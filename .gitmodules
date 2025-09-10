@@ -1,0 +1,3 @@
+[submodule "mct/submodules/file-discovery"]
+	path = mct/submodules/file-discovery
+	url = https://codeberg.org/cacherevolter/file-discovery

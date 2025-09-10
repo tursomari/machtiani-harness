@@ -1,0 +1,3 @@
+[submodule "submodules/file-discovery"]
+	path = submodules/file-discovery
+	url = https://codeberg.org/cacherevolter/file-discovery

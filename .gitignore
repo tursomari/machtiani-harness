@@ -1,0 +1,9 @@
+mct/.gocache
+mct/bin/
+mct/.machtiani/
+mct/.gitignore
+mct/trajectory-*
+mct/.git.bk/
+mct/submodules.bk/
+mct/.gitmodules.bk
+mct/issues/
