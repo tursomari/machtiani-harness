@@ -7,3 +7,5 @@ mct/.git.bk/
 mct/submodules.bk/
 mct/.gitmodules.bk
 mct/issues/
+agent/.gocache/
+.gitignore
