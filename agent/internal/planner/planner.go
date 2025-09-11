@@ -81,9 +81,11 @@ func (c *Client) Finalize(ctx context.Context, goal string, evidence []Turn, sum
 
 func (c *Client) planPrompt(goal, summary, lastAnswer string, retrieved []string, step, maxSteps int) string {
     var b strings.Builder
-    b.WriteString("You are an agentic planner helping another CLI (mct) to iteratively solve a task in a local codebase.\n")
-    b.WriteString("Decide either to ask one most-useful next question (exactly one), or to finalize if enough information is gathered.\n")
-    b.WriteString("Output strictly:\nDecision: ask|finalize\nIf ask, a second line:\nQuestion: <single best question>\n\n")
+    b.WriteString("You are an agentic planner whose message is sent to the mct tool, not a human. mct cannot run code; it only reads repository files and answers about them.\n")
+    b.WriteString("Decide either to produce one single, high-signal repository-focused prompt (exactly one) or to finalize if enough information is gathered.\n")
+    b.WriteString("Your prompt MUST be addressed to mct (the codebase-aware tool), not the user. Do NOT ask to clarify user intent, preferences, or scope.\n")
+    b.WriteString("Focus on files, functions, modules, architecture, error logs, or tests. Do not imply command execution.\n")
+    b.WriteString("Output strictly:\nDecision: ask|finalize\nIf ask, a second line using one of:\n- Question: <single best prompt>\n- Instruction: <single best prompt>\n- Message: <single best prompt>\n\n")
     b.WriteString("Original goal: \n" + goal + "\n\n")
     if summary != "" {
         b.WriteString("Running summary:\n" + summary + "\n\n")
@@ -184,6 +186,8 @@ func (c *Client) chat(ctx context.Context, model, prompt string) (string, error)
 // parseDecision expects output with lines like:
 // Decision: ask|finalize
 // Question: ... (optional)
+// Instruction: ... (optional)
+// Message: ... (optional)
 func parseDecision(s string) (Decision, string) {
     lines := strings.Split(strings.TrimSpace(s), "\n")
     var dec Decision
@@ -196,10 +200,16 @@ func parseDecision(s string) (Decision, string) {
             if strings.HasPrefix(v, "ask") { dec = DecisionAsk }
             if strings.HasPrefix(v, "finalize") { dec = DecisionFinalize }
         }
-        if strings.HasPrefix(strings.ToLower(t), "question:") {
+        lower := strings.ToLower(t)
+        if strings.HasPrefix(lower, "question:") {
             q = strings.TrimSpace(strings.TrimPrefix(t, "Question:"))
+        }
+        if strings.HasPrefix(lower, "instruction:") {
+            q = strings.TrimSpace(strings.TrimPrefix(t, "Instruction:"))
+        }
+        if strings.HasPrefix(lower, "message:") {
+            q = strings.TrimSpace(strings.TrimPrefix(t, "Message:"))
         }
     }
     return dec, q
 }
-

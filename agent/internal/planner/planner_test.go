@@ -12,6 +12,22 @@ func TestParseDecision(t *testing.T) {
     }
 }
 
+func TestParseDecisionInstruction(t *testing.T) {
+    s := "Decision: ask\nInstruction: List key init functions in startup path."
+    d, q := parseDecision(s)
+    if d != DecisionAsk || q == "" {
+        t.Fatalf("unexpected parse for Instruction: %v %q", d, q)
+    }
+}
+
+func TestParseDecisionMessage(t *testing.T) {
+    s := "Decision: ask\nMessage: Identify the main entrypoint file and its imports."
+    d, q := parseDecision(s)
+    if d != DecisionAsk || q == "" {
+        t.Fatalf("unexpected parse for Message: %v %q", d, q)
+    }
+}
+
 func TestFinalizePromptContainsEvidence(t *testing.T) {
     c := NewClient(ClientConfig{DryRun: true})
     ev := []Turn{{Step:1, Question:"Q1", RetrievedFilePaths:[]string{"a.go","b.md"}, AnswerExcerpt:"ans"}}
@@ -37,4 +53,3 @@ func index(s, sub string) int {
     }
     return -1
 }
-
