@@ -40,7 +40,16 @@ func ExtractRetrievedFilePaths(md string) []string {
 // ExtractAnswerSummary tries to find a concise answer snippet. As a simple heuristic,
 // it returns the first paragraph (up to 600 chars) of the markdown body following the first heading.
 func ExtractAnswerSummary(md string) string {
-    // Remove front matter headings; find first non-empty, non-heading line and take until blank line
+    // Prefer the first paragraph under an "Assistant" heading
+    assistant := ExtractAssistantAnswer(md)
+    if assistant != "" {
+        // take the first paragraph
+        parts := strings.Split(assistant, "\n\n")
+        sum := strings.TrimSpace(parts[0])
+        if len(sum) > 600 { sum = sum[:600] }
+        return sum
+    }
+    // Fallback: first non-heading paragraph in the document
     lines := strings.Split(md, "\n")
     var buf []string
     body := false
@@ -63,6 +72,31 @@ func ExtractAnswerSummary(md string) string {
     return sum
 }
 
+// ExtractAssistantAnswer returns the full content under the "# Assistant" section,
+// stopping before the next heading or end of document.
+func ExtractAssistantAnswer(md string) string {
+    lines := strings.Split(md, "\n")
+    in := false
+    var out []string
+    for _, l := range lines {
+        t := strings.TrimSpace(l)
+        low := strings.ToLower(t)
+        // enter assistant section on a heading containing "assistant"
+        if strings.HasPrefix(t, "#") && strings.Contains(low, "assistant") {
+            in = true
+            // skip the heading line itself
+            continue
+        }
+        if in {
+            // stop at the metadata separator or the Retrieved File Paths header
+            if t == "---" { break }
+            if strings.HasPrefix(t, "#") && strings.Contains(low, "retrieved file paths") { break }
+            out = append(out, l)
+        }
+    }
+    return strings.TrimSpace(strings.Join(out, "\n"))
+}
+
 // UpdateSummary appends a brief observation and the latest retrieved files to a running summary.
 func UpdateSummary(prev, observation string, retrieved []string) string {
     obs := strings.TrimSpace(observation)
@@ -77,4 +111,3 @@ func UpdateSummary(prev, observation string, retrieved []string) string {
     }
     return prev + "\n" + obs + "\nFiles: " + strings.Join(retrieved, ", ")
 }
-

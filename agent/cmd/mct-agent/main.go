@@ -112,8 +112,71 @@ func run() int {
         return 1
     }
 
-    // Loop
-    for step := 1; step <= cfg.maxSteps; step++ {
+    // First turn: use the original prompt directly (no planner)
+    {
+        step := 1
+        // Build mct args
+        args := []string{"prompt", "--mode=default"}
+        if cfg.model != "" { args = append(args, "--model", cfg.model) }
+        args = append(args, goal)
+
+        ctx2, cancel2 := context.WithTimeout(context.Background(), time.Duration(cfg.timeoutPerTurn)*time.Second)
+        savedPath, merr := mctRunner.RunPrompt(ctx2, sessionID, args...)
+        cancel2()
+        if merr != nil {
+            fmt.Fprintln(os.Stderr, "mct prompt error:", merr)
+            return 1
+        }
+
+        // Read the authoritative response file
+        content, rerr := os.ReadFile(".machtiani/chat/machtiani-response.md")
+        if rerr != nil {
+            fmt.Fprintln(os.Stderr, "Failed to read saved chat (.machtiani/chat/machtiani-response.md):", rerr)
+            return 1
+        }
+        lastAnswer = string(content)
+        retrieved = parser.ExtractRetrievedFilePaths(lastAnswer)
+
+        // Update summary/evidence
+        short := trimTo(firstNonEmpty(parser.ExtractAnswerSummary(lastAnswer), lastAnswer), 600)
+        evidence = append(evidence, planner.Turn{
+            Step:               step,
+            Question:           goal,
+            RetrievedFilePaths: retrieved,
+            AnswerExcerpt:      short,
+            SavedChatPath:      savedPath,
+        })
+        summary = parser.UpdateSummary(summary, short, retrieved)
+
+        // Log to transcript with full Assistant answer
+        fullAns := parser.ExtractAssistantAnswer(lastAnswer)
+        if strings.TrimSpace(fullAns) == "" { fullAns = lastAnswer }
+        if err := tr.WriteTurn(step, goal, savedPath, retrieved, fullAns, "initial"); err != nil {
+            fmt.Fprintln(os.Stderr, "Transcript write error:", err)
+            return 1
+        }
+    }
+
+    // If only one step is allowed, finalize immediately using the first turn's evidence
+    if cfg.maxSteps == 1 {
+        ctx, cancelF := context.WithTimeout(context.Background(), time.Duration(cfg.timeoutPerTurn)*time.Second)
+        answer, ferr := pl.Finalize(ctx, goal, evidence, summary)
+        cancelF()
+        if ferr != nil {
+            fmt.Fprintln(os.Stderr, "Finalizer error:", ferr)
+            return 1
+        }
+        if err := tr.WriteFinal(answer, 1, false); err != nil {
+            fmt.Fprintln(os.Stderr, "Transcript write error:", err)
+            return 1
+        }
+        fmt.Println("Conclusion:")
+        fmt.Println(answer)
+        return 0
+    }
+
+    // Subsequent turns loop
+    for step := 2; step <= cfg.maxSteps; step++ {
         // Decide next action
         ctx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.timeoutPerTurn)*time.Second)
         decision, question, perr := pl.Plan(ctx, goal, summary, lastAnswer, retrieved, step, cfg.maxSteps)
@@ -190,8 +253,10 @@ func run() int {
         })
         summary = parser.UpdateSummary(summary, short, retrieved)
 
-        // Log to transcript
-        if err := tr.WriteTurn(step, question, savedPath, retrieved, short, "ask"); err != nil {
+        // Log to transcript with full Assistant answer
+        fullAns := parser.ExtractAssistantAnswer(lastAnswer)
+        if strings.TrimSpace(fullAns) == "" { fullAns = lastAnswer }
+        if err := tr.WriteTurn(step, question, savedPath, retrieved, fullAns, "ask"); err != nil {
             fmt.Fprintln(os.Stderr, "Transcript write error:", err)
             return 1
         }
