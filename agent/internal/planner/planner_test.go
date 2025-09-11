@@ -28,11 +28,11 @@ func TestParseDecisionMessage(t *testing.T) {
     }
 }
 
-func TestFinalizePromptContainsEvidence(t *testing.T) {
+func TestFinalizePromptContainsTranscript(t *testing.T) {
     c := NewClient(ClientConfig{DryRun: true})
-    ev := []Turn{{Step:1, Question:"Q1", RetrievedFilePaths:[]string{"a.go","b.md"}, AnswerExcerpt:"ans"}}
-    p := c.finalizePrompt("Goal", ev, "sum")
-    if !containsAll(p, []string{"Goal", "Q1", "a.go", "ans"}) {
+    transcript := "# mct-agent Transcript\n\nGoal:\nGoal text here\n\n## Turn 1\nQuestion:\nQ1\n\nRetrieved File Paths:\n- a.go\n- b.md\n\nAnswer:\nans\n"
+    p := c.finalizePrompt(transcript)
+    if !containsAll(p, []string{"Transcript", "Q1", "a.go", "ans"}) {
         t.Fatalf("finalize prompt missing expected content: %s", p)
     }
 }

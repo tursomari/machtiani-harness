@@ -69,3 +69,18 @@ func (t *Transcript) WriteFinal(answer string, step int, capped bool) error {
     _, err := fmt.Fprintf(t.f, "\n## Conclusion%s (after %d turn(s))\n\n%s\n", note, step, answer)
     return err
 }
+
+// Tail returns up to the last maxBytes of the transcript file.
+func (t *Transcript) Tail(maxBytes int) (string, error) {
+    if t == nil || t.path == "" {
+        return "", nil
+    }
+    data, err := os.ReadFile(t.path)
+    if err != nil {
+        return "", err
+    }
+    if maxBytes <= 0 || len(data) <= maxBytes {
+        return string(data), nil
+    }
+    return string(data[len(data)-maxBytes:]), nil
+}

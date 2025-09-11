@@ -101,9 +101,7 @@ func run() int {
         DryRun:            cfg.dryRun,
     })
 
-    // Running state
-    summary := ""
-    evidence := make([]planner.Turn, 0, cfg.maxSteps)
+    // Running state (kept only for transcript writing)
     lastAnswer := ""
     retrieved := []string{}
 
@@ -137,17 +135,6 @@ func run() int {
         lastAnswer = string(content)
         retrieved = parser.ExtractRetrievedFilePaths(lastAnswer)
 
-        // Update summary/evidence
-        short := trimTo(firstNonEmpty(parser.ExtractAnswerSummary(lastAnswer), lastAnswer), 600)
-        evidence = append(evidence, planner.Turn{
-            Step:               step,
-            Question:           goal,
-            RetrievedFilePaths: retrieved,
-            AnswerExcerpt:      short,
-            SavedChatPath:      savedPath,
-        })
-        summary = parser.UpdateSummary(summary, short, retrieved)
-
         // Log to transcript with full Assistant answer
         fullAns := parser.ExtractAssistantAnswer(lastAnswer)
         if strings.TrimSpace(fullAns) == "" { fullAns = lastAnswer }
@@ -157,10 +144,11 @@ func run() int {
         }
     }
 
-    // If only one step is allowed, finalize immediately using the first turn's evidence
+    // If only one step is allowed, finalize immediately using transcript only
     if cfg.maxSteps == 1 {
         ctx, cancelF := context.WithTimeout(context.Background(), time.Duration(cfg.timeoutPerTurn)*time.Second)
-        answer, ferr := pl.Finalize(ctx, goal, evidence, summary)
+        trTail, _ := tr.Tail(20000)
+        answer, ferr := pl.Finalize(ctx, trTail)
         cancelF()
         if ferr != nil {
             fmt.Fprintln(os.Stderr, "Finalizer error:", ferr)
@@ -177,9 +165,10 @@ func run() int {
 
     // Subsequent turns loop
     for step := 2; step <= cfg.maxSteps; step++ {
-        // Decide next action
+        // Decide next action using transcript only
         ctx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.timeoutPerTurn)*time.Second)
-        decision, question, perr := pl.Plan(ctx, goal, summary, lastAnswer, retrieved, step, cfg.maxSteps)
+        trTail, _ := tr.Tail(20000)
+        decision, question, perr := pl.Plan(ctx, trTail, step, cfg.maxSteps)
         cancel()
         if perr != nil {
             fmt.Fprintln(os.Stderr, "Planner error:", perr)
@@ -191,9 +180,10 @@ func run() int {
         }
 
         if decision == planner.DecisionFinalize || step == cfg.maxSteps {
-            // Compose final answer
+            // Compose final answer using transcript only
             ctx, cancelF := context.WithTimeout(context.Background(), time.Duration(cfg.timeoutPerTurn)*time.Second)
-            answer, ferr := pl.Finalize(ctx, goal, evidence, summary)
+            trTail, _ := tr.Tail(20000)
+            answer, ferr := pl.Finalize(ctx, trTail)
             cancelF()
             if ferr != nil {
                 fmt.Fprintln(os.Stderr, "Finalizer error:", ferr)
@@ -241,17 +231,6 @@ func run() int {
         }
         lastAnswer = string(content)
         retrieved = parser.ExtractRetrievedFilePaths(lastAnswer)
-
-        // Update summary/evidence (simple, concise excerpt)
-        short := trimTo(firstNonEmpty(parser.ExtractAnswerSummary(lastAnswer), lastAnswer), 600)
-        evidence = append(evidence, planner.Turn{
-            Step:              step,
-            Question:          question,
-            RetrievedFilePaths: retrieved,
-            AnswerExcerpt:     short,
-            SavedChatPath:     savedPath,
-        })
-        summary = parser.UpdateSummary(summary, short, retrieved)
 
         // Log to transcript with full Assistant answer
         fullAns := parser.ExtractAssistantAnswer(lastAnswer)

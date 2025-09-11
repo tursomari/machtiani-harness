@@ -39,23 +39,16 @@ func NewClient(cfg ClientConfig) *Client {
     return c
 }
 
-type Turn struct {
-    Step               int
-    Question           string
-    RetrievedFilePaths []string
-    AnswerExcerpt      string
-    SavedChatPath      string
-}
-
-func (c *Client) Plan(ctx context.Context, goal, summary, lastAnswer string, retrieved []string, step, maxSteps int) (Decision, string, error) {
+// Plan decides the next action using only the transcript context.
+func (c *Client) Plan(ctx context.Context, transcript string, step, maxSteps int) (Decision, string, error) {
     if c.cfg.DryRun {
         // First step: ask; later steps: finalize
         if step < maxSteps {
-            return DecisionAsk, fmt.Sprintf("Given the goal: %s — what files and functions are most relevant?", goal), nil
+            return DecisionAsk, "From the transcript, ask mct for the next most informative repository-focused prompt.", nil
         }
         return DecisionFinalize, "", nil
     }
-    prompt := c.planPrompt(goal, summary, lastAnswer, retrieved, step, maxSteps)
+    prompt := c.planPrompt(transcript, step, maxSteps)
     resp, err := c.chat(ctx, c.cfg.AgentModel, prompt)
     if err != nil {
         return "", "", err
@@ -67,11 +60,12 @@ func (c *Client) Plan(ctx context.Context, goal, summary, lastAnswer string, ret
     return dec, q, nil
 }
 
-func (c *Client) Finalize(ctx context.Context, goal string, evidence []Turn, summary string) (string, error) {
+// Finalize composes the final answer using only the transcript content.
+func (c *Client) Finalize(ctx context.Context, transcript string) (string, error) {
     if c.cfg.DryRun {
         return "[dry-run] Final answer would be composed here based on accumulated evidence.", nil
     }
-    prompt := c.finalizePrompt(goal, evidence, summary)
+    prompt := c.finalizePrompt(transcript)
     resp, err := c.chat(ctx, c.cfg.AgentModel, prompt)
     if err != nil {
         return "", err
@@ -79,48 +73,32 @@ func (c *Client) Finalize(ctx context.Context, goal string, evidence []Turn, sum
     return strings.TrimSpace(resp), nil
 }
 
-func (c *Client) planPrompt(goal, summary, lastAnswer string, retrieved []string, step, maxSteps int) string {
+func (c *Client) planPrompt(transcript string, step, maxSteps int) string {
     var b strings.Builder
-    b.WriteString("You are an agentic planner whose message is sent to the mct tool, not a human. mct cannot run code; it only reads repository files and answers about them.\n")
+    b.WriteString("You are an agentic planner for mct. Read the transcript to understand the goal and prior turns. mct reads repository files and answers; it does not execute code.\n")
     b.WriteString("Decide either to produce one single, high-signal repository-focused prompt (exactly one) or to finalize if enough information is gathered.\n")
-    b.WriteString("Your prompt MUST be addressed to mct (the codebase-aware tool), not the user. Do NOT ask to clarify user intent, preferences, or scope.\n")
-    b.WriteString("Focus on files, functions, modules, architecture, error logs, or tests. Do not imply command execution.\n")
+    b.WriteString("Your prompt MUST be addressed to mct, not the user. Avoid clarifying user intent; focus on code, files, functions, modules, architecture, logs, or tests.\n")
     b.WriteString("Output strictly:\nDecision: ask|finalize\nIf ask, a second line using one of:\n- Question: <single best prompt>\n- Instruction: <single best prompt>\n- Message: <single best prompt>\n\n")
-    b.WriteString("Original goal: \n" + goal + "\n\n")
-    if summary != "" {
-        b.WriteString("Running summary:\n" + summary + "\n\n")
-    }
-    if lastAnswer != "" {
-        b.WriteString("Last mct answer excerpt (truncated):\n")
-        // cheap truncate to keep prompt compact
-        la := lastAnswer
-        if len(la) > 1200 { la = la[:1200] }
-        b.WriteString(la + "\n\n")
-    }
-    if len(retrieved) > 0 {
-        b.WriteString("Retrieved File Paths (last turn):\n- " + strings.Join(retrieved, "\n- ") + "\n\n")
+    if strings.TrimSpace(transcript) != "" {
+        b.WriteString("Transcript (truncated):\n")
+        tt := transcript
+        if len(tt) > 4000 { tt = tt[len(tt)-4000:] }
+        b.WriteString(tt + "\n\n")
     }
     b.WriteString(fmt.Sprintf("Step %d of %d. Decide.\n", step, maxSteps))
     return b.String()
 }
 
-func (c *Client) finalizePrompt(goal string, evidence []Turn, summary string) string {
+func (c *Client) finalizePrompt(transcript string) string {
     var b strings.Builder
-    b.WriteString("You are the composer agent. Using the accumulated evidence and summaries from previous mct turns, write the final answer to the original goal.\n\n")
-    b.WriteString("Original goal:\n" + goal + "\n\n")
-    if summary != "" { b.WriteString("Running summary:\n" + summary + "\n\n") }
-    b.WriteString("Evidence log (per turn):\n")
-    for _, t := range evidence {
-        b.WriteString(fmt.Sprintf("Turn %d question: %s\n", t.Step, t.Question))
-        if len(t.RetrievedFilePaths) > 0 {
-            b.WriteString("Files:\n- " + strings.Join(t.RetrievedFilePaths, "\n- ") + "\n")
-        }
-        if t.AnswerExcerpt != "" {
-            b.WriteString("Answer excerpt:\n" + t.AnswerExcerpt + "\n")
-        }
-        b.WriteString("\n")
+    b.WriteString("You are the composer agent. Read the transcript (which contains the goal and mct turns) and write the final answer to the original goal.\n\n")
+    if strings.TrimSpace(transcript) != "" {
+        b.WriteString("Transcript (truncated):\n")
+        tt := transcript
+        if len(tt) > 6000 { tt = tt[len(tt)-6000:] }
+        b.WriteString(tt + "\n\n")
     }
-    b.WriteString("Now, produce a clear, self-contained final answer. If there are gaps due to limited steps, call them out succinctly.")
+    b.WriteString("Now produce a clear, self-contained final answer grounded in the evidence from prior turns. If there are gaps, call them out succinctly.")
     return b.String()
 }
 
