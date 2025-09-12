@@ -34,7 +34,7 @@ func Build(userPrompt string, relPaths []string, opts Options) (string, []string
 	opts = opts.withDefaults()
 	var b strings.Builder
 	b.WriteString(userPrompt)
-	b.WriteString("\n\nHere are the relevant files:\n")
+	b.WriteString("\n\nHere are possible relevant files:\n")
 
 	included := make([]string, 0, len(relPaths))
 	total := 0
