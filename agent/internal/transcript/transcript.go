@@ -12,6 +12,7 @@ import (
 type Transcript struct {
     f    *os.File
     path string
+    mem  strings.Builder
 }
 
 func New() (*Transcript, error) {
@@ -33,7 +34,9 @@ func (t *Transcript) Close() error {
 }
 
 func (t *Transcript) WriteHeader(goal string, sessionID string, _ any) error {
-    _, err := fmt.Fprintf(t.f, "# mct-agent Transcript\n\nSession: %s\n\nGoal:\n%s\n\n", sessionID, goal)
+    s := fmt.Sprintf("# mct-agent Transcript\n\nSession: %s\n\nGoal:\n%s\n\n", sessionID, goal)
+    t.mem.WriteString(s)
+    _, err := t.f.WriteString(s)
     return err
 }
 
@@ -57,7 +60,9 @@ func (t *Transcript) WriteTurn(step int, question, savedPath string, retrieved [
     b.WriteString("Planner decision: ")
     b.WriteString(decision)
     b.WriteString("\n")
-    _, err := t.f.WriteString(b.String())
+    s := b.String()
+    t.mem.WriteString(s)
+    _, err := t.f.WriteString(s)
     return err
 }
 
@@ -66,21 +71,28 @@ func (t *Transcript) WriteFinal(answer string, step int, capped bool) error {
     if capped {
         note = " (reached max-steps cap)"
     }
-    _, err := fmt.Fprintf(t.f, "\n## Conclusion%s (after %d turn(s))\n\n%s\n", note, step, answer)
+    s := fmt.Sprintf("\n## Conclusion%s (after %d turn(s))\n\n%s\n", note, step, answer)
+    t.mem.WriteString(s)
+    _, err := t.f.WriteString(s)
     return err
 }
 
 // Tail returns up to the last maxBytes of the transcript file.
 func (t *Transcript) Tail(maxBytes int) (string, error) {
-    if t == nil || t.path == "" {
+    if t == nil {
         return "", nil
     }
-    data, err := os.ReadFile(t.path)
-    if err != nil {
-        return "", err
-    }
+    data := t.mem.String()
     if maxBytes <= 0 || len(data) <= maxBytes {
-        return string(data), nil
+        return data, nil
     }
-    return string(data[len(data)-maxBytes:]), nil
+    return data[len(data)-maxBytes:], nil
+}
+
+// Content returns the full in-memory transcript content.
+func (t *Transcript) Content() string {
+    if t == nil {
+        return ""
+    }
+    return t.mem.String()
 }
