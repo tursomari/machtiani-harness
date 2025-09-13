@@ -172,8 +172,8 @@ func run() int {
     // If only one step is allowed, finalize immediately using transcript only
     if cfg.maxSteps == 1 {
         ctx, cancelF := context.WithTimeout(context.Background(), time.Duration(cfg.timeoutPerTurn)*time.Second)
-        trTail, _ := tr.Tail(20000)
-        answer, ferr := pl.Finalize(ctx, trTail)
+        trFull := tr.Content()
+        answer, ferr := pl.Finalize(ctx, goal, trFull)
         cancelF()
         if ferr != nil {
             fmt.Fprintln(os.Stderr, "Finalizer error:", ferr)
@@ -192,8 +192,8 @@ func run() int {
     for step := 2; step <= cfg.maxSteps; step++ {
         // Decide next action using transcript only
         ctx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.timeoutPerTurn)*time.Second)
-        trTail, _ := tr.Tail(20000)
-        decision, question, perr := pl.Plan(ctx, trTail, step, cfg.maxSteps)
+        trFull := tr.Content()
+        decision, question, perr := pl.Plan(ctx, goal, trFull, step, cfg.maxSteps)
         cancel()
         if perr != nil {
             fmt.Fprintln(os.Stderr, "Planner error:", perr)
@@ -207,8 +207,8 @@ func run() int {
         if decision == planner.DecisionFinalize || step == cfg.maxSteps {
             // Compose final answer using transcript only
             ctx, cancelF := context.WithTimeout(context.Background(), time.Duration(cfg.timeoutPerTurn)*time.Second)
-            trTail, _ := tr.Tail(20000)
-            answer, ferr := pl.Finalize(ctx, trTail)
+            trFull := tr.Content()
+            answer, ferr := pl.Finalize(ctx, goal, trFull)
             cancelF()
             if ferr != nil {
                 fmt.Fprintln(os.Stderr, "Finalizer error:", ferr)

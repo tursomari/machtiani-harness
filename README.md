@@ -44,17 +44,17 @@ export PATH="$HOME/.local/bin:$PATH"
 ```
 
 ## Environment Setup
-`mct` requires an API key (and optionally a base URL). The agent can either reuse those or use its own pair.
+Both `mct` and `mct-agent` use OpenAI‑compatible configuration via `OPENAI_*`. Provide all three values explicitly (no implicit defaults):
 
 ```
-# Required for mct
-export MCT_MODEL_API_KEY=sk-...
-export MCT_MODEL_BASE_URL=https://api.openai.com/v1   # or your gateway
-
-# Optional override for the agent (falls back to MCT_* if unset)
-export AGENT_MODEL_API_KEY=sk-proj-...
-export AGENT_MODEL_BASE_URL=https://...
+export OPENAI_API_KEY=sk_...
+export OPENAI_BASE_URL=https://api.openai.com/v1   # or your gateway
+export OPENAI_MODEL=gpt-4o-mini
 ```
+
+Notes:
+- Agent flag precedence: `--openai-*` flags override env vars.
+- Legacy envs `AGENT_MODEL_*` / `MCT_MODEL_*` are still accepted as a fallback with a deprecation warning.
 
 Optional knobs:
 - `FILE_DISCOVERY_BIN`: path to a specific `file-discovery` binary (mct otherwise resolves one on PATH or its own bundled copy).
@@ -69,7 +69,6 @@ mct-agent -h | head -n 1
 
 Run a quick prompt with `mct` to confirm LLM access:
 ```
-export MCT_MODEL_API_KEY=sk-...  # if not set
 mct prompt "Say hello in one sentence."
 ```
 
@@ -79,11 +78,12 @@ Basic `mct-agent` run (asks up to a few focused questions via `mct`, then finali
 mct-agent run "Explain the architecture and identify main components" --verbose
 ```
 
-Useful flags (delegated to either `mct` or the agent):
+Useful flags (agent):
 - `--max-steps int`: max `mct` Q&A turns before finalizing (default ~4).
 - `--mct-bin path`: explicit path to the `mct` binary if not on PATH.
-- `--model string`: model for `mct prompt` calls.
-- `--agent-model string`: model for the agent’s planner/finalizer.
+- `--openai-api-key string`: API key for OpenAI‑compatible endpoint.
+- `--openai-base-url string`: Base URL for OpenAI‑compatible endpoint.
+- `--openai-model string`: Model name used by planner and `mct` (alias: `--model`).
 - `--timeout-per-turn int`: seconds per turn for the agent loop.
 - `--dry-run`: print intended calls without executing.
 - `--verbose`: verbose logging.
@@ -128,7 +128,7 @@ cd -
 - Command not found
   - Ensure `~/.local/bin` is on PATH and that you ran the install commands. Rehash your shell if needed (`hash -r`).
 - Missing model configuration / auth errors
-  - Set `MCT_MODEL_API_KEY` (and optionally `MCT_MODEL_BASE_URL`). The agent can reuse those, or set `AGENT_MODEL_API_KEY`/`AGENT_MODEL_BASE_URL`.
+  - Set `OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_MODEL` (or pass `--openai-*` flags to the agent).
 - `file-discovery` not found
   - Re-run the install step, or set `FILE_DISCOVERY_BIN` to the correct path.
 - `rg` missing
@@ -147,4 +147,3 @@ Remove the installed binaries (adjust paths to your environment):
 ```
 rm -f ~/.local/bin/mct ~/.local/bin/mct-agent ~/.local/bin/file-discovery
 ```
-

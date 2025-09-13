@@ -99,9 +99,10 @@ func unsetEnv(t *testing.T, keys []string) func() {
 
 func TestFinalizePromptContainsTranscript(t *testing.T) {
     c := NewClient(ClientConfig{DryRun: true})
+    goal := "Goal text here"
     transcript := "# mct-agent Transcript\n\nGoal:\nGoal text here\n\n## Turn 1\nQuestion:\nQ1\n\nRetrieved File Paths:\n- a.go\n- b.md\n\nAnswer:\nans\n"
-    p := c.finalizePrompt(transcript)
-    if !containsAll(p, []string{"Transcript", "Q1", "a.go", "ans"}) {
+    p := c.finalizePrompt(goal, transcript)
+    if !containsAll(p, []string{"Goal text here", "Transcript", "Q1", "a.go", "ans"}) {
         t.Fatalf("finalize prompt missing expected content: %s", p)
     }
 }

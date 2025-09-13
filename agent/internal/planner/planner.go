@@ -80,7 +80,7 @@ func warnLegacyOnce() {
 }
 
 // Plan decides the next action using only the transcript context.
-func (c *Client) Plan(ctx context.Context, transcript string, step, maxSteps int) (Decision, string, error) {
+func (c *Client) Plan(ctx context.Context, goal string, transcript string, step, maxSteps int) (Decision, string, error) {
     if c.cfg.DryRun {
         // First step: ask; later steps: finalize
         if step < maxSteps {
@@ -88,7 +88,7 @@ func (c *Client) Plan(ctx context.Context, transcript string, step, maxSteps int
         }
         return DecisionFinalize, "", nil
     }
-    prompt := c.planPrompt(transcript, step, maxSteps)
+    prompt := c.planPrompt(goal, transcript, step, maxSteps)
     resp, err := c.chat(ctx, c.cfg.AgentModel, prompt)
     if err != nil {
         return "", "", err
@@ -101,11 +101,11 @@ func (c *Client) Plan(ctx context.Context, transcript string, step, maxSteps int
 }
 
 // Finalize composes the final answer using only the transcript content.
-func (c *Client) Finalize(ctx context.Context, transcript string) (string, error) {
+func (c *Client) Finalize(ctx context.Context, goal string, transcript string) (string, error) {
     if c.cfg.DryRun {
         return "[dry-run] Final answer would be composed here based on accumulated evidence.", nil
     }
-    prompt := c.finalizePrompt(transcript)
+    prompt := c.finalizePrompt(goal, transcript)
     resp, err := c.chat(ctx, c.cfg.AgentModel, prompt)
     if err != nil {
         return "", err
@@ -113,12 +113,17 @@ func (c *Client) Finalize(ctx context.Context, transcript string) (string, error
     return strings.TrimSpace(resp), nil
 }
 
-func (c *Client) planPrompt(transcript string, step, maxSteps int) string {
+func (c *Client) planPrompt(goal string, transcript string, step, maxSteps int) string {
     var b strings.Builder
     b.WriteString("You are an agentic planner for mct. Read the transcript to understand the goal and prior turns. mct reads repository files and answers; it does not execute code.\n")
     b.WriteString("Decide either to produce one single, high-signal repository-focused prompt (exactly one) or to finalize if enough information is gathered.\n")
     b.WriteString("Your prompt MUST be addressed to mct, not the user. Avoid clarifying user intent; focus on code, files, functions, modules, architecture, logs, or tests.\n")
     b.WriteString("Output strictly:\nDecision: ask|finalize\nIf ask, a second line using one of:\n- Question: <single best prompt>\n- Instruction: <single best prompt>\n- Message: <single best prompt>\n\n")
+    if strings.TrimSpace(goal) != "" {
+        b.WriteString("Goal:\n")
+        // keep goal intact; it's short compared to transcript
+        b.WriteString(goal + "\n\n")
+    }
     if strings.TrimSpace(transcript) != "" {
         b.WriteString("Transcript (truncated):\n")
         tt := transcript
@@ -129,9 +134,13 @@ func (c *Client) planPrompt(transcript string, step, maxSteps int) string {
     return b.String()
 }
 
-func (c *Client) finalizePrompt(transcript string) string {
+func (c *Client) finalizePrompt(goal string, transcript string) string {
     var b strings.Builder
     b.WriteString("You are the composer agent. Read the transcript (which contains the goal and mct turns) and write the final answer to the original goal.\n\n")
+    if strings.TrimSpace(goal) != "" {
+        b.WriteString("Goal:\n")
+        b.WriteString(goal + "\n\n")
+    }
     if strings.TrimSpace(transcript) != "" {
         b.WriteString("Transcript (truncated):\n")
         tt := transcript
