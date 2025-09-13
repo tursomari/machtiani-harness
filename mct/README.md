@@ -9,9 +9,10 @@ The `prompt` command no longer relies on a remote URL or backend server. It runs
 
 ## Requirements
 - Go 1.22+
-- A model API key and base URL (OpenAI‑compatible)
-  - `MCT_MODEL_API_KEY` (required)
-  - `MCT_MODEL_BASE_URL` (defaults to `https://api.openai.com/v1` if not set)
+- OpenAI‑compatible model configuration (no implicit defaults)
+  - `OPENAI_API_KEY` (required)
+  - `OPENAI_BASE_URL` (required)
+  - `OPENAI_MODEL` (required; can be provided via `--openai-model`/`--model`)
 - Optional: `git` for other subcommands (`status`, `sync`, `remove`)
 
 ## Build and Install (recommended)
@@ -42,10 +43,11 @@ install -m 0755 ./bin/file-discovery ~/.local/bin/file-discovery
 ```
 
 ## Quick Start
-Set your model credentials:
+Set your model configuration:
 ```
-export MCT_MODEL_API_KEY=sk_...
-export MCT_MODEL_BASE_URL=https://api.openai.com/v1  # or your provider
+export OPENAI_API_KEY=sk_...
+export OPENAI_BASE_URL=https://api.openai.com/v1  # or your provider
+export OPENAI_MODEL=gpt-4o-mini
 ```
 
 Run a prompt against the current repo:
@@ -77,11 +79,12 @@ mct prompt --mode=answer-only -f prompt.md
 
 ## Configuration
 - Env vars:
-  - `MCT_MODEL_API_KEY`: API key for your LLM provider (required)
-  - `MCT_MODEL_BASE_URL`: Base URL for OpenAI‑compatible API (defaults to `https://api.openai.com/v1`)
+  - `OPENAI_API_KEY`: API key for your LLM provider (required)
+  - `OPENAI_BASE_URL`: Base URL for OpenAI‑compatible API (required)
+  - `OPENAI_MODEL`: Model name (required unless supplied via `--openai-model`/`--model`)
   - `MACHTIANI_SESSION_ID`: Optional; forwarded to `file-discovery`
   - `FILE_DISCOVERY_BIN`: Optional; path to a custom `file-discovery` binary
-- Model default: `gpt-4o-mini` (override with `--model`)
+  - Legacy `MCT_MODEL_*` accepted as fallback with a deprecation warning
 
 Binary resolution for `file-discovery`:
 1) `FILE_DISCOVERY_BIN` env override
@@ -96,7 +99,6 @@ Binary resolution for `file-discovery`:
 - “file-discovery binary not found”
   - Ensure you’ve run `./build.sh` and have `bin/file-discovery`, or install a compatible binary and set `FILE_DISCOVERY_BIN`.
 - “Missing model configuration”
-  - Set `MCT_MODEL_API_KEY` and (optionally) `MCT_MODEL_BASE_URL`.
+  - Set `OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_MODEL`.
 - Streaming fails or returns non‑OK
   - The CLI falls back to a non‑streaming request once; verify your base URL and key.
-

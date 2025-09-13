@@ -5,10 +5,10 @@ Agent “composer” that iteratively asks focused questions via the `mct` CLI (
 ## Requirements
 - Go 1.22+
 - `mct` CLI available in PATH or provided via `--mct-bin` (see repo `mct/README.md` to build/install `mct`)
-- Model credentials for an OpenAI‑compatible API:
-  - For `mct`: `MCT_MODEL_API_KEY` (required), `MCT_MODEL_BASE_URL` (optional; defaults to `https://api.openai.com/v1`)
-  - For the agent’s planner/finalizer (optional; falls back to the `mct` env):
-    - `AGENT_MODEL_API_KEY`, `AGENT_MODEL_BASE_URL`
+- OpenAI‑compatible model configuration (no implicit defaults):
+  - `OPENAI_API_KEY` (required)
+  - `OPENAI_BASE_URL` (required)
+  - `OPENAI_MODEL` (required)
 
 ## Install
 Build the binary from this module:
@@ -33,13 +33,11 @@ export PATH="$HOME/.local/bin:$PATH"
 ```
 
 ## Quick Start
-Set model credentials for `mct` (and optionally for the agent):
+Set model configuration (used by both agent and `mct`):
 ```
-export MCT_MODEL_API_KEY=sk_...
-export MCT_MODEL_BASE_URL=https://api.openai.com/v1   # or your provider
-# Optional (else falls back to MCT_*):
-export AGENT_MODEL_API_KEY=$MCT_MODEL_API_KEY
-export AGENT_MODEL_BASE_URL=$MCT_MODEL_BASE_URL
+export OPENAI_API_KEY=sk_...
+export OPENAI_BASE_URL=https://api.openai.com/v1   # or your provider
+export OPENAI_MODEL=gpt-4o-mini
 ```
 Run the agent:
 ```
@@ -52,8 +50,9 @@ mct-agent run "<issue or question>" [flags]
 ```
 Flags:
 - `--max-steps int`: maximum turns before finalizing (default: 4)
-- `--model string`: model for `mct prompt` calls (optional; mirrors mct default when omitted)
-- `--agent-model string`: model for the agent’s planner/finalizer (optional)
+- `--openai-api-key string`: API key for OpenAI-compatible endpoint
+- `--openai-base-url string`: Base URL for OpenAI-compatible endpoint
+- `--openai-model string`: Model name for planner and `mct` calls (alias: `--model`)
 - `--timeout-per-turn int`: per-turn timeout in seconds (default: 120)
 - `--mct-bin string`: explicit path to the `mct` binary
 - `--dry-run`: print intended `mct` calls; no subprocess or LLM
@@ -69,19 +68,18 @@ Flags:
 - A transcript is saved to `.machtiani/chat/agent-<timestamp>.md` with per-turn entries and the final conclusion.
 
 ## Environment Details
-- `mct` environment:
-  - `MCT_MODEL_API_KEY` (required)
-  - `MCT_MODEL_BASE_URL` (optional; default provided by mct)
-  - `MACHTIANI_SESSION_ID` is generated per run and exported to the `mct` subprocess for correlation
-- Agent environment (overrides; optional):
-  - `AGENT_MODEL_API_KEY`, `AGENT_MODEL_BASE_URL`
-  - If unset, the agent falls back to `MCT_MODEL_API_KEY` / `MCT_MODEL_BASE_URL`
+- `OPENAI_*` resolution precedence in agent:
+  - Flags `--openai-*` override
+  - Then `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL`
+  - Legacy envs `AGENT_MODEL_*` / `MCT_MODEL_*` accepted as fallback with a deprecation warning
+- Pass-through: agent injects the effective `OPENAI_*` into the `mct` subprocess environment.
+- `MACHTIANI_SESSION_ID` is generated per run and exported to the `mct` subprocess for correlation.
 
 ## Troubleshooting
 - “mct not found”
   - Build and install `mct`, or set `--mct-bin /path/to/mct`, or export `MCT_BIN`.
 - “Missing model configuration”
-  - Ensure `MCT_MODEL_API_KEY` is set; agent will also need credentials (falls back to MCT env).
+  - Ensure `OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_MODEL` are set (via flags or envs).
 - “Saved chat missing/unreadable”
   - The agent reads `.machtiani/chat/machtiani-response.md`. Ensure `mct prompt` ran successfully and wrote the file.
 
@@ -89,4 +87,3 @@ Flags:
 - The agent shells out to `mct` and does not import `mct/internal/*`.
 - It avoids parsing streamed stdout; always reads the saved chat file as the source of truth.
 - `--dry-run` simulates planning and prints the intended commands without executing `mct` or calling any LLM.
-

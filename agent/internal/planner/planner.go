@@ -31,12 +31,52 @@ type Client struct {
     httpClient *http.Client
 }
 
+var warnedLegacyEnv bool
+
 func NewClient(cfg ClientConfig) *Client {
     c := &Client{cfg: cfg, httpClient: &http.Client{}}
-    if c.cfg.AgentModelBaseURL == "" {
-        c.cfg.AgentModelBaseURL = "https://api.openai.com/v1"
+    // Resolve from OPENAI_* first, then legacy envs with a one-time warning
+    // Model
+    if strings.TrimSpace(c.cfg.AgentModel) == "" {
+        c.cfg.AgentModel = os.Getenv("OPENAI_MODEL")
+        if strings.TrimSpace(c.cfg.AgentModel) == "" {
+            // legacy fallbacks
+            c.cfg.AgentModel = firstNonEmptyEnv("AGENT_MODEL", "MCT_MODEL")
+            if c.cfg.AgentModel != "" { warnLegacyOnce() }
+        }
+    }
+    // API key
+    if strings.TrimSpace(c.cfg.AgentModelAPIKey) == "" {
+        c.cfg.AgentModelAPIKey = os.Getenv("OPENAI_API_KEY")
+        if strings.TrimSpace(c.cfg.AgentModelAPIKey) == "" {
+            c.cfg.AgentModelAPIKey = firstNonEmptyEnv("AGENT_MODEL_API_KEY", "MCT_MODEL_API_KEY")
+            if c.cfg.AgentModelAPIKey != "" { warnLegacyOnce() }
+        }
+    }
+    // Base URL
+    if strings.TrimSpace(c.cfg.AgentModelBaseURL) == "" {
+        c.cfg.AgentModelBaseURL = os.Getenv("OPENAI_BASE_URL")
+        if strings.TrimSpace(c.cfg.AgentModelBaseURL) == "" {
+            c.cfg.AgentModelBaseURL = firstNonEmptyEnv("AGENT_MODEL_BASE_URL", "MCT_MODEL_BASE_URL")
+            if c.cfg.AgentModelBaseURL != "" { warnLegacyOnce() }
+        }
     }
     return c
+}
+
+func firstNonEmptyEnv(keys ...string) string {
+    for _, k := range keys {
+        if v := strings.TrimSpace(os.Getenv(k)); v != "" {
+            return v
+        }
+    }
+    return ""
+}
+
+func warnLegacyOnce() {
+    if warnedLegacyEnv { return }
+    fmt.Fprintln(os.Stderr, "[deprecation] Using legacy AGENT_MODEL_* or MCT_MODEL_* envs. Please switch to OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL.")
+    warnedLegacyEnv = true
 }
 
 // Plan decides the next action using only the transcript context.
@@ -104,11 +144,17 @@ func (c *Client) finalizePrompt(transcript string) string {
 
 // Minimal OpenAI-compatible chat client
 func (c *Client) chat(ctx context.Context, model, prompt string) (string, error) {
-    if model == "" {
-        model = os.Getenv("AGENT_MODEL")
-        if model == "" {
-            model = "gpt-4o-mini"
-        }
+    if strings.TrimSpace(model) == "" {
+        model = strings.TrimSpace(c.cfg.AgentModel)
+    }
+    if strings.TrimSpace(model) == "" {
+        return "", errors.New("missing model config: set --openai-model or OPENAI_MODEL")
+    }
+    if strings.TrimSpace(c.cfg.AgentModelBaseURL) == "" {
+        return "", errors.New("missing base URL: set --openai-base-url or OPENAI_BASE_URL")
+    }
+    if strings.TrimSpace(c.cfg.AgentModelAPIKey) == "" {
+        return "", errors.New("missing API key: set --openai-api-key or OPENAI_API_KEY")
     }
     reqBody := map[string]any{
         "model": model,

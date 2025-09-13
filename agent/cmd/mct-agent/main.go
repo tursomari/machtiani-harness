@@ -22,6 +22,10 @@ type config struct {
     mctBin         string
     dryRun         bool
     verbose        bool
+    // Normalized OpenAI flags
+    openAIAPIKey   string
+    openAIBaseURL  string
+    openAIModel    string
 }
 
 func main() {
@@ -32,12 +36,16 @@ func run() int {
     var cfg config
     fs := flag.NewFlagSet("mct-agent", flag.ExitOnError)
     fs.IntVar(&cfg.maxSteps, "max-steps", 4, "maximum number of turns before finalizing")
-    fs.StringVar(&cfg.model, "model", "", "model for mct calls (optional; mirrors mct default)")
-    fs.StringVar(&cfg.agentModel, "agent-model", "", "model for planner/finalizer LLM (optional)")
+    fs.StringVar(&cfg.model, "model", "", "alias of --openai-model (deprecated)")
+    fs.StringVar(&cfg.agentModel, "agent-model", "", "legacy planner model (deprecated; use --openai-model)")
     fs.IntVar(&cfg.timeoutPerTurn, "timeout-per-turn", 120, "per-turn timeout in seconds")
     fs.StringVar(&cfg.mctBin, "mct-bin", "", "path to mct binary override")
     fs.BoolVar(&cfg.dryRun, "dry-run", false, "print intended mct calls; don’t execute")
     fs.BoolVar(&cfg.verbose, "verbose", false, "verbose agent logging")
+    // Normalized OpenAI flags
+    fs.StringVar(&cfg.openAIAPIKey, "openai-api-key", "", "API key for OpenAI-compatible endpoint")
+    fs.StringVar(&cfg.openAIBaseURL, "openai-base-url", "", "Base URL for OpenAI-compatible endpoint")
+    fs.StringVar(&cfg.openAIModel, "openai-model", "", "Model name for planner and mct")
 
     if len(os.Args) < 2 || os.Args[1] != "run" {
         fmt.Fprintln(os.Stderr, "Usage: mct-agent run \"<issue or question>\" [flags]")
@@ -80,11 +88,27 @@ func run() int {
         fmt.Println("Session:", sessionID)
     }
 
+    // Resolve effective OPENAI_* to use throughout
+    effAPIKey, effBaseURL, effModel := resolveOpenAI(cfg)
+    // Fail fast on missing planner/model configuration
+    missing := []string{}
+    if strings.TrimSpace(effAPIKey) == "" { missing = append(missing, "--openai-api-key or OPENAI_API_KEY") }
+    if strings.TrimSpace(effBaseURL) == "" { missing = append(missing, "--openai-base-url or OPENAI_BASE_URL") }
+    if strings.TrimSpace(effModel) == "" { missing = append(missing, "--openai-model/--model or OPENAI_MODEL") }
+    if len(missing) > 0 {
+        fmt.Fprintln(os.Stderr, "Missing model config: set:")
+        for _, m := range missing { fmt.Fprintln(os.Stderr, " - ", m) }
+        return 2
+    }
+
     // Resolve mct runner
     mctRunner := runner.Runner{
-        MCTBin:  cfg.mctBin,
-        Verbose: cfg.verbose,
-        DryRun:  cfg.dryRun,
+        MCTBin:        cfg.mctBin,
+        Verbose:       cfg.verbose,
+        DryRun:        cfg.dryRun,
+        OpenAIAPIKey:  effAPIKey,
+        OpenAIBaseURL: effBaseURL,
+        OpenAIModel:   effModel,
     }
     if err := mctRunner.Resolve(); err != nil {
         fmt.Fprintln(os.Stderr, "mct resolution error:", err)
@@ -92,11 +116,11 @@ func run() int {
         return 1
     }
 
-    // Planner/Finalizer client
+    // Planner/Finalizer client uses normalized OPENAI_* values
     pl := planner.NewClient(planner.ClientConfig{
-        AgentModel:        cfg.agentModel,
-        AgentModelAPIKey:  firstNonEmpty(os.Getenv("AGENT_MODEL_API_KEY"), os.Getenv("MCT_MODEL_API_KEY")),
-        AgentModelBaseURL: firstNonEmpty(os.Getenv("AGENT_MODEL_BASE_URL"), os.Getenv("MCT_MODEL_BASE_URL")),
+        AgentModel:        effModel,
+        AgentModelAPIKey:  effAPIKey,
+        AgentModelBaseURL: effBaseURL,
         Verbose:           cfg.verbose,
         DryRun:            cfg.dryRun,
     })
@@ -115,7 +139,8 @@ func run() int {
         step := 1
         // Build mct args
         args := []string{"prompt", "--mode=default"}
-        if cfg.model != "" { args = append(args, "--model", cfg.model) }
+        effPromptModel := firstNonEmpty(cfg.openAIModel, cfg.model, cfg.agentModel, effModel)
+        if effPromptModel != "" { args = append(args, "--model", effPromptModel) }
         args = append(args, goal)
 
         ctx2, cancel2 := context.WithTimeout(context.Background(), time.Duration(cfg.timeoutPerTurn)*time.Second)
@@ -210,9 +235,8 @@ func run() int {
 
         // Build mct args
         args := []string{"prompt", "--mode=default"}
-        if cfg.model != "" {
-            args = append(args, "--model", cfg.model)
-        }
+        effPromptModel := firstNonEmpty(cfg.openAIModel, cfg.model, cfg.agentModel, effModel)
+        if effPromptModel != "" { args = append(args, "--model", effPromptModel) }
         args = append(args, question)
 
         ctx2, cancel2 := context.WithTimeout(context.Background(), time.Duration(cfg.timeoutPerTurn)*time.Second)
@@ -258,4 +282,38 @@ func trimTo(s string, n int) string {
         return s
     }
     return s[:n]
+}
+
+// resolveOpenAI resolves OPENAI_* from flags first, then env, then legacy envs with a one-time warning.
+func resolveOpenAI(cfg config) (apiKey, baseURL, model string) {
+    // Flags first
+    apiKey = strings.TrimSpace(cfg.openAIAPIKey)
+    baseURL = strings.TrimSpace(cfg.openAIBaseURL)
+    model = strings.TrimSpace(cfg.openAIModel)
+    // Also accept deprecated flags as last-resort model alias
+    if model == "" {
+        model = firstNonEmpty(strings.TrimSpace(cfg.model), strings.TrimSpace(cfg.agentModel))
+    }
+    // Then OPENAI_* envs
+    if apiKey == "" { apiKey = strings.TrimSpace(os.Getenv("OPENAI_API_KEY")) }
+    if baseURL == "" { baseURL = strings.TrimSpace(os.Getenv("OPENAI_BASE_URL")) }
+    if model == "" { model = strings.TrimSpace(os.Getenv("OPENAI_MODEL")) }
+    // Legacy fallbacks with warning
+    usedLegacy := false
+    if apiKey == "" {
+        apiKey = firstNonEmpty(strings.TrimSpace(os.Getenv("AGENT_MODEL_API_KEY")), strings.TrimSpace(os.Getenv("MCT_MODEL_API_KEY")))
+        if apiKey != "" { usedLegacy = true }
+    }
+    if baseURL == "" {
+        baseURL = firstNonEmpty(strings.TrimSpace(os.Getenv("AGENT_MODEL_BASE_URL")), strings.TrimSpace(os.Getenv("MCT_MODEL_BASE_URL")))
+        if baseURL != "" { usedLegacy = true }
+    }
+    if model == "" {
+        model = firstNonEmpty(strings.TrimSpace(os.Getenv("AGENT_MODEL")), strings.TrimSpace(os.Getenv("MCT_MODEL")))
+        if model != "" { usedLegacy = true }
+    }
+    if usedLegacy {
+        fmt.Fprintln(os.Stderr, "[deprecation] Using legacy AGENT_MODEL_* or MCT_MODEL_* envs. Please migrate to OPENAI_*.")
+    }
+    return
 }

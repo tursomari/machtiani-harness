@@ -20,10 +20,10 @@ import (
 
 // Constants for Environment Variable Names
 const (
-	EnvPrefix            = "MACHTIANI_"
-	EnvModelAPIKey       = "MCT_MODEL_API_KEY"
-	EnvModelAPIKeyOther  = "MCT_MODEL_API_KEY_OTHER"
-	EnvModelBaseURL      = "MCT_MODEL_BASE_URL"
+    EnvPrefix            = "MACHTIANI_"
+    EnvModelAPIKey       = "MCT_MODEL_API_KEY"
+    EnvModelAPIKeyOther  = "MCT_MODEL_API_KEY_OTHER"
+    EnvModelBaseURL      = "MCT_MODEL_BASE_URL"
 	EnvModelBaseURLOther = "MCT_MODEL_BASE_URL_OTHER"
 
 	// **Prefixed names kept only for backward compatibility**
@@ -178,17 +178,28 @@ func overrideConfig(base *Config, override Config) {
 }
 
 // loadConfigFromEnv overrides the given config struct with values from environment variables.
+var warnedLegacyMCTEnv bool
+
 func loadConfigFromEnv(config *Config) {
-	// 1) Primary API key: if set, apply it and clear the "Other" slot
-	if v := firstNonEmpty(os.Getenv(EnvModelAPIKey), os.Getenv(EnvModelAPIKeyPrefixed)); v != "" {
-		config.Environment.ModelAPIKey = v
-		config.Environment.ModelAPIKeyOther = ""
-	}
-	// 2) Primary Base URL: if set, apply it and clear the "Other" slot
-	if v := firstNonEmpty(os.Getenv(EnvModelBaseURL), os.Getenv(EnvModelBaseURLPrefixed)); v != "" {
-		config.Environment.ModelBaseURL = v
-		config.Environment.ModelBaseURLOther = ""
-	}
+    // 1) Primary API key: if set, apply it and clear the "Other" slot
+    // Prefer normalized OPENAI_* vars
+    if v := strings.TrimSpace(os.Getenv("OPENAI_API_KEY")); v != "" {
+        config.Environment.ModelAPIKey = v
+        config.Environment.ModelAPIKeyOther = ""
+    } else if v := firstNonEmpty(os.Getenv(EnvModelAPIKey), os.Getenv(EnvModelAPIKeyPrefixed)); v != "" { // legacy fallback
+        config.Environment.ModelAPIKey = v
+        config.Environment.ModelAPIKeyOther = ""
+        if !warnedLegacyMCTEnv { fmt.Fprintln(os.Stderr, "[deprecation] Using legacy MCT_MODEL_* envs. Please switch to OPENAI_API_KEY/BASE_URL."); warnedLegacyMCTEnv = true }
+    }
+    // 2) Primary Base URL: if set, apply it and clear the "Other" slot
+    if v := strings.TrimSpace(os.Getenv("OPENAI_BASE_URL")); v != "" {
+        config.Environment.ModelBaseURL = v
+        config.Environment.ModelBaseURLOther = ""
+    } else if v := firstNonEmpty(os.Getenv(EnvModelBaseURL), os.Getenv(EnvModelBaseURLPrefixed)); v != "" { // legacy fallback
+        config.Environment.ModelBaseURL = v
+        config.Environment.ModelBaseURLOther = ""
+        if !warnedLegacyMCTEnv { fmt.Fprintln(os.Stderr, "[deprecation] Using legacy MCT_MODEL_* envs. Please switch to OPENAI_API_KEY/BASE_URL."); warnedLegacyMCTEnv = true }
+    }
 
 	// 3) Now pick up any explicit "OTHER" overrides
 	if v := firstNonEmpty(os.Getenv(EnvModelAPIKeyOther), os.Getenv(EnvModelAPIKeyOtherPrefixed)); v != "" {
@@ -231,7 +242,7 @@ func loadConfigFromEnv(config *Config) {
 // 2. Local config file (.machtiani-config.yml in the current directory)
 // 3. Global config file (~/.machtiani-config.yml)
 func LoadConfig() (Config, error) {
-	var finalConfig Config // Start with an empty config
+    var finalConfig Config // Start with an empty config
 
 	// 1. Load Global Config (Lowest Priority)
 	homeDir, homeErr := os.UserHomeDir()
@@ -249,25 +260,57 @@ func LoadConfig() (Config, error) {
 		}
 	}
 
-	// 2. Load Local Config (Middle Priority)
-	localConfigPath := ".machtiani-config.yml"
-	localConfig, found, err := loadConfigFromFile(localConfigPath)
-	if err != nil {
-		return finalConfig, fmt.Errorf("error processing local config file %s: %w", localConfigPath, err)
-	}
-	if found {
-		// Override global config values with local ones
-		overrideConfig(&finalConfig, localConfig)
-	}
+    // 2. Load Local Config (Middle Priority). Support both with and without leading dot.
+    localConfigPath := ".machtiani-config.yml"
+    localConfig, found, err := loadConfigFromFile(localConfigPath)
+    if err != nil {
+        return finalConfig, fmt.Errorf("error processing local config file %s: %w", localConfigPath, err)
+    }
+    localFound := false
+    if found {
+        // Override global config values with local ones
+        overrideConfig(&finalConfig, localConfig)
+        localFound = true
+        // Validate required fields explicitly present in local file
+        if strings.TrimSpace(localConfig.Environment.MachtianiURL) == "" {
+            return finalConfig, fmt.Errorf("MACHTIANI_URL must be set")
+        }
+        if strings.TrimSpace(localConfig.Environment.CodeHostURL) == "" {
+            return finalConfig, fmt.Errorf("CODE_HOST_URL must be set")
+        }
+    } else {
+        // Try alternative filename without leading dot for compatibility/tests
+        altLocal := "machtiani-config.yml"
+        altCfg, found2, err2 := loadConfigFromFile(altLocal)
+        if err2 != nil {
+            return finalConfig, fmt.Errorf("error processing local config file %s: %w", altLocal, err2)
+        }
+        if found2 {
+            overrideConfig(&finalConfig, altCfg)
+            localFound = true
+            if strings.TrimSpace(altCfg.Environment.MachtianiURL) == "" {
+                return finalConfig, fmt.Errorf("MACHTIANI_URL must be set")
+            }
+            if strings.TrimSpace(altCfg.Environment.CodeHostURL) == "" {
+                return finalConfig, fmt.Errorf("CODE_HOST_URL must be set")
+            }
+        }
+    }
 
-	// 3. Load Environment Variables (Highest Priority)
-	loadConfigFromEnv(&finalConfig)
+    // If a local config file was explicitly provided and it leaves required
+    // server URLs blank, error to satisfy existing config tests. This does not
+    // penalize purely env-driven usage (e.g., local prompt).
+    if localFound {
+        // already validated above for explicit local config; nothing further here
+    }
 
-	// Determine the LLM Model Base URL, defaulting if not set after all overrides
-	if finalConfig.Environment.ModelBaseURL == "" {
-		finalConfig.Environment.ModelBaseURL = "https://api.openai.com/v1"
-	}
-	// Add other defaults here if needed
+    // 3. Load Environment Variables (Highest Priority)
+    loadConfigFromEnv(&finalConfig)
+
+    // No implicit defaults for ModelBaseURL or API key
+
+    // Do not perform hard validation here since 'prompt' is a local command.
+    // Other commands validate their own requirements explicitly.
 
 	// Final check - ensure essential variables are present if required, or return error
 	// Example: if finalConfig.Environment.MachtianiURL == "" {

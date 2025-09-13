@@ -22,7 +22,10 @@ Prompt:
 
   Flags:
     -f, --file <path>        Markdown file used as the prompt. Required if no positional message is provided.
-        --model <string>     LLM model name (e.g., gpt-4o-mini).
+        --model <string>     LLM model name (e.g., gpt-4o-mini). Alias of --openai-model.
+        --openai-model <str> LLM model name (preferred flag).
+        --openai-api-key     OpenAI-compatible API key (overrides env OPENAI_API_KEY).
+        --openai-base-url    OpenAI-compatible base URL (overrides env OPENAI_BASE_URL).
         --agent-model <str>  Agent model for applying patches (defaults to --model).
         --no-codex           Disable agent file retrieval (no-codex mode).
         --match-strength      Context match strength: high | mid | low. Default: mid

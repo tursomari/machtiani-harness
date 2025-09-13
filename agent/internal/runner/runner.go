@@ -17,6 +17,10 @@ type Runner struct {
     Verbose bool
     DryRun  bool
     exePath string
+    // Effective OpenAI config to inject into the mct subprocess
+    OpenAIAPIKey  string
+    OpenAIBaseURL string
+    OpenAIModel   string
 }
 
 // Resolve locates the mct binary, honoring MCT_BIN env or PATH.
@@ -58,6 +62,16 @@ func (r *Runner) RunPrompt(ctx context.Context, sessionID string, args ...string
     env := os.Environ()
     if sessionID != "" {
         env = append(env, "MACHTIANI_SESSION_ID="+sessionID)
+    }
+    // Ensure OPENAI_* are set for mct regardless of parent shell
+    if strings.TrimSpace(r.OpenAIAPIKey) != "" {
+        env = append(env, "OPENAI_API_KEY="+r.OpenAIAPIKey)
+    }
+    if strings.TrimSpace(r.OpenAIBaseURL) != "" {
+        env = append(env, "OPENAI_BASE_URL="+r.OpenAIBaseURL)
+    }
+    if strings.TrimSpace(r.OpenAIModel) != "" {
+        env = append(env, "OPENAI_MODEL="+r.OpenAIModel)
     }
 
     // Compose command
@@ -120,4 +134,3 @@ func firstNonEmpty(vals ...string) string {
     }
     return ""
 }
-

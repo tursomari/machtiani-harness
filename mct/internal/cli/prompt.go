@@ -22,9 +22,8 @@ import (
 )
 
 const (
-	defaultModel         = "gpt-4o-mini"
-	defaultMatchStrength = "mid"
-	defaultMode          = "default"
+    defaultMatchStrength = "mid"
+    defaultMode          = "default"
 )
 
 const (
@@ -43,12 +42,15 @@ func createSeparator(message string) string {
 }
 
 func handlePrompt(args []string, config *utils.Config, apiKey *string, headCommitHash string) {
-	fs := pflag.NewFlagSet("prompt", pflag.ContinueOnError)
+    fs := pflag.NewFlagSet("prompt", pflag.ContinueOnError)
 	// Input source (exactly one required)
 	fileFlag := fs.StringP("file", "f", "", "Path to the markdown file (required if no positional message provided)")
 	// Supported flags
-	modelFlag := fs.String("model", defaultModel, "Model to use (e.g., gpt-4o, gpt-4o-mini)")
-	agentModelFlag := fs.String("agent-model", "", "Agent model for applying patches (defaults to --model)")
+    modelFlag := fs.String("model", "", "Model to use (e.g., gpt-4o, gpt-4o-mini)")
+    openAIModelFlag := fs.String("openai-model", "", "Alias of --model for normalized config")
+    openAIAPIKeyFlag := fs.String("openai-api-key", "", "OpenAI-compatible API key (overrides env)")
+    openAIBaseURLFlag := fs.String("openai-base-url", "", "OpenAI-compatible base URL (overrides env)")
+    agentModelFlag := fs.String("agent-model", "", "Agent model for applying patches (defaults to --model)")
 	matchStrengthFlag := fs.String("match-strength", defaultMatchStrength, "Match strength: high | mid | low")
 	modeFlag := fs.String("mode", defaultMode, "Mode: chat | pure-chat | answer-only | default")
 	// flags retained for compatibility in other subcommands; not used in local prompt path
@@ -93,13 +95,12 @@ func handlePrompt(args []string, config *utils.Config, apiKey *string, headCommi
 		os.Exit(2)
 	}
 
-	// Use agent-model for patches if specified, otherwise fall back to model (unused in local prompt path)
-	agentModelVal := *agentModelFlag
-	if agentModelVal == "" {
-		agentModelVal = *modelFlag
-	}
-	_ = agentModelVal
-	_ = *matchStrengthFlag
+    // Use agent-model for patches if specified, otherwise fall back to model (unused in local prompt path)
+    agentModelVal := *agentModelFlag
+    effModel := utilsFirstNonEmpty(*openAIModelFlag, *modelFlag)
+    if agentModelVal == "" { agentModelVal = effModel }
+    _ = agentModelVal
+    _ = *matchStrengthFlag
 
 	// Check if we're in answer-only mode early
 	isAnswerOnlyMode := *modeFlag == "answer-only"
@@ -137,9 +138,23 @@ func handlePrompt(args []string, config *utils.Config, apiKey *string, headCommi
 	var rawResponse string
 	var retrievedFilePaths []string
 
-	cfg := config // already loaded by caller
-	baseURL := cfg.Environment.ModelBaseURL
-	apiKeyVal := cfg.Environment.ModelAPIKey
+    cfg := config // already loaded by caller
+    // Resolve effective OpenAI config: flags override env/config
+    baseURL := utilsFirstNonEmpty(strings.TrimSpace(*openAIBaseURLFlag), strings.TrimSpace(cfg.Environment.ModelBaseURL))
+    apiKeyVal := utilsFirstNonEmpty(strings.TrimSpace(*openAIAPIKeyFlag), strings.TrimSpace(cfg.Environment.ModelAPIKey))
+    // Effective model from flags only (no defaults)
+    effModel = utilsFirstNonEmpty(strings.TrimSpace(*openAIModelFlag), strings.TrimSpace(*modelFlag))
+
+    // Validate required config
+    missing := []string{}
+    if apiKeyVal == "" { missing = append(missing, "--openai-api-key or OPENAI_API_KEY") }
+    if baseURL == "" { missing = append(missing, "--openai-base-url or OPENAI_BASE_URL") }
+    if effModel == "" { missing = append(missing, "--openai-model/--model or OPENAI_MODEL") }
+    if len(missing) > 0 {
+        fmt.Fprintln(os.Stderr, "Missing model config: set:")
+        for _, m := range missing { fmt.Fprintln(os.Stderr, " - ", m) }
+        os.Exit(2)
+    }
 
 	ctx := context.Background()
 
@@ -156,8 +171,8 @@ func handlePrompt(args []string, config *utils.Config, apiKey *string, headCommi
 		if ms != nil {
 			_ = ms.Feed(header)
 		}
-		messages := []llm.Message{{Role: "user", Content: prompt}}
-		full, err := llm.ChatStream(ctx, baseURL, apiKeyVal, *modelFlag, messages, func(tok string) {
+        messages := []llm.Message{{Role: "user", Content: prompt}}
+        full, err := llm.ChatStream(ctx, baseURL, apiKeyVal, effModel, messages, func(tok string) {
 			if ms != nil {
 				_ = ms.Feed(tok)
 			} else {
@@ -174,7 +189,7 @@ func handlePrompt(args []string, config *utils.Config, apiKey *string, headCommi
 		// In answer-only mode, we return early after printing and avoid saving below
 	} else {
 		// Run discovery
-		dr, err := discoveryrunner.Run(ctx, prompt, *modelFlag, apiKeyVal, baseURL, sessionID)
+        dr, err := discoveryrunner.Run(ctx, prompt, effModel, apiKeyVal, baseURL, sessionID)
 		if err != nil {
 			log.Fatalf("Error running local file discovery: %v", err)
 		}
@@ -197,8 +212,8 @@ func handlePrompt(args []string, config *utils.Config, apiKey *string, headCommi
 		if ms != nil {
 			_ = ms.Feed(header)
 		}
-		messages := []llm.Message{{Role: "user", Content: combined}}
-		full, err := llm.ChatStream(ctx, baseURL, apiKeyVal, *modelFlag, messages, func(tok string) {
+        messages := []llm.Message{{Role: "user", Content: combined}}
+        full, err := llm.ChatStream(ctx, baseURL, apiKeyVal, effModel, messages, func(tok string) {
 			if ms != nil {
 				_ = ms.Feed(tok)
 			} else {
@@ -236,10 +251,10 @@ func handlePrompt(args []string, config *utils.Config, apiKey *string, headCommi
 		}
 
 		// Generate a filename if necessary
-		if filename == "" || filename == "." {
-			filename = naming.Generate(ctx, prompt, cfg.Environment.ModelBaseURL, cfg.Environment.ModelAPIKey, *modelFlag)
-		}
-	}
+        if filename == "" || filename == "." {
+            filename = naming.Generate(ctx, prompt, baseURL, apiKeyVal, effModel)
+        }
+    }
 
 	utils.PrintIfNotAnswerOnly(isAnswerOnlyMode, "%s", createSeparator("Saving Chat Response"))
 
@@ -407,4 +422,13 @@ func filterPaths(paths []string, ignores []string) []string {
 		}
 	}
 	return out
+}
+
+func utilsFirstNonEmpty(vals ...string) string {
+    for _, v := range vals {
+        if strings.TrimSpace(v) != "" {
+            return v
+        }
+    }
+    return ""
 }

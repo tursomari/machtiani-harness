@@ -1,6 +1,8 @@
 package planner
 
 import (
+    "context"
+    "os"
     "testing"
 )
 
@@ -25,6 +27,73 @@ func TestParseDecisionMessage(t *testing.T) {
     d, q := parseDecision(s)
     if d != DecisionAsk || q == "" {
         t.Fatalf("unexpected parse for Message: %v %q", d, q)
+    }
+}
+
+func TestChatMissingModel(t *testing.T) {
+    restore := unsetEnv(t, []string{
+        "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL",
+        "AGENT_MODEL_API_KEY", "AGENT_MODEL_BASE_URL", "AGENT_MODEL",
+        "MCT_MODEL_API_KEY", "MCT_MODEL_BASE_URL", "MCT_MODEL",
+    })
+    defer restore()
+    c := NewClient(ClientConfig{AgentModelAPIKey: "k", AgentModelBaseURL: "http://example"})
+    _, err := c.chat(context.Background(), "", "hi")
+    if err == nil || !containsErr(err.Error(), "missing model config") {
+        t.Fatalf("expected missing model error, got %v", err)
+    }
+}
+
+func TestChatMissingBaseURL(t *testing.T) {
+    restore := unsetEnv(t, []string{
+        "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL",
+        "AGENT_MODEL_API_KEY", "AGENT_MODEL_BASE_URL", "AGENT_MODEL",
+        "MCT_MODEL_API_KEY", "MCT_MODEL_BASE_URL", "MCT_MODEL",
+    })
+    defer restore()
+    c := NewClient(ClientConfig{AgentModel: "m", AgentModelAPIKey: "k"})
+    _, err := c.chat(context.Background(), "", "hi")
+    if err == nil || !containsErr(err.Error(), "missing base URL") {
+        t.Fatalf("expected missing base URL error, got %v", err)
+    }
+}
+
+func TestChatMissingAPIKey(t *testing.T) {
+    restore := unsetEnv(t, []string{
+        "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL",
+        "AGENT_MODEL_API_KEY", "AGENT_MODEL_BASE_URL", "AGENT_MODEL",
+        "MCT_MODEL_API_KEY", "MCT_MODEL_BASE_URL", "MCT_MODEL",
+    })
+    defer restore()
+    c := NewClient(ClientConfig{AgentModel: "m", AgentModelBaseURL: "http://example"})
+    _, err := c.chat(context.Background(), "", "hi")
+    if err == nil || !containsErr(err.Error(), "missing API key") {
+        t.Fatalf("expected missing API key error, got %v", err)
+    }
+}
+
+func containsErr(s, sub string) bool { return index(s, sub) >= 0 }
+
+func unsetEnv(t *testing.T, keys []string) func() {
+    t.Helper()
+    orig := map[string]*string{}
+    for _, k := range keys {
+        if v, ok := os.LookupEnv(k); ok {
+            vv := v
+            orig[k] = &vv
+        } else {
+            orig[k] = nil
+        }
+        _ = os.Unsetenv(k)
+    }
+    return func() {
+        for k, pv := range orig {
+            if pv == nil {
+                _ = os.Unsetenv(k)
+            } else {
+                _ = os.Setenv(k, *pv)
+            }
+        }
     }
 }
 
