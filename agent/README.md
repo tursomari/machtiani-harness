@@ -53,7 +53,7 @@ Flags:
 - `--openai-api-key string`: API key for OpenAI-compatible endpoint
 - `--openai-base-url string`: Base URL for OpenAI-compatible endpoint
 - `--openai-model string`: Model name for planner and `mct` calls (alias: `--model`)
-- `--timeout-per-turn int`: per-turn timeout in seconds (default: 120)
+- `--timeout-per-turn int`: per-turn timeout in seconds (default: 120; set 0 for unlimited)
 - `--mct-bin string`: explicit path to the `mct` binary
 - `--dry-run`: print intended `mct` calls; no subprocess or LLM
 - `--verbose`: verbose agent logging (prints the exact `mct` command)
@@ -74,6 +74,7 @@ Flags:
   - Legacy envs `AGENT_MODEL_*` / `MCT_MODEL_*` accepted as fallback with a deprecation warning
 - Pass-through: agent injects the effective `OPENAI_*` into the `mct` subprocess environment.
 - `MACHTIANI_SESSION_ID` is generated per run and exported to the `mct` subprocess for correlation.
+- `--timeout-per-turn` applies to both the `mct` subprocess calls and the planner/finalizer LLM calls. Set to `0` to disable the deadline for all per-turn operations.
 
 ## Troubleshooting
 - “mct not found”
@@ -82,6 +83,8 @@ Flags:
   - Ensure `OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_MODEL` are set (via flags or envs).
 - “Saved chat missing/unreadable”
   - The agent reads `.machtiani/chat/machtiani-response.md`. Ensure `mct prompt` ran successfully and wrote the file.
+- “mct prompt error: signal: killed” or "timed out after N seconds"
+  - The `mct` subprocess likely exceeded the per-turn timeout and was terminated. Increase `--timeout-per-turn` (e.g., `--timeout-per-turn=600`) or set `--timeout-per-turn=0` to disable the deadline.
 
 ## Notes
 - The agent shells out to `mct` and does not import `mct/internal/*`.

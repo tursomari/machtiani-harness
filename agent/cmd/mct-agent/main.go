@@ -2,6 +2,7 @@ package main
 
 import (
     "context"
+    "errors"
     "flag"
     "fmt"
     "os"
@@ -38,7 +39,7 @@ func run() int {
     fs.IntVar(&cfg.maxSteps, "max-steps", 4, "maximum number of turns before finalizing")
     fs.StringVar(&cfg.model, "model", "", "alias of --openai-model (deprecated)")
     fs.StringVar(&cfg.agentModel, "agent-model", "", "legacy planner model (deprecated; use --openai-model)")
-    fs.IntVar(&cfg.timeoutPerTurn, "timeout-per-turn", 120, "per-turn timeout in seconds")
+    fs.IntVar(&cfg.timeoutPerTurn, "timeout-per-turn", 120, "per-turn timeout in seconds (set 0 for no timeout)")
     fs.StringVar(&cfg.mctBin, "mct-bin", "", "path to mct binary override")
     fs.BoolVar(&cfg.dryRun, "dry-run", false, "print intended mct calls; don’t execute")
     fs.BoolVar(&cfg.verbose, "verbose", false, "verbose agent logging")
@@ -143,10 +144,16 @@ func run() int {
         if effPromptModel != "" { args = append(args, "--model", effPromptModel) }
         args = append(args, goal)
 
-        ctx2, cancel2 := context.WithTimeout(context.Background(), time.Duration(cfg.timeoutPerTurn)*time.Second)
+        ctx2, cancel2 := makeTurnContext(cfg.timeoutPerTurn)
         savedPath, merr := mctRunner.RunPrompt(ctx2, sessionID, args...)
+        // ensure we release timers even on success
         cancel2()
         if merr != nil {
+            // Improve diagnostics for timeouts (common cause of "signal: killed")
+            if errors.Is(ctx2.Err(), context.DeadlineExceeded) || strings.Contains(strings.ToLower(merr.Error()), "signal: killed") {
+                fmt.Fprintf(os.Stderr, "mct prompt error: timed out after %ds. Try increasing --timeout-per-turn or set 0 for unlimited.\n", cfg.timeoutPerTurn)
+                return 1
+            }
             fmt.Fprintln(os.Stderr, "mct prompt error:", merr)
             return 1
         }
@@ -171,11 +178,15 @@ func run() int {
 
     // If only one step is allowed, finalize immediately using transcript only
     if cfg.maxSteps == 1 {
-        ctx, cancelF := context.WithTimeout(context.Background(), time.Duration(cfg.timeoutPerTurn)*time.Second)
+        ctx, cancelF := makeTurnContext(cfg.timeoutPerTurn)
         trFull := tr.Content()
         answer, ferr := pl.Finalize(ctx, goal, trFull)
         cancelF()
         if ferr != nil {
+            if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+                fmt.Fprintf(os.Stderr, "Finalizer error: timed out after %ds. Increase --timeout-per-turn or set 0 for unlimited.\n", cfg.timeoutPerTurn)
+                return 1
+            }
             fmt.Fprintln(os.Stderr, "Finalizer error:", ferr)
             return 1
         }
@@ -191,11 +202,15 @@ func run() int {
     // Subsequent turns loop
     for step := 2; step <= cfg.maxSteps; step++ {
         // Decide next action using transcript only
-        ctx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.timeoutPerTurn)*time.Second)
+        ctx, cancel := makeTurnContext(cfg.timeoutPerTurn)
         trFull := tr.Content()
         decision, question, perr := pl.Plan(ctx, goal, trFull, step, cfg.maxSteps)
         cancel()
         if perr != nil {
+            if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+                fmt.Fprintf(os.Stderr, "Planner error: timed out after %ds. Increase --timeout-per-turn or set 0 for unlimited.\n", cfg.timeoutPerTurn)
+                return 1
+            }
             fmt.Fprintln(os.Stderr, "Planner error:", perr)
             return 1
         }
@@ -206,11 +221,15 @@ func run() int {
 
         if decision == planner.DecisionFinalize || step == cfg.maxSteps {
             // Compose final answer using transcript only
-            ctx, cancelF := context.WithTimeout(context.Background(), time.Duration(cfg.timeoutPerTurn)*time.Second)
+            ctx, cancelF := makeTurnContext(cfg.timeoutPerTurn)
             trFull := tr.Content()
             answer, ferr := pl.Finalize(ctx, goal, trFull)
             cancelF()
             if ferr != nil {
+                if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+                    fmt.Fprintf(os.Stderr, "Finalizer error: timed out after %ds. Increase --timeout-per-turn or set 0 for unlimited.\n", cfg.timeoutPerTurn)
+                    return 1
+                }
                 fmt.Fprintln(os.Stderr, "Finalizer error:", ferr)
                 return 1
             }
@@ -239,10 +258,14 @@ func run() int {
         if effPromptModel != "" { args = append(args, "--model", effPromptModel) }
         args = append(args, question)
 
-        ctx2, cancel2 := context.WithTimeout(context.Background(), time.Duration(cfg.timeoutPerTurn)*time.Second)
+        ctx2, cancel2 := makeTurnContext(cfg.timeoutPerTurn)
         savedPath, merr := mctRunner.RunPrompt(ctx2, sessionID, args...)
         cancel2()
         if merr != nil {
+            if errors.Is(ctx2.Err(), context.DeadlineExceeded) || strings.Contains(strings.ToLower(merr.Error()), "signal: killed") {
+                fmt.Fprintf(os.Stderr, "mct prompt error: timed out after %ds. Try increasing --timeout-per-turn or set 0 for unlimited.\n", cfg.timeoutPerTurn)
+                return 1
+            }
             fmt.Fprintln(os.Stderr, "mct prompt error:", merr)
             return 1
         }
@@ -282,6 +305,15 @@ func trimTo(s string, n int) string {
         return s
     }
     return s[:n]
+}
+
+// makeTurnContext returns a context for a single turn.
+// If timeoutSec <= 0, returns a cancellable context without a deadline.
+func makeTurnContext(timeoutSec int) (context.Context, context.CancelFunc) {
+    if timeoutSec <= 0 {
+        return context.WithCancel(context.Background())
+    }
+    return context.WithTimeout(context.Background(), time.Duration(timeoutSec)*time.Second)
 }
 
 // resolveOpenAI resolves OPENAI_* from flags first, then env, then legacy envs with a one-time warning.
