@@ -6,9 +6,11 @@ import (
     "encoding/json"
     "errors"
     "fmt"
+    "io"
     "net/http"
     "os"
     "strings"
+    "time"
 )
 
 type Decision string
@@ -24,6 +26,8 @@ type ClientConfig struct {
     AgentModelBaseURL string
     Verbose           bool
     DryRun            bool
+    // Optional per-request timeout in seconds; 0 disables client timeout (uses ctx only)
+    RequestTimeoutSec int
 }
 
 type Client struct {
@@ -34,7 +38,11 @@ type Client struct {
 var warnedLegacyEnv bool
 
 func NewClient(cfg ClientConfig) *Client {
-    c := &Client{cfg: cfg, httpClient: &http.Client{}}
+    hc := &http.Client{}
+    if cfg.RequestTimeoutSec > 0 {
+        hc.Timeout = time.Duration(cfg.RequestTimeoutSec) * time.Second
+    }
+    c := &Client{cfg: cfg, httpClient: hc}
     // Resolve from OPENAI_* first, then legacy envs with a one-time warning
     // Model
     if strings.TrimSpace(c.cfg.AgentModel) == "" {
@@ -171,49 +179,195 @@ func (c *Client) chat(ctx context.Context, model, prompt string) (string, error)
             "role":    "user",
             "content": prompt,
         }},
-        "temperature": 0.2,
+        "temperature": 1,
         "stream":      false,
     }
     data, _ := json.Marshal(reqBody)
-    url := strings.TrimRight(c.cfg.AgentModelBaseURL, "/") + "/chat/completions"
-    httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(data))
-    if err != nil {
-        return "", err
+    // Build endpoint path safely: allow base to already include /chat/completions
+    base := strings.TrimRight(c.cfg.AgentModelBaseURL, "/")
+    endpoint := base
+    if !strings.HasSuffix(strings.ToLower(base), "/chat/completions") {
+        endpoint = base + "/chat/completions"
     }
-    httpReq.Header.Set("Content-Type", "application/json")
-    if c.cfg.AgentModelAPIKey != "" {
-        httpReq.Header.Set("Authorization", "Bearer "+c.cfg.AgentModelAPIKey)
+
+    // Up to 2 retries on transient errors (total 3 attempts)
+    var lastErr error
+    for attempt := 1; attempt <= 3; attempt++ {
+        if c.cfg.Verbose {
+            fmt.Fprintf(os.Stderr, "[planner] POST %s (model=%s, attempt=%d)\n", endpoint, model, attempt)
+        }
+        httpReq, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(data))
+        if err != nil {
+            return "", err
+        }
+        httpReq.Header.Set("Content-Type", "application/json")
+        if c.cfg.AgentModelAPIKey != "" {
+            httpReq.Header.Set("Authorization", "Bearer "+c.cfg.AgentModelAPIKey)
+        }
+        // Optional OpenRouter-friendly headers if provided by user
+        if v := strings.TrimSpace(os.Getenv("OPENROUTER_REFERER")); v != "" {
+            httpReq.Header.Set("HTTP-Referer", v)
+        }
+        if v := strings.TrimSpace(os.Getenv("OPENROUTER_TITLE")); v != "" {
+            httpReq.Header.Set("X-Title", v)
+        }
+        httpReq.Header.Set("User-Agent", "mct-agent/1 (planner)")
+
+        resp, err := c.httpClient.Do(httpReq)
+        if err != nil {
+            if isRetryableNetErr(err) && ctx.Err() == nil && attempt < 3 {
+                time.Sleep(time.Duration(250*attempt) * time.Millisecond)
+                lastErr = err
+                continue
+            }
+            return "", err
+        }
+        defer resp.Body.Close()
+        if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+            // Read a limited body to extract structured error info when available.
+            var bodyPreview string
+            if resp.Body != nil {
+                lr := io.LimitReader(resp.Body, 16*1024)
+                if b, _ := io.ReadAll(lr); len(b) > 0 {
+                    bodyPreview = strings.TrimSpace(string(b))
+                }
+            }
+            // Try parse OpenAI-compatible error shape
+            errStr := formatLLMHTTPError(resp.StatusCode, bodyPreview)
+            if (resp.StatusCode == 429 || resp.StatusCode >= 500) && attempt < 3 {
+                time.Sleep(time.Duration(300*attempt) * time.Millisecond)
+                lastErr = errors.New(errStr)
+                continue
+            }
+            return "", errors.New(errStr)
+        }
+        var out struct {
+            Choices []struct {
+                Message struct {
+                    Content string `json:"content"`
+                } `json:"message"`
+                Delta struct {
+                    Content string `json:"content"`
+                } `json:"delta"`
+            } `json:"choices"`
+        }
+        if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+            if attempt < 3 {
+                lastErr = err
+                time.Sleep(time.Duration(200*attempt) * time.Millisecond)
+                continue
+            }
+            return "", err
+        }
+        if len(out.Choices) == 0 {
+            return "", errors.New("llm: no choices")
+        }
+        content := strings.TrimSpace(out.Choices[0].Message.Content)
+        if content == "" { content = strings.TrimSpace(out.Choices[0].Delta.Content) }
+        if content == "" {
+            return "", errors.New("llm: empty content")
+        }
+        return content, nil
     }
-    resp, err := c.httpClient.Do(httpReq)
-    if err != nil {
-        return "", err
+    if lastErr != nil {
+        return "", lastErr
     }
-    defer resp.Body.Close()
-    if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-        return "", fmt.Errorf("llm error: status %d", resp.StatusCode)
+    return "", errors.New("planner chat: unknown error")
+}
+
+// isRetryableNetErr returns true for transient network/context errors worth retrying.
+func isRetryableNetErr(err error) bool {
+    s := strings.ToLower(err.Error())
+    if strings.Contains(s, "timeout") || strings.Contains(s, "deadline") || strings.Contains(s, "eof") || strings.Contains(s, "reset") || strings.Contains(s, "temporary") {
+        return true
     }
-    var out struct {
-        Choices []struct {
-            Message struct {
-                Content string `json:"content"`
-            } `json:"message"`
-            Delta struct {
-                Content string `json:"content"`
-            } `json:"delta"`
-        } `json:"choices"`
+    return false
+}
+
+// formatLLMHTTPError produces a provider-agnostic error string from an HTTP status
+// and an optional response body. It attempts to parse OpenAI-compatible shapes and
+// falls back to the raw body when parsing fails.
+func formatLLMHTTPError(status int, body string) string {
+    type openAIError struct {
+        Error struct {
+            Message string      `json:"message"`
+            Type    string      `json:"type"`
+            Code    interface{} `json:"code"`
+            Param   interface{} `json:"param"`
+        } `json:"error"`
+        Message      string      `json:"message"`
+        ErrorMessage string      `json:"error_message"`
+        Detail       interface{} `json:"detail"`
     }
-    if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-        return "", err
+
+    var msg, typ, code, detail string
+    // Best-effort JSON parse
+    if strings.HasPrefix(strings.TrimSpace(body), "{") {
+        var e openAIError
+        if json.Unmarshal([]byte(body), &e) == nil {
+            if m := strings.TrimSpace(e.Error.Message); m != "" {
+                msg = m
+            }
+            if t := strings.TrimSpace(e.Error.Type); t != "" {
+                typ = t
+            }
+            if e.Error.Code != nil {
+                code = strings.TrimSpace(fmt.Sprint(e.Error.Code))
+            }
+            if msg == "" {
+                if m := strings.TrimSpace(e.Message); m != "" {
+                    msg = m
+                }
+            }
+            if msg == "" {
+                if m := strings.TrimSpace(e.ErrorMessage); m != "" {
+                    msg = m
+                }
+            }
+            if e.Detail != nil {
+                detail = strings.TrimSpace(fmt.Sprint(e.Detail))
+            }
+        }
     }
-    if len(out.Choices) == 0 {
-        return "", errors.New("llm: no choices")
+
+    parts := []string{fmt.Sprintf("llm error: status %d", status)}
+    if typ != "" {
+        parts = append(parts, fmt.Sprintf("type=%s", typ))
     }
-    content := strings.TrimSpace(out.Choices[0].Message.Content)
-    if content == "" { content = strings.TrimSpace(out.Choices[0].Delta.Content) }
-    if content == "" {
-        return "", errors.New("llm: empty content")
+    if code != "" {
+        parts = append(parts, fmt.Sprintf("code=%s", code))
     }
-    return content, nil
+    if msg != "" {
+        parts = append(parts, fmt.Sprintf("message=\"%s\"", truncateMiddle(msg, 800)))
+    } else if strings.TrimSpace(body) != "" {
+        parts = append(parts, fmt.Sprintf("body=\"%s\"", truncateMiddle(strings.TrimSpace(body), 800)))
+    }
+    if detail != "" && msg == "" {
+        parts = append(parts, fmt.Sprintf("detail=\"%s\"", truncateMiddle(detail, 800)))
+    }
+    return strings.Join(parts, ": ")
+}
+
+func truncateMiddle(s string, max int) string {
+    if max <= 0 || len(s) <= max {
+        return s
+    }
+    if max <= 10 {
+        return s[:max]
+    }
+    head := max/2 - 3
+    tail := max - head - 6
+    if head < 0 {
+        head = 0
+    }
+    if tail < 0 {
+        tail = 0
+    }
+    if head+tail+6 > len(s) {
+        // fallback sane truncate
+        return s[:max]
+    }
+    return s[:head] + "[...]" + s[len(s)-tail:]
 }
 
 // parseDecision expects output with lines like:

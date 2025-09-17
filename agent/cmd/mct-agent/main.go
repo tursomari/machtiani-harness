@@ -124,6 +124,7 @@ func run() int {
         AgentModelBaseURL: effBaseURL,
         Verbose:           cfg.verbose,
         DryRun:            cfg.dryRun,
+        RequestTimeoutSec: cfg.timeoutPerTurn,
     })
 
     // Running state (kept only for transcript writing)
@@ -210,6 +211,31 @@ func run() int {
             if errors.Is(ctx.Err(), context.DeadlineExceeded) {
                 fmt.Fprintf(os.Stderr, "Planner error: timed out after %ds. Increase --timeout-per-turn or set 0 for unlimited.\n", cfg.timeoutPerTurn)
                 return 1
+            }
+            // Graceful fallback: if the planner hit a transient network error, finalize instead of aborting.
+            perrStr := strings.ToLower(perr.Error())
+            if strings.Contains(perrStr, "deadline exceeded") || strings.Contains(perrStr, "timeout") || strings.Contains(perrStr, "temporary") {
+                fmt.Fprintln(os.Stderr, "Planner warning:", perr)
+                fmt.Fprintln(os.Stderr, "Falling back to finalizing with current transcript.")
+                ctxF, cancelF := makeTurnContext(cfg.timeoutPerTurn)
+                trFull := tr.Content()
+                answer, ferr := pl.Finalize(ctxF, goal, trFull)
+                cancelF()
+                if ferr != nil {
+                    if errors.Is(ctxF.Err(), context.DeadlineExceeded) {
+                        fmt.Fprintf(os.Stderr, "Finalizer error: timed out after %ds. Increase --timeout-per-turn or set 0 for unlimited.\n", cfg.timeoutPerTurn)
+                        return 1
+                    }
+                    fmt.Fprintln(os.Stderr, "Finalizer error:", ferr)
+                    return 1
+                }
+                if err := tr.WriteFinal(answer, step, true); err != nil {
+                    fmt.Fprintln(os.Stderr, "Transcript write error:", err)
+                    return 1
+                }
+                fmt.Println("Conclusion:")
+                fmt.Println(answer)
+                return 0
             }
             fmt.Fprintln(os.Stderr, "Planner error:", perr)
             return 1
