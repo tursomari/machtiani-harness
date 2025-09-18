@@ -6,6 +6,7 @@ import (
     "flag"
     "fmt"
     "os"
+    "path/filepath"
     "strings"
     "time"
 
@@ -23,6 +24,7 @@ type config struct {
     mctBin         string
     dryRun         bool
     verbose        bool
+    finalFile      string
     // Normalized OpenAI flags
     openAIAPIKey   string
     openAIBaseURL  string
@@ -43,6 +45,7 @@ func run() int {
     fs.StringVar(&cfg.mctBin, "mct-bin", "", "path to mct binary override")
     fs.BoolVar(&cfg.dryRun, "dry-run", false, "print intended mct calls; don’t execute")
     fs.BoolVar(&cfg.verbose, "verbose", false, "verbose agent logging")
+    fs.StringVar(&cfg.finalFile, "final-file", "", "path to write final answer-only artifact (default: .machtiani/chat/agent-final-<sessionID>.txt)")
     // Normalized OpenAI flags
     fs.StringVar(&cfg.openAIAPIKey, "openai-api-key", "", "API key for OpenAI-compatible endpoint")
     fs.StringVar(&cfg.openAIBaseURL, "openai-base-url", "", "Base URL for OpenAI-compatible endpoint")
@@ -195,6 +198,10 @@ func run() int {
             fmt.Fprintln(os.Stderr, "Transcript write error:", err)
             return 1
         }
+        if err := writeFinalAnswer(sessionID, answer, cfg.finalFile, cfg.verbose, cfg.dryRun); err != nil {
+            fmt.Fprintln(os.Stderr, "Final file write error:", err)
+            return 1
+        }
         fmt.Println("Conclusion:")
         fmt.Println(answer)
         return 0
@@ -233,6 +240,10 @@ func run() int {
                     fmt.Fprintln(os.Stderr, "Transcript write error:", err)
                     return 1
                 }
+                if err := writeFinalAnswer(sessionID, answer, cfg.finalFile, cfg.verbose, cfg.dryRun); err != nil {
+                    fmt.Fprintln(os.Stderr, "Final file write error:", err)
+                    return 1
+                }
                 fmt.Println("Conclusion:")
                 fmt.Println(answer)
                 return 0
@@ -261,6 +272,10 @@ func run() int {
             }
             if err := tr.WriteFinal(answer, step, step == cfg.maxSteps && decision != planner.DecisionFinalize); err != nil {
                 fmt.Fprintln(os.Stderr, "Transcript write error:", err)
+                return 1
+            }
+            if err := writeFinalAnswer(sessionID, answer, cfg.finalFile, cfg.verbose, cfg.dryRun); err != nil {
+                fmt.Fprintln(os.Stderr, "Final file write error:", err)
                 return 1
             }
             fmt.Println("Conclusion:")
@@ -374,4 +389,28 @@ func resolveOpenAI(cfg config) (apiKey, baseURL, model string) {
         fmt.Fprintln(os.Stderr, "[deprecation] Using legacy AGENT_MODEL_* or MCT_MODEL_* envs. Please migrate to OPENAI_*.")
     }
     return
+}
+
+// writeFinalAnswer persists the final answer to a plain text file.
+// It writes nothing in dry-run mode.
+// If finalFileFlag is empty, it writes to .machtiani/chat/agent-final-<sessionID>.txt
+func writeFinalAnswer(sessionID, answer, finalFileFlag string, verbose bool, dryRun bool) error {
+    if dryRun {
+        return nil
+    }
+    path := strings.TrimSpace(finalFileFlag)
+    if path == "" {
+        path = filepath.Join(".machtiani", "chat", fmt.Sprintf("agent-final-%s.txt", sessionID))
+    }
+    if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+        return err
+    }
+    // Always overwrite
+    if err := os.WriteFile(path, []byte(answer+"\n"), 0o644); err != nil {
+        return err
+    }
+    if verbose {
+        fmt.Println("Final answer saved:", path)
+    }
+    return nil
 }
