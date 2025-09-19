@@ -1,13 +1,13 @@
 package session
 
 import (
-	"encoding/json"
-	"fmt"
-	"os"
-	"path/filepath"
-	"time"
+    "encoding/json"
+    "fmt"
+    "os"
+    "path/filepath"
+    "time"
 
-	"github.com/tursomari/machtiani/mct/internal/contextbuilder"
+    "github.com/tursomari/machtiani/mct/internal/contextbuilder"
 )
 
 const (
@@ -84,18 +84,45 @@ func AddMessage(role, content string) error {
 }
 
 // getSessionPath returns the path to the session file
+// Behavior:
+// - If MACHTIANI_SESSION_ID is set, scope history to that stable session ID
+//   at ~/.machtiani/sessions/session-<id>.json
+// - Otherwise, fall back to a per-day file (legacy behavior) to avoid breaking
+//   existing flows where the caller doesn't set the session.
 func getSessionPath() string {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		homeDir = "."
-	}
+    homeDir, err := os.UserHomeDir()
+    if err != nil {
+        homeDir = "."
+    }
 
-	// Use a session directory in ~/.machtiani/sessions
-	sessionDir := filepath.Join(homeDir, ".machtiani", "sessions")
+    // Base dir for all sessions
+    sessionDir := filepath.Join(homeDir, ".machtiani", "sessions")
 
-	// Use current timestamp to create unique sessions per day
-	timestamp := time.Now().Format("2006-01-02")
-	sessionFile := fmt.Sprintf("session-%s.json", timestamp)
+    // Prefer explicit session ID provided by an agent or the CLI bootstrap
+    if sid := sanitizeID(os.Getenv("MACHTIANI_SESSION_ID")); sid != "" {
+        return filepath.Join(sessionDir, fmt.Sprintf("session-%s.json", sid))
+    }
 
-	return filepath.Join(sessionDir, sessionFile)
+    // Legacy fallback: per-day file if no session id exists
+    timestamp := time.Now().Format("2006-01-02")
+    return filepath.Join(sessionDir, fmt.Sprintf("session-%s.json", timestamp))
+}
+
+// sanitizeID restricts session id to a filesystem-friendly subset
+func sanitizeID(in string) string {
+    if in == "" {
+        return ""
+    }
+    out := make([]rune, 0, len(in))
+    for _, r := range in {
+        if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+            out = append(out, r)
+        } else {
+            out = append(out, '_')
+        }
+    }
+    if len(out) == 0 {
+        return ""
+    }
+    return string(out)
 }

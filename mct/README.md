@@ -82,7 +82,9 @@ mct prompt --mode=answer-only -f prompt.md
   - `OPENAI_API_KEY`: API key for your LLM provider (required)
   - `OPENAI_BASE_URL`: Base URL for OpenAI‑compatible API (required)
   - `OPENAI_MODEL`: Model name (required unless supplied via `--openai-model`/`--model`)
-  - `MACHTIANI_SESSION_ID`: Optional; forwarded to `file-discovery`
+  - `MACHTIANI_SESSION_ID`: Optional session identifier respected by `mct`.
+    - If set (e.g., by the agent), `mct` loads and persists conversation history under `~/.machtiani/sessions/session-<id>.json`, enabling continuity across multiple `mct` calls within the same agent run.
+    - If not set, `mct` generates a fresh unique session ID for the run, so no prior conversation is inlined and the session will not be reused unintentionally across projects.
   - `FILE_DISCOVERY_BIN`: Optional; path to a custom `file-discovery` binary
   - Legacy `MCT_MODEL_*` accepted as fallback with a deprecation warning
 

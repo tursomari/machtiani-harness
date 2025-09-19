@@ -1,16 +1,16 @@
 package cli
 
 import (
-	"os"
-	"strconv"
-	"strings"
-	"time"
+    "os"
+    "strconv"
+    "strings"
+    "time"
 
-	"github.com/google/uuid"
-	"github.com/spf13/pflag"
-	"github.com/tursomari/machtiani/mct/internal/api"
-	"github.com/tursomari/machtiani/mct/internal/git"
-	"github.com/tursomari/machtiani/mct/internal/utils"
+    "github.com/google/uuid"
+    "github.com/spf13/pflag"
+    "github.com/tursomari/machtiani/mct/internal/api"
+    "github.com/tursomari/machtiani/mct/internal/git"
+    "github.com/tursomari/machtiani/mct/internal/utils"
 )
 
 // Build-time variable for system message frequency
@@ -18,16 +18,20 @@ var SystemMessageFrequencyHours = "24" // Default 24 hours, will be set via ldfl
 
 func Execute() {
 
-	// Handle help variants immediately (before any network/system-message work)
-	if len(os.Args) >= 2 {
-		cmd := os.Args[1]
-		if cmd == "help" || cmd == "--help" || cmd == "-h" {
-			printHelp()
-			return
-		}
-	}
-	sessionID := uuid.New().String()
-	os.Setenv("MACHTIANI_SESSION_ID", sessionID) // Keep this for local CLI context
+    // Handle help variants immediately (before any network/system-message work)
+    if len(os.Args) >= 2 {
+        cmd := os.Args[1]
+        if cmd == "help" || cmd == "--help" || cmd == "-h" {
+            printHelp()
+            return
+        }
+    }
+    // Respect an existing agent-provided session; otherwise generate a fresh one per run
+    sessionID := strings.TrimSpace(os.Getenv("MACHTIANI_SESSION_ID"))
+    if sessionID == "" {
+        sessionID = uuid.New().String()
+        os.Setenv("MACHTIANI_SESSION_ID", sessionID)
+    }
 	// First, check if we're in answer-only mode early
 	isAnswerOnlyMode := utils.IsAnswerOnlyMode()
 
