@@ -14,8 +14,13 @@ const (
 )
 
 type Options struct {
-	PerFileCap int
-	TotalCap   int
+    PerFileCap int
+    TotalCap   int
+}
+
+type Message struct {
+    Role    string // "user" or "assistant"
+    Content string
 }
 
 func (o Options) withDefaults() Options {
@@ -28,16 +33,36 @@ func (o Options) withDefaults() Options {
 	return o
 }
 
-// Build concatenates the user prompt and the contents of the discovered files
-// into a single prompt suitable for an LLM call.
-func Build(userPrompt string, relPaths []string, opts Options) (string, []string) {
-	opts = opts.withDefaults()
-	var b strings.Builder
-	b.WriteString(userPrompt)
-	b.WriteString("\n\nHere are possible relevant files:\n")
+// Build concatenates the conversation history (if provided), the current user prompt,
+// and the contents of the discovered files into a single prompt suitable for an LLM call.
+func Build(userPrompt string, relPaths []string, conversationHistory []Message, opts Options) (string, []string) {
+    opts = opts.withDefaults()
+    var b strings.Builder
+    // Prepend conversation history
+    if len(conversationHistory) > 0 {
+        b.WriteString("# Conversation History\n\n")
+        for i, m := range conversationHistory {
+            role := strings.ToLower(strings.TrimSpace(m.Role))
+            if role == "assistant" {
+                b.WriteString(fmt.Sprintf("## Assistant %d\n\n", i+1))
+            } else {
+                b.WriteString(fmt.Sprintf("## User %d\n\n", i+1))
+            }
+            b.WriteString(m.Content)
+            b.WriteString("\n\n")
+        }
+    }
 
-	included := make([]string, 0, len(relPaths))
-	total := 0
+    // Current request
+    b.WriteString("# Current Request\n\n")
+    b.WriteString(userPrompt)
+    b.WriteString("\n\n")
+
+    // Relevant files header
+    b.WriteString("# Relevant Files\n")
+
+    included := make([]string, 0, len(relPaths))
+    total := 0
 
 	for _, p := range relPaths {
 		if total >= opts.TotalCap {
@@ -50,9 +75,9 @@ func Build(userPrompt string, relPaths []string, opts Options) (string, []string
 
 		// Attempt to read with per-file cap
 		f, err := os.Open(p)
-		header := fmt.Sprintf("\n\n### %s\n\n", p)
-		b.WriteString(header)
-		included = append(included, p)
+        header := fmt.Sprintf("\n\n## %s\n\n", p)
+        b.WriteString(header)
+        included = append(included, p)
 		if err != nil {
 			b.WriteString("```\n[ERROR: could not read file]\n``" + "`\n")
 			continue

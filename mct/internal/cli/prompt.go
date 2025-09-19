@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/tursomari/machtiani/mct/internal/contextbuilder"
 	"github.com/tursomari/machtiani/mct/internal/discoveryrunner"
+	"github.com/tursomari/machtiani/mct/internal/session"
 	"github.com/tursomari/machtiani/mct/internal/llm"
 	"github.com/tursomari/machtiani/mct/internal/naming"
 	"github.com/tursomari/machtiani/mct/internal/utils"
@@ -159,19 +160,22 @@ func handlePrompt(args []string, config *utils.Config, apiKey *string, headCommi
 	ctx := context.Background()
 
 	if isAnswerOnlyMode {
-		// No discovery, just stream model on the raw prompt; no saving
+		// No discovery; include conversation history for continuity.
+		hist, _ := session.LoadHistory()
+		combined, _ := contextbuilder.Build(prompt, nil, hist, contextbuilder.Options{})
+
 		ms, _ := llm.NewMarkdownStreamer()
-		header := prompt
-		if strings.HasPrefix(strings.TrimSpace(prompt), "# User") {
-			header = fmt.Sprintf("%s\n# Assistant\n\n", prompt)
+		header := combined
+		if strings.HasPrefix(strings.TrimSpace(combined), "# User") {
+			header = fmt.Sprintf("%s\n# Assistant\n\n", combined)
 		} else {
-			header = fmt.Sprintf("# User\n\n%s\n\n# Assistant\n\n", prompt)
+			header = fmt.Sprintf("# User\n\n%s\n\n# Assistant\n\n", combined)
 		}
 		// Print header rendered
 		if ms != nil {
 			_ = ms.Feed(header)
 		}
-        messages := []llm.Message{{Role: "user", Content: prompt}}
+        messages := []llm.Message{{Role: "user", Content: combined}}
         full, err := llm.ChatStream(ctx, baseURL, apiKeyVal, effModel, messages, func(tok string) {
 			if ms != nil {
 				_ = ms.Feed(tok)
@@ -186,7 +190,10 @@ func handlePrompt(args []string, config *utils.Config, apiKey *string, headCommi
 			log.Fatalf("Error calling LLM: %v", err)
 		}
 		rawResponse = header + full
-		// In answer-only mode, we return early after printing and avoid saving below
+
+		// Persist history even in answer-only mode
+		_ = session.AddMessage("user", prompt)
+		_ = session.AddMessage("assistant", full)
 	} else {
 		// Run discovery
         dr, err := discoveryrunner.Run(ctx, prompt, effModel, apiKeyVal, baseURL, sessionID)
@@ -198,8 +205,9 @@ func handlePrompt(args []string, config *utils.Config, apiKey *string, headCommi
 		filtered := filterPaths(dr.Paths, ignoreFiles)
 		retrievedFilePaths = filtered
 
-		// Build combined prompt
-		combined, _ := contextbuilder.Build(prompt, filtered, contextbuilder.Options{})
+		// Load conversation history and build combined prompt
+		hist, _ := session.LoadHistory()
+		combined, _ := contextbuilder.Build(prompt, filtered, hist, contextbuilder.Options{})
 
 		// Stream chat
 		ms, _ := llm.NewMarkdownStreamer()
@@ -227,6 +235,10 @@ func handlePrompt(args []string, config *utils.Config, apiKey *string, headCommi
 			log.Fatalf("Error calling LLM: %v", err)
 		}
 		rawResponse = header + full
+
+		// Persist updated history
+		_ = session.AddMessage("user", prompt)
+		_ = session.AddMessage("assistant", full)
 
 		// Append Retrieved File Paths section to rawResponse
 		if len(retrievedFilePaths) > 0 {
@@ -263,10 +275,10 @@ func handlePrompt(args []string, config *utils.Config, apiKey *string, headCommi
 }
 
 func handleAPIResponse(prompt, openaiResponse string, retrievedFilePaths []string, filename, fileFlag string, isAnswerOnlyMode bool) {
-	// In answer-only mode, just print the raw response without any file operations
-	if isAnswerOnlyMode {
-		return
-	}
+    // In answer-only mode, just print the raw response without any file operations
+    if isAnswerOnlyMode {
+        return
+    }
 
 	// For other modes, continue with file creation and structured output
 	var finalContent string
