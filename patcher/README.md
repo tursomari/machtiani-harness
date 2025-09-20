@@ -4,8 +4,7 @@ A standalone Go binary that generates git-compatible patches from precise edit i
 
 Usage:
 
-- Build: `go build ./cmd/patcher` (produces `./patcher` in this dir)
-- Add to PATH: `export PATH="$PWD:$PATH"`
+- Build: `go build -o ~/.local/bin/patcher ./cmd/patcher`
 - Run: `patcher --repo <path> --session <id> --input <file|-> [--out-dir <path>] [--verbose]`
 
 Behavior:
