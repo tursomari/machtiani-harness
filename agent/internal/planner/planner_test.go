@@ -3,6 +3,7 @@ package planner
 import (
     "context"
     "os"
+    "strings"
     "testing"
 )
 
@@ -27,6 +28,14 @@ func TestParseDecisionMessage(t *testing.T) {
     d, q := parseDecision(s)
     if d != DecisionAsk || q == "" {
         t.Fatalf("unexpected parse for Message: %v %q", d, q)
+    }
+}
+
+func TestParseDecisionPatch(t *testing.T) {
+    body := "Decision: patch\n{\n  \"edits\": []\n}"
+    d, payload := parseDecision(body)
+    if d != DecisionPatch || strings.TrimSpace(payload) == "" {
+        t.Fatalf("expected DecisionPatch with non-empty payload, got %v %q", d, payload)
     }
 }
 
@@ -104,6 +113,14 @@ func TestFinalizePromptContainsTranscript(t *testing.T) {
     p := c.finalizePrompt(goal, transcript)
     if !containsAll(p, []string{"Goal text here", "Transcript", "Q1", "a.go", "ans"}) {
         t.Fatalf("finalize prompt missing expected content: %s", p)
+    }
+}
+
+func TestPlanPromptIncludesPatch(t *testing.T) {
+    c := NewClient(ClientConfig{DryRun: true})
+    p := c.planPrompt("g", "t", 2, 4)
+    if !contains(p, "Decision: ask|patch|finalize") {
+        t.Fatalf("plan prompt missing patch option: %s", p)
     }
 }
 

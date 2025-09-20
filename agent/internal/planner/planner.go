@@ -17,6 +17,7 @@ type Decision string
 
 const (
     DecisionAsk      Decision = "ask"
+    DecisionPatch    Decision = "patch"
     DecisionFinalize Decision = "finalize"
 )
 
@@ -101,6 +102,10 @@ func (c *Client) Plan(ctx context.Context, goal string, transcript string, step,
     if err != nil {
         return "", "", err
     }
+    if c.cfg.Verbose {
+        // Log the raw model response to help debug patch JSON creation
+        fmt.Fprintln(os.Stderr, "[planner] model response:", truncateMiddle(strings.TrimSpace(resp), 1800))
+    }
     dec, q := parseDecision(resp)
     if dec == "" {
         return "", "", errors.New("planner: unable to parse decision from model output")
@@ -124,9 +129,16 @@ func (c *Client) Finalize(ctx context.Context, goal string, transcript string) (
 func (c *Client) planPrompt(goal string, transcript string, step, maxSteps int) string {
     var b strings.Builder
     b.WriteString("You are an agentic planner for mct. Read the transcript to understand the goal and prior turns. mct reads repository files and answers; it does not execute code.\n")
-    b.WriteString("Decide either to produce one single, high-signal repository-focused prompt (exactly one) or to finalize if enough information is gathered.\n")
+    b.WriteString("Decide either to: (a) produce one single, high-signal repository-focused prompt, (b) request a patch, or (c) finalize if enough information is gathered.\n")
     b.WriteString("Your prompt MUST be addressed to mct, not the user. Avoid clarifying user intent; focus on code, files, functions, modules, architecture, logs, or tests.\n")
-    b.WriteString("Output strictly:\nDecision: ask|finalize\nIf ask, a second line using one of:\n- Question: <single best prompt>\n- Instruction: <single best prompt>\n- Message: <single best prompt>\n\n")
+    b.WriteString("Output strictly:\nDecision: ask|patch|finalize\nIf ask, a second line using exactly one of:\n- Question: <single best prompt>\n- Instruction: <single best prompt>\n- Message: <single best prompt>\nIf patch, immediately follow with a single standalone JSON object ONLY (no commentary, no markdown fences).\n\n")
+    b.WriteString("Patch JSON schema (when Decision: patch):\n")
+    b.WriteString("{\n  \"metadata\": { \"description\": string, \"author\": string, \"email\": string },\n  \"edits\": [\n    { \"path\": string (repo-relative), \"mode\": one of replace|rewrite|create|delete,\n      \"before\": string (replace only), \"after\": string (replace only), \"occurrence\": number (1-based, optional),\n      \"new_content\": string (rewrite/create only) }\n  ]\n}\n")
+    b.WriteString("Rules: use forward slashes; paths must be under repo root;\n")
+    b.WriteString("replace requires before+after and file exists; rewrite requires new_content and file exists;\n")
+    b.WriteString("create requires new_content and file must not exist; delete requires file exists.\n\n")
+    b.WriteString("Minimal example (do not include this text in output):\n")
+    b.WriteString("Decision: patch\n{\n  \"metadata\": { \"description\": \"Fix README typo\" },\n  \"edits\": [\n    { \"path\": \"README.md\", \"mode\": \"replace\", \"before\": \"teh\", \"after\": \"the\", \"occurrence\": 1 }\n  ]\n}\n\n")
     if strings.TrimSpace(goal) != "" {
         b.WriteString("Goal:\n")
         // keep goal intact; it's short compared to transcript
@@ -385,6 +397,7 @@ func parseDecision(s string) (Decision, string) {
             v := strings.TrimSpace(strings.TrimPrefix(t, "Decision:"))
             v = strings.ToLower(v)
             if strings.HasPrefix(v, "ask") { dec = DecisionAsk }
+            if strings.HasPrefix(v, "patch") { dec = DecisionPatch }
             if strings.HasPrefix(v, "finalize") { dec = DecisionFinalize }
         }
         lower := strings.ToLower(t)
@@ -397,6 +410,11 @@ func parseDecision(s string) (Decision, string) {
         if strings.HasPrefix(lower, "message:") {
             q = strings.TrimSpace(strings.TrimPrefix(t, "Message:"))
         }
+    }
+    // For patch decisions, return the full body as payload so the caller can extract JSON robustly.
+    if dec == DecisionPatch {
+        body := strings.TrimSpace(s)
+        return dec, body
     }
     return dec, q
 }

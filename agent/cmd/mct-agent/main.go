@@ -1,11 +1,14 @@
 package main
 
 import (
+    "bytes"
     "context"
+    "encoding/json"
     "errors"
     "flag"
     "fmt"
     "os"
+    "os/exec"
     "path/filepath"
     "strings"
     "time"
@@ -22,9 +25,12 @@ type config struct {
     agentModel     string
     timeoutPerTurn int
     mctBin         string
+    patcherBin     string
     dryRun         bool
     verbose        bool
     finalFile      string
+    // Patch application behavior
+    noApply        bool
     // Normalized OpenAI flags
     openAIAPIKey   string
     openAIBaseURL  string
@@ -43,9 +49,11 @@ func run() int {
     fs.StringVar(&cfg.agentModel, "agent-model", "", "legacy planner model (deprecated; use --openai-model)")
     fs.IntVar(&cfg.timeoutPerTurn, "timeout-per-turn", 120, "per-turn timeout in seconds (set 0 for no timeout)")
     fs.StringVar(&cfg.mctBin, "mct-bin", "", "path to mct binary override")
+    fs.StringVar(&cfg.patcherBin, "patcher-bin", "", "path to patcher binary override (default: PATCHER_BIN or PATH)")
     fs.BoolVar(&cfg.dryRun, "dry-run", false, "print intended mct calls; don’t execute")
     fs.BoolVar(&cfg.verbose, "verbose", false, "verbose agent logging")
     fs.StringVar(&cfg.finalFile, "final-file", "", "path to write final answer-only artifact (default: .machtiani/chat/agent-final-<sessionID>.txt)")
+    fs.BoolVar(&cfg.noApply, "no-apply", false, "do not auto-apply generated patches (default: apply)\n")
     // Normalized OpenAI flags
     fs.StringVar(&cfg.openAIAPIKey, "openai-api-key", "", "API key for OpenAI-compatible endpoint")
     fs.StringVar(&cfg.openAIBaseURL, "openai-base-url", "", "Base URL for OpenAI-compatible endpoint")
@@ -118,6 +126,15 @@ func run() int {
         fmt.Fprintln(os.Stderr, "mct resolution error:", err)
         fmt.Fprintln(os.Stderr, "Hint: install mct into PATH or set MCT_BIN to its location.")
         return 1
+    }
+
+    // Resolve patcher runner
+    pRunner := runner.PatcherRunner{Verbose: cfg.verbose, DryRun: cfg.dryRun, SessionID: sessionID}
+    if err := pRunner.Resolve(cfg.patcherBin); err != nil {
+        if cfg.verbose {
+            fmt.Fprintln(os.Stderr, "[patcher] resolve warning:", err)
+        }
+        // Non-fatal until we actually need to patch; we will re-resolve errors then.
     }
 
     // Planner/Finalizer client uses normalized OPENAI_* values
@@ -283,52 +300,230 @@ func run() int {
             return 0
         }
 
-        // Ask one question via mct
-        if question == "" {
-            fmt.Fprintln(os.Stderr, "Planner returned empty question for 'ask' decision")
-            return 1
-        }
-
-        if cfg.verbose {
-            fmt.Println("Question:", question)
-        }
-
-        // Build mct args
-        args := []string{"prompt", "--mode=default"}
-        effPromptModel := firstNonEmpty(cfg.openAIModel, cfg.model, cfg.agentModel, effModel)
-        if effPromptModel != "" { args = append(args, "--model", effPromptModel) }
-        args = append(args, question)
-
-        ctx2, cancel2 := makeTurnContext(cfg.timeoutPerTurn)
-        savedPath, merr := mctRunner.RunPrompt(ctx2, sessionID, args...)
-        cancel2()
-        if merr != nil {
-            if errors.Is(ctx2.Err(), context.DeadlineExceeded) || strings.Contains(strings.ToLower(merr.Error()), "signal: killed") {
-                fmt.Fprintf(os.Stderr, "mct prompt error: timed out after %ds. Try increasing --timeout-per-turn or set 0 for unlimited.\n", cfg.timeoutPerTurn)
+        switch decision {
+        case planner.DecisionAsk:
+            if question == "" {
+                fmt.Fprintln(os.Stderr, "Planner returned empty question for 'ask' decision")
                 return 1
             }
-            fmt.Fprintln(os.Stderr, "mct prompt error:", merr)
-            return 1
-        }
+            if cfg.verbose { fmt.Println("Question:", question) }
+            // Build mct args
+            args := []string{"prompt", "--mode=default"}
+            effPromptModel := firstNonEmpty(cfg.openAIModel, cfg.model, cfg.agentModel, effModel)
+            if effPromptModel != "" { args = append(args, "--model", effPromptModel) }
+            args = append(args, question)
+            ctx2, cancel2 := makeTurnContext(cfg.timeoutPerTurn)
+            savedPath, merr := mctRunner.RunPrompt(ctx2, sessionID, args...)
+            cancel2()
+            if merr != nil {
+                if errors.Is(ctx2.Err(), context.DeadlineExceeded) || strings.Contains(strings.ToLower(merr.Error()), "signal: killed") {
+                    fmt.Fprintf(os.Stderr, "mct prompt error: timed out after %ds. Try increasing --timeout-per-turn or set 0 for unlimited.\n", cfg.timeoutPerTurn)
+                    return 1
+                }
+                fmt.Fprintln(os.Stderr, "mct prompt error:", merr)
+                return 1
+            }
+            // Read the authoritative response file
+            content, rerr := os.ReadFile(".machtiani/chat/machtiani-response.md")
+            if rerr != nil {
+                fmt.Fprintln(os.Stderr, "Failed to read saved chat (.machtiani/chat/machtiani-response.md):", rerr)
+                return 1
+            }
+            lastAnswer = string(content)
+            retrieved = parser.ExtractRetrievedFilePaths(lastAnswer)
+            // Log to transcript with full Assistant answer
+            fullAns := parser.ExtractAssistantAnswer(lastAnswer)
+            if strings.TrimSpace(fullAns) == "" { fullAns = lastAnswer }
+            if err := tr.WriteTurn(step, question, savedPath, retrieved, fullAns, "ask"); err != nil {
+                fmt.Fprintln(os.Stderr, "Transcript write error:", err)
+                return 1
+            }
+            // Continue to next turn unless we've hit cap, in which case break to finalize path.
+            if step == cfg.maxSteps { goto FINALIZE }
 
-        // Read the authoritative response file
-        content, rerr := os.ReadFile(".machtiani/chat/machtiani-response.md")
-        if rerr != nil {
-            fmt.Fprintln(os.Stderr, "Failed to read saved chat (.machtiani/chat/machtiani-response.md):", rerr)
-            return 1
-        }
-        lastAnswer = string(content)
-        retrieved = parser.ExtractRetrievedFilePaths(lastAnswer)
+        case planner.DecisionPatch:
+            // Extract JSON and invoke patcher
+            payload := question // for patch decisions, parseDecision returns raw body here
+            if cfg.verbose {
+                fmt.Fprintln(os.Stderr, "[patcher] planner payload (raw):", trimTo(strings.TrimSpace(payload), 1200))
+            }
+            jsonBytes, jerr := parser.ExtractPatchJSONPayload(payload)
+            if jerr != nil {
+                // Record a patch-error turn then exit 1
+                _ = tr.WriteTurn(step, "Patcher: invalid input JSON", "", nil, "Error extracting JSON: "+jerr.Error(), "patch-error")
+                return 1
+            }
+            if cfg.verbose {
+                fmt.Fprintln(os.Stderr, "[patcher] extracted JSON:", trimTo(string(jsonBytes), 1200))
+            }
+            // Ensure patcher is resolved (may have failed earlier lazily)
+            if err := pRunner.Resolve(cfg.patcherBin); err != nil {
+                _ = tr.WriteTurn(step, "Patcher: resolve failed", "", nil, "Error: "+err.Error(), "patch-error")
+                return 1
+            }
+            ctxP, cancelP := makeTurnContext(cfg.timeoutPerTurn)
+            stdout, stderr, perr := pRunner.RunJSON(ctxP, jsonBytes, cfg.verbose)
+            cancelP()
+            if perr != nil {
+                _ = tr.WriteTurn(step, "Patcher: execution error", "", nil, trimTo("stderr: "+string(stderr), 800), "patch-error")
+                return 1
+            }
+            if cfg.verbose {
+                if len(stdout) > 0 { fmt.Fprintln(os.Stderr, "[patcher] stdout:", trimTo(string(stdout), 1200)) }
+                if len(stderr) > 0 { fmt.Fprintln(os.Stderr, "[patcher] stderr:", trimTo(string(stderr), 1200)) }
+            }
+            // Parse stdout JSON
+            var pout struct {
+                PatchPath     string   `json:"patch_path"`
+                Applies       bool     `json:"applies"`
+                FilesModified []string `json:"files_modified"`
+                Insertions    int      `json:"insertions"`
+                Deletions     int      `json:"deletions"`
+                Description   string   `json:"description"`
+            }
+            if err := json.Unmarshal(stdout, &pout); err != nil {
+                _ = tr.WriteTurn(step, "Patcher: invalid stdout JSON", "", nil, "stdout: "+trimTo(string(stdout), 600)+"\nstderr: "+trimTo(string(stderr), 200), "patch-error")
+                return 1
+            }
+            if !pout.Applies {
+                _ = tr.WriteTurn(step, "Patcher: apply-check failed", "", nil, "stdout: "+trimTo(string(stdout), 600)+"\nstderr: "+trimTo(string(stderr), 200), "patch-error")
+                return 1
+            }
+            // Build concise answer block
+            qline := "Patcher: create patch"
+            if strings.TrimSpace(pout.Description) != "" { qline = "Patcher: "+pout.Description }
+            ans := fmt.Sprintf("Patch created: %s\nfiles_modified: %v\ninsertions: %d\ndeletions: %d\n\ninput:\n%s\n\noutput:\n%s\n",
+                pout.PatchPath,
+                strings.Join(pout.FilesModified, ", "),
+                pout.Insertions,
+                pout.Deletions,
+                trimTo(string(jsonBytes), 1000),
+                trimTo(string(stdout), 1000),
+            )
+            // Optionally apply the patch to the working tree
+            if !cfg.noApply && !cfg.dryRun {
+                if aerr := gitApply(pout.PatchPath, cfg.verbose); aerr != nil {
+                    if cfg.verbose { fmt.Fprintln(os.Stderr, "[git] apply error:", aerr) }
+                    _ = tr.WriteTurn(step, "Patcher: apply failed", "", nil, trimTo(aerr.Error()+"\n"+trimTo(string(stderr), 400), 800), "patch-error")
+                    return 1
+                }
+                ans = ans + "applied: yes\n"
+            } else if cfg.dryRun {
+                if cfg.verbose { fmt.Fprintln(os.Stderr, "[git] apply (dry-run) skipping") }
+                ans = ans + "applied: (dry-run)\n"
+            } else {
+                ans = ans + "applied: skipped (use without --no-apply)\n"
+            }
+            if err := tr.WriteTurn(step, qline, "", nil, ans, "patch"); err != nil {
+                fmt.Fprintln(os.Stderr, "Transcript write error:", err)
+                return 1
+            }
+            if step == cfg.maxSteps { goto FINALIZE }
 
-        // Log to transcript with full Assistant answer
-        fullAns := parser.ExtractAssistantAnswer(lastAnswer)
-        if strings.TrimSpace(fullAns) == "" { fullAns = lastAnswer }
-        if err := tr.WriteTurn(step, question, savedPath, retrieved, fullAns, "ask"); err != nil {
-            fmt.Fprintln(os.Stderr, "Transcript write error:", err)
-            return 1
+        case planner.DecisionFinalize:
+            // Break to finalize path immediately.
+            goto FINALIZE
+        default:
+            // Unknown decision: treat as finalize to be safe
+            goto FINALIZE
         }
     }
 
+FINALIZE:
+    // One last planning opportunity before finalizing: if planner returns patch, run exactly one patch turn.
+    {
+        step := countTurns(tr.Content()) + 1
+        ctx, cancel := makeTurnContext(cfg.timeoutPerTurn)
+        trFull := tr.Content()
+        lastDec, lastBody, err := pl.Plan(ctx, goal, trFull, step, cfg.maxSteps)
+        cancel()
+        if err == nil && lastDec == planner.DecisionPatch {
+            if cfg.verbose {
+                fmt.Fprintln(os.Stderr, "[patcher] pre-finalize planner payload (raw):", trimTo(strings.TrimSpace(lastBody), 1200))
+            }
+            jsonBytes, jerr := parser.ExtractPatchJSONPayload(lastBody)
+            if jerr != nil {
+                _ = tr.WriteTurn(step, "Patcher: pre-finalize (invalid JSON)", "", nil, jerr.Error(), "patch-error")
+            } else {
+                if cfg.verbose {
+                    fmt.Fprintln(os.Stderr, "[patcher] pre-finalize extracted JSON:", trimTo(string(jsonBytes), 1200))
+                }
+                _ = pRunner.Resolve(cfg.patcherBin)
+                ctxP, cancelP := makeTurnContext(cfg.timeoutPerTurn)
+                stdout, stderr, perr := pRunner.RunJSON(ctxP, jsonBytes, cfg.verbose)
+                cancelP()
+                if perr != nil {
+                    _ = tr.WriteTurn(step, "Patcher: pre-finalize (error)", "", nil, trimTo(string(stderr), 800), "patch-error")
+                } else {
+                    if cfg.verbose {
+                        if len(stdout) > 0 { fmt.Fprintln(os.Stderr, "[patcher] pre-finalize stdout:", trimTo(string(stdout), 1200)) }
+                        if len(stderr) > 0 { fmt.Fprintln(os.Stderr, "[patcher] pre-finalize stderr:", trimTo(string(stderr), 1200)) }
+                    }
+                    var pout struct {
+                        PatchPath     string   `json:"patch_path"`
+                        Applies       bool     `json:"applies"`
+                        FilesModified []string `json:"files_modified"`
+                        Insertions    int      `json:"insertions"`
+                        Deletions     int      `json:"deletions"`
+                        Description   string   `json:"description"`
+                    }
+                    if json.Unmarshal(stdout, &pout) == nil && pout.Applies {
+                        qline := "Patcher: pre-finalize"
+                        if strings.TrimSpace(pout.Description) != "" { qline = "Patcher: pre-finalize - "+pout.Description }
+                        ans := fmt.Sprintf("Patch created: %s\nfiles_modified: %v\ninsertions: %d\ndeletions: %d\n\ninput:\n%s\n\noutput:\n%s\n",
+                            pout.PatchPath,
+                            strings.Join(pout.FilesModified, ", "),
+                            pout.Insertions,
+                            pout.Deletions,
+                            trimTo(string(jsonBytes), 1000),
+                            trimTo(string(stdout), 1000),
+                        )
+                        // Optionally apply at pre-finalize too
+                        if !cfg.noApply && !cfg.dryRun {
+                            if aerr := gitApply(pout.PatchPath, cfg.verbose); aerr != nil {
+                                if cfg.verbose { fmt.Fprintln(os.Stderr, "[git] apply error (pre-finalize):", aerr) }
+                                _ = tr.WriteTurn(step, "Patcher: pre-finalize apply failed", "", nil, trimTo(aerr.Error()+"\n"+trimTo(string(stderr), 400), 800), "patch-error")
+                            } else {
+                                ans = ans + "applied: yes\n"
+                            }
+                        } else if cfg.dryRun {
+                            if cfg.verbose { fmt.Fprintln(os.Stderr, "[git] apply (pre-finalize dry-run) skipping") }
+                            ans = ans + "applied: (dry-run)\n"
+                        } else {
+                            ans = ans + "applied: skipped (use without --no-apply)\n"
+                        }
+                        _ = tr.WriteTurn(step, qline, "", nil, ans, "patch")
+                    } else {
+                        _ = tr.WriteTurn(step, "Patcher: pre-finalize (apply-check failed)", "", nil, trimTo(string(stdout), 800)+"\n"+trimTo(string(stderr), 200), "patch-error")
+                    }
+                }
+            }
+        }
+    }
+
+    // Compose final answer using transcript only
+    {
+        // Determine how many turns occurred by counting headings
+        turns := countTurns(tr.Content())
+        ctx, cancelF := makeTurnContext(cfg.timeoutPerTurn)
+        trFull := tr.Content()
+        answer, ferr := pl.Finalize(ctx, goal, trFull)
+        cancelF()
+        if ferr != nil {
+            fmt.Fprintln(os.Stderr, "Finalizer error:", ferr)
+            return 1
+        }
+        if err := tr.WriteFinal(answer, turns, turns >= cfg.maxSteps); err != nil {
+            fmt.Fprintln(os.Stderr, "Transcript write error:", err)
+            return 1
+        }
+        if err := writeFinalAnswer(sessionID, answer, cfg.finalFile, cfg.verbose, cfg.dryRun); err != nil {
+            fmt.Fprintln(os.Stderr, "Final file write error:", err)
+            return 1
+        }
+        fmt.Println("Conclusion:")
+        fmt.Println(answer)
+    }
     return 0
 }
 
@@ -355,6 +550,51 @@ func makeTurnContext(timeoutSec int) (context.Context, context.CancelFunc) {
         return context.WithCancel(context.Background())
     }
     return context.WithTimeout(context.Background(), time.Duration(timeoutSec)*time.Second)
+}
+
+// gitApply applies a patch file to the current repository working tree using git apply.
+func gitApply(patchPath string, verbose bool) error {
+    if strings.TrimSpace(patchPath) == "" {
+        return errors.New("empty patch path")
+    }
+    args := []string{"apply", "--unsafe-paths", patchPath}
+    cmd := exec.Command("git", args...)
+    var out bytes.Buffer
+    var errb bytes.Buffer
+    cmd.Stdout = &out
+    cmd.Stderr = &errb
+    if verbose {
+        fmt.Fprintln(os.Stderr, "[git]", "git "+strings.Join(args, " "))
+    }
+    if err := cmd.Run(); err != nil {
+        if verbose {
+            if out.Len() > 0 { fmt.Fprintln(os.Stderr, "[git] stdout:", trimTo(out.String(), 800)) }
+            if errb.Len() > 0 { fmt.Fprintln(os.Stderr, "[git] stderr:", trimTo(errb.String(), 800)) }
+        }
+        return fmt.Errorf("git apply failed: %v\n%s", err, trimTo(errb.String(), 600))
+    }
+    if verbose {
+        fmt.Fprintln(os.Stderr, "[git] apply: success")
+        if out.Len() > 0 { fmt.Fprintln(os.Stderr, "[git] stdout:", trimTo(out.String(), 800)) }
+        // Show a concise git status diff summary to confirm changes landed
+        st := exec.Command("git", "status", "--porcelain")
+        var sb bytes.Buffer
+        st.Stdout = &sb
+        _ = st.Run()
+        s := strings.TrimSpace(sb.String())
+        if s != "" { fmt.Fprintln(os.Stderr, "[git] status:", trimTo(strings.ReplaceAll(s, "\n", "; "), 800)) }
+    }
+    return nil
+}
+
+// countTurns counts how many Turn headings exist in the transcript content.
+func countTurns(md string) int {
+    lines := strings.Split(md, "\n")
+    n := 0
+    for _, l := range lines {
+        if strings.HasPrefix(strings.TrimSpace(l), "## Turn ") { n++ }
+    }
+    return n
 }
 
 // resolveOpenAI resolves OPENAI_* from flags first, then env, then legacy envs with a one-time warning.
