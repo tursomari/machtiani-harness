@@ -196,7 +196,7 @@ func handlePrompt(args []string, config *utils.Config, apiKey *string, headCommi
 		_ = session.AddMessage("assistant", full)
 	} else {
 		// Run discovery
-        dr, err := discoveryrunner.Run(ctx, prompt, effModel, apiKeyVal, baseURL, sessionID)
+        dr, err := discoveryrunner.Run(ctx, prompt, effModel, apiKeyVal, baseURL, sessionID, *verboseFlag)
 		if err != nil {
 			log.Fatalf("Error running local file discovery: %v", err)
 		}

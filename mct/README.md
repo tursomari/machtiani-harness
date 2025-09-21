@@ -77,6 +77,15 @@ mct prompt --mode=answer-only -f prompt.md
 4. Streams tokens from your LLM endpoint and renders Markdown in the terminal.
 5. Saves output to `.machtiani/chat/<generated-name>.md` and updates `.machtiani/chat/machtiani-response.md`.
 
+### Git‑Only Discovery Sandbox
+- By default, `mct` creates a temporary workspace containing only Git‑tracked files (committed or staged) and runs `file-discovery` there.
+- This keeps untracked/build artifacts out of scope for privacy and reproducibility, without changing any other tools or your working tree.
+- Behavior can be disabled by setting `MCT_USE_GIT_FILTER=false`.
+- If not in a Git repo, discovery runs in the current directory as before.
+ - Tracked files inside initialized Git submodules are included automatically. Uninitialized submodules are skipped without error.
+ - Only declared submodules are considered; nested repos that are not configured as submodules are not scanned.
+ - Inclusion remains strictly "tracked‑only": untracked files within submodules are not copied into the sandbox.
+
 ## Configuration
 - Env vars:
   - `OPENAI_API_KEY`: API key for your LLM provider (required)
@@ -86,6 +95,7 @@ mct prompt --mode=answer-only -f prompt.md
     - If set (e.g., by the agent), `mct` loads and persists conversation history under `~/.machtiani/sessions/session-<id>.json`, enabling continuity across multiple `mct` calls within the same agent run.
     - If not set, `mct` generates a fresh unique session ID for the run, so no prior conversation is inlined and the session will not be reused unintentionally across projects.
   - `FILE_DISCOVERY_BIN`: Optional; path to a custom `file-discovery` binary
+  - `MCT_USE_GIT_FILTER`: Enable Git‑only temp workspace for discovery (default: true; set to `false` to disable)
   - Legacy `MCT_MODEL_*` accepted as fallback with a deprecation warning
 
 Binary resolution for `file-discovery`:
