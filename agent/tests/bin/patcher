@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# Emits a minimal JSON result for patcher. Reads stdin but ignores.
+PATCH_PATH="agent/tests/tmp/test.patch"
+mkdir -p "$(dirname "$PATCH_PATH")"
+printf "" > "$PATCH_PATH"
+cat <<JSON
+{
+  "patch_path": "$PATCH_PATH",
+  "applies": true,
+  "files_modified": ["README.md"],
+  "insertions": 1,
+  "deletions": 0,
+  "description": "Test patch from stub"
+}
+JSON

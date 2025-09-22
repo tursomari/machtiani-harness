@@ -57,6 +57,8 @@ Flags:
 - `--mct-bin string`: explicit path to the `mct` binary
 - `--dry-run`: print intended `mct` calls; no subprocess or LLM
 - `--verbose`: verbose agent logging (prints the exact `mct` command)
+- `--final-file string`: path to write final answer-only artifact
+- `--transcript-file string`: path to write transcript (default: `.machtiani/chat/agent-<timestamp>.md`)
 
 ## How It Works
 - The agent controls the loop: it plans either `Decision: ask` with one next question or `Decision: finalize`.
@@ -90,3 +92,29 @@ Flags:
 - The agent shells out to `mct` and does not import `mct/internal/*`.
 - It avoids parsing streamed stdout; always reads the saved chat file as the source of truth.
 - `--dry-run` simulates planning and prints the intended commands without executing `mct` or calling any LLM.
+
+## Testing
+
+### Unit Tests
+Run `go test ./...` from `agent/` for internal modules (e.g., planner, runner, parser, transcript handling).
+
+### Integration Tests (Live or Dry-Run)
+End-to-end tests against the built `mct-agent` binary, modeled after `file-discovery/run-live.sh`.
+
+Prerequisites:
+1. Build `mct-agent`: `cd agent && go build -o mct-agent ./cmd/mct-agent` (the script builds automatically).
+2. Build/in PATH: `mct` (via `mct/README.md`) and `patcher` (optional; only used when planner decides to patch).
+3. For live mode: `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL` (e.g., gpt-4o-mini for speed).
+
+Running:
+- From repo root: `bash agent/tests/run-live.sh`
+  - Covers Issues A (init/single-turn), B (multi-turn/context), C (finalize/transcript/errors).
+  - 1-turn and 3-turn max variants.
+  - Artifacts: `test-out-*` dirs with stdout/stderr/final/transcript files.
+  - Validates: Turn counts (<= max), keywords (relevance), artifacts (non-empty), error handling.
+  - If `OPENAI_*` not fully set, the script runs in `--dry-run` mode: no LLM calls or `mct` subprocess side effects; transcripts/finals are still generated for assertions.
+- Edge cases: Empty inputs, missing config/deps, timeouts (flaky; manual check advised).
+- Custom: Run in a test repo branch for git/file interactions.
+
+For CI: Include explicit `go build` and script invocation; provide OpenAI secrets.
+Note: Tests may vary by LLM (non-deterministic multi-turn); refine prompts if needed.

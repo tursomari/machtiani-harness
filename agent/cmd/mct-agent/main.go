@@ -29,6 +29,7 @@ type config struct {
     dryRun         bool
     verbose        bool
     finalFile      string
+    transcriptFile string
     // Patch application behavior
     noApply        bool
     // Normalized OpenAI flags
@@ -53,6 +54,7 @@ func run() int {
     fs.BoolVar(&cfg.dryRun, "dry-run", false, "print intended mct calls; don’t execute")
     fs.BoolVar(&cfg.verbose, "verbose", false, "verbose agent logging")
     fs.StringVar(&cfg.finalFile, "final-file", "", "path to write final answer-only artifact (default: .machtiani/chat/agent-final-<sessionID>.txt)")
+    fs.StringVar(&cfg.transcriptFile, "transcript-file", "", "path to write transcript file (default: .machtiani/chat/agent-<timestamp>.md)")
     fs.BoolVar(&cfg.noApply, "no-apply", false, "do not auto-apply generated patches (default: apply)\n")
     // Normalized OpenAI flags
     fs.StringVar(&cfg.openAIAPIKey, "openai-api-key", "", "API key for OpenAI-compatible endpoint")
@@ -83,7 +85,7 @@ func run() int {
     }
 
     // Prepare transcript file
-    tr, err := transcript.New()
+    tr, err := transcript.NewWithPath(cfg.transcriptFile)
     if err != nil {
         fmt.Fprintln(os.Stderr, "Error preparing transcript:", err)
         return 1
@@ -107,7 +109,9 @@ func run() int {
     if strings.TrimSpace(effAPIKey) == "" { missing = append(missing, "--openai-api-key or OPENAI_API_KEY") }
     if strings.TrimSpace(effBaseURL) == "" { missing = append(missing, "--openai-base-url or OPENAI_BASE_URL") }
     if strings.TrimSpace(effModel) == "" { missing = append(missing, "--openai-model/--model or OPENAI_MODEL") }
-    if len(missing) > 0 {
+fmt.Fprintln(os.Stderr, "debug dryRun:", cfg.dryRun, "len(missing):", len(missing))
+    if !cfg.dryRun && len(missing) > 0 {
+fmt.Fprintln(os.Stderr, "debug dryRun:", cfg.dryRun, "len(missing):", len(missing))
         fmt.Fprintln(os.Stderr, "Missing model config: set:")
         for _, m := range missing { fmt.Fprintln(os.Stderr, " - ", m) }
         return 2
@@ -179,14 +183,21 @@ func run() int {
             return 1
         }
 
-        // Read the authoritative response file
-        content, rerr := os.ReadFile(".machtiani/chat/machtiani-response.md")
-        if rerr != nil {
-            fmt.Fprintln(os.Stderr, "Failed to read saved chat (.machtiani/chat/machtiani-response.md):", rerr)
-            return 1
+        if cfg.dryRun {
+            lastAnswer = "[dry-run] mct would have produced a chat response here."
+            retrieved = nil
+        } else {
+            // Read the authoritative response file (prefer the savedPath if provided)
+            path := strings.TrimSpace(savedPath)
+            if path == "" { path = ".machtiani/chat/machtiani-response.md" }
+            content, rerr := os.ReadFile(path)
+            if rerr != nil {
+                fmt.Fprintln(os.Stderr, "Failed to read saved chat (", path, "):", rerr)
+                return 1
+            }
+            lastAnswer = string(content)
+            retrieved = parser.ExtractRetrievedFilePaths(lastAnswer)
         }
-        lastAnswer = string(content)
-        retrieved = parser.ExtractRetrievedFilePaths(lastAnswer)
 
         // Log to transcript with full Assistant answer
         fullAns := parser.ExtractAssistantAnswer(lastAnswer)
@@ -323,14 +334,21 @@ func run() int {
                 fmt.Fprintln(os.Stderr, "mct prompt error:", merr)
                 return 1
             }
-            // Read the authoritative response file
-            content, rerr := os.ReadFile(".machtiani/chat/machtiani-response.md")
-            if rerr != nil {
-                fmt.Fprintln(os.Stderr, "Failed to read saved chat (.machtiani/chat/machtiani-response.md):", rerr)
-                return 1
+            if cfg.dryRun {
+                lastAnswer = "[dry-run] mct would have produced a chat response here."
+                retrieved = nil
+            } else {
+                // Read the authoritative response file (prefer savedPath if provided)
+                path := strings.TrimSpace(savedPath)
+                if path == "" { path = ".machtiani/chat/machtiani-response.md" }
+                content, rerr := os.ReadFile(path)
+                if rerr != nil {
+                    fmt.Fprintln(os.Stderr, "Failed to read saved chat (", path, "):", rerr)
+                    return 1
+                }
+                lastAnswer = string(content)
+                retrieved = parser.ExtractRetrievedFilePaths(lastAnswer)
             }
-            lastAnswer = string(content)
-            retrieved = parser.ExtractRetrievedFilePaths(lastAnswer)
             // Log to transcript with full Assistant answer
             fullAns := parser.ExtractAssistantAnswer(lastAnswer)
             if strings.TrimSpace(fullAns) == "" { fullAns = lastAnswer }

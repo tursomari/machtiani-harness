@@ -26,6 +26,20 @@ func New() (*Transcript, error) {
     return &Transcript{f: f, path: p}, nil
 }
 
+// NewWithPath creates a transcript at an explicit path. If path is empty,
+// it falls back to New(). Parent directories are created as needed.
+func NewWithPath(path string) (*Transcript, error) {
+    if strings.TrimSpace(path) == "" {
+        return New()
+    }
+    if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+        return nil, err
+    }
+    f, err := os.Create(path)
+    if err != nil { return nil, err }
+    return &Transcript{f: f, path: path}, nil
+}
+
 func (t *Transcript) Path() string { return t.path }
 
 func (t *Transcript) Close() error {
