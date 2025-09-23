@@ -2,6 +2,8 @@ Agent Integration Tests (mct-agent)
 
 - Entry script: `agent/tests/run-live.sh`
 - Purpose: Exercise `mct-agent` end-to-end against a locally built binary. Supports live LLM calls or dry-run (no network/subprocess side effects).
+- Auto-handles dependencies: builds `mct-agent` and, if missing, builds `mct` + `file-discovery` into `agent/tests/bin` using the standard `mct/build.sh` flow.
+ - Optional override: set `MCT_BIN=/path/to/mct` to use a specific binary (ignored when `FORCE_REBUILD=true`).
 
 Scenarios
 - Issue A/B/C run twice each:
@@ -20,13 +22,13 @@ Validations performed
 
 Run locally
 ```
-# From repo root; the script builds the binary automatically
+# From repo root; the script builds required binaries automatically
 bash agent/tests/run-live.sh
 ```
 Artifacts directory: created as `test-out-*` under the current working directory.
 
 CI guidance
 ```
-cd agent && go build -o mct-agent ./cmd/mct-agent
-cd .. && bash agent/tests/run-live.sh
+# Optional explicit build; otherwise the script will build locally
+FORCE_REBUILD=true bash agent/tests/run-live.sh
 ```

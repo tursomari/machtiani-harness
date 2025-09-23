@@ -145,10 +145,8 @@ func (c *Client) planPrompt(goal string, transcript string, step, maxSteps int) 
         b.WriteString(goal + "\n\n")
     }
     if strings.TrimSpace(transcript) != "" {
-        b.WriteString("Transcript (truncated):\n")
-        tt := transcript
-        if len(tt) > 4000 { tt = tt[len(tt)-4000:] }
-        b.WriteString(tt + "\n\n")
+        b.WriteString("Transcript:\n")
+        b.WriteString(transcript + "\n\n")
     }
     b.WriteString(fmt.Sprintf("Step %d of %d. Decide.\n", step, maxSteps))
     return b.String()
@@ -162,10 +160,8 @@ func (c *Client) finalizePrompt(goal string, transcript string) string {
         b.WriteString(goal + "\n\n")
     }
     if strings.TrimSpace(transcript) != "" {
-        b.WriteString("Transcript (truncated):\n")
-        tt := transcript
-        if len(tt) > 6000 { tt = tt[len(tt)-6000:] }
-        b.WriteString(tt + "\n\n")
+        b.WriteString("Transcript:\n")
+        b.WriteString(transcript + "\n\n")
     }
     b.WriteString("Now produce a clear, self-contained final answer grounded in the evidence from prior turns. If there are gaps, call them out succinctly.")
     return b.String()

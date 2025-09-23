@@ -1,22 +1,83 @@
 #!/bin/bash
 set -euo pipefail  # Strict mode
-export PATH="agent/tests/bin:$PATH"
+
+# Repo-aware paths
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+BUILD_DIR="$REPO_ROOT/agent/tests/bin"
+mkdir -p "$BUILD_DIR"
+
+# Note: Add $BUILD_DIR to PATH only after dependency checks to avoid masking system binaries
 
 # Script: Live integration tests for mct-agent binary (modeled after file-discovery/run-live.sh)
 # Builds binary locally, runs live scenarios against Issues A/B/C with turn constraints.
-# Requires: Go installed; OPENAI_* env vars; mct/patcher in PATH (build via their READMEs).
+# Requires: Go installed (in PATH). OPENAI_* env vars optional for live mode.
+# Dependencies handled automatically:
+# - mct-agent: built to agent/tests/bin
+# - mct + file-discovery: auto-built from ./mct and installed to agent/tests/bin if not found
+# - patcher: optional; a local stub exists in agent/tests/bin for planner patch flows
 # Artifacts: Per-case files in cwd (stdout-*, stderr-*, final-*, transcript-*).
 # Run from repo root.
 
 # Helper: Build mct-agent binary (if not exists or force-rebuild)
-BUILD_DIR="agent/tests/bin"
-mkdir -p "$BUILD_DIR"
 MCT_AGENT="$BUILD_DIR/mct-agent"
 if [[ ! -f "$MCT_AGENT" || "${FORCE_REBUILD:-}" == "true" ]]; then
   echo "Building mct-agent binary..." >&2
   (
-    cd agent && go build -o "tests/bin/mct-agent" ./cmd/mct-agent
+    cd "$REPO_ROOT/agent" && go build -o "$REPO_ROOT/agent/tests/bin/mct-agent" ./cmd/mct-agent
   ) || { echo "Build failed" >&2; exit 1; }
+fi
+
+# Helper: Ensure mct + file-discovery are available in PATH, matching standard build flow
+# Standard flow (outside tests):
+#   cd mct && mkdir -p ~/.local/bin && ./build.sh \
+#     && install -m 0755 ./machtiani-cli ~/.local/bin/mct \
+#     && install -m 0755 ./bin/file-discovery ~/.local/bin/file-discovery && hash -r
+# Test flow: install both to ./agent/tests/bin and prepend to PATH for this script only.
+
+AGENT_MCT_BIN="${MCT_BIN:-}"  # respect external override only when not force rebuilding
+if [[ "${FORCE_REBUILD:-}" == "true" ]]; then
+  AGENT_MCT_BIN=""  # force local rebuild
+fi
+
+# Determine live vs dry-run early to avoid unnecessary builds
+LIVE_MODE=false
+if [[ -n "${OPENAI_API_KEY:-}" && -n "${OPENAI_BASE_URL:-}" && -n "${OPENAI_MODEL:-}" ]]; then
+  LIVE_MODE=true
+fi
+
+if [[ -n "$AGENT_MCT_BIN" && -x "$AGENT_MCT_BIN" ]]; then
+  echo "Using provided MCT_BIN: $AGENT_MCT_BIN" >&2
+else
+  if [[ "$LIVE_MODE" == true || "${FORCE_REBUILD:-}" == "true" ]]; then
+    # In live mode (or when forcing rebuild), ensure a real mct is resolved
+    if [[ "${FORCE_REBUILD:-}" != "true" ]] && command -v mct >/dev/null 2>&1; then
+      AGENT_MCT_BIN="$(command -v mct)"
+      echo "Found mct in PATH: $AGENT_MCT_BIN" >&2
+    else
+      echo "Building local mct + file-discovery into $BUILD_DIR..." >&2
+      (
+        cd "$REPO_ROOT/mct" \
+          && ./build.sh \
+          && install -m 0755 ./machtiani-cli "$BUILD_DIR/mct" \
+          && install -m 0755 ./bin/file-discovery "$BUILD_DIR/file-discovery"
+      ) || { echo "Failed to build/install mct or file-discovery. Ensure Go is installed and submodules are initialized." >&2; exit 1; }
+      AGENT_MCT_BIN="$BUILD_DIR/mct"
+    fi
+  else
+    # Dry-run mode and not forcing rebuild: skip building mct entirely
+    AGENT_MCT_BIN=""
+    echo "Dry-run: skipping mct build (not needed)." >&2
+  fi
+fi
+
+# Now that we may rely on locally installed helpers, add tests/bin to PATH
+# - If we built mct locally, prepend so it takes precedence over any global mct
+# - Otherwise, append to avoid masking user's globally installed mct with local stubs
+if [[ "$AGENT_MCT_BIN" == "$BUILD_DIR/mct" ]]; then
+  export PATH="$BUILD_DIR:$PATH"
+else
+  export PATH="$PATH:$BUILD_DIR"
 fi
 
 # Helper: Run happy path case
@@ -40,6 +101,7 @@ run_happy_case() {
     --verbose \
     --no-apply \
     $maybe_dry_run \
+    ${AGENT_MCT_BIN:+--mct-bin "$AGENT_MCT_BIN"} \
     --final-file "$out_dir/final-${session_id}.txt" \
     --transcript-file "$out_dir/transcript-${session_id}.md" \
   "$prompt" \
@@ -90,15 +152,22 @@ run_error_case() {
   if [[ -z "${OPENAI_API_KEY:-}" || -z "${OPENAI_BASE_URL:-}" || -z "${OPENAI_MODEL:-}" ]]; then
     maybe_dry_run="--dry-run"
   fi
-  timeout $((max_steps * 60)) "$MCT_AGENT" run "" $args \
+  # Only add --mct-bin if not already provided in args
+  local maybe_mct_bin_arg=()
+  if [[ -n "$AGENT_MCT_BIN" && "$args" != *"--mct-bin"* ]]; then
+    maybe_mct_bin_arg=(--mct-bin "$AGENT_MCT_BIN")
+  fi
+
+  timeout $((max_steps * 60)) "$MCT_AGENT" run $args \
     --max-steps "$max_steps" \
     --timeout-per-turn 300 \
     --verbose \
     --no-apply \
     $maybe_dry_run \
+    "${maybe_mct_bin_arg[@]}" \
     --final-file "$out_dir/final-${session_id}.txt" \
     --transcript-file "$out_dir/transcript-${session_id}.md" \
-  "$prompt" \
+    "" \
     > "$out_dir/stdout-${session_id}.txt" 2> "$out_dir/stderr-${session_id}.txt"
 
   local rc=$?

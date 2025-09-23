@@ -102,9 +102,14 @@ Run `go test ./...` from `agent/` for internal modules (e.g., planner, runner, p
 End-to-end tests against the built `mct-agent` binary, modeled after `file-discovery/run-live.sh`.
 
 Prerequisites:
-1. Build `mct-agent`: `cd agent && go build -o mct-agent ./cmd/mct-agent` (the script builds automatically).
-2. Build/in PATH: `mct` (via `mct/README.md`) and `patcher` (optional; only used when planner decides to patch).
-3. For live mode: `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL` (e.g., gpt-4o-mini for speed).
+1. Go installed and available in PATH.
+2. For live mode: `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL` (e.g., gpt-4o-mini for speed).
+
+Notes:
+- The script automatically builds `mct-agent` and, if needed, `mct` + `file-discovery` using the standard `mct/build.sh` flow.
+- Binaries are installed to `agent/tests/bin` and that directory is prepended to PATH for the test duration.
+- Set `FORCE_REBUILD=true` to force rebuilding all local test binaries.
+- Optional: Set `MCT_BIN=/path/to/mct` to use a specific `mct` binary; the script honors it unless `FORCE_REBUILD=true`.
 
 Running:
 - From repo root: `bash agent/tests/run-live.sh`
