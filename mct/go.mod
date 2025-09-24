@@ -3,10 +3,11 @@ module github.com/tursomari/machtiani/mct
 go 1.22.6
 
 require (
-	github.com/charmbracelet/glamour v0.8.0
-	github.com/spf13/pflag v1.0.5
-	gopkg.in/yaml.v2 v2.4.0
-	github.com/google/uuid v1.6.0
+    github.com/BurntSushi/toml v1.3.2
+    github.com/charmbracelet/glamour v0.8.0
+    github.com/google/uuid v1.6.0
+    github.com/spf13/pflag v1.0.5
+    gopkg.in/yaml.v2 v2.4.0
 )
 
 require (

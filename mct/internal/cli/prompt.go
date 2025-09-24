@@ -16,15 +16,15 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/tursomari/machtiani/mct/internal/contextbuilder"
 	"github.com/tursomari/machtiani/mct/internal/discoveryrunner"
-	"github.com/tursomari/machtiani/mct/internal/session"
-	"github.com/tursomari/machtiani/mct/internal/llm"
 	"github.com/tursomari/machtiani/mct/internal/naming"
+	"github.com/tursomari/machtiani/mct/internal/session"
 	"github.com/tursomari/machtiani/mct/internal/utils"
+	"github.com/tursomari/machtiani/mct/llm"
 )
 
 const (
-    defaultMatchStrength = "mid"
-    defaultMode          = "default"
+	defaultMatchStrength = "mid"
+	defaultMode          = "default"
 )
 
 const (
@@ -43,15 +43,17 @@ func createSeparator(message string) string {
 }
 
 func handlePrompt(args []string, config *utils.Config, apiKey *string, headCommitHash string) {
-    fs := pflag.NewFlagSet("prompt", pflag.ContinueOnError)
+	fs := pflag.NewFlagSet("prompt", pflag.ContinueOnError)
 	// Input source (exactly one required)
 	fileFlag := fs.StringP("file", "f", "", "Path to the markdown file (required if no positional message provided)")
 	// Supported flags
-    modelFlag := fs.String("model", "", "Model to use (e.g., gpt-4o, gpt-4o-mini)")
-    openAIModelFlag := fs.String("openai-model", "", "Alias of --model for normalized config")
-    openAIAPIKeyFlag := fs.String("openai-api-key", "", "OpenAI-compatible API key (overrides env)")
-    openAIBaseURLFlag := fs.String("openai-base-url", "", "OpenAI-compatible base URL (overrides env)")
-    agentModelFlag := fs.String("agent-model", "", "Agent model for applying patches (defaults to --model)")
+	modelFlag := fs.String("model", "", "Model alias defined in .machtiani/config.toml")
+	openAIModelFlag := fs.String("openai-model", "", "Direct upstream model name (deprecated; prefer --model)")
+	openAIAPIKeyFlag := fs.String("openai-api-key", "", "OpenAI-compatible API key (overrides env, deprecated)")
+	openAIBaseURLFlag := fs.String("openai-base-url", "", "OpenAI-compatible base URL (overrides env, deprecated)")
+	paramFlag := fs.StringArray("param", nil, "Additional request parameter key=value (repeatable)")
+	paramJSONFlag := fs.StringArray("param-json", nil, "Merge JSON object of additional parameters (repeatable)")
+	agentModelFlag := fs.String("agent-model", "", "Agent model for applying patches (defaults to --model)")
 	matchStrengthFlag := fs.String("match-strength", defaultMatchStrength, "Match strength: high | mid | low")
 	modeFlag := fs.String("mode", defaultMode, "Mode: chat | pure-chat | answer-only | default")
 	// flags retained for compatibility in other subcommands; not used in local prompt path
@@ -96,12 +98,13 @@ func handlePrompt(args []string, config *utils.Config, apiKey *string, headCommi
 		os.Exit(2)
 	}
 
-    // Use agent-model for patches if specified, otherwise fall back to model (unused in local prompt path)
-    agentModelVal := *agentModelFlag
-    effModel := utilsFirstNonEmpty(*openAIModelFlag, *modelFlag)
-    if agentModelVal == "" { agentModelVal = effModel }
-    _ = agentModelVal
-    _ = *matchStrengthFlag
+	// Use agent-model for patches if specified, otherwise fall back to model (unused in local prompt path)
+	agentModelVal := *agentModelFlag
+	if agentModelVal == "" {
+		agentModelVal = *modelFlag
+	}
+	_ = agentModelVal
+	_ = *matchStrengthFlag
 
 	// Check if we're in answer-only mode early
 	isAnswerOnlyMode := *modeFlag == "answer-only"
@@ -131,31 +134,31 @@ func handlePrompt(args []string, config *utils.Config, apiKey *string, headCommi
 		prompt = positionalMessage
 	}
 
-	if *verboseFlag && *modeFlag != "answer-only" {
-		printVerboseInfo(*fileFlag, *modelFlag, *matchStrengthFlag, *modeFlag, prompt)
-	}
-
 	// New local pipeline: discovery -> context -> direct LLM
 	var rawResponse string
 	var retrievedFilePaths []string
 
-    cfg := config // already loaded by caller
-    // Resolve effective OpenAI config: flags override env/config
-    baseURL := utilsFirstNonEmpty(strings.TrimSpace(*openAIBaseURLFlag), strings.TrimSpace(cfg.Environment.ModelBaseURL))
-    apiKeyVal := utilsFirstNonEmpty(strings.TrimSpace(*openAIAPIKeyFlag), strings.TrimSpace(cfg.Environment.ModelAPIKey))
-    // Effective model from flags only (no defaults)
-    effModel = utilsFirstNonEmpty(strings.TrimSpace(*openAIModelFlag), strings.TrimSpace(*modelFlag))
+	cfg := config // already loaded by caller
 
-    // Validate required config
-    missing := []string{}
-    if apiKeyVal == "" { missing = append(missing, "--openai-api-key or OPENAI_API_KEY") }
-    if baseURL == "" { missing = append(missing, "--openai-base-url or OPENAI_BASE_URL") }
-    if effModel == "" { missing = append(missing, "--openai-model/--model or OPENAI_MODEL") }
-    if len(missing) > 0 {
-        fmt.Fprintln(os.Stderr, "Missing model config: set:")
-        for _, m := range missing { fmt.Fprintln(os.Stderr, " - ", m) }
-        os.Exit(2)
-    }
+	paramPairs := append([]string(nil), (*paramFlag)...)
+	paramJSON := append([]string(nil), (*paramJSONFlag)...)
+
+	runtime, err := resolveModelRuntime(cfg, strings.TrimSpace(*modelFlag), strings.TrimSpace(*openAIBaseURLFlag), strings.TrimSpace(*openAIAPIKeyFlag), strings.TrimSpace(*openAIModelFlag), paramPairs, paramJSON)
+	if err != nil {
+		if miss, ok := err.(*missingConfigError); ok {
+			fmt.Fprintln(os.Stderr, "Missing model config: set:")
+			for _, item := range miss.items {
+				fmt.Fprintln(os.Stderr, " - ", item)
+			}
+			os.Exit(2)
+		}
+		fmt.Fprintf(os.Stderr, "Error resolving model: %v\n", err)
+		os.Exit(2)
+	}
+
+	if *verboseFlag && *modeFlag != "answer-only" {
+		printVerboseInfo(*fileFlag, runtime.displayName(), *matchStrengthFlag, *modeFlag, prompt)
+	}
 
 	ctx := context.Background()
 
@@ -175,8 +178,8 @@ func handlePrompt(args []string, config *utils.Config, apiKey *string, headCommi
 		if ms != nil {
 			_ = ms.Feed(header)
 		}
-        messages := []llm.Message{{Role: "user", Content: combined}}
-        full, err := llm.ChatStream(ctx, baseURL, apiKeyVal, effModel, messages, func(tok string) {
+		messages := []llm.Message{{Role: "user", Content: combined}}
+		full, err := llm.ChatStreamWithResolved(ctx, runtime.resolved, runtime.extras, messages, func(tok string) {
 			if ms != nil {
 				_ = ms.Feed(tok)
 			} else {
@@ -196,7 +199,14 @@ func handlePrompt(args []string, config *utils.Config, apiKey *string, headCommi
 		_ = session.AddMessage("assistant", full)
 	} else {
 		// Run discovery
-        dr, err := discoveryrunner.Run(ctx, prompt, effModel, apiKeyVal, baseURL, sessionID, *verboseFlag)
+		drModel := discoveryrunner.ModelSettings{
+			UsingAlias: runtime.usingAlias,
+			Alias:      runtime.alias,
+			Resolved:   runtime.resolved,
+			ParamPairs: runtime.paramPairs,
+			ParamJSON:  runtime.paramJSON,
+		}
+		dr, err := discoveryrunner.Run(ctx, prompt, drModel, sessionID, *verboseFlag)
 		if err != nil {
 			log.Fatalf("Error running local file discovery: %v", err)
 		}
@@ -220,8 +230,8 @@ func handlePrompt(args []string, config *utils.Config, apiKey *string, headCommi
 		if ms != nil {
 			_ = ms.Feed(header)
 		}
-        messages := []llm.Message{{Role: "user", Content: combined}}
-        full, err := llm.ChatStream(ctx, baseURL, apiKeyVal, effModel, messages, func(tok string) {
+		messages := []llm.Message{{Role: "user", Content: combined}}
+		full, err := llm.ChatStreamWithResolved(ctx, runtime.resolved, runtime.extras, messages, func(tok string) {
 			if ms != nil {
 				_ = ms.Feed(tok)
 			} else {
@@ -263,10 +273,10 @@ func handlePrompt(args []string, config *utils.Config, apiKey *string, headCommi
 		}
 
 		// Generate a filename if necessary
-        if filename == "" || filename == "." {
-            filename = naming.Generate(ctx, prompt, baseURL, apiKeyVal, effModel)
-        }
-    }
+		if filename == "" || filename == "." {
+			filename = naming.Generate(ctx, prompt, runtime.resolved)
+		}
+	}
 
 	utils.PrintIfNotAnswerOnly(isAnswerOnlyMode, "%s", createSeparator("Saving Chat Response"))
 
@@ -275,10 +285,10 @@ func handlePrompt(args []string, config *utils.Config, apiKey *string, headCommi
 }
 
 func handleAPIResponse(prompt, openaiResponse string, retrievedFilePaths []string, filename, fileFlag string, isAnswerOnlyMode bool) {
-    // In answer-only mode, just print the raw response without any file operations
-    if isAnswerOnlyMode {
-        return
-    }
+	// In answer-only mode, just print the raw response without any file operations
+	if isAnswerOnlyMode {
+		return
+	}
 
 	// For other modes, continue with file creation and structured output
 	var finalContent string
@@ -437,10 +447,113 @@ func filterPaths(paths []string, ignores []string) []string {
 }
 
 func utilsFirstNonEmpty(vals ...string) string {
-    for _, v := range vals {
-        if strings.TrimSpace(v) != "" {
-            return v
-        }
-    }
-    return ""
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+type modelRuntime struct {
+	resolved   llm.ResolvedModel
+	alias      string
+	usingAlias bool
+	extras     map[string]any
+	paramPairs []string
+	paramJSON  []string
+}
+
+func (m modelRuntime) displayName() string {
+	if m.usingAlias && strings.TrimSpace(m.alias) != "" {
+		return m.alias
+	}
+	return m.resolved.Model
+}
+
+func resolveModelRuntime(cfg *utils.Config, aliasFlag, baseURLFlag, apiKeyFlag, directModelFlag string, paramPairs, paramJSON []string) (modelRuntime, error) {
+	extra, err := llm.ParseParamOverrides(paramPairs, paramJSON)
+	if err != nil {
+		return modelRuntime{}, err
+	}
+	runtime := modelRuntime{
+		extras:     extra,
+		paramPairs: append([]string(nil), paramPairs...),
+		paramJSON:  append([]string(nil), paramJSON...),
+	}
+
+	hasDirectFlags := strings.TrimSpace(baseURLFlag) != "" || strings.TrimSpace(apiKeyFlag) != "" || strings.TrimSpace(directModelFlag) != ""
+	alias := strings.TrimSpace(aliasFlag)
+
+	directBaseURL := utilsFirstNonEmpty(strings.TrimSpace(baseURLFlag), strings.TrimSpace(cfg.Environment.ModelBaseURL), strings.TrimSpace(cfg.Environment.ModelBaseURLOther), strings.TrimSpace(os.Getenv("OPENAI_BASE_URL")))
+	directAPIKey := utilsFirstNonEmpty(strings.TrimSpace(apiKeyFlag), strings.TrimSpace(cfg.Environment.ModelAPIKey), strings.TrimSpace(cfg.Environment.ModelAPIKeyOther), strings.TrimSpace(os.Getenv("OPENAI_API_KEY")))
+	directModel := utilsFirstNonEmpty(strings.TrimSpace(directModelFlag), strings.TrimSpace(os.Getenv("OPENAI_MODEL")), strings.TrimSpace(os.Getenv("MCT_MODEL")))
+
+	if hasDirectFlags {
+		missing := missingDirect(directAPIKey, directBaseURL, directModel)
+		if len(missing) > 0 {
+			return runtime, &missingConfigError{items: missing}
+		}
+		resolved, err := llm.NewDirectModel(directBaseURL, directAPIKey, directModel)
+		if err != nil {
+			return runtime, err
+		}
+		runtime.resolved = resolved
+		runtime.usingAlias = false
+		return runtime, nil
+	}
+
+	if alias != "" {
+		resolved, err := llm.ResolveModel(alias)
+		if err != nil {
+			return runtime, err
+		}
+		runtime.resolved = resolved
+		runtime.alias = alias
+		runtime.usingAlias = true
+		return runtime, nil
+	}
+
+	if defaultAlias, err := llm.DefaultModelAlias(); err == nil {
+		if resolved, err2 := llm.ResolveModel(defaultAlias); err2 == nil {
+			runtime.resolved = resolved
+			runtime.alias = defaultAlias
+			runtime.usingAlias = true
+			return runtime, nil
+		}
+	}
+
+	missing := missingDirect(directAPIKey, directBaseURL, directModel)
+	if len(missing) > 0 {
+		return runtime, &missingConfigError{items: missing}
+	}
+	resolved, err := llm.NewDirectModel(directBaseURL, directAPIKey, directModel)
+	if err != nil {
+		return runtime, err
+	}
+	runtime.resolved = resolved
+	runtime.usingAlias = false
+	return runtime, nil
+}
+
+func missingDirect(apiKey, baseURL, model string) []string {
+	var missing []string
+	if strings.TrimSpace(apiKey) == "" {
+		missing = append(missing, "--openai-api-key or OPENAI_API_KEY")
+	}
+	if strings.TrimSpace(baseURL) == "" {
+		missing = append(missing, "--openai-base-url or OPENAI_BASE_URL")
+	}
+	if strings.TrimSpace(model) == "" {
+		missing = append(missing, "--openai-model or OPENAI_MODEL")
+	}
+	return missing
+}
+
+type missingConfigError struct {
+	items []string
+}
+
+func (e *missingConfigError) Error() string {
+	return "missing model configuration"
 }

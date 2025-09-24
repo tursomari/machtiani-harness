@@ -4,9 +4,10 @@ import (
 	"context"
 	"regexp"
 	"strings"
+	"time"
 	"unicode"
 
-	"github.com/tursomari/machtiani/mct/internal/llm"
+	"github.com/tursomari/machtiani/mct/llm"
 )
 
 var stopwords = map[string]bool{
@@ -21,15 +22,14 @@ var nonASCII = regexp.MustCompile(`[^\x00-\x7F]+`)
 var nonAlnum = regexp.MustCompile(`[^a-z0-9]+`)
 
 // Generate attempts an LLM-based filename, falling back to deterministic slug.
-func Generate(ctx context.Context, prompt, baseURL, apiKey, model string) string {
-	// Try LLM quickly
-	if apiKey != "" && baseURL != "" && model != "" {
+func Generate(ctx context.Context, prompt string, model llm.ResolvedModel) string {
+	if strings.TrimSpace(model.APIKey) != "" && strings.TrimSpace(model.BaseURL) != "" && strings.TrimSpace(model.Model) != "" {
 		sys := "You are a naming assistant. Return only a short, kebab-case title (<= 60 chars), no extension, no quotes."
 		user := "Suggest a concise filename for this prompt:\n\n" + prompt
 		msg := []llm.Message{{Role: "system", Content: sys}, {Role: "user", Content: user}}
-		ctx, cancel := context.WithTimeout(ctx, 8_000_000_000) // 8s
+		ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 		defer cancel()
-		if out, err := llm.Chat(ctx, baseURL, apiKey, model, msg); err == nil {
+		if out, err := llm.ChatWithResolved(ctx, model, nil, msg); err == nil {
 			name := sanitize(out)
 			if name != "" {
 				return name
