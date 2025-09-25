@@ -16,10 +16,21 @@ func TestParseDecisionVariants(t *testing.T) {
 		{"Decision: finalize", DecisionFinalize},
 	}
 	for _, tc := range cases {
-		got, _ := parseDecision(tc.input)
+		got, _ := parseDecision(tc.input, false)
 		if got != tc.want {
 			t.Fatalf("parseDecision(%q) = %v, want %v", tc.input, got, tc.want)
 		}
+	}
+}
+
+func TestParseDecisionNoPatchFallsBackToAsk(t *testing.T) {
+	dec, rest := parseDecision("Decision: patch\n{ }", true)
+	if dec != DecisionAsk {
+		t.Fatalf("expected ask decision when noPatch is true; got %v", dec)
+	}
+	want := "Question: Considering the current transcript, produce the single next high-signal repository-focused prompt for mct."
+	if rest != want {
+		t.Fatalf("unexpected remainder. got %q, want %q", rest, want)
 	}
 }
 
@@ -31,6 +42,23 @@ func TestPlanPromptIncludesMetadata(t *testing.T) {
 		if !contains(prompt, w) {
 			t.Fatalf("plan prompt missing %q:\n%s", w, prompt)
 		}
+	}
+}
+
+func TestPlanPromptNoPatchOmitsPatchInstructions(t *testing.T) {
+	c := NewClient(ClientConfig{DryRun: true, NoPatch: true})
+	prompt := c.planPrompt("goal", "transcript", 2, 4)
+	if contains(prompt, "Decision: ask|patch|finalize") {
+		t.Fatalf("prompt should not list patch option when NoPatch is true:\n%s", prompt)
+	}
+	if !contains(prompt, "Decision: ask|finalize") {
+		t.Fatalf("prompt should list ask|finalize when NoPatch is true:\n%s", prompt)
+	}
+	if contains(prompt, "Patch JSON schema") {
+		t.Fatalf("prompt should not include patch schema when NoPatch is true:\n%s", prompt)
+	}
+	if !contains(prompt, "Patch requests are disabled for this run") {
+		t.Fatalf("prompt should call out that patch requests are disabled:\n%s", prompt)
 	}
 }
 

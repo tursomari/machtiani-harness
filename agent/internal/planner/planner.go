@@ -26,6 +26,7 @@ type ClientConfig struct {
 	Verbose           bool
 	DryRun            bool
 	RequestTimeoutSec int
+	NoPatch           bool
 }
 
 type Client struct {
@@ -55,7 +56,7 @@ func (c *Client) Plan(ctx context.Context, goal string, transcript string, step,
 	if c.cfg.Verbose {
 		fmt.Fprintln(os.Stderr, "[planner] model response:", truncateMiddle(strings.TrimSpace(resp), 1800))
 	}
-	dec, q := parseDecision(resp)
+	dec, q := parseDecision(resp, c.cfg.NoPatch)
 	if dec == "" {
 		return "", "", errors.New("planner: unable to parse decision from model output")
 	}
@@ -92,16 +93,30 @@ func (c *Client) chat(ctx context.Context, prompt string) (string, error) {
 func (c *Client) planPrompt(goal string, transcript string, step, maxSteps int) string {
 	var b strings.Builder
 	b.WriteString("You are an agentic planner for mct. Read the transcript to understand the goal and prior turns. mct reads repository files and answers; it does not execute code.\n")
-	b.WriteString("Decide either to: (a) produce one single, high-signal repository-focused prompt, (b) request a patch, or (c) finalize if enough information is gathered.\n")
+	if c.cfg.NoPatch {
+		b.WriteString("Patch requests are disabled for this run. Decide either to: (a) produce one single, high-signal repository-focused prompt, or (b) finalize if enough information is gathered.\n")
+	} else {
+		b.WriteString("Decide either to: (a) produce one single, high-signal repository-focused prompt, (b) request a patch, or (c) finalize if enough information is gathered.\n")
+	}
 	b.WriteString("Your prompt MUST be addressed to mct, not the user. Avoid clarifying user intent; focus on code, files, functions, modules, architecture, logs, or tests.\n")
-	b.WriteString("Output strictly:\nDecision: ask|patch|finalize\nIf ask, a second line using exactly one of:\n- Question: <single best prompt>\n- Instruction: <single best prompt>\n- Message: <single best prompt>\nIf patch, immediately follow with a single standalone JSON object ONLY (no commentary, no markdown fences).\n\n")
-	b.WriteString("Patch JSON schema (when Decision: patch):\n")
-	b.WriteString("{\n  \"metadata\": { \"description\": string, \"author\": string, \"email\": string },\n  \"edits\": [\n    { \"path\": string (repo-relative), \"mode\": one of replace|rewrite|create|delete,\n      \"before\": string (replace only), \"after\": string (replace only), \"occurrence\": number (1-based, optional),\n      \"new_content\": string (rewrite/create only) }\n  ]\n}\n")
-	b.WriteString("Rules: use forward slashes; paths must be under repo root;\n")
-	b.WriteString("replace requires before+after and file exists; rewrite requires new_content and file exists;\n")
-	b.WriteString("create requires new_content and file must not exist; delete requires file exists.\n\n")
-	b.WriteString("Minimal example (do not include this text in output):\n")
-	b.WriteString("Decision: patch\n{\n  \"metadata\": { \"description\": \"Fix README typo\" },\n  \"edits\": [\n    { \"path\": \"README.md\", \"mode\": \"replace\", \"before\": \"teh\", \"after\": \"the\", \"occurrence\": 1 }\n  ]\n}\n\n")
+	b.WriteString("Output strictly:\nDecision: ")
+	if c.cfg.NoPatch {
+		b.WriteString("ask|finalize\n")
+	} else {
+		b.WriteString("ask|patch|finalize\n")
+	}
+	b.WriteString("If ask, a second line using exactly one of:\n- Question: <single best prompt>\n- Instruction: <single best prompt>\n- Message: <single best prompt>\n")
+	if !c.cfg.NoPatch {
+		b.WriteString("If patch, immediately follow with a single standalone JSON object ONLY (no commentary, no markdown fences).\n\n")
+		b.WriteString("Patch JSON schema (when Decision: patch):\n")
+		b.WriteString("{\n  \"metadata\": { \"description\": string, \"author\": string, \"email\": string },\n  \"edits\": [\n    { \"path\": string (repo-relative), \"mode\": one of replace|rewrite|create|delete,\n      \"before\": string (replace only), \"after\": string (replace only), \"occurrence\": number (1-based, optional),\n      \"new_content\": string (rewrite/create only) }\n  ]\n}\n")
+		b.WriteString("Rules: use forward slashes; paths must be under repo root;\n")
+		b.WriteString("replace requires before+after and file exists; rewrite requires new_content and file exists;\n")
+		b.WriteString("create requires new_content and file must not exist; delete requires file exists.\n\n")
+		b.WriteString("Minimal example (do not include this text in output):\n")
+		b.WriteString("Decision: patch\n{\n  \"metadata\": { \"description\": \"Fix README typo\" },\n  \"edits\": [\n    { \"path\": \"README.md\", \"mode\": \"replace\", \"before\": \"teh\", \"after\": \"the\", \"occurrence\": 1 }\n  ]\n}\n\n")
+	}
+
 	if strings.TrimSpace(goal) != "" {
 		b.WriteString("Goal:\n")
 		b.WriteString(goal + "\n\n")
@@ -137,7 +152,7 @@ func truncateMiddle(s string, max int) string {
 	return s[:half] + "…" + s[len(s)-half:]
 }
 
-func parseDecision(resp string) (Decision, string) {
+func parseDecision(resp string, noPatch bool) (Decision, string) {
 	lines := strings.Split(strings.TrimSpace(resp), "\n")
 	if len(lines) == 0 {
 		return "", ""
@@ -151,6 +166,10 @@ func parseDecision(resp string) (Decision, string) {
 		return "", ""
 	}
 	decision := Decision(strings.TrimSpace(strings.ToLower(parts[1])))
+	if noPatch && decision == DecisionPatch {
+		// Fallback to a generic ask when patches are disabled to keep the agent progressing.
+		return DecisionAsk, "Question: Considering the current transcript, produce the single next high-signal repository-focused prompt for mct."
+	}
 	switch decision {
 	case DecisionAsk, DecisionPatch, DecisionFinalize:
 	default:

@@ -33,6 +33,7 @@ type config struct {
 	transcriptFile string
 	// Patch application behavior
 	noApply bool
+	noPatch bool
 	// Normalized OpenAI flags
 	openAIAPIKey  string
 	openAIBaseURL string
@@ -68,6 +69,7 @@ func run() int {
 	fs.StringVar(&cfg.finalFile, "final-file", "", "path to write final answer-only artifact (default: .machtiani/chat/agent-final-<sessionID>.txt)")
 	fs.StringVar(&cfg.transcriptFile, "transcript-file", "", "path to write transcript file (default: .machtiani/chat/agent-<timestamp>.md)")
 	fs.BoolVar(&cfg.noApply, "no-apply", false, "do not auto-apply generated patches (default: apply)\n")
+	fs.BoolVar(&cfg.noPatch, "no-patch", false, "disable patch planning; planner will never request patches")
 	// Normalized OpenAI flags
 	fs.StringVar(&cfg.openAIAPIKey, "openai-api-key", "", "OpenAI-compatible API key (overrides env, deprecated)")
 	fs.StringVar(&cfg.openAIBaseURL, "openai-base-url", "", "OpenAI-compatible base URL (overrides env, deprecated)")
@@ -166,6 +168,7 @@ func run() int {
 		Verbose:           cfg.verbose,
 		DryRun:            cfg.dryRun,
 		RequestTimeoutSec: cfg.timeoutPerTurn,
+		NoPatch:           cfg.noPatch,
 	})
 
 	// Running state (kept only for transcript writing)
