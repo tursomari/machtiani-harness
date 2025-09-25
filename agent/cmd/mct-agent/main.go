@@ -28,14 +28,16 @@ var (
 )
 
 type config struct {
-	maxSteps       int
-	model          string
-	agentModel     string
-	timeoutPerTurn int
-	dryRun         bool
-	verbose        bool
-	finalFile      string
-	transcriptFile string
+	maxSteps                int
+	model                   string
+	agentModel              string
+	timeoutPerTurn          int
+	dryRun                  bool
+	verbose                 bool
+	finalFile               string
+	transcriptFile          string
+	fileDiscoveryTrajectory string
+	fileDiscoveryOutputDir  string
 	// Patch application behavior
 	noApply bool
 	noPatch bool
@@ -83,6 +85,8 @@ func run() int {
 	fs.BoolVar(&cfg.verbose, "verbose", false, "verbose agent logging")
 	fs.StringVar(&cfg.finalFile, "final-file", "", "path to write final answer-only artifact (default: .machtiani/chat/agent-final-<sessionID>.txt)")
 	fs.StringVar(&cfg.transcriptFile, "transcript-file", "", "path to write transcript file (default: .machtiani/chat/agent-<timestamp>.md)")
+	fs.StringVar(&cfg.fileDiscoveryTrajectory, "file-discovery-trajectory", "", "path to write file-discovery trajectory JSONL (default: auto-named under output dir)")
+	fs.StringVar(&cfg.fileDiscoveryOutputDir, "file-discovery-output-dir", "", "directory for file-discovery artifacts (default: .machtiani/chat)")
 	fs.BoolVar(&cfg.noApply, "no-apply", false, "do not auto-apply generated patches (default: apply)\n")
 	fs.BoolVar(&cfg.noPatch, "no-patch", false, "disable patch planning; planner will never request patches")
 	// Normalized OpenAI flags
@@ -135,6 +139,15 @@ func run() int {
 		fmt.Println("Session:", sessionID)
 	}
 
+	trajectoryPath, err := resolveFileDiscoveryTrajectory(cfg, sessionID)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "File-discovery setup error:", err)
+		return 1
+	}
+	if cfg.verbose && strings.TrimSpace(trajectoryPath) != "" {
+		fmt.Println("File discovery trajectory:", trajectoryPath)
+	}
+
 	paramPairs := append([]string(nil), paramFlags...)
 	paramJSONVals := append([]string(nil), paramJSON...)
 
@@ -153,11 +166,12 @@ func run() int {
 
 	// Resolve mct runner
 	mctRunner := runner.Runner{
-		Verbose:    cfg.verbose,
-		DryRun:     cfg.dryRun,
-		Model:      runtime.resolved,
-		UsingAlias: runtime.usingAlias,
-		Alias:      runtime.alias,
+		Verbose:                 cfg.verbose,
+		DryRun:                  cfg.dryRun,
+		Model:                   runtime.resolved,
+		UsingAlias:              runtime.usingAlias,
+		Alias:                   runtime.alias,
+		FileDiscoveryTrajectory: trajectoryPath,
 	}
 	if err := mctRunner.Resolve(); err != nil {
 		fmt.Fprintln(os.Stderr, "mct resolution error:", err)
@@ -820,6 +834,49 @@ type missingConfigError struct {
 
 func (e *missingConfigError) Error() string {
 	return "missing model configuration"
+}
+
+func resolveFileDiscoveryTrajectory(cfg config, sessionID string) (string, error) {
+	override := strings.TrimSpace(cfg.fileDiscoveryTrajectory)
+	outDir := strings.TrimSpace(cfg.fileDiscoveryOutputDir)
+	if override != "" && outDir != "" {
+		return "", errors.New("cannot combine --file-discovery-trajectory with --file-discovery-output-dir")
+	}
+	if override != "" {
+		path := override
+		if !filepath.IsAbs(path) {
+			abs, err := filepath.Abs(path)
+			if err != nil {
+				return "", fmt.Errorf("resolve file-discovery trajectory path: %w", err)
+			}
+			path = abs
+		}
+		if !cfg.dryRun {
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				return "", fmt.Errorf("create file-discovery trajectory directory: %w", err)
+			}
+		}
+		return path, nil
+	}
+
+	dir := outDir
+	if dir == "" {
+		dir = filepath.Join(".machtiani", "chat")
+	}
+	if !filepath.IsAbs(dir) {
+		abs, err := filepath.Abs(dir)
+		if err != nil {
+			return "", fmt.Errorf("resolve file-discovery output dir: %w", err)
+		}
+		dir = abs
+	}
+	if !cfg.dryRun {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return "", fmt.Errorf("create file-discovery output dir: %w", err)
+		}
+	}
+	name := fmt.Sprintf("file-discovery-%s.jsonl", sessionID)
+	return filepath.Join(dir, name), nil
 }
 
 // writeFinalAnswer persists the final answer to a plain text file.

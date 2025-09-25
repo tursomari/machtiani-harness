@@ -15,12 +15,13 @@ import (
 )
 
 type Runner struct {
-	Verbose    bool
-	DryRun     bool
-	exePath    string
-	Model      llm.ResolvedModel
-	UsingAlias bool
-	Alias      string
+	Verbose                 bool
+	DryRun                  bool
+	exePath                 string
+	Model                   llm.ResolvedModel
+	UsingAlias              bool
+	Alias                   string
+	FileDiscoveryTrajectory string
 }
 
 // Resolve locates the mct binary strictly from PATH (dry-run stores logical name only).
@@ -60,6 +61,9 @@ func (r *Runner) RunPrompt(ctx context.Context, sessionID string, args ...string
 		if strings.TrimSpace(r.Model.Model) != "" {
 			env = append(env, "OPENAI_MODEL="+r.Model.Model)
 		}
+	}
+	if strings.TrimSpace(r.FileDiscoveryTrajectory) != "" {
+		env = append(env, "FILE_DISCOVERY_TRAJECTORY="+r.FileDiscoveryTrajectory)
 	}
 
 	// Compose command

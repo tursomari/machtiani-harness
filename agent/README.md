@@ -61,6 +61,8 @@ Flags:
 - `--verbose`: verbose agent logging (prints the exact `mct` command)
 - `--final-file string`: path to write final answer-only artifact
 - `--transcript-file string`: path to write transcript (default: `.machtiani/chat/agent-<timestamp>.md`)
+- `--file-discovery-trajectory string`: absolute/relative file path for the file-discovery trajectory JSONL
+- `--file-discovery-output-dir string`: directory to place file-discovery artifacts (default: `.machtiani/chat`)
 
 ## How It Works
 - The agent controls the loop: it plans either `Decision: ask` with one next question or `Decision: finalize`.
@@ -98,10 +100,14 @@ Flags:
 ## Testing
 
 ### Unit Tests
-Run `go test ./...` from `agent/` for internal modules (e.g., planner, runner, parser, transcript handling).
+See `TESTING.md` for detailed commands. Quick reference:
+```
+cd agent
+GOCACHE=$(pwd)/.gocache go test ./...
+```
 
 ### Integration Tests (Live or Dry-Run)
-`agent/tests/run-live.sh` exercises the PATH-installed binaries end-to-end.
+`agent/tests/run-live.sh` exercises the PATH-installed binaries end-to-end (see `TESTING.md` for full details).
 
 Prerequisites:
 1. Run `./scripts/install-all.sh` (or otherwise ensure `mct`, `file-discovery`, `patcher`, and `mct-agent` are already on PATH).
@@ -115,8 +121,7 @@ What the script does:
 Run from the repo root:
 
 ```
-./scripts/install-all.sh
-bash agent/tests/run-live.sh
+./scripts/install-all.sh && bash agent/tests/run-live.sh
 ```
 
 The script no longer mutates PATH or accepts binary override flags; everything must resolve via PATH.

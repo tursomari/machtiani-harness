@@ -134,6 +134,26 @@ cd -
 - Agent specifics (flags, behavior): see `agent/README.md`.
 - `mct` falls back to a bundled `file-discovery` if it can’t find one on PATH and was built via `build.sh`.
 
+## Integration Tests (mct-agent)
+`agent/tests/run-live.sh` exercises the PATH-installed binaries end-to-end.
+
+Prerequisites:
+1. Run `./scripts/install-all.sh` (or otherwise ensure `mct`, `file-discovery`, `patcher`, and `mct-agent` are already on PATH).
+2. Optional for live mode: export `OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_MODEL`. Without these, the script forces deterministic dry-run mode.
+
+What the script does:
+- Performs a preflight that resolves each binary on PATH, prints `--version`/`go version -m` metadata, and fails if the commit/time does not match the current sources.
+- Generates a temporary `.machtiani/config.toml` under `agent/tests/tmp/` and exports `MACHTIANI_CONFIG` for the duration of the run. Live mode reuses your `OPENAI_*` values; dry-run mode writes stub credentials and appends `--dry-run`.
+- Runs Issue A/B/C happy-path scenarios (1-turn and 3-turn variants) plus deterministic error cases (empty input, missing config when in live mode). Artifacts land under `test-out-*` directories in the repo root.
+
+Run from the repo root:
+```
+./scripts/install-all.sh
+bash agent/tests/run-live.sh
+```
+
+The script does not mutate PATH; ensure the install location is already exported. When `OPENAI_*` are absent it forces dry-run, so no network calls occur but transcripts remain for assertions. For full context (including CI guidance) see `agent/TESTING.md`.
+
 ## Uninstall
 Remove the installed binaries (adjust paths to your environment):
 ```

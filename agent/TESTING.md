@@ -1,3 +1,12 @@
+Unit Tests
+
+- Run from the repo root:
+  ```
+  cd agent
+  GOCACHE=$(pwd)/.gocache go test ./...
+  ```
+- The explicit `GOCACHE` keeps build artifacts inside the workspace when sandboxed or running in CI environments that restrict `$HOME`.
+
 Agent Integration Tests (mct-agent)
 
 - Entry script: `agent/tests/run-live.sh`
