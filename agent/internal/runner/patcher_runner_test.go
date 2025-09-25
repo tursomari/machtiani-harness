@@ -9,74 +9,8 @@ import (
 	"testing"
 )
 
-func TestResolvePrecedence(t *testing.T) {
-	dir := t.TempDir()
-	stubSrc := []byte(`package main
-import ("io"; "os")
-func main(){ io.Copy(os.Stdout, os.Stdin) }
-`)
-	buildStub := func(name string) string {
-		srcPath := filepath.Join(dir, name+".go")
-		if err := os.WriteFile(srcPath, stubSrc, 0o644); err != nil {
-			t.Fatal(err)
-		}
-		bin := filepath.Join(dir, name)
-		cmd := exec.Command("go", "build", "-o", bin, srcPath)
-		cmd.Env = os.Environ()
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Skipf("skipping build-dependent test: %v (%s)", err, string(out))
-		}
-		return bin
-	}
-	envBin := buildStub("patcher-env")
-	flagBin := buildStub("patcher-flag")
-	pathBin := buildStub("patcher")
-
-	originalPath := os.Getenv("PATH")
-	t.Cleanup(func() { _ = os.Setenv("PATH", originalPath) })
-	if err := os.Setenv("PATH", dir+string(os.PathListSeparator)+originalPath); err != nil {
-		t.Fatalf("set PATH: %v", err)
-	}
-
-	t.Setenv("PATCHER_BIN", "")
-	pr := &PatcherRunner{}
-	if err := pr.Resolve(""); err != nil {
-		t.Fatalf("expected PATH patcher to resolve, got err: %v", err)
-	}
-	if pr.exePath != pathBin {
-		t.Fatalf("expected PATH patcher (%s), got %s", pathBin, pr.exePath)
-	}
-
-	t.Setenv("PATCHER_BIN", envBin)
-	if err := pr.Resolve(""); err != nil {
-		t.Fatalf("expected env patcher to resolve, got err: %v", err)
-	}
-	if pr.exePath != envBin {
-		t.Fatalf("expected env exePath, got %s", pr.exePath)
-	}
-
-	if err := pr.Resolve(flagBin); err != nil {
-		t.Fatalf("expected flag patcher to resolve, got err: %v", err)
-	}
-	if pr.exePath != flagBin {
-		t.Fatalf("expected flag exePath, got %s", pr.exePath)
-	}
-}
-
-func TestRunJSON_DryRun(t *testing.T) {
-	pr := &PatcherRunner{DryRun: true, SessionID: "sess"}
-	if err := pr.Resolve(""); err != nil {
-		t.Fatalf("resolve dry-run: %v", err)
-	}
-	out, errOut, err := pr.RunJSON(context.Background(), []byte("{}"), false)
-	if err != nil || string(errOut) != "" || string(out) == "" {
-		t.Fatalf("dry-run exec mismatch: out=%q errOut=%q err=%v", string(out), string(errOut), err)
-	}
-}
-
-func TestRunJSON_Executes(t *testing.T) {
-	// Create a temporary stub binary that echoes stdin to stdout and logs to stderr.
-	dir := t.TempDir()
+func buildPatcherStub(t *testing.T, dir string) string {
+	t.Helper()
 	src := []byte(`package main
 import (
   "fmt"; "io"; "os"
@@ -90,17 +24,61 @@ func main(){
 	if err := os.WriteFile(srcPath, src, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	binPath := filepath.Join(dir, "patcher-stub")
-	// Build the stub
+	binPath := filepath.Join(dir, "patcher")
 	cmd := exec.Command("go", "build", "-o", binPath, srcPath)
 	cmd.Env = os.Environ()
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Skipf("skipping build-dependent test on %s: %v (%s)", runtime.GOOS, err, string(out))
-		return
 	}
+	return binPath
+}
+
+func TestResolvePrefersPATH(t *testing.T) {
+	dir := t.TempDir()
+	binPath := buildPatcherStub(t, dir)
+	t.Setenv("PATH", dir)
+
+	pr := &PatcherRunner{}
+	if err := pr.Resolve(); err != nil {
+		t.Fatalf("resolve failed: %v", err)
+	}
+	if pr.exePath != binPath {
+		t.Fatalf("expected %s, got %s", binPath, pr.exePath)
+	}
+}
+
+func TestResolveMissing(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PATH", dir)
+
+	pr := &PatcherRunner{}
+	if err := pr.Resolve(); err == nil {
+		t.Fatalf("expected resolve error when patcher missing")
+	}
+}
+
+func TestRunJSON_DryRun(t *testing.T) {
+	pr := &PatcherRunner{DryRun: true, SessionID: "sess"}
+	if err := pr.Resolve(); err != nil {
+		t.Fatalf("resolve dry-run: %v", err)
+	}
+	out, errOut, err := pr.RunJSON(context.Background(), []byte("{}"), false)
+	if err != nil || string(errOut) != "" || string(out) == "" {
+		t.Fatalf("dry-run exec mismatch: out=%q errOut=%q err=%v", string(out), string(errOut), err)
+	}
+}
+
+func TestRunJSON_Executes(t *testing.T) {
+	dir := t.TempDir()
+	binPath := buildPatcherStub(t, dir)
+	t.Setenv("PATH", dir)
+
 	pr := &PatcherRunner{SessionID: "sess"}
-	if err := pr.Resolve(binPath); err != nil {
+	if err := pr.Resolve(); err != nil {
 		t.Fatal(err)
+	}
+	if pr.exePath != binPath {
+		t.Fatalf("expected resolved path %s, got %s", binPath, pr.exePath)
 	}
 	out, errOut, err := pr.RunJSON(context.Background(), []byte(`{"k":"v"}`), true)
 	if err != nil {

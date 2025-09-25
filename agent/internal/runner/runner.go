@@ -15,7 +15,6 @@ import (
 )
 
 type Runner struct {
-	MCTBin     string
 	Verbose    bool
 	DryRun     bool
 	exePath    string
@@ -24,42 +23,15 @@ type Runner struct {
 	Alias      string
 }
 
-// Resolve locates the mct binary, honoring MCT_BIN env or PATH.
+// Resolve locates the mct binary strictly from PATH (dry-run stores logical name only).
 func (r *Runner) Resolve() error {
 	if r.DryRun {
-		r.exePath = firstNonEmpty(r.MCTBin, os.Getenv("MCT_BIN"))
-		if r.exePath == "" {
-			r.exePath = "mct"
-		}
+		r.exePath = "mct"
 		return nil
-	}
-	if r.MCTBin != "" {
-		r.exePath = r.MCTBin
-		if _, err := os.Stat(r.exePath); err == nil {
-			return nil
-		}
-		// try PATH even if provided path missing
-	}
-	if v := os.Getenv("MCT_BIN"); v != "" {
-		if _, err := os.Stat(v); err == nil {
-			r.exePath = v
-			return nil
-		}
-	}
-	workspaceCandidates := []string{
-		"./mct/machtiani-cli",
-		"./mct/mct",
-		"./mct/bin/mct",
-	}
-	for _, c := range workspaceCandidates {
-		if _, err := os.Stat(c); err == nil {
-			r.exePath = c
-			return nil
-		}
 	}
 	p, err := exec.LookPath("mct")
 	if err != nil {
-		return fmt.Errorf("mct not found in PATH and MCT_BIN not set")
+		return fmt.Errorf("mct not found in PATH: %w", err)
 	}
 	r.exePath = p
 	return nil
@@ -148,13 +120,4 @@ func GenerateSessionID() string {
 	// Simple timestamp+rand; good enough for correlation
 	now := time.Now().UTC().Format("20060102T150405")
 	return fmt.Sprintf("agent-%s-%04d", now, rand.Intn(10000))
-}
-
-func firstNonEmpty(vals ...string) string {
-	for _, v := range vals {
-		if strings.TrimSpace(v) != "" {
-			return v
-		}
-	}
-	return ""
 }

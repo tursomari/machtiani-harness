@@ -4,32 +4,34 @@ Agent “composer” that iteratively asks focused questions via the `mct` CLI (
 
 ## Requirements
 - Go 1.22+
-- `mct` CLI available in PATH or provided via `--mct-bin` (see repo `mct/README.md` to build/install `mct`)
+- `mct` CLI available in PATH (run `./scripts/install-all.sh` from repo root to build/install `mct`, `file-discovery`, `patcher`, and `mct-agent` together)
 - OpenAI‑compatible model configuration (no implicit defaults):
   - `OPENAI_API_KEY` (required)
   - `OPENAI_BASE_URL` (required)
   - `OPENAI_MODEL` (required)
 
 ## Install
-Build the binary from this module:
 
-- Build in place
-```
-cd agent && go build -o mct-agent ./cmd/mct-agent
-```
+From the repo root, run the unified installer to build **mct**, **file-discovery**, **patcher**, and **mct-agent** together:
 
-- Install to GOPATH/GOBIN
 ```
-cd agent && go install ./cmd/mct-agent
-# Ensure $(go env GOPATH)/bin or $GOBIN is on PATH
+./scripts/install-all.sh
 ```
 
-- Install to a custom path (recommended for local use)
+The script writes binaries to `~/.local/bin` by default. Override the destination with `PREFIX` if you prefer a different path:
+
 ```
-mkdir -p ~/.local/bin
-cd agent && go build -o ~/.local/bin/mct-agent ./cmd/mct-agent
-# Ensure your shell PATH includes ~/.local/bin
-export PATH="$HOME/.local/bin:$PATH"
+PREFIX="$PWD/.mct-bin" ./scripts/install-all.sh
+export PATH="$PWD/.mct-bin/bin:$PATH"
+```
+
+After installation, confirm the tools resolve via PATH:
+
+```
+mct --help | head -n 1
+file-discovery -version
+patcher --version
+mct-agent --version
 ```
 
 ## Quick Start
@@ -54,7 +56,7 @@ Flags:
 - `--openai-base-url string`: Base URL for OpenAI-compatible endpoint
 - `--openai-model string`: Model name for planner and `mct` calls (alias: `--model`)
 - `--timeout-per-turn int`: per-turn timeout in seconds (default: 120; set 0 for unlimited)
-- `--mct-bin string`: explicit path to the `mct` binary
+- `--version`: print build metadata for the agent and exit
 - `--dry-run`: print intended `mct` calls; no subprocess or LLM
 - `--verbose`: verbose agent logging (prints the exact `mct` command)
 - `--final-file string`: path to write final answer-only artifact
@@ -80,7 +82,7 @@ Flags:
 
 ## Troubleshooting
 - “mct not found”
-  - Build and install `mct`, or set `--mct-bin /path/to/mct`, or export `MCT_BIN`.
+  - Run `./scripts/install-all.sh` (or ensure the prefix you installed to is on PATH).
 - “Missing model configuration”
   - Provide a valid `.machtiani/config.toml` (or set `MACHTIANI_CONFIG`) containing the model alias, or export `OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_MODEL` so the agent can generate one.
 - “Saved chat missing/unreadable”
@@ -99,25 +101,25 @@ Flags:
 Run `go test ./...` from `agent/` for internal modules (e.g., planner, runner, parser, transcript handling).
 
 ### Integration Tests (Live or Dry-Run)
-End-to-end tests against the built `mct-agent` binary, modeled after `file-discovery/run-live.sh`.
+`agent/tests/run-live.sh` exercises the PATH-installed binaries end-to-end.
 
 Prerequisites:
-1. Go installed and available in PATH.
-2. Optional for live mode: `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL` so the script can populate a temporary config. When unset, tests run in deterministic dry-run mode.
+1. Run `./scripts/install-all.sh` (or otherwise ensure `mct`, `file-discovery`, `patcher`, and `mct-agent` are already on PATH).
+2. Optional for live mode: export `OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_MODEL`. When these variables are absent the script forces deterministic dry-run mode.
 
-Notes:
-- The script automatically builds `mct-agent` and, if needed, `mct` + `file-discovery` using the standard `mct/build.sh` flow.
-- It writes a temporary `.machtiani/config.toml` under `agent/tests/bin` and exports `MACHTIANI_CONFIG` so the agent resolves its model via config. In live mode the file reuses your `OPENAI_*` env values; otherwise it falls back to stub credentials and forces `--dry-run`. The script passes `--model <alias>` that matches the generated config (your `OPENAI_MODEL` in live mode, a stub alias in dry-run).
-- Binaries are installed to `agent/tests/bin`, which is added to PATH for the test duration.
-- Set `FORCE_REBUILD=true` to force rebuilding all local test binaries.
-- Optional: Set `MCT_BIN=/path/to/mct` to use a specific `mct` binary; the script honors it unless `FORCE_REBUILD=true`.
+What the script does:
+- Performs a preflight that resolves each binary on PATH, prints `--version`/`go version -m` metadata, and fails if the commit/time does not match the current sources.
+- Generates a temporary `.machtiani/config.toml` under `agent/tests/tmp/` and exports `MACHTIANI_CONFIG` for the duration of the run. The file uses your `OPENAI_*` values in live mode and stub credentials in dry-run.
+- Runs Issue A/B/C happy-path scenarios (1-turn and 3-turn variants) plus deterministic error cases (empty input, missing config when in live mode). Artifacts land under `test-out-*` directories in the repo root.
 
-Running:
-- From repo root: `bash agent/tests/run-live.sh`
-  - Covers Issues A (init/single-turn), B (multi-turn/context), C (finalize/transcript/errors).
-  - 1-turn and 3-turn max variants.
-  - Artifacts: `test-out-*` dirs with stdout/stderr/final/transcript files.
-  - Validates: Turn counts (<= max), keywords (relevance), artifacts (non-empty), error handling.
+Run from the repo root:
+
+```
+./scripts/install-all.sh
+bash agent/tests/run-live.sh
+```
+
+The script no longer mutates PATH or accepts binary override flags; everything must resolve via PATH.
 - When `OPENAI_*` are not provided, the generated config points at stub credentials and the script forces `--dry-run`, so no network or `mct` subprocess calls occur; transcripts remain available for assertions while the final artifact is intentionally skipped.
 - Edge cases: Empty inputs, missing config/deps, timeouts (flaky; manual check advised).
 - Custom: Run in a test repo branch for git/file interactions.

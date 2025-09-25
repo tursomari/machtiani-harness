@@ -8,25 +8,48 @@ import (
 	"time"
 )
 
-func main() {
-	// Get Git commit hash
-	cmd := exec.Command("git", "rev-parse", "HEAD")
-	commitBytes, err := cmd.Output()
+func mustGit(args ...string) string {
+	cmd := exec.Command("git", args...)
+	output, err := cmd.Output()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error getting commit hash: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error running git %s: %v\n", strings.Join(args, " "), err)
 		os.Exit(1)
 	}
-	headOID := strings.TrimSpace(string(commitBytes))
+	return strings.TrimSpace(string(output))
+}
 
-	// Get build date
-	buildDate := time.Now().Format(time.RFC3339)
+func gitDirtyState() string {
+	cmd := exec.Command("git", "status", "--porcelain", "--untracked-files=no")
+	output, err := cmd.Output()
+	if err != nil {
+		return "unknown"
+	}
+	if strings.TrimSpace(string(output)) == "" {
+		return "clean"
+	}
+	return "dirty"
+}
 
-	// Start constructing ldflags
+func main() {
+	headOID := mustGit("rev-parse", "HEAD")
+	shortCommit := mustGit("rev-parse", "--short=12", "HEAD")
+	buildDate := time.Now().UTC().Format(time.RFC3339)
+	dirty := gitDirtyState()
+	version := "dev-" + shortCommit
+	if dirty == "dirty" {
+		version += "-dirty"
+	}
 
-    ldflags := fmt.Sprintf("-X 'github.com/tursomari/machtiani/mct/internal/api.HeadOID=%s' -X 'github.com/tursomari/machtiani/mct/internal/api.BuildDate=%s' -X 'github.com/tursomari/machtiani/mct/internal/api.MachtianiGitRemoteURL=%s' -X 'github.com/tursomari/machtiani/mct/internal/cli.SystemMessageFrequencyHours=24'",
-		headOID,
-		buildDate,
-		"https://github.com/tursomari/machtiani")
+	ldflags := []string{
+		fmt.Sprintf("-X 'github.com/tursomari/machtiani/mct/internal/api.HeadOID=%s'", headOID),
+		fmt.Sprintf("-X 'github.com/tursomari/machtiani/mct/internal/api.BuildDate=%s'", buildDate),
+		fmt.Sprintf("-X 'github.com/tursomari/machtiani/mct/internal/api.MachtianiGitRemoteURL=%s'", "https://github.com/tursomari/machtiani"),
+		"-X 'github.com/tursomari/machtiani/mct/internal/cli.SystemMessageFrequencyHours=24'",
+		fmt.Sprintf("-X 'github.com/tursomari/machtiani/mct/internal/cli.Version=%s'", version),
+		fmt.Sprintf("-X 'github.com/tursomari/machtiani/mct/internal/cli.Commit=%s'", shortCommit),
+		fmt.Sprintf("-X 'github.com/tursomari/machtiani/mct/internal/cli.BuiltAt=%s'", buildDate),
+		fmt.Sprintf("-X 'github.com/tursomari/machtiani/mct/internal/cli.Dirty=%s'", dirty),
+	}
 
-	fmt.Println(ldflags)
+	fmt.Println(strings.Join(ldflags, " "))
 }

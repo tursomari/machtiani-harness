@@ -20,13 +20,18 @@ import (
 	"github.com/tursomari/machtiani/mct/llm"
 )
 
+var (
+	Version = "dev"
+	Commit  = "unknown"
+	BuiltAt = "unknown"
+	Dirty   = "unknown"
+)
+
 type config struct {
 	maxSteps       int
 	model          string
 	agentModel     string
 	timeoutPerTurn int
-	mctBin         string
-	patcherBin     string
 	dryRun         bool
 	verbose        bool
 	finalFile      string
@@ -51,19 +56,29 @@ func (m *multiString) Set(value string) error {
 	return nil
 }
 
+func printVersion() {
+	fmt.Printf("mct-agent %s\ncommit: %s\nbuilt: %s\ndirty: %s\n", Version, Commit, BuiltAt, Dirty)
+}
+
 func main() {
 	os.Exit(run())
 }
 
 func run() int {
+	if len(os.Args) == 2 {
+		switch os.Args[1] {
+		case "--version", "-version":
+			printVersion()
+			return 0
+		}
+	}
+
 	var cfg config
 	fs := flag.NewFlagSet("mct-agent", flag.ExitOnError)
 	fs.IntVar(&cfg.maxSteps, "max-steps", 4, "maximum number of turns before finalizing")
 	fs.StringVar(&cfg.model, "model", "", "Model alias defined in .machtiani/config.toml")
 	fs.StringVar(&cfg.agentModel, "agent-model", "", "Legacy planner model alias (deprecated; use --model)")
 	fs.IntVar(&cfg.timeoutPerTurn, "timeout-per-turn", 120, "per-turn timeout in seconds (set 0 for no timeout)")
-	fs.StringVar(&cfg.mctBin, "mct-bin", "", "path to mct binary override")
-	fs.StringVar(&cfg.patcherBin, "patcher-bin", "", "path to patcher binary override (default: PATCHER_BIN or PATH)")
 	fs.BoolVar(&cfg.dryRun, "dry-run", false, "print intended mct calls; don’t execute")
 	fs.BoolVar(&cfg.verbose, "verbose", false, "verbose agent logging")
 	fs.StringVar(&cfg.finalFile, "final-file", "", "path to write final answer-only artifact (default: .machtiani/chat/agent-final-<sessionID>.txt)")
@@ -138,7 +153,6 @@ func run() int {
 
 	// Resolve mct runner
 	mctRunner := runner.Runner{
-		MCTBin:     cfg.mctBin,
 		Verbose:    cfg.verbose,
 		DryRun:     cfg.dryRun,
 		Model:      runtime.resolved,
@@ -147,13 +161,13 @@ func run() int {
 	}
 	if err := mctRunner.Resolve(); err != nil {
 		fmt.Fprintln(os.Stderr, "mct resolution error:", err)
-		fmt.Fprintln(os.Stderr, "Hint: install mct into PATH or set MCT_BIN to its location.")
+		fmt.Fprintln(os.Stderr, "Hint: install 'mct' into PATH (see mct/README.md).")
 		return 1
 	}
 
 	// Resolve patcher runner
 	pRunner := runner.PatcherRunner{Verbose: cfg.verbose, DryRun: cfg.dryRun, SessionID: sessionID}
-	if err := pRunner.Resolve(cfg.patcherBin); err != nil {
+	if err := pRunner.Resolve(); err != nil {
 		if cfg.verbose {
 			fmt.Fprintln(os.Stderr, "[patcher] resolve warning:", err)
 		}
@@ -429,7 +443,7 @@ func run() int {
 				fmt.Fprintln(os.Stderr, "[patcher] extracted JSON:", trimTo(string(jsonBytes), 1200))
 			}
 			// Ensure patcher is resolved (may have failed earlier lazily)
-			if err := pRunner.Resolve(cfg.patcherBin); err != nil {
+			if err := pRunner.Resolve(); err != nil {
 				_ = tr.WriteTurn(step, "Patcher: resolve failed", "", nil, "Error: "+err.Error(), "patch-error")
 				return 1
 			}
@@ -532,7 +546,7 @@ FINALIZE:
 				if cfg.verbose {
 					fmt.Fprintln(os.Stderr, "[patcher] pre-finalize extracted JSON:", trimTo(string(jsonBytes), 1200))
 				}
-				_ = pRunner.Resolve(cfg.patcherBin)
+				_ = pRunner.Resolve()
 				ctxP, cancelP := makeTurnContext(cfg.timeoutPerTurn)
 				stdout, stderr, perr := pRunner.RunJSON(ctxP, jsonBytes, cfg.verbose)
 				cancelP()

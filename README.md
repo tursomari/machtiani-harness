@@ -21,27 +21,13 @@ git submodule update --init --recursive
 ```
 
 ## Quick Install (recommended)
-Build `mct` and its bundled `file-discovery`, then install both alongside `mct-agent` into `~/.local/bin`.
+Run the unified installer from the repo root to build **mct**, **file-discovery**, **patcher**, and **mct-agent** into `~/.local/bin`:
 
 ```
-# 1) Build and install mct + file-discovery
-cd mct
-mkdir -p ~/.local/bin \
-  && ./build.sh \
-  && install -m 0755 ./machtiani-cli ~/.local/bin/mct \
-  && install -m 0755 ./bin/file-discovery ~/.local/bin/file-discovery \
-  && hash -r
-cd -
-
-# 2) Build and install mct-agent
-cd agent
-mkdir -p ~/.local/bin
-go build -o ~/.local/bin/mct-agent ./cmd/mct-agent
-cd -
-
-# 3) Ensure your shell PATH includes ~/.local/bin (if not already)
-export PATH="$HOME/.local/bin:$PATH"
+./scripts/install-all.sh
 ```
+
+Prefer a different prefix? Supply `PREFIX=...` and add the resulting `bin` directory to PATH.
 
 ## Environment Setup
 Both `mct` and `mct-agent` use OpenAI‑compatible configuration via `OPENAI_*`. Provide all three values explicitly (no implicit defaults):
@@ -62,9 +48,10 @@ Optional knobs:
 
 ## Verify Installation
 ```
-mct -h | head -n 1
-file-discovery -version || file-discovery -h | head -n 1
-mct-agent -h | head -n 1
+mct --help | head -n 1
+file-discovery -version
+patcher --version
+mct-agent --version
 ```
 
 Run a quick prompt with `mct` to confirm LLM access:
@@ -80,11 +67,11 @@ mct-agent run "Explain the architecture and identify main components" --verbose
 
 Useful flags (agent):
 - `--max-steps int`: max `mct` Q&A turns before finalizing (default ~4).
-- `--mct-bin path`: explicit path to the `mct` binary if not on PATH.
 - `--openai-api-key string`: API key for OpenAI‑compatible endpoint.
 - `--openai-base-url string`: Base URL for OpenAI‑compatible endpoint.
 - `--openai-model string`: Model name used by planner and `mct` (alias: `--model`).
 - `--timeout-per-turn int`: seconds per turn for the agent loop.
+- `--version`: print build metadata for the agent and exit.
 - `--dry-run`: print intended calls without executing.
 - `--verbose`: verbose logging.
 
@@ -122,11 +109,16 @@ cd -
 cd agent
 go build -o ~/.local/bin/mct-agent ./cmd/mct-agent
 cd -
+
+# Build and install patcher
+cd patcher
+go build -o ~/.local/bin/patcher ./cmd/patcher
+cd -
 ```
 
 ## Troubleshooting
 - Command not found
-  - Ensure `~/.local/bin` is on PATH and that you ran the install commands. Rehash your shell if needed (`hash -r`).
+  - Re-run `./scripts/install-all.sh` (or the manual steps) and ensure the chosen prefix (default `~/.local/bin`) is on PATH. Rehash your shell if needed (`hash -r`).
 - Missing model configuration / auth errors
   - Set `OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_MODEL` (or pass `--openai-*` flags to the agent).
 - `file-discovery` not found

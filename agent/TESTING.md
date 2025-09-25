@@ -1,35 +1,37 @@
 Agent Integration Tests (mct-agent)
 
 - Entry script: `agent/tests/run-live.sh`
-- Purpose: Exercise `mct-agent` end-to-end against a locally built binary. Supports live LLM calls or dry-run (no network/subprocess side effects).
-- Auto-handles dependencies: builds `mct-agent` and, if missing, builds `mct` + `file-discovery` into `agent/tests/bin` using the standard `mct/build.sh` flow.
- - Optional override: set `MCT_BIN=/path/to/mct` to use a specific binary (ignored when `FORCE_REBUILD=true`).
-- Config management: writes a temporary `.machtiani/config.toml` under `agent/tests/bin`, exports `MACHTIANI_CONFIG`, and invokes the agent with `--model <alias>` that matches the generated config (your `OPENAI_MODEL` in live mode, a stub alias in dry-run). Live mode mirrors your `OPENAI_*` values into that file; dry-run mode uses stub credentials.
+- Purpose: Exercise `mct-agent` end-to-end using the binaries already on PATH. Supports live LLM calls or deterministic dry-run.
+- Preflight: validates `mct-agent`, `mct`, `file-discovery`, and `patcher` found on PATH, prints `--version`/`go version -m` metadata, and fails if the commit/time is out of sync with the current repo.
+- Config: produces a temporary `.machtiani/config.toml` under `agent/tests/tmp/`; exports `MACHTIANI_CONFIG` for the run. Live mode reuses your `OPENAI_*` values, dry-run mode writes stub credentials and forces `--dry-run`.
 
-Scenarios
-- Issue A/B/C run twice each:
-  - 1-turn fast path: `--max-steps=1` (timeout per turn 300s)
-  - 3-turn path: `--max-steps=3` (timeout per turn 300s), often surfacing planner `ask`/`patch` decisions
+Scenarios covered
+- Issue A/B/C happy paths (1-turn and 3-turn max steps)
+- Error: empty prompt
+- Error: missing config (only when live env vars are present)
 
 Modes
-- Live: set `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL` so the generated config points at a real provider and the script runs without `--dry-run`.
-- Dry-run: default when `OPENAI_*` not set; the generated config uses stub credentials, `--dry-run` is added, and the run avoids network and `mct` subprocess calls while still producing deterministic transcripts (final artifacts are skipped by the agent in this mode).
+- Live: export `OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_MODEL` before running.
+- Dry-run: omit the env vars; the script injects stub credentials and appends `--dry-run`.
 
-Validations performed
-- `Conclusion:` block present in stdout
-- Transcript file exists and contains `## Conclusion` and expected turn headings
-- For 3-turn: planner decisions logged (may vary by model)
-- Final answer artifact exists and is non-empty
+Artifacts and validations
+- Each case writes `test-out-*` directories containing stdout/stderr, transcripts, and final artifacts when applicable.
+- Transcript turn counts checked against the `--max-steps` bounds; keywords asserted in stdout (and final artifacts in live mode).
+- Error cases assert canonical error messages in stderr/stdout.
 
 Run locally
 ```
-# From repo root; the script builds required binaries automatically
+./scripts/install-all.sh
 bash agent/tests/run-live.sh
 ```
-Artifacts directory: created as `test-out-*` under the current working directory.
 
 CI guidance
 ```
-# Optional explicit build; otherwise the script will build locally
-FORCE_REBUILD=true bash agent/tests/run-live.sh
+PREFIX="$HOME/.local" ./scripts/install-all.sh
+export PATH="$HOME/.local/bin:$PATH"
+bash agent/tests/run-live.sh
 ```
+
+Notes
+- The script never mutates PATH or accepts binary override flags; ensure the install location is already on PATH before invoking it.
+- Timeout simulations that previously used stubs are skipped; rely on the live preflight + PATH binaries instead.

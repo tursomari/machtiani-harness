@@ -1,16 +1,16 @@
 package cli
 
 import (
-    "os"
-    "strconv"
-    "strings"
-    "time"
+	"os"
+	"strconv"
+	"strings"
+	"time"
 
-    "github.com/google/uuid"
-    "github.com/spf13/pflag"
-    "github.com/tursomari/machtiani/mct/internal/api"
-    "github.com/tursomari/machtiani/mct/internal/git"
-    "github.com/tursomari/machtiani/mct/internal/utils"
+	"github.com/google/uuid"
+	"github.com/spf13/pflag"
+	"github.com/tursomari/machtiani/mct/internal/api"
+	"github.com/tursomari/machtiani/mct/internal/git"
+	"github.com/tursomari/machtiani/mct/internal/utils"
 )
 
 // Build-time variable for system message frequency
@@ -18,20 +18,22 @@ var SystemMessageFrequencyHours = "24" // Default 24 hours, will be set via ldfl
 
 func Execute() {
 
-    // Handle help variants immediately (before any network/system-message work)
-    if len(os.Args) >= 2 {
-        cmd := os.Args[1]
-        if cmd == "help" || cmd == "--help" || cmd == "-h" {
-            printHelp()
-            return
-        }
-    }
-    // Respect an existing agent-provided session; otherwise generate a fresh one per run
-    sessionID := strings.TrimSpace(os.Getenv("MACHTIANI_SESSION_ID"))
-    if sessionID == "" {
-        sessionID = uuid.New().String()
-        os.Setenv("MACHTIANI_SESSION_ID", sessionID)
-    }
+	if len(os.Args) >= 2 {
+		switch os.Args[1] {
+		case "--version", "-version":
+			printVersion()
+			return
+		case "help", "--help", "-h":
+			printHelp()
+			return
+		}
+	}
+	// Respect an existing agent-provided session; otherwise generate a fresh one per run
+	sessionID := strings.TrimSpace(os.Getenv("MACHTIANI_SESSION_ID"))
+	if sessionID == "" {
+		sessionID = uuid.New().String()
+		os.Setenv("MACHTIANI_SESSION_ID", sessionID)
+	}
 	// First, check if we're in answer-only mode early
 	isAnswerOnlyMode := utils.IsAnswerOnlyMode()
 
@@ -109,14 +111,14 @@ func Execute() {
 		{
 			missingRequired := false
 			var missingFields []string
-            if config.Environment.ModelAPIKey == "" {
-                missingFields = append(missingFields, "OPENAI_API_KEY")
-                missingRequired = true
-            }
-            if config.Environment.ModelBaseURL == "" {
-                missingFields = append(missingFields, "OPENAI_BASE_URL")
-                missingRequired = true
-            }
+			if config.Environment.ModelAPIKey == "" {
+				missingFields = append(missingFields, "OPENAI_API_KEY")
+				missingRequired = true
+			}
+			if config.Environment.ModelBaseURL == "" {
+				missingFields = append(missingFields, "OPENAI_BASE_URL")
+				missingRequired = true
+			}
 			if api.MachtianiURL == "" {
 				missingFields = append(missingFields, "MACHTIANI_URL")
 				missingRequired = true
@@ -128,17 +130,17 @@ func Execute() {
 			if missingRequired {
 				utils.PrintIfNotAnswerOnly(isAnswerOnlyMode, "Error: Missing required configuration.\n")
 				for _, field := range missingFields {
-                    if field == "OPENAI_API_KEY" {
-                        utils.PrintIfNotAnswerOnly(isAnswerOnlyMode, "\nPlease set OPENAI_API_KEY with your provider API key, such as:\n\n$ export OPENAI_API_KEY=sk...\n\n")
-                    } else if field == "OPENAI_BASE_URL" {
-                        utils.PrintIfNotAnswerOnly(isAnswerOnlyMode, "\nPlease set OPENAI_BASE_URL for your API provider, e.g.:\n\n$ export OPENAI_BASE_URL=\"https://api.openai.com/v1\"\n")
-                    } else {
-                        utils.PrintIfNotAnswerOnly(isAnswerOnlyMode, "  - %s (environment variable or config file entry)\n", field)
-                    }
-                }
-                os.Exit(1)
-            }
-        }
+					if field == "OPENAI_API_KEY" {
+						utils.PrintIfNotAnswerOnly(isAnswerOnlyMode, "\nPlease set OPENAI_API_KEY with your provider API key, such as:\n\n$ export OPENAI_API_KEY=sk...\n\n")
+					} else if field == "OPENAI_BASE_URL" {
+						utils.PrintIfNotAnswerOnly(isAnswerOnlyMode, "\nPlease set OPENAI_BASE_URL for your API provider, e.g.:\n\n$ export OPENAI_BASE_URL=\"https://api.openai.com/v1\"\n")
+					} else {
+						utils.PrintIfNotAnswerOnly(isAnswerOnlyMode, "  - %s (environment variable or config file entry)\n", field)
+					}
+				}
+				os.Exit(1)
+			}
+		}
 		// Resolve API key early, used by connectivity checks after per-command parsing
 		var apiKey *string = utils.GetCodeHostAPIKey(config)
 		compatible, message, err := api.GetInstallInfo()
@@ -197,14 +199,14 @@ func Execute() {
 		{
 			missingRequired := false
 			var missingFields []string
-            if config.Environment.ModelAPIKey == "" {
-                missingFields = append(missingFields, "OPENAI_API_KEY")
-                missingRequired = true
-            }
-            if config.Environment.ModelBaseURL == "" {
-                missingFields = append(missingFields, "OPENAI_BASE_URL")
-                missingRequired = true
-            }
+			if config.Environment.ModelAPIKey == "" {
+				missingFields = append(missingFields, "OPENAI_API_KEY")
+				missingRequired = true
+			}
+			if config.Environment.ModelBaseURL == "" {
+				missingFields = append(missingFields, "OPENAI_BASE_URL")
+				missingRequired = true
+			}
 			if api.MachtianiURL == "" {
 				missingFields = append(missingFields, "MACHTIANI_URL")
 				missingRequired = true
@@ -216,17 +218,17 @@ func Execute() {
 			if missingRequired {
 				utils.PrintIfNotAnswerOnly(isAnswerOnlyMode, "Error: Missing required configuration.\n")
 				for _, field := range missingFields {
-                    if field == "OPENAI_API_KEY" {
-                        utils.PrintIfNotAnswerOnly(isAnswerOnlyMode, "\nPlease set OPENAI_API_KEY with your provider API key, such as:\n\n$ export OPENAI_API_KEY=sk...\n\n")
-                    } else if field == "OPENAI_BASE_URL" {
-                        utils.PrintIfNotAnswerOnly(isAnswerOnlyMode, "\nPlease set OPENAI_BASE_URL for your API provider, e.g.:\n\n$ export OPENAI_BASE_URL=\"https://api.openai.com/v1\"\n")
-                    } else {
-                        utils.PrintIfNotAnswerOnly(isAnswerOnlyMode, "  - %s (environment variable or config file entry)\n", field)
-                    }
-                }
-                os.Exit(1)
-            }
-        }
+					if field == "OPENAI_API_KEY" {
+						utils.PrintIfNotAnswerOnly(isAnswerOnlyMode, "\nPlease set OPENAI_API_KEY with your provider API key, such as:\n\n$ export OPENAI_API_KEY=sk...\n\n")
+					} else if field == "OPENAI_BASE_URL" {
+						utils.PrintIfNotAnswerOnly(isAnswerOnlyMode, "\nPlease set OPENAI_BASE_URL for your API provider, e.g.:\n\n$ export OPENAI_BASE_URL=\"https://api.openai.com/v1\"\n")
+					} else {
+						utils.PrintIfNotAnswerOnly(isAnswerOnlyMode, "  - %s (environment variable or config file entry)\n", field)
+					}
+				}
+				os.Exit(1)
+			}
+		}
 		var apiKey *string = utils.GetCodeHostAPIKey(config)
 		compatible, message, err := api.GetInstallInfo()
 		if err != nil {
@@ -313,14 +315,14 @@ func Execute() {
 		{
 			missingRequired := false
 			var missingFields []string
-            if config.Environment.ModelAPIKey == "" {
-                missingFields = append(missingFields, "OPENAI_API_KEY")
-                missingRequired = true
-            }
-            if config.Environment.ModelBaseURL == "" {
-                missingFields = append(missingFields, "OPENAI_BASE_URL")
-                missingRequired = true
-            }
+			if config.Environment.ModelAPIKey == "" {
+				missingFields = append(missingFields, "OPENAI_API_KEY")
+				missingRequired = true
+			}
+			if config.Environment.ModelBaseURL == "" {
+				missingFields = append(missingFields, "OPENAI_BASE_URL")
+				missingRequired = true
+			}
 			if api.MachtianiURL == "" {
 				missingFields = append(missingFields, "MACHTIANI_URL")
 				missingRequired = true
@@ -332,17 +334,17 @@ func Execute() {
 			if missingRequired {
 				utils.PrintIfNotAnswerOnly(isAnswerOnlyMode, "Error: Missing required configuration.\n")
 				for _, field := range missingFields {
-                    if field == "OPENAI_API_KEY" {
-                        utils.PrintIfNotAnswerOnly(isAnswerOnlyMode, "\nPlease set OPENAI_API_KEY with your provider API key, such as:\n\n$ export OPENAI_API_KEY=sk...\n\n")
-                    } else if field == "OPENAI_BASE_URL" {
-                        utils.PrintIfNotAnswerOnly(isAnswerOnlyMode, "\nPlease set OPENAI_BASE_URL for your API provider, e.g.:\n\n$ export OPENAI_BASE_URL=\"https://api.openai.com/v1\"\n")
-                    } else {
-                        utils.PrintIfNotAnswerOnly(isAnswerOnlyMode, "  - %s (environment variable or config file entry)\n", field)
-                    }
-                }
-                os.Exit(1)
-            }
-        }
+					if field == "OPENAI_API_KEY" {
+						utils.PrintIfNotAnswerOnly(isAnswerOnlyMode, "\nPlease set OPENAI_API_KEY with your provider API key, such as:\n\n$ export OPENAI_API_KEY=sk...\n\n")
+					} else if field == "OPENAI_BASE_URL" {
+						utils.PrintIfNotAnswerOnly(isAnswerOnlyMode, "\nPlease set OPENAI_BASE_URL for your API provider, e.g.:\n\n$ export OPENAI_BASE_URL=\"https://api.openai.com/v1\"\n")
+					} else {
+						utils.PrintIfNotAnswerOnly(isAnswerOnlyMode, "  - %s (environment variable or config file entry)\n", field)
+					}
+				}
+				os.Exit(1)
+			}
+		}
 		var apiKey *string = utils.GetCodeHostAPIKey(config)
 		compatible, message, err := api.GetInstallInfo()
 		if err != nil {
@@ -404,26 +406,26 @@ func Execute() {
 			// Only require model configuration for prompt
 			missingRequired := false
 			var missingFields []string
-            if config.Environment.ModelAPIKey == "" {
-                missingFields = append(missingFields, "OPENAI_API_KEY")
-                missingRequired = true
-            }
-            if config.Environment.ModelBaseURL == "" {
-                missingFields = append(missingFields, "OPENAI_BASE_URL")
-                missingRequired = true
-            }
-            if missingRequired {
-                utils.PrintIfNotAnswerOnly(isAnswerOnlyMode, "Error: Missing required configuration.\n")
-                for _, field := range missingFields {
-                    if field == "OPENAI_API_KEY" {
-                        utils.PrintIfNotAnswerOnly(isAnswerOnlyMode, "\nPlease set OPENAI_API_KEY with your provider API key, such as:\n\n$ export OPENAI_API_KEY=sk...\n\n")
-                    } else if field == "OPENAI_BASE_URL" {
-                        utils.PrintIfNotAnswerOnly(isAnswerOnlyMode, "\nPlease set OPENAI_BASE_URL for your API provider, e.g.:\n\n$ export OPENAI_BASE_URL=\"https://api.openai.com/v1\"\n")
-                    }
-                }
-                os.Exit(1)
-            }
-            startTime := time.Now()
+			if config.Environment.ModelAPIKey == "" {
+				missingFields = append(missingFields, "OPENAI_API_KEY")
+				missingRequired = true
+			}
+			if config.Environment.ModelBaseURL == "" {
+				missingFields = append(missingFields, "OPENAI_BASE_URL")
+				missingRequired = true
+			}
+			if missingRequired {
+				utils.PrintIfNotAnswerOnly(isAnswerOnlyMode, "Error: Missing required configuration.\n")
+				for _, field := range missingFields {
+					if field == "OPENAI_API_KEY" {
+						utils.PrintIfNotAnswerOnly(isAnswerOnlyMode, "\nPlease set OPENAI_API_KEY with your provider API key, such as:\n\n$ export OPENAI_API_KEY=sk...\n\n")
+					} else if field == "OPENAI_BASE_URL" {
+						utils.PrintIfNotAnswerOnly(isAnswerOnlyMode, "\nPlease set OPENAI_BASE_URL for your API provider, e.g.:\n\n$ export OPENAI_BASE_URL=\"https://api.openai.com/v1\"\n")
+					}
+				}
+				os.Exit(1)
+			}
+			startTime := time.Now()
 			args := os.Args[2:]
 			headCommitHash, err := git.GetHeadCommitHash()
 			if err != nil {
