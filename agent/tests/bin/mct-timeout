@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Minimal stub used by timeout error-case tests to simulate a slow mct binary.
+# Sleeps long enough to exceed agent --timeout-per-turn when set to 1 second.
+sleep "${MCT_TIMEOUT_SLEEP:-5}"
+# Exit successfully so the context cancellation is what terminates us.
+exit 0

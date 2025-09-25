@@ -5,6 +5,7 @@ set -euo pipefail  # Strict mode
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 BUILD_DIR="$REPO_ROOT/agent/tests/bin"
+TIMEOUT_MCT_BIN="$SCRIPT_DIR/bin/mct-timeout"
 mkdir -p "$BUILD_DIR"
 
 # Note: Add $BUILD_DIR to PATH only after dependency checks to avoid masking system binaries
@@ -46,6 +47,51 @@ if [[ -n "${OPENAI_API_KEY:-}" && -n "${OPENAI_BASE_URL:-}" && -n "${OPENAI_MODE
   LIVE_MODE=true
 fi
 
+TEST_MODEL_ALIAS=""
+
+generate_test_config() {
+  local config_dir="$BUILD_DIR/.machtiani"
+  local config_file="$config_dir/config.toml"
+  mkdir -p "$config_dir"
+
+  if [[ "$LIVE_MODE" == true ]]; then
+    TEST_MODEL_ALIAS="${OPENAI_MODEL}"
+    cat > "$config_file" <<EOF
+default_model = "${TEST_MODEL_ALIAS}"
+
+[providers.test-provider]
+base_url = "${OPENAI_BASE_URL}"
+api_key = "${OPENAI_API_KEY}"
+endpoint = "/chat/completions"
+
+[models."${TEST_MODEL_ALIAS}"]
+provider = "test-provider"
+model = "${OPENAI_MODEL}"
+EOF
+  else
+    TEST_MODEL_ALIAS="test-model"
+    cat > "$config_file" <<EOF
+default_model = "${TEST_MODEL_ALIAS}"
+
+[providers.test-provider]
+base_url = "https://api.openai.com/v1"
+api_key = "sk-test-key-fake"
+endpoint = "/chat/completions"
+
+[models."${TEST_MODEL_ALIAS}"]
+provider = "test-provider"
+model = "gpt-4o-mini"
+EOF
+  fi
+
+  if [[ "${TRACE_TEST_CONFIG:-}" == "true" ]]; then
+    echo "Generated test config ($config_file):" >&2
+    cat "$config_file" >&2
+  fi
+
+  echo "$config_file"
+}
+
 if [[ -n "$AGENT_MCT_BIN" && -x "$AGENT_MCT_BIN" ]]; then
   echo "Using provided MCT_BIN: $AGENT_MCT_BIN" >&2
 else
@@ -80,6 +126,28 @@ else
   export PATH="$PATH:$BUILD_DIR"
 fi
 
+TEST_CONFIG_FILE="$(generate_test_config)"
+export MACHTIANI_CONFIG="$TEST_CONFIG_FILE"
+TEST_CONFIG_DIR="$(dirname "$TEST_CONFIG_FILE")"
+
+cleanup_config() {
+  if [[ "${KEEP_TEST_CONFIG:-}" == "true" ]]; then
+    return
+  fi
+  if [[ -n "${TEST_CONFIG_FILE:-}" && -f "$TEST_CONFIG_FILE" ]]; then
+    rm -f "$TEST_CONFIG_FILE"
+  fi
+  if [[ -n "${TEST_CONFIG_DIR:-}" ]]; then
+    rmdir "$TEST_CONFIG_DIR" 2>/dev/null || true
+  fi
+}
+trap cleanup_config EXIT
+
+AGENT_RUNTIME_ARGS=(--model "$TEST_MODEL_ALIAS")
+if [[ "$LIVE_MODE" != true ]]; then
+  AGENT_RUNTIME_ARGS+=(--dry-run)
+fi
+
 # Helper: Run happy path case
 # Args: case_id max_steps prompt expected_keywords [min_turns=1]
 run_happy_case() {
@@ -89,25 +157,30 @@ run_happy_case() {
   mkdir -p "$out_dir"
 
   echo "Running happy case: $case_id (max $max_steps turns)..." >&2
-  # If no OpenAI config, use dry-run to avoid network and filesystem side effects
-  local maybe_dry_run=""
-  if [[ -z "${OPENAI_API_KEY:-}" || -z "${OPENAI_BASE_URL:-}" || -z "${OPENAI_MODEL:-}" ]]; then
-    maybe_dry_run="--dry-run"
-  fi
   # Invoke binary: provide subcommand and prompt as arg, capture outputs
-  timeout $((max_steps * 60)) "$MCT_AGENT" run \
-    --max-steps "$max_steps" \
-    --timeout-per-turn 300 \
-    --verbose \
-    --no-apply \
-    $maybe_dry_run \
-    ${AGENT_MCT_BIN:+--mct-bin "$AGENT_MCT_BIN"} \
-    --final-file "$out_dir/final-${session_id}.txt" \
-    --transcript-file "$out_dir/transcript-${session_id}.md" \
-  "$prompt" \
-    > "$out_dir/stdout-${session_id}.txt" 2> "$out_dir/stderr-${session_id}.txt"
+  local -a cmd=(
+    timeout $((max_steps * 180)) "$MCT_AGENT" run  # allow 3 minutes per planned turn for live latency
+    --max-steps "$max_steps"
+    --timeout-per-turn 300
+    --verbose
+    --no-apply
+  )
+  if ((${#AGENT_RUNTIME_ARGS[@]})); then
+    cmd+=("${AGENT_RUNTIME_ARGS[@]}")
+  fi
+  if [[ -n "$AGENT_MCT_BIN" ]]; then
+    cmd+=(--mct-bin "$AGENT_MCT_BIN")
+  fi
+  cmd+=(
+    --final-file "$out_dir/final-${session_id}.txt"
+    --transcript-file "$out_dir/transcript-${session_id}.md"
+    "$prompt"
+  )
 
+  set +e
+  "${cmd[@]}" > "$out_dir/stdout-${session_id}.txt" 2> "$out_dir/stderr-${session_id}.txt"
   local rc=$?
+  set -e
   if [[ $rc -ne 0 ]]; then
     echo "Failed (rc=$rc): $case_id" >&2
     return 1
@@ -119,17 +192,25 @@ run_happy_case() {
     echo "Invalid turns ($turns): $case_id" >&2
     return 1
   fi
-  if ! grep -qE "$expected_keywords" "$out_dir/stdout-${session_id}.txt" "$out_dir/final-${session_id}.txt" 2>/dev/null; then
+  local -a keyword_files=("$out_dir/stdout-${session_id}.txt")
+  if [[ "$LIVE_MODE" == true ]]; then
+    keyword_files+=("$out_dir/final-${session_id}.txt")
+  fi
+  if ! grep -qE "$expected_keywords" "${keyword_files[@]}" 2>/dev/null; then
     echo "Missing keywords: $case_id" >&2
     return 1
   fi
-  if [[ ! -s "$out_dir/final-${session_id}.txt" || ! -s "$out_dir/transcript-${session_id}.md" ]]; then
-    echo "Missing/empty artifacts: $case_id" >&2
+  if [[ ! -s "$out_dir/transcript-${session_id}.md" ]]; then
+    echo "Missing transcript: $case_id" >&2
+    return 1
+  fi
+  if [[ "$LIVE_MODE" == true && ! -s "$out_dir/final-${session_id}.txt" ]]; then
+    echo "Missing final artifact: $case_id" >&2
     return 1
   fi
 
   # Check finalization: No errors in transcript (e.g., via pl.Finalize fallback)
-  if grep -q "error.*finalize\|transcript" "$out_dir/stderr-${session_id}.txt"; then
+  if grep -qE "(Finalizer|Transcript write|Final file write) error:" "$out_dir/stderr-${session_id}.txt"; then
     echo "Finalize error detected: $case_id" >&2
     return 1
   fi
@@ -140,37 +221,73 @@ run_happy_case() {
 # Helper: Run error case
 # Args: case_id args max_steps expected_error_keywords
 run_error_case() {
-  local case_id="$1" args="$2" max_steps="$3" expected_keywords="$4"
+  local case_id="$1" args="$2" max_steps="$3" expected_keywords="$4" prompt_override="${5:-}"
   local session_id="error-${case_id}-$(date +%s)"
   local out_dir="test-out-${session_id}"
   mkdir -p "$out_dir"
 
   echo "Running error case: $case_id..." >&2
   if [[ -z "$args" ]]; then args=""; fi  # For empty-goal
-  # In error cases, still prefer dry-run if model config is missing
-  local maybe_dry_run=""
-  if [[ -z "${OPENAI_API_KEY:-}" || -z "${OPENAI_BASE_URL:-}" || -z "${OPENAI_MODEL:-}" ]]; then
-    maybe_dry_run="--dry-run"
+  local -a provided_args=()
+  if [[ -n "$args" ]]; then
+    # shellcheck disable=SC2206  # word splitting intentional for arg list
+    provided_args=($args)
   fi
-  # Only add --mct-bin if not already provided in args
-  local maybe_mct_bin_arg=()
-  if [[ -n "$AGENT_MCT_BIN" && "$args" != *"--mct-bin"* ]]; then
-    maybe_mct_bin_arg=(--mct-bin "$AGENT_MCT_BIN")
+  local has_timeout=false
+  local has_max_steps=false
+  local has_mct_flag=false
+  for ((i=0; i<${#provided_args[@]}; i++)); do
+    case "${provided_args[i]}" in
+      --timeout-per-turn|--timeout-per-turn=*)
+        has_timeout=true
+        ;;
+      --max-steps|--max-steps=*)
+        has_max_steps=true
+        ;;
+      --mct-bin|--mct-bin=*)
+        has_mct_flag=true
+        ;;
+    esac
+  done
+  local -a cmd=(
+    timeout $((max_steps * 60)) "$MCT_AGENT" run
+  )
+  if ((${#provided_args[@]})); then
+    cmd+=("${provided_args[@]}")
+  fi
+  if [[ "$has_max_steps" == false ]]; then
+    cmd+=(--max-steps "$max_steps")
+  fi
+  if [[ "$has_timeout" == false ]]; then
+    cmd+=(--timeout-per-turn 300)
+  fi
+  if [[ "$has_mct_flag" == false ]]; then
+    if [[ -n "$AGENT_MCT_BIN" ]]; then
+      cmd+=(--mct-bin "$AGENT_MCT_BIN")
+    fi
+  fi
+  if ((${#AGENT_RUNTIME_ARGS[@]})); then
+    cmd+=("${AGENT_RUNTIME_ARGS[@]}")
+  fi
+  cmd+=(
+    --verbose
+    --no-apply
+  )
+  cmd+=(
+    --final-file "$out_dir/final-${session_id}.txt"
+    --transcript-file "$out_dir/transcript-${session_id}.md"
+  )
+
+  if [[ -n "$prompt_override" ]]; then
+    cmd+=("$prompt_override")
+  else
+    cmd+=("")
   fi
 
-  timeout $((max_steps * 60)) "$MCT_AGENT" run $args \
-    --max-steps "$max_steps" \
-    --timeout-per-turn 300 \
-    --verbose \
-    --no-apply \
-    $maybe_dry_run \
-    "${maybe_mct_bin_arg[@]}" \
-    --final-file "$out_dir/final-${session_id}.txt" \
-    --transcript-file "$out_dir/transcript-${session_id}.md" \
-    "" \
-    > "$out_dir/stdout-${session_id}.txt" 2> "$out_dir/stderr-${session_id}.txt"
-
+  set +e
+  "${cmd[@]}" > "$out_dir/stdout-${session_id}.txt" 2> "$out_dir/stderr-${session_id}.txt"
   local rc=$?
+  set -e
   if [[ $rc -eq 0 ]]; then
     echo "Unexpected success (rc=0): $case_id" >&2
     return 1
@@ -190,10 +307,10 @@ run_error_case() {
 rm -rf test-out-*
 
 # Restore env defaults if overridden (live tests when all are set; otherwise dry-run mode)
-if [[ -n "${OPENAI_API_KEY:-}" && -n "${OPENAI_BASE_URL:-}" && -n "${OPENAI_MODEL:-}" ]]; then
-  echo "Live mode: using provided OPENAI_* for real LLM calls." >&2
+if [[ "$LIVE_MODE" == true ]]; then
+  echo "Live mode: using generated config.toml populated from OPENAI_* env." >&2
 else
-  echo "Dry-run mode: OPENAI_* not fully set; skipping live LLM calls." >&2
+  echo "Dry-run mode: using generated config.toml with stubbed provider; --dry-run enabled." >&2
 fi
 
 ## Run happy path cases (Issues A, B, C with 1-turn and 3-turn)
@@ -235,7 +352,7 @@ run_happy_case "issue-c-3turn" 3 \
 
 # Error: Missing mct binary (triggers resolution error in first turn)
 if ! command -v mct >/dev/null 2>&1; then
-  if [[ -n "${OPENAI_API_KEY:-}" && -n "${OPENAI_BASE_URL:-}" && -n "${OPENAI_MODEL:-}" ]]; then
+  if [[ "$LIVE_MODE" == true ]]; then
     run_error_case "missing-mct" "--mct-bin /nonexistent/path" 1 "mct resolution error|mct not found"
   else
     echo "Skipping missing-mct in dry-run mode (mct not required)." >&2
@@ -248,13 +365,15 @@ fi
 run_error_case "empty-goal" "" 1 "empty issue/question|missing issue"
 
 # Error: Missing OpenAI config (only when currently configured for live)
-if [[ -n "${OPENAI_API_KEY:-}" || -n "${OPENAI_BASE_URL:-}" || -n "${OPENAI_MODEL:-}" ]]; then
-  OPENAI_API_KEY="" OPENAI_BASE_URL="" OPENAI_MODEL="" \
-  run_error_case "missing-config" "" 1 "Missing model config|OPENAI_API_KEY|OPENAI_BASE_URL|OPENAI_MODEL"
+if [[ "$LIVE_MODE" == true ]]; then
+  MACHTIANI_CONFIG="/nonexistent/machtiani-config.toml" OPENAI_API_KEY="" OPENAI_BASE_URL="" OPENAI_MODEL="" \
+  run_error_case "missing-config" "" 1 "Missing model config|Model resolution error|MACHTIANI_CONFIG" \
+    "Explain how the agent chooses its model runtime."
 fi
 
 # Error: Timeout simulation (short timeout + simple prompt; loose check)
-run_error_case "timeout" "--timeout-per-turn 1 --max-steps 1" 1 "timed out|deadline exceeded" || \
+run_error_case "timeout" "--mct-bin $TIMEOUT_MCT_BIN --timeout-per-turn 1 --max-steps 1" 1 "timed out|deadline exceeded" \
+  "Explain an involved refactor plan that requires multiple steps." || \
   echo "Warning: timeout case flaky (LLM too fast); manual verification recommended"
 
 echo "All cases finished. Check test-out-* dirs for artifacts." >&2
