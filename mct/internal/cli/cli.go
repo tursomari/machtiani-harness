@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"os"
 	"strconv"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/tursomari/machtiani/mct/internal/api"
 	"github.com/tursomari/machtiani/mct/internal/git"
+	"github.com/tursomari/machtiani/mct/internal/readme"
 	"github.com/tursomari/machtiani/mct/internal/utils"
 )
 
@@ -87,6 +89,19 @@ func Execute() {
 	if err != nil {
 		utils.LogErrorIfNotAnswerOnly(isAnswerOnlyMode, err, "Error loading config")
 		os.Exit(1)
+	}
+
+	if headCommitHash, err := git.GetHeadCommitHash(); err == nil {
+		if mgr, mgrErr := readme.NewManager(isAnswerOnlyMode); mgrErr == nil {
+			ctx := context.Background()
+			if runErr := mgr.Run(ctx, headCommitHash); runErr != nil {
+				utils.LogErrorIfNotAnswerOnly(isAnswerOnlyMode, runErr, "Internal README management failed")
+			}
+		} else if !strings.Contains(strings.ToLower(mgrErr.Error()), "not a git repository") {
+			utils.LogErrorIfNotAnswerOnly(isAnswerOnlyMode, mgrErr, "Failed to initialize internal README manager")
+		}
+	} else if err != nil && !strings.Contains(strings.ToLower(err.Error()), "not a git repository") {
+		utils.LogErrorIfNotAnswerOnly(isAnswerOnlyMode, err, "Failed to determine project commit for README management")
 	}
 
 	// Require explicit subcommand
