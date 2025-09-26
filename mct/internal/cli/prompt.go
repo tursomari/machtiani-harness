@@ -482,6 +482,10 @@ func resolveModelRuntime(cfg *utils.Config, aliasFlag, baseURLFlag, apiKeyFlag, 
 		paramJSON:  append([]string(nil), paramJSON...),
 	}
 
+	if strings.TrimSpace(os.Getenv("MCT_LLM_TEST_STUB")) != "" {
+		return runtime, nil
+	}
+
 	hasDirectFlags := strings.TrimSpace(baseURLFlag) != "" || strings.TrimSpace(apiKeyFlag) != "" || strings.TrimSpace(directModelFlag) != ""
 	alias := strings.TrimSpace(aliasFlag)
 

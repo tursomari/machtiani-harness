@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -47,7 +48,16 @@ func ChatStreamWithResolved(ctx context.Context, model ResolvedModel, extraParam
 
 var streamingHTTPClient = &http.Client{Timeout: 60 * time.Minute}
 
+const testStubEnv = "MCT_LLM_TEST_STUB" // test-only knob to bypass network LLM calls
+
 func chat(ctx context.Context, model ResolvedModel, extraParams map[string]any, messages []Message, stream bool, onToken func(string)) (string, error) {
+	if stub := strings.TrimSpace(os.Getenv(testStubEnv)); stub != "" {
+		reply := buildStubResponse(stub, messages)
+		if stream && onToken != nil {
+			onToken(reply)
+		}
+		return reply, nil
+	}
 	if strings.TrimSpace(model.BaseURL) == "" {
 		return "", errors.New("resolved model missing base URL")
 	}
@@ -198,6 +208,25 @@ func buildRequest(ctx context.Context, model ResolvedModel, body []byte) (*http.
 		req.Header.Set(k, v)
 	}
 	return req, nil
+}
+
+func buildStubResponse(mode string, messages []Message) string {
+	content := ""
+	if len(messages) > 0 {
+		content = messages[len(messages)-1].Content
+	}
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" {
+		trimmed = "(no prompt provided)"
+	}
+	if len(trimmed) > 400 {
+		trimmed = trimmed[:400] + "\n...[truncated by stub]"
+	}
+	modeLabel := strings.TrimSpace(mode)
+	if modeLabel == "" {
+		modeLabel = "default"
+	}
+	return fmt.Sprintf("Stub LLM (%s) response\n\n%s", modeLabel, trimmed)
 }
 
 // Markdown streaming helpers remain unchanged

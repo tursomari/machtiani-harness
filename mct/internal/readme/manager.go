@@ -13,14 +13,15 @@ import (
 
 	"github.com/tursomari/machtiani/mct/internal/git"
 	"github.com/tursomari/machtiani/mct/internal/utils"
-	"github.com/tursomari/machtiani/mct/llm"
 )
 
 const (
-	repoRelativePath   = ".machtiani/readme"
-	readmeFilename     = "internal-readme.md"
-	stateDirName       = ".state"
-	lastCommitFilename = "last_project_commit"
+	repoRelativePath     = ".machtiani/readme"
+	readmeFilename       = "internal-readme.md"
+	stateDirName         = ".state"
+	lastCommitFilename   = "last_project_commit"
+	mockReadmeEnv        = "MCT_README_TEST_STUB"     // enables deterministic content for integration tests
+	SkipReadmeManagerEnv = "MCT_SKIP_INTERNAL_README" // disables recursive manager execution when invoking the CLI
 )
 
 // Manager coordinates readme repository state against the project repository.
@@ -241,10 +242,10 @@ func (m *Manager) buildReadmeContent(ctx context.Context, projectCommitHash, las
 		summary, _ = m.runProjectGit("show", "--no-patch", "--pretty=%h %s", projectCommitHash)
 	}
 
-	resolved, err := m.resolveModel()
-	if err != nil {
-		return "", err
+	if stub := strings.TrimSpace(os.Getenv(mockReadmeEnv)); stub != "" {
+		return buildMockReadme(stub, projectCommitHash, base, prevContent, significantFiles, diffStat, summary, diffDetail), nil
 	}
+
 	systemPrompt := "You are Machtiani's internal documentation agent. Write a precise, factual internal README for the engineering team. Capture architecture, key services, and any material code changes relevant to this commit. Keep it under 600 words. Use markdown."
 
 	builder := &strings.Builder{}
@@ -291,26 +292,94 @@ func (m *Manager) buildReadmeContent(ctx context.Context, projectCommitHash, las
 		builder.WriteString("\n````\n")
 	}
 
-	messages := []llm.Message{
-		{Role: "system", Content: systemPrompt},
-		{Role: "user", Content: builder.String()},
-	}
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	fullPrompt := strings.Builder{}
+	fullPrompt.WriteString(systemPrompt)
+	fullPrompt.WriteString("\n\n")
+	fullPrompt.WriteString(builder.String())
+
+	cmdCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 
-	content, err := llm.ChatWithResolved(ctx, resolved, nil, messages)
-	if err != nil {
-		return "", fmt.Errorf("llm generate readme: %w", err)
+	cmd := exec.CommandContext(cmdCtx, "mct", "prompt", "--mode=answer-only")
+	cmd.Dir = m.ProjectRoot
+	cmd.Stdin = strings.NewReader(fullPrompt.String())
+	cmd.Env = append(os.Environ(), fmt.Sprintf("%s=1", SkipReadmeManagerEnv))
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("mct prompt --mode=answer-only failed: %w: %s", err, strings.TrimSpace(stderr.String()))
 	}
-	return strings.TrimSpace(content), nil
+	return strings.TrimSpace(stdout.String()), nil
 }
 
-func (m *Manager) resolveModel() (llm.ResolvedModel, error) {
-	alias, err := llm.DefaultModelAlias()
-	if err != nil {
-		return llm.ResolvedModel{}, err
+func limitLines(input string, maxLines int) string {
+	lines := strings.Split(input, "\n")
+	if len(lines) > maxLines {
+		lines = append(lines[:maxLines], "...[truncated]")
 	}
-	return llm.ResolveModel(alias)
+	return strings.Join(lines, "\n")
+}
+
+func limitLength(input string, max int) string {
+	if len(input) <= max {
+		return input
+	}
+	if max < 0 {
+		return input
+	}
+	if max > len(input) {
+		max = len(input)
+	}
+	return input[:max] + "\n...[diff truncated by mock]\n"
+}
+
+func buildMockReadme(mode, projectCommitHash, lastProcessed, prevContent string, significant []string, diffStat, summary, diffDetail string) string {
+	b := &strings.Builder{}
+	b.WriteString("# Internal README (Mock)\n\n")
+	b.WriteString(fmt.Sprintf("- Project commit: %s\n", projectCommitHash))
+	if strings.TrimSpace(lastProcessed) != "" {
+		b.WriteString(fmt.Sprintf("- Base commit: %s\n", lastProcessed))
+	} else {
+		b.WriteString("- Base commit: <none>\n")
+	}
+	b.WriteString(fmt.Sprintf("- Previous README chars: %d\n\n", len(prevContent)))
+	b.WriteString("## Significant Files\n")
+	if len(significant) == 0 {
+		b.WriteString("* none\n")
+	} else {
+		const maxFiles = 20
+		for i, file := range significant {
+			if i >= maxFiles {
+				b.WriteString(fmt.Sprintf("* ... %d more files\n", len(significant)-i))
+				break
+			}
+			b.WriteString("* " + file + "\n")
+		}
+	}
+	b.WriteString("\n## Diff Summary\n```\n")
+	trimmedStat := strings.TrimSpace(diffStat)
+	if trimmedStat == "" {
+		b.WriteString("<no diff stat available>\n")
+	} else {
+		b.WriteString(limitLines(trimmedStat, 10) + "\n")
+	}
+	b.WriteString("```\n")
+	if trimmedSummary := strings.TrimSpace(summary); trimmedSummary != "" {
+		b.WriteString("\n## Commit Log\n```\n")
+		b.WriteString(limitLines(trimmedSummary, 8) + "\n")
+		b.WriteString("```\n")
+	}
+	if detail := strings.TrimSpace(diffDetail); detail != "" {
+		detail = limitLines(detail, 20)
+		detail = limitLength(detail, 400)
+		b.WriteString("\n## Diff Excerpt\n```\n")
+		b.WriteString(detail + "\n")
+		b.WriteString("```\n")
+	}
+	b.WriteString("\nMock mode: " + strings.TrimSpace(mode) + "\n")
+	return b.String()
 }
 
 func (m *Manager) runGit(dir string, args ...string) error {

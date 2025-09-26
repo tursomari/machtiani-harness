@@ -39,6 +39,8 @@ func Execute() {
 	// First, check if we're in answer-only mode early
 	isAnswerOnlyMode := utils.IsAnswerOnlyMode()
 
+	skipReadmeManager := strings.TrimSpace(os.Getenv(readme.SkipReadmeManagerEnv)) != ""
+
 	// Parse the system message frequency
 	frequencyHours, err := strconv.Atoi(SystemMessageFrequencyHours)
 	if err != nil {
@@ -91,17 +93,19 @@ func Execute() {
 		os.Exit(1)
 	}
 
-	if headCommitHash, err := git.GetHeadCommitHash(); err == nil {
-		if mgr, mgrErr := readme.NewManager(isAnswerOnlyMode); mgrErr == nil {
-			ctx := context.Background()
-			if runErr := mgr.Run(ctx, headCommitHash); runErr != nil {
-				utils.LogErrorIfNotAnswerOnly(isAnswerOnlyMode, runErr, "Internal README management failed")
+	if !skipReadmeManager {
+		if headCommitHash, err := git.GetHeadCommitHash(); err == nil {
+			if mgr, mgrErr := readme.NewManager(isAnswerOnlyMode); mgrErr == nil {
+				ctx := context.Background()
+				if runErr := mgr.Run(ctx, headCommitHash); runErr != nil {
+					utils.LogErrorIfNotAnswerOnly(isAnswerOnlyMode, runErr, "Internal README management failed")
+				}
+			} else if !strings.Contains(strings.ToLower(mgrErr.Error()), "not a git repository") {
+				utils.LogErrorIfNotAnswerOnly(isAnswerOnlyMode, mgrErr, "Failed to initialize internal README manager")
 			}
-		} else if !strings.Contains(strings.ToLower(mgrErr.Error()), "not a git repository") {
-			utils.LogErrorIfNotAnswerOnly(isAnswerOnlyMode, mgrErr, "Failed to initialize internal README manager")
+		} else if err != nil && !strings.Contains(strings.ToLower(err.Error()), "not a git repository") {
+			utils.LogErrorIfNotAnswerOnly(isAnswerOnlyMode, err, "Failed to determine project commit for README management")
 		}
-	} else if err != nil && !strings.Contains(strings.ToLower(err.Error()), "not a git repository") {
-		utils.LogErrorIfNotAnswerOnly(isAnswerOnlyMode, err, "Failed to determine project commit for README management")
 	}
 
 	// Require explicit subcommand
@@ -418,27 +422,29 @@ func Execute() {
 
 	default:
 		if command == "prompt" {
-			// Only require model configuration for prompt
-			missingRequired := false
-			var missingFields []string
-			if config.Environment.ModelAPIKey == "" {
-				missingFields = append(missingFields, "OPENAI_API_KEY")
-				missingRequired = true
-			}
-			if config.Environment.ModelBaseURL == "" {
-				missingFields = append(missingFields, "OPENAI_BASE_URL")
-				missingRequired = true
-			}
-			if missingRequired {
-				utils.PrintIfNotAnswerOnly(isAnswerOnlyMode, "Error: Missing required configuration.\n")
-				for _, field := range missingFields {
-					if field == "OPENAI_API_KEY" {
-						utils.PrintIfNotAnswerOnly(isAnswerOnlyMode, "\nPlease set OPENAI_API_KEY with your provider API key, such as:\n\n$ export OPENAI_API_KEY=sk...\n\n")
-					} else if field == "OPENAI_BASE_URL" {
-						utils.PrintIfNotAnswerOnly(isAnswerOnlyMode, "\nPlease set OPENAI_BASE_URL for your API provider, e.g.:\n\n$ export OPENAI_BASE_URL=\"https://api.openai.com/v1\"\n")
-					}
+			if strings.TrimSpace(os.Getenv("MCT_LLM_TEST_STUB")) == "" {
+				// Only require model configuration for prompt when no stub is active
+				missingRequired := false
+				var missingFields []string
+				if config.Environment.ModelAPIKey == "" {
+					missingFields = append(missingFields, "OPENAI_API_KEY")
+					missingRequired = true
 				}
-				os.Exit(1)
+				if config.Environment.ModelBaseURL == "" {
+					missingFields = append(missingFields, "OPENAI_BASE_URL")
+					missingRequired = true
+				}
+				if missingRequired {
+					utils.PrintIfNotAnswerOnly(isAnswerOnlyMode, "Error: Missing required configuration.\n")
+					for _, field := range missingFields {
+						if field == "OPENAI_API_KEY" {
+							utils.PrintIfNotAnswerOnly(isAnswerOnlyMode, "\nPlease set OPENAI_API_KEY with your provider API key, such as:\n\n$ export OPENAI_API_KEY=sk...\n\n")
+						} else if field == "OPENAI_BASE_URL" {
+							utils.PrintIfNotAnswerOnly(isAnswerOnlyMode, "\nPlease set OPENAI_BASE_URL for your API provider, e.g.:\n\n$ export OPENAI_BASE_URL=\"https://api.openai.com/v1\"\n")
+						}
+					}
+					os.Exit(1)
+				}
 			}
 			startTime := time.Now()
 			args := os.Args[2:]
