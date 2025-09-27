@@ -27,6 +27,7 @@ Prompt:
         --openai-api-key     OpenAI-compatible API key (overrides env OPENAI_API_KEY).
         --openai-base-url    OpenAI-compatible base URL (overrides env OPENAI_BASE_URL).
         --agent-model <str>  Agent model for applying patches (defaults to --model).
+        --session <string>   Session identifier used to scope conversation history (overrides MACHTIANI_SESSION_ID).
         --no-codex           Disable agent file retrieval (no-codex mode).
         --match-strength      Context match strength: high | mid | low. Default: mid
         --mode <string>       Mode: chat | pure-chat | answer-only | default. Default: default

@@ -45,9 +45,6 @@ func (r *Runner) RunPrompt(ctx context.Context, sessionID string, args ...string
 		return "", errors.New("runner unresolved: call Resolve() first")
 	}
 	env := os.Environ()
-	if sessionID != "" {
-		env = append(env, "MACHTIANI_SESSION_ID="+sessionID)
-	}
 	if r.Verbose {
 		env = append(env, "MCT_INTERNAL_README_VERBOSE=1")
 	}
@@ -69,14 +66,27 @@ func (r *Runner) RunPrompt(ctx context.Context, sessionID string, args ...string
 		env = append(env, "FILE_DISCOVERY_TRAJECTORY="+r.FileDiscoveryTrajectory)
 	}
 
-	// Compose command
-	cmd := exec.CommandContext(ctx, r.exePath, args...)
+	// Compose command, inserting --session <id> directly on the CLI if provided.
+	finalArgs := make([]string, 0, len(args)+2)
+	if len(args) > 0 {
+		finalArgs = append(finalArgs, args[0])
+		if sessionID != "" {
+			finalArgs = append(finalArgs, "--session", sessionID)
+		}
+		finalArgs = append(finalArgs, args[1:]...)
+	} else if sessionID != "" {
+		finalArgs = append(finalArgs, "--session", sessionID)
+	}
+	if len(finalArgs) == 0 {
+		finalArgs = append(finalArgs, args...)
+	}
+	cmd := exec.CommandContext(ctx, r.exePath, finalArgs...)
 	cmd.Env = env
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
 	if r.Verbose || r.DryRun {
-		fmt.Println("[mct]", r.exePath, strings.Join(args, " "))
+		fmt.Println("[mct]", r.exePath, strings.Join(finalArgs, " "))
 	}
 	if r.DryRun {
 		return "", nil

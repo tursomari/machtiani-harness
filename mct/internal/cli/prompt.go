@@ -54,6 +54,7 @@ func handlePrompt(args []string, config *utils.Config, apiKey *string, headCommi
 	paramFlag := fs.StringArray("param", nil, "Additional request parameter key=value (repeatable)")
 	paramJSONFlag := fs.StringArray("param-json", nil, "Merge JSON object of additional parameters (repeatable)")
 	agentModelFlag := fs.String("agent-model", "", "Agent model for applying patches (defaults to --model)")
+	sessionFlag := fs.String("session", "", "Session identifier used to scope conversation history")
 	matchStrengthFlag := fs.String("match-strength", defaultMatchStrength, "Match strength: high | mid | low")
 	modeFlag := fs.String("mode", defaultMode, "Mode: chat | pure-chat | answer-only | default")
 	// flags retained for compatibility in other subcommands; not used in local prompt path
@@ -72,6 +73,9 @@ func handlePrompt(args []string, config *utils.Config, apiKey *string, headCommi
 		fs.Usage()
 		fmt.Fprintf(os.Stderr, "Error parsing flags: %v\n", err)
 		os.Exit(2)
+	}
+	if session := strings.TrimSpace(*sessionFlag); session != "" {
+		os.Setenv("MACHTIANI_SESSION_ID", session)
 	}
 
 	// Accept a single positional message if --file is not provided
