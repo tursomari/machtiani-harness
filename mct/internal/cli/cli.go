@@ -40,6 +40,7 @@ func Execute() {
 	isAnswerOnlyMode := utils.IsAnswerOnlyMode()
 
 	skipReadmeManager := strings.TrimSpace(os.Getenv(readme.SkipReadmeManagerEnv)) != ""
+	verboseRequested := hasVerboseFlag(os.Args[1:])
 
 	// Parse the system message frequency
 	frequencyHours, err := strconv.Atoi(SystemMessageFrequencyHours)
@@ -95,7 +96,7 @@ func Execute() {
 
 	if !skipReadmeManager {
 		if headCommitHash, err := git.GetHeadCommitHash(); err == nil {
-			if mgr, mgrErr := readme.NewManager(isAnswerOnlyMode); mgrErr == nil {
+			if mgr, mgrErr := readme.NewManager(isAnswerOnlyMode, verboseRequested); mgrErr == nil {
 				ctx := context.Background()
 				if runErr := mgr.Run(ctx, headCommitHash); runErr != nil {
 					utils.LogErrorIfNotAnswerOnly(isAnswerOnlyMode, runErr, "Internal README management failed")
@@ -464,4 +465,13 @@ func Execute() {
 		printHelp()
 		os.Exit(1)
 	}
+}
+
+func hasVerboseFlag(args []string) bool {
+	for _, arg := range args {
+		if arg == "--verbose" || strings.HasPrefix(arg, "--verbose=") {
+			return true
+		}
+	}
+	return false
 }

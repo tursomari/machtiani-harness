@@ -22,6 +22,7 @@ const (
 	lastCommitFilename   = "last_project_commit"
 	mockReadmeEnv        = "MCT_README_TEST_STUB"     // enables deterministic content for integration tests
 	SkipReadmeManagerEnv = "MCT_SKIP_INTERNAL_README" // disables recursive manager execution when invoking the CLI
+	verboseEnv           = "MCT_INTERNAL_README_VERBOSE"
 )
 
 // Manager coordinates readme repository state against the project repository.
@@ -32,10 +33,11 @@ type Manager struct {
 	StateDirPath     string
 	LastCommitPath   string
 	IsAnswerOnlyMode bool
+	Verbose          bool
 }
 
 // NewManager returns a manager rooted at the git toplevel containing cwd.
-func NewManager(isAnswerOnly bool) (*Manager, error) {
+func NewManager(isAnswerOnly bool, verbose bool) (*Manager, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return nil, fmt.Errorf("getwd: %w", err)
@@ -46,6 +48,8 @@ func NewManager(isAnswerOnly bool) (*Manager, error) {
 	}
 	repoPath := filepath.Join(projectRoot, repoRelativePath)
 	stateDir := filepath.Join(repoPath, stateDirName)
+	envVerbose := strings.TrimSpace(os.Getenv(verboseEnv)) != ""
+
 	return &Manager{
 		ProjectRoot:      projectRoot,
 		ReadmeRepoPath:   repoPath,
@@ -53,6 +57,7 @@ func NewManager(isAnswerOnly bool) (*Manager, error) {
 		StateDirPath:     stateDir,
 		LastCommitPath:   filepath.Join(stateDir, lastCommitFilename),
 		IsAnswerOnlyMode: isAnswerOnly,
+		Verbose:          verbose || envVerbose,
 	}, nil
 }
 
@@ -61,15 +66,24 @@ func (m *Manager) Run(ctx context.Context, projectCommitHash string) error {
 	if strings.TrimSpace(projectCommitHash) == "" {
 		return errors.New("project commit hash is required")
 	}
-	if err := m.ensureRepo(); err != nil {
+	repoInitialized, err := m.ensureRepo()
+	if err != nil {
 		return err
 	}
+	if repoInitialized {
+		m.verbosef("initialized internal README repo at %s", m.ReadmeRepoPath)
+	}
 
-	if err := m.ensureStateDir(); err != nil {
+	stateCreated, err := m.ensureStateDir()
+	if err != nil {
 		return err
+	}
+	if stateCreated {
+		m.verbosef("created state directory %s", m.StateDirPath)
 	}
 
 	if err := m.syncExistingReadme(projectCommitHash); err == nil {
+		m.verbosef("readme already tagged for project %s; syncing existing content", shortHash(projectCommitHash))
 		if err := m.writeLastProcessed(projectCommitHash); err != nil {
 			utils.LogErrorIfNotAnswerOnly(m.IsAnswerOnlyMode, err, "failed to update last processed commit state")
 		}
@@ -84,10 +98,12 @@ func (m *Manager) Run(ctx context.Context, projectCommitHash string) error {
 	}
 
 	if needsUpdate {
+		m.verbosef("regenerating README for project %s (base %s, %d significant files)", shortHash(projectCommitHash), shortHash(lastProcessed), len(significantFiles))
 		if err := m.generateAndCommit(ctx, projectCommitHash, lastProcessed, significantFiles); err != nil {
 			return err
 		}
 	} else {
+		m.verbosef("no significant changes for project %s; reusing existing README", shortHash(projectCommitHash))
 		if err := m.reuseExistingReadme(projectCommitHash); err != nil {
 			return err
 		}
@@ -96,23 +112,25 @@ func (m *Manager) Run(ctx context.Context, projectCommitHash string) error {
 	if err := m.writeLastProcessed(projectCommitHash); err != nil {
 		utils.LogErrorIfNotAnswerOnly(m.IsAnswerOnlyMode, err, "failed to persist last processed commit")
 	}
+	m.verbosef("updated last processed commit marker to %s", shortHash(projectCommitHash))
 	return nil
 }
 
-func (m *Manager) ensureRepo() error {
+func (m *Manager) ensureRepo() (bool, error) {
+	created := false
 	if err := os.MkdirAll(m.ReadmeRepoPath, 0o755); err != nil {
-		return fmt.Errorf("create readme repo dir: %w", err)
+		return created, fmt.Errorf("create readme repo dir: %w", err)
 	}
 	gitDir := filepath.Join(m.ReadmeRepoPath, ".git")
 	if _, err := os.Stat(gitDir); os.IsNotExist(err) {
 		if err := m.runGit(m.ReadmeRepoPath, "init"); err != nil {
-			return err
+			return created, err
 		}
 		if err := m.runGit(m.ReadmeRepoPath, "config", "user.name", "Machtiani README Bot"); err != nil {
-			return err
+			return created, err
 		}
 		if err := m.runGit(m.ReadmeRepoPath, "config", "user.email", "readme-bot@machtiani.local"); err != nil {
-			return err
+			return created, err
 		}
 		gitignorePath := filepath.Join(m.ReadmeRepoPath, ".gitignore")
 		if _, statErr := os.Stat(gitignorePath); os.IsNotExist(statErr) {
@@ -120,17 +138,22 @@ func (m *Manager) ensureRepo() error {
 				utils.LogErrorIfNotAnswerOnly(m.IsAnswerOnlyMode, writeErr, "failed to seed .gitignore for readme repo")
 			}
 		}
+		created = true
 	} else if err != nil {
-		return fmt.Errorf("stat readme git dir: %w", err)
+		return created, fmt.Errorf("stat readme git dir: %w", err)
 	}
-	return nil
+	return created, nil
 }
 
-func (m *Manager) ensureStateDir() error {
-	if err := os.MkdirAll(m.StateDirPath, 0o755); err != nil {
-		return fmt.Errorf("create state dir: %w", err)
+func (m *Manager) ensureStateDir() (bool, error) {
+	created := false
+	if _, err := os.Stat(m.StateDirPath); os.IsNotExist(err) {
+		created = true
 	}
-	return nil
+	if err := os.MkdirAll(m.StateDirPath, 0o755); err != nil {
+		return created, fmt.Errorf("create state dir: %w", err)
+	}
+	return created, nil
 }
 
 func (m *Manager) syncExistingReadme(projectCommitHash string) error {
@@ -212,9 +235,14 @@ func (m *Manager) generateAndCommit(ctx context.Context, projectCommitHash, last
 	if err := m.runGit(m.ReadmeRepoPath, "commit", "-m", commitMsg); err != nil {
 		return err
 	}
+	newHead, headErr := m.gitOutput(m.ReadmeRepoPath, "rev-parse", "HEAD")
+	if headErr == nil {
+		m.verbosef("committed README update for project %s as %s", shortHash(projectCommitHash), shortHash(strings.TrimSpace(newHead)))
+	}
 	if err := TagREADMEWithProjectCommit(projectCommitHash); err != nil {
 		return err
 	}
+	m.verbosef("tagged README commit with oid-%s", shortHash(projectCommitHash))
 	return nil
 }
 
@@ -222,6 +250,7 @@ func (m *Manager) reuseExistingReadme(projectCommitHash string) error {
 	if err := TagREADMEWithProjectCommit(projectCommitHash); err != nil {
 		return err
 	}
+	m.verbosef("updated tag oid-%s to current README HEAD", shortHash(projectCommitHash))
 	return nil
 }
 
@@ -300,9 +329,9 @@ func (m *Manager) buildReadmeContent(ctx context.Context, projectCommitHash, las
 	cmdCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 
-	cmd := exec.CommandContext(cmdCtx, "mct", "prompt", "--mode=answer-only")
+	args := []string{"prompt", "--mode=answer-only", fullPrompt.String()}
+	cmd := exec.CommandContext(cmdCtx, "mct", args...)
 	cmd.Dir = m.ProjectRoot
-	cmd.Stdin = strings.NewReader(fullPrompt.String())
 	cmd.Env = append(os.Environ(), fmt.Sprintf("%s=1", SkipReadmeManagerEnv))
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -311,7 +340,10 @@ func (m *Manager) buildReadmeContent(ctx context.Context, projectCommitHash, las
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("mct prompt --mode=answer-only failed: %w: %s", err, strings.TrimSpace(stderr.String()))
 	}
-	return strings.TrimSpace(stdout.String()), nil
+	if content, err := m.readLatestResponse(); err == nil && strings.TrimSpace(content) != "" {
+		return strings.TrimSpace(content), nil
+	}
+	return strings.TrimSpace(extractAssistantContent(stdout.String())), nil
 }
 
 func limitLines(input string, maxLines int) string {
@@ -487,4 +519,50 @@ func runGitCommand(dir string, args ...string) error {
 		return fmt.Errorf("git %s failed: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
 	}
 	return nil
+}
+
+func extractAssistantContent(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return trimmed
+	}
+	lines := strings.Split(trimmed, "\n")
+	markerIdx := -1
+	for i, line := range lines {
+		if strings.TrimSpace(line) == "# Assistant" {
+			markerIdx = i
+		}
+	}
+	if markerIdx == -1 {
+		return trimmed
+	}
+	if markerIdx+1 >= len(lines) {
+		return ""
+	}
+	section := strings.Join(lines[markerIdx+1:], "\n")
+	return strings.TrimSpace(section)
+}
+
+func shortHash(hash string) string {
+	clean := strings.TrimSpace(hash)
+	if len(clean) <= 12 {
+		return clean
+	}
+	return clean[:12]
+}
+
+func (m *Manager) verbosef(format string, args ...interface{}) {
+	if !m.Verbose {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "[readme] "+format+"\n", args...)
+}
+
+func (m *Manager) readLatestResponse() (string, error) {
+	path := filepath.Join(m.ProjectRoot, ".machtiani", "chat", "machtiani-response.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
 }

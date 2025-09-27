@@ -48,6 +48,9 @@ func (r *Runner) RunPrompt(ctx context.Context, sessionID string, args ...string
 	if sessionID != "" {
 		env = append(env, "MACHTIANI_SESSION_ID="+sessionID)
 	}
+	if r.Verbose {
+		env = append(env, "MCT_INTERNAL_README_VERBOSE=1")
+	}
 	if cfgPath, err := llm.ConfigPath(); err == nil && strings.TrimSpace(cfgPath) != "" {
 		env = append(env, "MACHTIANI_CONFIG="+cfgPath)
 	}
