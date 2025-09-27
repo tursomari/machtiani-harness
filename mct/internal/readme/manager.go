@@ -321,15 +321,12 @@ func (m *Manager) buildReadmeContent(ctx context.Context, projectCommitHash, las
 		builder.WriteString("\n````\n")
 	}
 
-	fullPrompt := strings.Builder{}
-	fullPrompt.WriteString(systemPrompt)
-	fullPrompt.WriteString("\n\n")
-	fullPrompt.WriteString(builder.String())
+	fullPrompt := composeMCTPrompt(systemPrompt, builder.String(), lastProcessed)
 
 	cmdCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 
-	args := []string{"prompt", "--mode=answer-only", fullPrompt.String()}
+	args := []string{"prompt", "--mode=answer-only", fullPrompt}
 	cmd := exec.CommandContext(cmdCtx, "mct", args...)
 	cmd.Dir = m.ProjectRoot
 	cmd.Env = append(os.Environ(), fmt.Sprintf("%s=1", SkipReadmeManagerEnv))
@@ -344,6 +341,16 @@ func (m *Manager) buildReadmeContent(ctx context.Context, projectCommitHash, las
 		return strings.TrimSpace(content), nil
 	}
 	return strings.TrimSpace(extractAssistantContent(stdout.String())), nil
+}
+
+func composeMCTPrompt(systemPrompt, dynamicContext, lastProcessed string) string {
+	if strings.TrimSpace(lastProcessed) == "" {
+		return systemPrompt
+	}
+	if strings.TrimSpace(dynamicContext) == "" {
+		return systemPrompt
+	}
+	return systemPrompt + "\n\n" + dynamicContext
 }
 
 func limitLines(input string, maxLines int) string {
