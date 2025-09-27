@@ -169,7 +169,7 @@ func handlePrompt(args []string, config *utils.Config, apiKey *string, headCommi
 	if isAnswerOnlyMode {
 		// No discovery; include conversation history for continuity.
 		hist, _ := session.LoadHistory()
-		combined, _ := contextbuilder.Build(prompt, nil, hist, contextbuilder.Options{})
+		combined, included := contextbuilder.Build(prompt, nil, hist, contextbuilder.Options{})
 
 		ms, _ := llm.NewMarkdownStreamer()
 		header := combined
@@ -199,8 +199,8 @@ func handlePrompt(args []string, config *utils.Config, apiKey *string, headCommi
 		rawResponse = header + full
 
 		// Persist history even in answer-only mode
-		_ = session.AddMessage("user", prompt)
-		_ = session.AddMessage("assistant", full)
+		_ = session.AddMessage("user", prompt, nil)
+		_ = session.AddMessage("assistant", full, included)
 	} else {
 		// Run discovery
 		drModel := discoveryrunner.ModelSettings{
@@ -221,7 +221,7 @@ func handlePrompt(args []string, config *utils.Config, apiKey *string, headCommi
 
 		// Load conversation history and build combined prompt
 		hist, _ := session.LoadHistory()
-		combined, _ := contextbuilder.Build(prompt, filtered, hist, contextbuilder.Options{})
+		combined, included := contextbuilder.Build(prompt, filtered, hist, contextbuilder.Options{})
 
 		// Stream chat
 		ms, _ := llm.NewMarkdownStreamer()
@@ -251,10 +251,11 @@ func handlePrompt(args []string, config *utils.Config, apiKey *string, headCommi
 		rawResponse = header + full
 
 		// Persist updated history
-		_ = session.AddMessage("user", prompt)
-		_ = session.AddMessage("assistant", full)
+		_ = session.AddMessage("user", prompt, nil)
+		_ = session.AddMessage("assistant", full, included)
 
 		// Append Retrieved File Paths section to rawResponse
+		retrievedFilePaths = included
 		if len(retrievedFilePaths) > 0 {
 			var b strings.Builder
 			b.WriteString("\n\n---\n\n# Retrieved File Paths\n\n")

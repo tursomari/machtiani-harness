@@ -21,6 +21,7 @@ type Options struct {
 type Message struct {
 	Role    string // "user" or "assistant"
 	Content string
+	Files   []string `json:"Files,omitempty"` // Relevant files supplied to assistant replies
 }
 
 func (o Options) withDefaults() Options {

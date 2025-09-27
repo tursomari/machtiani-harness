@@ -1,13 +1,13 @@
 package session
 
 import (
-    "encoding/json"
-    "fmt"
-    "os"
-    "path/filepath"
-    "time"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"time"
 
-    "github.com/tursomari/machtiani/mct/internal/contextbuilder"
+	"github.com/tursomari/machtiani/mct/internal/contextbuilder"
 )
 
 const (
@@ -68,16 +68,23 @@ func SaveHistory(history []contextbuilder.Message) error {
 	return nil
 }
 
-// AddMessage adds a new message to the history and saves it
-func AddMessage(role, content string) error {
+// AddMessage adds a new message to the history and saves it.
+// The files slice is optional and only relevant for assistant messages.
+func AddMessage(role, content string, files []string) error {
 	history, err := LoadHistory()
 	if err != nil {
 		return err
 	}
 
+	var filesCopy []string
+	if len(files) > 0 {
+		filesCopy = append([]string(nil), files...)
+	}
+
 	history = append(history, contextbuilder.Message{
 		Role:    role,
 		Content: content,
+		Files:   filesCopy,
 	})
 
 	return SaveHistory(history)
@@ -85,44 +92,44 @@ func AddMessage(role, content string) error {
 
 // getSessionPath returns the path to the session file
 // Behavior:
-// - If MACHTIANI_SESSION_ID is set, scope history to that stable session ID
-//   at ~/.machtiani/sessions/session-<id>.json
-// - Otherwise, fall back to a per-day file (legacy behavior) to avoid breaking
-//   existing flows where the caller doesn't set the session.
+//   - If MACHTIANI_SESSION_ID is set, scope history to that stable session ID
+//     at ~/.machtiani/sessions/session-<id>.json
+//   - Otherwise, fall back to a per-day file (legacy behavior) to avoid breaking
+//     existing flows where the caller doesn't set the session.
 func getSessionPath() string {
-    homeDir, err := os.UserHomeDir()
-    if err != nil {
-        homeDir = "."
-    }
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		homeDir = "."
+	}
 
-    // Base dir for all sessions
-    sessionDir := filepath.Join(homeDir, ".machtiani", "sessions")
+	// Base dir for all sessions
+	sessionDir := filepath.Join(homeDir, ".machtiani", "sessions")
 
-    // Prefer explicit session ID provided by an agent or the CLI bootstrap
-    if sid := sanitizeID(os.Getenv("MACHTIANI_SESSION_ID")); sid != "" {
-        return filepath.Join(sessionDir, fmt.Sprintf("session-%s.json", sid))
-    }
+	// Prefer explicit session ID provided by an agent or the CLI bootstrap
+	if sid := sanitizeID(os.Getenv("MACHTIANI_SESSION_ID")); sid != "" {
+		return filepath.Join(sessionDir, fmt.Sprintf("session-%s.json", sid))
+	}
 
-    // Legacy fallback: per-day file if no session id exists
-    timestamp := time.Now().Format("2006-01-02")
-    return filepath.Join(sessionDir, fmt.Sprintf("session-%s.json", timestamp))
+	// Legacy fallback: per-day file if no session id exists
+	timestamp := time.Now().Format("2006-01-02")
+	return filepath.Join(sessionDir, fmt.Sprintf("session-%s.json", timestamp))
 }
 
 // sanitizeID restricts session id to a filesystem-friendly subset
 func sanitizeID(in string) string {
-    if in == "" {
-        return ""
-    }
-    out := make([]rune, 0, len(in))
-    for _, r := range in {
-        if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
-            out = append(out, r)
-        } else {
-            out = append(out, '_')
-        }
-    }
-    if len(out) == 0 {
-        return ""
-    }
-    return string(out)
+	if in == "" {
+		return ""
+	}
+	out := make([]rune, 0, len(in))
+	for _, r := range in {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			out = append(out, r)
+		} else {
+			out = append(out, '_')
+		}
+	}
+	if len(out) == 0 {
+		return ""
+	}
+	return string(out)
 }
