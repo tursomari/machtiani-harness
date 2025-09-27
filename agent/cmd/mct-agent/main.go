@@ -212,7 +212,7 @@ func run() int {
 	{
 		step := 1
 		// Build mct args
-		args := []string{"prompt", "--mode=default"}
+		args := []string{"prompt", "--mode=default", "--include-history"}
 		if runtime.usingAlias {
 			if strings.TrimSpace(runtime.alias) != "" {
 				args = append(args, "--model", runtime.alias)
@@ -384,7 +384,7 @@ func run() int {
 				fmt.Println("Question:", question)
 			}
 			// Build mct args
-			args := []string{"prompt", "--mode=default"}
+			args := []string{"prompt", "--mode=default", "--include-history"}
 			if runtime.usingAlias {
 				if strings.TrimSpace(runtime.alias) != "" {
 					args = append(args, "--model", runtime.alias)

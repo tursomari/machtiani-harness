@@ -57,9 +57,12 @@ func handlePrompt(args []string, config *utils.Config, apiKey *string, headCommi
 	sessionFlag := fs.String("session", "", "Session identifier used to scope conversation history")
 	matchStrengthFlag := fs.String("match-strength", defaultMatchStrength, "Match strength: high | mid | low")
 	modeFlag := fs.String("mode", defaultMode, "Mode: chat | pure-chat | answer-only | default")
+	includeHistoryFlag := fs.Bool("include-history", false, "Include conversation history in the LLM prompt (internal use)")
 	// flags retained for compatibility in other subcommands; not used in local prompt path
 	verboseFlag := fs.Bool("verbose", false, "Enable verbose output")
 	// remote not needed for local prompt path
+
+	_ = fs.MarkHidden("include-history")
 
 	// Parse the flags from args (unknown flags should error)
 	// Ensure Usage is non-nil and goes to stderr
@@ -169,7 +172,7 @@ func handlePrompt(args []string, config *utils.Config, apiKey *string, headCommi
 	if isAnswerOnlyMode {
 		// No discovery; include conversation history for continuity.
 		hist, _ := session.LoadHistory()
-		combined, included := contextbuilder.Build(prompt, nil, hist, contextbuilder.Options{})
+		combined, included := contextbuilder.Build(prompt, nil, hist, contextbuilder.Options{IncludeHistory: *includeHistoryFlag})
 
 		ms, _ := llm.NewMarkdownStreamer()
 		header := combined
@@ -221,7 +224,7 @@ func handlePrompt(args []string, config *utils.Config, apiKey *string, headCommi
 
 		// Load conversation history and build combined prompt
 		hist, _ := session.LoadHistory()
-		combined, included := contextbuilder.Build(prompt, filtered, hist, contextbuilder.Options{})
+		combined, included := contextbuilder.Build(prompt, filtered, hist, contextbuilder.Options{IncludeHistory: *includeHistoryFlag})
 
 		// Stream chat
 		ms, _ := llm.NewMarkdownStreamer()

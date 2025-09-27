@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
 )
 
 const (
@@ -14,8 +15,9 @@ const (
 )
 
 type Options struct {
-	PerFileCap int
-	TotalCap   int
+	PerFileCap     int
+	TotalCap       int
+	IncludeHistory bool
 }
 
 type Message struct {
@@ -34,14 +36,36 @@ func (o Options) withDefaults() Options {
 	return o
 }
 
-// Build concatenates the user prompt and the contents of the discovered files
-// into a single prompt suitable for an LLM call. The conversationHistory
-// parameter is accepted for compatibility with session storage but currently
-// ignored by the CLI caller.
-func Build(userPrompt string, relPaths []string, _ []Message, opts Options) (string, []string) {
+// Build concatenates the structured conversation context with the user prompt
+// and the contents of the discovered files into a single prompt suitable for an
+// LLM call. When opts.IncludeHistory is true and conversationHistory is
+// non-empty, the prompt begins with a Conversation History section followed by a
+// Current Request section.
+func Build(userPrompt string, relPaths []string, conversationHistory []Message, opts Options) (string, []string) {
 	opts = opts.withDefaults()
 	var b strings.Builder
-	b.WriteString(userPrompt)
+
+	includeHistory := opts.IncludeHistory && len(conversationHistory) > 0
+	if includeHistory {
+		b.WriteString("Conversation History:\n")
+		for idx, msg := range conversationHistory {
+			roleLabel := roleDisplayName(msg.Role)
+			fmt.Fprintf(&b, "%d. %s", idx+1, roleLabel)
+			if len(msg.Files) > 0 {
+				fmt.Fprintf(&b, " (Files: %s)", strings.Join(msg.Files, ", "))
+			}
+			b.WriteString(":\n")
+			b.WriteString(msg.Content)
+			if !strings.HasSuffix(msg.Content, "\n") {
+				b.WriteString("\n")
+			}
+			b.WriteString("\n")
+		}
+		b.WriteString("Current Request:\n")
+		b.WriteString(userPrompt)
+	} else {
+		b.WriteString(userPrompt)
+	}
 	b.WriteString("\n\nHere are possible relevant files:\n")
 
 	included := make([]string, 0, len(relPaths))
@@ -125,4 +149,24 @@ func Build(userPrompt string, relPaths []string, _ []Message, opts Options) (str
 	}
 
 	return b.String(), included
+}
+
+func roleDisplayName(role string) string {
+	trimmed := strings.TrimSpace(role)
+	if trimmed == "" {
+		return "Unknown"
+	}
+	lower := strings.ToLower(trimmed)
+	switch lower {
+	case "assistant":
+		return "Assistant"
+	case "user":
+		return "User"
+	}
+	runes := []rune(lower)
+	runes[0] = unicode.ToUpper(runes[0])
+	for i := 1; i < len(runes); i++ {
+		runes[i] = unicode.ToLower(runes[i])
+	}
+	return string(runes)
 }
