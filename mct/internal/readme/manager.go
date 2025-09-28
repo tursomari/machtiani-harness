@@ -277,51 +277,54 @@ func (m *Manager) buildReadmeContent(ctx context.Context, projectCommitHash, las
 
 	systemPrompt := "You are Machtiani's internal documentation agent. Write a precise, factual internal README for the engineering team. Capture architecture, key services, and any material code changes relevant to this commit. Keep it under 600 words. Use markdown."
 
-	builder := &strings.Builder{}
-	builder.WriteString("Project commit: ")
-	builder.WriteString(projectCommitHash)
-	builder.WriteString("\n\n")
-	if lastProcessed != "" {
-		builder.WriteString("Previous processed commit: ")
-		builder.WriteString(lastProcessed)
+	hasExistingReadme := strings.TrimSpace(prevContent) != ""
+	var dynamicContext string
+	if hasExistingReadme {
+		builder := &strings.Builder{}
+		builder.WriteString("Project commit: ")
+		builder.WriteString(projectCommitHash)
 		builder.WriteString("\n\n")
-	}
-	if prevContent != "" {
+		if lastProcessed != "" {
+			builder.WriteString("Previous processed commit: ")
+			builder.WriteString(lastProcessed)
+			builder.WriteString("\n\n")
+		}
 		builder.WriteString("Previous internal README:\n````markdown\n")
 		builder.WriteString(prevContent)
 		builder.WriteString("\n````\n\n")
-	}
-	if len(significantFiles) > 0 {
-		builder.WriteString("Files with significant changes since the previous commit:\n")
-		for _, f := range significantFiles {
-			builder.WriteString("- ")
-			builder.WriteString(f)
+		if len(significantFiles) > 0 {
+			builder.WriteString("Files with significant changes since the previous commit:\n")
+			for _, f := range significantFiles {
+				builder.WriteString("- ")
+				builder.WriteString(f)
+				builder.WriteString("\n")
+			}
 			builder.WriteString("\n")
 		}
-		builder.WriteString("\n")
-	}
-	if strings.TrimSpace(diffStat) != "" {
-		builder.WriteString("Diff summary (git diff --stat):\n````\n")
-		builder.WriteString(diffStat)
-		builder.WriteString("\n````\n\n")
-	}
-	if strings.TrimSpace(summary) != "" {
-		builder.WriteString("Commit log between previous and current:\n````\n")
-		builder.WriteString(summary)
-		builder.WriteString("\n````\n\n")
+		if strings.TrimSpace(diffStat) != "" {
+			builder.WriteString("Diff summary (git diff --stat):\n````\n")
+			builder.WriteString(diffStat)
+			builder.WriteString("\n````\n\n")
+		}
+		if strings.TrimSpace(summary) != "" {
+			builder.WriteString("Commit log between previous and current:\n````\n")
+			builder.WriteString(summary)
+			builder.WriteString("\n````\n\n")
+		}
+
+		detail := strings.TrimSpace(diffDetail)
+		if len(detail) > 20000 {
+			detail = detail[:20000] + "\n...\n[diff truncated]"
+		}
+		if detail != "" {
+			builder.WriteString("Relevant diff excerpt:\n````diff\n")
+			builder.WriteString(detail)
+			builder.WriteString("\n````\n")
+		}
+		dynamicContext = builder.String()
 	}
 
-	detail := strings.TrimSpace(diffDetail)
-	if len(detail) > 20000 {
-		detail = detail[:20000] + "\n...\n[diff truncated]"
-	}
-	if detail != "" {
-		builder.WriteString("Relevant diff excerpt:\n````diff\n")
-		builder.WriteString(detail)
-		builder.WriteString("\n````\n")
-	}
-
-	fullPrompt := composeMCTPrompt(systemPrompt, builder.String(), lastProcessed)
+	fullPrompt := composeMCTPrompt(systemPrompt, dynamicContext, lastProcessed)
 
 	cmdCtx, cancel := context.WithTimeout(ctx, 8*time.Minute)
 	defer cancel()
