@@ -329,7 +329,7 @@ func (m *Manager) buildReadmeContent(ctx context.Context, projectCommitHash, las
 	cmdCtx, cancel := context.WithTimeout(ctx, 8*time.Minute)
 	defer cancel()
 
-	args := []string{"run", "--max-steps=5", "--no-patch", "--final-file=" + m.ReadmeFilePath, "--timeout-per-turn=0", fullPrompt}
+	args := []string{"run", "--max-steps=1", "--no-patch", "--final-file=" + m.ReadmeFilePath, "--timeout-per-turn=0", fullPrompt}
 	cmd := exec.CommandContext(cmdCtx, "mct-agent", args...)
 	cmd.Dir = m.ProjectRoot
 	cmd.Env = append(os.Environ(), fmt.Sprintf("%s=1", SkipReadmeManagerEnv))
