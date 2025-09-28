@@ -323,11 +323,11 @@ func (m *Manager) buildReadmeContent(ctx context.Context, projectCommitHash, las
 
 	fullPrompt := composeMCTPrompt(systemPrompt, builder.String(), lastProcessed)
 
-	cmdCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	cmdCtx, cancel := context.WithTimeout(ctx, 8*time.Minute)
 	defer cancel()
 
-	args := []string{"prompt", "--mode=answer-only", fullPrompt}
-	cmd := exec.CommandContext(cmdCtx, "mct", args...)
+	args := []string{"run", "--max-steps=5", "--no-patch", "--final-file=" + m.ReadmeFilePath, "--timeout-per-turn=0", fullPrompt}
+	cmd := exec.CommandContext(cmdCtx, "mct-agent", args...)
 	cmd.Dir = m.ProjectRoot
 	cmd.Env = append(os.Environ(), fmt.Sprintf("%s=1", SkipReadmeManagerEnv))
 	var stdout bytes.Buffer
@@ -335,7 +335,10 @@ func (m *Manager) buildReadmeContent(ctx context.Context, projectCommitHash, las
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("mct prompt --mode=answer-only failed: %w: %s", err, strings.TrimSpace(stderr.String()))
+		return "", fmt.Errorf("mct-agent run failed: %w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	if fileContent, err := os.ReadFile(m.ReadmeFilePath); err == nil && strings.TrimSpace(string(fileContent)) != "" {
+		return strings.TrimSpace(string(fileContent)), nil
 	}
 	if content, err := m.readLatestResponse(); err == nil && strings.TrimSpace(content) != "" {
 		return strings.TrimSpace(content), nil
