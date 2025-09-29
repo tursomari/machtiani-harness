@@ -17,6 +17,7 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/planner"
 	"github.com/tursomari/machtiani/agent/internal/runner"
 	"github.com/tursomari/machtiani/agent/internal/transcript"
+	"github.com/tursomari/machtiani/mct/artifacts"
 	"github.com/tursomari/machtiani/mct/llm"
 )
 
@@ -83,10 +84,10 @@ func run() int {
 	fs.IntVar(&cfg.timeoutPerTurn, "timeout-per-turn", 120, "per-turn timeout in seconds (set 0 for no timeout)")
 	fs.BoolVar(&cfg.dryRun, "dry-run", false, "print intended mct calls; don’t execute")
 	fs.BoolVar(&cfg.verbose, "verbose", false, "verbose agent logging")
-	fs.StringVar(&cfg.finalFile, "final-file", "", "path to write final answer-only artifact (default: .machtiani/chat/agent-final-<sessionID>.txt)")
-	fs.StringVar(&cfg.transcriptFile, "transcript-file", "", "path to write transcript file (default: .machtiani/chat/agent-<timestamp>.md)")
+	fs.StringVar(&cfg.finalFile, "final-file", "", "path to write final answer-only artifact (default: .machtiani/chats/agent-final-<sessionID>.txt)")
+	fs.StringVar(&cfg.transcriptFile, "transcript-file", "", "path to write transcript file (default: .machtiani/chats/agent-<timestamp>.md)")
 	fs.StringVar(&cfg.fileDiscoveryTrajectory, "file-discovery-trajectory", "", "path to write file-discovery trajectory JSONL (default: auto-named under output dir)")
-	fs.StringVar(&cfg.fileDiscoveryOutputDir, "file-discovery-output-dir", "", "directory for file-discovery artifacts (default: .machtiani/chat)")
+	fs.StringVar(&cfg.fileDiscoveryOutputDir, "file-discovery-output-dir", "", "directory for file-discovery artifacts (default: .machtiani/chats)")
 	fs.BoolVar(&cfg.noApply, "no-apply", false, "do not auto-apply generated patches (default: apply)\n")
 	fs.BoolVar(&cfg.noPatch, "no-patch", false, "disable patch planning; planner will never request patches")
 	// Normalized OpenAI flags
@@ -249,7 +250,12 @@ func run() int {
 			// Read the authoritative response file (prefer the savedPath if provided)
 			path := strings.TrimSpace(savedPath)
 			if path == "" {
-				path = ".machtiani/chat/machtiani-response.md"
+				chatDir, err := artifacts.ChatDirectory()
+				if err != nil {
+					fmt.Fprintln(os.Stderr, "Failed to resolve chat directory:", err)
+					return 1
+				}
+				path = filepath.Join(chatDir, "machtiani-response.md")
 			}
 			content, rerr := os.ReadFile(path)
 			if rerr != nil {
@@ -417,7 +423,12 @@ func run() int {
 				// Read the authoritative response file (prefer savedPath if provided)
 				path := strings.TrimSpace(savedPath)
 				if path == "" {
-					path = ".machtiani/chat/machtiani-response.md"
+					chatDir, err := artifacts.ChatDirectory()
+					if err != nil {
+						fmt.Fprintln(os.Stderr, "Failed to resolve chat directory:", err)
+						return 1
+					}
+					path = filepath.Join(chatDir, "machtiani-response.md")
 				}
 				content, rerr := os.ReadFile(path)
 				if rerr != nil {
@@ -861,7 +872,11 @@ func resolveFileDiscoveryTrajectory(cfg config, sessionID string) (string, error
 
 	dir := outDir
 	if dir == "" {
-		dir = filepath.Join(".machtiani", "chat")
+		chatDir, err := artifacts.ChatDirectory()
+		if err != nil {
+			return "", err
+		}
+		dir = chatDir
 	}
 	if !filepath.IsAbs(dir) {
 		abs, err := filepath.Abs(dir)
@@ -881,14 +896,18 @@ func resolveFileDiscoveryTrajectory(cfg config, sessionID string) (string, error
 
 // writeFinalAnswer persists the final answer to a plain text file.
 // It writes nothing in dry-run mode.
-// If finalFileFlag is empty, it writes to .machtiani/chat/agent-final-<sessionID>.txt
+// If finalFileFlag is empty, it writes to .machtiani/chats/agent-final-<sessionID>.txt
 func writeFinalAnswer(sessionID, answer, finalFileFlag string, verbose bool, dryRun bool) error {
 	if dryRun {
 		return nil
 	}
 	path := strings.TrimSpace(finalFileFlag)
 	if path == "" {
-		path = filepath.Join(".machtiani", "chat", fmt.Sprintf("agent-final-%s.txt", sessionID))
+		dir, err := artifacts.ChatDirectory()
+		if err != nil {
+			return err
+		}
+		path = filepath.Join(dir, fmt.Sprintf("agent-final-%s.txt", sessionID))
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err

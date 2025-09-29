@@ -5,7 +5,7 @@ Lightweight CLI for prompting against your local repository using:
 - Direct LLM calls to any OpenAI‑compatible endpoint
 - Local filename generation and chat saving
 
-The `prompt` command no longer relies on a remote URL or backend server. It runs file discovery locally, builds an inline context from the discovered files, streams the LLM response, and saves the chat to `.machtiani/chat/`.
+The `prompt` command no longer relies on a remote URL or backend server. It runs file discovery locally, builds an inline context from the discovered files, streams the LLM response, and saves the chat to `.machtiani/chats/`.
 
 ## Requirements
 - Go 1.22+
@@ -75,7 +75,7 @@ mct prompt --mode=answer-only -f prompt.md
    - Default caps: ~100 KB per file; ~2 MB total
    - Appends `[TRUNCATED]` when clipping
 4. Streams tokens from your LLM endpoint and renders Markdown in the terminal.
-5. Saves output to `.machtiani/chat/<generated-name>.md` and updates `.machtiani/chat/machtiani-response.md`.
+5. Saves output to `.machtiani/chats/<generated-name>.md` and updates `.machtiani/chats/machtiani-response.md`.
 
 ### Git‑Only Discovery Sandbox
 - By default, `mct` creates a temporary workspace containing only Git‑tracked files (committed or staged) and runs `file-discovery` there.
@@ -98,10 +98,25 @@ mct prompt --mode=answer-only -f prompt.md
   - `MCT_USE_GIT_FILTER`: Enable Git‑only temp workspace for discovery (default: true; set to `false` to disable)
   - Legacy `MCT_MODEL_*` accepted as fallback with a deprecation warning
 
+### Config resolution order
+
+`mct` looks for `config.toml` in the following priority:
+1. `MACHTIANI_CONFIG` environment override (must point to an existing file).
+2. Nearest `.machtiani/config.toml` inside the current Git repository, searching from the working directory up to the repo root.
+3. Global fallback at `~/.machtiani/config.toml`.
+
+If you are outside a Git repository, step 2 is skipped and only the environment variable and global config are considered.
+
 Binary resolution for `file-discovery`:
 1) `FILE_DISCOVERY_BIN` env override
 2) `file-discovery` in PATH
 3) `<mct-exe-dir>/bin/file-discovery` (bundled by `build.sh`)
+
+## Artifact storage
+
+- **Chat transcripts**: saved under `.machtiani/chats/` at the Git repository root when running inside a repo. Outside a repo, they fall back to `~/.machtiani/chats/`.
+- **Readme artifacts**: always written to `.machtiani/readme/` at the repository root and require a Git working tree.
+- `mct-agent` and helper tools use the same resolution so invocations from subdirectories share the project-scoped artifacts.
 
 ## Notes
 - The `prompt` command is fully local and does not hit Machtiani server URLs.

@@ -62,18 +62,18 @@ Flags:
 - `--dry-run`: print intended `mct` calls; no subprocess or LLM
 - `--verbose`: verbose agent logging (prints the exact `mct` command)
 - `--final-file string`: path to write final answer-only artifact
-- `--transcript-file string`: path to write transcript (default: `.machtiani/chat/agent-<timestamp>.md`)
+- `--transcript-file string`: path to write transcript (default: `.machtiani/chats/agent-<timestamp>.md`)
 - `--file-discovery-trajectory string`: absolute/relative file path for the file-discovery trajectory JSONL
-- `--file-discovery-output-dir string`: directory to place file-discovery artifacts (default: `.machtiani/chat`)
+- `--file-discovery-output-dir string`: directory to place file-discovery artifacts (default: `.machtiani/chats`)
 
 ## How It Works
 - The agent controls the loop: it plans either `Decision: ask` with one next question or `Decision: finalize`.
-- On `ask`, it invokes `mct prompt --mode=default` with that question. It then reads `.machtiani/chat/machtiani-response.md` and extracts:
+- On `ask`, it invokes `mct prompt --mode=default` with that question. It then reads `.machtiani/chats/machtiani-response.md` and extracts:
   - “Retrieved File Paths” section
   - A short answer excerpt for the running summary
 - It maintains a concise evolving summary/evidence log across turns.
 - On finalize (or at `--max-steps`), the agent composes the final answer via its own LLM and prints it.
-- A transcript is saved to `.machtiani/chat/agent-<timestamp>.md` with per-turn entries and the final conclusion.
+- A transcript is saved to `.machtiani/chats/agent-<timestamp>.md` with per-turn entries and the final conclusion.
 
 ## Environment Details
 - `OPENAI_*` resolution precedence in agent:
@@ -90,7 +90,7 @@ Flags:
 - “Missing model configuration”
   - Provide a valid `.machtiani/config.toml` (or set `MACHTIANI_CONFIG`) containing the model alias, or export `OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_MODEL` so the agent can generate one.
 - “Saved chat missing/unreadable”
-  - The agent reads `.machtiani/chat/machtiani-response.md`. Ensure `mct prompt` ran successfully and wrote the file.
+  - The agent reads `.machtiani/chats/machtiani-response.md`. Ensure `mct prompt` ran successfully and wrote the file.
 - “mct prompt error: signal: killed” or "timed out after N seconds"
   - The `mct` subprocess likely exceeded the per-turn timeout and was terminated. Increase `--timeout-per-turn` (e.g., `--timeout-per-turn=600`) or set `--timeout-per-turn=0` to disable the deadline.
 

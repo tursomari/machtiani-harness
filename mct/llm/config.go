@@ -8,6 +8,8 @@ import (
 	"sync"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/tursomari/machtiani/mct/internal/git"
 )
 
 type Config struct {
@@ -155,8 +157,12 @@ func locateConfig() (string, error) {
 		return env, nil
 	}
 	if wd, err := os.Getwd(); err == nil {
-		if p := searchParents(wd, filepath.Join(".machtiani", "config.toml")); p != "" {
-			return p, nil
+		local, err := findLocalConfig(wd)
+		if err != nil {
+			return "", err
+		}
+		if local != "" {
+			return local, nil
 		}
 	}
 	if home, err := os.UserHomeDir(); err == nil {
@@ -168,12 +174,32 @@ func locateConfig() (string, error) {
 	return "", fmt.Errorf("machtiani config not found; set MACHTIANI_CONFIG or create .machtiani/config.toml")
 }
 
-func searchParents(start, rel string) string {
-	dir := start
+func findLocalConfig(start string) (string, error) {
+	rel := filepath.Join(".machtiani", "config.toml")
+	if git.IsGitRepo(start) {
+		root, err := git.RepoRoot(start)
+		if err != nil {
+			return "", fmt.Errorf("resolve git root: %w", err)
+		}
+		return searchParents(start, rel, root)
+	}
+	return searchParents(start, rel, "")
+}
+
+func searchParents(start, rel, limit string) (string, error) {
+	dir := filepath.Clean(start)
+	if limit != "" {
+		limit = filepath.Clean(limit)
+	}
 	for {
 		candidate := filepath.Join(dir, rel)
 		if _, err := os.Stat(candidate); err == nil {
-			return candidate
+			return candidate, nil
+		} else if err != nil && !os.IsNotExist(err) {
+			return "", fmt.Errorf("stat %s: %w", candidate, err)
+		}
+		if limit != "" && filepath.Clean(dir) == limit {
+			break
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
@@ -181,7 +207,7 @@ func searchParents(start, rel string) string {
 		}
 		dir = parent
 	}
-	return ""
+	return "", nil
 }
 
 func parseConfig(path string) (Config, error) {

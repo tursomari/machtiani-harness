@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/tursomari/machtiani/mct/artifacts"
 )
 
 func TestResolveFileDiscoveryTrajectoryConflictingFlags(t *testing.T) {
@@ -40,11 +42,11 @@ func TestResolveFileDiscoveryTrajectoryDefaultDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveFileDiscoveryTrajectory returned error: %v", err)
 	}
-	absDir, err := filepath.Abs(filepath.Join(".machtiani", "chat"))
+	chatDir, err := artifacts.ChatDirectory()
 	if err != nil {
-		t.Fatalf("failed to build expected path: %v", err)
+		t.Fatalf("failed to resolve chat directory: %v", err)
 	}
-	expected := filepath.Join(absDir, fmt.Sprintf("file-discovery-%s.jsonl", sessionID))
+	expected := filepath.Join(chatDir, fmt.Sprintf("file-discovery-%s.jsonl", sessionID))
 	if got != expected {
 		t.Fatalf("expected %q, got %q", expected, got)
 	}

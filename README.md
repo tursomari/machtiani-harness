@@ -120,7 +120,7 @@ mct prompt --mode=answer-only -f prompt.md
 - `rg` missing
   - Install ripgrep (`rg`) and ensure it’s on PATH.
 - Saved chat not found
-  - `mct-agent` reads `.machtiani/chat/machtiani-response.md` produced by `mct prompt`. Make sure `mct` runs successfully first.
+  - `mct-agent` reads `.machtiani/chats/machtiani-response.md` produced by `mct prompt`. Make sure `mct` runs successfully first.
 
 ## Notes and Pointers
 - Detailed `mct` docs: see `mct/README.md` for configuration, discovery rules, and troubleshooting.

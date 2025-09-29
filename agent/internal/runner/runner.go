@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tursomari/machtiani/mct/artifacts"
 	"github.com/tursomari/machtiani/mct/llm"
 )
 
@@ -96,8 +97,11 @@ func (r *Runner) RunPrompt(ctx context.Context, sessionID string, args ...string
 		return "", err
 	}
 
-	// mct updates .machtiani/chat/machtiani-response.md; return the latest file under that dir if present
-	saved := findLatestChatFile(".machtiani/chat")
+	chatDir, err := artifacts.ChatDirectory()
+	if err != nil {
+		return "", err
+	}
+	saved := findLatestChatFile(chatDir)
 	return saved, nil
 }
 
