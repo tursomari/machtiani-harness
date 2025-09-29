@@ -33,6 +33,7 @@ Run locally
 ./scripts/install-all.sh
 bash agent/tests/run-live.sh
 ```
+Prefer to avoid the script? Use the manual command block in the root `README.md` first, then run `bash agent/tests/run-live.sh`.
 
 CI guidance
 ```
@@ -40,6 +41,7 @@ PREFIX="$HOME/.local" ./scripts/install-all.sh
 export PATH="$HOME/.local/bin:$PATH"
 bash agent/tests/run-live.sh
 ```
+When using an alternate install location, replicate the manual build block from the root `README.md` and adjust `PATH` accordingly before running the tests.
 
 Notes
 - The script never mutates PATH or accepts binary override flags; ensure the install location is already on PATH before invoking it.

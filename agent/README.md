@@ -4,7 +4,7 @@ Agent “composer” that iteratively asks focused questions via the `mct` CLI (
 
 ## Requirements
 - Go 1.22+
-- `mct` CLI available in PATH (run `./scripts/install-all.sh` from repo root to build/install `mct`, `file-discovery`, `patcher`, and `mct-agent` together)
+- `mct` CLI available in PATH (run `./scripts/install-all.sh` from repo root to build/install `mct`, `file-discovery`, `patcher`, and `mct-agent` together; a transparent manual command block lives in the workspace `README.md` under Quick Install)
 - OpenAI‑compatible model configuration (no implicit defaults):
   - `OPENAI_API_KEY` (required)
   - `OPENAI_BASE_URL` (required)
@@ -24,6 +24,8 @@ The script writes binaries to `~/.local/bin` by default. Override the destinatio
 PREFIX="$PWD/.mct-bin" ./scripts/install-all.sh
 export PATH="$PWD/.mct-bin/bin:$PATH"
 ```
+
+Prefer to inspect every step? Copy the manual snippet from the repository `README.md` (Quick Install section); it builds the same binaries without any extra flags.
 
 After installation, confirm the tools resolve via PATH:
 
@@ -84,7 +86,7 @@ Flags:
 
 ## Troubleshooting
 - “mct not found”
-  - Run `./scripts/install-all.sh` (or ensure the prefix you installed to is on PATH).
+  - Run `./scripts/install-all.sh` (or use the manual snippet in the repo `README.md`) and ensure the chosen prefix is on PATH.
 - “Missing model configuration”
   - Provide a valid `.machtiani/config.toml` (or set `MACHTIANI_CONFIG`) containing the model alias, or export `OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_MODEL` so the agent can generate one.
 - “Saved chat missing/unreadable”
@@ -110,7 +112,7 @@ GOCACHE=$(pwd)/.gocache go test ./...
 `agent/tests/run-live.sh` exercises the PATH-installed binaries end-to-end (see `TESTING.md` for full details).
 
 Prerequisites:
-1. Run `./scripts/install-all.sh` (or otherwise ensure `mct`, `file-discovery`, `patcher`, and `mct-agent` are already on PATH).
+1. Run `./scripts/install-all.sh` (or copy the manual command block from the repo `README.md`) so that `mct`, `file-discovery`, `patcher`, and `mct-agent` are on PATH.
 2. Optional for live mode: export `OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_MODEL`. When these variables are absent the script forces deterministic dry-run mode.
 
 What the script does:
@@ -123,6 +125,7 @@ Run from the repo root:
 ```
 ./scripts/install-all.sh && bash agent/tests/run-live.sh
 ```
+If you prefer not to invoke the script, run the manual block from the root `README.md` first, then execute `bash agent/tests/run-live.sh`.
 
 The script no longer mutates PATH or accepts binary override flags; everything must resolve via PATH.
 - When `OPENAI_*` are not provided, the generated config points at stub credentials and the script forces `--dry-run`, so no network or `mct` subprocess calls occur; transcripts remain available for assertions while the final artifact is intentionally skipped.

@@ -29,8 +29,32 @@ Run the unified installer from the repo root to build **mct**, **file-discovery*
 
 Prefer a different prefix? Supply `PREFIX=...` and add the resulting `bin` directory to PATH.
 
+Prefer to see the full sequence? The commands below inline everything the installer does, but without any build metadata flags:
+
+```bash
+PREFIX="${PREFIX:-$HOME/.local}"
+BIN_DIR="$PREFIX/bin"
+mkdir -p "$BIN_DIR" mct/bin
+: "${GOCACHE:=$PWD/.gocache}"; export GOCACHE; mkdir -p "$GOCACHE"
+
+( cd mct && go build -o machtiani-cli ./cmd/mct )
+( cd mct/submodules/file-discovery && go build -o ../../bin/file-discovery ./cmd/file-discovery )
+( cd patcher && go build -o "$BIN_DIR/patcher" ./cmd/patcher )
+( cd agent && go build -o "$BIN_DIR/mct-agent" ./cmd/mct-agent )
+install -m 0755 mct/machtiani-cli "$BIN_DIR/mct"
+install -m 0755 mct/bin/file-discovery "$BIN_DIR/file-discovery"
+
+hash -r 2>/dev/null || true
+"$BIN_DIR/mct" --version >/dev/null 2>&1 || true
+"$BIN_DIR/mct-agent" --version >/dev/null 2>&1 || true
+"$BIN_DIR/patcher" --version >/dev/null 2>&1 || true
+"$BIN_DIR/file-discovery" -version >/dev/null 2>&1 || true
+```
+
+The manual block skips the ldflags metadata that the installer uses, so those version commands will show `dev`/`unknown` fields—this is expected.
+
 ## Environment Setup
-Both `mct` and `mct-agent` use OpenAI‑compatible configuration via `OPENAI_*`. Provide all three values explicitly (no implicit defaults):
+Both `mct` and `mct-agent` use OpenAI-compatible configuration via `OPENAI_*`. Provide all three values explicitly (no implicit defaults):
 
 ```
 export OPENAI_API_KEY=sk_...
@@ -86,39 +110,9 @@ mct prompt --file prompt.md
 # Answer-only mode (no discovery/saving)
 mct prompt --mode=answer-only -f prompt.md
 ```
-
-## Alternative: Manual Build Steps
-If you prefer not to run `mct/build.sh`, you can build each piece manually.
-
-```
-# Build mct (CLI)
-cd mct
-go build -o mct ./cmd/mct
-
-# Build file-discovery from the submodule
-(cd submodules/file-discovery && \
-  mkdir -p ../../bin && \
-  GOCACHE=$(pwd)/.gocache go build -o ../../bin/file-discovery ./cmd/file-discovery)
-
-# Install both
-install -m 0755 ./mct ~/.local/bin/mct
-install -m 0755 ./bin/file-discovery ~/.local/bin/file-discovery
-cd -
-
-# Build and install mct-agent
-cd agent
-go build -o ~/.local/bin/mct-agent ./cmd/mct-agent
-cd -
-
-# Build and install patcher
-cd patcher
-go build -o ~/.local/bin/patcher ./cmd/patcher
-cd -
-```
-
 ## Troubleshooting
 - Command not found
-  - Re-run `./scripts/install-all.sh` (or the manual steps) and ensure the chosen prefix (default `~/.local/bin`) is on PATH. Rehash your shell if needed (`hash -r`).
+  - Re-run `./scripts/install-all.sh` (or the manual block above) and ensure the chosen prefix (default `~/.local/bin`) is on PATH. Rehash your shell if needed (`hash -r`).
 - Missing model configuration / auth errors
   - Set `OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_MODEL` (or pass `--openai-*` flags to the agent).
 - `file-discovery` not found
@@ -138,7 +132,7 @@ cd -
 `agent/tests/run-live.sh` exercises the PATH-installed binaries end-to-end.
 
 Prerequisites:
-1. Run `./scripts/install-all.sh` (or otherwise ensure `mct`, `file-discovery`, `patcher`, and `mct-agent` are already on PATH).
+1. Run `./scripts/install-all.sh` (or copy/paste the manual block above) so `mct`, `file-discovery`, `patcher`, and `mct-agent` resolve on PATH.
 2. Optional for live mode: export `OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_MODEL`. Without these, the script forces deterministic dry-run mode.
 
 What the script does:
@@ -151,6 +145,7 @@ Run from the repo root:
 ./scripts/install-all.sh
 bash agent/tests/run-live.sh
 ```
+If you built via the manual block, skip the first line and run `bash agent/tests/run-live.sh` once the binaries are in place.
 
 The script does not mutate PATH; ensure the install location is already exported. When `OPENAI_*` are absent it forces dry-run, so no network calls occur but transcripts remain for assertions. For full context (including CI guidance) see `agent/TESTING.md`.
 
