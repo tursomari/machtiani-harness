@@ -21,25 +21,39 @@ for arg in "$@"; do
   esac
 done
 
+BIN_DIR="bin"
+
+mkdir -p "$BIN_DIR"
+rm -f machtiani-cli 2>/dev/null || true
+
 run_generate_ldflags() {
   # Prefer prebuilt helper inside the folder
-  if [ -x ./generate_ldflags/generate_ldflags ]; then
-    ./generate_ldflags/generate_ldflags "$@"
+  local helper_dir="./generate_ldflags"
+  local helper_bin="${helper_dir}/bin/generate_ldflags"
+  local legacy_dir_bin="${helper_dir}/generate_ldflags"
+  local root_bin="./generate_ldflags"
+  if [ -x "$helper_bin" ]; then
+    "$helper_bin" "$@"
+    return $?
+  fi
+  # If a legacy directory helper exists, use it
+  if [ -x "$legacy_dir_bin" ]; then
+    "$legacy_dir_bin" "$@"
     return $?
   fi
   # If a top-level file exists and is executable (not a dir), use it
-  if [ -f ./generate_ldflags ] && [ -x ./generate_ldflags ]; then
-    ./generate_ldflags "$@"
+  if [ -f "$root_bin" ] && [ -x "$root_bin" ]; then
+    "$root_bin" "$@"
     return $?
   fi
-  # Otherwise try to build it into ./generate_ldflags/generate_ldflags
-  mkdir -p generate_ldflags
+  # Otherwise try to build it into ./generate_ldflags/bin/generate_ldflags
+  mkdir -p "${helper_dir}/bin"
   if [ -d .gocache ]; then
-    GOCACHE=$(pwd)/.gocache go build -o generate_ldflags/generate_ldflags ./generate_ldflags
+    GOCACHE=$(pwd)/.gocache go build -o "$helper_bin" ./generate_ldflags
   else
-    go build -o generate_ldflags/generate_ldflags ./generate_ldflags
+    go build -o "$helper_bin" ./generate_ldflags
   fi
-  ./generate_ldflags/generate_ldflags "$@"
+  "$helper_bin" "$@"
 }
 
 if [ "$RELEASE" = true ]; then
@@ -60,10 +74,9 @@ else
   LD_FLAGS=$(run_generate_ldflags)
 
   # Build the main application with ldflags
-  go build -buildvcs=true -ldflags "$LD_FLAGS" -o machtiani-cli ./cmd/mct
+  go build -buildvcs=true -ldflags "$LD_FLAGS" -o "$BIN_DIR/mct" ./cmd/mct
 
   # Build local file-discovery helper (from submodule)
-  mkdir -p bin
   FD_COMMIT=$(git -C submodules/file-discovery rev-parse --short=12 HEAD 2>/dev/null || echo unknown)
   [ -z "$FD_COMMIT" ] && FD_COMMIT=unknown
   FD_TIME=$(git -C submodules/file-discovery log -1 --format=%cd --date=format:%Y%m%dT%H%M%SZ -- . 2>/dev/null)
@@ -90,8 +103,8 @@ else
   FD_LDFLAGS="-X main.version=${FD_VERSION} -X main.commit=${FD_COMMIT} -X main.builtAt=${FD_BUILD_AT} -X main.dirty=${FD_DIRTY_STATE}"
   # Try to respect a local GOCACHE if present
   if [ -d .gocache ]; then
-    (cd submodules/file-discovery && GOCACHE=$(pwd)/../../.gocache go build -buildvcs=true -ldflags "$FD_LDFLAGS" -o ../../bin/file-discovery ./cmd/file-discovery)
+    (cd submodules/file-discovery && GOCACHE=$(pwd)/../../.gocache go build -buildvcs=true -ldflags "$FD_LDFLAGS" -o ../../"$BIN_DIR"/file-discovery ./cmd/file-discovery)
   else
-    (cd submodules/file-discovery && go build -buildvcs=true -ldflags "$FD_LDFLAGS" -o ../../bin/file-discovery ./cmd/file-discovery)
+    (cd submodules/file-discovery && go build -buildvcs=true -ldflags "$FD_LDFLAGS" -o ../../"$BIN_DIR"/file-discovery ./cmd/file-discovery)
   fi
 fi

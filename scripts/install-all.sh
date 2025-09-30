@@ -43,15 +43,15 @@ log "Building mct and file-discovery"
   cd "$REPO_ROOT/mct"
   ./build.sh
 )
-if [ ! -f "$REPO_ROOT/mct/machtiani-cli" ]; then
-  echo "mct build did not produce machtiani-cli" >&2
+if [ ! -f "$REPO_ROOT/mct/bin/mct" ]; then
+  echo "mct build did not produce bin/mct" >&2
   exit 1
 fi
 if [ ! -f "$REPO_ROOT/mct/bin/file-discovery" ]; then
   echo "mct build did not produce file-discovery" >&2
   exit 1
 fi
-install -m 0755 "$REPO_ROOT/mct/machtiani-cli" "$BIN_DIR/mct"
+install -m 0755 "$REPO_ROOT/mct/bin/mct" "$BIN_DIR/mct"
 install -m 0755 "$REPO_ROOT/mct/bin/file-discovery" "$BIN_DIR/file-discovery"
 
 log "Building patcher"

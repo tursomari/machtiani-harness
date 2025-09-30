@@ -21,7 +21,7 @@ This builds the CLI and the bundled `file-discovery` helper from the submodule, 
 ```
 mkdir -p ~/.local/bin \
   && ./build.sh \
-  && install -m 0755 ./machtiani-cli ~/.local/bin/mct \
+  && install -m 0755 ./bin/mct ~/.local/bin/mct \
   && install -m 0755 ./bin/file-discovery ~/.local/bin/file-discovery \
   && hash -r
 
@@ -32,13 +32,14 @@ export PATH="$HOME/.local/bin:$PATH"
 Alternative (manual) build:
 ```
 # Build CLI
-go build -o mct ./cmd/mct
+mkdir -p bin
+go build -o bin/mct ./cmd/mct
 
 # Build file-discovery from submodule
 (cd submodules/file-discovery && go build -o ../../bin/file-discovery ./cmd/file-discovery)
 
 # Install both
-install -m 0755 ./mct ~/.local/bin/mct
+install -m 0755 ./bin/mct ~/.local/bin/mct
 install -m 0755 ./bin/file-discovery ~/.local/bin/file-discovery
 ```
 

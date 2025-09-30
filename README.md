@@ -37,11 +37,11 @@ BIN_DIR="$PREFIX/bin"
 mkdir -p "$BIN_DIR" mct/bin
 : "${GOCACHE:=$PWD/.gocache}"; export GOCACHE; mkdir -p "$GOCACHE"
 
-( cd mct && go build -o machtiani-cli ./cmd/mct )
+( cd mct && go build -o bin/mct ./cmd/mct )
 ( cd mct/submodules/file-discovery && go build -o ../../bin/file-discovery ./cmd/file-discovery )
 ( cd patcher && go build -o "$BIN_DIR/patcher" ./cmd/patcher )
 ( cd agent && go build -o "$BIN_DIR/mct-agent" ./cmd/mct-agent )
-install -m 0755 mct/machtiani-cli "$BIN_DIR/mct"
+install -m 0755 mct/bin/mct "$BIN_DIR/mct"
 install -m 0755 mct/bin/file-discovery "$BIN_DIR/file-discovery"
 
 hash -r 2>/dev/null || true
