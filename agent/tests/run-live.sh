@@ -392,12 +392,12 @@ fi
 
 run_happy_case "issue-a-1turn" 1 \
   "What is the main purpose of the mct-agent binary?" \
-  "Conclusion" \
+  "\\[full answer\\]" \
   1
 
 run_happy_case "issue-a-3turn" 3 \
   "What is the main purpose of the mct-agent binary?" \
-  "Conclusion"
+  "\\[full answer\\]"
 
 run_happy_case "issue-b-1turn" 1 \
   "Describe the full multi-turn flow in mct-agent, including planning and context retention." \

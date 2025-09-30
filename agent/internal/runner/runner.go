@@ -23,6 +23,8 @@ type PromptInput struct {
 	Mode           string
 	IncludeHistory bool
 	SourceFile     string
+	OnStreamHeader func(string)
+	OnStreamToken  func(string)
 }
 
 func (r *Runner) Resolve() error {
@@ -45,19 +47,41 @@ func (r *Runner) RunPrompt(ctx context.Context, sessionID string, in PromptInput
 		return promptsvc.Result{}, nil
 	}
 
-	ms, _ := llm.NewMarkdownStreamer()
-	onHeader := func(chunk string) {
-		if ms != nil {
-			_ = ms.Feed(chunk)
-		} else {
-			fmt.Print(chunk)
+	var (
+		ms          *llm.MarkdownStreamer
+		onHeader    func(string)
+		onToken     func(string)
+		useMarkdown bool
+	)
+
+	if in.OnStreamHeader != nil {
+		onHeader = in.OnStreamHeader
+	}
+	if in.OnStreamToken != nil {
+		onToken = in.OnStreamToken
+	}
+
+	if onHeader == nil || onToken == nil {
+		ms, _ = llm.NewMarkdownStreamer()
+		useMarkdown = ms != nil
+	}
+
+	if onHeader == nil {
+		onHeader = func(chunk string) {
+			if useMarkdown {
+				_ = ms.Feed(chunk)
+			} else {
+				fmt.Print(chunk)
+			}
 		}
 	}
-	onToken := func(tok string) {
-		if ms != nil {
-			_ = ms.Feed(tok)
-		} else {
-			fmt.Print(tok)
+	if onToken == nil {
+		onToken = func(tok string) {
+			if useMarkdown {
+				_ = ms.Feed(tok)
+			} else {
+				fmt.Print(tok)
+			}
 		}
 	}
 
@@ -73,7 +97,7 @@ func (r *Runner) RunPrompt(ctx context.Context, sessionID string, in PromptInput
 		Verbose:                 r.Verbose,
 		FileDiscoveryTrajectory: r.FileDiscoveryTrajectory,
 	})
-	if ms != nil {
+	if useMarkdown && ms != nil {
 		_ = ms.Flush()
 	}
 	if err != nil {

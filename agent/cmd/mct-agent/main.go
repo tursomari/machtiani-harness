@@ -17,6 +17,7 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/planner"
 	"github.com/tursomari/machtiani/agent/internal/runner"
 	"github.com/tursomari/machtiani/agent/internal/transcript"
+	"github.com/tursomari/machtiani/agent/internal/ui"
 	"github.com/tursomari/machtiani/mct/artifacts"
 	"github.com/tursomari/machtiani/mct/llm"
 	promptsvc "github.com/tursomari/machtiani/mct/prompt"
@@ -132,13 +133,13 @@ func run() int {
 	defer tr.Close()
 
 	if cfg.verbose {
-		fmt.Println("mct-agent starting; transcript:", tr.Path())
+		fmt.Fprintln(os.Stderr, "mct-agent starting; transcript:", tr.Path())
 	}
 
 	// Setup session ID for correlation
 	sessionID := runner.GenerateSessionID()
 	if cfg.verbose {
-		fmt.Println("Session:", sessionID)
+		fmt.Fprintln(os.Stderr, "Session:", sessionID)
 	}
 
 	trajectoryPath, err := resolveFileDiscoveryTrajectory(cfg, sessionID)
@@ -147,7 +148,7 @@ func run() int {
 		return 1
 	}
 	if cfg.verbose && strings.TrimSpace(trajectoryPath) != "" {
-		fmt.Println("File discovery trajectory:", trajectoryPath)
+		fmt.Fprintln(os.Stderr, "File discovery trajectory:", trajectoryPath)
 	}
 
 	paramPairs := append([]string(nil), paramFlags...)
@@ -215,20 +216,39 @@ func run() int {
 		return 1
 	}
 
+	display := ui.NewTerminalDisplay(os.Stdout)
+	display.StartSession(goal)
+	sessionClosed := false
+	defer func() {
+		if !sessionClosed {
+			display.EndSession()
+		}
+	}()
+
 	// First turn: use the original prompt directly (no planner)
 	{
 		step := 1
-		input := runner.PromptInput{Prompt: goal, Mode: "default", IncludeHistory: true}
+		stream := display.BeginPrompt(goal)
+		input := runner.PromptInput{
+			Prompt:         goal,
+			Mode:           "default",
+			IncludeHistory: true,
+			OnStreamHeader: stream.OnChunk,
+			OnStreamToken:  stream.OnChunk,
+		}
 
 		ctx2, cancel2 := makeTurnContext(cfg.timeoutPerTurn)
 		result, merr := mctRunner.RunPrompt(ctx2, sessionID, input)
 		cancel2()
 		if merr != nil {
+			msg := merr.Error()
 			if errors.Is(ctx2.Err(), context.DeadlineExceeded) || strings.Contains(strings.ToLower(merr.Error()), "signal: killed") {
-				fmt.Fprintf(os.Stderr, "mct prompt error: timed out after %ds. Try increasing --timeout-per-turn or set 0 for unlimited.\n", cfg.timeoutPerTurn)
-				return 1
+				msg = fmt.Sprintf("timed out after %ds", cfg.timeoutPerTurn)
+				fmt.Fprintf(os.Stderr, "mct prompt error: %s. Try increasing --timeout-per-turn or set 0 for unlimited.\n", msg)
+			} else {
+				fmt.Fprintln(os.Stderr, "mct prompt error:", merr)
 			}
-			fmt.Fprintln(os.Stderr, "mct prompt error:", merr)
+			stream.Abort(msg)
 			return 1
 		}
 
@@ -244,6 +264,7 @@ func run() int {
 				chatDir, err := artifacts.ChatDirectory()
 				if err != nil {
 					fmt.Fprintln(os.Stderr, "Failed to resolve chat directory:", err)
+					stream.Abort("failed to save chat transcript")
 					return 1
 				}
 				savedPath = filepath.Join(chatDir, "machtiani-response.md")
@@ -256,6 +277,7 @@ func run() int {
 		if cfg.dryRun || strings.TrimSpace(fullAns) == "" {
 			fullAns = lastAnswer
 		}
+		stream.Complete(fullAns)
 		if err := tr.WriteTurn(step, goal, savedPath, retrieved, fullAns, "initial"); err != nil {
 			fmt.Fprintln(os.Stderr, "Transcript write error:", err)
 			return 1
@@ -284,8 +306,9 @@ func run() int {
 			fmt.Fprintln(os.Stderr, "Final file write error:", err)
 			return 1
 		}
-		fmt.Println("Conclusion:")
-		fmt.Println(answer)
+		presentFinalAnswer(display, answer)
+		display.EndSession()
+		sessionClosed = true
 		return 0
 	}
 
@@ -326,8 +349,9 @@ func run() int {
 					fmt.Fprintln(os.Stderr, "Final file write error:", err)
 					return 1
 				}
-				fmt.Println("Conclusion:")
-				fmt.Println(answer)
+				presentFinalAnswer(display, answer)
+				display.EndSession()
+				sessionClosed = true
 				return 0
 			}
 			fmt.Fprintln(os.Stderr, "Planner error:", perr)
@@ -335,7 +359,7 @@ func run() int {
 		}
 
 		if cfg.verbose {
-			fmt.Printf("Step %d decision: %s\n", step, decision)
+			fmt.Fprintf(os.Stderr, "Step %d decision: %s\n", step, decision)
 		}
 
 		if decision == planner.DecisionFinalize || step == cfg.maxSteps {
@@ -360,8 +384,9 @@ func run() int {
 				fmt.Fprintln(os.Stderr, "Final file write error:", err)
 				return 1
 			}
-			fmt.Println("Conclusion:")
-			fmt.Println(answer)
+			presentFinalAnswer(display, answer)
+			display.EndSession()
+			sessionClosed = true
 			return 0
 		}
 
@@ -372,18 +397,28 @@ func run() int {
 				return 1
 			}
 			if cfg.verbose {
-				fmt.Println("Question:", question)
+				fmt.Fprintln(os.Stderr, "Question:", question)
 			}
-			input := runner.PromptInput{Prompt: question, Mode: "default", IncludeHistory: true}
+			stream := display.BeginPrompt(question)
+			input := runner.PromptInput{
+				Prompt:         question,
+				Mode:           "default",
+				IncludeHistory: true,
+				OnStreamHeader: stream.OnChunk,
+				OnStreamToken:  stream.OnChunk,
+			}
 			ctx2, cancel2 := makeTurnContext(cfg.timeoutPerTurn)
 			result, merr := mctRunner.RunPrompt(ctx2, sessionID, input)
 			cancel2()
 			if merr != nil {
+				msg := merr.Error()
 				if errors.Is(ctx2.Err(), context.DeadlineExceeded) || strings.Contains(strings.ToLower(merr.Error()), "signal: killed") {
-					fmt.Fprintf(os.Stderr, "mct prompt error: timed out after %ds. Try increasing --timeout-per-turn or set 0 for unlimited.\n", cfg.timeoutPerTurn)
-					return 1
+					msg = fmt.Sprintf("timed out after %ds", cfg.timeoutPerTurn)
+					fmt.Fprintf(os.Stderr, "mct prompt error: %s. Try increasing --timeout-per-turn or set 0 for unlimited.\n", msg)
+				} else {
+					fmt.Fprintln(os.Stderr, "mct prompt error:", merr)
 				}
-				fmt.Fprintln(os.Stderr, "mct prompt error:", merr)
+				stream.Abort(msg)
 				return 1
 			}
 			savedPath := strings.TrimSpace(result.SavedPath)
@@ -398,6 +433,7 @@ func run() int {
 					chatDir, err := artifacts.ChatDirectory()
 					if err != nil {
 						fmt.Fprintln(os.Stderr, "Failed to resolve chat directory:", err)
+						stream.Abort("failed to save chat transcript")
 						return 1
 					}
 					savedPath = filepath.Join(chatDir, "machtiani-response.md")
@@ -409,6 +445,7 @@ func run() int {
 			if cfg.dryRun || strings.TrimSpace(fullAns) == "" {
 				fullAns = lastAnswer
 			}
+			stream.Complete(fullAns)
 			if err := tr.WriteTurn(step, question, savedPath, retrieved, fullAns, "ask"); err != nil {
 				fmt.Fprintln(os.Stderr, "Transcript write error:", err)
 				return 1
@@ -420,11 +457,13 @@ func run() int {
 		case planner.DecisionPatch:
 			// Extract JSON and invoke patcher
 			payload := question // for patch decisions, parseDecision returns raw body here
+			stream := display.BeginPrompt("Patcher: create patch")
 			if cfg.verbose {
 				fmt.Fprintln(os.Stderr, "[patcher] planner payload (raw):", trimTo(strings.TrimSpace(payload), 1200))
 			}
 			jsonBytes, jerr := parser.ExtractPatchJSONPayload(payload)
 			if jerr != nil {
+				stream.Abort("invalid patch payload")
 				// Record a patch-error turn then exit 1
 				_ = tr.WriteTurn(step, "Patcher: invalid input JSON", "", nil, "Error extracting JSON: "+jerr.Error(), "patch-error")
 				return 1
@@ -434,6 +473,7 @@ func run() int {
 			}
 			// Ensure patcher is resolved (may have failed earlier lazily)
 			if err := pRunner.Resolve(); err != nil {
+				stream.Abort("patcher resolve failed")
 				_ = tr.WriteTurn(step, "Patcher: resolve failed", "", nil, "Error: "+err.Error(), "patch-error")
 				return 1
 			}
@@ -441,6 +481,7 @@ func run() int {
 			stdout, stderr, perr := pRunner.RunJSON(ctxP, jsonBytes, cfg.verbose)
 			cancelP()
 			if perr != nil {
+				stream.Abort("patcher execution error")
 				_ = tr.WriteTurn(step, "Patcher: execution error", "", nil, trimTo("stderr: "+string(stderr), 800), "patch-error")
 				return 1
 			}
@@ -462,10 +503,12 @@ func run() int {
 				Description   string   `json:"description"`
 			}
 			if err := json.Unmarshal(stdout, &pout); err != nil {
+				stream.Abort("patcher produced invalid JSON")
 				_ = tr.WriteTurn(step, "Patcher: invalid stdout JSON", "", nil, "stdout: "+trimTo(string(stdout), 600)+"\nstderr: "+trimTo(string(stderr), 200), "patch-error")
 				return 1
 			}
 			if !pout.Applies {
+				stream.Abort("patch did not apply")
 				_ = tr.WriteTurn(step, "Patcher: apply-check failed", "", nil, "stdout: "+trimTo(string(stdout), 600)+"\nstderr: "+trimTo(string(stderr), 200), "patch-error")
 				return 1
 			}
@@ -500,6 +543,7 @@ func run() int {
 			} else {
 				ans = ans + "applied: skipped (use without --no-apply)\n"
 			}
+			stream.Complete(ans)
 			if err := tr.WriteTurn(step, qline, "", nil, ans, "patch"); err != nil {
 				fmt.Fprintln(os.Stderr, "Transcript write error:", err)
 				return 1
@@ -526,11 +570,14 @@ FINALIZE:
 		lastDec, lastBody, err := pl.Plan(ctx, goal, trFull, step, cfg.maxSteps)
 		cancel()
 		if err == nil && lastDec == planner.DecisionPatch {
+			stream := display.BeginPrompt("Patcher: pre-finalize patch")
 			if cfg.verbose {
 				fmt.Fprintln(os.Stderr, "[patcher] pre-finalize planner payload (raw):", trimTo(strings.TrimSpace(lastBody), 1200))
 			}
 			jsonBytes, jerr := parser.ExtractPatchJSONPayload(lastBody)
 			if jerr != nil {
+				stream.Abort("invalid patch payload")
+				stream = nil
 				_ = tr.WriteTurn(step, "Patcher: pre-finalize (invalid JSON)", "", nil, jerr.Error(), "patch-error")
 			} else {
 				if cfg.verbose {
@@ -541,6 +588,8 @@ FINALIZE:
 				stdout, stderr, perr := pRunner.RunJSON(ctxP, jsonBytes, cfg.verbose)
 				cancelP()
 				if perr != nil {
+					stream.Abort("patcher execution error")
+					stream = nil
 					_ = tr.WriteTurn(step, "Patcher: pre-finalize (error)", "", nil, trimTo(string(stderr), 800), "patch-error")
 				} else {
 					if cfg.verbose {
@@ -578,6 +627,10 @@ FINALIZE:
 								if cfg.verbose {
 									fmt.Fprintln(os.Stderr, "[git] apply error (pre-finalize):", aerr)
 								}
+								if stream != nil {
+									stream.Abort("git apply failed")
+									stream = nil
+								}
 								_ = tr.WriteTurn(step, "Patcher: pre-finalize apply failed", "", nil, trimTo(aerr.Error()+"\n"+trimTo(string(stderr), 400), 800), "patch-error")
 							} else {
 								ans = ans + "applied: yes\n"
@@ -591,7 +644,14 @@ FINALIZE:
 							ans = ans + "applied: skipped (use without --no-apply)\n"
 						}
 						_ = tr.WriteTurn(step, qline, "", nil, ans, "patch")
+						if stream != nil {
+							stream.Complete(ans)
+						}
 					} else {
+						if stream != nil {
+							stream.Abort("patch did not apply")
+							stream = nil
+						}
 						_ = tr.WriteTurn(step, "Patcher: pre-finalize (apply-check failed)", "", nil, trimTo(string(stdout), 800)+"\n"+trimTo(string(stderr), 200), "patch-error")
 					}
 				}
@@ -619,8 +679,9 @@ FINALIZE:
 			fmt.Fprintln(os.Stderr, "Final file write error:", err)
 			return 1
 		}
-		fmt.Println("Conclusion:")
-		fmt.Println(answer)
+		presentFinalAnswer(display, answer)
+		display.EndSession()
+		sessionClosed = true
 	}
 	return 0
 }
@@ -888,7 +949,49 @@ func writeFinalAnswer(sessionID, answer, finalFileFlag string, verbose bool, dry
 		return err
 	}
 	if verbose {
-		fmt.Println("Final answer saved:", path)
+		fmt.Fprintln(os.Stderr, "Final answer saved:", path)
 	}
 	return nil
+}
+
+func presentFinalAnswer(display *ui.TerminalDisplay, answer string) {
+	rendered, fallback, err := renderWithGlow(answer)
+	if fallback {
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "[warning] glow render failed; showing plain text:", err)
+		} else {
+			fmt.Fprintln(os.Stderr, "[warning] glow not found; displaying plain text output")
+		}
+	} else if err != nil {
+		fmt.Fprintln(os.Stderr, "[warning] glow render warning:", err)
+	}
+	if strings.TrimSpace(rendered) == "" {
+		rendered = strings.TrimSpace(answer)
+	}
+	display.ShowFinal(rendered)
+}
+
+func renderWithGlow(content string) (string, bool, error) {
+	glowPath, err := exec.LookPath("glow")
+	if err != nil {
+		return strings.TrimSpace(content), true, nil
+	}
+	cmd := exec.Command(glowPath, "-")
+	cmd.Stdin = strings.NewReader(content)
+	var out bytes.Buffer
+	var errBuf bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errBuf
+	if err := cmd.Run(); err != nil {
+		combined := strings.TrimSpace(errBuf.String())
+		if combined != "" {
+			err = fmt.Errorf("%w: %s", err, combined)
+		}
+		return strings.TrimSpace(content), true, err
+	}
+	rendered := strings.TrimRight(out.String(), "\n")
+	if strings.TrimSpace(rendered) == "" {
+		return strings.TrimSpace(content), false, nil
+	}
+	return rendered, false, nil
 }
