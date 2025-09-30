@@ -4,22 +4,14 @@ import (
 	"context"
 	"fmt"
 	"io/ioutil"
-
 	"log"
 	"os"
-	//"os/exec" // No longer needed here for git apply
-	"path"
-	"path/filepath"
 	"strings"
 
-	"github.com/charmbracelet/glamour"
 	"github.com/spf13/pflag"
-	"github.com/tursomari/machtiani/mct/internal/contextbuilder"
-	"github.com/tursomari/machtiani/mct/internal/discoveryrunner"
-	"github.com/tursomari/machtiani/mct/internal/naming"
-	"github.com/tursomari/machtiani/mct/internal/session"
 	"github.com/tursomari/machtiani/mct/internal/utils"
 	"github.com/tursomari/machtiani/mct/llm"
+	promptsvc "github.com/tursomari/machtiani/mct/prompt"
 )
 
 const (
@@ -141,10 +133,6 @@ func handlePrompt(args []string, config *utils.Config, apiKey *string, headCommi
 		prompt = positionalMessage
 	}
 
-	// New local pipeline: discovery -> context -> direct LLM
-	var rawResponse string
-	var retrievedFilePaths []string
-
 	cfg := config // already loaded by caller
 
 	paramPairs := append([]string(nil), (*paramFlag)...)
@@ -169,213 +157,60 @@ func handlePrompt(args []string, config *utils.Config, apiKey *string, headCommi
 
 	ctx := context.Background()
 
-	if isAnswerOnlyMode {
-		// No discovery; include conversation history for continuity.
-		hist, _ := session.LoadHistory()
-		combined, included := contextbuilder.Build(prompt, nil, hist, contextbuilder.Options{IncludeHistory: *includeHistoryFlag})
-
-		ms, _ := llm.NewMarkdownStreamer()
-		header := combined
-		if strings.HasPrefix(strings.TrimSpace(combined), "# User") {
-			header = fmt.Sprintf("%s\n# Assistant\n\n", combined)
+	ms, _ := llm.NewMarkdownStreamer()
+	streamHeader := func(chunk string) {
+		if ms != nil {
+			_ = ms.Feed(chunk)
 		} else {
-			header = fmt.Sprintf("# User\n\n%s\n\n# Assistant\n\n", combined)
+			fmt.Print(chunk)
 		}
-		// Print header rendered
+	}
+	streamToken := func(tok string) {
 		if ms != nil {
-			_ = ms.Feed(header)
-		}
-		messages := []llm.Message{{Role: "user", Content: combined}}
-		full, err := llm.ChatStreamWithResolved(ctx, runtime.resolved, runtime.extras, messages, func(tok string) {
-			if ms != nil {
-				_ = ms.Feed(tok)
-			} else {
-				fmt.Print(tok)
-			}
-		})
-		if ms != nil {
-			_ = ms.Flush()
-		}
-		if err != nil {
-			log.Fatalf("Error calling LLM: %v", err)
-		}
-		rawResponse = header + full
-
-		// Persist history even in answer-only mode
-		_ = session.AddMessage("user", prompt, nil)
-		_ = session.AddMessage("assistant", full, included)
-	} else {
-		// Run discovery
-		drModel := discoveryrunner.ModelSettings{
-			UsingAlias: runtime.usingAlias,
-			Alias:      runtime.alias,
-			Resolved:   runtime.resolved,
-			ParamPairs: runtime.paramPairs,
-			ParamJSON:  runtime.paramJSON,
-		}
-		dr, err := discoveryrunner.Run(ctx, prompt, drModel, sessionID, *verboseFlag)
-		if err != nil {
-			log.Fatalf("Error running local file discovery: %v", err)
-		}
-		// Filter via .machtiani.ignore
-		_, ignoreFiles, _ := utils.LoadConfigAndIgnoreFiles()
-		filtered := filterPaths(dr.Paths, ignoreFiles)
-		retrievedFilePaths = filtered
-
-		// Load conversation history and build combined prompt
-		hist, _ := session.LoadHistory()
-		combined, included := contextbuilder.Build(prompt, filtered, hist, contextbuilder.Options{IncludeHistory: *includeHistoryFlag})
-
-		// Stream chat
-		ms, _ := llm.NewMarkdownStreamer()
-		header := combined
-		if strings.HasPrefix(strings.TrimSpace(combined), "# User") {
-			header = fmt.Sprintf("%s\n# Assistant\n\n", combined)
+			_ = ms.Feed(tok)
 		} else {
-			header = fmt.Sprintf("# User\n\n%s\n\n# Assistant\n\n", combined)
-		}
-		if ms != nil {
-			_ = ms.Feed(header)
-		}
-		messages := []llm.Message{{Role: "user", Content: combined}}
-		full, err := llm.ChatStreamWithResolved(ctx, runtime.resolved, runtime.extras, messages, func(tok string) {
-			if ms != nil {
-				_ = ms.Feed(tok)
-			} else {
-				fmt.Print(tok)
-			}
-		})
-		if ms != nil {
-			_ = ms.Flush()
-		}
-		if err != nil {
-			log.Fatalf("Error calling LLM: %v", err)
-		}
-		rawResponse = header + full
-
-		// Persist updated history
-		_ = session.AddMessage("user", prompt, nil)
-		_ = session.AddMessage("assistant", full, included)
-
-		// Append Retrieved File Paths section to rawResponse
-		retrievedFilePaths = included
-		if len(retrievedFilePaths) > 0 {
-			var b strings.Builder
-			b.WriteString("\n\n---\n\n# Retrieved File Paths\n\n")
-			for _, p := range retrievedFilePaths {
-				b.WriteString(fmt.Sprintf("- %s\n", p))
-			}
-			rawResponse += b.String()
+			fmt.Print(tok)
 		}
 	}
 
-	// In answer-only mode, we don't need to generate any filename
-	var filename string
-	if !isAnswerOnlyMode {
-		// Determine the filename to save the response
-		filename = path.Base(*fileFlag)
+	result, err := promptsvc.Run(ctx, promptsvc.RunOptions{
+		Prompt:         prompt,
+		Mode:           *modeFlag,
+		IncludeHistory: *includeHistoryFlag,
+		SessionID:      sessionID,
+		SourceFile:     *fileFlag,
+		Runtime: promptsvc.ModelRuntime{
+			Resolved:   runtime.resolved,
+			Alias:      runtime.alias,
+			UsingAlias: runtime.usingAlias,
+			Extras:     runtime.extras,
+			ParamPairs: runtime.paramPairs,
+			ParamJSON:  runtime.paramJSON,
+		},
+		OnHeader: streamHeader,
+		OnToken:  streamToken,
+		Verbose:  *verboseFlag,
+	})
+	if ms != nil {
+		_ = ms.Flush()
+	}
+	if err != nil {
+		log.Fatalf("Error executing prompt: %v", err)
+	}
 
-		// Strip all extensions from the filename
-		for ext := path.Ext(filename); ext != ""; ext = path.Ext(filename) {
-			filename = strings.TrimSuffix(filename, ext)
-		}
-
-		// Generate a filename if necessary
-		if filename == "" || filename == "." {
-			filename = naming.Generate(ctx, prompt, runtime.resolved)
-		}
+	if isAnswerOnlyMode {
+		return
 	}
 
 	utils.PrintIfNotAnswerOnly(isAnswerOnlyMode, "%s", createSeparator("Saving Chat Response"))
-
-	// Handle the final response with structured data, passing the isAnswerOnlyMode flag
-	handleAPIResponse(prompt, rawResponse, retrievedFilePaths, filename, *fileFlag, isAnswerOnlyMode)
-}
-
-func handleAPIResponse(prompt, openaiResponse string, retrievedFilePaths []string, filename, fileFlag string, isAnswerOnlyMode bool) {
-	// In answer-only mode, just print the raw response without any file operations
-	if isAnswerOnlyMode {
-		return
-	}
-
-	// For other modes, continue with file creation and structured output
-	var finalContent string
-	finalContent = openaiResponse
-
-	tempFile, err := utils.CreateTempMarkdownFile(finalContent, filename)
-	if err != nil {
-		log.Printf("Error creating markdown file '%s': %v", filename+".md", err)
+	if result.SaveError != nil {
+		log.Printf("Error creating markdown file '%s': %v", result.Filename+".md", result.SaveError)
 		fmt.Println("\n--- Start Fallback Response Output ---")
-		fmt.Println(finalContent)
+		fmt.Println(result.FullText)
 		fmt.Println("--- End Fallback Response Output ---")
 		return
 	}
-
-	fmt.Printf("Response saved to %s\n", tempFile)
-}
-
-// Remote generateFilename removed; replaced by naming.Generate()
-
-// createMarkdownContent - unchanged
-func createMarkdownContent(prompt, openAIResponse string, retrievedFilePaths []string, fileFlag string) string {
-	var markdownContent string
-	if fileFlag != "" {
-		// Ensure reading the file doesn't cause a fatal error if it fails here
-		// It should have been read successfully earlier in handlePrompt
-		content, err := ioutil.ReadFile(fileFlag)
-		if err != nil {
-			log.Printf("Warning: could not re-read markdown file %s for content creation: %v", fileFlag, err)
-			// Fallback to just using the prompt string if file read fails here
-			markdownContent = fmt.Sprintf("# User\n\n%s\n\n# Assistant\n\n%s", prompt, openAIResponse)
-		} else {
-			markdownContent = fmt.Sprintf("%s\n\n# Assistant\n\n%s", string(content), openAIResponse)
-		}
-	} else {
-		markdownContent = fmt.Sprintf("# User\n\n%s\n\n# Assistant\n\n%s", prompt, openAIResponse)
-	}
-
-	if len(retrievedFilePaths) > 0 {
-		markdownContent += "\n\n# Retrieved File Paths\n\n"
-		for _, path := range retrievedFilePaths {
-			markdownContent += fmt.Sprintf("- `%s`\n", path) // Added backticks for code formatting
-		}
-	}
-
-	return markdownContent
-}
-
-// renderMarkdown - unchanged
-func renderMarkdown(content string) {
-	renderer, err := glamour.NewTermRenderer(
-		glamour.WithAutoStyle(),
-		glamour.WithWordWrap(120), // Adjust wrap width as needed
-	)
-	if err != nil {
-		// Log error but perhaps fallback to plain print
-		log.Printf("Error creating glamour renderer: %v. Printing raw content.", err)
-		fmt.Println(content)
-		return
-	}
-
-	out, err := renderer.Render(content)
-	if err != nil {
-		// Log error but perhaps fallback to plain print
-		log.Printf("Error rendering Markdown with glamour: %v. Printing raw content.", err)
-		fmt.Println(content)
-		return
-	}
-
-	fmt.Println(out)
-}
-
-// readMarkdownFile - unchanged (though maybe make it return error instead of fatal)
-func readMarkdownFile(path string) string {
-	content, err := ioutil.ReadFile(path)
-	if err != nil {
-		// This is called from createMarkdownContent which now handles potential errors
-		log.Fatalf("Error reading markdown file: %v", err) // Keep fatal here if initial read must succeed
-	}
-	return string(content)
+	fmt.Printf("Response saved to %s\n", result.SavedPath)
 }
 
 // printVerboseInfo - unchanged
@@ -411,47 +246,6 @@ func printVerboseInfo(markdown, model, matchStrength, mode, prompt string) {
 	// If you want to print token counts here, use:
 	// fmt.Printf("  Embedding tokens: %s\n", utils.FormatIntWithCommas(embeddingTokens))
 	// fmt.Printf("  Inference tokens: %s\n", utils.FormatIntWithCommas(inferenceTokens))
-}
-
-// filterPaths applies ignore rules: exact match, directory prefix (trailing '/'), and glob patterns
-func filterPaths(paths []string, ignores []string) []string {
-	if len(ignores) == 0 {
-		return paths
-	}
-	out := make([]string, 0, len(paths))
-	for _, p := range paths {
-		drop := false
-		for _, rule := range ignores {
-			rule = strings.TrimSpace(rule)
-			if rule == "" || strings.HasPrefix(rule, "#") {
-				continue
-			}
-			if strings.HasSuffix(rule, "/") {
-				// directory prefix rule
-				prefix := strings.TrimSuffix(rule, "/") + "/"
-				if strings.HasPrefix(p, prefix) {
-					drop = true
-					break
-				}
-			}
-			// glob pattern support
-			if strings.ContainsAny(rule, "*?") {
-				if ok, _ := filepath.Match(rule, p); ok {
-					drop = true
-					break
-				}
-			}
-			// exact match
-			if p == rule {
-				drop = true
-				break
-			}
-		}
-		if !drop {
-			out = append(out, p)
-		}
-	}
-	return out
 }
 
 func utilsFirstNonEmpty(vals ...string) string {

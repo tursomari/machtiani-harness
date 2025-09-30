@@ -19,6 +19,7 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/transcript"
 	"github.com/tursomari/machtiani/mct/artifacts"
 	"github.com/tursomari/machtiani/mct/llm"
+	promptsvc "github.com/tursomari/machtiani/mct/prompt"
 )
 
 var (
@@ -167,11 +168,16 @@ func run() int {
 
 	// Resolve mct runner
 	mctRunner := runner.Runner{
-		Verbose:                 cfg.verbose,
-		DryRun:                  cfg.dryRun,
-		Model:                   runtime.resolved,
-		UsingAlias:              runtime.usingAlias,
-		Alias:                   runtime.alias,
+		Verbose: cfg.verbose,
+		DryRun:  cfg.dryRun,
+		Runtime: promptsvc.ModelRuntime{
+			Resolved:   runtime.resolved,
+			Alias:      runtime.alias,
+			UsingAlias: runtime.usingAlias,
+			Extras:     runtime.extras,
+			ParamPairs: runtime.paramPairs,
+			ParamJSON:  runtime.paramJSON,
+		},
 		FileDiscoveryTrajectory: trajectoryPath,
 	}
 	if err := mctRunner.Resolve(); err != nil {
@@ -212,29 +218,12 @@ func run() int {
 	// First turn: use the original prompt directly (no planner)
 	{
 		step := 1
-		// Build mct args
-		args := []string{"prompt", "--mode=default", "--include-history"}
-		if runtime.usingAlias {
-			if strings.TrimSpace(runtime.alias) != "" {
-				args = append(args, "--model", runtime.alias)
-			}
-		} else if strings.TrimSpace(runtime.resolved.Model) != "" {
-			args = append(args, "--openai-model", runtime.resolved.Model)
-		}
-		for _, p := range runtime.paramPairs {
-			args = append(args, "--param", p)
-		}
-		for _, j := range runtime.paramJSON {
-			args = append(args, "--param-json", j)
-		}
-		args = append(args, goal)
+		input := runner.PromptInput{Prompt: goal, Mode: "default", IncludeHistory: true}
 
 		ctx2, cancel2 := makeTurnContext(cfg.timeoutPerTurn)
-		savedPath, merr := mctRunner.RunPrompt(ctx2, sessionID, args...)
-		// ensure we release timers even on success
+		result, merr := mctRunner.RunPrompt(ctx2, sessionID, input)
 		cancel2()
 		if merr != nil {
-			// Improve diagnostics for timeouts (common cause of "signal: killed")
 			if errors.Is(ctx2.Err(), context.DeadlineExceeded) || strings.Contains(strings.ToLower(merr.Error()), "signal: killed") {
 				fmt.Fprintf(os.Stderr, "mct prompt error: timed out after %ds. Try increasing --timeout-per-turn or set 0 for unlimited.\n", cfg.timeoutPerTurn)
 				return 1
@@ -243,32 +232,28 @@ func run() int {
 			return 1
 		}
 
+		savedPath := strings.TrimSpace(result.SavedPath)
 		if cfg.dryRun {
 			lastAnswer = "[dry-run] mct would have produced a chat response here."
 			retrieved = nil
 		} else {
-			// Read the authoritative response file (prefer the savedPath if provided)
-			path := strings.TrimSpace(savedPath)
-			if path == "" {
+			if result.SaveError != nil {
+				fmt.Fprintln(os.Stderr, "Warning: failed to save chat transcript:", result.SaveError)
+			}
+			if savedPath == "" {
 				chatDir, err := artifacts.ChatDirectory()
 				if err != nil {
 					fmt.Fprintln(os.Stderr, "Failed to resolve chat directory:", err)
 					return 1
 				}
-				path = filepath.Join(chatDir, "machtiani-response.md")
+				savedPath = filepath.Join(chatDir, "machtiani-response.md")
 			}
-			content, rerr := os.ReadFile(path)
-			if rerr != nil {
-				fmt.Fprintln(os.Stderr, "Failed to read saved chat (", path, "):", rerr)
-				return 1
-			}
-			lastAnswer = string(content)
-			retrieved = parser.ExtractRetrievedFilePaths(lastAnswer)
+			lastAnswer = result.FullText
+			retrieved = append([]string(nil), result.RetrievedFiles...)
 		}
 
-		// Log to transcript with full Assistant answer
-		fullAns := parser.ExtractAssistantAnswer(lastAnswer)
-		if strings.TrimSpace(fullAns) == "" {
+		fullAns := result.Assistant
+		if cfg.dryRun || strings.TrimSpace(fullAns) == "" {
 			fullAns = lastAnswer
 		}
 		if err := tr.WriteTurn(step, goal, savedPath, retrieved, fullAns, "initial"); err != nil {
@@ -389,24 +374,9 @@ func run() int {
 			if cfg.verbose {
 				fmt.Println("Question:", question)
 			}
-			// Build mct args
-			args := []string{"prompt", "--mode=default", "--include-history"}
-			if runtime.usingAlias {
-				if strings.TrimSpace(runtime.alias) != "" {
-					args = append(args, "--model", runtime.alias)
-				}
-			} else if strings.TrimSpace(runtime.resolved.Model) != "" {
-				args = append(args, "--openai-model", runtime.resolved.Model)
-			}
-			for _, p := range runtime.paramPairs {
-				args = append(args, "--param", p)
-			}
-			for _, j := range runtime.paramJSON {
-				args = append(args, "--param-json", j)
-			}
-			args = append(args, question)
+			input := runner.PromptInput{Prompt: question, Mode: "default", IncludeHistory: true}
 			ctx2, cancel2 := makeTurnContext(cfg.timeoutPerTurn)
-			savedPath, merr := mctRunner.RunPrompt(ctx2, sessionID, args...)
+			result, merr := mctRunner.RunPrompt(ctx2, sessionID, input)
 			cancel2()
 			if merr != nil {
 				if errors.Is(ctx2.Err(), context.DeadlineExceeded) || strings.Contains(strings.ToLower(merr.Error()), "signal: killed") {
@@ -416,38 +386,33 @@ func run() int {
 				fmt.Fprintln(os.Stderr, "mct prompt error:", merr)
 				return 1
 			}
+			savedPath := strings.TrimSpace(result.SavedPath)
 			if cfg.dryRun {
 				lastAnswer = "[dry-run] mct would have produced a chat response here."
 				retrieved = nil
 			} else {
-				// Read the authoritative response file (prefer savedPath if provided)
-				path := strings.TrimSpace(savedPath)
-				if path == "" {
+				if result.SaveError != nil {
+					fmt.Fprintln(os.Stderr, "Warning: failed to save chat transcript:", result.SaveError)
+				}
+				if savedPath == "" {
 					chatDir, err := artifacts.ChatDirectory()
 					if err != nil {
 						fmt.Fprintln(os.Stderr, "Failed to resolve chat directory:", err)
 						return 1
 					}
-					path = filepath.Join(chatDir, "machtiani-response.md")
+					savedPath = filepath.Join(chatDir, "machtiani-response.md")
 				}
-				content, rerr := os.ReadFile(path)
-				if rerr != nil {
-					fmt.Fprintln(os.Stderr, "Failed to read saved chat (", path, "):", rerr)
-					return 1
-				}
-				lastAnswer = string(content)
-				retrieved = parser.ExtractRetrievedFilePaths(lastAnswer)
+				lastAnswer = result.FullText
+				retrieved = append([]string(nil), result.RetrievedFiles...)
 			}
-			// Log to transcript with full Assistant answer
-			fullAns := parser.ExtractAssistantAnswer(lastAnswer)
-			if strings.TrimSpace(fullAns) == "" {
+			fullAns := result.Assistant
+			if cfg.dryRun || strings.TrimSpace(fullAns) == "" {
 				fullAns = lastAnswer
 			}
 			if err := tr.WriteTurn(step, question, savedPath, retrieved, fullAns, "ask"); err != nil {
 				fmt.Fprintln(os.Stderr, "Transcript write error:", err)
 				return 1
 			}
-			// Continue to next turn unless we've hit cap, in which case break to finalize path.
 			if step == cfg.maxSteps {
 				goto FINALIZE
 			}

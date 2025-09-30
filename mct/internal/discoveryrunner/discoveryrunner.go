@@ -25,11 +25,12 @@ type Result struct {
 }
 
 type ModelSettings struct {
-	UsingAlias bool
-	Alias      string
-	Resolved   llm.ResolvedModel
-	ParamPairs []string
-	ParamJSON  []string
+	UsingAlias         bool
+	Alias              string
+	Resolved           llm.ResolvedModel
+	ParamPairs         []string
+	ParamJSON          []string
+	TrajectoryOverride string
 }
 
 // Matches blocks like:
@@ -160,7 +161,13 @@ func Run(ctx context.Context, prompt string, model ModelSettings, sessionID stri
 			env = append(env, "OPENAI_MODEL="+model.Resolved.Model)
 		}
 	}
-	if effectiveSessionID != "" {
+	if strings.TrimSpace(model.TrajectoryOverride) != "" {
+		override := strings.TrimSpace(model.TrajectoryOverride)
+		if err := os.MkdirAll(filepath.Dir(override), 0o755); err != nil {
+			return Result{}, fmt.Errorf("create file-discovery trajectory directory: %w", err)
+		}
+		env = append(env, "FILE_DISCOVERY_TRAJECTORY="+override)
+	} else if effectiveSessionID != "" {
 		trajectoryPath, err := artifacts.FileDiscoveryTrajectoryPath(effectiveSessionID)
 		if err != nil {
 			return Result{}, fmt.Errorf("resolve file-discovery trajectory path: %w", err)
