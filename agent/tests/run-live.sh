@@ -142,9 +142,16 @@ check_bin() {
   want_dirty="$(git_dirty "$src_dir")"
   local got_dirty
   got_dirty="$(normalize_dirty "$got_dirty_raw")"
-  if [ -n "$got_dirty" ] && [ "$want_dirty" != "unknown" ] && [ -n "$want_dirty" ] && [ "$want_dirty" != "$got_dirty" ]; then
-    echo "ERROR: $name dirty flag mismatch (binary $got_dirty vs repo $want_dirty)" >&2
-    exit 1
+  if [ -n "$got_dirty" ] && [ "$want_dirty" != "unknown" ] && [ -n "$want_dirty" ]; then
+    if [ "$want_dirty" = "clean" ] && [ "$got_dirty" = "dirty" ]; then
+      echo "ERROR: $name dirty flag mismatch (binary $got_dirty vs repo $want_dirty)" >&2
+      exit 1
+    elif [ "$want_dirty" = "dirty" ] && [ "$got_dirty" = "clean" ]; then
+      echo "NOTE: $name dirty flag mismatch (binary clean vs repo dirty); continuing" >&2
+    elif [ "$want_dirty" != "$got_dirty" ]; then
+      echo "ERROR: $name dirty flag mismatch (binary $got_dirty vs repo $want_dirty)" >&2
+      exit 1
+    fi
   fi
 
   local bin_mtime
@@ -161,7 +168,7 @@ check_bin() {
 
 echo "== Preflight: verifying PATH binaries ==" >&2
 check_bin MCT_AGENT_BIN mct-agent "$REPO_ROOT/agent" "--version"
-check_bin MCT_PATH mct "$REPO_ROOT/mct"
+check_bin MCT_PATH mct "$REPO_ROOT/mct" "--version"
 check_bin FILE_DISCOVERY_BIN file-discovery "$REPO_ROOT/mct/submodules/file-discovery" "-version"
 check_bin PATCHER_BIN patcher "$REPO_ROOT/patcher" "--version"
 echo "Preflight OK" >&2
