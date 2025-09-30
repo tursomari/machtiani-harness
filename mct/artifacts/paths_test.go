@@ -48,6 +48,47 @@ func TestChatDirectoryGlobalFallback(t *testing.T) {
 	})
 }
 
+func TestArtifactsDirectoryLocalRepo(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+
+	subdir := filepath.Join(repoDir, "nested")
+	if err := os.MkdirAll(subdir, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", subdir, err)
+	}
+
+	withWorkingDir(t, subdir, func() {
+		dir, err := ArtifactsDirectory()
+		if err != nil {
+			t.Fatalf("ArtifactsDirectory: %v", err)
+		}
+		expected := filepath.Join(repoDir, ".machtiani", "artifacts")
+		if dir != expected {
+			t.Fatalf("expected %s, got %s", expected, dir)
+		}
+	})
+}
+
+func TestArtifactsDirectoryGlobalFallback(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	work := t.TempDir()
+	withWorkingDir(t, work, func() {
+		dir, err := ArtifactsDirectory()
+		if err != nil {
+			t.Fatalf("ArtifactsDirectory: %v", err)
+		}
+		expected := filepath.Join(home, ".machtiani", "artifacts")
+		if dir != expected {
+			t.Fatalf("expected %s, got %s", expected, dir)
+		}
+	})
+}
+
 func TestReadmeDirectoryLocalRepo(t *testing.T) {
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)
@@ -57,7 +98,7 @@ func TestReadmeDirectoryLocalRepo(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ReadmeDirectory: %v", err)
 		}
-		expected := filepath.Join(repoDir, ".machtiani", "readme")
+		expected := filepath.Join(repoDir, ".machtiani", "artifacts", "readme")
 		if dir != expected {
 			t.Fatalf("expected %s, got %s", expected, dir)
 		}
@@ -95,6 +136,22 @@ func TestIsLocalContext(t *testing.T) {
 		}
 		if local {
 			t.Fatal("expected global context outside git repo")
+		}
+	})
+}
+
+func TestFileDiscoveryTrajectoryPath(t *testing.T) {
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+
+	withWorkingDir(t, repoDir, func() {
+		dir, err := FileDiscoveryTrajectoryPath("session-123")
+		if err != nil {
+			t.Fatalf("FileDiscoveryTrajectoryPath: %v", err)
+		}
+		expected := filepath.Join(repoDir, ".machtiani", "artifacts", "file-discovery-session-123.jsonl")
+		if dir != expected {
+			t.Fatalf("expected %s, got %s", expected, dir)
 		}
 	})
 }

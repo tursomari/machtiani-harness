@@ -87,7 +87,7 @@ func run() int {
 	fs.StringVar(&cfg.finalFile, "final-file", "", "path to write final answer-only artifact (default: .machtiani/chats/agent-final-<sessionID>.txt)")
 	fs.StringVar(&cfg.transcriptFile, "transcript-file", "", "path to write transcript file (default: .machtiani/chats/agent-<timestamp>.md)")
 	fs.StringVar(&cfg.fileDiscoveryTrajectory, "file-discovery-trajectory", "", "path to write file-discovery trajectory JSONL (default: auto-named under output dir)")
-	fs.StringVar(&cfg.fileDiscoveryOutputDir, "file-discovery-output-dir", "", "directory for file-discovery artifacts (default: .machtiani/chats)")
+	fs.StringVar(&cfg.fileDiscoveryOutputDir, "file-discovery-output-dir", "", "directory for file-discovery artifacts (default: .machtiani/artifacts)")
 	fs.BoolVar(&cfg.noApply, "no-apply", false, "do not auto-apply generated patches (default: apply)\n")
 	fs.BoolVar(&cfg.noPatch, "no-patch", false, "disable patch planning; planner will never request patches")
 	// Normalized OpenAI flags
@@ -872,11 +872,17 @@ func resolveFileDiscoveryTrajectory(cfg config, sessionID string) (string, error
 
 	dir := outDir
 	if dir == "" {
-		chatDir, err := artifacts.ChatDirectory()
+		path, err := artifacts.FileDiscoveryTrajectoryPath(sessionID)
 		if err != nil {
 			return "", err
 		}
-		dir = chatDir
+		if cfg.dryRun {
+			return path, nil
+		}
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return "", fmt.Errorf("create file-discovery output dir: %w", err)
+		}
+		return path, nil
 	}
 	if !filepath.IsAbs(dir) {
 		abs, err := filepath.Abs(dir)

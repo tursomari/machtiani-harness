@@ -20,7 +20,7 @@ Set `KEEP_README_TEST_TMP=true` to keep the temporary worktree under `mct/tests/
 1. **Builds a fresh CLI binary** into an ephemeral directory and exports the LLM/README stub environment variables so no external services are needed.
 2. **Clones the undici fixture** into a clean working copy, wipes any prior `.machtiani` state, and points `$HOME` to an isolated location so the README sidecar repo starts from scratch.
 3. **Executes five sequential scenarios**, each invoking `mct prompt --mode=answer-only` (which triggers README management before returning):
-   - `initial-generation`: first commit, expect a new `.machtiani/readme` repo with a commit and `oid-<commit>` tag.
+   - `initial-generation`: first commit, expect a new `.machtiani/artifacts/readme` repo with a commit and `oid-<commit>` tag.
    - `significant-change`: second commit with code changes, expect regeneration, fresh commit, updated tag, and README under 600 words.
    - `repeated-commit`: rerun on the same commit, expect no new commit, only tag reuse.
    - `docs-only`: temporary branch with only documentation edits, expect skip + retag.

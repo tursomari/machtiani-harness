@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"unicode"
+
+	git "github.com/tursomari/machtiani/mct/internal/git"
 )
 
 const (
@@ -43,6 +45,12 @@ func (o Options) withDefaults() Options {
 // Current Request section.
 func Build(userPrompt string, relPaths []string, conversationHistory []Message, opts Options) (string, []string) {
 	opts = opts.withDefaults()
+	repoRoot := ""
+	if cwd, err := os.Getwd(); err == nil {
+		if root, err := git.RepoRoot(cwd); err == nil {
+			repoRoot = root
+		}
+	}
 	var b strings.Builder
 
 	includeHistory := opts.IncludeHistory && len(conversationHistory) > 0
@@ -80,16 +88,28 @@ func Build(userPrompt string, relPaths []string, conversationHistory []Message, 
 			continue
 		}
 
+		openPath := filepath.FromSlash(p)
+		if repoRoot != "" {
+			candidate := filepath.Clean(filepath.Join(repoRoot, openPath))
+			relCandidate, err := filepath.Rel(repoRoot, candidate)
+			if err != nil {
+				continue
+			}
+			if strings.HasPrefix(relCandidate, "..") {
+				continue
+			}
+			openPath = candidate
+		}
+
 		// Attempt to read with per-file cap
-		f, err := os.Open(p)
+		f, err := os.Open(openPath)
 		header := fmt.Sprintf("\n\n### %s\n\n", p)
 		b.WriteString(header)
 		included = append(included, p)
 		if err != nil {
-			b.WriteString("```\n[ERROR: could not read file]\n``" + "`\n")
+			b.WriteString("```\n[ERROR: could not read file]\n```\n")
 			continue
 		}
-		defer f.Close()
 
 		// Read up to cap or until EOF
 		remainingBudget := opts.TotalCap - total
@@ -98,6 +118,7 @@ func Build(userPrompt string, relPaths []string, conversationHistory []Message, 
 			perFileBudget = remainingBudget
 		}
 		if perFileBudget <= 0 {
+			_ = f.Close()
 			break
 		}
 
@@ -144,8 +165,9 @@ func Build(userPrompt string, relPaths []string, conversationHistory []Message, 
 			b.WriteString(readErr.Error())
 			b.WriteString("]\n")
 		}
-		b.WriteString("``" + "`\n")
+		b.WriteString("```\n")
 		total += totalRead
+		_ = f.Close()
 	}
 
 	return b.String(), included

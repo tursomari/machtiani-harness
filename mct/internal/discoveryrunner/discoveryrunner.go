@@ -13,6 +13,8 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/google/uuid"
+	"github.com/tursomari/machtiani/mct/artifacts"
 	gitpkg "github.com/tursomari/machtiani/mct/internal/git"
 	"github.com/tursomari/machtiani/mct/llm"
 )
@@ -105,9 +107,14 @@ func Run(ctx context.Context, prompt string, model ModelSettings, sessionID stri
 	}
 	debugf(verbose, "mct: using file-discovery binary: %s", bin)
 
+	effectiveSessionID := strings.TrimSpace(sessionID)
+	if effectiveSessionID == "" {
+		effectiveSessionID = uuid.New().String()
+	}
+
 	args := []string{}
-	if sessionID != "" {
-		args = append(args, "-session-id", sessionID)
+	if effectiveSessionID != "" {
+		args = append(args, "-session-id", effectiveSessionID)
 	}
 	if model.UsingAlias {
 		if strings.TrimSpace(model.Alias) != "" {
@@ -152,6 +159,16 @@ func Run(ctx context.Context, prompt string, model ModelSettings, sessionID stri
 		if strings.TrimSpace(model.Resolved.Model) != "" {
 			env = append(env, "OPENAI_MODEL="+model.Resolved.Model)
 		}
+	}
+	if effectiveSessionID != "" {
+		trajectoryPath, err := artifacts.FileDiscoveryTrajectoryPath(effectiveSessionID)
+		if err != nil {
+			return Result{}, fmt.Errorf("resolve file-discovery trajectory path: %w", err)
+		}
+		if err := os.MkdirAll(filepath.Dir(trajectoryPath), 0o755); err != nil {
+			return Result{}, fmt.Errorf("create file-discovery trajectory directory: %w", err)
+		}
+		env = append(env, "FILE_DISCOVERY_TRAJECTORY="+trajectoryPath)
 	}
 	if cfgPath, err := llm.ConfigPath(); err == nil && strings.TrimSpace(cfgPath) != "" {
 		env = append(env, "MACHTIANI_CONFIG="+cfgPath)

@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	repoRelativePath     = ".machtiani/readme"
+	repoRelativePath     = ".machtiani/artifacts/readme"
 	readmeFilename       = "internal-readme.md"
 	stateDirName         = ".state"
 	lastCommitFilename   = "last_project_commit"

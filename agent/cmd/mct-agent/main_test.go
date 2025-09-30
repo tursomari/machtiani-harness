@@ -42,11 +42,10 @@ func TestResolveFileDiscoveryTrajectoryDefaultDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveFileDiscoveryTrajectory returned error: %v", err)
 	}
-	chatDir, err := artifacts.ChatDirectory()
+	expected, err := artifacts.FileDiscoveryTrajectoryPath(sessionID)
 	if err != nil {
-		t.Fatalf("failed to resolve chat directory: %v", err)
+		t.Fatalf("failed to resolve default file discovery path: %v", err)
 	}
-	expected := filepath.Join(chatDir, fmt.Sprintf("file-discovery-%s.jsonl", sessionID))
 	if got != expected {
 		t.Fatalf("expected %q, got %q", expected, got)
 	}

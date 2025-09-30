@@ -64,7 +64,7 @@ Flags:
 - `--final-file string`: path to write final answer-only artifact
 - `--transcript-file string`: path to write transcript (default: `.machtiani/chats/agent-<timestamp>.md`)
 - `--file-discovery-trajectory string`: absolute/relative file path for the file-discovery trajectory JSONL
-- `--file-discovery-output-dir string`: directory to place file-discovery artifacts (default: `.machtiani/chats`)
+- `--file-discovery-output-dir string`: directory to place file-discovery artifacts (default: `.machtiani/artifacts`)
 
 ## How It Works
 - The agent controls the loop: it plans either `Decision: ask` with one next question or `Decision: finalize`.

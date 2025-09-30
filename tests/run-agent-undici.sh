@@ -97,13 +97,13 @@ RESET_STATE() {
 }
 
 ensure_readme_repo_exists() {
-  if [[ ! -d "$TEST_REPO/.machtiani/readme/.git" ]]; then
+  if [[ ! -d "$TEST_REPO/.machtiani/artifacts/readme/.git" ]]; then
     fail "Expected internal README repo to exist after run"
   fi
 }
 
 get_readme_repo() {
-  echo "$TEST_REPO/.machtiani/readme"
+  echo "$TEST_REPO/.machtiani/artifacts/readme"
 }
 
 read_state_commit() {

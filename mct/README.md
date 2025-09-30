@@ -115,7 +115,7 @@ Binary resolution for `file-discovery`:
 ## Artifact storage
 
 - **Chat transcripts**: saved under `.machtiani/chats/` at the Git repository root when running inside a repo. Outside a repo, they fall back to `~/.machtiani/chats/`.
-- **Readme artifacts**: always written to `.machtiani/readme/` at the repository root and require a Git working tree.
+- **Readme artifacts**: always written to `.machtiani/artifacts/readme/` at the repository root and require a Git working tree.
 - `mct-agent` and helper tools use the same resolution so invocations from subdirectories share the project-scoped artifacts.
 
 ## Notes
