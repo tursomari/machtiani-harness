@@ -5,6 +5,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 hash -r 2>/dev/null || true
 
+PYTHON_BIN="${PYTHON_BIN:-python3}"
+if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+  if command -v python >/dev/null 2>&1; then
+    PYTHON_BIN="python"
+  fi
+fi
+
 stat_mtime() {
   local path="$1"
   if stat -c %Y "$path" >/dev/null 2>&1; then
@@ -46,6 +53,45 @@ normalize_dirty() {
     unknown|UNKNOWN) echo "unknown" ;;
     *) echo "" ;;
   esac
+}
+
+contains_keywords() {
+  local pattern="$1"
+  shift || true
+  if (( $# == 0 )); then
+    return 1
+  fi
+  "$PYTHON_BIN" - "$pattern" "$@" <<'PY'
+import pathlib
+import re
+import sys
+
+pattern = sys.argv[1]
+files = sys.argv[2:]
+if not files:
+    sys.exit(1)
+
+regex = re.compile(pattern)
+ansi_csi = re.compile(r'\x1B\[[0-9;?]*[ -/]*[@-~]')
+ansi_osc = re.compile(r'\x1B\][^\x07]*\x07')
+
+for name in files:
+    path = pathlib.Path(name)
+    if not path.exists():
+        continue
+    try:
+        data = path.read_bytes()
+    except OSError:
+        continue
+    text = data.decode('utf-8', errors='ignore')
+    text = ansi_csi.sub('', text)
+    text = ansi_osc.sub('', text)
+    text = text.replace('\r', '')
+    if regex.search(text):
+        sys.exit(0)
+
+sys.exit(1)
+PY
 }
 
 check_bin() {
@@ -291,7 +337,7 @@ run_happy_case() {
   if [[ "$LIVE_MODE" == true ]]; then
     keyword_files+=("$out_dir/final-${session_id}.txt")
   fi
-  if ! grep -qE "$expected_keywords" "${keyword_files[@]}" 2>/dev/null; then
+  if ! contains_keywords "$expected_keywords" "${keyword_files[@]}"; then
     echo "Missing keywords: $case_id" >&2
     return 1
   fi
@@ -373,8 +419,9 @@ run_error_case() {
     return 1
   fi
 
-  if ! (grep -qE "$expected_keywords" "$out_dir/stderr-${session_id}.txt" 2>/dev/null || \
-        grep -qE "$expected_keywords" "$out_dir/stdout-${session_id}.txt" 2>/dev/null); then
+  if ! contains_keywords "$expected_keywords" \
+      "$out_dir/stderr-${session_id}.txt" \
+      "$out_dir/stdout-${session_id}.txt"; then
     echo "Missing error keywords: $case_id" >&2
     return 1
   fi
@@ -392,12 +439,12 @@ fi
 
 run_happy_case "issue-a-1turn" 1 \
   "What is the main purpose of the mct-agent binary?" \
-  "\\[full answer\\]" \
+  "===> FINAL RESPONSE <===" \
   1
 
 run_happy_case "issue-a-3turn" 3 \
   "What is the main purpose of the mct-agent binary?" \
-  "\\[full answer\\]"
+  "===> FINAL RESPONSE <==="
 
 run_happy_case "issue-b-1turn" 1 \
   "Describe the full multi-turn flow in mct-agent, including planning and context retention." \

@@ -1,14 +1,15 @@
 package ui
 
 import (
-    "fmt"
-    "io"
-    "os"
-    "strconv"
-    "strings"
+	"fmt"
+	"io"
+	"os"
+	"strconv"
+	"strings"
 
-    "golang.org/x/term"
+	"golang.org/x/term"
 )
+
 const defaultWidth = 80
 
 // TerminalDisplay manages the structured streaming output for mct-agent.
@@ -39,52 +40,53 @@ func NewTerminalDisplay(out io.Writer) *TerminalDisplay {
 
 // StartSession marks the start of a session. Prompt lines are printed by BeginPrompt.
 func (t *TerminalDisplay) StartSession(goal string) {
-    if t.started {
-        return
-    }
-    t.started = true
-    // The initial prompt is printed when BeginPrompt is called.
+	if t.started {
+		return
+	}
+	t.started = true
+	// The initial prompt is printed when BeginPrompt is called.
 }
 
 // BeginPrompt prepares the stream for a prompt/question block.
 func (t *TerminalDisplay) BeginPrompt(prompt string) *PromptStream {
-    if !t.started {
-        t.StartSession(prompt)
-    }
-    // Link from previous answer to next prompt, if any.
-    if t.hasPrompt {
-        fmt.Fprintln(t.out, "|")
-    }
-    // Print the prompt itself (no indentation).
-    fmt.Fprintln(t.out, strings.TrimSpace(prompt))
-    // Link prompt to its answer preview.
-    fmt.Fprintln(t.out, "|")
-    stream := &PromptStream{display: t}
-    t.hasPrompt = true
-    return stream
+	if !t.started {
+		t.StartSession(prompt)
+	}
+	// Link from previous answer to next prompt, if any.
+	if t.hasPrompt {
+		fmt.Fprintln(t.out, "|")
+	}
+	// Print the prompt itself (no indentation).
+	fmt.Fprintln(t.out, strings.TrimSpace(prompt))
+	// Link prompt to its answer preview.
+	fmt.Fprintln(t.out, "|")
+	stream := &PromptStream{display: t}
+	t.hasPrompt = true
+	return stream
 }
 
 // ShowFinal prints the final rendered answer (expected to be glow-rendered).
 func (t *TerminalDisplay) ShowFinal(rendered string) {
-    if !t.started {
-        t.StartSession("")
-    }
-    // Do not emit labels or extra leading newlines; present the answer as-is.
-    final := strings.Trim(rendered, "\n")
-    if strings.TrimSpace(final) == "" {
-        return
-    }
-    // Print a single leading newline before the final answer for separation.
-    fmt.Fprintln(t.out)
-    fmt.Fprintln(t.out, final)
+	if !t.started {
+		t.StartSession("")
+	}
+	// Do not emit labels or extra leading newlines; present the answer as-is.
+	final := strings.Trim(rendered, "\n")
+	if strings.TrimSpace(final) == "" {
+		return
+	}
+	// Print a single leading newline before the final answer for separation.
+	fmt.Fprintln(t.out)
+	fmt.Fprintln(t.out, "===> FINAL RESPONSE <===")
+	fmt.Fprintln(t.out, final)
 }
 
 // EndSession prints the trailing border once.
 func (t *TerminalDisplay) EndSession() {
-    if t.closed {
-        return
-    }
-    t.closed = true
+	if t.closed {
+		return
+	}
+	t.closed = true
 }
 
 // OnChunk ingests a header/token chunk while streaming.
@@ -140,12 +142,12 @@ func (s *PromptStream) renderCurrent() {
 }
 
 func (s *PromptStream) printLine(text string) {
-    prefix := "`-- "
-    cleaned := sanitizeLine(text)
-    maxWidth := s.display.width - len(prefix)
-    if maxWidth <= 0 {
-        maxWidth = 1
-    }
+	prefix := "`-- "
+	cleaned := sanitizeLine(text)
+	maxWidth := s.display.width - len(prefix)
+	if maxWidth <= 0 {
+		maxWidth = 1
+	}
 	cleaned = truncate(cleaned, maxWidth)
 	full := prefix + cleaned
 	if !s.started {
