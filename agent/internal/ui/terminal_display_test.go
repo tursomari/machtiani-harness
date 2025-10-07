@@ -35,35 +35,44 @@ func TestPromptStreamCompleteTruncatesLongLine(t *testing.T) {
 	answer := "Goroutines are lightweight managed threads in Go that scale."
 	stream.Complete(answer)
 
-	lines := strings.Split(buf.String(), "\n")
-	var preview string
-	for _, line := range lines {
-		if strings.HasPrefix(line, "   ") {
-			preview = line
-		}
-	}
+    lines := strings.Split(buf.String(), "\n")
+    var preview string
+    for _, line := range lines {
+        if strings.HasPrefix(line, "`-- ") {
+            preview = line
+        }
+    }
 	if preview == "" {
 		t.Fatalf("did not capture preview line in output: %q", buf.String())
 	}
 	if len([]rune(preview)) > display.width {
 		t.Fatalf("preview exceeds width: got %q (len=%d) width=%d", preview, len([]rune(preview)), display.width)
 	}
-	if !strings.HasSuffix(preview, "...") {
-		t.Fatalf("expected truncated preview to end with ellipsis: %q", preview)
-	}
+    if !strings.HasSuffix(preview, "...") {
+        t.Fatalf("expected truncated preview to end with ellipsis: %q", preview)
+    }
 }
 
-func TestShowFinalIncludesMarker(t *testing.T) {
-	var buf bytes.Buffer
-	display := NewTerminalDisplay(&buf)
-	display.StartSession("Primary goal")
-	display.ShowFinal("Hello world")
+func TestShowFinalWithoutMarker(t *testing.T) {
+    var buf bytes.Buffer
+    display := NewTerminalDisplay(&buf)
+    display.StartSession("Primary goal")
+    display.ShowFinal("Hello world")
 
-	output := buf.String()
-	if !strings.Contains(output, "[full answer]") {
-		t.Fatalf("missing final answer marker, got %q", output)
-	}
-	if strings.Contains(output, "glow") {
-		t.Fatalf("final output should not mention glow, got %q", output)
-	}
+    output := buf.String()
+    if !strings.HasPrefix(output, "\n") {
+        t.Fatalf("final output should start with a single leading newline, got %q", output)
+    }
+    if strings.HasPrefix(output, "\n\n") {
+        t.Fatalf("final output should not have more than one leading newline, got %q", output)
+    }
+    if strings.Contains(output, "[full answer]") {
+        t.Fatalf("final answer marker should be absent, got %q", output)
+    }
+    if strings.Contains(output, "glow") {
+        t.Fatalf("final output should not mention glow, got %q", output)
+    }
+    if !strings.Contains(output, "Hello world") {
+        t.Fatalf("final output should include answer text, got %q", output)
+    }
 }
