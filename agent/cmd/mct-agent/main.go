@@ -1,26 +1,27 @@
 package main
 
 import (
-	"bytes"
-	"context"
-	"encoding/json"
-	"errors"
-	"flag"
-	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
-	"time"
+    "bytes"
+    "context"
+    "encoding/json"
+    "errors"
+    "flag"
+    "fmt"
+    "os"
+    "os/exec"
+    "path/filepath"
+    "strings"
+    "time"
 
-	"github.com/tursomari/machtiani/agent/internal/parser"
-	"github.com/tursomari/machtiani/agent/internal/planner"
-	"github.com/tursomari/machtiani/agent/internal/runner"
-	"github.com/tursomari/machtiani/agent/internal/transcript"
-	"github.com/tursomari/machtiani/agent/internal/ui"
-	"github.com/tursomari/machtiani/mct/artifacts"
-	"github.com/tursomari/machtiani/mct/llm"
-	promptsvc "github.com/tursomari/machtiani/mct/prompt"
+    "github.com/charmbracelet/glamour"
+    "github.com/tursomari/machtiani/agent/internal/parser"
+    "github.com/tursomari/machtiani/agent/internal/planner"
+    "github.com/tursomari/machtiani/agent/internal/runner"
+    "github.com/tursomari/machtiani/agent/internal/transcript"
+    "github.com/tursomari/machtiani/agent/internal/ui"
+    "github.com/tursomari/machtiani/mct/artifacts"
+    "github.com/tursomari/machtiani/mct/llm"
+    promptsvc "github.com/tursomari/machtiani/mct/prompt"
 )
 
 var (
@@ -955,43 +956,36 @@ func writeFinalAnswer(sessionID, answer, finalFileFlag string, verbose bool, dry
 }
 
 func presentFinalAnswer(display *ui.TerminalDisplay, answer string) {
-	rendered, fallback, err := renderWithGlow(answer)
-	if fallback {
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "[warning] glow render failed; showing plain text:", err)
-		} else {
-			fmt.Fprintln(os.Stderr, "[warning] glow not found; displaying plain text output")
-		}
-	} else if err != nil {
-		fmt.Fprintln(os.Stderr, "[warning] glow render warning:", err)
-	}
-	if strings.TrimSpace(rendered) == "" {
-		rendered = strings.TrimSpace(answer)
-	}
-	display.ShowFinal(rendered)
+    rendered, fallback, err := renderWithGlow(answer)
+    if fallback {
+        if err != nil {
+            fmt.Fprintln(os.Stderr, "[warning] markdown render failed; showing plain text:", err)
+        }
+    } else if err != nil {
+        fmt.Fprintln(os.Stderr, "[warning] markdown render warning:", err)
+    }
+    if strings.TrimSpace(rendered) == "" {
+        rendered = strings.TrimSpace(answer)
+    }
+    display.ShowFinal(rendered)
 }
 
 func renderWithGlow(content string) (string, bool, error) {
-	glowPath, err := exec.LookPath("glow")
-	if err != nil {
-		return strings.TrimSpace(content), true, nil
-	}
-	cmd := exec.Command(glowPath, "-")
-	cmd.Stdin = strings.NewReader(content)
-	var out bytes.Buffer
-	var errBuf bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &errBuf
-	if err := cmd.Run(); err != nil {
-		combined := strings.TrimSpace(errBuf.String())
-		if combined != "" {
-			err = fmt.Errorf("%w: %s", err, combined)
-		}
-		return strings.TrimSpace(content), true, err
-	}
-	rendered := strings.TrimRight(out.String(), "\n")
-	if strings.TrimSpace(rendered) == "" {
-		return strings.TrimSpace(content), false, nil
-	}
-	return rendered, false, nil
+    // Render using glamour (the library used by glow) so we avoid external binaries.
+    r, err := glamour.NewTermRenderer(
+        glamour.WithAutoStyle(),
+        // Use default wrapping; TerminalDisplay adds a leading newline before output.
+    )
+    if err != nil {
+        return strings.TrimSpace(content), true, err
+    }
+    rendered, err := r.Render(content)
+    if err != nil {
+        return strings.TrimSpace(content), true, err
+    }
+    rendered = strings.TrimRight(rendered, "\n")
+    if strings.TrimSpace(rendered) == "" {
+        return strings.TrimSpace(content), false, nil
+    }
+    return rendered, false, nil
 }
