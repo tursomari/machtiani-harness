@@ -1,11 +1,15 @@
 package contextbuilder
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/tursomari/machtiani/mct/llm"
 )
 
 func TestBuildIncludesConversationHistory(t *testing.T) {
@@ -101,5 +105,80 @@ func TestBuildResolvesPathsFromRepoRoot(t *testing.T) {
 	}
 	if strings.Contains(combined, "[ERROR: could not read file]") {
 		t.Fatalf("did not expect file read error in prompt: %q", combined)
+	}
+}
+
+func TestBuildAppliesTokenLimit(t *testing.T) {
+	tmpDir := t.TempDir()
+	prevWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("chdir temp: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(prevWD)
+	})
+
+	lines := make([]string, 5)
+	for i := 1; i <= 5; i++ {
+		lines[i-1] = fmt.Sprintf("alpha bravo charlie delta echo foxtrot golf hotel %d", i)
+	}
+	content := strings.Join(lines, "\n") + "\n"
+	if err := os.WriteFile("sample.txt", []byte(content), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	basePrompt, _ := Build("Hello", []string{"sample.txt"}, nil, Options{})
+	baseTokens := llm.EstimateTokens(basePrompt)
+
+	lineFive := lines[4]
+	lineFiveTokens := llm.EstimateTokens(lineFive + "\n")
+	limit := baseTokens - (lineFiveTokens / 2)
+	if limit <= 0 {
+		t.Fatalf("unexpected token limit: %d", limit)
+	}
+
+	limitedPrompt, included := Build("Hello", []string{"sample.txt"}, nil, Options{MaxInputTokens: limit})
+	if len(included) != 1 || included[0] != "sample.txt" {
+		t.Fatalf("expected included sample.txt, got %v", included)
+	}
+
+	limitedTokens := llm.EstimateTokens(limitedPrompt)
+	if limitedTokens > limit {
+		t.Fatalf("expected prompt tokens <= %d, got %d", limit, limitedTokens)
+	}
+
+	if !strings.Contains(limitedPrompt, "TRUNCATED") {
+		t.Fatalf("expected truncation stamp, got\n%s", limitedPrompt)
+	}
+	stampIdx := strings.Index(limitedPrompt, "omitted lines ")
+	if stampIdx == -1 {
+		t.Fatalf("expected omitted lines stamp, got\n%s", limitedPrompt)
+	}
+	stampLine := limitedPrompt[stampIdx:]
+	stampLine = strings.SplitN(stampLine, "\n", 2)[0]
+	rangePart := strings.TrimPrefix(stampLine, "omitted lines ")
+	parts := strings.Split(rangePart, "...")
+	if len(parts) != 2 {
+		t.Fatalf("unexpected stamp format: %s", stampLine)
+	}
+	startVal, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+	if err != nil {
+		t.Fatalf("invalid start line in stamp: %v", err)
+	}
+	endVal, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if err != nil {
+		t.Fatalf("invalid end line in stamp: %v", err)
+	}
+	if endVal != 5 {
+		t.Fatalf("expected end line 5 in stamp, got %d", endVal)
+	}
+	if startVal < 1 || startVal > 5 {
+		t.Fatalf("unexpected start line %d", startVal)
+	}
+	if strings.Contains(limitedPrompt, lineFive) {
+		t.Fatalf("expected last line to be truncated, got\n%s", limitedPrompt)
 	}
 }

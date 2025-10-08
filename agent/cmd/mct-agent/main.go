@@ -1,27 +1,27 @@
 package main
 
 import (
-    "bytes"
-    "context"
-    "encoding/json"
-    "errors"
-    "flag"
-    "fmt"
-    "os"
-    "os/exec"
-    "path/filepath"
-    "strings"
-    "time"
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"time"
 
-    "github.com/charmbracelet/glamour"
-    "github.com/tursomari/machtiani/agent/internal/parser"
-    "github.com/tursomari/machtiani/agent/internal/planner"
-    "github.com/tursomari/machtiani/agent/internal/runner"
-    "github.com/tursomari/machtiani/agent/internal/transcript"
-    "github.com/tursomari/machtiani/agent/internal/ui"
-    "github.com/tursomari/machtiani/mct/artifacts"
-    "github.com/tursomari/machtiani/mct/llm"
-    promptsvc "github.com/tursomari/machtiani/mct/prompt"
+	"github.com/charmbracelet/glamour"
+	"github.com/tursomari/machtiani/agent/internal/parser"
+	"github.com/tursomari/machtiani/agent/internal/planner"
+	"github.com/tursomari/machtiani/agent/internal/runner"
+	"github.com/tursomari/machtiani/agent/internal/transcript"
+	"github.com/tursomari/machtiani/agent/internal/ui"
+	"github.com/tursomari/machtiani/mct/artifacts"
+	"github.com/tursomari/machtiani/mct/llm"
+	promptsvc "github.com/tursomari/machtiani/mct/prompt"
 )
 
 var (
@@ -42,6 +42,7 @@ type config struct {
 	transcriptFile          string
 	fileDiscoveryTrajectory string
 	fileDiscoveryOutputDir  string
+	maxInputTokens          int
 	// Patch application behavior
 	noApply bool
 	noPatch bool
@@ -91,6 +92,7 @@ func run() int {
 	fs.StringVar(&cfg.transcriptFile, "transcript-file", "", "path to write transcript file (default: .machtiani/chats/agent-<timestamp>.md)")
 	fs.StringVar(&cfg.fileDiscoveryTrajectory, "file-discovery-trajectory", "", "path to write file-discovery trajectory JSONL (default: auto-named under output dir)")
 	fs.StringVar(&cfg.fileDiscoveryOutputDir, "file-discovery-output-dir", "", "directory for file-discovery artifacts (default: .machtiani/artifacts)")
+	fs.IntVar(&cfg.maxInputTokens, "max-input-tokens", 0, "maximum number of tokens allowed in constructed prompts (0 disables truncation)")
 	fs.BoolVar(&cfg.noApply, "no-apply", false, "do not auto-apply generated patches (default: apply)\n")
 	fs.BoolVar(&cfg.noPatch, "no-patch", false, "disable patch planning; planner will never request patches")
 	// Normalized OpenAI flags
@@ -236,6 +238,7 @@ func run() int {
 			IncludeHistory: true,
 			OnStreamHeader: stream.OnChunk,
 			OnStreamToken:  stream.OnChunk,
+			MaxInputTokens: cfg.maxInputTokens,
 		}
 
 		ctx2, cancel2 := makeTurnContext(cfg.timeoutPerTurn)
@@ -407,6 +410,7 @@ func run() int {
 				IncludeHistory: true,
 				OnStreamHeader: stream.OnChunk,
 				OnStreamToken:  stream.OnChunk,
+				MaxInputTokens: cfg.maxInputTokens,
 			}
 			ctx2, cancel2 := makeTurnContext(cfg.timeoutPerTurn)
 			result, merr := mctRunner.RunPrompt(ctx2, sessionID, input)
@@ -956,36 +960,36 @@ func writeFinalAnswer(sessionID, answer, finalFileFlag string, verbose bool, dry
 }
 
 func presentFinalAnswer(display *ui.TerminalDisplay, answer string) {
-    rendered, fallback, err := renderWithGlow(answer)
-    if fallback {
-        if err != nil {
-            fmt.Fprintln(os.Stderr, "[warning] markdown render failed; showing plain text:", err)
-        }
-    } else if err != nil {
-        fmt.Fprintln(os.Stderr, "[warning] markdown render warning:", err)
-    }
-    if strings.TrimSpace(rendered) == "" {
-        rendered = strings.TrimSpace(answer)
-    }
-    display.ShowFinal(rendered)
+	rendered, fallback, err := renderWithGlow(answer)
+	if fallback {
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "[warning] markdown render failed; showing plain text:", err)
+		}
+	} else if err != nil {
+		fmt.Fprintln(os.Stderr, "[warning] markdown render warning:", err)
+	}
+	if strings.TrimSpace(rendered) == "" {
+		rendered = strings.TrimSpace(answer)
+	}
+	display.ShowFinal(rendered)
 }
 
 func renderWithGlow(content string) (string, bool, error) {
-    // Render using glamour (the library used by glow) so we avoid external binaries.
-    r, err := glamour.NewTermRenderer(
-        glamour.WithAutoStyle(),
-        // Use default wrapping; TerminalDisplay adds a leading newline before output.
-    )
-    if err != nil {
-        return strings.TrimSpace(content), true, err
-    }
-    rendered, err := r.Render(content)
-    if err != nil {
-        return strings.TrimSpace(content), true, err
-    }
-    rendered = strings.TrimRight(rendered, "\n")
-    if strings.TrimSpace(rendered) == "" {
-        return strings.TrimSpace(content), false, nil
-    }
-    return rendered, false, nil
+	// Render using glamour (the library used by glow) so we avoid external binaries.
+	r, err := glamour.NewTermRenderer(
+		glamour.WithAutoStyle(),
+		// Use default wrapping; TerminalDisplay adds a leading newline before output.
+	)
+	if err != nil {
+		return strings.TrimSpace(content), true, err
+	}
+	rendered, err := r.Render(content)
+	if err != nil {
+		return strings.TrimSpace(content), true, err
+	}
+	rendered = strings.TrimRight(rendered, "\n")
+	if strings.TrimSpace(rendered) == "" {
+		return strings.TrimSpace(content), false, nil
+	}
+	return rendered, false, nil
 }

@@ -28,6 +28,7 @@ type RunOptions struct {
 	OnHeader                func(string)
 	OnToken                 func(string)
 	Verbose                 bool
+	MaxInputTokens          int
 }
 
 // Result captures the outcome of a prompt execution.

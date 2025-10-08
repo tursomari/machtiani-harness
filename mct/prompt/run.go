@@ -57,7 +57,7 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 	included := []string(nil)
 
 	if isAnswerOnly {
-		combined, included = contextbuilder.Build(opts.Prompt, nil, hist, contextbuilder.Options{IncludeHistory: includeHistory})
+		combined, included = contextbuilder.Build(opts.Prompt, nil, hist, contextbuilder.Options{IncludeHistory: includeHistory, MaxInputTokens: opts.MaxInputTokens})
 	} else {
 		_, ignoreFiles, err := utils.LoadConfigAndIgnoreFiles()
 		if err != nil {
@@ -77,7 +77,7 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 			return res, fmt.Errorf("file discovery: %w", err)
 		}
 		filtered := filterPaths(dr.Paths, ignoreFiles)
-		combined, included = contextbuilder.Build(opts.Prompt, filtered, hist, contextbuilder.Options{IncludeHistory: includeHistory})
+		combined, included = contextbuilder.Build(opts.Prompt, filtered, hist, contextbuilder.Options{IncludeHistory: includeHistory, MaxInputTokens: opts.MaxInputTokens})
 	}
 
 	header := buildHeader(combined)

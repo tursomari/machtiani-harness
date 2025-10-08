@@ -16,6 +16,28 @@ mct/tests/run-readme-integration.sh
 
 Set `KEEP_README_TEST_TMP=true` to keep the temporary worktree under `mct/tests/tmp/` for inspection after the run.
 
+## Unit Tests (mct module)
+
+For changes under `mct/` that don’t require the full integration suite, run the standard Go test sweep from the module directory:
+
+```bash
+cd mct
+go test ./...
+```
+
+To avoid sandbox permission issues in constrained environments, you can direct the Go build cache into the repository tree:
+
+```bash
+cd mct
+GOCACHE=$(pwd)/.gocache go test ./...
+```
+
+Remember to remove the temporary cache afterwards if you use that pattern:
+
+```bash
+rm -rf mct/.gocache
+```
+
 ## What the Script Does
 1. **Builds a fresh CLI binary** into an ephemeral directory and exports the LLM/README stub environment variables so no external services are needed.
 2. **Clones the undici fixture** into a clean working copy, wipes any prior `.machtiani` state, and points `$HOME` to an isolated location so the README sidecar repo starts from scratch.

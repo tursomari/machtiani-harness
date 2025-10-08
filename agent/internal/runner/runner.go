@@ -25,6 +25,7 @@ type PromptInput struct {
 	SourceFile     string
 	OnStreamHeader func(string)
 	OnStreamToken  func(string)
+	MaxInputTokens int
 }
 
 func (r *Runner) Resolve() error {
@@ -96,6 +97,7 @@ func (r *Runner) RunPrompt(ctx context.Context, sessionID string, in PromptInput
 		OnToken:                 onToken,
 		Verbose:                 r.Verbose,
 		FileDiscoveryTrajectory: r.FileDiscoveryTrajectory,
+		MaxInputTokens:          in.MaxInputTokens,
 	})
 	if useMarkdown && ms != nil {
 		_ = ms.Flush()

@@ -61,6 +61,12 @@ Use a markdown prompt file:
 mct prompt --file prompt.md
 ```
 
+Cap prompt size when using models with stricter limits:
+```
+mct prompt "Summarize architecture" --max-input-tokens 6000
+```
+The flag keeps the combined prompt (history, user text, and discovered files) within the specified token estimate by truncating file content from the bottom and inserting stamps that describe the omitted line range.
+
 Answer‑only mode (no discovery, no saving):
 ```
 mct prompt --mode=answer-only -f prompt.md
@@ -75,6 +81,7 @@ mct prompt --mode=answer-only -f prompt.md
 3. Builds a combined prompt that inlines file contents:
    - Default caps: ~100 KB per file; ~2 MB total
    - Appends `[TRUNCATED]` when clipping
+   - Optional `--max-input-tokens` enforces an estimated token budget and replaces truncated sections with a stamped marker showing line numbers of the omission.
 4. Streams tokens from your LLM endpoint and renders Markdown in the terminal.
 5. Saves output to `.machtiani/chats/<generated-name>.md` and updates `.machtiani/chats/machtiani-response.md`.
 

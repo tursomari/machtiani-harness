@@ -50,6 +50,7 @@ func handlePrompt(args []string, config *utils.Config, apiKey *string, headCommi
 	matchStrengthFlag := fs.String("match-strength", defaultMatchStrength, "Match strength: high | mid | low")
 	modeFlag := fs.String("mode", defaultMode, "Mode: chat | pure-chat | answer-only | default")
 	includeHistoryFlag := fs.Bool("include-history", false, "Include conversation history in the LLM prompt (internal use)")
+	maxInputTokensFlag := fs.Int("max-input-tokens", 0, "Maximum number of tokens allowed in the constructed prompt (0 disables truncation)")
 	// flags retained for compatibility in other subcommands; not used in local prompt path
 	verboseFlag := fs.Bool("verbose", false, "Enable verbose output")
 	// remote not needed for local prompt path
@@ -187,9 +188,10 @@ func handlePrompt(args []string, config *utils.Config, apiKey *string, headCommi
 			ParamPairs: runtime.paramPairs,
 			ParamJSON:  runtime.paramJSON,
 		},
-		OnHeader: streamHeader,
-		OnToken:  streamToken,
-		Verbose:  *verboseFlag,
+		OnHeader:       streamHeader,
+		OnToken:        streamToken,
+		Verbose:        *verboseFlag,
+		MaxInputTokens: *maxInputTokensFlag,
 	})
 	if ms != nil {
 		_ = ms.Flush()

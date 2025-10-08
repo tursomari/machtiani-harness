@@ -94,6 +94,7 @@ Useful flags (agent):
 - `--openai-api-key string`: API key for OpenAI‑compatible endpoint.
 - `--openai-base-url string`: Base URL for OpenAI‑compatible endpoint.
 - `--openai-model string`: Model name used by planner and `mct` (alias: `--model`).
+- `--max-input-tokens int`: cap the estimated prompt size that `mct` may build from discovery results; truncates file tails and inserts stamps when necessary.
 - `--timeout-per-turn int`: seconds per turn for the agent loop.
 - `--version`: print build metadata for the agent and exit.
 - `--dry-run`: print intended calls without executing.
@@ -106,6 +107,9 @@ mct prompt "Summarize the project's README files."
 
 # From a prompt file
 mct prompt --file prompt.md
+
+# Limit prompt size for models with strict budgets
+mct prompt "Summarize architecture" --max-input-tokens 6000
 
 # Answer-only mode (no discovery/saving)
 mct prompt --mode=answer-only -f prompt.md

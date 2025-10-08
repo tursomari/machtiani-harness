@@ -31,6 +31,7 @@ Prompt:
         --no-codex           Disable agent file retrieval (no-codex mode).
         --match-strength      Context match strength: high | mid | low. Default: mid
         --mode <string>       Mode: chat | pure-chat | answer-only | default. Default: default
+        --max-input-tokens    Maximum number of tokens allowed in the constructed prompt (0 disables truncation).
         --force               Skip confirmation for file changes.
         --verbose             Print verbose/log output.
         --remote <name>       Git remote name. Default: origin
