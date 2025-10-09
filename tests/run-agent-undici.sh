@@ -198,8 +198,7 @@ run_case() {
   cmd+=(
     --max-steps "$MAX_STEPS"
     --timeout-per-turn "$TIMEOUT_PER_TURN"
-    --no-patch
-    --no-apply
+    --patch-no-apply
     --verbose
     --transcript-file "$transcript_file"
     --final-file "$final_file"

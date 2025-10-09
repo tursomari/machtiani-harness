@@ -12,6 +12,7 @@ import (
 )
 
 type PatcherRunner struct {
+	Enabled   bool
 	Verbose   bool
 	DryRun    bool
 	SessionID string
@@ -65,6 +66,9 @@ func (e *PatchRunnerError) Unwrap() error {
 
 // Resolve locates the patcher binary strictly via PATH (dry-run stores logical name only).
 func (p *PatcherRunner) Resolve() error {
+	if !p.Enabled {
+		return nil
+	}
 	if p.DryRun {
 		// In dry-run, rely on logical name for logging.
 		p.exePath = "patcher"
@@ -81,6 +85,9 @@ func (p *PatcherRunner) Resolve() error {
 // RunJSON executes: patcher --repo . --session <sessionID> --input - [--verbose]
 // It returns captured stdout and stderr. In DryRun, returns "{}" stdout and empty stderr.
 func (p *PatcherRunner) RunJSON(ctx context.Context, stdinBytes []byte, verbose bool) ([]byte, []byte, error) {
+	if !p.Enabled {
+		return nil, nil, errors.New("patch runner disabled")
+	}
 	if p.exePath == "" {
 		return nil, nil, errors.New("patcher unresolved: call Resolve() first")
 	}

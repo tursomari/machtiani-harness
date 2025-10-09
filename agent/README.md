@@ -98,6 +98,8 @@ Flags:
 - The agent shells out to `mct` and does not import `mct/internal/*`.
 - It avoids parsing streamed stdout; always reads the saved chat file as the source of truth.
 - `--dry-run` simulates planning and prints the intended commands without executing `mct` or calling any LLM.
+- Patch planning is opt-in. Pass `--patch` to enable planner patch requests; without it the agent skips patch JSON parsing and never resolves or invokes the `patcher` binary.
+- Use `--patch-no-apply` to capture patch diagnostics and transcript turns without touching the working tree.
 
 ## Testing
 

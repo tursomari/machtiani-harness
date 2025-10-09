@@ -44,8 +44,8 @@ type config struct {
 	fileDiscoveryOutputDir  string
 	maxInputTokens          int
 	// Patch application behavior
-	noApply bool
-	noPatch bool
+	patchNoApply bool
+	patch        bool
 	// Normalized OpenAI flags
 	openAIAPIKey  string
 	openAIBaseURL string
@@ -93,8 +93,8 @@ func run() int {
 	fs.StringVar(&cfg.fileDiscoveryTrajectory, "file-discovery-trajectory", "", "path to write file-discovery trajectory JSONL (default: auto-named under output dir)")
 	fs.StringVar(&cfg.fileDiscoveryOutputDir, "file-discovery-output-dir", "", "directory for file-discovery artifacts (default: .machtiani/artifacts)")
 	fs.IntVar(&cfg.maxInputTokens, "max-input-tokens", 0, "maximum number of tokens allowed in constructed prompts (0 disables truncation)")
-	fs.BoolVar(&cfg.noApply, "no-apply", false, "do not auto-apply generated patches (default: apply)\n")
-	fs.BoolVar(&cfg.noPatch, "no-patch", false, "disable patch planning; planner will never request patches")
+	fs.BoolVar(&cfg.patchNoApply, "patch-no-apply", false, "skip applying generated patches to the worktree (default: apply)\n")
+	fs.BoolVar(&cfg.patch, "patch", false, "enable patch planning (disabled by default)")
 	// Normalized OpenAI flags
 	fs.StringVar(&cfg.openAIAPIKey, "openai-api-key", "", "OpenAI-compatible API key (overrides env, deprecated)")
 	fs.StringVar(&cfg.openAIBaseURL, "openai-base-url", "", "OpenAI-compatible base URL (overrides env, deprecated)")
@@ -115,7 +115,6 @@ func run() int {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
-
 	args := fs.Args()
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "Error: missing issue/question. Example: mct-agent run \"Explain X...\"")
@@ -190,13 +189,17 @@ func run() int {
 		return 1
 	}
 
-	// Resolve patcher runner
-	pRunner := runner.PatcherRunner{Verbose: cfg.verbose, DryRun: cfg.dryRun, SessionID: sessionID}
-	if err := pRunner.Resolve(); err != nil {
-		if cfg.verbose {
-			fmt.Fprintln(os.Stderr, "[patcher] resolve warning:", err)
+	// Resolve patcher runner when patching is enabled
+	var pRunner *runner.PatcherRunner
+	if cfg.patch {
+		pr := &runner.PatcherRunner{Enabled: true, Verbose: cfg.verbose, DryRun: cfg.dryRun, SessionID: sessionID}
+		if err := pr.Resolve(); err != nil {
+			if cfg.verbose {
+				fmt.Fprintln(os.Stderr, "[patcher] resolve warning:", err)
+			}
+			// Non-fatal until we actually need to patch; we will re-resolve errors then.
 		}
-		// Non-fatal until we actually need to patch; we will re-resolve errors then.
+		pRunner = pr
 	}
 
 	// Planner/Finalizer client uses normalized OPENAI_* values
@@ -207,7 +210,7 @@ func run() int {
 		Verbose:           cfg.verbose,
 		DryRun:            cfg.dryRun,
 		RequestTimeoutSec: cfg.timeoutPerTurn,
-		NoPatch:           cfg.noPatch,
+		PatchEnabled:      cfg.patch,
 	})
 
 	// Running state (kept only for transcript writing)
@@ -486,6 +489,11 @@ func run() int {
 			if desc := strings.TrimSpace(plannerPatch.Metadata.Description); desc != "" {
 				patchTurnLabel = "Patcher: " + desc
 			}
+			if pRunner == nil {
+				stream.Abort("patch runner unavailable")
+				_ = tr.WriteTurn(step, patchTurnLabel, "", nil, "Error: patch runner disabled", "patch-error")
+				return 1
+			}
 			// Ensure patcher is resolved (may have failed earlier lazily)
 			if err := pRunner.Resolve(); err != nil {
 				stream.Abort("patcher resolve failed")
@@ -581,7 +589,7 @@ func run() int {
 				trimTo(stdoutStr, 1000),
 			)
 			// Optionally apply the patch to the working tree
-			if !cfg.noApply && !cfg.dryRun {
+			if !cfg.patchNoApply && !cfg.dryRun {
 				if aerr := gitApply(pout.PatchPath, cfg.verbose); aerr != nil {
 					if cfg.verbose {
 						fmt.Fprintln(os.Stderr, "[git] apply error:", aerr)
@@ -619,7 +627,7 @@ func run() int {
 				}
 				ans = ans + "applied: (dry-run)\n"
 			} else {
-				ans = ans + "applied: skipped (use without --no-apply)\n"
+				ans = ans + "applied: skipped (use without --patch-no-apply)\n"
 			}
 			stream.Complete(ans)
 			if err := tr.WriteTurn(step, patchTurnLabel, "", nil, ans, "patch"); err != nil {
@@ -648,89 +656,100 @@ FINALIZE:
 		lastDec, lastBody, err := pl.Plan(ctx, goal, trFull, step, cfg.maxSteps)
 		cancel()
 		if err == nil && lastDec == planner.DecisionPatch {
-			stream := display.BeginPrompt("Patcher: pre-finalize patch")
-			if cfg.verbose {
-				fmt.Fprintln(os.Stderr, "[patcher] pre-finalize planner payload (raw):", trimTo(strings.TrimSpace(lastBody), 1200))
-			}
-			jsonBytes, jerr := parser.ExtractPatchJSONPayload(lastBody)
-			if jerr != nil {
-				stream.Abort("invalid patch payload")
-				stream = nil
-				_ = tr.WriteTurn(step, "Patcher: pre-finalize (invalid JSON)", "", nil, jerr.Error(), "patch-error")
-			} else {
+			if pRunner == nil {
 				if cfg.verbose {
-					fmt.Fprintln(os.Stderr, "[patcher] pre-finalize extracted JSON:", trimTo(string(jsonBytes), 1200))
+					fmt.Fprintln(os.Stderr, "[patcher] skipping pre-finalize patch: patch runner disabled")
 				}
-				_ = pRunner.Resolve()
-				ctxP, cancelP := makeTurnContext(cfg.timeoutPerTurn)
-				stdout, stderr, perr := pRunner.RunJSON(ctxP, jsonBytes, cfg.verbose)
-				cancelP()
-				if perr != nil {
-					stream.Abort("patcher execution error")
+			} else {
+				stream := display.BeginPrompt("Patcher: pre-finalize patch")
+				if cfg.verbose {
+					fmt.Fprintln(os.Stderr, "[patcher] pre-finalize planner payload (raw):", trimTo(strings.TrimSpace(lastBody), 1200))
+				}
+				jsonBytes, jerr := parser.ExtractPatchJSONPayload(lastBody)
+				if jerr != nil {
+					stream.Abort("invalid patch payload")
 					stream = nil
-					_ = tr.WriteTurn(step, "Patcher: pre-finalize (error)", "", nil, trimTo(string(stderr), 800), "patch-error")
+					_ = tr.WriteTurn(step, "Patcher: pre-finalize (invalid JSON)", "", nil, jerr.Error(), "patch-error")
 				} else {
 					if cfg.verbose {
-						if len(stdout) > 0 {
-							fmt.Fprintln(os.Stderr, "[patcher] pre-finalize stdout:", trimTo(string(stdout), 1200))
-						}
-						if len(stderr) > 0 {
-							fmt.Fprintln(os.Stderr, "[patcher] pre-finalize stderr:", trimTo(string(stderr), 1200))
-						}
+						fmt.Fprintln(os.Stderr, "[patcher] pre-finalize extracted JSON:", trimTo(string(jsonBytes), 1200))
 					}
-					var pout struct {
-						PatchPath     string   `json:"patch_path"`
-						Applies       bool     `json:"applies"`
-						FilesModified []string `json:"files_modified"`
-						Insertions    int      `json:"insertions"`
-						Deletions     int      `json:"deletions"`
-						Description   string   `json:"description"`
-					}
-					if json.Unmarshal(stdout, &pout) == nil && pout.Applies {
-						qline := "Patcher: pre-finalize"
-						if strings.TrimSpace(pout.Description) != "" {
-							qline = "Patcher: pre-finalize - " + pout.Description
-						}
-						ans := fmt.Sprintf("Patch created: %s\nfiles_modified: %v\ninsertions: %d\ndeletions: %d\n\ninput:\n%s\n\noutput:\n%s\n",
-							pout.PatchPath,
-							strings.Join(pout.FilesModified, ", "),
-							pout.Insertions,
-							pout.Deletions,
-							trimTo(string(jsonBytes), 1000),
-							trimTo(string(stdout), 1000),
-						)
-						// Optionally apply at pre-finalize too
-						if !cfg.noApply && !cfg.dryRun {
-							if aerr := gitApply(pout.PatchPath, cfg.verbose); aerr != nil {
-								if cfg.verbose {
-									fmt.Fprintln(os.Stderr, "[git] apply error (pre-finalize):", aerr)
+					if err := pRunner.Resolve(); err != nil {
+						stream.Abort("patcher resolve failed")
+						stream = nil
+						_ = tr.WriteTurn(step, "Patcher: pre-finalize (resolve failed)", "", nil, err.Error(), "patch-error")
+					} else {
+						ctxP, cancelP := makeTurnContext(cfg.timeoutPerTurn)
+						stdout, stderr, perr := pRunner.RunJSON(ctxP, jsonBytes, cfg.verbose)
+						cancelP()
+						if perr != nil {
+							stream.Abort("patcher execution error")
+							stream = nil
+							_ = tr.WriteTurn(step, "Patcher: pre-finalize (error)", "", nil, trimTo(string(stderr), 800), "patch-error")
+						} else {
+							if cfg.verbose {
+								if len(stdout) > 0 {
+									fmt.Fprintln(os.Stderr, "[patcher] pre-finalize stdout:", trimTo(string(stdout), 1200))
 								}
+								if len(stderr) > 0 {
+									fmt.Fprintln(os.Stderr, "[patcher] pre-finalize stderr:", trimTo(string(stderr), 1200))
+								}
+							}
+							var pout struct {
+								PatchPath     string   `json:"patch_path"`
+								Applies       bool     `json:"applies"`
+								FilesModified []string `json:"files_modified"`
+								Insertions    int      `json:"insertions"`
+								Deletions     int      `json:"deletions"`
+								Description   string   `json:"description"`
+							}
+							if json.Unmarshal(stdout, &pout) == nil && pout.Applies {
+								qline := "Patcher: pre-finalize"
+								if strings.TrimSpace(pout.Description) != "" {
+									qline = "Patcher: pre-finalize - " + pout.Description
+								}
+								ans := fmt.Sprintf("Patch created: %s\nfiles_modified: %v\ninsertions: %d\ndeletions: %d\n\ninput:\n%s\n\noutput:\n%s\n",
+									pout.PatchPath,
+									strings.Join(pout.FilesModified, ", "),
+									pout.Insertions,
+									pout.Deletions,
+									trimTo(string(jsonBytes), 1000),
+									trimTo(string(stdout), 1000),
+								)
+								// Optionally apply at pre-finalize too
+								if !cfg.patchNoApply && !cfg.dryRun {
+									if aerr := gitApply(pout.PatchPath, cfg.verbose); aerr != nil {
+										if cfg.verbose {
+											fmt.Fprintln(os.Stderr, "[git] apply error (pre-finalize):", aerr)
+										}
+										if stream != nil {
+											stream.Abort("git apply failed")
+											stream = nil
+										}
+										_ = tr.WriteTurn(step, "Patcher: pre-finalize apply failed", "", nil, trimTo(aerr.Error()+"\n"+trimTo(string(stderr), 400), 800), "patch-error")
+									} else {
+										ans = ans + "applied: yes\n"
+									}
+								} else if cfg.dryRun {
+									if cfg.verbose {
+										fmt.Fprintln(os.Stderr, "[git] apply (pre-finalize dry-run) skipping")
+									}
+									ans = ans + "applied: (dry-run)\n"
+								} else {
+									ans = ans + "applied: skipped (use without --patch-no-apply)\n"
+								}
+								_ = tr.WriteTurn(step, qline, "", nil, ans, "patch")
 								if stream != nil {
-									stream.Abort("git apply failed")
+									stream.Complete(ans)
+								}
+							} else {
+								if stream != nil {
+									stream.Abort("patch did not apply")
 									stream = nil
 								}
-								_ = tr.WriteTurn(step, "Patcher: pre-finalize apply failed", "", nil, trimTo(aerr.Error()+"\n"+trimTo(string(stderr), 400), 800), "patch-error")
-							} else {
-								ans = ans + "applied: yes\n"
+								_ = tr.WriteTurn(step, "Patcher: pre-finalize (apply-check failed)", "", nil, trimTo(string(stdout), 800)+"\n"+trimTo(string(stderr), 200), "patch-error")
 							}
-						} else if cfg.dryRun {
-							if cfg.verbose {
-								fmt.Fprintln(os.Stderr, "[git] apply (pre-finalize dry-run) skipping")
-							}
-							ans = ans + "applied: (dry-run)\n"
-						} else {
-							ans = ans + "applied: skipped (use without --no-apply)\n"
 						}
-						_ = tr.WriteTurn(step, qline, "", nil, ans, "patch")
-						if stream != nil {
-							stream.Complete(ans)
-						}
-					} else {
-						if stream != nil {
-							stream.Abort("patch did not apply")
-							stream = nil
-						}
-						_ = tr.WriteTurn(step, "Patcher: pre-finalize (apply-check failed)", "", nil, trimTo(string(stdout), 800)+"\n"+trimTo(string(stderr), 200), "patch-error")
 					}
 				}
 			}

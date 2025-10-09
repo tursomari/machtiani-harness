@@ -308,7 +308,7 @@ run_happy_case() {
     --max-steps "$max_steps"
     --timeout-per-turn 300
     --verbose
-    --no-apply
+    --patch-no-apply
   )
   if ((${#AGENT_RUNTIME_ARGS[@]})); then
     cmd+=("${AGENT_RUNTIME_ARGS[@]}")
@@ -398,7 +398,7 @@ run_error_case() {
   fi
   cmd+=(
     --verbose
-    --no-apply
+    --patch-no-apply
   )
   cmd+=(
     --final-file "$out_dir/final-${session_id}.txt"

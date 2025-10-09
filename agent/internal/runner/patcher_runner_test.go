@@ -38,7 +38,7 @@ func TestResolvePrefersPATH(t *testing.T) {
 	binPath := buildPatcherStub(t, dir)
 	t.Setenv("PATH", dir)
 
-	pr := &PatcherRunner{}
+	pr := &PatcherRunner{Enabled: true}
 	if err := pr.Resolve(); err != nil {
 		t.Fatalf("resolve failed: %v", err)
 	}
@@ -51,14 +51,14 @@ func TestResolveMissing(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("PATH", dir)
 
-	pr := &PatcherRunner{}
+	pr := &PatcherRunner{Enabled: true}
 	if err := pr.Resolve(); err == nil {
 		t.Fatalf("expected resolve error when patcher missing")
 	}
 }
 
 func TestRunJSON_DryRun(t *testing.T) {
-	pr := &PatcherRunner{DryRun: true, SessionID: "sess"}
+	pr := &PatcherRunner{Enabled: true, DryRun: true, SessionID: "sess"}
 	if err := pr.Resolve(); err != nil {
 		t.Fatalf("resolve dry-run: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestRunJSON_Executes(t *testing.T) {
 	binPath := buildPatcherStub(t, dir)
 	t.Setenv("PATH", dir)
 
-	pr := &PatcherRunner{SessionID: "sess"}
+	pr := &PatcherRunner{Enabled: true, SessionID: "sess"}
 	if err := pr.Resolve(); err != nil {
 		t.Fatal(err)
 	}
@@ -89,5 +89,18 @@ func TestRunJSON_Executes(t *testing.T) {
 	}
 	if len(errOut) == 0 {
 		t.Fatalf("expected stderr output from stub")
+	}
+}
+
+func TestDisabledRunnerSkipsResolution(t *testing.T) {
+	pr := &PatcherRunner{}
+	if err := pr.Resolve(); err != nil {
+		t.Fatalf("disabled resolve should not error: %v", err)
+	}
+	if pr.exePath != "" {
+		t.Fatalf("expected exePath to remain empty when disabled; got %q", pr.exePath)
+	}
+	if _, _, err := pr.RunJSON(context.Background(), []byte("{}"), false); err == nil {
+		t.Fatalf("expected RunJSON to error when patch runner disabled")
 	}
 }
