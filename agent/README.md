@@ -79,7 +79,7 @@ Flags:
 - `OPENAI_*` resolution precedence in agent:
   - Flags `--openai-*` override
   - Then `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL`
-  - Legacy envs `AGENT_MODEL_*` / `MCT_MODEL_*` accepted as fallback with a deprecation warning
+  - Legacy envs `AGENT_MODEL_*` accepted as fallback with a deprecation warning
 - Pass-through: agent injects the effective `OPENAI_*` into the `mct` subprocess environment.
 - `MACHTIANI_SESSION_ID` is generated per run and passed to the `mct` subprocess via `--session` for correlation.
 - `--timeout-per-turn` applies to both the `mct` subprocess calls and the planner/finalizer LLM calls. Set to `0` to disable the deadline for all per-turn operations.

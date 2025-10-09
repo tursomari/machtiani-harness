@@ -64,7 +64,7 @@ export OPENAI_MODEL=gpt-4o-mini
 
 Notes:
 - Agent flag precedence: `--openai-*` flags override env vars.
-- Legacy envs `AGENT_MODEL_*` / `MCT_MODEL_*` are still accepted as a fallback with a deprecation warning.
+- Legacy envs `AGENT_MODEL_*` are still accepted as a fallback with a deprecation warning.
 
 Optional knobs:
 - `FILE_DISCOVERY_BIN`: path to a specific `file-discovery` binary (mct otherwise resolves one on PATH or its own bundled copy).

@@ -13,7 +13,7 @@ The `prompt` command no longer relies on a remote URL or backend server. It runs
   - `OPENAI_API_KEY` (required)
   - `OPENAI_BASE_URL` (required)
   - `OPENAI_MODEL` (required; can be provided via `--openai-model`/`--model`)
-- Optional: `git` for other subcommands (`status`, `sync`, `remove`)
+- Optional: `git` for repository-aware features (system messages, discovery sandboxing)
 
 ## Build and Install (recommended)
 This builds the CLI and the bundled `file-discovery` helper from the submodule, then installs both into your PATH.
@@ -104,7 +104,6 @@ mct prompt --mode=answer-only -f prompt.md
     - If not set, `mct` generates a fresh unique session ID for the run, so no prior conversation is inlined and the session will not be reused unintentionally across projects.
   - `FILE_DISCOVERY_BIN`: Optional; path to a custom `file-discovery` binary
   - `MCT_USE_GIT_FILTER`: Enable Git‑only temp workspace for discovery (default: true; set to `false` to disable)
-  - Legacy `MCT_MODEL_*` accepted as fallback with a deprecation warning
 
 ### Config resolution order
 
@@ -128,7 +127,6 @@ Binary resolution for `file-discovery`:
 
 ## Notes
 - The `prompt` command is fully local and does not hit Machtiani server URLs.
-- Other commands (`status`, `sync`, `remove`) still interact with server APIs and may require additional env such as `MACHTIANI_URL` and `MACHTIANI_REPO_MANAGER_URL`.
 
 ## Troubleshooting
 - “file-discovery binary not found”

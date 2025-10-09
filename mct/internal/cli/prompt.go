@@ -19,12 +19,6 @@ const (
 	defaultMode          = "default"
 )
 
-const (
-	CONTENT_TYPE_KEY     = "Content-Type"
-	CONTENT_TYPE_VALUE   = "application/json"
-	API_GATEWAY_HOST_KEY = "X-RapidAPI-Key"
-)
-
 // Function to create a visual separator
 func createSeparator(message string) string {
 	separator := strings.Repeat("=", 60)
@@ -34,7 +28,7 @@ func createSeparator(message string) string {
 	return fmt.Sprintf("\n%s\n%s\n%s\n", separator, message, separator)
 }
 
-func handlePrompt(args []string, config *utils.Config, apiKey *string, headCommitHash string) {
+func handlePrompt(args []string) {
 	fs := pflag.NewFlagSet("prompt", pflag.ContinueOnError)
 	// Input source (exactly one required)
 	fileFlag := fs.StringP("file", "f", "", "Path to the markdown file (required if no positional message provided)")
@@ -134,12 +128,10 @@ func handlePrompt(args []string, config *utils.Config, apiKey *string, headCommi
 		prompt = positionalMessage
 	}
 
-	cfg := config // already loaded by caller
-
 	paramPairs := append([]string(nil), (*paramFlag)...)
 	paramJSON := append([]string(nil), (*paramJSONFlag)...)
 
-	runtime, err := resolveModelRuntime(cfg, strings.TrimSpace(*modelFlag), strings.TrimSpace(*openAIBaseURLFlag), strings.TrimSpace(*openAIAPIKeyFlag), strings.TrimSpace(*openAIModelFlag), paramPairs, paramJSON)
+	runtime, err := resolveModelRuntime(strings.TrimSpace(*modelFlag), strings.TrimSpace(*openAIBaseURLFlag), strings.TrimSpace(*openAIAPIKeyFlag), strings.TrimSpace(*openAIModelFlag), paramPairs, paramJSON)
 	if err != nil {
 		if miss, ok := err.(*missingConfigError); ok {
 			fmt.Fprintln(os.Stderr, "Missing model config: set:")
@@ -218,9 +210,9 @@ func handlePrompt(args []string, config *utils.Config, apiKey *string, headCommi
 // printVerboseInfo - unchanged
 
 func printVerboseInfo(markdown, model, matchStrength, mode, prompt string) {
-	_, ignoreFiles, err := utils.LoadConfigAndIgnoreFiles()
+	ignoreFiles, err := utils.ReadIgnoreFile(".machtiani.ignore")
 	if err != nil {
-		log.Printf("Warning: Error loading config/ignore files for verbose info: %v", err)
+		log.Printf("Warning: Error loading ignore file for verbose info: %v", err)
 	} else {
 		// Print the file paths
 		fmt.Println("Parsed file paths from machtiani.ignore:")
@@ -275,7 +267,7 @@ func (m modelRuntime) displayName() string {
 	return m.resolved.Model
 }
 
-func resolveModelRuntime(cfg *utils.Config, aliasFlag, baseURLFlag, apiKeyFlag, directModelFlag string, paramPairs, paramJSON []string) (modelRuntime, error) {
+func resolveModelRuntime(aliasFlag, baseURLFlag, apiKeyFlag, directModelFlag string, paramPairs, paramJSON []string) (modelRuntime, error) {
 	extra, err := llm.ParseParamOverrides(paramPairs, paramJSON)
 	if err != nil {
 		return modelRuntime{}, err
@@ -293,9 +285,18 @@ func resolveModelRuntime(cfg *utils.Config, aliasFlag, baseURLFlag, apiKeyFlag, 
 	hasDirectFlags := strings.TrimSpace(baseURLFlag) != "" || strings.TrimSpace(apiKeyFlag) != "" || strings.TrimSpace(directModelFlag) != ""
 	alias := strings.TrimSpace(aliasFlag)
 
-	directBaseURL := utilsFirstNonEmpty(strings.TrimSpace(baseURLFlag), strings.TrimSpace(cfg.Environment.ModelBaseURL), strings.TrimSpace(cfg.Environment.ModelBaseURLOther), strings.TrimSpace(os.Getenv("OPENAI_BASE_URL")))
-	directAPIKey := utilsFirstNonEmpty(strings.TrimSpace(apiKeyFlag), strings.TrimSpace(cfg.Environment.ModelAPIKey), strings.TrimSpace(cfg.Environment.ModelAPIKeyOther), strings.TrimSpace(os.Getenv("OPENAI_API_KEY")))
-	directModel := utilsFirstNonEmpty(strings.TrimSpace(directModelFlag), strings.TrimSpace(os.Getenv("OPENAI_MODEL")), strings.TrimSpace(os.Getenv("MCT_MODEL")))
+	directBaseURL := utilsFirstNonEmpty(
+		strings.TrimSpace(baseURLFlag),
+		strings.TrimSpace(os.Getenv("OPENAI_BASE_URL")),
+	)
+	directAPIKey := utilsFirstNonEmpty(
+		strings.TrimSpace(apiKeyFlag),
+		strings.TrimSpace(os.Getenv("OPENAI_API_KEY")),
+	)
+	directModel := utilsFirstNonEmpty(
+		strings.TrimSpace(directModelFlag),
+		strings.TrimSpace(os.Getenv("OPENAI_MODEL")),
+	)
 
 	if hasDirectFlags {
 		missing := missingDirect(directAPIKey, directBaseURL, directModel)

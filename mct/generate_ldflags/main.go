@@ -31,7 +31,6 @@ func gitDirtyState() string {
 }
 
 func main() {
-	headOID := mustGit("rev-parse", "HEAD")
 	shortCommit := mustGit("rev-parse", "--short=12", "HEAD")
 	buildDate := time.Now().UTC().Format(time.RFC3339)
 	dirty := gitDirtyState()
@@ -41,10 +40,8 @@ func main() {
 	}
 
 	ldflags := []string{
-		fmt.Sprintf("-X 'github.com/tursomari/machtiani/mct/internal/api.HeadOID=%s'", headOID),
-		fmt.Sprintf("-X 'github.com/tursomari/machtiani/mct/internal/api.BuildDate=%s'", buildDate),
-		fmt.Sprintf("-X 'github.com/tursomari/machtiani/mct/internal/api.MachtianiGitRemoteURL=%s'", "https://github.com/tursomari/machtiani"),
 		"-X 'github.com/tursomari/machtiani/mct/internal/cli.SystemMessageFrequencyHours=24'",
+		fmt.Sprintf("-X 'github.com/tursomari/machtiani/mct/internal/cli.SystemMessageRemote=%s'", "https://github.com/tursomari/machtiani"),
 		fmt.Sprintf("-X 'github.com/tursomari/machtiani/mct/internal/cli.Version=%s'", version),
 		fmt.Sprintf("-X 'github.com/tursomari/machtiani/mct/internal/cli.Commit=%s'", shortCommit),
 		fmt.Sprintf("-X 'github.com/tursomari/machtiani/mct/internal/cli.BuiltAt=%s'", buildDate),

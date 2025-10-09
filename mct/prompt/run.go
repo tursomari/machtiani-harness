@@ -59,9 +59,9 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 	if isAnswerOnly {
 		combined, included = contextbuilder.Build(opts.Prompt, nil, hist, contextbuilder.Options{IncludeHistory: includeHistory, MaxInputTokens: opts.MaxInputTokens})
 	} else {
-		_, ignoreFiles, err := utils.LoadConfigAndIgnoreFiles()
+		ignoreFiles, err := utils.ReadIgnoreFile(".machtiani.ignore")
 		if err != nil {
-			return res, fmt.Errorf("load config: %w", err)
+			return res, fmt.Errorf("load ignore rules: %w", err)
 		}
 
 		drModel := discoveryrunner.ModelSettings{
