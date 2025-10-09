@@ -17,6 +17,8 @@ const (
 	defaultTotalCap   = 2 * 1024 * 1024 // 2 MB
 )
 
+const fileSectionPrelude = "\n\nHere are possible relevant files:\n"
+
 type Options struct {
 	PerFileCap     int
 	TotalCap       int
@@ -59,6 +61,8 @@ func Build(userPrompt string, relPaths []string, conversationHistory []Message, 
 
 	prelude := buildPrelude(userPrompt, conversationHistory, opts.IncludeHistory)
 	totalTokens := llm.EstimateTokens(prelude)
+	filePreludeTokens := llm.EstimateTokens(fileSectionPrelude)
+	addedFilePrelude := false
 
 	sections := make([]*fileSection, 0, len(relPaths))
 	included := make([]string, 0, len(relPaths))
@@ -87,6 +91,10 @@ func Build(userPrompt string, relPaths []string, conversationHistory []Message, 
 		section := newFileSection(rel)
 		sections = append(sections, section)
 		included = append(included, rel)
+		if !addedFilePrelude {
+			totalTokens += filePreludeTokens
+			addedFilePrelude = true
+		}
 		totalTokens += section.HeaderTokens + section.FooterTokens
 
 		f, err := os.Open(resolved)
@@ -133,6 +141,9 @@ func Build(userPrompt string, relPaths []string, conversationHistory []Message, 
 
 	var builder strings.Builder
 	builder.WriteString(prelude)
+	if len(sections) > 0 {
+		builder.WriteString(fileSectionPrelude)
+	}
 	for _, section := range sections {
 		builder.WriteString(section.Header)
 		builder.WriteString(section.RenderContent())
@@ -166,8 +177,6 @@ func buildPrelude(userPrompt string, history []Message, includeHistory bool) str
 	} else {
 		b.WriteString(userPrompt)
 	}
-
-	b.WriteString("\n\nHere are possible relevant files:\n")
 	return b.String()
 }
 

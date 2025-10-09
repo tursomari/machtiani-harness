@@ -40,6 +40,8 @@ type ModelSettings struct {
 // Go's regexp doesn't support backreferences, so capture both session ids and compare in code.
 var blockRe = regexp.MustCompile(`(?s)BEGIN_RELEVANT_FILES\[(.+?)\]\n(.*?)\nEND_RELEVANT_FILES\[(.+?)\]`)
 
+const exitCodeNoRelevantFiles = 2
+
 // findBinary resolves the file-discovery binary path using precedence:
 // 1) FILE_DISCOVERY_BIN env
 // 2) file-discovery in PATH
@@ -204,6 +206,10 @@ func Run(ctx context.Context, prompt string, model ModelSettings, sessionID stri
 	}()
 
 	if err := cmd.Wait(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == exitCodeNoRelevantFiles {
+			return Result{}, nil
+		}
 		// include a hint with stderr for troubleshooting
 		return Result{}, fmt.Errorf("file-discovery failed: %w\n%s", err, stderr.String())
 	}
