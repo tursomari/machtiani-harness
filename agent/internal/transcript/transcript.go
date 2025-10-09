@@ -16,6 +16,26 @@ type Transcript struct {
 	mem  strings.Builder
 }
 
+type PatchValidationMessage struct {
+	Severity string
+	Path     string
+	Line     int
+	Message  string
+	Raw      string
+}
+
+type PatchValidationRecord struct {
+	Operation    string
+	Status       string
+	PatchPath    string
+	PatchPreview string
+	PatchInput   string
+	Stdout       string
+	Stderr       string
+	Error        string
+	Messages     []PatchValidationMessage
+}
+
 func New() (*Transcript, error) {
 	chatDir, err := artifacts.ChatDirectory()
 	if err != nil {
@@ -99,6 +119,86 @@ func (t *Transcript) WriteFinal(answer string, step int, capped bool) error {
 		note = " (reached max-steps cap)"
 	}
 	s := fmt.Sprintf("\n## Conclusion%s (after %d turn(s))\n\n%s\n", note, step, answer)
+	t.mem.WriteString(s)
+	_, err := t.f.WriteString(s)
+	return err
+}
+
+func (t *Transcript) WritePatchValidation(step int, record PatchValidationRecord) error {
+	if t == nil {
+		return nil
+	}
+	var b strings.Builder
+	b.WriteString("\n### Patch Validation")
+	if step > 0 {
+		b.WriteString(fmt.Sprintf(" (Turn %d)", step))
+	}
+	b.WriteString("\n\n")
+	if record.Operation != "" {
+		b.WriteString("Operation: ")
+		b.WriteString(record.Operation)
+		b.WriteString("\n")
+	}
+	if record.Status != "" {
+		b.WriteString("Status: ")
+		b.WriteString(record.Status)
+		b.WriteString("\n")
+	}
+	if record.PatchPath != "" {
+		b.WriteString("Patch Path: ")
+		b.WriteString(record.PatchPath)
+		b.WriteString("\n")
+	}
+	if record.PatchPreview != "" {
+		b.WriteString("Patch Preview:\n")
+		b.WriteString(record.PatchPreview)
+		b.WriteString("\n")
+	}
+	if record.PatchInput != "" {
+		b.WriteString("Patch Input JSON:\n")
+		b.WriteString(record.PatchInput)
+		b.WriteString("\n")
+	}
+	if len(record.Messages) > 0 {
+		b.WriteString("Messages:\n")
+		for _, msg := range record.Messages {
+			b.WriteString("- ")
+			if msg.Severity != "" {
+				b.WriteString("[")
+				b.WriteString(msg.Severity)
+				b.WriteString("] ")
+			}
+			if msg.Path != "" {
+				b.WriteString(msg.Path)
+				if msg.Line > 0 {
+					b.WriteString(fmt.Sprintf(":%d", msg.Line))
+				}
+				b.WriteString(" - ")
+			}
+			if msg.Message != "" {
+				b.WriteString(msg.Message)
+			} else if msg.Raw != "" {
+				b.WriteString(msg.Raw)
+			}
+			b.WriteString("\n")
+		}
+	}
+	if record.Stdout != "" {
+		b.WriteString("Validation Stdout:\n")
+		b.WriteString(record.Stdout)
+		b.WriteString("\n")
+	}
+	if record.Stderr != "" {
+		b.WriteString("Validation Stderr:\n")
+		b.WriteString(record.Stderr)
+		b.WriteString("\n")
+	}
+	if record.Error != "" {
+		b.WriteString("Error:\n")
+		b.WriteString(record.Error)
+		b.WriteString("\n")
+	}
+	s := b.String()
 	t.mem.WriteString(s)
 	_, err := t.f.WriteString(s)
 	return err

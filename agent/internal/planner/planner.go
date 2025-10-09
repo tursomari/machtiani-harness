@@ -93,6 +93,7 @@ func (c *Client) chat(ctx context.Context, prompt string) (string, error) {
 func (c *Client) planPrompt(goal string, transcript string, step, maxSteps int) string {
 	var b strings.Builder
 	b.WriteString("You are an agentic planner for mct. Read the transcript to understand the goal and prior turns. mct reads repository files and answers; it does not execute code.\n")
+	b.WriteString("Patch validation diagnostics are recorded in the transcript; use them to decide on next steps when patches fail.\n")
 	if c.cfg.NoPatch {
 		b.WriteString("Patch requests are disabled for this run. Decide either to: (a) produce one single, high-signal repository-focused prompt, or (b) finalize if enough information is gathered.\n")
 	} else {

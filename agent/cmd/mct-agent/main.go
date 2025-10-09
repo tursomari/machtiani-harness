@@ -476,26 +476,61 @@ func run() int {
 			if cfg.verbose {
 				fmt.Fprintln(os.Stderr, "[patcher] extracted JSON:", trimTo(string(jsonBytes), 1200))
 			}
+			var plannerPatch struct {
+				Metadata struct {
+					Description string `json:"description"`
+				} `json:"metadata"`
+			}
+			_ = json.Unmarshal(jsonBytes, &plannerPatch)
+			patchTurnLabel := "Patcher: create patch"
+			if desc := strings.TrimSpace(plannerPatch.Metadata.Description); desc != "" {
+				patchTurnLabel = "Patcher: " + desc
+			}
 			// Ensure patcher is resolved (may have failed earlier lazily)
 			if err := pRunner.Resolve(); err != nil {
 				stream.Abort("patcher resolve failed")
-				_ = tr.WriteTurn(step, "Patcher: resolve failed", "", nil, "Error: "+err.Error(), "patch-error")
+				_ = tr.WriteTurn(step, patchTurnLabel, "", nil, "Error: "+err.Error(), "patch-error")
 				return 1
 			}
 			ctxP, cancelP := makeTurnContext(cfg.timeoutPerTurn)
 			stdout, stderr, perr := pRunner.RunJSON(ctxP, jsonBytes, cfg.verbose)
 			cancelP()
+			stdoutStr := string(stdout)
+			stderrStr := string(stderr)
 			if perr != nil {
+				var prErr *runner.PatchRunnerError
+				if errors.As(perr, &prErr) && prErr.Kind == runner.PatchErrorValidation {
+					stream.Abort("patch validation failed")
+					summary := "Patch validation failed. See diagnostics below."
+					if err := tr.WriteTurn(step, patchTurnLabel, "", nil, summary, "patch-error"); err != nil {
+						fmt.Fprintln(os.Stderr, "Transcript write error:", err)
+						return 1
+					}
+					rec := transcript.PatchValidationRecord{
+						Operation:  prErr.Diagnostics.Operation,
+						Status:     "failed",
+						PatchInput: trimTo(string(jsonBytes), 1000),
+						Stdout:     trimTo(stdoutStr, 800),
+						Stderr:     trimTo(prErr.Diagnostics.Stderr, 800),
+						Error:      strings.TrimSpace(prErr.Error()),
+						Messages:   convertPatchMessages(prErr.Diagnostics.Messages),
+					}
+					_ = tr.WritePatchValidation(step, rec)
+					if step == cfg.maxSteps {
+						goto FINALIZE
+					}
+					continue
+				}
 				stream.Abort("patcher execution error")
-				_ = tr.WriteTurn(step, "Patcher: execution error", "", nil, trimTo("stderr: "+string(stderr), 800), "patch-error")
+				_ = tr.WriteTurn(step, patchTurnLabel, "", nil, trimTo("stderr: "+stderrStr, 800), "patch-error")
 				return 1
 			}
 			if cfg.verbose {
 				if len(stdout) > 0 {
-					fmt.Fprintln(os.Stderr, "[patcher] stdout:", trimTo(string(stdout), 1200))
+					fmt.Fprintln(os.Stderr, "[patcher] stdout:", trimTo(stdoutStr, 1200))
 				}
 				if len(stderr) > 0 {
-					fmt.Fprintln(os.Stderr, "[patcher] stderr:", trimTo(string(stderr), 1200))
+					fmt.Fprintln(os.Stderr, "[patcher] stderr:", trimTo(stderrStr, 1200))
 				}
 			}
 			// Parse stdout JSON
@@ -509,26 +544,41 @@ func run() int {
 			}
 			if err := json.Unmarshal(stdout, &pout); err != nil {
 				stream.Abort("patcher produced invalid JSON")
-				_ = tr.WriteTurn(step, "Patcher: invalid stdout JSON", "", nil, "stdout: "+trimTo(string(stdout), 600)+"\nstderr: "+trimTo(string(stderr), 200), "patch-error")
+				_ = tr.WriteTurn(step, patchTurnLabel, "", nil, "stdout: "+trimTo(stdoutStr, 600)+"\nstderr: "+trimTo(stderrStr, 200), "patch-error")
 				return 1
 			}
 			if !pout.Applies {
 				stream.Abort("patch did not apply")
-				_ = tr.WriteTurn(step, "Patcher: apply-check failed", "", nil, "stdout: "+trimTo(string(stdout), 600)+"\nstderr: "+trimTo(string(stderr), 200), "patch-error")
-				return 1
+				if err := tr.WriteTurn(step, patchTurnLabel, "", nil, "Patch validation reported failure. See diagnostics below.", "patch-error"); err != nil {
+					fmt.Fprintln(os.Stderr, "Transcript write error:", err)
+					return 1
+				}
+				rec := transcript.PatchValidationRecord{
+					Operation:  "git apply --check",
+					Status:     "failed",
+					PatchInput: trimTo(string(jsonBytes), 1000),
+					Stdout:     trimTo(stdoutStr, 800),
+					Stderr:     trimTo(stderrStr, 800),
+					Error:      "patcher reported applies=false",
+					Messages:   convertPatchMessages(runner.ParseGitApplyMessages(stderrStr)),
+				}
+				_ = tr.WritePatchValidation(step, rec)
+				if step == cfg.maxSteps {
+					goto FINALIZE
+				}
+				continue
+			}
+			if strings.TrimSpace(pout.Description) != "" {
+				patchTurnLabel = "Patcher: " + strings.TrimSpace(pout.Description)
 			}
 			// Build concise answer block
-			qline := "Patcher: create patch"
-			if strings.TrimSpace(pout.Description) != "" {
-				qline = "Patcher: " + pout.Description
-			}
 			ans := fmt.Sprintf("Patch created: %s\nfiles_modified: %v\ninsertions: %d\ndeletions: %d\n\ninput:\n%s\n\noutput:\n%s\n",
 				pout.PatchPath,
 				strings.Join(pout.FilesModified, ", "),
 				pout.Insertions,
 				pout.Deletions,
 				trimTo(string(jsonBytes), 1000),
-				trimTo(string(stdout), 1000),
+				trimTo(stdoutStr, 1000),
 			)
 			// Optionally apply the patch to the working tree
 			if !cfg.noApply && !cfg.dryRun {
@@ -536,8 +586,31 @@ func run() int {
 					if cfg.verbose {
 						fmt.Fprintln(os.Stderr, "[git] apply error:", aerr)
 					}
-					_ = tr.WriteTurn(step, "Patcher: apply failed", "", nil, trimTo(aerr.Error()+"\n"+trimTo(string(stderr), 400), 800), "patch-error")
-					return 1
+					stream.Abort("git apply failed")
+					if err := tr.WriteTurn(step, patchTurnLabel, "", nil, "git apply failed. See diagnostics below.", "patch-error"); err != nil {
+						fmt.Fprintln(os.Stderr, "Transcript write error:", err)
+						return 1
+					}
+					applyStderr := extractApplyStderr(aerr.Error())
+					if strings.TrimSpace(applyStderr) == "" {
+						applyStderr = stderrStr
+					}
+					rec := transcript.PatchValidationRecord{
+						Operation:    "git apply",
+						Status:       "failed",
+						PatchPath:    pout.PatchPath,
+						PatchPreview: readPatchPreview(pout.PatchPath, 1000),
+						PatchInput:   trimTo(string(jsonBytes), 1000),
+						Stdout:       trimTo(stdoutStr, 800),
+						Stderr:       trimTo(applyStderr, 800),
+						Error:        aerr.Error(),
+						Messages:     convertPatchMessages(runner.ParseGitApplyMessages(applyStderr)),
+					}
+					_ = tr.WritePatchValidation(step, rec)
+					if step == cfg.maxSteps {
+						goto FINALIZE
+					}
+					continue
 				}
 				ans = ans + "applied: yes\n"
 			} else if cfg.dryRun {
@@ -549,7 +622,7 @@ func run() int {
 				ans = ans + "applied: skipped (use without --no-apply)\n"
 			}
 			stream.Complete(ans)
-			if err := tr.WriteTurn(step, qline, "", nil, ans, "patch"); err != nil {
+			if err := tr.WriteTurn(step, patchTurnLabel, "", nil, ans, "patch"); err != nil {
 				fmt.Fprintln(os.Stderr, "Transcript write error:", err)
 				return 1
 			}
@@ -705,6 +778,47 @@ func trimTo(s string, n int) string {
 		return s
 	}
 	return s[:n]
+}
+
+func convertPatchMessages(msgs []runner.PatchValidationMessage) []transcript.PatchValidationMessage {
+	if len(msgs) == 0 {
+		return nil
+	}
+	out := make([]transcript.PatchValidationMessage, 0, len(msgs))
+	for _, msg := range msgs {
+		out = append(out, transcript.PatchValidationMessage{
+			Severity: msg.Severity,
+			Path:     msg.Path,
+			Line:     msg.Line,
+			Message:  msg.Message,
+			Raw:      msg.Raw,
+		})
+	}
+	return out
+}
+
+func extractApplyStderr(msg string) string {
+	msg = strings.TrimSpace(msg)
+	if msg == "" {
+		return ""
+	}
+	parts := strings.SplitN(msg, "\n", 2)
+	if len(parts) == 2 {
+		return strings.TrimSpace(parts[1])
+	}
+	return ""
+}
+
+func readPatchPreview(path string, max int) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return trimTo(string(data), max)
 }
 
 // makeTurnContext returns a context for a single turn.
