@@ -212,11 +212,8 @@ check_bin() {
   echo "--" >&2
 }
 
-echo "== Preflight: verifying PATH binaries ==" >&2
+echo "== Preflight: verifying mct-agent binary ==" >&2
 check_bin MCT_AGENT_BIN mct-agent "$REPO_ROOT/agent" "--version"
-check_bin MCT_PATH mct "$REPO_ROOT/mct" "--version"
-check_bin FILE_DISCOVERY_BIN file-discovery "$REPO_ROOT/mct/submodules/file-discovery" "-version"
-check_bin PATCHER_BIN patcher "$REPO_ROOT/patcher" "--version"
 echo "Preflight OK" >&2
 
 echo >&2
