@@ -1,43 +1,52 @@
 # mct-agent — Agent Orchestrator
 
-Agent “composer” that iteratively asks focused questions via the `mct` CLI (the worker) and decides when to stop to produce the final answer itself. It shells out to `mct prompt`, parses the saved chat (including the “Retrieved File Paths”), maintains a running summary, and uses its own LLM for planning and final composition.
+Agent “composer” that iteratively asks focused questions using the embedded `mct` discovery pipeline and decides when to stop to produce the final answer. It now calls the `mct` packages directly (no external `mct` binary required), parses the retrieved paths and answers in-memory, maintains a running summary, and uses its own LLM for planning and final composition.
 
 ## Requirements
-- Go 1.22+
-- `mct` CLI available in PATH (run `./scripts/install-all.sh` from repo root to build/install `mct`, `file-discovery`, `patcher`, and `mct-agent` together; a transparent manual command block lives in the workspace `README.md` under Quick Install)
+- Go 1.22+ (when building from source)
 - OpenAI‑compatible model configuration (no implicit defaults):
   - `OPENAI_API_KEY` (required)
   - `OPENAI_BASE_URL` (required)
   - `OPENAI_MODEL` (required)
+- Optional standalone CLIs (`mct`, `file-discovery`, `patcher`) are only needed for direct use; install them with `./scripts/install.sh --install-peripherals`.
 
 ## Install
 
-From the repo root, run the unified installer to build **mct**, **file-discovery**, **patcher**, and **mct-agent** together:
+From the repo root, run the installer to build **mct-agent** into `~/.local/bin`:
 
 ```
-./scripts/install-all.sh
+./scripts/install.sh
 ```
 
-The script writes binaries to `~/.local/bin` by default. Override the destination with `PREFIX` if you prefer a different path:
+Need the standalone CLIs too? Append `--install-peripherals` to build **mct**, **file-discovery**, and **patcher** alongside `mct-agent`:
 
 ```
-PREFIX="$PWD/.mct-bin" ./scripts/install-all.sh
+./scripts/install.sh --install-peripherals
+```
+
+Override the destination with `PREFIX` if you prefer a different path:
+
+```
+PREFIX="$PWD/.mct-bin" ./scripts/install.sh
 export PATH="$PWD/.mct-bin/bin:$PATH"
 ```
 
-Prefer to inspect every step? Copy the manual snippet from the repository `README.md` (Quick Install section); it builds the same binaries without any extra flags.
+After installation, confirm `mct-agent` resolves via PATH:
 
-After installation, confirm the tools resolve via PATH:
+```
+mct-agent --version
+```
+
+If you built the peripherals, check them too:
 
 ```
 mct --help | head -n 1
 file-discovery -version
 patcher --version
-mct-agent --version
 ```
 
 ## Quick Start
-Set model configuration (used by both agent and `mct`):
+Set model configuration (shared across the agent and any optional `mct` CLI):
 ```
 export OPENAI_API_KEY=sk_...
 export OPENAI_BASE_URL=https://api.openai.com/v1   # or your provider
@@ -56,11 +65,11 @@ Flags:
 - `--max-steps int`: maximum turns before finalizing (default: 4)
 - `--openai-api-key string`: API key for OpenAI-compatible endpoint
 - `--openai-base-url string`: Base URL for OpenAI-compatible endpoint
-- `--openai-model string`: Model name for planner and `mct` calls (alias: `--model`)
+- `--openai-model string`: Model name for planner and the embedded discovery pipeline (alias: `--model`)
 - `--timeout-per-turn int`: per-turn timeout in seconds (default: 120; set 0 for unlimited)
 - `--version`: print build metadata for the agent and exit
-- `--dry-run`: print intended `mct` calls; no subprocess or LLM
-- `--verbose`: verbose agent logging (prints the exact `mct` command)
+- `--dry-run`: print intended discovery calls; no remote LLM requests executed
+- `--verbose`: verbose agent logging (includes discovery and planner context)
 - `--final-file string`: path to write final answer-only artifact
 - `--transcript-file string`: path to write transcript (default: `.machtiani/chats/agent-<timestamp>.md`)
 - `--file-discovery-trajectory string`: absolute/relative file path for the file-discovery trajectory JSONL
@@ -68,9 +77,7 @@ Flags:
 
 ## How It Works
 - The agent controls the loop: it plans either `Decision: ask` with one next question or `Decision: finalize`.
-- On `ask`, it invokes `mct prompt --mode=default` with that question. It then reads `.machtiani/chats/machtiani-response.md` and extracts:
-  - “Retrieved File Paths” section
-  - A short answer excerpt for the running summary
+- On `ask`, it runs the `mct` prompt service via Go packages, retrieving the answer text and retrieved-path metadata without invoking external binaries. The service still writes `.machtiani/chats/machtiani-response.md` for compatibility, and the agent records the paths plus answer payload directly from memory.
 - It maintains a concise evolving summary/evidence log across turns.
 - On finalize (or at `--max-steps`), the agent composes the final answer via its own LLM and prints it.
 - A transcript is saved to `.machtiani/chats/agent-<timestamp>.md` with per-turn entries and the final conclusion.
@@ -80,25 +87,25 @@ Flags:
   - Flags `--openai-*` override
   - Then `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL`
   - Legacy envs `AGENT_MODEL_*` accepted as fallback with a deprecation warning
-- Pass-through: agent injects the effective `OPENAI_*` into the `mct` subprocess environment.
-- `MACHTIANI_SESSION_ID` is generated per run and passed to the `mct` subprocess via `--session` for correlation.
-- `--timeout-per-turn` applies to both the `mct` subprocess calls and the planner/finalizer LLM calls. Set to `0` to disable the deadline for all per-turn operations.
+- The resolved configuration is reused for both the embedded discovery pipeline and the planner/finalizer clients.
+- `MACHTIANI_SESSION_ID` is generated per run and passed into the discovery service for correlation across artifacts.
+- `--timeout-per-turn` applies to both the discovery steps and the planner/finalizer LLM calls. Set to `0` to disable the deadline for all per-turn operations.
 
 ## Troubleshooting
-- “mct not found”
-  - Run `./scripts/install-all.sh` (or use the manual snippet in the repo `README.md`) and ensure the chosen prefix is on PATH.
+- “mct-agent not found”
+  - Re-run `./scripts/install.sh` (append `--install-peripherals` if you also need the standalone CLIs) and ensure the chosen prefix is on PATH.
 - “Missing model configuration”
   - Provide a valid `.machtiani/config.toml` (or set `MACHTIANI_CONFIG`) containing the model alias, or export `OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_MODEL` so the agent can generate one.
 - “Saved chat missing/unreadable”
-  - The agent reads `.machtiani/chats/machtiani-response.md`. Ensure `mct prompt` ran successfully and wrote the file.
-- “mct prompt error: signal: killed” or "timed out after N seconds"
-  - The `mct` subprocess likely exceeded the per-turn timeout and was terminated. Increase `--timeout-per-turn` (e.g., `--timeout-per-turn=600`) or set `--timeout-per-turn=0` to disable the deadline.
+  - The embedded discovery service still writes `.machtiani/chats/machtiani-response.md`. Ensure the workspace is writable and no other process removed the file mid-run.
+- “Discovery timed out”
+  - Increase `--timeout-per-turn` (e.g., `--timeout-per-turn=600`) or set `--timeout-per-turn=0` to disable the deadline for discovery and planner steps.
 
 ## Notes
-- The agent shells out to `mct` and does not import `mct/internal/*`.
-- It avoids parsing streamed stdout; always reads the saved chat file as the source of truth.
-- `--dry-run` simulates planning and prints the intended commands without executing `mct` or calling any LLM.
-- Patch planning is opt-in. Pass `--patch` to enable planner patch requests; without it the agent skips patch JSON parsing and never resolves or invokes the `patcher` binary.
+- The agent links against the `mct` and `patcher` Go packages directly; no external binaries are required for default operation.
+- Discovery responses are consumed in-memory while the library still persists `.machtiani/chats/machtiani-response.md` for compatibility.
+- `--dry-run` simulates planning and discovery without making outbound LLM requests.
+- Patch planning is opt-in. Pass `--patch` to enable planner patch requests; without it the agent skips patch instructions entirely.
 - Use `--patch-no-apply` to capture patch diagnostics and transcript turns without touching the working tree.
 
 ## Testing
@@ -111,23 +118,23 @@ GOCACHE=$(pwd)/.gocache go test ./...
 ```
 
 ### Integration Tests (Live or Dry-Run)
-`agent/tests/run-live.sh` exercises the PATH-installed binaries end-to-end (see `TESTING.md` for full details).
+`agent/tests/run-live.sh` exercises the PATH-installed `mct-agent` binary end-to-end (see `TESTING.md` for full details). The default install is sufficient; optional CLIs are not required for this harness.
 
 Prerequisites:
-1. Run `./scripts/install-all.sh` (or copy the manual command block from the repo `README.md`) so that `mct`, `file-discovery`, `patcher`, and `mct-agent` are on PATH.
+1. Run `./scripts/install.sh` (add `--install-peripherals` if you also want the standalone CLIs on PATH).
 2. Optional for live mode: export `OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_MODEL`. When these variables are absent the script forces deterministic dry-run mode.
 
 What the script does:
-- Performs a preflight that resolves each binary on PATH, prints `--version`/`go version -m` metadata, and fails if the commit/time does not match the current sources.
+- Performs a preflight that resolves `mct-agent` on PATH, prints `--version`/`go version -m` metadata, and fails if the commit/time does not match the current sources.
 - Generates a temporary `.machtiani/config.toml` under `agent/tests/tmp/` and exports `MACHTIANI_CONFIG` for the duration of the run. The file uses your `OPENAI_*` values in live mode and stub credentials in dry-run.
 - Runs Issue A/B/C happy-path scenarios (1-turn and 3-turn variants) plus deterministic error cases (empty input, missing config when in live mode). Artifacts land under `test-out-*` directories in the repo root.
 
 Run from the repo root:
 
 ```
-./scripts/install-all.sh && bash agent/tests/run-live.sh
+./scripts/install.sh && bash agent/tests/run-live.sh
 ```
-If you prefer not to invoke the script, run the manual block from the root `README.md` first, then execute `bash agent/tests/run-live.sh`.
+If you prefer not to invoke the installer, run the manual block from the root `README.md` and ensure `mct-agent` is on PATH before executing `bash agent/tests/run-live.sh`.
 
 The script no longer mutates PATH or accepts binary override flags; everything must resolve via PATH.
 - When `OPENAI_*` are not provided, the generated config points at stub credentials and the script forces `--dry-run`, so no network or `mct` subprocess calls occur; transcripts remain available for assertions while the final artifact is intentionally skipped.

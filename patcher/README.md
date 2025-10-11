@@ -4,7 +4,7 @@ A standalone Go binary that generates git-compatible patches from precise edit i
 
 Usage:
 
-- Install (recommended): `./scripts/install-all.sh` from the repo root (puts `patcher` under `~/.local/bin` by default; manual commands without extra flags live in the root `README.md` under Quick Install)
+- Install (recommended): `./scripts/install.sh --install-peripherals` from the repo root (puts `patcher` under `~/.local/bin` by default; manual commands live in the root `README.md` under Quick Install → Optional CLIs)
 - Run: `patcher --repo <path> --session <id> --input <file|-> [--out-dir <path>] [--verbose]`
 - Inspect build metadata: `patcher --version`
 
