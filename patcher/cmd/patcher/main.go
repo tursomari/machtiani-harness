@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -9,14 +10,10 @@ import (
 	"io"
 	"log"
 	"os"
-	"path/filepath"
-	"time"
+	"strings"
 
-	"github.com/tursomari/machtiani/patcher/internal/check"
-	"github.com/tursomari/machtiani/patcher/internal/diff"
-	"github.com/tursomari/machtiani/patcher/internal/engine"
-	fsutil "github.com/tursomari/machtiani/patcher/internal/fs"
-	"github.com/tursomari/machtiani/patcher/internal/instructions"
+	mctpatcher "github.com/tursomari/machtiani/mct/patcher"
+	patchersvc "github.com/tursomari/machtiani/patcher"
 )
 
 var (
@@ -60,27 +57,8 @@ func run() int {
 		return exitOK
 	}
 
-	logger := log.New(io.Discard, "", log.LstdFlags)
-	if verbose {
-		logger.SetOutput(os.Stderr)
-	}
-
 	if repo == "" || session == "" || input == "" {
 		fmt.Fprintln(os.Stderr, "--repo, --session, and --input are required")
-		return exitInvalidInput
-	}
-
-	repoAbs, err := filepath.Abs(repo)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "invalid --repo: %v\n", err)
-		return exitInvalidInput
-	}
-	if ok, err := fsutil.IsRepoRoot(repoAbs); err != nil || !ok {
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "failed to inspect repo: %v\n", err)
-		} else {
-			fmt.Fprintf(os.Stderr, "--repo must point to a git repo root (no .git found): %s\n", repoAbs)
-		}
 		return exitInvalidInput
 	}
 
@@ -97,7 +75,7 @@ func run() int {
 		in = f
 	}
 
-	var instr instructions.Instructions
+	var instr mctpatcher.Instructions
 	dec := json.NewDecoder(in)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&instr); err != nil {
@@ -105,85 +83,46 @@ func run() int {
 		return exitInvalidInput
 	}
 
-	if err := instructions.Validate(repoAbs, instr); err != nil {
-		if errors.Is(err, instructions.ErrInvalid) {
-			fmt.Fprintf(os.Stderr, "invalid instructions: %v\n", err)
+	ctx := context.Background()
+	logger := log.New(os.Stderr, "", log.LstdFlags)
+	svc := patchersvc.NewService(patchersvc.WithLogger(logger))
+	params := mctpatcher.PatchParams{
+		RepoRoot:     repo,
+		SessionID:    session,
+		Instructions: instr,
+		OutputDir:    outDir,
+		Verbose:      verbose,
+	}
+	result, err := svc.ApplyAndGeneratePatch(ctx, params)
+	if err != nil {
+		var vErr *mctpatcher.ValidationError
+		var genErr *mctpatcher.PatchGenerationError
+		var cleanErr *mctpatcher.PatchNotCleanError
+		switch {
+		case errors.As(err, &vErr):
+			fmt.Fprintln(os.Stderr, vErr.Error())
 			return exitInvalidInput
-		}
-		fmt.Fprintf(os.Stderr, "validation error: %v\n", err)
-		return exitInternalError
-	}
-
-	// Compute after-state for each file.
-	logger.Println("Applying edits in memory...")
-	afterMap, filesTouched, err := engine.ApplyAll(repoAbs, instr)
-	if err != nil {
-		if errors.Is(err, engine.ErrEditConflict) || errors.Is(err, engine.ErrEditFailed) {
-			fmt.Fprintf(os.Stderr, "failed to apply edits: %v\n", err)
-			return exitInvalidInput
-		}
-		fmt.Fprintf(os.Stderr, "engine error: %v\n", err)
-		return exitInternalError
-	}
-
-	// Create temp mirror and generate patch via git diff --no-index.
-	logger.Println("Generating patch via git diff --no-index...")
-	mirrorDir, cleanup, err := fsutil.MakeTempMirror(repoAbs, afterMap)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to create mirror: %v\n", err)
-		return exitInternalError
-	}
-	defer cleanup()
-
-	patchBytes, err := diff.Generate(repoAbs, mirrorDir, filesTouched)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to generate patch: %v\n", err)
-		return exitPatchGenFailed
-	}
-
-	// Ensure output dir.
-	if outDir == "" {
-		outDir = filepath.Join(repoAbs, ".mct", "patches", session)
-	} else {
-		// Allow relative outDir to repo.
-		if !filepath.IsAbs(outDir) {
-			outDir = filepath.Join(repoAbs, outDir)
+		case errors.As(err, &genErr):
+			fmt.Fprintln(os.Stderr, genErr.Error())
+			return exitPatchGenFailed
+		case errors.As(err, &cleanErr):
+			fmt.Fprintln(os.Stderr, cleanErr.Error())
+			return exitPatchNotClean
+		default:
+			fmt.Fprintf(os.Stderr, "patcher error: %v\n", err)
+			return exitInternalError
 		}
 	}
-	if err := os.MkdirAll(outDir, 0o755); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to create out-dir: %v\n", err)
-		return exitInternalError
-	}
 
-	// Name file with timestamp and short rand.
-	patchPath := filepath.Join(outDir, fsutil.PatchFilename(time.Now()))
-	if err := os.WriteFile(patchPath, patchBytes, 0o644); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to write patch: %v\n", err)
-		return exitInternalError
-	}
-
-	// Validate applicability.
-	logger.Println("Validating patch with git apply --check...")
-	if err := check.ApplyCheck(repoAbs, patchPath); err != nil {
-		fmt.Fprintf(os.Stderr, "patch does not apply cleanly: %v\n", err)
-		return exitPatchNotClean
-	}
-
-	// Extract stats and files list.
-	stats := diff.ExtractStats(patchBytes)
-	// Prefer the explicit touched files list for clearer relative paths.
-	stats.FilesModified = filesTouched
-
-	// Emit machine-readable JSON to stdout.
 	out := map[string]any{
-		"patch_path":     patchPath,
+		"patch_path":     result.PatchPath,
 		"applies":        true,
-		"files_modified": stats.FilesModified,
-		"insertions":     stats.Insertions,
-		"deletions":      stats.Deletions,
+		"files_modified": result.FilesModified,
+		"insertions":     result.Insertions,
+		"deletions":      result.Deletions,
 	}
-	if instr.Metadata != nil && instr.Metadata.Description != "" {
-		out["description"] = instr.Metadata.Description
+	if strings.TrimSpace(result.Description) != "" {
+		out["description"] = result.Description
 	}
 	enc := json.NewEncoder(os.Stdout)
 	if err := enc.Encode(out); err != nil {

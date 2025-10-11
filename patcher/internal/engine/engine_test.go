@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/tursomari/machtiani/patcher/internal/instructions"
+	patcher "github.com/tursomari/machtiani/mct/patcher"
 )
 
 func TestReplaceNth(t *testing.T) {
@@ -21,10 +21,10 @@ func TestApplyAll_CreateReplaceDelete(t *testing.T) {
 	// Start with foo.txt
 	mustWrite(t, filepath.Join(dir, "foo.txt"), "hello world")
 
-	instr := instructions.Instructions{Edits: []instructions.Edit{
-		{Path: "bar.txt", Mode: instructions.ModeCreate, NewContent: "new"},
-		{Path: "foo.txt", Mode: instructions.ModeReplace, Before: "world", After: "you", Occurrence: 1},
-		{Path: "bar.txt", Mode: instructions.ModeDelete},
+	instr := patcher.Instructions{Edits: []patcher.Edit{
+		{Path: "bar.txt", Mode: patcher.ModeCreate, NewContent: "new"},
+		{Path: "foo.txt", Mode: patcher.ModeReplace, Before: "world", After: "you", Occurrence: 1},
+		{Path: "bar.txt", Mode: patcher.ModeDelete},
 	}}
 
 	after, files, err := ApplyAll(dir, instr)

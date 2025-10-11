@@ -9,7 +9,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/tursomari/machtiani/patcher/internal/instructions"
+	patcher "github.com/tursomari/machtiani/mct/patcher"
 )
 
 var (
@@ -20,7 +20,7 @@ var (
 // ApplyAll applies all edits deterministically in input order.
 // It returns a map of relative file paths to their final content after applying
 // all edits, and a list of unique files touched (relative paths).
-func ApplyAll(repoRoot string, instr instructions.Instructions) (map[string][]byte, []string, error) {
+func ApplyAll(repoRoot string, instr patcher.Instructions) (map[string][]byte, []string, error) {
 	after := make(map[string][]byte)
 	touchedSet := make(map[string]struct{})
 
@@ -50,7 +50,7 @@ func ApplyAll(repoRoot string, instr instructions.Instructions) (map[string][]by
 		}
 
 		switch ed.Mode {
-		case instructions.ModeCreate:
+		case patcher.ModeCreate:
 			if exists {
 				return nil, nil, fmt.Errorf("%w: edit[%d] create but file exists: %s", ErrEditConflict, idx, rel)
 			}
@@ -58,13 +58,13 @@ func ApplyAll(repoRoot string, instr instructions.Instructions) (map[string][]by
 				return nil, nil, fmt.Errorf("%w: edit[%d] create has non-utf8 content", ErrEditFailed, idx)
 			}
 			after[rel] = []byte(ed.NewContent)
-		case instructions.ModeDelete:
+		case patcher.ModeDelete:
 			if !exists {
 				return nil, nil, fmt.Errorf("%w: edit[%d] delete but file missing: %s", ErrEditConflict, idx, rel)
 			}
 			// Represent deletion by absence in after map with a sentinel nil pointer.
 			after[rel] = nil
-		case instructions.ModeRewrite:
+		case patcher.ModeRewrite:
 			if !exists {
 				return nil, nil, fmt.Errorf("%w: edit[%d] rewrite but file missing: %s", ErrEditConflict, idx, rel)
 			}
@@ -72,7 +72,7 @@ func ApplyAll(repoRoot string, instr instructions.Instructions) (map[string][]by
 				return nil, nil, fmt.Errorf("%w: edit[%d] rewrite has non-utf8 content", ErrEditFailed, idx)
 			}
 			after[rel] = []byte(ed.NewContent)
-		case instructions.ModeReplace:
+		case patcher.ModeReplace:
 			if !exists {
 				return nil, nil, fmt.Errorf("%w: edit[%d] replace but file missing: %s", ErrEditConflict, idx, rel)
 			}

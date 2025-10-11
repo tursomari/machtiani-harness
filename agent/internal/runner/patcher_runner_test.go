@@ -2,105 +2,83 @@ package runner
 
 import (
 	"context"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"runtime"
 	"testing"
+
+	mctpatcher "github.com/tursomari/machtiani/mct/patcher"
 )
 
-func buildPatcherStub(t *testing.T, dir string) string {
-	t.Helper()
-	src := []byte(`package main
-import (
-  "fmt"; "io"; "os"
-)
-func main(){
-  fmt.Fprintln(os.Stderr, "stub patcher running")
-  io.Copy(os.Stdout, os.Stdin)
-}
-`)
-	srcPath := filepath.Join(dir, "main.go")
-	if err := os.WriteFile(srcPath, src, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	binPath := filepath.Join(dir, "patcher")
-	cmd := exec.Command("go", "build", "-o", binPath, srcPath)
-	cmd.Env = os.Environ()
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Skipf("skipping build-dependent test on %s: %v (%s)", runtime.GOOS, err, string(out))
-	}
-	return binPath
+type stubService struct {
+	lastParams mctpatcher.PatchParams
+	result     *mctpatcher.PatchResult
+	err        error
 }
 
-func TestResolvePrefersPATH(t *testing.T) {
-	dir := t.TempDir()
-	binPath := buildPatcherStub(t, dir)
-	t.Setenv("PATH", dir)
+func (s *stubService) ApplyAndGeneratePatch(_ context.Context, params mctpatcher.PatchParams) (*mctpatcher.PatchResult, error) {
+	s.lastParams = params
+	if s.err != nil {
+		return nil, s.err
+	}
+	if s.result != nil {
+		return s.result, nil
+	}
+	return &mctpatcher.PatchResult{PatchPath: "stub.patch"}, nil
+}
 
+func (s *stubService) ValidateInstructions(context.Context, string, mctpatcher.Instructions) error {
+	return nil
+}
+
+func TestResolveRequiresSession(t *testing.T) {
 	pr := &PatcherRunner{Enabled: true}
+	if err := pr.Resolve(); err == nil {
+		t.Fatalf("expected error when session id missing")
+	}
+}
+
+func TestResolveInstantiatesService(t *testing.T) {
+	pr := &PatcherRunner{Enabled: true, SessionID: "sess"}
 	if err := pr.Resolve(); err != nil {
 		t.Fatalf("resolve failed: %v", err)
 	}
-	if pr.exePath != binPath {
-		t.Fatalf("expected %s, got %s", binPath, pr.exePath)
+	if pr.Service == nil {
+		t.Fatalf("expected service to be created")
 	}
 }
 
-func TestResolveMissing(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("PATH", dir)
-
-	pr := &PatcherRunner{Enabled: true}
-	if err := pr.Resolve(); err == nil {
-		t.Fatalf("expected resolve error when patcher missing")
-	}
-}
-
-func TestRunJSON_DryRun(t *testing.T) {
+func TestApplyDryRun(t *testing.T) {
 	pr := &PatcherRunner{Enabled: true, DryRun: true, SessionID: "sess"}
-	if err := pr.Resolve(); err != nil {
-		t.Fatalf("resolve dry-run: %v", err)
-	}
-	out, errOut, err := pr.RunJSON(context.Background(), []byte("{}"), false)
-	if err != nil || string(errOut) != "" || string(out) == "" {
-		t.Fatalf("dry-run exec mismatch: out=%q errOut=%q err=%v", string(out), string(errOut), err)
-	}
-}
-
-func TestRunJSON_Executes(t *testing.T) {
-	dir := t.TempDir()
-	binPath := buildPatcherStub(t, dir)
-	t.Setenv("PATH", dir)
-
-	pr := &PatcherRunner{Enabled: true, SessionID: "sess"}
-	if err := pr.Resolve(); err != nil {
-		t.Fatal(err)
-	}
-	if pr.exePath != binPath {
-		t.Fatalf("expected resolved path %s, got %s", binPath, pr.exePath)
-	}
-	out, errOut, err := pr.RunJSON(context.Background(), []byte(`{"k":"v"}`), true)
+	instr := mctpatcher.Instructions{Edits: []mctpatcher.Edit{{Path: "a.txt", Mode: mctpatcher.ModeCreate, NewContent: "hi"}}}
+	res, err := pr.Apply(context.Background(), instr, false)
 	if err != nil {
-		t.Fatalf("stub exec err: %v", err)
+		t.Fatalf("dry-run apply returned error: %v", err)
 	}
-	if string(out) != `{"k":"v"}` {
-		t.Fatalf("stdout mismatch: %q", string(out))
-	}
-	if len(errOut) == 0 {
-		t.Fatalf("expected stderr output from stub")
+	if res == nil {
+		t.Fatalf("expected result in dry-run")
 	}
 }
 
-func TestDisabledRunnerSkipsResolution(t *testing.T) {
+func TestApplyInvokesService(t *testing.T) {
+	stub := &stubService{result: &mctpatcher.PatchResult{PatchPath: "ok.patch"}}
+	pr := &PatcherRunner{Enabled: true, SessionID: "sess", Service: stub, Verbose: true}
+	instr := mctpatcher.Instructions{Edits: []mctpatcher.Edit{{Path: "a.txt", Mode: mctpatcher.ModeCreate, NewContent: "hi"}}}
+	res, err := pr.Apply(context.Background(), instr, false)
+	if err != nil {
+		t.Fatalf("apply error: %v", err)
+	}
+	if res.PatchPath != "ok.patch" {
+		t.Fatalf("unexpected result: %+v", res)
+	}
+	if stub.lastParams.SessionID != "sess" {
+		t.Fatalf("session id not passed to service: %+v", stub.lastParams)
+	}
+	if !stub.lastParams.Verbose {
+		t.Fatalf("expected verbose to propagate to service")
+	}
+}
+
+func TestApplyDisabled(t *testing.T) {
 	pr := &PatcherRunner{}
-	if err := pr.Resolve(); err != nil {
-		t.Fatalf("disabled resolve should not error: %v", err)
-	}
-	if pr.exePath != "" {
-		t.Fatalf("expected exePath to remain empty when disabled; got %q", pr.exePath)
-	}
-	if _, _, err := pr.RunJSON(context.Background(), []byte("{}"), false); err == nil {
-		t.Fatalf("expected RunJSON to error when patch runner disabled")
+	if _, err := pr.Apply(context.Background(), mctpatcher.Instructions{}, false); err == nil {
+		t.Fatalf("expected error when runner disabled")
 	}
 }
