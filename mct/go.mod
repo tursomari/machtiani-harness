@@ -1,12 +1,13 @@
 module github.com/tursomari/machtiani/mct
 
-go 1.22.6
+go 1.23
 
 require (
 	github.com/BurntSushi/toml v1.3.2
 	github.com/charmbracelet/glamour v0.8.0
 	github.com/google/uuid v1.6.0
 	github.com/spf13/pflag v1.0.5
+	github.com/tursomari/machtiani/file-discovery v0.0.0
 )
 
 require (
@@ -30,3 +31,5 @@ require (
 	golang.org/x/sys v0.24.0 // indirect
 	golang.org/x/term v0.23.0 // indirect
 )
+
+replace github.com/tursomari/machtiani/file-discovery => ./submodules/file-discovery

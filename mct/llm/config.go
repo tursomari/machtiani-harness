@@ -375,6 +375,24 @@ func mergeMaps(base, override map[string]any) map[string]any {
 	return out
 }
 
+// CloneResolvedModel returns a deep copy of the provided resolved model so callers
+// can safely modify headers, query params, or request payload overrides without
+// mutating shared state.
+func CloneResolvedModel(in ResolvedModel) ResolvedModel {
+	clone := ResolvedModel{
+		Alias:        in.Alias,
+		ProviderName: in.ProviderName,
+		BaseURL:      in.BaseURL,
+		APIKey:       in.APIKey,
+		Headers:      copyStringMap(in.Headers),
+		Query:        copyStringMap(in.Query),
+		Endpoint:     in.Endpoint,
+		Model:        in.Model,
+		Params:       deepCopyMap(in.Params),
+	}
+	return clone
+}
+
 func toStringMap(v any) (map[string]any, bool) {
 	if v == nil {
 		return nil, false

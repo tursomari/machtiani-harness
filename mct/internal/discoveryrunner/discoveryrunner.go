@@ -1,19 +1,20 @@
 package discoveryrunner
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/google/uuid"
+	integration "github.com/tursomari/machtiani/file-discovery/integration"
 	"github.com/tursomari/machtiani/mct/artifacts"
 	gitpkg "github.com/tursomari/machtiani/mct/internal/git"
 	"github.com/tursomari/machtiani/mct/llm"
@@ -41,28 +42,6 @@ type ModelSettings struct {
 var blockRe = regexp.MustCompile(`(?s)BEGIN_RELEVANT_FILES\[(.+?)\]\n(.*?)\nEND_RELEVANT_FILES\[(.+?)\]`)
 
 const exitCodeNoRelevantFiles = 2
-
-// findBinary resolves the file-discovery binary path using precedence:
-// 1) FILE_DISCOVERY_BIN env
-// 2) file-discovery in PATH
-// 3) <exec-dir>/bin/file-discovery
-func findBinary() (string, error) {
-	if override := os.Getenv("FILE_DISCOVERY_BIN"); override != "" {
-		return override, nil
-	}
-	if p, err := exec.LookPath("file-discovery"); err == nil {
-		return p, nil
-	}
-	exe, err := os.Executable()
-	if err == nil {
-		base := filepath.Dir(exe)
-		candidate := filepath.Join(base, "bin", "file-discovery")
-		if st, err2 := os.Stat(candidate); err2 == nil && !st.IsDir() {
-			return candidate, nil
-		}
-	}
-	return "", errors.New("file-discovery binary not found; set FILE_DISCOVERY_BIN or add to PATH")
-}
 
 // isSafePath performs defense-in-depth checks on a relative file path
 func isSafePath(p string) bool {
@@ -104,71 +83,47 @@ func uniqOrder(in []string) []string {
 // Run executes file-discovery with the given prompt and environment mapping.
 // It returns the list of discovered relative paths.
 func Run(ctx context.Context, prompt string, model ModelSettings, sessionID string, verbose bool) (Result, error) {
-	bin, err := findBinary()
-	if err != nil {
+	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
-	debugf(verbose, "mct: using file-discovery binary: %s", bin)
 
 	effectiveSessionID := strings.TrimSpace(sessionID)
 	if effectiveSessionID == "" {
 		effectiveSessionID = uuid.New().String()
 	}
 
-	args := []string{}
-	if effectiveSessionID != "" {
-		args = append(args, "-session-id", effectiveSessionID)
-	}
-	if model.UsingAlias {
-		if strings.TrimSpace(model.Alias) != "" {
-			args = append(args, "--model", model.Alias)
-		}
-	}
-	for _, p := range model.ParamPairs {
-		args = append(args, "--param", p)
-	}
-	for _, j := range model.ParamJSON {
-		args = append(args, "--param-json", j)
+	extraParams, err := llm.ParseParamOverrides(model.ParamPairs, model.ParamJSON)
+	if err != nil {
+		return Result{}, fmt.Errorf("parse llm parameter overrides: %w", err)
 	}
 
-	cmd := exec.CommandContext(ctx, bin, args...)
+	resolved := llm.CloneResolvedModel(model.Resolved)
+	cfg := integration.Config{
+		MaxRounds:      20,
+		CmdTimeoutSec:  30,
+		MaxStdoutBytes: 20480,
+		MaxTranscript:  300000,
+		Verbose:        verbose,
+		SessionID:      effectiveSessionID,
+		ToolCallMode:   integration.ToolCallModeJSON,
+		APIKey:         strings.TrimSpace(resolved.APIKey),
+		BaseURL:        strings.TrimSpace(resolved.BaseURL),
+		Model:          strings.TrimSpace(resolved.Model),
+	}
+	if cfg.APIKey == "" || cfg.BaseURL == "" || cfg.Model == "" {
+		return Result{}, errors.New("file-discovery runtime missing API key, base URL, or model")
+	}
+	llmSettings := integration.LLMSettings{
+		Model:  resolved,
+		Extras: extraParams,
+	}
+	debugf(verbose, "mct: using embedded file-discovery module")
 
-	// Optionally run file-discovery in a temp workspace filtered to git-tracked files only.
-	// Controlled by env MCT_USE_GIT_FILTER (default: true). Set to "false"/"0"/"no" to disable.
-	if useGitFilter() {
-		if tmpDir, cleanup, err := prepareGitFilteredWorkspace(verbose); err == nil && tmpDir != "" {
-			defer cleanup()
-			cmd.Dir = tmpDir
-			debugf(verbose, "mct: discovery sandbox enabled at %s", tmpDir)
-		} else {
-			if err != nil {
-				debugf(verbose, "mct: discovery sandbox disabled: %v", err)
-			} else {
-				debugf(verbose, "mct: discovery sandbox skipped: not a git repo or empty")
-			}
-		}
-	} else {
-		debugf(verbose, "mct: discovery sandbox disabled via MCT_USE_GIT_FILTER")
-	}
-	// Build env with OPENAI_* expected by file-discovery when alias is not used
-	env := os.Environ()
-	if !model.UsingAlias {
-		if strings.TrimSpace(model.Resolved.APIKey) != "" {
-			env = append(env, "OPENAI_API_KEY="+model.Resolved.APIKey)
-		}
-		if strings.TrimSpace(model.Resolved.BaseURL) != "" {
-			env = append(env, "OPENAI_BASE_URL="+model.Resolved.BaseURL)
-		}
-		if strings.TrimSpace(model.Resolved.Model) != "" {
-			env = append(env, "OPENAI_MODEL="+model.Resolved.Model)
-		}
-	}
-	if strings.TrimSpace(model.TrajectoryOverride) != "" {
-		override := strings.TrimSpace(model.TrajectoryOverride)
+	if override := strings.TrimSpace(model.TrajectoryOverride); override != "" {
 		if err := os.MkdirAll(filepath.Dir(override), 0o755); err != nil {
 			return Result{}, fmt.Errorf("create file-discovery trajectory directory: %w", err)
 		}
-		env = append(env, "FILE_DISCOVERY_TRAJECTORY="+override)
+		cfg.TrajectoryPath = override
 	} else if effectiveSessionID != "" {
 		trajectoryPath, err := artifacts.FileDiscoveryTrajectoryPath(effectiveSessionID)
 		if err != nil {
@@ -177,44 +132,142 @@ func Run(ctx context.Context, prompt string, model ModelSettings, sessionID stri
 		if err := os.MkdirAll(filepath.Dir(trajectoryPath), 0o755); err != nil {
 			return Result{}, fmt.Errorf("create file-discovery trajectory directory: %w", err)
 		}
-		env = append(env, "FILE_DISCOVERY_TRAJECTORY="+trajectoryPath)
-	}
-	if cfgPath, err := llm.ConfigPath(); err == nil && strings.TrimSpace(cfgPath) != "" {
-		env = append(env, "MACHTIANI_CONFIG="+cfgPath)
-	}
-	cmd.Env = env
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr // explicitly ignore logs; useful for debug on failure
-
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return Result{}, fmt.Errorf("failed to open stdin: %w", err)
+		cfg.TrajectoryPath = trajectoryPath
 	}
 
-	if err := cmd.Start(); err != nil {
-		return Result{}, fmt.Errorf("failed to start file-discovery: %w", err)
+	var (
+		restoreWD      func()
+		cleanupSandbox func()
+	)
+	if useGitFilter() {
+		tmpDir, tmpCleanup, err := prepareGitFilteredWorkspace(verbose)
+		switch {
+		case err != nil:
+			debugf(verbose, "mct: discovery sandbox disabled: %v", err)
+		case tmpDir == "":
+			debugf(verbose, "mct: discovery sandbox skipped: not a git repo or empty")
+			if tmpCleanup != nil {
+				tmpCleanup()
+			}
+		default:
+			wd, err2 := os.Getwd()
+			if err2 != nil {
+				tmpCleanup()
+				return Result{}, fmt.Errorf("discovery sandbox getwd: %w", err2)
+			}
+			if err2 = os.Chdir(tmpDir); err2 != nil {
+				tmpCleanup()
+				return Result{}, fmt.Errorf("discovery sandbox chdir: %w", err2)
+			}
+			debugf(verbose, "mct: discovery sandbox enabled at %s", tmpDir)
+			restoreWD = func() { _ = os.Chdir(wd) }
+			cleanupSandbox = tmpCleanup
+		}
+	} else {
+		debugf(verbose, "mct: discovery sandbox disabled via MCT_USE_GIT_FILTER")
 	}
-
-	// Stream prompt into stdin
-	go func() {
-		w := bufio.NewWriter(stdin)
-		_, _ = w.WriteString(prompt)
-		_ = w.Flush()
-		_ = stdin.Close()
+	defer func() {
+		if restoreWD != nil {
+			restoreWD()
+		}
+		if cleanupSandbox != nil {
+			cleanupSandbox()
+		}
 	}()
 
-	if err := cmd.Wait(); err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) && exitErr.ExitCode() == exitCodeNoRelevantFiles {
-			return Result{}, nil
-		}
-		// include a hint with stderr for troubleshooting
-		return Result{}, fmt.Errorf("file-discovery failed: %w\n%s", err, stderr.String())
+	select {
+	case <-ctx.Done():
+		return Result{}, ctx.Err()
+	default:
 	}
 
-	outStr := stdout.String()
+	stdoutR, stdoutW, err := os.Pipe()
+	if err != nil {
+		return Result{}, fmt.Errorf("pipe stdout: %w", err)
+	}
+	stderrR, stderrW, err := os.Pipe()
+	if err != nil {
+		stdoutR.Close()
+		stdoutW.Close()
+		return Result{}, fmt.Errorf("pipe stderr: %w", err)
+	}
+	stdinR, stdinW, err := os.Pipe()
+	if err != nil {
+		stdoutR.Close()
+		stdoutW.Close()
+		stderrR.Close()
+		stderrW.Close()
+		return Result{}, fmt.Errorf("pipe stdin: %w", err)
+	}
+
+	originalStdout := os.Stdout
+	originalStderr := os.Stderr
+	originalStdin := os.Stdin
+	os.Stdout = stdoutW
+	os.Stderr = stderrW
+	os.Stdin = stdinR
+
+	originalLogWriter := log.Writer()
+	originalLogFlags := log.Flags()
+	originalLogPrefix := log.Prefix()
+	log.SetOutput(stderrW)
+	log.SetFlags(0)
+	log.SetPrefix("")
+
+	defer func() {
+		os.Stdout = originalStdout
+		os.Stderr = originalStderr
+		os.Stdin = originalStdin
+		log.SetOutput(originalLogWriter)
+		log.SetFlags(originalLogFlags)
+		log.SetPrefix(originalLogPrefix)
+		_ = stdoutR.Close()
+		_ = stdoutW.Close()
+		_ = stderrR.Close()
+		_ = stderrW.Close()
+		_ = stdinR.Close()
+		_ = stdinW.Close()
+	}()
+
+	var stdoutBuf, stderrBuf bytes.Buffer
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		_, _ = io.Copy(&stdoutBuf, stdoutR)
+	}()
+	go func() {
+		defer wg.Done()
+		_, _ = io.Copy(&stderrBuf, stderrR)
+	}()
+
+	go func() {
+		_, _ = io.WriteString(stdinW, prompt)
+		_ = stdinW.Close()
+	}()
+
+	exitCode := integration.Run(cfg, llmSettings)
+
+	_ = stdoutW.Close()
+	_ = stderrW.Close()
+	wg.Wait()
+
+	if err := ctx.Err(); err != nil {
+		return Result{}, err
+	}
+
+	if exitCode == exitCodeNoRelevantFiles {
+		return Result{}, nil
+	}
+	if exitCode != 0 {
+		errMsg := strings.TrimSpace(stderrBuf.String())
+		if errMsg != "" {
+			return Result{}, fmt.Errorf("file-discovery failed: exit code %d\n%s", exitCode, errMsg)
+		}
+		return Result{}, fmt.Errorf("file-discovery failed: exit code %d", exitCode)
+	}
+
+	outStr := stdoutBuf.String()
 	m := blockRe.FindStringSubmatch(outStr)
 	if len(m) != 4 {
 		return Result{}, errors.New("failed to parse relevant files block from file-discovery output")
