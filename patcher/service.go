@@ -116,7 +116,7 @@ func (s *Service) ApplyAndGeneratePatch(ctx context.Context, params mctpatcher.P
 
 	outDir := params.OutputDir
 	if outDir == "" {
-		outDir = filepath.Join(repoAbs, ".mct", "patches", params.SessionID)
+		outDir = filepath.Join(repoAbs, ".machtiani", "artifacts", "patches", params.SessionID)
 	} else if !filepath.IsAbs(outDir) {
 		outDir = filepath.Join(repoAbs, outDir)
 	}

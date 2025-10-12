@@ -14,7 +14,7 @@ Behavior:
 - Applies edits in-memory to compute final contents.
 - Writes changed files to a temporary mirror directory.
 - Generates a patch with `git diff --no-index --binary --relative <repo> <mirror>`.
-- Saves the patch to `<repo>/.mct/patches/<session>/<timestamp>-<rand>.patch` by default.
+- Saves the patch to `<repo>/.machtiani/artifacts/patches/<session>/<timestamp>-<rand>.patch` by default.
 - Verifies applicability via `git apply --check --unsafe-paths` without modifying files.
 - Prints a single JSON object to stdout with patch path and basic stats.
 

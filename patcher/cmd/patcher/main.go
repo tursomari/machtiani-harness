@@ -47,7 +47,7 @@ func run() int {
 	flag.StringVar(&repo, "repo", "", "Repository root where .git lives (required)")
 	flag.StringVar(&session, "session", "", "Session ID (required)")
 	flag.StringVar(&input, "input", "-", "Path to JSON instructions or '-' for stdin (required)")
-	flag.StringVar(&outDir, "out-dir", "", "Output directory for patch (default: <repo>/.mct/patches/<session>)")
+	flag.StringVar(&outDir, "out-dir", "", "Output directory for patch (default: <repo>/.machtiani/artifacts/patches/<session>)")
 	flag.BoolVar(&verbose, "verbose", false, "Enable verbose logging to stderr")
 	flag.BoolVar(&showVersion, "version", false, "Print version information and exit")
 	flag.Parse()
