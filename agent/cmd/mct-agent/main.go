@@ -343,6 +343,12 @@ func run() int {
 			}
 			// Graceful fallback: if the planner hit a transient network error, finalize instead of aborting.
 			perrStr := strings.ToLower(perr.Error())
+
+			// Continue on parsing errors to give the model a chance to recover
+			if strings.Contains(perrStr, "unable to parse decision from model output") {
+				fmt.Fprintln(os.Stderr, "Planner error:", perr)
+				continue
+			}
 			if strings.Contains(perrStr, "deadline exceeded") || strings.Contains(perrStr, "timeout") || strings.Contains(perrStr, "temporary") {
 				fmt.Fprintln(os.Stderr, "Planner warning:", perr)
 				fmt.Fprintln(os.Stderr, "Falling back to finalizing with current transcript.")
@@ -482,7 +488,7 @@ func run() int {
 			if jerr != nil {
 				stream.Abort("invalid patch payload")
 				_ = tr.WriteTurn(step, "Patcher: invalid input JSON", "", nil, "Error extracting JSON: "+jerr.Error(), "patch-error")
-				return 1
+				continue
 			}
 			if cfg.verbose {
 				fmt.Fprintln(os.Stderr, "[patcher] extracted JSON:", trimTo(string(jsonBytes), 1200))
@@ -493,7 +499,7 @@ func run() int {
 			if derr := dec.Decode(&instr); derr != nil {
 				stream.Abort("invalid patch payload")
 				_ = tr.WriteTurn(step, "Patcher: invalid instructions", "", nil, "Error decoding JSON: "+derr.Error(), "patch-error")
-				return 1
+				continue
 			}
 			patchTurnLabel := "Patcher: create patch"
 			if instr.Metadata != nil {
@@ -504,12 +510,12 @@ func run() int {
 			if pRunner == nil {
 				stream.Abort("patch runner unavailable")
 				_ = tr.WriteTurn(step, patchTurnLabel, "", nil, "Error: patch runner disabled", "patch-error")
-				return 1
+				continue
 			}
 			if err := pRunner.Resolve(); err != nil {
 				stream.Abort("patcher resolve failed")
 				_ = tr.WriteTurn(step, patchTurnLabel, "", nil, "Error: "+err.Error(), "patch-error")
-				return 1
+				continue
 			}
 			ctxP, cancelP := makeTurnContext(cfg.timeoutPerTurn)
 			result, applyErr := pRunner.Apply(ctxP, instr, cfg.verbose)
@@ -542,21 +548,21 @@ func run() int {
 				case errors.As(applyErr, &valErr):
 					stream.Abort("patch validation error")
 					_ = tr.WriteTurn(step, patchTurnLabel, "", nil, valErr.Error(), "patch-error")
-					return 1
+					continue
 				case errors.As(applyErr, &genErr):
 					stream.Abort("patch generation error")
 					_ = tr.WriteTurn(step, patchTurnLabel, "", nil, genErr.Error(), "patch-error")
-					return 1
+					continue
 				default:
 					stream.Abort("patcher execution error")
 					_ = tr.WriteTurn(step, patchTurnLabel, "", nil, applyErr.Error(), "patch-error")
-					return 1
+					continue
 				}
 			}
 			if result == nil {
 				stream.Abort("patcher returned no result")
 				_ = tr.WriteTurn(step, patchTurnLabel, "", nil, "patcher returned empty result", "patch-error")
-				return 1
+				continue
 			}
 			if desc := strings.TrimSpace(result.Description); desc != "" {
 				patchTurnLabel = "Patcher: " + desc
