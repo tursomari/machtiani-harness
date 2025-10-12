@@ -5,7 +5,7 @@ Lightweight CLI for prompting against your local repository using:
 - Direct LLM calls to any OpenAI‑compatible endpoint
 - Local filename generation and chat saving
 
-The `prompt` command no longer relies on a remote URL or backend server. It runs file discovery locally, builds an inline context from the discovered files, streams the LLM response, and saves the chat to `.machtiani/chats/`.
+The `prompt` command no longer relies on a remote URL or backend server. It runs file discovery locally, builds an inline context from the discovered files, streams the LLM response, and saves the chat to `.machtiani/sessions/<session-id>/chat/`.
 
 ## Requirements
 - Go 1.22+
@@ -84,7 +84,7 @@ mct prompt --mode=answer-only -f prompt.md
    - Appends `[TRUNCATED]` when clipping
    - Optional `--max-input-tokens` enforces an estimated token budget and replaces truncated sections with a stamped marker showing line numbers of the omission.
 4. Streams tokens from your LLM endpoint and renders Markdown in the terminal.
-5. Saves output to `.machtiani/chats/<generated-name>.md` and updates `.machtiani/chats/machtiani-response.md`.
+5. Saves output to `.machtiani/sessions/<session-id>/chat/<generated-name>.md` and updates `.machtiani/sessions/<session-id>/chat/machtiani-response.md`.
 
 ### Git‑Only Discovery Sandbox
 - By default, `mct` creates a temporary workspace containing only Git‑tracked files (committed or staged) and runs `file-discovery` there.
@@ -122,7 +122,7 @@ Binary resolution for `file-discovery`:
 
 ## Artifact storage
 
-- **Chat transcripts**: saved under `.machtiani/chats/` at the Git repository root when running inside a repo. Outside a repo, they fall back to `~/.machtiani/chats/`.
+- **Chat transcripts**: saved under `.machtiani/sessions/<session-id>/chat/` at the Git repository root when running inside a repo. Outside a repo, they fall back to `~/.machtiani/sessions/<session-id>/chat/`.
 - **Readme artifacts**: always written to `.machtiani/artifacts/readme/` at the repository root and require a Git working tree.
 - `mct-agent` and helper tools use the same resolution so invocations from subdirectories share the project-scoped artifacts.
 

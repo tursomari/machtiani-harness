@@ -115,7 +115,7 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 	}
 	res.Filename = filename
 
-	savedPath, saveErr := utils.CreateTempMarkdownFile(res.FullText, filename)
+	savedPath, saveErr := utils.CreateTempMarkdownFile(res.FullText, filename, opts.SessionID)
 	if saveErr != nil {
 		res.SaveError = fmt.Errorf("write chat file: %w", saveErr)
 		return res, nil

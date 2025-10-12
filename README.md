@@ -136,7 +136,7 @@ See `patcher/README.md` for patch workflows and `mct/submodules/file-discovery/R
 - `rg` missing
   - Install ripgrep (`rg`) and ensure it’s on PATH.
 - Saved chat not found
-  - If you are using the optional `mct` CLI, ensure it completed successfully and wrote `.machtiani/chats/machtiani-response.md`.
+  - If you are using the optional `mct` CLI, ensure it completed successfully and wrote `.machtiani/sessions/<session-id>/chat/machtiani-response.md`.
 
 ## Notes and Pointers
 - Detailed `mct` docs: see `mct/README.md` for configuration, discovery rules, and troubleshooting.

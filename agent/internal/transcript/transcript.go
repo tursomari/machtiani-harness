@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/tursomari/machtiani/mct/artifacts"
 )
@@ -36,16 +35,15 @@ type PatchValidationRecord struct {
 	Messages     []PatchValidationMessage
 }
 
-func New() (*Transcript, error) {
-	chatDir, err := artifacts.ChatDirectory()
+func New(sessionID string) (*Transcript, error) {
+	chatDir, err := artifacts.SessionChatDirectory(sessionID)
 	if err != nil {
 		return nil, err
 	}
 	if err := os.MkdirAll(chatDir, 0o755); err != nil {
 		return nil, err
 	}
-	name := fmt.Sprintf("agent-%s.md", time.Now().UTC().Format("20060102T150405"))
-	path := filepath.Join(chatDir, name)
+	path := filepath.Join(chatDir, "agent.md")
 	f, err := os.Create(path)
 	if err != nil {
 		return nil, err
@@ -53,11 +51,15 @@ func New() (*Transcript, error) {
 	return &Transcript{f: f, path: path}, nil
 }
 
-// NewWithPath creates a transcript at an explicit path. If path is empty,
-// it falls back to New(). Parent directories are created as needed.
-func NewWithPath(path string) (*Transcript, error) {
+// NewWithPath creates a transcript at an explicit path scoped to a session.
+// If path is empty, it falls back to New(sessionID). Parent directories are
+// created as needed.
+func NewWithPath(path string, sessionID string) (*Transcript, error) {
+	if strings.TrimSpace(sessionID) == "" {
+		return nil, fmt.Errorf("session id required for transcript")
+	}
 	if strings.TrimSpace(path) == "" {
-		return New()
+		return New(sessionID)
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err

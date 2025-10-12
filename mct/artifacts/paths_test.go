@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestChatDirectoryLocalRepo(t *testing.T) {
+func TestSessionChatDirectoryLocalRepo(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -20,69 +20,64 @@ func TestChatDirectoryLocalRepo(t *testing.T) {
 	}
 
 	withWorkingDir(t, subdir, func() {
-		dir, err := ChatDirectory()
+		const sessionID = "session-123"
+		dir, err := SessionChatDirectory(sessionID)
 		if err != nil {
-			t.Fatalf("ChatDirectory: %v", err)
+			t.Fatalf("SessionChatDirectory: %v", err)
 		}
-		expected := filepath.Join(repoDir, ".machtiani", "chats")
+		expected := filepath.Join(repoDir, ".machtiani", "sessions", sessionID, "chat")
 		if dir != expected {
 			t.Fatalf("expected %s, got %s", expected, dir)
 		}
 	})
 }
 
-func TestChatDirectoryGlobalFallback(t *testing.T) {
+func TestSessionChatDirectoryGlobalFallback(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
 	work := t.TempDir()
 	withWorkingDir(t, work, func() {
-		dir, err := ChatDirectory()
+		const sessionID = "session-abc"
+		dir, err := SessionChatDirectory(sessionID)
 		if err != nil {
-			t.Fatalf("ChatDirectory: %v", err)
+			t.Fatalf("SessionChatDirectory: %v", err)
 		}
-		expected := filepath.Join(home, ".machtiani", "chats")
+		expected := filepath.Join(home, ".machtiani", "sessions", sessionID, "chat")
 		if dir != expected {
 			t.Fatalf("expected %s, got %s", expected, dir)
 		}
 	})
 }
 
-func TestArtifactsDirectoryLocalRepo(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-
+func TestSessionArtifactsDirectoryLocalRepo(t *testing.T) {
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)
 
-	subdir := filepath.Join(repoDir, "nested")
-	if err := os.MkdirAll(subdir, 0o755); err != nil {
-		t.Fatalf("mkdir %s: %v", subdir, err)
-	}
-
-	withWorkingDir(t, subdir, func() {
-		dir, err := ArtifactsDirectory()
+	withWorkingDir(t, repoDir, func() {
+		const sessionID = "session-xyz"
+		dir, err := SessionArtifactsDirectory(sessionID)
 		if err != nil {
-			t.Fatalf("ArtifactsDirectory: %v", err)
+			t.Fatalf("SessionArtifactsDirectory: %v", err)
 		}
-		expected := filepath.Join(repoDir, ".machtiani", "artifacts")
+		expected := filepath.Join(repoDir, ".machtiani", "sessions", sessionID, "artifacts")
 		if dir != expected {
 			t.Fatalf("expected %s, got %s", expected, dir)
 		}
 	})
 }
 
-func TestArtifactsDirectoryGlobalFallback(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+func TestSessionPatchesDirectoryLocalRepo(t *testing.T) {
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
 
-	work := t.TempDir()
-	withWorkingDir(t, work, func() {
-		dir, err := ArtifactsDirectory()
+	withWorkingDir(t, repoDir, func() {
+		const sessionID = "session-patch"
+		dir, err := SessionPatchesDirectory(sessionID)
 		if err != nil {
-			t.Fatalf("ArtifactsDirectory: %v", err)
+			t.Fatalf("SessionPatchesDirectory: %v", err)
 		}
-		expected := filepath.Join(home, ".machtiani", "artifacts")
+		expected := filepath.Join(repoDir, ".machtiani", "sessions", sessionID, "artifacts", "patches")
 		if dir != expected {
 			t.Fatalf("expected %s, got %s", expected, dir)
 		}
@@ -145,11 +140,12 @@ func TestFileDiscoveryTrajectoryPath(t *testing.T) {
 	initGitRepo(t, repoDir)
 
 	withWorkingDir(t, repoDir, func() {
-		dir, err := FileDiscoveryTrajectoryPath("session-123")
+		const sessionID = "session-123"
+		dir, err := FileDiscoveryTrajectoryPath(sessionID)
 		if err != nil {
 			t.Fatalf("FileDiscoveryTrajectoryPath: %v", err)
 		}
-		expected := filepath.Join(repoDir, ".machtiani", "artifacts", "file-discovery-session-123.jsonl")
+		expected := filepath.Join(repoDir, ".machtiani", "sessions", sessionID, "artifacts", "file-discovery.jsonl")
 		if dir != expected {
 			t.Fatalf("expected %s, got %s", expected, dir)
 		}

@@ -2,6 +2,7 @@ package utils
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -23,9 +24,16 @@ func EnsureDirExists(dirPath string) error {
 	return nil
 }
 
-// CreateTempMarkdownFile writes a chat transcript to the chat artifacts directory.
-func CreateTempMarkdownFile(content string, filename string) (string, error) {
-	chatDir, err := artifacts.ChatDirectory()
+// CreateTempMarkdownFile writes a chat transcript to the session-scoped chat directory.
+func CreateTempMarkdownFile(content string, filename string, sessionID string) (string, error) {
+	sid := strings.TrimSpace(sessionID)
+	if sid == "" {
+		sid = strings.TrimSpace(os.Getenv("MACHTIANI_SESSION_ID"))
+	}
+	if sid == "" {
+		return "", errors.New("session id required to write chat artifacts")
+	}
+	chatDir, err := artifacts.SessionChatDirectory(sid)
 	if err != nil {
 		return "", err
 	}
@@ -34,12 +42,12 @@ func CreateTempMarkdownFile(content string, filename string) (string, error) {
 	}
 
 	primaryPath := filepath.Join(chatDir, fmt.Sprintf("%s.md", filename))
-	if err := os.WriteFile(primaryPath, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(primaryPath, []byte(content), 0o644); err != nil {
 		return "", err
 	}
 
 	secondaryPath := filepath.Join(chatDir, "machtiani-response.md")
-	if err := os.WriteFile(secondaryPath, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(secondaryPath, []byte(content), 0o644); err != nil {
 		log.Printf("Warning: failed to write secondary chat copy (%s): %v", secondaryPath, err)
 	}
 

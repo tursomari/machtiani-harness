@@ -91,10 +91,10 @@ func run() int {
 	fs.IntVar(&cfg.timeoutPerTurn, "timeout-per-turn", 120, "per-turn timeout in seconds (set 0 for no timeout)")
 	fs.BoolVar(&cfg.dryRun, "dry-run", false, "print intended mct calls; don’t execute")
 	fs.BoolVar(&cfg.verbose, "verbose", false, "verbose agent logging")
-	fs.StringVar(&cfg.finalFile, "final-file", "", "path to write final answer-only artifact (default: .machtiani/chats/agent-final-<sessionID>.txt)")
-	fs.StringVar(&cfg.transcriptFile, "transcript-file", "", "path to write transcript file (default: .machtiani/chats/agent-<timestamp>.md)")
-	fs.StringVar(&cfg.fileDiscoveryTrajectory, "file-discovery-trajectory", "", "path to write file-discovery trajectory JSONL (default: auto-named under output dir)")
-	fs.StringVar(&cfg.fileDiscoveryOutputDir, "file-discovery-output-dir", "", "directory for file-discovery artifacts (default: .machtiani/artifacts)")
+	fs.StringVar(&cfg.finalFile, "final-file", "", "path to write final answer-only artifact (default: .machtiani/sessions/<sessionID>/chat/agent-final.txt)")
+	fs.StringVar(&cfg.transcriptFile, "transcript-file", "", "path to write transcript file (default: .machtiani/sessions/<sessionID>/chat/agent.md)")
+	fs.StringVar(&cfg.fileDiscoveryTrajectory, "file-discovery-trajectory", "", "path to write file-discovery trajectory JSONL (default: auto-named under session artifacts)")
+	fs.StringVar(&cfg.fileDiscoveryOutputDir, "file-discovery-output-dir", "", "directory for file-discovery artifacts (default: .machtiani/sessions/<sessionID>/artifacts)")
 	fs.IntVar(&cfg.maxInputTokens, "max-input-tokens", 0, "maximum number of tokens allowed in constructed prompts (0 disables truncation)")
 	fs.BoolVar(&cfg.patchNoApply, "patch-no-apply", false, "skip applying generated patches to the worktree (default: apply)\n")
 	fs.BoolVar(&cfg.patch, "patch", false, "enable patch planning (disabled by default)")
@@ -129,8 +129,11 @@ func run() int {
 		return 2
 	}
 
-	// Prepare transcript file
-	tr, err := transcript.NewWithPath(cfg.transcriptFile)
+	// Setup session ID for correlation
+	sessionID := runner.GenerateSessionID()
+
+	// Prepare transcript file scoped to this session
+	tr, err := transcript.NewWithPath(cfg.transcriptFile, sessionID)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Error preparing transcript:", err)
 		return 1
@@ -140,9 +143,6 @@ func run() int {
 	if cfg.verbose {
 		fmt.Fprintln(os.Stderr, "mct-agent starting; transcript:", tr.Path())
 	}
-
-	// Setup session ID for correlation
-	sessionID := runner.GenerateSessionID()
 	if cfg.verbose {
 		fmt.Fprintln(os.Stderr, "Session:", sessionID)
 	}
@@ -278,7 +278,7 @@ func run() int {
 				fmt.Fprintln(os.Stderr, "Warning: failed to save chat transcript:", result.SaveError)
 			}
 			if savedPath == "" {
-				chatDir, err := artifacts.ChatDirectory()
+				chatDir, err := artifacts.SessionChatDirectory(sessionID)
 				if err != nil {
 					fmt.Fprintln(os.Stderr, "Failed to resolve chat directory:", err)
 					stream.Abort("failed to save chat transcript")
@@ -454,7 +454,7 @@ func run() int {
 					fmt.Fprintln(os.Stderr, "Warning: failed to save chat transcript:", result.SaveError)
 				}
 				if savedPath == "" {
-					chatDir, err := artifacts.ChatDirectory()
+					chatDir, err := artifacts.SessionChatDirectory(sessionID)
 					if err != nil {
 						fmt.Fprintln(os.Stderr, "Failed to resolve chat directory:", err)
 						stream.Abort("failed to save chat transcript")
@@ -1084,24 +1084,24 @@ func resolveFileDiscoveryTrajectory(cfg config, sessionID string) (string, error
 			return "", fmt.Errorf("create file-discovery output dir: %w", err)
 		}
 	}
-	name := fmt.Sprintf("file-discovery-%s.jsonl", sessionID)
+	name := "file-discovery.jsonl"
 	return filepath.Join(dir, name), nil
 }
 
 // writeFinalAnswer persists the final answer to a plain text file.
 // It writes nothing in dry-run mode.
-// If finalFileFlag is empty, it writes to .machtiani/chats/agent-final-<sessionID>.txt
+// If finalFileFlag is empty, it writes to .machtiani/sessions/<sessionID>/chat/agent-final.txt
 func writeFinalAnswer(sessionID, answer, finalFileFlag string, verbose bool, dryRun bool) error {
 	if dryRun {
 		return nil
 	}
 	path := strings.TrimSpace(finalFileFlag)
 	if path == "" {
-		dir, err := artifacts.ChatDirectory()
+		dir, err := artifacts.SessionChatDirectory(sessionID)
 		if err != nil {
 			return err
 		}
-		path = filepath.Join(dir, fmt.Sprintf("agent-final-%s.txt", sessionID))
+		path = filepath.Join(dir, "agent-final.txt")
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -62,7 +61,7 @@ func TestResolveFileDiscoveryTrajectoryCustomDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to compute absolute dir: %v", err)
 	}
-	expected := filepath.Join(absDir, fmt.Sprintf("file-discovery-%s.jsonl", sessionID))
+	expected := filepath.Join(absDir, "file-discovery.jsonl")
 	if got != expected {
 		t.Fatalf("expected %q, got %q", expected, got)
 	}

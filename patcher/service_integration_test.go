@@ -45,7 +45,7 @@ func TestServiceWritesPatchesToArtifactsDirectory(t *testing.T) {
 		t.Fatalf("ApplyAndGeneratePatch: %v", err)
 	}
 
-	expectedDir := filepath.Join(repo, ".machtiani", "artifacts", "patches", sess)
+	expectedDir := filepath.Join(repo, ".machtiani", "sessions", sess, "artifacts", "patches")
 	if got := filepath.Dir(res.PatchPath); got != expectedDir {
 		t.Fatalf("unexpected patch directory: got %q want %q", got, expectedDir)
 	}

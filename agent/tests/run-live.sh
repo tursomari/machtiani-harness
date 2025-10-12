@@ -296,8 +296,10 @@ MCT_AGENT="$MCT_AGENT_BIN"
 run_happy_case() {
   local case_id="$1" max_steps="$2" prompt="$3" expected_keywords="$4" min_turns="${5:-1}"
   local session_id="test-${case_id}-$(date +%s)"
-  local out_dir="test-out-${session_id}"
+  local out_dir="$(pwd)/test-out-${session_id}"
   mkdir -p "$out_dir"
+  local stdout_file="$out_dir/stdout-${session_id}.txt"
+  local stderr_file="$out_dir/stderr-${session_id}.txt"
 
   echo "Running happy case: $case_id (max $max_steps turns)..." >&2
   local -a cmd=(
@@ -310,27 +312,80 @@ run_happy_case() {
   if ((${#AGENT_RUNTIME_ARGS[@]})); then
     cmd+=("${AGENT_RUNTIME_ARGS[@]}")
   fi
-  cmd+=(
-    --final-file "$out_dir/final-${session_id}.txt"
-    --transcript-file "$out_dir/transcript-${session_id}.md"
-    "$prompt"
-  )
+  cmd+=("$prompt")
 
+  pushd "$REPO_ROOT" >/dev/null
   set +e
-  "${cmd[@]}" > "$out_dir/stdout-${session_id}.txt" 2> "$out_dir/stderr-${session_id}.txt"
+  "${cmd[@]}" > "$stdout_file" 2> "$stderr_file"
   local rc=$?
   set -e
+  popd >/dev/null
   if [[ $rc -ne 0 ]]; then
     echo "Failed (rc=$rc): $case_id" >&2
     return 1
   fi
 
-  local turns=$(grep -c '^## Turn ' "$out_dir/transcript-${session_id}.md" || echo 0)
+  local agent_session
+  agent_session=$(grep -m1 '^Session:' "$stderr_file" | awk '{print $2}')
+  if [[ -z "$agent_session" ]]; then
+    echo "Failed to parse session ID from stderr for $case_id" >&2
+    return 1
+  fi
+
+  local sessions_root="$REPO_ROOT/.machtiani/sessions"
+  local session_dir="$sessions_root/$agent_session"
+  if [[ ! -d "$session_dir" ]]; then
+    echo "Session directory missing: $session_dir" >&2
+    return 1
+  fi
+
+  local chat_dir="$session_dir/chat"
+  if [[ ! -d "$chat_dir" ]]; then
+    echo "Chat directory missing: $chat_dir" >&2
+    return 1
+  fi
+
+  local transcript_path="$chat_dir/agent.md"
+  if [[ ! -s "$transcript_path" ]]; then
+    echo "Transcript missing or empty: $transcript_path" >&2
+    return 1
+  fi
+
+  cp -f "$transcript_path" "$out_dir/transcript-${session_id}.md"
+
+  local turns
+  turns=$(grep -c '^## Turn ' "$transcript_path" 2>/dev/null || echo 0)
   if [[ $turns -gt $max_steps || $turns -lt $min_turns ]]; then
     echo "Invalid turns ($turns): $case_id" >&2
     return 1
   fi
-  local -a keyword_files=("$out_dir/stdout-${session_id}.txt")
+  local -a keyword_files=("$stdout_file")
+
+  local final_path=""
+  if [[ "$LIVE_MODE" == true ]]; then
+    final_path="$chat_dir/agent-final.txt"
+    if [[ ! -s "$final_path" ]]; then
+      echo "Missing final artifact in session directory: $final_path" >&2
+      return 1
+    fi
+    cp -f "$final_path" "$out_dir/final-${session_id}.txt"
+    keyword_files+=("$final_path")
+
+    local fd_path="$session_dir/artifacts/file-discovery.jsonl"
+    if [[ ! -f "$fd_path" ]]; then
+      echo "Missing file-discovery trajectory: $fd_path" >&2
+      return 1
+    fi
+  else
+    rm -f "$out_dir/final-${session_id}.txt"
+  fi
+
+  local patches_dir="$session_dir/artifacts/patches"
+  if [[ -e "$patches_dir" && ! -d "$patches_dir" ]]; then
+    echo "Patches path exists but is not a directory: $patches_dir" >&2
+    return 1
+  fi
+
   if [[ "$LIVE_MODE" == true ]]; then
     keyword_files+=("$out_dir/final-${session_id}.txt")
   fi
@@ -346,7 +401,7 @@ run_happy_case() {
     echo "Missing final artifact: $case_id" >&2
     return 1
   fi
-  if grep -qE "(Finalizer|Transcript write|Final file write) error:" "$out_dir/stderr-${session_id}.txt"; then
+  if grep -qE "(Finalizer|Transcript write|Final file write) error:" "$stderr_file"; then
     echo "Finalize error detected: $case_id" >&2
     return 1
   fi
@@ -357,8 +412,10 @@ run_happy_case() {
 run_error_case() {
   local case_id="$1" args="$2" max_steps="$3" expected_keywords="$4" prompt_override="${5:-}"
   local session_id="error-${case_id}-$(date +%s)"
-  local out_dir="test-out-${session_id}"
+  local out_dir="$(pwd)/test-out-${session_id}"
   mkdir -p "$out_dir"
+  local stdout_file="$out_dir/stdout-${session_id}.txt"
+  local stderr_file="$out_dir/stderr-${session_id}.txt"
 
   echo "Running error case: $case_id..." >&2
   local -a provided_args=()
@@ -397,28 +454,26 @@ run_error_case() {
     --verbose
     --patch-no-apply
   )
-  cmd+=(
-    --final-file "$out_dir/final-${session_id}.txt"
-    --transcript-file "$out_dir/transcript-${session_id}.md"
-  )
   if [[ -n "$prompt_override" ]]; then
     cmd+=("$prompt_override")
   else
     cmd+=("")
   fi
 
+  pushd "$REPO_ROOT" >/dev/null
   set +e
-  "${cmd[@]}" > "$out_dir/stdout-${session_id}.txt" 2> "$out_dir/stderr-${session_id}.txt"
+  "${cmd[@]}" > "$stdout_file" 2> "$stderr_file"
   local rc=$?
   set -e
+  popd >/dev/null
   if [[ $rc -eq 0 ]]; then
     echo "Unexpected success (rc=0): $case_id" >&2
     return 1
   fi
 
   if ! contains_keywords "$expected_keywords" \
-      "$out_dir/stderr-${session_id}.txt" \
-      "$out_dir/stdout-${session_id}.txt"; then
+      "$stderr_file" \
+      "$stdout_file"; then
     echo "Missing error keywords: $case_id" >&2
     return 1
   fi

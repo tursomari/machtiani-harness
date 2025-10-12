@@ -35,7 +35,7 @@ Examples:
     mct prompt "Refactor payment module." --model anthropic/claude-3.7-sonnet:thinking --mode chat
 
   Prompt chat from a markdown file:
-    mct prompt --file .machtiani/chats/my_chat.md --model deepseek-coder
+    mct prompt --file .machtiani/sessions/session-123/chat/my_chat.md --model deepseek-coder
 
   Specify stricter context match:
     mct prompt "Summarize architecture and main APIs." --model Qwen2.5-Coder-1.5B-Instruct --match-strength high

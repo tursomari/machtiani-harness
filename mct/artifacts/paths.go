@@ -12,37 +12,63 @@ import (
 
 const (
 	machtianiRootDir = ".machtiani"
-	chatDirName      = "chats"
+	sessionsDirName  = "sessions"
+	chatDirName      = "chat"
 	readmeDirName    = "readme"
 	artifactDirName  = "artifacts"
+	patchesDirName   = "patches"
 )
 
-// ChatDirectory returns the directory to use for chat transcripts.
-// If invoked inside a git repository, it resolves relative to the repository root.
-// Otherwise it falls back to the user's global ~/.machtiani/chats directory.
-func ChatDirectory() (string, error) {
+// SessionDirectory resolves the root directory for a session-scoped run.
+// The caller must provide a non-empty session identifier.
+func SessionDirectory(sessionID string) (string, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return "", errors.New("session id required")
+	}
 	root, local, err := projectRoot()
 	if err != nil {
 		return "", err
 	}
 	if local {
-		return filepath.Join(root, machtianiRootDir, chatDirName), nil
+		return filepath.Join(root, machtianiRootDir, sessionsDirName, sessionID), nil
 	}
-	return globalMachtianiPath(chatDirName)
+	base, err := globalMachtianiPath(sessionsDirName)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, sessionID), nil
 }
 
-// ArtifactsDirectory returns the directory to use for general artifacts such as
-// file discovery trajectories. When inside a git repository it resolves at the
-// repository root; otherwise it falls back to ~/.machtiani/artifacts.
-func ArtifactsDirectory() (string, error) {
-	root, local, err := projectRoot()
+// SessionChatDirectory returns the directory under the session root dedicated
+// to chat transcripts and final answers.
+func SessionChatDirectory(sessionID string) (string, error) {
+
+	root, err := SessionDirectory(sessionID)
 	if err != nil {
 		return "", err
 	}
-	if local {
-		return filepath.Join(root, machtianiRootDir, artifactDirName), nil
+	return filepath.Join(root, chatDirName), nil
+}
+
+// SessionArtifactsDirectory returns the directory under the session root used
+// for general artifacts such as file-discovery trajectories.
+func SessionArtifactsDirectory(sessionID string) (string, error) {
+	root, err := SessionDirectory(sessionID)
+	if err != nil {
+		return "", err
 	}
-	return globalMachtianiPath(artifactDirName)
+	return filepath.Join(root, artifactDirName), nil
+}
+
+// SessionPatchesDirectory returns the directory under the session artifacts
+// directory dedicated to storing generated patch files.
+func SessionPatchesDirectory(sessionID string) (string, error) {
+	artifactsDir, err := SessionArtifactsDirectory(sessionID)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(artifactsDir, patchesDirName), nil
 }
 
 // FileDiscoveryTrajectoryPath returns the canonical path for a file-discovery
@@ -52,11 +78,11 @@ func FileDiscoveryTrajectoryPath(sessionID string) (string, error) {
 	if sessionID == "" {
 		return "", errors.New("session id required for file discovery trajectory path")
 	}
-	dir, err := ArtifactsDirectory()
+	dir, err := SessionArtifactsDirectory(sessionID)
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, fmt.Sprintf("file-discovery-%s.jsonl", sessionID)), nil
+	return filepath.Join(dir, "file-discovery.jsonl"), nil
 }
 
 // ReadmeDirectory returns the directory to use for README artifacts.
