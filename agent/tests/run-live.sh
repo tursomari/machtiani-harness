@@ -94,6 +94,19 @@ sys.exit(1)
 PY
 }
 
+regex_escape() {
+  local text="$1"
+  "$PYTHON_BIN" - "$text" <<'PY'
+import re
+import sys
+
+if len(sys.argv) != 2:
+    sys.exit(1)
+
+print(re.escape(sys.argv[1]))
+PY
+}
+
 check_bin() {
   local out_var="$1"
   local name="$2"
@@ -224,6 +237,9 @@ if [[ -n "${OPENAI_API_KEY:-}" && -n "${OPENAI_BASE_URL:-}" && -n "${OPENAI_MODE
 fi
 
 TEST_MODEL_ALIAS=""
+ORCH_MODEL_ALIAS=""
+PATCHER_MODEL_ALIAS=""
+FILE_DISCOVERY_MODEL_ALIAS=""
 TMP_ROOT="$SCRIPT_DIR/tmp"
 mkdir -p "$TMP_ROOT"
 CONFIG_ROOT="$(mktemp -d "$TMP_ROOT/config.XXXXXX")"
@@ -234,35 +250,79 @@ generate_test_config() {
   local config_file="$config_dir/config.toml"
   mkdir -p "$config_dir"
 
+  local provider_base_url="https://api.openai.com/v1"
+  local provider_api_key="sk-test-key-fake"
+  local provider_endpoint="/chat/completions"
+
+  local orch_remote_model="gpt-4o-mini"
+  local patcher_remote_model="gpt-4o-mini"
+  local fd_remote_model="gpt-4o-mini"
+
   if [[ "$LIVE_MODE" == true ]]; then
-    TEST_MODEL_ALIAS="${OPENAI_MODEL}"
-    cat > "$config_file" <<EOF
-default_model = "${TEST_MODEL_ALIAS}"
+    provider_base_url="${OPENAI_BASE_URL}"
+    provider_api_key="${OPENAI_API_KEY}"
+    orch_remote_model="${OPENAI_ORCH_MODEL:-${OPENAI_MODEL}}"
+    patcher_remote_model="${OPENAI_PATCHER_MODEL:-${orch_remote_model}}"
+    fd_remote_model="${OPENAI_FILE_DISCOVERY_MODEL:-${patcher_remote_model}}"
+  fi
 
-[providers.test-provider]
-base_url = "${OPENAI_BASE_URL}"
-api_key = "${OPENAI_API_KEY}"
-endpoint = "/chat/completions"
+  ORCH_MODEL_ALIAS="${OPENAI_ORCH_MODEL_ALIAS:-${orch_remote_model}}"
+  PATCHER_MODEL_ALIAS="${OPENAI_PATCHER_MODEL_ALIAS:-${patcher_remote_model}}"
+  FILE_DISCOVERY_MODEL_ALIAS="${OPENAI_FILE_DISCOVERY_MODEL_ALIAS:-${fd_remote_model}}"
 
-[models."${TEST_MODEL_ALIAS}"]
-provider = "test-provider"
-model = "${OPENAI_MODEL}"
-EOF
+  if [[ "$LIVE_MODE" == true ]]; then
+    TEST_MODEL_ALIAS="${OPENAI_MODEL:-${ORCH_MODEL_ALIAS}}"
   else
     TEST_MODEL_ALIAS="test-model"
-    cat > "$config_file" <<EOF
+    ORCH_MODEL_ALIAS="${TEST_MODEL_ALIAS}"
+    PATCHER_MODEL_ALIAS="${TEST_MODEL_ALIAS}"
+    FILE_DISCOVERY_MODEL_ALIAS="${TEST_MODEL_ALIAS}"
+    orch_remote_model="gpt-4o-mini"
+    patcher_remote_model="${orch_remote_model}"
+    fd_remote_model="${patcher_remote_model}"
+  fi
+
+  cat > "$config_file" <<EOF
 default_model = "${TEST_MODEL_ALIAS}"
 
 [providers.test-provider]
-base_url = "https://api.openai.com/v1"
-api_key = "sk-test-key-fake"
-endpoint = "/chat/completions"
-
-[models."${TEST_MODEL_ALIAS}"]
-provider = "test-provider"
-model = "gpt-4o-mini"
+base_url = "${provider_base_url}"
+api_key = "${provider_api_key}"
+endpoint = "${provider_endpoint}"
 EOF
-  fi
+
+  local -a declared_aliases=()
+  write_model_block() {
+    local alias="$1"
+    local remote="$2"
+    if [[ -z "$alias" ]]; then
+      return
+    fi
+    local already=false
+    for existing in "${declared_aliases[@]:-}"; do
+      if [[ "$existing" == "$alias" ]]; then
+        already=true
+        break
+      fi
+    done
+    if [[ "$already" == true ]]; then
+      return
+    fi
+    cat >> "$config_file" <<EOF
+
+[models."${alias}"]
+provider = "test-provider"
+model = "${remote}"
+EOF
+    declared_aliases+=("$alias")
+  }
+
+  write_model_block "$TEST_MODEL_ALIAS" "$orch_remote_model"
+  write_model_block "$ORCH_MODEL_ALIAS" "$orch_remote_model"
+  write_model_block "$PATCHER_MODEL_ALIAS" "$patcher_remote_model"
+  write_model_block "$FILE_DISCOVERY_MODEL_ALIAS" "$fd_remote_model"
+
+  unset -f write_model_block
 
   if [[ "${TRACE_TEST_CONFIG:-}" == "true" ]]; then
     echo "Generated test config ($config_file):" >&2
@@ -286,15 +346,32 @@ trap cleanup_config EXIT
 TEST_CONFIG_FILE="$(generate_test_config)"
 export MACHTIANI_CONFIG="$TEST_CONFIG_FILE"
 
-AGENT_RUNTIME_ARGS=(--model "$TEST_MODEL_ALIAS")
+COMMON_AGENT_ARGS=()
 if [[ "$LIVE_MODE" != true ]]; then
-  AGENT_RUNTIME_ARGS+=(--dry-run)
+  COMMON_AGENT_ARGS+=(--dry-run)
 fi
+
+DEFAULT_MODEL_ARGS=(--model "$TEST_MODEL_ALIAS")
+PER_COMPONENT_MODEL_ARGS=(
+  --orch-model "$ORCH_MODEL_ALIAS"
+  --patcher-model "$PATCHER_MODEL_ALIAS"
+  --file-discovery-model "$FILE_DISCOVERY_MODEL_ALIAS"
+)
 
 MCT_AGENT="$MCT_AGENT_BIN"
 
 run_happy_case() {
-  local case_id="$1" max_steps="$2" prompt="$3" expected_keywords="$4" min_turns="${5:-1}"
+  local case_id="$1"
+  local max_steps="$2"
+  local prompt="$3"
+  local expected_keywords="$4"
+  shift 4
+  local min_turns=1
+  if (( $# > 0 )) && [[ "${1}" != --* ]]; then
+    min_turns="$1"
+    shift
+  fi
+  local -a runtime_args=("$@")
   local session_id="test-${case_id}-$(date +%s)"
   local out_dir="$(pwd)/test-out-${session_id}"
   mkdir -p "$out_dir"
@@ -309,8 +386,11 @@ run_happy_case() {
     --verbose
     --patch-no-apply
   )
-  if ((${#AGENT_RUNTIME_ARGS[@]})); then
-    cmd+=("${AGENT_RUNTIME_ARGS[@]}")
+  if ((${#COMMON_AGENT_ARGS[@]})); then
+    cmd+=("${COMMON_AGENT_ARGS[@]}")
+  fi
+  if ((${#runtime_args[@]})); then
+    cmd+=("${runtime_args[@]}")
   fi
   cmd+=("$prompt")
 
@@ -359,7 +439,7 @@ run_happy_case() {
     echo "Invalid turns ($turns): $case_id" >&2
     return 1
   fi
-  local -a keyword_files=("$stdout_file")
+  local -a keyword_files=("$stdout_file" "$transcript_path")
 
   local final_path=""
   if [[ "$LIVE_MODE" == true ]]; then
@@ -410,7 +490,17 @@ run_happy_case() {
 }
 
 run_error_case() {
-  local case_id="$1" args="$2" max_steps="$3" expected_keywords="$4" prompt_override="${5:-}"
+  local case_id="$1"
+  local args="$2"
+  local max_steps="$3"
+  local expected_keywords="$4"
+  shift 4
+  local prompt_override=""
+  if (( $# > 0 )) && [[ "${1}" != --* ]]; then
+    prompt_override="$1"
+    shift
+  fi
+  local -a runtime_args=("$@")
   local session_id="error-${case_id}-$(date +%s)"
   local out_dir="$(pwd)/test-out-${session_id}"
   mkdir -p "$out_dir"
@@ -447,8 +537,11 @@ run_error_case() {
   if [[ "$has_timeout" == false ]]; then
     cmd+=(--timeout-per-turn 300)
   fi
-  if ((${#AGENT_RUNTIME_ARGS[@]})); then
-    cmd+=("${AGENT_RUNTIME_ARGS[@]}")
+  if ((${#COMMON_AGENT_ARGS[@]})); then
+    cmd+=("${COMMON_AGENT_ARGS[@]}")
+  fi
+  if ((${#runtime_args[@]})); then
+    cmd+=("${runtime_args[@]}")
   fi
   cmd+=(
     --verbose
@@ -489,34 +582,87 @@ else
   echo "Dry-run mode: using generated config.toml with stubbed provider; --dry-run enabled." >&2
 fi
 
+ORCH_LABEL_REGEX="$(regex_escape "$ORCH_MODEL_ALIAS")"
+FILE_DISCOVERY_LABEL_REGEX="$(regex_escape "$FILE_DISCOVERY_MODEL_ALIAS")"
+DEFAULT_LABEL_REGEX="$(regex_escape "$TEST_MODEL_ALIAS")"
+
+PER_COMPONENT_LABEL_PATTERN="(?s)(?=.*orchestrator model: ${ORCH_LABEL_REGEX})(?=.*file discovery model: ${FILE_DISCOVERY_LABEL_REGEX})"
+MIXED_LABEL_PATTERN="(?s)(?=.*orchestrator model: ${ORCH_LABEL_REGEX})(?=.*file discovery model: ${ORCH_LABEL_REGEX})"
+CATCH_ALL_LABEL_PATTERN="(?s)(?=.*orchestrator model: ${DEFAULT_LABEL_REGEX})(?=.*file discovery model: ${DEFAULT_LABEL_REGEX})"
+
+INVALID_ALIAS="does-not-exist-alias"
+INVALID_ALIAS_REGEX="$(regex_escape "$INVALID_ALIAS")"
+MODEL_ALIAS_NOT_FOUND_PATTERN="model alias \"${INVALID_ALIAS_REGEX}\" not found"
+
+# Per-component flag coverage.
+run_happy_case "models-per-component" 3 \
+  "Outline how the orchestrator, patcher, and file discovery collaborators interact." \
+  "$PER_COMPONENT_LABEL_PATTERN" \
+  1 \
+  --patch \
+  "${PER_COMPONENT_MODEL_ARGS[@]}"
+
+run_happy_case "models-mixed-fallback" 3 \
+  "Summarize how the patcher falls back to the orchestrator model when unspecified." \
+  "$MIXED_LABEL_PATTERN" \
+  1 \
+  --patch \
+  --orch-model "$ORCH_MODEL_ALIAS"
+
+run_happy_case "models-catch-all" 1 \
+  "Describe the default model wiring for orchestrator and file discovery." \
+  "$CATCH_ALL_LABEL_PATTERN" \
+  1 \
+  "${DEFAULT_MODEL_ARGS[@]}"
+
 run_happy_case "issue-a-1turn" 1 \
   "What is the main purpose of the mct-agent binary?" \
   "===> FINAL RESPONSE <===" \
-  1
+  1 \
+  "${DEFAULT_MODEL_ARGS[@]}"
 
 run_happy_case "issue-a-3turn" 3 \
   "What is the main purpose of the mct-agent binary?" \
-  "===> FINAL RESPONSE <==="
+  "===> FINAL RESPONSE <===" \
+  "${DEFAULT_MODEL_ARGS[@]}"
 
 run_happy_case "issue-b-1turn" 1 \
   "Describe the full multi-turn flow in mct-agent, including planning and context retention." \
   "multi-turn|conversation|context|planner|ask" \
-  1
+  1 \
+  "${DEFAULT_MODEL_ARGS[@]}"
 
 run_happy_case "issue-b-3turn" 3 \
   "Describe the full multi-turn flow in mct-agent, including planning and context retention." \
   "multi-turn|conversation|context|planner|ask" \
-  1
+  1 \
+  "${DEFAULT_MODEL_ARGS[@]}"
 
 run_happy_case "issue-c-1turn" 1 \
   "Explain how mct-agent handles errors during finalization and transcript writing." \
-  "error|handling|finalize|transcript|fallback"
+  "error|handling|finalize|transcript|fallback" \
+  "${DEFAULT_MODEL_ARGS[@]}"
 
 run_happy_case "issue-c-3turn" 3 \
   "Explain how mct-agent handles errors during finalization and transcript writing, with examples from code." \
-  "error|handling|finalize|transcript|fallback"
+  "error|handling|finalize|transcript|fallback" \
+  "${DEFAULT_MODEL_ARGS[@]}"
 
-run_error_case "empty-goal" "" 1 "empty issue/question|missing issue"
+run_error_case "empty-goal" "" 1 "empty issue/question|missing issue" "${DEFAULT_MODEL_ARGS[@]}"
+
+run_error_case "invalid-orch-model" "" 1 "$MODEL_ALIAS_NOT_FOUND_PATTERN" \
+  "Trigger orchestrator alias failure" \
+  --orch-model "$INVALID_ALIAS"
+
+run_error_case "invalid-patcher-model" "" 1 "$MODEL_ALIAS_NOT_FOUND_PATTERN" \
+  "Trigger patcher alias failure" \
+  --patcher-model "$INVALID_ALIAS" \
+  "${DEFAULT_MODEL_ARGS[@]}"
+
+run_error_case "invalid-file-discovery-model" "" 1 "$MODEL_ALIAS_NOT_FOUND_PATTERN" \
+  "Trigger file discovery alias failure" \
+  --file-discovery-model "$INVALID_ALIAS" \
+  "${DEFAULT_MODEL_ARGS[@]}"
 
 if [[ "$LIVE_MODE" == true ]]; then
   MACHTIANI_CONFIG="/nonexistent/machtiani-config.toml" OPENAI_API_KEY="" OPENAI_BASE_URL="" OPENAI_MODEL="" \
