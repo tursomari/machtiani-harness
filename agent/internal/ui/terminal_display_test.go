@@ -11,7 +11,7 @@ func TestPromptStreamCompleteShowsOnlyFirstLine(t *testing.T) {
 	display := NewTerminalDisplay(&buf)
 	display.width = 120
 	display.StartSession("Primary goal")
-	stream := display.BeginPrompt("What is concurrency?")
+	stream := display.BeginPrompt("What is concurrency?", nil)
 
 	answer := "Concurrency lets multiple tasks make progress.\nIt does not guarantee parallel execution."
 	stream.Complete(answer)
@@ -30,7 +30,7 @@ func TestPromptStreamCompleteTruncatesLongLine(t *testing.T) {
 	display := NewTerminalDisplay(&buf)
 	display.width = 20
 	display.StartSession("Primary goal")
-	stream := display.BeginPrompt("Explain goroutines")
+	stream := display.BeginPrompt("Explain goroutines", nil)
 
 	answer := "Goroutines are lightweight managed threads in Go that scale."
 	stream.Complete(answer)

@@ -25,6 +25,7 @@ type RunOptions struct {
 	ExplicitName            string
 	FileDiscoveryTrajectory string
 	Runtime                 ModelRuntime
+	FileDiscoveryRuntime    ModelRuntime
 	OnHeader                func(string)
 	OnToken                 func(string)
 	Verbose                 bool

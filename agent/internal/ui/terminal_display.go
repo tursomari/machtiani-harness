@@ -30,6 +30,11 @@ type PromptStream struct {
 	lastLen int
 }
 
+// PromptOptions controls how prompts are rendered in the terminal chain.
+type PromptOptions struct {
+	Metadata []string
+}
+
 // NewTerminalDisplay constructs a TerminalDisplay writing to out (defaults to STDOUT).
 func NewTerminalDisplay(out io.Writer) *TerminalDisplay {
 	if out == nil {
@@ -48,7 +53,7 @@ func (t *TerminalDisplay) StartSession(goal string) {
 }
 
 // BeginPrompt prepares the stream for a prompt/question block.
-func (t *TerminalDisplay) BeginPrompt(prompt string) *PromptStream {
+func (t *TerminalDisplay) BeginPrompt(prompt string, opts *PromptOptions) *PromptStream {
 	if !t.started {
 		t.StartSession(prompt)
 	}
@@ -58,6 +63,15 @@ func (t *TerminalDisplay) BeginPrompt(prompt string) *PromptStream {
 	}
 	// Print the prompt itself (no indentation).
 	fmt.Fprintln(t.out, strings.TrimSpace(prompt))
+	if opts != nil {
+		for _, meta := range opts.Metadata {
+			clean := strings.TrimSpace(meta)
+			if clean == "" {
+				continue
+			}
+			fmt.Fprintf(t.out, "|  %s\n", clean)
+		}
+	}
 	// Link prompt to its answer preview.
 	fmt.Fprintln(t.out, "|")
 	stream := &PromptStream{display: t}

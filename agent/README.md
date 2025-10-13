@@ -65,7 +65,10 @@ Flags:
 - `--max-steps int`: maximum turns before finalizing (default: 4)
 - `--openai-api-key string`: API key for OpenAI-compatible endpoint
 - `--openai-base-url string`: Base URL for OpenAI-compatible endpoint
-- `--openai-model string`: Model name for planner and the embedded discovery pipeline (alias: `--model`)
+- `--orch-model string`: Model alias for planner/finalizer turns (alias: `--model`)
+- `--patcher-model string`: Model alias for patch planning/execution (default: orchestration model)
+- `--file-discovery-model string`: Model alias for file discovery runs (default: orchestration model)
+- `--openai-model string`: Direct upstream model name for orchestrator (deprecated; prefer aliases)
 - `--timeout-per-turn int`: per-turn timeout in seconds (default: 120; set 0 for unlimited)
 - `--version`: print build metadata for the agent and exit
 - `--dry-run`: print intended discovery calls; no remote LLM requests executed
@@ -83,11 +86,15 @@ Flags:
 - A transcript is saved to `.machtiani/sessions/<session-id>/chat/agent.md` with per-turn entries and the final conclusion.
 
 ## Environment Details
-- `OPENAI_*` resolution precedence in agent:
+- Component model selection precedence:
+  - Flags `--orch-model`, `--patcher-model`, `--file-discovery-model`
+  - Environment variables `MCT_ORCH_MODEL`, `MCT_PATCHER_MODEL`, `MCT_FILE_DISCOVERY_MODEL` (planner also honors `MCT_MODEL` as a legacy alias)
+  - Shared `.machtiani/config.toml` defaults or legacy `--agent-model`
+- `OPENAI_*` resolution controls direct upstream credentials when skipping aliases:
   - Flags `--openai-*` override
   - Then `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL`
   - Legacy envs `AGENT_MODEL_*` accepted as fallback with a deprecation warning
-- The resolved configuration is reused for both the embedded discovery pipeline and the planner/finalizer clients.
+- The orchestrator, patcher, and discovery paths each resolve their effective model; unset component flags fall back to the orchestrator configuration.
 - `MACHTIANI_SESSION_ID` is generated per run and passed into the discovery service for correlation across artifacts.
 - `--timeout-per-turn` applies to both the discovery steps and the planner/finalizer LLM calls. Set to `0` to disable the deadline for all per-turn operations.
 

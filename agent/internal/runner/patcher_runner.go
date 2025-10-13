@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	mctpatcher "github.com/tursomari/machtiani/mct/patcher"
+	promptsvc "github.com/tursomari/machtiani/mct/prompt"
 	patchersvc "github.com/tursomari/machtiani/patcher"
 )
 
@@ -16,6 +17,7 @@ type PatcherRunner struct {
 	DryRun    bool
 	SessionID string
 	Service   mctpatcher.Service
+	Runtime   promptsvc.ModelRuntime
 }
 
 // Resolve ensures a usable patcher service is available before execution.

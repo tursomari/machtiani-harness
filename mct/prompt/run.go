@@ -64,12 +64,16 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 			return res, fmt.Errorf("load ignore rules: %w", err)
 		}
 
+		fdRuntime := opts.FileDiscoveryRuntime
+		if strings.TrimSpace(fdRuntime.Resolved.Model) == "" {
+			fdRuntime = opts.Runtime
+		}
 		drModel := discoveryrunner.ModelSettings{
-			UsingAlias:         opts.Runtime.UsingAlias,
-			Alias:              opts.Runtime.Alias,
-			Resolved:           opts.Runtime.Resolved,
-			ParamPairs:         append([]string(nil), opts.Runtime.ParamPairs...),
-			ParamJSON:          append([]string(nil), opts.Runtime.ParamJSON...),
+			UsingAlias:         fdRuntime.UsingAlias,
+			Alias:              fdRuntime.Alias,
+			Resolved:           fdRuntime.Resolved,
+			ParamPairs:         append([]string(nil), fdRuntime.ParamPairs...),
+			ParamJSON:          append([]string(nil), fdRuntime.ParamJSON...),
 			TrajectoryOverride: strings.TrimSpace(opts.FileDiscoveryTrajectory),
 		}
 		dr, err := discoveryrunner.Run(ctx, opts.Prompt, drModel, opts.SessionID, opts.Verbose)

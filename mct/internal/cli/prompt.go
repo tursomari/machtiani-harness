@@ -166,24 +166,26 @@ func handlePrompt(args []string) {
 		}
 	}
 
+	modelRuntime := promptsvc.ModelRuntime{
+		Resolved:   runtime.resolved,
+		Alias:      runtime.alias,
+		UsingAlias: runtime.usingAlias,
+		Extras:     runtime.extras,
+		ParamPairs: runtime.paramPairs,
+		ParamJSON:  runtime.paramJSON,
+	}
 	result, err := promptsvc.Run(ctx, promptsvc.RunOptions{
-		Prompt:         prompt,
-		Mode:           *modeFlag,
-		IncludeHistory: *includeHistoryFlag,
-		SessionID:      sessionID,
-		SourceFile:     *fileFlag,
-		Runtime: promptsvc.ModelRuntime{
-			Resolved:   runtime.resolved,
-			Alias:      runtime.alias,
-			UsingAlias: runtime.usingAlias,
-			Extras:     runtime.extras,
-			ParamPairs: runtime.paramPairs,
-			ParamJSON:  runtime.paramJSON,
-		},
-		OnHeader:       streamHeader,
-		OnToken:        streamToken,
-		Verbose:        *verboseFlag,
-		MaxInputTokens: *maxInputTokensFlag,
+		Prompt:               prompt,
+		Mode:                 *modeFlag,
+		IncludeHistory:       *includeHistoryFlag,
+		SessionID:            sessionID,
+		SourceFile:           *fileFlag,
+		Runtime:              modelRuntime,
+		FileDiscoveryRuntime: modelRuntime,
+		OnHeader:             streamHeader,
+		OnToken:              streamToken,
+		Verbose:              *verboseFlag,
+		MaxInputTokens:       *maxInputTokensFlag,
 	})
 	if ms != nil {
 		_ = ms.Flush()

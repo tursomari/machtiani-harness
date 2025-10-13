@@ -15,6 +15,7 @@ type Runner struct {
 	Verbose                 bool
 	DryRun                  bool
 	Runtime                 promptsvc.ModelRuntime
+	FileDiscoveryRuntime    promptsvc.ModelRuntime
 	FileDiscoveryTrajectory string
 }
 
@@ -86,6 +87,10 @@ func (r *Runner) RunPrompt(ctx context.Context, sessionID string, in PromptInput
 		}
 	}
 
+	fdRuntime := r.FileDiscoveryRuntime
+	if strings.TrimSpace(fdRuntime.Resolved.Model) == "" {
+		fdRuntime = r.Runtime
+	}
 	res, err := promptsvc.Run(ctx, promptsvc.RunOptions{
 		Prompt:                  in.Prompt,
 		Mode:                    safeMode,
@@ -93,6 +98,7 @@ func (r *Runner) RunPrompt(ctx context.Context, sessionID string, in PromptInput
 		SessionID:               sessionID,
 		SourceFile:              in.SourceFile,
 		Runtime:                 r.Runtime,
+		FileDiscoveryRuntime:    fdRuntime,
 		OnHeader:                onHeader,
 		OnToken:                 onToken,
 		Verbose:                 r.Verbose,

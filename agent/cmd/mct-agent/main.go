@@ -36,7 +36,9 @@ var (
 
 type config struct {
 	maxSteps                int
-	model                   string
+	orchModel               string
+	patcherModel            string
+	fileDiscoveryModel      string
 	agentModel              string
 	timeoutPerTurn          int
 	dryRun                  bool
@@ -86,8 +88,11 @@ func run() int {
 	var cfg config
 	fs := flag.NewFlagSet("mct-agent", flag.ExitOnError)
 	fs.IntVar(&cfg.maxSteps, "max-steps", 4, "maximum number of turns before finalizing")
-	fs.StringVar(&cfg.model, "model", "", "Model alias defined in .machtiani/config.toml")
-	fs.StringVar(&cfg.agentModel, "agent-model", "", "Legacy planner model alias (deprecated; use --model)")
+	fs.StringVar(&cfg.orchModel, "model", "", "Model alias defined in .machtiani/config.toml (alias for --orch-model)")
+	fs.StringVar(&cfg.orchModel, "orch-model", "", "Model alias for orchestration/planner steps (default: config or env)")
+	fs.StringVar(&cfg.patcherModel, "patcher-model", "", "Model alias for patch planning/execution (default: orchestration model)")
+	fs.StringVar(&cfg.fileDiscoveryModel, "file-discovery-model", "", "Model alias for file discovery runs (default: orchestration model)")
+	fs.StringVar(&cfg.agentModel, "agent-model", "", "Legacy planner model alias (deprecated; use --orch-model)")
 	fs.IntVar(&cfg.timeoutPerTurn, "timeout-per-turn", 120, "per-turn timeout in seconds (set 0 for no timeout)")
 	fs.BoolVar(&cfg.dryRun, "dry-run", false, "print intended mct calls; don’t execute")
 	fs.BoolVar(&cfg.verbose, "verbose", false, "verbose agent logging")
@@ -159,7 +164,7 @@ func run() int {
 	paramPairs := append([]string(nil), paramFlags...)
 	paramJSONVals := append([]string(nil), paramJSON...)
 
-	runtime, err := resolveModelRuntime(cfg, paramPairs, paramJSONVals)
+	models, err := resolveModelRuntimes(cfg, paramPairs, paramJSONVals)
 	if err != nil {
 		if miss, ok := err.(*missingConfigError); ok {
 			fmt.Fprintln(os.Stderr, "Missing model config: set:")
@@ -171,19 +176,20 @@ func run() int {
 		fmt.Fprintln(os.Stderr, "Model resolution error:", err)
 		return 1
 	}
+	orchPromptOpts := promptOptions(
+		describeModel("orchestrator", models.orchestrator),
+		describeModel("file discovery", models.fileDiscovery),
+	)
+	patcherPromptOpts := promptOptions(
+		describeModel("patcher", models.patcher),
+	)
 
 	// Resolve mct runner
 	mctRunner := runner.Runner{
-		Verbose: cfg.verbose,
-		DryRun:  cfg.dryRun,
-		Runtime: promptsvc.ModelRuntime{
-			Resolved:   runtime.resolved,
-			Alias:      runtime.alias,
-			UsingAlias: runtime.usingAlias,
-			Extras:     runtime.extras,
-			ParamPairs: runtime.paramPairs,
-			ParamJSON:  runtime.paramJSON,
-		},
+		Verbose:                 cfg.verbose,
+		DryRun:                  cfg.dryRun,
+		Runtime:                 models.orchestrator.toPromptRuntime(),
+		FileDiscoveryRuntime:    models.fileDiscovery.toPromptRuntime(),
 		FileDiscoveryTrajectory: trajectoryPath,
 	}
 	if err := mctRunner.Resolve(); err != nil {
@@ -201,6 +207,7 @@ func run() int {
 			Verbose:   cfg.verbose,
 			DryRun:    cfg.dryRun,
 			SessionID: sessionID,
+			Runtime:   models.patcher.toPromptRuntime(),
 			Service:   patchersvc.NewService(patchersvc.WithLogger(patchLogger)),
 		}
 		if err := pr.Resolve(); err != nil {
@@ -214,9 +221,9 @@ func run() int {
 
 	// Planner/Finalizer client uses normalized OPENAI_* values
 	pl := planner.NewClient(planner.ClientConfig{
-		Model:             runtime.resolved,
-		Extras:            runtime.extras,
-		Alias:             runtime.alias,
+		Model:             models.orchestrator.resolved,
+		Extras:            models.orchestrator.extras,
+		Alias:             models.orchestrator.alias,
 		Verbose:           cfg.verbose,
 		DryRun:            cfg.dryRun,
 		RequestTimeoutSec: cfg.timeoutPerTurn,
@@ -244,7 +251,7 @@ func run() int {
 	// First turn: use the original prompt directly (no planner)
 	{
 		step := 1
-		stream := display.BeginPrompt(goal)
+		stream := display.BeginPrompt(goal, orchPromptOpts)
 		input := runner.PromptInput{
 			Prompt:         goal,
 			Mode:           "default",
@@ -422,7 +429,7 @@ func run() int {
 			if cfg.verbose {
 				fmt.Fprintln(os.Stderr, "Question:", question)
 			}
-			stream := display.BeginPrompt(question)
+			stream := display.BeginPrompt(question, orchPromptOpts)
 			input := runner.PromptInput{
 				Prompt:         question,
 				Mode:           "default",
@@ -480,7 +487,7 @@ func run() int {
 
 		case planner.DecisionPatch:
 			payload := question
-			stream := display.BeginPrompt("Patcher: create patch")
+			stream := display.BeginPrompt("Patcher: create patch", patcherPromptOpts)
 			if cfg.verbose {
 				fmt.Fprintln(os.Stderr, "[patcher] planner payload (raw):", trimTo(strings.TrimSpace(payload), 1200))
 			}
@@ -655,7 +662,7 @@ FINALIZE:
 					fmt.Fprintln(os.Stderr, "[patcher] skipping pre-finalize patch: patch runner disabled")
 				}
 			} else {
-				stream := display.BeginPrompt("Patcher: pre-finalize patch")
+				stream := display.BeginPrompt("Patcher: pre-finalize patch", patcherPromptOpts)
 				if cfg.verbose {
 					fmt.Fprintln(os.Stderr, "[patcher] pre-finalize planner payload (raw):", trimTo(strings.TrimSpace(lastBody), 1200))
 				}
@@ -937,28 +944,113 @@ type modelRuntime struct {
 	paramJSON  []string
 }
 
-func (m modelRuntime) displayName() string {
-	if m.usingAlias && strings.TrimSpace(m.alias) != "" {
-		return m.alias
+func (m modelRuntime) displayLabel() string {
+	alias := strings.TrimSpace(m.alias)
+	resolvedModel := strings.TrimSpace(m.resolved.Model)
+	provider := strings.TrimSpace(m.resolved.ProviderName)
+	var providerModel string
+	switch {
+	case provider != "" && resolvedModel != "":
+		providerModel = fmt.Sprintf("%s:%s", provider, resolvedModel)
+	case resolvedModel != "":
+		providerModel = resolvedModel
+	case provider != "":
+		providerModel = provider
 	}
-	return m.resolved.Model
+	switch {
+	case alias != "" && providerModel != "" && !strings.EqualFold(alias, providerModel):
+		return fmt.Sprintf("%s (%s)", alias, providerModel)
+	case alias != "":
+		return alias
+	case providerModel != "":
+		return providerModel
+	}
+	baseURL := strings.TrimSpace(m.resolved.BaseURL)
+	if baseURL != "" {
+		return baseURL
+	}
+	return ""
 }
 
-func resolveModelRuntime(cfg config, paramPairs, paramJSON []string) (modelRuntime, error) {
+type componentModelRuntimes struct {
+	orchestrator  modelRuntime
+	patcher       modelRuntime
+	fileDiscovery modelRuntime
+}
+
+func (m modelRuntime) toPromptRuntime() promptsvc.ModelRuntime {
+	return promptsvc.ModelRuntime{
+		Resolved:   llm.CloneResolvedModel(m.resolved),
+		Alias:      m.alias,
+		UsingAlias: m.usingAlias,
+		Extras:     copyExtras(m.extras),
+		ParamPairs: append([]string(nil), m.paramPairs...),
+		ParamJSON:  append([]string(nil), m.paramJSON...),
+	}
+}
+
+func cloneModelRuntime(m modelRuntime) modelRuntime {
+	return modelRuntime{
+		resolved:   llm.CloneResolvedModel(m.resolved),
+		alias:      m.alias,
+		usingAlias: m.usingAlias,
+		extras:     copyExtras(m.extras),
+		paramPairs: append([]string(nil), m.paramPairs...),
+		paramJSON:  append([]string(nil), m.paramJSON...),
+	}
+}
+
+func copyExtras(src map[string]any) map[string]any {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[string]any, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
+}
+
+func describeModel(system string, runtime modelRuntime) string {
+	label := strings.TrimSpace(runtime.displayLabel())
+	if label == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s model: %s", system, label)
+}
+
+func promptOptions(lines ...string) *ui.PromptOptions {
+	var meta []string
+	for _, line := range lines {
+		clean := strings.TrimSpace(line)
+		if clean == "" {
+			continue
+		}
+		meta = append(meta, clean)
+	}
+	if len(meta) == 0 {
+		return nil
+	}
+	return &ui.PromptOptions{Metadata: meta}
+}
+
+func resolveModelRuntimes(cfg config, paramPairs, paramJSON []string) (componentModelRuntimes, error) {
 	extras, err := llm.ParseParamOverrides(paramPairs, paramJSON)
 	if err != nil {
-		return modelRuntime{}, err
+		return componentModelRuntimes{}, err
 	}
-	runtime := modelRuntime{
+	primary := modelRuntime{
 		extras:     extras,
 		paramPairs: append([]string(nil), paramPairs...),
 		paramJSON:  append([]string(nil), paramJSON...),
 	}
 
-	alias := strings.TrimSpace(cfg.model)
-	if alias == "" {
-		alias = strings.TrimSpace(cfg.agentModel)
-	}
+	orchAlias := firstNonEmpty(
+		strings.TrimSpace(cfg.orchModel),
+		strings.TrimSpace(os.Getenv("MCT_ORCH_MODEL")),
+		strings.TrimSpace(os.Getenv("MCT_MODEL")),
+		strings.TrimSpace(cfg.agentModel),
+	)
 
 	hasDirectFlags := strings.TrimSpace(cfg.openAIAPIKey) != "" || strings.TrimSpace(cfg.openAIBaseURL) != "" || strings.TrimSpace(cfg.openAIModel) != ""
 
@@ -966,51 +1058,78 @@ func resolveModelRuntime(cfg config, paramPairs, paramJSON []string) (modelRunti
 	directBaseURL := firstNonEmpty(strings.TrimSpace(cfg.openAIBaseURL), strings.TrimSpace(os.Getenv("OPENAI_BASE_URL")), strings.TrimSpace(os.Getenv("AGENT_MODEL_BASE_URL")))
 	directModel := firstNonEmpty(strings.TrimSpace(cfg.openAIModel), strings.TrimSpace(os.Getenv("OPENAI_MODEL")), strings.TrimSpace(os.Getenv("AGENT_MODEL")))
 
-	if hasDirectFlags {
+	switch {
+	case hasDirectFlags:
 		missing := missingDirect(directAPIKey, directBaseURL, directModel)
 		if len(missing) > 0 {
-			return runtime, &missingConfigError{items: missing}
+			return componentModelRuntimes{}, &missingConfigError{items: missing}
 		}
 		resolved, err := llm.NewDirectModel(directBaseURL, directAPIKey, directModel)
 		if err != nil {
-			return runtime, err
+			return componentModelRuntimes{}, err
 		}
-		runtime.resolved = resolved
-		runtime.usingAlias = false
-		return runtime, nil
-	}
-
-	if alias != "" {
-		resolved, err := llm.ResolveModel(alias)
+		primary.resolved = resolved
+		primary.usingAlias = false
+	case strings.TrimSpace(orchAlias) != "":
+		resolved, err := llm.ResolveModel(orchAlias)
 		if err != nil {
-			return runtime, err
+			return componentModelRuntimes{}, err
 		}
-		runtime.resolved = resolved
-		runtime.alias = alias
-		runtime.usingAlias = true
-		return runtime, nil
-	}
-
-	if defaultAlias, err := llm.DefaultModelAlias(); err == nil {
-		if resolved, err2 := llm.ResolveModel(defaultAlias); err2 == nil {
-			runtime.resolved = resolved
-			runtime.alias = defaultAlias
-			runtime.usingAlias = true
-			return runtime, nil
+		primary.resolved = resolved
+		primary.alias = orchAlias
+		primary.usingAlias = true
+	default:
+		if defaultAlias, err := llm.DefaultModelAlias(); err == nil {
+			if resolved, err2 := llm.ResolveModel(defaultAlias); err2 == nil {
+				primary.resolved = resolved
+				primary.alias = defaultAlias
+				primary.usingAlias = true
+			}
 		}
 	}
 
-	missing := missingDirect(directAPIKey, directBaseURL, directModel)
-	if len(missing) > 0 {
-		return runtime, &missingConfigError{items: missing}
+	if strings.TrimSpace(primary.resolved.Model) == "" {
+		missing := missingDirect(directAPIKey, directBaseURL, directModel)
+		if len(missing) > 0 {
+			return componentModelRuntimes{}, &missingConfigError{items: missing}
+		}
+		resolved, err := llm.NewDirectModel(directBaseURL, directAPIKey, directModel)
+		if err != nil {
+			return componentModelRuntimes{}, err
+		}
+		primary.resolved = resolved
+		primary.usingAlias = false
 	}
-	resolved, err := llm.NewDirectModel(directBaseURL, directAPIKey, directModel)
-	if err != nil {
-		return runtime, err
+
+	patcher := cloneModelRuntime(primary)
+	patcherAlias := firstNonEmpty(strings.TrimSpace(cfg.patcherModel), strings.TrimSpace(os.Getenv("MCT_PATCHER_MODEL")))
+	if strings.TrimSpace(patcherAlias) != "" {
+		resolved, err := llm.ResolveModel(patcherAlias)
+		if err != nil {
+			return componentModelRuntimes{}, err
+		}
+		patcher.resolved = resolved
+		patcher.alias = patcherAlias
+		patcher.usingAlias = true
 	}
-	runtime.resolved = resolved
-	runtime.usingAlias = false
-	return runtime, nil
+
+	fileDiscovery := cloneModelRuntime(primary)
+	fdAlias := firstNonEmpty(strings.TrimSpace(cfg.fileDiscoveryModel), strings.TrimSpace(os.Getenv("MCT_FILE_DISCOVERY_MODEL")))
+	if strings.TrimSpace(fdAlias) != "" {
+		resolved, err := llm.ResolveModel(fdAlias)
+		if err != nil {
+			return componentModelRuntimes{}, err
+		}
+		fileDiscovery.resolved = resolved
+		fileDiscovery.alias = fdAlias
+		fileDiscovery.usingAlias = true
+	}
+
+	return componentModelRuntimes{
+		orchestrator:  primary,
+		patcher:       patcher,
+		fileDiscovery: fileDiscovery,
+	}, nil
 }
 
 func missingDirect(apiKey, baseURL, model string) []string {
