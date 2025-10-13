@@ -34,6 +34,7 @@ func handlePrompt(args []string) {
 	fileFlag := fs.StringP("file", "f", "", "Path to the markdown file (required if no positional message provided)")
 	// Supported flags
 	modelFlag := fs.String("model", "", "Model alias defined in .machtiani/config.toml")
+	orchModelFlag := fs.String("orch-model", "", "Fallback model alias to try if the primary model fails")
 	openAIModelFlag := fs.String("openai-model", "", "Direct upstream model name (deprecated; prefer --model)")
 	openAIAPIKeyFlag := fs.String("openai-api-key", "", "OpenAI-compatible API key (overrides env, deprecated)")
 	openAIBaseURLFlag := fs.String("openai-base-url", "", "OpenAI-compatible base URL (overrides env, deprecated)")
@@ -131,7 +132,7 @@ func handlePrompt(args []string) {
 	paramPairs := append([]string(nil), (*paramFlag)...)
 	paramJSON := append([]string(nil), (*paramJSONFlag)...)
 
-	runtime, err := resolveModelRuntime(strings.TrimSpace(*modelFlag), strings.TrimSpace(*openAIBaseURLFlag), strings.TrimSpace(*openAIAPIKeyFlag), strings.TrimSpace(*openAIModelFlag), paramPairs, paramJSON)
+	runtime, err := resolveModelRuntime(strings.TrimSpace(*modelFlag), strings.TrimSpace(*orchModelFlag), strings.TrimSpace(*openAIBaseURLFlag), strings.TrimSpace(*openAIAPIKeyFlag), strings.TrimSpace(*openAIModelFlag), paramPairs, paramJSON)
 	if err != nil {
 		if miss, ok := err.(*missingConfigError); ok {
 			fmt.Fprintln(os.Stderr, "Missing model config: set:")
@@ -167,12 +168,14 @@ func handlePrompt(args []string) {
 	}
 
 	modelRuntime := promptsvc.ModelRuntime{
-		Resolved:   runtime.resolved,
-		Alias:      runtime.alias,
-		UsingAlias: runtime.usingAlias,
-		Extras:     runtime.extras,
-		ParamPairs: runtime.paramPairs,
-		ParamJSON:  runtime.paramJSON,
+		Resolved:         runtime.resolved,
+		Alias:            runtime.alias,
+		UsingAlias:       runtime.usingAlias,
+		Extras:           runtime.extras,
+		ParamPairs:       runtime.paramPairs,
+		ParamJSON:        runtime.paramJSON,
+		FallbackAliases:  append([]string(nil), runtime.fallbackAliases...),
+		FallbackResolved: cloneResolvedModels(runtime.fallbackResolved),
 	}
 	result, err := promptsvc.Run(ctx, promptsvc.RunOptions{
 		Prompt:               prompt,
@@ -253,13 +256,26 @@ func utilsFirstNonEmpty(vals ...string) string {
 	return ""
 }
 
+func cloneResolvedModels(in []llm.ResolvedModel) []llm.ResolvedModel {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]llm.ResolvedModel, 0, len(in))
+	for _, m := range in {
+		out = append(out, llm.CloneResolvedModel(m))
+	}
+	return out
+}
+
 type modelRuntime struct {
-	resolved   llm.ResolvedModel
-	alias      string
-	usingAlias bool
-	extras     map[string]any
-	paramPairs []string
-	paramJSON  []string
+	resolved         llm.ResolvedModel
+	alias            string
+	usingAlias       bool
+	extras           map[string]any
+	paramPairs       []string
+	paramJSON        []string
+	fallbackAliases  []string
+	fallbackResolved []llm.ResolvedModel
 }
 
 func (m modelRuntime) displayName() string {
@@ -269,7 +285,7 @@ func (m modelRuntime) displayName() string {
 	return m.resolved.Model
 }
 
-func resolveModelRuntime(aliasFlag, baseURLFlag, apiKeyFlag, directModelFlag string, paramPairs, paramJSON []string) (modelRuntime, error) {
+func resolveModelRuntime(aliasFlag, orchAliasFlag, baseURLFlag, apiKeyFlag, directModelFlag string, paramPairs, paramJSON []string) (modelRuntime, error) {
 	extra, err := llm.ParseParamOverrides(paramPairs, paramJSON)
 	if err != nil {
 		return modelRuntime{}, err
@@ -286,6 +302,7 @@ func resolveModelRuntime(aliasFlag, baseURLFlag, apiKeyFlag, directModelFlag str
 
 	hasDirectFlags := strings.TrimSpace(baseURLFlag) != "" || strings.TrimSpace(apiKeyFlag) != "" || strings.TrimSpace(directModelFlag) != ""
 	alias := strings.TrimSpace(aliasFlag)
+	orchAlias := strings.TrimSpace(orchAliasFlag)
 
 	directBaseURL := utilsFirstNonEmpty(
 		strings.TrimSpace(baseURLFlag),
@@ -311,6 +328,7 @@ func resolveModelRuntime(aliasFlag, baseURLFlag, apiKeyFlag, directModelFlag str
 		}
 		runtime.resolved = resolved
 		runtime.usingAlias = false
+		runtime = enrichFallbacks(runtime, alias, orchAlias, directBaseURL, directAPIKey, directModel)
 		return runtime, nil
 	}
 
@@ -322,6 +340,7 @@ func resolveModelRuntime(aliasFlag, baseURLFlag, apiKeyFlag, directModelFlag str
 		runtime.resolved = resolved
 		runtime.alias = alias
 		runtime.usingAlias = true
+		runtime = enrichFallbacks(runtime, alias, orchAlias, directBaseURL, directAPIKey, directModel)
 		return runtime, nil
 	}
 
@@ -330,6 +349,7 @@ func resolveModelRuntime(aliasFlag, baseURLFlag, apiKeyFlag, directModelFlag str
 			runtime.resolved = resolved
 			runtime.alias = defaultAlias
 			runtime.usingAlias = true
+			runtime = enrichFallbacks(runtime, alias, orchAlias, directBaseURL, directAPIKey, directModel)
 			return runtime, nil
 		}
 	}
@@ -344,7 +364,46 @@ func resolveModelRuntime(aliasFlag, baseURLFlag, apiKeyFlag, directModelFlag str
 	}
 	runtime.resolved = resolved
 	runtime.usingAlias = false
+	runtime = enrichFallbacks(runtime, alias, orchAlias, directBaseURL, directAPIKey, directModel)
 	return runtime, nil
+}
+
+func enrichFallbacks(rt modelRuntime, aliasFlag, orchAliasFlag, directBaseURL, directAPIKey, directModel string) modelRuntime {
+	primaryAlias := strings.TrimSpace(rt.alias)
+	candidates := []string{strings.TrimSpace(aliasFlag), strings.TrimSpace(orchAliasFlag)}
+	fallbackAliases := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate == "" {
+			continue
+		}
+		if primaryAlias != "" && strings.EqualFold(candidate, primaryAlias) {
+			continue
+		}
+		if containsFold(fallbackAliases, candidate) {
+			continue
+		}
+		fallbackAliases = append(fallbackAliases, candidate)
+	}
+	rt.fallbackAliases = fallbackAliases
+
+	trimmedModel := strings.TrimSpace(directModel)
+	trimmedBase := strings.TrimSpace(directBaseURL)
+	trimmedKey := strings.TrimSpace(directAPIKey)
+	if trimmedModel != "" && trimmedBase != "" && trimmedKey != "" {
+		if resolved, err := llm.NewDirectModel(trimmedBase, trimmedKey, trimmedModel); err == nil {
+			rt.fallbackResolved = append(rt.fallbackResolved, resolved)
+		}
+	}
+	return rt
+}
+
+func containsFold(list []string, val string) bool {
+	for _, item := range list {
+		if strings.EqualFold(item, val) {
+			return true
+		}
+	}
+	return false
 }
 
 func missingDirect(apiKey, baseURL, model string) []string {

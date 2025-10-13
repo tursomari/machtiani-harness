@@ -91,7 +91,7 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 	}
 
 	messages := []llm.Message{{Role: "user", Content: combined}}
-	assistant, err := llm.ChatStreamWithResolved(ctx, opts.Runtime.Resolved, opts.Runtime.Extras, messages, opts.OnToken)
+	assistant, err := llm.ChatStreamWithResolvedFallback(ctx, opts.Runtime.Resolved, opts.Runtime.FallbackAliases, opts.Runtime.FallbackResolved, opts.Runtime.Extras, messages, opts.OnToken)
 	if err != nil {
 		return res, err
 	}

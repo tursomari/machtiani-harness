@@ -936,12 +936,14 @@ func countTurns(md string) int {
 }
 
 type modelRuntime struct {
-	resolved   llm.ResolvedModel
-	alias      string
-	usingAlias bool
-	extras     map[string]any
-	paramPairs []string
-	paramJSON  []string
+	resolved         llm.ResolvedModel
+	alias            string
+	usingAlias       bool
+	extras           map[string]any
+	paramPairs       []string
+	paramJSON        []string
+	fallbackAliases  []string
+	fallbackResolved []llm.ResolvedModel
 }
 
 func (m modelRuntime) displayLabel() string {
@@ -980,23 +982,27 @@ type componentModelRuntimes struct {
 
 func (m modelRuntime) toPromptRuntime() promptsvc.ModelRuntime {
 	return promptsvc.ModelRuntime{
-		Resolved:   llm.CloneResolvedModel(m.resolved),
-		Alias:      m.alias,
-		UsingAlias: m.usingAlias,
-		Extras:     copyExtras(m.extras),
-		ParamPairs: append([]string(nil), m.paramPairs...),
-		ParamJSON:  append([]string(nil), m.paramJSON...),
+		Resolved:         llm.CloneResolvedModel(m.resolved),
+		Alias:            m.alias,
+		UsingAlias:       m.usingAlias,
+		Extras:           copyExtras(m.extras),
+		ParamPairs:       append([]string(nil), m.paramPairs...),
+		ParamJSON:        append([]string(nil), m.paramJSON...),
+		FallbackAliases:  append([]string(nil), m.fallbackAliases...),
+		FallbackResolved: cloneResolvedModels(m.fallbackResolved),
 	}
 }
 
 func cloneModelRuntime(m modelRuntime) modelRuntime {
 	return modelRuntime{
-		resolved:   llm.CloneResolvedModel(m.resolved),
-		alias:      m.alias,
-		usingAlias: m.usingAlias,
-		extras:     copyExtras(m.extras),
-		paramPairs: append([]string(nil), m.paramPairs...),
-		paramJSON:  append([]string(nil), m.paramJSON...),
+		resolved:         llm.CloneResolvedModel(m.resolved),
+		alias:            m.alias,
+		usingAlias:       m.usingAlias,
+		extras:           copyExtras(m.extras),
+		paramPairs:       append([]string(nil), m.paramPairs...),
+		paramJSON:        append([]string(nil), m.paramJSON...),
+		fallbackAliases:  append([]string(nil), m.fallbackAliases...),
+		fallbackResolved: cloneResolvedModels(m.fallbackResolved),
 	}
 }
 
@@ -1009,6 +1015,17 @@ func copyExtras(src map[string]any) map[string]any {
 		dst[k] = v
 	}
 	return dst
+}
+
+func cloneResolvedModels(in []llm.ResolvedModel) []llm.ResolvedModel {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]llm.ResolvedModel, 0, len(in))
+	for _, m := range in {
+		out = append(out, llm.CloneResolvedModel(m))
+	}
+	return out
 }
 
 func describeModel(system string, runtime modelRuntime) string {
@@ -1101,6 +1118,14 @@ func resolveModelRuntimes(cfg config, paramPairs, paramJSON []string) (component
 		primary.usingAlias = false
 	}
 
+	applyFallbacks(&primary, []string{
+		cfg.agentModel,
+		cfg.patcherModel,
+		cfg.fileDiscoveryModel,
+		os.Getenv("MCT_MODEL"),
+		os.Getenv("MCT_ORCH_MODEL"),
+	}, directBaseURL, directAPIKey, directModel)
+
 	patcher := cloneModelRuntime(primary)
 	patcherAlias := firstNonEmpty(strings.TrimSpace(cfg.patcherModel), strings.TrimSpace(os.Getenv("MCT_PATCHER_MODEL")))
 	if strings.TrimSpace(patcherAlias) != "" {
@@ -1152,6 +1177,38 @@ type missingConfigError struct {
 
 func (e *missingConfigError) Error() string {
 	return "missing model configuration"
+}
+
+func applyFallbacks(rt *modelRuntime, candidates []string, directBase, directKey, directModel string) {
+	if rt == nil {
+		return
+	}
+	primaryAlias := strings.TrimSpace(rt.alias)
+	seen := make(map[string]struct{}, len(candidates))
+	rt.fallbackAliases = nil
+	for _, cand := range candidates {
+		trimmed := strings.TrimSpace(cand)
+		if trimmed == "" {
+			continue
+		}
+		if primaryAlias != "" && strings.EqualFold(primaryAlias, trimmed) {
+			continue
+		}
+		key := strings.ToLower(trimmed)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		rt.fallbackAliases = append(rt.fallbackAliases, trimmed)
+	}
+	trimmedModel := strings.TrimSpace(directModel)
+	trimmedBase := strings.TrimSpace(directBase)
+	trimmedKey := strings.TrimSpace(directKey)
+	if trimmedModel != "" && trimmedBase != "" && trimmedKey != "" {
+		if resolved, err := llm.NewDirectModel(trimmedBase, trimmedKey, trimmedModel); err == nil {
+			rt.fallbackResolved = append(rt.fallbackResolved, resolved)
+		}
+	}
 }
 
 func resolveFileDiscoveryTrajectory(cfg config, sessionID string) (string, error) {

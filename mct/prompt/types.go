@@ -6,12 +6,14 @@ import "github.com/tursomari/machtiani/mct/llm"
 // and file discovery. It mirrors the data produced by the existing runtime
 // resolution helpers in both the mct CLI and mct-agent.
 type ModelRuntime struct {
-	Resolved   llm.ResolvedModel
-	Alias      string
-	UsingAlias bool
-	Extras     map[string]any
-	ParamPairs []string
-	ParamJSON  []string
+	Resolved         llm.ResolvedModel
+	Alias            string
+	UsingAlias       bool
+	Extras           map[string]any
+	ParamPairs       []string
+	ParamJSON        []string
+	FallbackAliases  []string
+	FallbackResolved []llm.ResolvedModel
 }
 
 // RunOptions configures the execution of a prompt, including streaming
