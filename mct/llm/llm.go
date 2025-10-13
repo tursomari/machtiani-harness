@@ -80,29 +80,21 @@ func chat(ctx context.Context, model ResolvedModel, extraParams map[string]any, 
 	}
 
 	if stream {
-		return executeStream(req, body, model, extraParams, messages, onToken)
+		return executeStream(req, onToken)
 	}
 	return executeOnce(req)
 }
 
-func executeStream(req *http.Request, body []byte, model ResolvedModel, extraParams map[string]any, messages []Message, onToken func(string)) (string, error) {
+func executeStream(req *http.Request, onToken func(string)) (string, error) {
 	resp, err := streamingHTTPClient.Do(req)
 	if err != nil {
-		return "", err
+		return "", &UnreachableHostError{URL: req.URL.String(), Err: err}
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
-		// modify payload by setting stream=false and reissuing using standard client via recursion
-		content, err2 := chat(req.Context(), model, extraParams, messages, false, onToken)
-		if err2 != nil {
-			return "", fmt.Errorf("llm stream error %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
-		}
-		if onToken != nil {
-			onToken(content)
-		}
-		return content, nil
+		return "", &HTTPResponseError{URL: req.URL.String(), Status: resp.StatusCode, Body: strings.TrimSpace(string(b))}
 	}
 
 	var full strings.Builder
@@ -148,13 +140,13 @@ func executeStream(req *http.Request, body []byte, model ResolvedModel, extraPar
 func executeOnce(req *http.Request) (string, error) {
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", err
+		return "", &UnreachableHostError{URL: req.URL.String(), Err: err}
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("llm error %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return "", &HTTPResponseError{URL: req.URL.String(), Status: resp.StatusCode, Body: strings.TrimSpace(string(body))}
 	}
 
 	var parsed struct {
