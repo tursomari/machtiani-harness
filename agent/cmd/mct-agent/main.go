@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,6 +24,7 @@ import (
 	patchersvc "github.com/tursomari/machtiani/agent/internal/patcher"
 	"github.com/tursomari/machtiani/agent/internal/planner"
 	"github.com/tursomari/machtiani/agent/internal/runner"
+	"github.com/tursomari/machtiani/agent/internal/trajectory"
 	"github.com/tursomari/machtiani/agent/internal/transcript"
 	"github.com/tursomari/machtiani/agent/internal/ui"
 )
@@ -48,6 +50,12 @@ type config struct {
 	fileDiscoveryTrajectory string
 	fileDiscoveryOutputDir  string
 	maxInputTokens          int
+	trajectoryFile          string
+	noTrajectory            bool
+	trajectoryVerboseLLM    bool
+	trajectoryStreamTokens  bool
+	trajectoryExcerpt       int
+	trajectoryOmitRepoRoot  bool
 	// Patch application behavior
 	patchNoApply bool
 	patch        bool
@@ -101,6 +109,12 @@ func run() int {
 	fs.StringVar(&cfg.fileDiscoveryTrajectory, "file-discovery-trajectory", "", "path to write file-discovery trajectory JSONL (default: auto-named under session artifacts)")
 	fs.StringVar(&cfg.fileDiscoveryOutputDir, "file-discovery-output-dir", "", "directory for file-discovery artifacts (default: .machtiani/sessions/<sessionID>/artifacts)")
 	fs.IntVar(&cfg.maxInputTokens, "max-input-tokens", 0, "maximum number of tokens allowed in constructed prompts (0 disables truncation)")
+	fs.StringVar(&cfg.trajectoryFile, "trajectory-file", "", "override path for unified trajectory JSONL (default: session-scoped path)")
+	fs.BoolVar(&cfg.noTrajectory, "no-trajectory", false, "disable unified trajectory JSONL emission")
+	fs.BoolVar(&cfg.trajectoryVerboseLLM, "trajectory-verbose-llm", false, "include expanded LLM details in the trajectory stream")
+	fs.BoolVar(&cfg.trajectoryStreamTokens, "trajectory-stream-tokens", false, "record LLM token streaming events in the trajectory (disabled by default)")
+	fs.IntVar(&cfg.trajectoryExcerpt, "trajectory-excerpt", 512, "excerpt length (in characters) for prompts/responses captured in the trajectory")
+	fs.BoolVar(&cfg.trajectoryOmitRepoRoot, "trajectory-omit-repo-root", false, "omit repo_root from trajectory events")
 	fs.BoolVar(&cfg.patchNoApply, "patch-no-apply", false, "skip applying generated patches to the worktree (default: apply)\n")
 	fs.BoolVar(&cfg.patch, "patch", false, "enable patch planning (disabled by default)")
 	// Normalized OpenAI flags
@@ -133,9 +147,30 @@ func run() int {
 		fmt.Fprintln(os.Stderr, "Error: empty issue/question provided")
 		return 2
 	}
+	applyTrajectoryEnvOverrides(&cfg)
+
+	sessionStatus := "error"
+	var sessionErr error
+	turnsCompleted := 0
 
 	// Setup session ID for correlation
 	sessionID := runner.GenerateSessionID()
+	trajectoryWriter, repoRoot, trajErr := newTrajectoryWriter(cfg, sessionID)
+	if trajErr != nil {
+		fmt.Fprintln(os.Stderr, "Trajectory setup error:", trajErr)
+		return 1
+	}
+	if trajectoryWriter != nil {
+		fmt.Fprintln(os.Stderr, "[trajectory] unified stream:", trajectoryWriter.Config().Path)
+	}
+	sessTelemetry := newSessionTelemetry(trajectoryWriter, sessionID, goal, cfg, repoRoot)
+	defer func() {
+		if sessTelemetry != nil {
+			sessTelemetry.Finish(sessionStatus, turnsCompleted, sessionErr)
+		} else if trajectoryWriter != nil {
+			_ = trajectoryWriter.Close()
+		}
+	}()
 
 	// Prepare transcript file scoped to this session
 	tr, err := transcript.NewWithPath(cfg.transcriptFile, sessionID)
@@ -144,6 +179,7 @@ func run() int {
 		return 1
 	}
 	defer tr.Close()
+	tr.SetTrajectory(trajectoryWriter)
 
 	if cfg.verbose {
 		fmt.Fprintln(os.Stderr, "mct-agent starting; transcript:", tr.Path())
@@ -261,7 +297,18 @@ func run() int {
 			MaxInputTokens: cfg.maxInputTokens,
 		}
 
+		var turn *turnTelemetry
+		if sessTelemetry != nil {
+			turn = sessTelemetry.StartTurn(step, cfg.maxSteps)
+		}
 		ctx2, cancel2 := makeTurnContext(cfg.timeoutPerTurn)
+		parentSpanID := ""
+		if turn != nil {
+			parentSpanID = turn.span.ID
+		} else if sessTelemetry != nil {
+			parentSpanID = sessTelemetry.span.ID
+		}
+		ctx2 = attachTrajectory(ctx2, trajectoryWriter, parentSpanID)
 		result, merr := mctRunner.RunPrompt(ctx2, sessionID, input)
 		cancel2()
 		if merr != nil {
@@ -273,6 +320,12 @@ func run() int {
 				fmt.Fprintln(os.Stderr, "mct prompt error:", merr)
 			}
 			stream.Abort(msg)
+			sessionErr = merr
+			if sessTelemetry != nil {
+				info := map[string]any{"prompt_mode": input.Mode}
+				sessTelemetry.EndTurn(turn, "initial", "error", info, merr)
+			}
+			turnsCompleted = step
 			return 1
 		}
 
@@ -289,6 +342,8 @@ func run() int {
 				if err != nil {
 					fmt.Fprintln(os.Stderr, "Failed to resolve chat directory:", err)
 					stream.Abort("failed to save chat transcript")
+					sessionErr = err
+					turnsCompleted = step
 					return 1
 				}
 				savedPath = filepath.Join(chatDir, "machtiani-response.md")
@@ -304,48 +359,106 @@ func run() int {
 		stream.Complete(fullAns)
 		if err := tr.WriteTurn(step, goal, savedPath, retrieved, fullAns, "initial"); err != nil {
 			fmt.Fprintln(os.Stderr, "Transcript write error:", err)
+			sessionErr = err
+			if sessTelemetry != nil {
+				info := map[string]any{"prompt_mode": input.Mode}
+				sessTelemetry.EndTurn(turn, "initial", "error", info, err)
+			}
+			turnsCompleted = step
 			return 1
 		}
+		if sessTelemetry != nil {
+			info := map[string]any{
+				"prompt_mode":     input.Mode,
+				"retrieved_count": len(retrieved),
+			}
+			if savedPath != "" {
+				info["saved_chat_path"] = savedPath
+			}
+			if trajectoryWriter != nil && strings.TrimSpace(fullAns) != "" {
+				excerpt := trajectory.MakeTextExcerpt(fullAns, trajectoryWriter.ExcerptLen())
+				info = trajectory.MergeExcerptWithPrefix(info, excerpt, "answer")
+			}
+			sessTelemetry.EndTurn(turn, "initial", "success", info, nil)
+		}
+		turnsCompleted = 1
 	}
 
 	// If only one step is allowed, finalize immediately using transcript only
 	if cfg.maxSteps == 1 {
 		ctx, cancelF := makeTurnContext(cfg.timeoutPerTurn)
 		trFull := tr.Content()
+		parentSpanID := ""
+		if sessTelemetry != nil {
+			parentSpanID = sessTelemetry.span.ID
+		}
+		ctx = attachTrajectory(ctx, trajectoryWriter, parentSpanID)
 		answer, ferr := pl.Finalize(ctx, goal, trFull)
 		cancelF()
 		if ferr != nil {
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 				fmt.Fprintf(os.Stderr, "Finalizer error: timed out after %ds. Increase --timeout-per-turn or set 0 for unlimited.\n", cfg.timeoutPerTurn)
-				return 1
+			} else {
+				fmt.Fprintln(os.Stderr, "Finalizer error:", ferr)
 			}
-			fmt.Fprintln(os.Stderr, "Finalizer error:", ferr)
+			sessionErr = ferr
 			return 1
 		}
 		if err := tr.WriteFinal(answer, 1, false); err != nil {
 			fmt.Fprintln(os.Stderr, "Transcript write error:", err)
+			sessionErr = err
 			return 1
 		}
 		if err := writeFinalAnswer(sessionID, answer, cfg.finalFile, cfg.verbose, cfg.dryRun); err != nil {
 			fmt.Fprintln(os.Stderr, "Final file write error:", err)
+			sessionErr = err
 			return 1
 		}
 		presentFinalAnswer(display, answer)
 		display.EndSession()
 		sessionClosed = true
+		sessionStatus = "success"
 		return 0
 	}
 
 	// Subsequent turns loop
 	for step := 2; step <= cfg.maxSteps; step++ {
+		var turn *turnTelemetry
+		if sessTelemetry != nil {
+			turn = sessTelemetry.StartTurn(step, cfg.maxSteps)
+		}
+		turnInfo := map[string]any{}
+		turnDecision := "pending"
+		turnEnded := false
+		finishTurn := func(decision, status string, info map[string]any, err error) {
+			if turnEnded {
+				return
+			}
+			if info == nil {
+				info = map[string]any{}
+			}
+			if sessTelemetry != nil {
+				sessTelemetry.EndTurn(turn, decision, status, info, err)
+			}
+			turnEnded = true
+		}
+		parentSpanID := ""
+		if turn != nil {
+			parentSpanID = turn.span.ID
+		} else if sessTelemetry != nil {
+			parentSpanID = sessTelemetry.span.ID
+		}
+
 		// Decide next action using transcript only
 		ctx, cancel := makeTurnContext(cfg.timeoutPerTurn)
 		trFull := tr.Content()
+		ctx = attachTrajectory(ctx, trajectoryWriter, parentSpanID)
 		decision, question, perr := pl.Plan(ctx, goal, trFull, step, cfg.maxSteps)
 		cancel()
 		if perr != nil {
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 				fmt.Fprintf(os.Stderr, "Planner error: timed out after %ds. Increase --timeout-per-turn or set 0 for unlimited.\n", cfg.timeoutPerTurn)
+				finishTurn("planner", "error", turnInfo, perr)
 				return 1
 			}
 			// Graceful fallback: if the planner hit a transient network error, finalize instead of aborting.
@@ -354,6 +467,8 @@ func run() int {
 			// Continue on parsing errors to give the model a chance to recover
 			if strings.Contains(perrStr, "unable to parse decision from model output") {
 				fmt.Fprintln(os.Stderr, "Planner error:", perr)
+				turnDecision = "planner"
+				finishTurn(turnDecision, "error", turnInfo, perr)
 				continue
 			}
 			if strings.Contains(perrStr, "deadline exceeded") || strings.Contains(perrStr, "timeout") || strings.Contains(perrStr, "temporary") {
@@ -361,69 +476,112 @@ func run() int {
 				fmt.Fprintln(os.Stderr, "Falling back to finalizing with current transcript.")
 				ctxF, cancelF := makeTurnContext(cfg.timeoutPerTurn)
 				trFull := tr.Content()
+				ctxF = attachTrajectory(ctxF, trajectoryWriter, parentSpanID)
 				answer, ferr := pl.Finalize(ctxF, goal, trFull)
 				cancelF()
 				if ferr != nil {
 					if errors.Is(ctxF.Err(), context.DeadlineExceeded) {
 						fmt.Fprintf(os.Stderr, "Finalizer error: timed out after %ds. Increase --timeout-per-turn or set 0 for unlimited.\n", cfg.timeoutPerTurn)
-						return 1
+					} else {
+						fmt.Fprintln(os.Stderr, "Finalizer error:", ferr)
 					}
-					fmt.Fprintln(os.Stderr, "Finalizer error:", ferr)
+					sessionErr = ferr
+					finishTurn("finalize", "error", turnInfo, ferr)
+					turnsCompleted = step
 					return 1
 				}
 				if err := tr.WriteFinal(answer, step, true); err != nil {
 					fmt.Fprintln(os.Stderr, "Transcript write error:", err)
+					sessionErr = err
+					finishTurn("finalize", "error", turnInfo, err)
+					turnsCompleted = step
 					return 1
 				}
 				if err := writeFinalAnswer(sessionID, answer, cfg.finalFile, cfg.verbose, cfg.dryRun); err != nil {
 					fmt.Fprintln(os.Stderr, "Final file write error:", err)
+					sessionErr = err
+					finishTurn("finalize", "error", turnInfo, err)
+					turnsCompleted = step
 					return 1
 				}
 				presentFinalAnswer(display, answer)
 				display.EndSession()
 				sessionClosed = true
+				turnDecision = "finalize"
+				turnInfo["finalized"] = true
+				finishTurn(turnDecision, "success", turnInfo, nil)
+				turnsCompleted = step
+				sessionStatus = "success"
 				return 0
 			}
 			fmt.Fprintln(os.Stderr, "Planner error:", perr)
+			sessionErr = perr
+			finishTurn("planner", "error", turnInfo, perr)
+			turnsCompleted = step
 			return 1
 		}
 
 		if cfg.verbose {
 			fmt.Fprintf(os.Stderr, "Step %d decision: %s\n", step, decision)
 		}
+		turnDecision = string(decision)
+		turnInfo["planner_decision"] = string(decision)
+		if question != "" && trajectoryWriter != nil {
+			excerpt := trajectory.MakeTextExcerpt(question, trajectoryWriter.ExcerptLen())
+			turnInfo = trajectory.MergeExcerptWithPrefix(turnInfo, excerpt, "planner_question")
+		}
 
 		if decision == planner.DecisionFinalize || step == cfg.maxSteps {
 			// Compose final answer using transcript only
 			ctx, cancelF := makeTurnContext(cfg.timeoutPerTurn)
 			trFull := tr.Content()
+			ctx = attachTrajectory(ctx, trajectoryWriter, parentSpanID)
 			answer, ferr := pl.Finalize(ctx, goal, trFull)
 			cancelF()
 			if ferr != nil {
 				if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 					fmt.Fprintf(os.Stderr, "Finalizer error: timed out after %ds. Increase --timeout-per-turn or set 0 for unlimited.\n", cfg.timeoutPerTurn)
-					return 1
+				} else {
+					fmt.Fprintln(os.Stderr, "Finalizer error:", ferr)
 				}
-				fmt.Fprintln(os.Stderr, "Finalizer error:", ferr)
+				sessionErr = ferr
+				finishTurn("finalize", "error", turnInfo, ferr)
+				turnsCompleted = step
 				return 1
 			}
 			if err := tr.WriteFinal(answer, step, step == cfg.maxSteps && decision != planner.DecisionFinalize); err != nil {
 				fmt.Fprintln(os.Stderr, "Transcript write error:", err)
+				sessionErr = err
+				finishTurn("finalize", "error", turnInfo, err)
+				turnsCompleted = step
 				return 1
 			}
 			if err := writeFinalAnswer(sessionID, answer, cfg.finalFile, cfg.verbose, cfg.dryRun); err != nil {
 				fmt.Fprintln(os.Stderr, "Final file write error:", err)
+				sessionErr = err
+				finishTurn("finalize", "error", turnInfo, err)
+				turnsCompleted = step
 				return 1
 			}
 			presentFinalAnswer(display, answer)
 			display.EndSession()
 			sessionClosed = true
+			turnDecision = "finalize"
+			turnInfo["finalized"] = true
+			finishTurn(turnDecision, "success", turnInfo, nil)
+			turnsCompleted = step
+			sessionStatus = "success"
 			return 0
 		}
 
 		switch decision {
 		case planner.DecisionAsk:
 			if question == "" {
+				errEmpty := errors.New("planner returned empty question")
 				fmt.Fprintln(os.Stderr, "Planner returned empty question for 'ask' decision")
+				sessionErr = errEmpty
+				finishTurn(turnDecision, "error", turnInfo, errEmpty)
+				turnsCompleted = step
 				return 1
 			}
 			if cfg.verbose {
@@ -439,6 +597,7 @@ func run() int {
 				MaxInputTokens: cfg.maxInputTokens,
 			}
 			ctx2, cancel2 := makeTurnContext(cfg.timeoutPerTurn)
+			ctx2 = attachTrajectory(ctx2, trajectoryWriter, parentSpanID)
 			result, merr := mctRunner.RunPrompt(ctx2, sessionID, input)
 			cancel2()
 			if merr != nil {
@@ -450,6 +609,9 @@ func run() int {
 					fmt.Fprintln(os.Stderr, "mct prompt error:", merr)
 				}
 				stream.Abort(msg)
+				sessionErr = merr
+				finishTurn(turnDecision, "error", turnInfo, merr)
+				turnsCompleted = step
 				return 1
 			}
 			savedPath := strings.TrimSpace(result.SavedPath)
@@ -479,11 +641,31 @@ func run() int {
 			stream.Complete(fullAns)
 			if err := tr.WriteTurn(step, question, savedPath, retrieved, fullAns, "ask"); err != nil {
 				fmt.Fprintln(os.Stderr, "Transcript write error:", err)
+				sessionErr = err
+				finishTurn(turnDecision, "error", turnInfo, err)
 				return 1
 			}
+			askInfo := map[string]any{
+				"retrieved_count": len(retrieved),
+			}
+			if savedPath != "" {
+				askInfo["saved_chat_path"] = savedPath
+			}
+			if trajectoryWriter != nil && strings.TrimSpace(fullAns) != "" {
+				excerpt := trajectory.MakeTextExcerpt(fullAns, trajectoryWriter.ExcerptLen())
+				askInfo = trajectory.MergeExcerptWithPrefix(askInfo, excerpt, "answer")
+			}
+			for k, v := range askInfo {
+				turnInfo[k] = v
+			}
 			if step == cfg.maxSteps {
+				finishTurn(turnDecision, "success", turnInfo, nil)
+				turnsCompleted = step
 				goto FINALIZE
 			}
+			turnsCompleted = step
+			finishTurn(turnDecision, "success", turnInfo, nil)
+			continue
 
 		case planner.DecisionPatch:
 			payload := question
@@ -491,14 +673,43 @@ func run() int {
 			if cfg.verbose {
 				fmt.Fprintln(os.Stderr, "[patcher] planner payload (raw):", trimTo(strings.TrimSpace(payload), 1200))
 			}
+			patchTurnLabel := "Patcher: create patch"
+			patchOutcome := func(status string, err error, extra map[string]any) {
+				if extra == nil {
+					extra = map[string]any{}
+				}
+				if patchTurnLabel != "" {
+					extra["patch_turn_label"] = patchTurnLabel
+				}
+				for k, v := range extra {
+					turnInfo[k] = v
+				}
+				turnsCompleted = step
+				finishTurn(turnDecision, status, turnInfo, err)
+			}
+			recordPatchError := func(kind string, err error, extra map[string]any) {
+				if extra == nil {
+					extra = map[string]any{}
+				}
+				extra["patch_error_kind"] = kind
+				if err != nil {
+					extra["patch_error"] = err.Error()
+				}
+				patchOutcome("error", err, extra)
+			}
 			jsonBytes, jerr := parser.ExtractPatchJSONPayload(payload)
 			if jerr != nil {
 				stream.Abort("invalid patch payload")
 				_ = tr.WriteTurn(step, "Patcher: invalid input JSON", "", nil, "Error extracting JSON: "+jerr.Error(), "patch-error")
+				recordPatchError("invalid_patch_payload", jerr, nil)
 				continue
 			}
 			if cfg.verbose {
 				fmt.Fprintln(os.Stderr, "[patcher] extracted JSON:", trimTo(string(jsonBytes), 1200))
+			}
+			if trajectoryWriter != nil {
+				excerpt := trajectory.MakeTextExcerpt(string(jsonBytes), trajectoryWriter.ExcerptLen())
+				turnInfo = trajectory.MergeExcerptWithPrefix(turnInfo, excerpt, "patch_instructions")
 			}
 			var instr mctpatcher.Instructions
 			dec := json.NewDecoder(bytes.NewReader(jsonBytes))
@@ -506,25 +717,29 @@ func run() int {
 			if derr := dec.Decode(&instr); derr != nil {
 				stream.Abort("invalid patch payload")
 				_ = tr.WriteTurn(step, "Patcher: invalid instructions", "", nil, "Error decoding JSON: "+derr.Error(), "patch-error")
+				recordPatchError("invalid_patch_instructions", derr, nil)
 				continue
 			}
-			patchTurnLabel := "Patcher: create patch"
 			if instr.Metadata != nil {
 				if desc := strings.TrimSpace(instr.Metadata.Description); desc != "" {
 					patchTurnLabel = "Patcher: " + desc
 				}
 			}
 			if pRunner == nil {
+				errDisabled := errors.New("patch runner disabled")
 				stream.Abort("patch runner unavailable")
 				_ = tr.WriteTurn(step, patchTurnLabel, "", nil, "Error: patch runner disabled", "patch-error")
+				recordPatchError("patch_runner_unavailable", errDisabled, nil)
 				continue
 			}
 			if err := pRunner.Resolve(); err != nil {
 				stream.Abort("patcher resolve failed")
 				_ = tr.WriteTurn(step, patchTurnLabel, "", nil, "Error: "+err.Error(), "patch-error")
+				recordPatchError("patch_runner_resolve", err, nil)
 				continue
 			}
 			ctxP, cancelP := makeTurnContext(cfg.timeoutPerTurn)
+			ctxP = attachTrajectory(ctxP, trajectoryWriter, parentSpanID)
 			result, applyErr := pRunner.Apply(ctxP, instr, cfg.verbose)
 			cancelP()
 			if applyErr != nil {
@@ -537,6 +752,8 @@ func run() int {
 					summary := "Patch validation failed. See diagnostics below."
 					if err := tr.WriteTurn(step, patchTurnLabel, "", nil, summary, "patch-error"); err != nil {
 						fmt.Fprintln(os.Stderr, "Transcript write error:", err)
+						sessionErr = err
+						recordPatchError("transcript_write_error", err, map[string]any{"patch_error_context": "validation_summary"})
 						return 1
 					}
 					rec := transcript.PatchValidationRecord{
@@ -548,6 +765,12 @@ func run() int {
 						Messages:   convertPatchMessages(cleanErr.Diagnostics.Messages),
 					}
 					_ = tr.WritePatchValidation(step, rec)
+					extra := map[string]any{
+						"patch_validation_operation": cleanErr.Diagnostics.Operation,
+						"patch_validation_status":    "failed",
+						"patch_validation_messages":  len(cleanErr.Diagnostics.Messages),
+					}
+					recordPatchError("patch_validation_failed", applyErr, extra)
 					if step == cfg.maxSteps {
 						goto FINALIZE
 					}
@@ -555,20 +778,25 @@ func run() int {
 				case errors.As(applyErr, &valErr):
 					stream.Abort("patch validation error")
 					_ = tr.WriteTurn(step, patchTurnLabel, "", nil, valErr.Error(), "patch-error")
+					recordPatchError("patch_validation_error", valErr, nil)
 					continue
 				case errors.As(applyErr, &genErr):
 					stream.Abort("patch generation error")
 					_ = tr.WriteTurn(step, patchTurnLabel, "", nil, genErr.Error(), "patch-error")
+					recordPatchError("patch_generation_error", genErr, nil)
 					continue
 				default:
 					stream.Abort("patcher execution error")
 					_ = tr.WriteTurn(step, patchTurnLabel, "", nil, applyErr.Error(), "patch-error")
+					recordPatchError("patch_apply_error", applyErr, nil)
 					continue
 				}
 			}
 			if result == nil {
+				errEmpty := errors.New("patcher returned empty result")
 				stream.Abort("patcher returned no result")
-				_ = tr.WriteTurn(step, patchTurnLabel, "", nil, "patcher returned empty result", "patch-error")
+				_ = tr.WriteTurn(step, patchTurnLabel, "", nil, errEmpty.Error(), "patch-error")
+				recordPatchError("patch_empty_result", errEmpty, nil)
 				continue
 			}
 			if desc := strings.TrimSpace(result.Description); desc != "" {
@@ -601,6 +829,8 @@ func run() int {
 					stream.Abort("git apply failed")
 					if err := tr.WriteTurn(step, patchTurnLabel, "", nil, "git apply failed. See diagnostics below.", "patch-error"); err != nil {
 						fmt.Fprintln(os.Stderr, "Transcript write error:", err)
+						sessionErr = err
+						recordPatchError("transcript_write_error", err, map[string]any{"patch_error_context": "git_apply_failure"})
 						return 1
 					}
 					applyStderr := extractApplyStderr(aerr.Error())
@@ -616,6 +846,11 @@ func run() int {
 						Messages:     convertPatchMessages(mctpatcher.ParseGitApplyMessages(applyStderr)),
 					}
 					_ = tr.WritePatchValidation(step, rec)
+					extra := map[string]any{
+						"patch_apply_operation":  "git apply",
+						"patch_apply_stderr_len": len(applyStderr),
+					}
+					recordPatchError("git_apply_failed", aerr, extra)
 					if step == cfg.maxSteps {
 						goto FINALIZE
 					}
@@ -633,11 +868,39 @@ func run() int {
 			stream.Complete(ans)
 			if err := tr.WriteTurn(step, patchTurnLabel, "", nil, ans, "patch"); err != nil {
 				fmt.Fprintln(os.Stderr, "Transcript write error:", err)
+				sessionErr = err
+				recordPatchError("transcript_write_error", err, map[string]any{"patch_error_context": "patch_success"})
 				return 1
 			}
 			if step == cfg.maxSteps {
+				extra := map[string]any{}
+				if trajectoryWriter != nil && strings.TrimSpace(ans) != "" {
+					extra = trajectory.MergeExcerptWithPrefix(extra, trajectory.MakeTextExcerpt(ans, trajectoryWriter.ExcerptLen()), "answer")
+				}
+				extra["patch_path"] = strings.TrimSpace(result.PatchPath)
+				extra["patch_insertions"] = result.Insertions
+				extra["patch_deletions"] = result.Deletions
+				extra["patch_files_modified"] = len(result.FilesModified)
+				if len(result.FilesModified) > 0 && len(result.FilesModified) <= 10 {
+					extra["patch_files"] = append([]string(nil), result.FilesModified...)
+				}
+				extra["patch_applied"] = !cfg.patchNoApply && !cfg.dryRun
+				patchOutcome("success", nil, extra)
 				goto FINALIZE
 			}
+			extra := map[string]any{}
+			if trajectoryWriter != nil && strings.TrimSpace(ans) != "" {
+				extra = trajectory.MergeExcerptWithPrefix(extra, trajectory.MakeTextExcerpt(ans, trajectoryWriter.ExcerptLen()), "answer")
+			}
+			extra["patch_path"] = strings.TrimSpace(result.PatchPath)
+			extra["patch_insertions"] = result.Insertions
+			extra["patch_deletions"] = result.Deletions
+			extra["patch_files_modified"] = len(result.FilesModified)
+			if len(result.FilesModified) > 0 && len(result.FilesModified) <= 10 {
+				extra["patch_files"] = append([]string(nil), result.FilesModified...)
+			}
+			extra["patch_applied"] = !cfg.patchNoApply && !cfg.dryRun
+			patchOutcome("success", nil, extra)
 
 		case planner.DecisionFinalize:
 			// Break to finalize path immediately.
@@ -652,8 +915,13 @@ FINALIZE:
 	// One last planning opportunity before finalizing: if planner returns patch, run exactly one patch turn.
 	{
 		step := countTurns(tr.Content()) + 1
+		parentSpanID := ""
+		if sessTelemetry != nil {
+			parentSpanID = sessTelemetry.span.ID
+		}
 		ctx, cancel := makeTurnContext(cfg.timeoutPerTurn)
 		trFull := tr.Content()
+		ctx = attachTrajectory(ctx, trajectoryWriter, parentSpanID)
 		lastDec, lastBody, err := pl.Plan(ctx, goal, trFull, step, cfg.maxSteps)
 		cancel()
 		if err == nil && lastDec == planner.DecisionPatch {
@@ -693,6 +961,7 @@ FINALIZE:
 						handled = true
 					} else {
 						ctxP, cancelP := makeTurnContext(cfg.timeoutPerTurn)
+						ctxP = attachTrajectory(ctxP, trajectoryWriter, parentSpanID)
 						result, applyErr := pRunner.Apply(ctxP, instr, cfg.verbose)
 						cancelP()
 						if applyErr != nil {
@@ -792,23 +1061,32 @@ FINALIZE:
 			turns := countTurns(tr.Content())
 			ctx, cancelF := makeTurnContext(cfg.timeoutPerTurn)
 			trFull := tr.Content()
+			ctx = attachTrajectory(ctx, trajectoryWriter, parentSpanID)
 			answer, ferr := pl.Finalize(ctx, goal, trFull)
 			cancelF()
 			if ferr != nil {
 				fmt.Fprintln(os.Stderr, "Finalizer error:", ferr)
+				sessionErr = ferr
+				turnsCompleted = turns
 				return 1
 			}
 			if err := tr.WriteFinal(answer, turns, turns >= cfg.maxSteps); err != nil {
 				fmt.Fprintln(os.Stderr, "Transcript write error:", err)
+				sessionErr = err
+				turnsCompleted = turns
 				return 1
 			}
 			if err := writeFinalAnswer(sessionID, answer, cfg.finalFile, cfg.verbose, cfg.dryRun); err != nil {
 				fmt.Fprintln(os.Stderr, "Final file write error:", err)
+				sessionErr = err
+				turnsCompleted = turns
 				return 1
 			}
 			presentFinalAnswer(display, answer)
 			display.EndSession()
 			sessionClosed = true
+			sessionStatus = "success"
+			turnsCompleted = turns
 		}
 		return 0
 	}
@@ -869,6 +1147,241 @@ func readPatchPreview(path string, max int) string {
 		return ""
 	}
 	return trimTo(string(data), max)
+}
+
+type sessionTelemetry struct {
+	writer    *trajectory.Writer
+	sessionID string
+	span      trajectory.Span
+	started   time.Time
+	repoRoot  string
+	goal      string
+	cfg       config
+}
+
+type turnTelemetry struct {
+	span     trajectory.Span
+	step     int
+	maxSteps int
+	started  time.Time
+}
+
+func newSessionTelemetry(writer *trajectory.Writer, sessionID, goal string, cfg config, repoRoot string) *sessionTelemetry {
+	if writer == nil {
+		return nil
+	}
+	st := &sessionTelemetry{
+		writer:    writer,
+		sessionID: sessionID,
+		span:      writer.StartSpan(""),
+		started:   time.Now(),
+		repoRoot:  repoRoot,
+		goal:      goal,
+		cfg:       cfg,
+	}
+	payload := map[string]any{
+		"event_version": 1,
+		"config_summary": map[string]any{
+			"max_steps":        cfg.maxSteps,
+			"timeout_per_turn": cfg.timeoutPerTurn,
+			"dry_run":          cfg.dryRun,
+			"patch_enabled":    cfg.patch,
+			"patch_no_apply":   cfg.patchNoApply,
+		},
+		"versions": map[string]any{
+			"agent":    Version,
+			"commit":   Commit,
+			"built_at": BuiltAt,
+			"dirty":    Dirty,
+		},
+	}
+	if repoRoot != "" && !cfg.trajectoryOmitRepoRoot {
+		payload["repo_root"] = repoRoot
+	}
+	payload = trajectory.MergeExcerptWithPrefix(payload, trajectory.MakeTextExcerpt(goal, writer.ExcerptLen()), "goal")
+	evt := trajectory.Event{Kind: "agent.session.start", SpanID: st.span.ID, Payload: payload}
+	if err := writer.Emit(context.Background(), evt); err != nil {
+		fmt.Fprintf(os.Stderr, "[trajectory] session start emit error: %v\n", err)
+	}
+	return st
+}
+
+func (st *sessionTelemetry) StartTurn(step, maxSteps int) *turnTelemetry {
+	if st == nil || st.writer == nil {
+		return nil
+	}
+	tt := &turnTelemetry{
+		span:     st.writer.StartSpan(st.span.ID),
+		step:     step,
+		maxSteps: maxSteps,
+		started:  time.Now(),
+	}
+	payload := map[string]any{
+		"event_version": 1,
+		"step":          step,
+		"max_steps":     maxSteps,
+	}
+	if step == 1 {
+		payload = trajectory.MergeExcerptWithPrefix(payload, trajectory.MakeTextExcerpt(st.goal, st.writer.ExcerptLen()), "goal")
+	}
+	evt := trajectory.Event{Kind: "agent.turn.start", SpanID: tt.span.ID, ParentSpanID: st.span.ID, Payload: payload}
+	if err := st.writer.Emit(context.Background(), evt); err != nil {
+		fmt.Fprintf(os.Stderr, "[trajectory] turn start emit error: %v\n", err)
+	}
+	return tt
+}
+
+func (st *sessionTelemetry) EndTurn(tt *turnTelemetry, decision string, status string, info map[string]any, err error) {
+	if st == nil || st.writer == nil || tt == nil {
+		return
+	}
+	payload := map[string]any{
+		"event_version": 1,
+		"step":          tt.step,
+		"max_steps":     tt.maxSteps,
+		"decision":      decision,
+		"status":        status,
+		"duration_ms":   time.Since(tt.started).Milliseconds(),
+	}
+	for k, v := range info {
+		payload[k] = v
+	}
+	event := trajectory.Event{
+		Kind:         "agent.turn.end",
+		SpanID:       tt.span.ID,
+		ParentSpanID: st.span.ID,
+		Payload:      payload,
+	}
+	if err != nil {
+		event.Level = "error"
+		event.Err = &trajectory.ErrorInfo{Message: err.Error(), Category: "unknown"}
+	}
+	if emitErr := st.writer.Emit(context.Background(), event); emitErr != nil {
+		fmt.Fprintf(os.Stderr, "[trajectory] turn end emit error: %v\n", emitErr)
+	}
+}
+
+func (st *sessionTelemetry) Finish(status string, turns int, err error) {
+	if st == nil || st.writer == nil {
+		return
+	}
+	payload := map[string]any{
+		"event_version": 1,
+		"status":        status,
+		"turns":         turns,
+		"duration_ms":   time.Since(st.started).Milliseconds(),
+	}
+	event := trajectory.Event{
+		Kind:    "agent.session.end",
+		SpanID:  st.span.ID,
+		Payload: payload,
+	}
+	if err != nil {
+		event.Level = "error"
+		event.Err = &trajectory.ErrorInfo{Message: err.Error(), Category: "unknown"}
+	}
+	if emitErr := st.writer.Emit(context.Background(), event); emitErr != nil {
+		fmt.Fprintf(os.Stderr, "[trajectory] session end emit error: %v\n", emitErr)
+	}
+	_ = st.writer.Close()
+}
+
+func applyTrajectoryEnvOverrides(cfg *config) {
+	if cfg == nil {
+		return
+	}
+	if v := strings.TrimSpace(os.Getenv("MACHTIANI_TRAJECTORY_FILE")); v != "" {
+		cfg.trajectoryFile = v
+	}
+	if b, ok := envBool("MACHTIANI_NO_TRAJECTORY"); ok && b {
+		cfg.noTrajectory = true
+	}
+	if b, ok := envBool("MACHTIANI_TRAJECTORY_VERBOSE_LLM"); ok && b {
+		cfg.trajectoryVerboseLLM = true
+	}
+	if b, ok := envBool("MACHTIANI_TRAJECTORY_STREAM_TOKENS"); ok && b {
+		cfg.trajectoryStreamTokens = true
+	}
+	if n, ok := envInt("MACHTIANI_TRAJECTORY_EXCERPT"); ok {
+		cfg.trajectoryExcerpt = n
+	}
+	if b, ok := envBool("MACHTIANI_TRAJECTORY_OMIT_REPO_ROOT"); ok && b {
+		cfg.trajectoryOmitRepoRoot = true
+	}
+}
+
+func envBool(name string) (bool, bool) {
+	val, ok := os.LookupEnv(name)
+	if !ok {
+		return false, false
+	}
+	switch strings.ToLower(strings.TrimSpace(val)) {
+	case "1", "true", "yes", "on":
+		return true, true
+	case "0", "false", "no", "off":
+		return false, true
+	default:
+		return false, true
+	}
+}
+
+func envInt(name string) (int, bool) {
+	val, ok := os.LookupEnv(name)
+	if !ok {
+		return 0, false
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(val))
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
+func newTrajectoryWriter(cfg config, sessionID string) (*trajectory.Writer, string, error) {
+	if cfg.noTrajectory {
+		return nil, "", nil
+	}
+	path := strings.TrimSpace(cfg.trajectoryFile)
+	if path == "" {
+		p, err := artifacts.SessionTrajectoryFile(sessionID, "agent")
+		if err != nil {
+			return nil, "", err
+		}
+		path = p
+	}
+	w, err := trajectory.New(trajectory.Config{
+		SessionID:    sessionID,
+		Path:         path,
+		Component:    "agent",
+		ExcerptLen:   cfg.trajectoryExcerpt,
+		StreamTokens: cfg.trajectoryStreamTokens,
+		VerboseLLM:   cfg.trajectoryVerboseLLM,
+		OmitRepoRoot: cfg.trajectoryOmitRepoRoot,
+	})
+	if err != nil {
+		return nil, "", fmt.Errorf("create trajectory writer at %s: %w", path, err)
+	}
+	repoRoot := ""
+	if !cfg.trajectoryOmitRepoRoot {
+		if isLocal, _ := artifacts.IsLocalContext(); isLocal {
+			sessionDir, err := artifacts.SessionDirectory(sessionID)
+			if err == nil {
+				repoRoot = filepath.Dir(filepath.Dir(filepath.Dir(sessionDir)))
+			}
+		}
+	}
+	return w, repoRoot, nil
+}
+
+func attachTrajectory(ctx context.Context, w *trajectory.Writer, parent string) context.Context {
+	if w == nil {
+		return ctx
+	}
+	ctx = trajectory.ContextWithWriter(ctx, w)
+	if parent != "" {
+		ctx = trajectory.ContextWithParentSpan(ctx, parent)
+	}
+	return ctx
 }
 
 // makeTurnContext returns a context for a single turn.
@@ -1006,6 +1519,14 @@ func cloneModelRuntime(m modelRuntime) modelRuntime {
 	}
 }
 
+func ensureFallbackToPrimary(target *modelRuntime, primary modelRuntime) {
+	if target == nil {
+		return
+	}
+	target.fallbackAliases = prependAliasIfMissing(target.fallbackAliases, primary.alias)
+	target.fallbackResolved = prependResolvedModel(target.fallbackResolved, primary.resolved)
+}
+
 func copyExtras(src map[string]any) map[string]any {
 	if src == nil {
 		return nil
@@ -1026,6 +1547,37 @@ func cloneResolvedModels(in []llm.ResolvedModel) []llm.ResolvedModel {
 		out = append(out, llm.CloneResolvedModel(m))
 	}
 	return out
+}
+
+func prependAliasIfMissing(list []string, alias string) []string {
+	alias = strings.TrimSpace(alias)
+	if alias == "" {
+		return list
+	}
+	for _, existing := range list {
+		if strings.EqualFold(strings.TrimSpace(existing), alias) {
+			return list
+		}
+	}
+	return append([]string{alias}, list...)
+}
+
+func prependResolvedModel(list []llm.ResolvedModel, model llm.ResolvedModel) []llm.ResolvedModel {
+	if strings.TrimSpace(model.Model) == "" {
+		return list
+	}
+	for _, existing := range list {
+		if resolvedModelsEqual(existing, model) {
+			return list
+		}
+	}
+	return append([]llm.ResolvedModel{llm.CloneResolvedModel(model)}, list...)
+}
+
+func resolvedModelsEqual(a, b llm.ResolvedModel) bool {
+	return strings.EqualFold(strings.TrimSpace(a.BaseURL), strings.TrimSpace(b.BaseURL)) &&
+		strings.EqualFold(strings.TrimSpace(a.Endpoint), strings.TrimSpace(b.Endpoint)) &&
+		strings.EqualFold(strings.TrimSpace(a.Model), strings.TrimSpace(b.Model))
 }
 
 func describeModel(system string, runtime modelRuntime) string {
@@ -1149,6 +1701,8 @@ func resolveModelRuntimes(cfg config, paramPairs, paramJSON []string) (component
 		fileDiscovery.alias = fdAlias
 		fileDiscovery.usingAlias = true
 	}
+	ensureFallbackToPrimary(&patcher, primary)
+	ensureFallbackToPrimary(&fileDiscovery, primary)
 
 	return componentModelRuntimes{
 		orchestrator:  primary,

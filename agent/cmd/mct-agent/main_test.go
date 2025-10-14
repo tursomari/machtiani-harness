@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
+	"github.com/tursomari/machtiani/agent/internal/mct/llm"
 )
 
 func TestResolveFileDiscoveryTrajectoryConflictingFlags(t *testing.T) {
@@ -64,5 +65,73 @@ func TestResolveFileDiscoveryTrajectoryCustomDir(t *testing.T) {
 	expected := filepath.Join(absDir, "file-discovery.jsonl")
 	if got != expected {
 		t.Fatalf("expected %q, got %q", expected, got)
+	}
+}
+
+func TestEnsureFallbackToPrimaryAddsAliasAndResolved(t *testing.T) {
+	primary := modelRuntime{
+		alias: "good",
+		resolved: llm.ResolvedModel{
+			Model:    "good-model",
+			BaseURL:  "https://example.com",
+			Endpoint: "/chat/completions",
+		},
+	}
+	target := modelRuntime{
+		alias: "bad",
+		resolved: llm.ResolvedModel{
+			Model:    "bad-model",
+			BaseURL:  "https://bad.example.com",
+			Endpoint: "/chat/completions",
+		},
+	}
+
+	ensureFallbackToPrimary(&target, primary)
+
+	if got, want := len(target.fallbackAliases), 1; got != want {
+		t.Fatalf("unexpected fallback alias count: got %d want %d", got, want)
+	}
+	if target.fallbackAliases[0] != "good" {
+		t.Fatalf("unexpected fallback alias: got %q want %q", target.fallbackAliases[0], "good")
+	}
+	if got, want := len(target.fallbackResolved), 1; got != want {
+		t.Fatalf("unexpected fallback resolved count: got %d want %d", got, want)
+	}
+	if target.fallbackResolved[0].Model != "good-model" {
+		t.Fatalf("unexpected fallback resolved model: got %q want %q", target.fallbackResolved[0].Model, "good-model")
+	}
+}
+
+func TestEnsureFallbackToPrimaryNoDuplicates(t *testing.T) {
+	primary := modelRuntime{
+		alias: "good",
+		resolved: llm.ResolvedModel{
+			Model:    "good-model",
+			BaseURL:  "https://example.com",
+			Endpoint: "/chat/completions",
+		},
+	}
+	target := modelRuntime{
+		alias: "good",
+		resolved: llm.ResolvedModel{
+			Model:    "good-model",
+			BaseURL:  "https://example.com",
+			Endpoint: "/chat/completions",
+		},
+		fallbackAliases: []string{"good"},
+		fallbackResolved: []llm.ResolvedModel{{
+			Model:    "good-model",
+			BaseURL:  "https://example.com",
+			Endpoint: "/chat/completions",
+		}},
+	}
+
+	ensureFallbackToPrimary(&target, primary)
+
+	if got, want := len(target.fallbackAliases), 1; got != want {
+		t.Fatalf("unexpected fallback alias count: got %d want %d", got, want)
+	}
+	if got, want := len(target.fallbackResolved), 1; got != want {
+		t.Fatalf("unexpected fallback resolved count: got %d want %d", got, want)
 	}
 }

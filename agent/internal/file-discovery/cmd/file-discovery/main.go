@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -134,15 +135,22 @@ func main() {
 		cfg.Model = runtime.resolved.Model
 	}
 
-	llmSettings := discovery.LLMSettings{Model: runtime.resolved, Extras: runtime.extras}
-	os.Exit(discovery.Run(cfg, llmSettings))
+	llmSettings := discovery.LLMSettings{
+		Model:            runtime.resolved,
+		Extras:           runtime.extras,
+		FallbackAliases:  runtime.fallbackAliases,
+		FallbackResolved: runtime.fallbackResolved,
+	}
+	os.Exit(discovery.Run(context.Background(), cfg, llmSettings))
 }
 
 type modelRuntime struct {
-	resolved   llm.ResolvedModel
-	alias      string
-	usingAlias bool
-	extras     map[string]any
+	resolved         llm.ResolvedModel
+	alias            string
+	usingAlias       bool
+	extras           map[string]any
+	fallbackAliases  []string
+	fallbackResolved []llm.ResolvedModel
 }
 
 func resolveModelRuntime(cfg *cfgpkg.Config, aliasFlag, directModelFlag string, paramPairs, paramJSON []string) (modelRuntime, error) {

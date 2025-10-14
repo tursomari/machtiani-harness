@@ -8,14 +8,17 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/charmbracelet/glamour"
+	"github.com/tursomari/machtiani/agent/internal/trajectory"
 )
 
 type Message struct {
@@ -32,6 +35,313 @@ const (
 	testStubEnv   = "MCT_LLM_TEST_STUB" // test-only knob to bypass network LLM calls
 	retryAfterCap = 15 * time.Second
 )
+
+func modelSummary(model ResolvedModel) map[string]any {
+	return map[string]any{
+		"alias":    strings.TrimSpace(model.Alias),
+		"provider": strings.TrimSpace(model.ProviderName),
+		"model":    strings.TrimSpace(model.Model),
+		"base_url": strings.TrimSpace(model.BaseURL),
+		"endpoint": strings.TrimSpace(model.Endpoint),
+	}
+}
+
+func classifyLLMError(err error) (string, string) {
+	if err == nil {
+		return "", ""
+	}
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout", "deadline_exceeded"
+	case errors.Is(err, context.Canceled):
+		return "canceled", "context_canceled"
+	}
+	var httpErr *HTTPResponseError
+	if errors.As(err, &httpErr) {
+		return "http", classifyHTTPStatus(httpErr.Status)
+	}
+	var netErr *UnreachableHostError
+	if errors.As(err, &netErr) {
+		if code := classifyNetworkError(netErr.Err); code != "" {
+			return "network", code
+		}
+		return "network", "network_unreachable"
+	}
+	if code := classifyNetworkError(err); code != "" {
+		return "network", code
+	}
+	return "unknown", ""
+}
+
+// ClassifyError returns the normalized error category and code for use by other components.
+func ClassifyError(err error) (string, string) {
+	return classifyLLMError(err)
+}
+
+func classifyHTTPStatus(status int) string {
+	switch status {
+	case http.StatusTooManyRequests:
+		return "rate_limited"
+	case http.StatusServiceUnavailable, http.StatusBadGateway, http.StatusGatewayTimeout:
+		return fmt.Sprintf("http_%d", status)
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return "http_auth"
+	case http.StatusRequestTimeout:
+		return "http_timeout"
+	}
+	if status == 0 {
+		return "http_unknown"
+	}
+	return fmt.Sprintf("http_%d", status)
+}
+
+func classifyNetworkError(err error) string {
+	if err == nil {
+		return ""
+	}
+	switch e := err.(type) {
+	case syscall.Errno:
+		switch e {
+		case syscall.ECONNREFUSED:
+			return "connection_refused"
+		case syscall.ENETUNREACH:
+			return "network_unreachable"
+		case syscall.ECONNRESET:
+			return "connection_reset"
+		case syscall.ETIMEDOUT:
+			return "network_timeout"
+		}
+	case *net.DNSError:
+		return "dns_error"
+	case *net.OpError:
+		if e.Timeout() {
+			return "network_timeout"
+		}
+		if e.Err != nil {
+			if code := classifyNetworkError(e.Err); code != "" {
+				return code
+			}
+		}
+		if strings.EqualFold(e.Op, "dial") {
+			return "dial_error"
+		}
+	case *url.Error:
+		if e.Timeout() {
+			return "network_timeout"
+		}
+		if code := classifyNetworkError(e.Err); code != "" {
+			return code
+		}
+	}
+	msg := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(msg, "no such host"):
+		return "dns_error"
+	case strings.Contains(msg, "network is unreachable"):
+		return "network_unreachable"
+	case strings.Contains(msg, "connection refused"):
+		return "connection_refused"
+	case strings.Contains(msg, "connection reset"):
+		return "connection_reset"
+	case strings.Contains(msg, "tls handshake timeout"):
+		return "tls_handshake_timeout"
+	case strings.Contains(msg, "i/o timeout"):
+		return "network_timeout"
+	case strings.Contains(msg, "dial tcp"):
+		return "dial_error"
+	}
+	return ""
+}
+
+func appendErrorDetails(payload map[string]any, err error) {
+	if err == nil {
+		return
+	}
+	var httpErr *HTTPResponseError
+	if errors.As(err, &httpErr) {
+		payload["status"] = httpErr.Status
+		if url := strings.TrimSpace(httpErr.URL); url != "" {
+			payload["url"] = url
+		}
+	}
+	var netErr *UnreachableHostError
+	if errors.As(err, &netErr) {
+		if url := strings.TrimSpace(netErr.URL); url != "" {
+			if _, exists := payload["url"]; !exists {
+				payload["url"] = url
+			}
+		}
+	}
+}
+
+func emitLLMEvent(ctx context.Context, level, kind string, payload map[string]any, err error) {
+	if ctx == nil {
+		return
+	}
+	w, ok := trajectory.FromContext(ctx)
+	if !ok || w == nil {
+		return
+	}
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	payload["event_version"] = 1
+	evt := trajectory.Event{
+		Level:     level,
+		Kind:      kind,
+		SpanID:    trajectory.NewSpanID(),
+		Payload:   payload,
+		Component: "llm",
+	}
+	if parent, ok := trajectory.ParentSpanID(ctx); ok && parent != "" {
+		evt.ParentSpanID = parent
+	}
+	if err != nil {
+		category, code := classifyLLMError(err)
+		evt.Err = &trajectory.ErrorInfo{Message: err.Error(), Category: category, Code: code}
+	}
+	if emitErr := w.Emit(ctx, evt); emitErr != nil {
+		reportLLMTrajectoryError(emitErr)
+	}
+}
+
+type llmAttemptMeta struct {
+	Alias       string
+	Mode        string
+	Attempt     int
+	MaxAttempts int
+	Source      string
+	Fallback    bool
+	Metadata    map[string]any
+}
+
+type llmAttempt struct {
+	writer   *trajectory.Writer
+	span     trajectory.Span
+	parent   string
+	ctx      context.Context
+	model    ResolvedModel
+	meta     llmAttemptMeta
+	started  time.Time
+	finished bool
+}
+
+func startLLMAttempt(ctx context.Context, model ResolvedModel, meta llmAttemptMeta) (*llmAttempt, context.Context) {
+	w, ok := trajectory.FromContext(ctx)
+	if !ok || w == nil {
+		return nil, ctx
+	}
+	parent, _ := trajectory.ParentSpanID(ctx)
+	span := w.StartSpan(parent)
+	payload := map[string]any{
+		"event_version": 1,
+		"model":         modelSummary(model),
+	}
+	mode := strings.TrimSpace(meta.Mode)
+	if mode == "" {
+		mode = "non-stream"
+	}
+	payload["mode"] = mode
+	if meta.Attempt > 0 {
+		payload["attempt"] = meta.Attempt
+	}
+	if meta.MaxAttempts > 0 {
+		payload["max_attempts"] = meta.MaxAttempts
+	}
+	if alias := strings.TrimSpace(meta.Alias); alias != "" {
+		payload["alias"] = alias
+	}
+	if source := strings.TrimSpace(meta.Source); source != "" {
+		payload["source"] = source
+	}
+	if meta.Fallback {
+		payload["fallback"] = true
+	}
+	var metadataCopy map[string]any
+	if len(meta.Metadata) > 0 {
+		metadataCopy = make(map[string]any, len(meta.Metadata))
+		for k, v := range meta.Metadata {
+			payload[k] = v
+			metadataCopy[k] = v
+		}
+	}
+	evt := trajectory.Event{Kind: "llm.request.start", SpanID: span.ID, ParentSpanID: parent, Payload: payload, Component: "llm"}
+	if err := w.Emit(ctx, evt); err != nil {
+		reportLLMTrajectoryError(err)
+	}
+	attemptCtx := trajectory.ContextWithParentSpan(ctx, span.ID)
+	return &llmAttempt{
+		writer:  w,
+		span:    span,
+		parent:  parent,
+		ctx:     attemptCtx,
+		model:   model,
+		meta:    llmAttemptMeta{Alias: meta.Alias, Mode: mode, Attempt: meta.Attempt, MaxAttempts: meta.MaxAttempts, Source: meta.Source, Fallback: meta.Fallback, Metadata: metadataCopy},
+		started: time.Now(),
+	}, attemptCtx
+}
+
+func (a *llmAttempt) finish(err error, extra map[string]any) {
+	if a == nil || a.writer == nil || a.finished {
+		return
+	}
+	a.finished = true
+	payload := map[string]any{
+		"event_version": 1,
+		"model":         modelSummary(a.model),
+		"mode":          a.meta.Mode,
+		"duration_ms":   time.Since(a.started).Milliseconds(),
+	}
+	if a.meta.Attempt > 0 {
+		payload["attempt"] = a.meta.Attempt
+	}
+	if a.meta.MaxAttempts > 0 {
+		payload["max_attempts"] = a.meta.MaxAttempts
+	}
+	if alias := strings.TrimSpace(a.meta.Alias); alias != "" {
+		payload["alias"] = alias
+	}
+	if source := strings.TrimSpace(a.meta.Source); source != "" {
+		payload["source"] = source
+	}
+	if a.meta.Fallback {
+		payload["fallback"] = true
+	}
+	for k, v := range a.meta.Metadata {
+		payload[k] = v
+	}
+	for k, v := range extra {
+		payload[k] = v
+	}
+	level := "info"
+	kind := "llm.request.end"
+	var errInfo *trajectory.ErrorInfo
+	if err != nil {
+		level = "error"
+		kind = "llm.request.error"
+		category, code := classifyLLMError(err)
+		errInfo = &trajectory.ErrorInfo{Message: err.Error(), Category: category, Code: code}
+	}
+	evt := trajectory.Event{
+		Level:        level,
+		Kind:         kind,
+		SpanID:       a.span.ID,
+		ParentSpanID: a.parent,
+		Payload:      payload,
+		Err:          errInfo,
+		Component:    "llm",
+	}
+	if emitErr := a.writer.Emit(a.ctx, evt); emitErr != nil {
+		reportLLMTrajectoryError(emitErr)
+	}
+}
+
+func reportLLMTrajectoryError(err error) {
+	if err == nil {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "[trajectory] llm emit error: %v\n", err)
+}
 
 type partialResponseError struct {
 	Prefix string
@@ -50,6 +360,92 @@ func (e *partialResponseError) Unwrap() error {
 		return nil
 	}
 	return e.Err
+}
+
+func emitStreamFallbackEvent(ctx context.Context, model ResolvedModel, err error, partial bool, prefixLen int) {
+	payload := map[string]any{
+		"model":              modelSummary(model),
+		"mode":               "stream",
+		"fallback_mode":      "non-stream",
+		"partial_output":     partial,
+		"partial_prefix_len": prefixLen,
+	}
+	appendErrorDetails(payload, err)
+	emitLLMEvent(ctx, "warn", "llm.stream.fallback", payload, err)
+}
+
+func emitRetryEvent(ctx context.Context, model ResolvedModel, attempt, maxAttempts int, wait time.Duration, err error, meta llmAttemptMeta) {
+	payload := map[string]any{
+		"model":        modelSummary(model),
+		"mode":         strings.TrimSpace(meta.Mode),
+		"attempt":      attempt,
+		"next_attempt": attempt + 1,
+		"max_attempts": maxAttempts,
+		"wait_ms":      wait.Milliseconds(),
+	}
+	if payload["mode"] == "" {
+		payload["mode"] = "non-stream"
+	}
+	if alias := strings.TrimSpace(meta.Alias); alias != "" {
+		payload["alias"] = alias
+	}
+	if source := strings.TrimSpace(meta.Source); source != "" {
+		payload["source"] = source
+	}
+	if meta.Fallback {
+		payload["fallback"] = true
+	}
+	for k, v := range meta.Metadata {
+		payload[k] = v
+	}
+	appendErrorDetails(payload, err)
+	emitLLMEvent(ctx, "warn", "llm.retry", payload, err)
+}
+
+func emitFailoverStartEvent(ctx context.Context, primary, fallback ResolvedModel, source, alias string, trigger error) {
+	payload := map[string]any{
+		"from":   modelSummary(primary),
+		"to":     modelSummary(fallback),
+		"source": source,
+	}
+	if alias = strings.TrimSpace(alias); alias != "" {
+		payload["alias"] = alias
+	}
+	appendErrorDetails(payload, trigger)
+	emitLLMEvent(ctx, "warn", "llm.failover.start", payload, trigger)
+}
+
+func emitFailoverResultEvent(ctx context.Context, primary, fallback ResolvedModel, source, alias string, resultErr error) {
+	payload := map[string]any{
+		"from":    modelSummary(primary),
+		"to":      modelSummary(fallback),
+		"source":  source,
+		"success": resultErr == nil,
+	}
+	if alias = strings.TrimSpace(alias); alias != "" {
+		payload["alias"] = alias
+	}
+	if resultErr != nil {
+		appendErrorDetails(payload, resultErr)
+		emitLLMEvent(ctx, "error", "llm.failover.result", payload, resultErr)
+		return
+	}
+	emitLLMEvent(ctx, "info", "llm.failover.result", payload, nil)
+}
+
+func emitFallbackResolutionErrorEvent(ctx context.Context, alias string, err error) {
+	payload := map[string]any{"alias": strings.TrimSpace(alias)}
+	appendErrorDetails(payload, err)
+	emitLLMEvent(ctx, "error", "llm.failover.resolve_error", payload, err)
+}
+
+func emitPrefixMismatchEvent(ctx context.Context, model ResolvedModel, expectedLen, fullLen int) {
+	payload := map[string]any{
+		"model":               modelSummary(model),
+		"expected_prefix_len": expectedLen,
+		"full_len":            fullLen,
+	}
+	emitLLMEvent(ctx, "warn", "llm.stream.prefix_mismatch", payload, nil)
 }
 
 func Chat(ctx context.Context, modelAlias string, extraParams map[string]any, messages []Message) (string, error) {
@@ -142,7 +538,12 @@ func chatWithResolvedFallback(ctx context.Context, primary ResolvedModel, fallba
 			attemptErr = partial.Err
 		}
 	} else {
-		result, attemptErr = executeOnceWithRetries(ctx, primary, nonStreamBody)
+		primaryMeta := llmAttemptMeta{
+			Alias:  strings.TrimSpace(primary.Alias),
+			Mode:   "non-stream",
+			Source: "primary",
+		}
+		result, attemptErr = executeOnceWithRetries(ctx, primary, nonStreamBody, primaryMeta)
 		if attemptErr == nil {
 			return result, nil
 		}
@@ -164,13 +565,19 @@ func chatWithResolvedFallback(ctx context.Context, primary ResolvedModel, fallba
 			return "", err
 		}
 		var fallbackModel ResolvedModel
+		source := "alias"
+		alias := strings.TrimSpace(target.alias)
 		if target.resolved != nil {
 			fallbackModel = CloneResolvedModel(*target.resolved)
+			source = "resolved"
+			if alias == "" {
+				alias = strings.TrimSpace(fallbackModel.Alias)
+			}
 		} else {
 			resolved, err := ResolveModel(target.alias)
 			if err != nil {
 				lastErr = fmt.Errorf("resolve fallback model %q: %w", target.alias, err)
-				logFallbackResolutionError(target.alias, err)
+				emitFallbackResolutionErrorEvent(ctx, target.alias, err)
 				continue
 			}
 			fallbackModel = resolved
@@ -192,14 +599,24 @@ func chatWithResolvedFallback(ctx context.Context, primary ResolvedModel, fallba
 			continue
 		}
 
-		logModelFailover(primary, fallbackModel)
-		result, err = executeOnceWithRetries(ctx, fallbackModel, body)
+		emitFailoverStartEvent(ctx, primary, fallbackModel, source, alias, lastErr)
+		fallbackMeta := llmAttemptMeta{
+			Alias:    alias,
+			Mode:     "non-stream",
+			Source:   source,
+			Fallback: true,
+		}
+		if alias != "" {
+			fallbackMeta.Metadata = map[string]any{"fallback_alias": alias}
+		}
+		result, err = executeOnceWithRetries(ctx, fallbackModel, body, fallbackMeta)
+		emitFailoverResultEvent(ctx, primary, fallbackModel, source, alias, err)
 		if err != nil {
 			lastErr = err
 			continue
 		}
 		if stream {
-			emitWithPrefix(onToken, emittedPrefix, result, fallbackModel)
+			emitWithPrefix(ctx, onToken, emittedPrefix, result, fallbackModel)
 		}
 		return result, nil
 	}
@@ -306,12 +723,39 @@ func tryStreamThenFallback(ctx context.Context, model ResolvedModel, streamBody,
 		}
 	}
 
-	result, err := executeStream(ctx, model, streamBody, wrapped)
+	streamMeta := llmAttemptMeta{
+		Alias:       strings.TrimSpace(model.Alias),
+		Mode:        "stream",
+		Attempt:     1,
+		MaxAttempts: 1,
+		Source:      "primary",
+	}
+	streamAttempt, attemptCtx := startLLMAttempt(ctx, model, streamMeta)
+	if streamAttempt == nil {
+		attemptCtx = ctx
+	}
+	result, err := executeStream(attemptCtx, model, streamBody, wrapped)
+	if streamAttempt != nil {
+		extra := map[string]any{
+			"partial_output":     emitted,
+			"partial_prefix_len": streamedPrefix.Len(),
+		}
+		streamAttempt.finish(err, extra)
+	}
 	if err == nil {
 		return result, nil
 	}
-	logStreamingFallback(model, err)
-	fallbackResult, fallbackErr := executeOnceWithRetries(ctx, model, nonStreamBody)
+	emitStreamFallbackEvent(attemptCtx, model, err, emitted, streamedPrefix.Len())
+	fallbackMeta := llmAttemptMeta{
+		Alias:    strings.TrimSpace(model.Alias),
+		Mode:     "non-stream",
+		Source:   "primary",
+		Fallback: true,
+		Metadata: map[string]any{
+			"fallback_mode": "non-stream",
+		},
+	}
+	fallbackResult, fallbackErr := executeOnceWithRetries(ctx, model, nonStreamBody, fallbackMeta)
 	if fallbackErr != nil {
 		if emitted {
 			return "", &partialResponseError{Prefix: streamedPrefix.String(), Err: fallbackErr}
@@ -322,7 +766,7 @@ func tryStreamThenFallback(ctx context.Context, model ResolvedModel, streamBody,
 	if emitted {
 		prefix = streamedPrefix.String()
 	}
-	emitWithPrefix(onToken, prefix, fallbackResult, model)
+	emitWithPrefix(ctx, onToken, prefix, fallbackResult, model)
 	return fallbackResult, nil
 }
 
@@ -334,27 +778,41 @@ func executeStream(ctx context.Context, model ResolvedModel, body []byte, onToke
 	return performStream(req, onToken)
 }
 
-func executeOnceWithRetries(ctx context.Context, model ResolvedModel, body []byte) (string, error) {
+func executeOnceWithRetries(ctx context.Context, model ResolvedModel, body []byte, meta llmAttemptMeta) (string, error) {
 	maxAttempts := len(nonStreamRetryBackoffs) + 1
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}
-		req, err := buildRequest(ctx, model, body)
+		attemptMeta := meta
+		attemptMeta.Attempt = attempt
+		attemptMeta.MaxAttempts = maxAttempts
+		attemptAttempt, attemptCtx := startLLMAttempt(ctx, model, attemptMeta)
+		if attemptAttempt == nil {
+			attemptCtx = ctx
+		}
+		req, err := buildRequest(attemptCtx, model, body)
 		if err != nil {
+			if attemptAttempt != nil {
+				attemptAttempt.finish(err, map[string]any{"stage": "build_request"})
+			}
 			return "", err
 		}
 		result, err := performNonStream(req)
+		if attemptAttempt != nil {
+			attemptAttempt.finish(err, nil)
+		}
 		if err == nil {
 			return result, nil
 		}
 		lastErr = err
-		if !shouldRetry(err) || attempt == maxAttempts {
-			return "", err
+		retryable := shouldRetry(err)
+		if !retryable || attempt == maxAttempts {
+			break
 		}
 		wait := retryDelay(err, nonStreamRetryBackoffs[attempt-1])
-		logRetryAttempt(model, attempt+1, maxAttempts, wait, err)
+		emitRetryEvent(attemptCtx, model, attempt, maxAttempts, wait, err, attemptMeta)
 		if wait > 0 {
 			timer := time.NewTimer(wait)
 			select {
@@ -451,7 +909,7 @@ func performNonStream(req *http.Request) (string, error) {
 	return parsed.Choices[0].Message.Content, nil
 }
 
-func emitWithPrefix(onToken func(string), prefix, full string, model ResolvedModel) {
+func emitWithPrefix(ctx context.Context, onToken func(string), prefix, full string, model ResolvedModel) {
 	if onToken == nil {
 		return
 	}
@@ -466,7 +924,7 @@ func emitWithPrefix(onToken func(string), prefix, full string, model ResolvedMod
 		}
 		return
 	}
-	logSuffixMismatch(model)
+	emitPrefixMismatchEvent(ctx, model, len(prefix), len(full))
 	onToken(full)
 }
 
@@ -563,56 +1021,6 @@ func parseRetryAfter(header http.Header) (time.Duration, bool) {
 		return delta, true
 	}
 	return 0, false
-}
-
-func logStreamingFallback(model ResolvedModel, err error) {
-	if err == nil {
-		return
-	}
-	var httpErr *HTTPResponseError
-	if errors.As(err, &httpErr) {
-		url := httpErr.URL
-		if url != "" {
-			fmt.Fprintf(os.Stderr, "llm: streaming failure for %s (status=%d url=%s); falling back to non-streaming\n", modelDisplayName(model), httpErr.Status, url)
-			return
-		}
-		fmt.Fprintf(os.Stderr, "llm: streaming failure for %s (status=%d); falling back to non-streaming\n", modelDisplayName(model), httpErr.Status)
-		return
-	}
-	fmt.Fprintf(os.Stderr, "llm: streaming failure for %s: %v; falling back to non-streaming\n", modelDisplayName(model), err)
-}
-
-func logRetryAttempt(model ResolvedModel, nextAttempt, maxAttempts int, wait time.Duration, err error) {
-	fmt.Fprintf(os.Stderr, "llm: retrying %s attempt %d/%d in %s due to %v\n", modelDisplayName(model), nextAttempt, maxAttempts, wait, err)
-}
-
-func logModelFailover(primary, fallback ResolvedModel) {
-	fmt.Fprintf(os.Stderr, "llm: model failover %s -> %s\n", modelDisplayName(primary), modelDisplayName(fallback))
-}
-
-func logSuffixMismatch(model ResolvedModel) {
-	fmt.Fprintf(os.Stderr, "llm: non-stream fallback response diverged for %s; emitting full response\n", modelDisplayName(model))
-}
-
-func logFallbackResolutionError(alias string, err error) {
-	name := strings.TrimSpace(alias)
-	if name == "" {
-		name = "(empty alias)"
-	}
-	fmt.Fprintf(os.Stderr, "llm: could not resolve fallback model %s: %v\n", name, err)
-}
-
-func modelDisplayName(model ResolvedModel) string {
-	if alias := strings.TrimSpace(model.Alias); alias != "" {
-		return alias
-	}
-	if name := strings.TrimSpace(model.Model); name != "" {
-		return name
-	}
-	if endpoint := strings.TrimSpace(model.Endpoint); endpoint != "" {
-		return endpoint
-	}
-	return strings.TrimSpace(model.BaseURL)
 }
 
 func buildRequest(ctx context.Context, model ResolvedModel, body []byte) (*http.Request, error) {

@@ -1,18 +1,21 @@
 package transcript
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
+	"github.com/tursomari/machtiani/agent/internal/trajectory"
 )
 
 type Transcript struct {
 	f    *os.File
 	path string
 	mem  strings.Builder
+	traj *trajectory.Writer
 }
 
 type PatchValidationMessage struct {
@@ -80,10 +83,23 @@ func (t *Transcript) Close() error {
 	return t.f.Close()
 }
 
+// SetTrajectory attaches a trajectory writer used for structured transcript
+// events. Passing nil disables emission.
+func (t *Transcript) SetTrajectory(w *trajectory.Writer) {
+	if t == nil {
+		return
+	}
+	t.traj = w
+}
+
 func (t *Transcript) WriteHeader(goal string, sessionID string, _ any) error {
 	s := fmt.Sprintf("# mct-agent Transcript\n\nSession: %s\n\nGoal:\n%s\n\n", sessionID, goal)
 	t.mem.WriteString(s)
 	_, err := t.f.WriteString(s)
+	t.emit("header", map[string]any{
+		"written_bytes": len(s),
+		"goal_len":      len(goal),
+	})
 	return err
 }
 
@@ -112,6 +128,12 @@ func (t *Transcript) WriteTurn(step int, question, savedPath string, retrieved [
 	s := b.String()
 	t.mem.WriteString(s)
 	_, err := t.f.WriteString(s)
+	t.emit("turn", map[string]any{
+		"step":            step,
+		"written_bytes":   len(s),
+		"retrieved_count": len(retrieved),
+		"decision":        decision,
+	})
 	return err
 }
 
@@ -123,6 +145,11 @@ func (t *Transcript) WriteFinal(answer string, step int, capped bool) error {
 	s := fmt.Sprintf("\n## Conclusion%s (after %d turn(s))\n\n%s\n", note, step, answer)
 	t.mem.WriteString(s)
 	_, err := t.f.WriteString(s)
+	t.emit("final", map[string]any{
+		"step":          step,
+		"written_bytes": len(s),
+		"capped":        capped,
+	})
 	return err
 }
 
@@ -203,6 +230,11 @@ func (t *Transcript) WritePatchValidation(step int, record PatchValidationRecord
 	s := b.String()
 	t.mem.WriteString(s)
 	_, err := t.f.WriteString(s)
+	t.emit("patch-validation", map[string]any{
+		"written_bytes": len(s),
+		"has_messages":  len(record.Messages) > 0,
+		"operation":     record.Operation,
+	})
 	return err
 }
 
@@ -224,4 +256,24 @@ func (t *Transcript) Content() string {
 		return ""
 	}
 	return t.mem.String()
+}
+
+func (t *Transcript) emit(op string, payload map[string]any) {
+	if t == nil || t.traj == nil {
+		return
+	}
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	payload["event_version"] = 1
+	payload["path"] = t.path
+	payload["op"] = op
+	evt := trajectory.Event{
+		Kind:    "transcript.write",
+		SpanID:  trajectory.NewSpanID(),
+		Payload: payload,
+	}
+	if err := t.traj.Emit(context.Background(), evt); err != nil {
+		fmt.Fprintf(os.Stderr, "[trajectory] transcript emit error: %v\n", err)
+	}
 }

@@ -72,8 +72,11 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 			UsingAlias:         fdRuntime.UsingAlias,
 			Alias:              fdRuntime.Alias,
 			Resolved:           fdRuntime.Resolved,
+			Extras:             copyExtrasMap(fdRuntime.Extras),
 			ParamPairs:         append([]string(nil), fdRuntime.ParamPairs...),
 			ParamJSON:          append([]string(nil), fdRuntime.ParamJSON...),
+			FallbackAliases:    append([]string(nil), fdRuntime.FallbackAliases...),
+			FallbackResolved:   cloneResolvedModels(fdRuntime.FallbackResolved),
 			TrajectoryOverride: strings.TrimSpace(opts.FileDiscoveryTrajectory),
 		}
 		dr, err := discoveryrunner.Run(ctx, opts.Prompt, drModel, opts.SessionID, opts.Verbose)
@@ -196,4 +199,26 @@ func formatRetrievedSection(paths []string) string {
 		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+func copyExtrasMap(src map[string]any) map[string]any {
+	if len(src) == 0 {
+		return map[string]any{}
+	}
+	out := make(map[string]any, len(src))
+	for k, v := range src {
+		out[k] = v
+	}
+	return out
+}
+
+func cloneResolvedModels(src []llm.ResolvedModel) []llm.ResolvedModel {
+	if len(src) == 0 {
+		return nil
+	}
+	out := make([]llm.ResolvedModel, 0, len(src))
+	for _, m := range src {
+		out = append(out, llm.CloneResolvedModel(m))
+	}
+	return out
 }

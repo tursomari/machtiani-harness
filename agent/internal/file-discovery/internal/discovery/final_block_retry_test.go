@@ -62,7 +62,7 @@ func TestRun_FinalBlockRetryInvalidThenMissing(t *testing.T) {
 	}
 	os.Stdout = w
 
-	exit := Run(cfg, llmCfg)
+	exit := Run(context.Background(), cfg, llmCfg)
 
 	w.Close()
 	os.Stdout = oldStdout
@@ -139,7 +139,7 @@ func TestRun_ForcedFinalizationRetries(t *testing.T) {
 	}
 	os.Stdout = w
 
-	exit := Run(cfg, llmCfg)
+	exit := Run(context.Background(), cfg, llmCfg)
 
 	w.Close()
 	os.Stdout = oldStdout

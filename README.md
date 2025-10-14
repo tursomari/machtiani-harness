@@ -102,6 +102,35 @@ Useful flags (agent):
 - `--dry-run`: print intended calls without executing.
 - `--verbose`: verbose logging.
 
+### Session Artifacts & Trajectory Logs
+
+Every run stores artifacts under `.machtiani/sessions/<session-id>/`, including the transcript (`chat/agent.md`), final answer, and a unified trajectory JSONL stream at `trajectory/agent.jsonl`. The trajectory is enabled by default and can be controlled with the following flags (or their matching `MACHTIANI_TRAJECTORY_*` env vars):
+
+- `--trajectory-file` — override the output path.
+- `--no-trajectory` — disable emission entirely.
+- `--trajectory-excerpt` — tune how many characters are captured for prompt/response excerpts (default 512).
+- `--trajectory-verbose-llm` — include expanded LLM diagnostics.
+- `--trajectory-stream-tokens` — log token streaming progress events.
+- `--trajectory-omit-repo-root` — omit the detected repository root from payloads.
+
+Inspect the JSONL stream with `jq` or similar tools. Examples:
+
+```bash
+# Summarise each turn outcome
+jq 'select(.kind == "agent.turn.end") | {turn: .payload.step, decision: .payload.decision, status: .payload.status}' \
+  .machtiani/sessions/<session-id>/trajectory/agent.jsonl
+
+# Show planner responses with timing and trimmed content
+jq 'select(.kind == "planner.response") | {step: .payload.step, duration_ms: .payload.duration_ms, response: .payload.response_excerpt_first}' \
+  .machtiani/sessions/<session-id>/trajectory/agent.jsonl
+
+# Quickly list error events emitted during the run
+jq 'select(.level == "error") | {kind, message: .err.message, span: .span_id}' \
+  .machtiani/sessions/<session-id>/trajectory/agent.jsonl
+```
+
+These events complement the transcript and final artifact, providing structured telemetry that is easy to diff or feed into downstream tooling.
+
 ## Optional: Standalone CLIs
 If you installed the peripherals (`./scripts/install.sh --install-peripherals`), you can continue using the individual tools. Example `mct` flows:
 

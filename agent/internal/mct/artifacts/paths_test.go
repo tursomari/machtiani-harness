@@ -67,6 +67,23 @@ func TestSessionArtifactsDirectoryLocalRepo(t *testing.T) {
 	})
 }
 
+func TestSessionTrajectoryDirectoryLocalRepo(t *testing.T) {
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+
+	withWorkingDir(t, repoDir, func() {
+		const sessionID = "session-traj"
+		dir, err := SessionTrajectoryDirectory(sessionID)
+		if err != nil {
+			t.Fatalf("SessionTrajectoryDirectory: %v", err)
+		}
+		expected := filepath.Join(repoDir, ".machtiani", "sessions", sessionID, "trajectory")
+		if dir != expected {
+			t.Fatalf("expected %s, got %s", expected, dir)
+		}
+	})
+}
+
 func TestSessionPatchesDirectoryLocalRepo(t *testing.T) {
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)
@@ -148,6 +165,15 @@ func TestFileDiscoveryTrajectoryPath(t *testing.T) {
 		expected := filepath.Join(repoDir, ".machtiani", "sessions", sessionID, "artifacts", "file-discovery.jsonl")
 		if dir != expected {
 			t.Fatalf("expected %s, got %s", expected, dir)
+		}
+
+		file, err := SessionTrajectoryFile(sessionID, "agent")
+		if err != nil {
+			t.Fatalf("SessionTrajectoryFile: %v", err)
+		}
+		expectedFile := filepath.Join(repoDir, ".machtiani", "sessions", sessionID, "trajectory", "agent.jsonl")
+		if file != expectedFile {
+			t.Fatalf("expected %s, got %s", expectedFile, file)
 		}
 	})
 }

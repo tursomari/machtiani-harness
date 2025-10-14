@@ -29,8 +29,11 @@ type ModelSettings struct {
 	UsingAlias         bool
 	Alias              string
 	Resolved           llm.ResolvedModel
+	Extras             map[string]any
 	ParamPairs         []string
 	ParamJSON          []string
+	FallbackAliases    []string
+	FallbackResolved   []llm.ResolvedModel
 	TrajectoryOverride string
 }
 
@@ -96,6 +99,7 @@ func Run(ctx context.Context, prompt string, model ModelSettings, sessionID stri
 	if err != nil {
 		return Result{}, fmt.Errorf("parse llm parameter overrides: %w", err)
 	}
+	mergedExtras := mergeExtras(model.Extras, extraParams)
 
 	resolved := llm.CloneResolvedModel(model.Resolved)
 	cfg := integration.Config{
@@ -114,8 +118,10 @@ func Run(ctx context.Context, prompt string, model ModelSettings, sessionID stri
 		return Result{}, errors.New("file-discovery runtime missing API key, base URL, or model")
 	}
 	llmSettings := integration.LLMSettings{
-		Model:  resolved,
-		Extras: extraParams,
+		Model:            resolved,
+		Extras:           mergedExtras,
+		FallbackAliases:  append([]string(nil), model.FallbackAliases...),
+		FallbackResolved: cloneResolvedModels(model.FallbackResolved),
 	}
 	debugf(verbose, "mct: using embedded file-discovery module")
 
@@ -246,7 +252,7 @@ func Run(ctx context.Context, prompt string, model ModelSettings, sessionID stri
 		_ = stdinW.Close()
 	}()
 
-	exitCode := integration.Run(cfg, llmSettings)
+	exitCode := integration.Run(ctx, cfg, llmSettings)
 
 	_ = stdoutW.Close()
 	_ = stderrW.Close()
@@ -411,6 +417,31 @@ func copyFile(src, dst string, mode os.FileMode) error {
 		return err
 	}
 	return nil
+}
+
+func mergeExtras(base map[string]any, overrides map[string]any) map[string]any {
+	if len(base) == 0 && len(overrides) == 0 {
+		return map[string]any{}
+	}
+	out := make(map[string]any, len(base)+len(overrides))
+	for k, v := range base {
+		out[k] = v
+	}
+	for k, v := range overrides {
+		out[k] = v
+	}
+	return out
+}
+
+func cloneResolvedModels(src []llm.ResolvedModel) []llm.ResolvedModel {
+	if len(src) == 0 {
+		return nil
+	}
+	out := make([]llm.ResolvedModel, 0, len(src))
+	for _, m := range src {
+		out = append(out, llm.CloneResolvedModel(m))
+	}
+	return out
 }
 
 // Thin wrappers to call internal/git without import cycles in helper decl.

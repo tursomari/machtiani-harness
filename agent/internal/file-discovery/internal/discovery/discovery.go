@@ -197,8 +197,10 @@ var excludeExts = map[string]struct{}{
 }
 
 type LLMSettings struct {
-	Model  llm.ResolvedModel
-	Extras map[string]any
+	Model            llm.ResolvedModel
+	Extras           map[string]any
+	FallbackAliases  []string
+	FallbackResolved []llm.ResolvedModel
 }
 
 func readAllStdin(limit int) (string, bool, error) {
@@ -902,7 +904,7 @@ func callChat(ctx context.Context, llmCfg LLMSettings, msgs []chatMessage) (stri
 	if _, ok := extras["max_completion_tokens"]; !ok {
 		extras["max_completion_tokens"] = 2048
 	}
-	return llm.ChatWithResolved(ctx, llmCfg.Model, extras, llmMsgs)
+	return llm.ChatWithResolvedFallback(ctx, llmCfg.Model, llmCfg.FallbackAliases, llmCfg.FallbackResolved, extras, llmMsgs)
 }
 
 var chatInvoker = callChat
@@ -952,7 +954,11 @@ func failNoRelevantBlockProduced(lg cfgpkg.Logger, tr *cfgpkg.TrajectoryRecorder
 }
 
 // Run executes the discovery loop and returns an exit code.
-func Run(cfg cfgpkg.Config, llmCfg LLMSettings) int {
+func Run(ctx context.Context, cfg cfgpkg.Config, llmCfg LLMSettings) int {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	baseCtx := ctx
 	lg := cfgpkg.Logger{JSON: cfg.LogJSON, V: cfg.Verbose}
 	mode := normalizeToolCallMode(cfg.ToolCallMode)
 
@@ -995,7 +1001,7 @@ func Run(cfg cfgpkg.Config, llmCfg LLMSettings) int {
 			})
 			tr.Event("round_start", 0, map[string]any{"round": 0, "transcript_bytes_before": 0, "messages_count_before": 0})
 		}
-		cctx, ccancel := context.WithTimeout(context.Background(), time.Duration(cfg.CmdTimeoutSec)*time.Second)
+		cctx, ccancel := context.WithTimeout(baseCtx, time.Duration(cfg.CmdTimeoutSec)*time.Second)
 		allPaths, stats, err := runRGFilesFn(cctx)
 		ccancel()
 		if err != nil {
@@ -1074,8 +1080,8 @@ func Run(cfg cfgpkg.Config, llmCfg LLMSettings) int {
 			tr.Event("llm_request", round, map[string]any{"messages": messages})
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-		assistantContent, err := chatInvoker(ctx, llmCfg, messages)
+		llmCtx, cancel := context.WithTimeout(baseCtx, 60*time.Second)
+		assistantContent, err := chatInvoker(llmCtx, llmCfg, messages)
 		cancel()
 		if err != nil {
 			lg.Error("chat API error")
@@ -1205,7 +1211,7 @@ func Run(cfg cfgpkg.Config, llmCfg LLMSettings) int {
 				transcriptBytes += len(msg)
 				lg.Warn("sed path not in seenPaths")
 			} else {
-				cctx, ccancel := context.WithTimeout(context.Background(), time.Duration(cfg.CmdTimeoutSec)*time.Second)
+				cctx, ccancel := context.WithTimeout(baseCtx, time.Duration(cfg.CmdTimeoutSec)*time.Second)
 				lines, stats, err := runSed(cctx, sedCmd.program, sedCmd.path)
 				ccancel()
 				if err != nil {
@@ -1235,7 +1241,7 @@ func Run(cfg cfgpkg.Config, llmCfg LLMSettings) int {
 			}
 		} else if lsCmd != nil {
 			// LS is allowed for any validated relative PATH; no prior RG_OUT requirement
-			cctx, ccancel := context.WithTimeout(context.Background(), time.Duration(cfg.CmdTimeoutSec)*time.Second)
+			cctx, ccancel := context.WithTimeout(baseCtx, time.Duration(cfg.CmdTimeoutSec)*time.Second)
 			lines, stats, err := runLS(cctx, lsCmd.path)
 			ccancel()
 			if err != nil {
@@ -1275,7 +1281,7 @@ func Run(cfg cfgpkg.Config, llmCfg LLMSettings) int {
 				}
 				responseBuf.Reset()
 			} else {
-				cctx, ccancel := context.WithTimeout(context.Background(), time.Duration(cfg.CmdTimeoutSec)*time.Second)
+				cctx, ccancel := context.WithTimeout(baseCtx, time.Duration(cfg.CmdTimeoutSec)*time.Second)
 				allPaths, stats, err := runRGFiles(cctx)
 				ccancel()
 				if err != nil {
@@ -1356,8 +1362,8 @@ func Run(cfg cfgpkg.Config, llmCfg LLMSettings) int {
 			tr.Event("llm_request", forcedRound, map[string]any{"messages": messages, "forced_finalization": true, "retry_count": finalBlockRetries})
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-		assistantContent, err := chatInvoker(ctx, llmCfg, messages)
+		llmCtx, cancel := context.WithTimeout(baseCtx, 60*time.Second)
+		assistantContent, err := chatInvoker(llmCtx, llmCfg, messages)
 		cancel()
 		if err != nil {
 			lg.Error("chat API error on forced finalization")

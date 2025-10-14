@@ -27,6 +27,16 @@ Artifacts and validations
 - Each case writes `test-out-*` directories containing stdout/stderr, transcripts, and final artifacts when applicable.
 - Transcript turn counts checked against the `--max-steps` bounds; keywords asserted in stdout (and final artifacts in live mode).
 - Error cases assert canonical error messages in stderr/stdout.
+- The unified trajectory stream lives under `.machtiani/sessions/<session-id>/trajectory/agent.jsonl`. Handy `jq` probes when debugging:
+  - `jq -r '.kind' trajectory/agent.jsonl | sort -u` — inventory of emitted event kinds for the session.
+  - `jq 'select(.kind == "agent.session.start") | {session: .session_id, goal_sha: .payload.goal_sha256, max_steps: .payload.config.max_steps}' trajectory/agent.jsonl`
+  - `jq 'select(.kind == "agent.turn.end") | {step: .payload.step, decision: .payload.decision, status: .payload.status, finalized: (.payload.finalized // false), err: (.err.message // null)}' trajectory/agent.jsonl`
+  - `jq 'select(.kind == "planner.request") | {step: (.payload.step // null), alias: .payload.model_alias, prompt_excerpt: .payload.prompt_excerpt_first}' trajectory/agent.jsonl`
+  - `jq 'select(.kind == "planner.response") | {level: .level, step: (.payload.step // null), parse_ok: .payload.parse_ok, decision: (.payload.parse.decision? // null), err: (.err.message // null)}' trajectory/agent.jsonl`
+  - `jq 'select(.kind == "mct.prompt.result") | {mode: .payload.mode, retrieved: .payload.retrieved_count, saved_chat: .payload.saved_chat_path, dry_run: (.payload.dry_run // false)}' trajectory/agent.jsonl`
+  - `jq 'select(.kind | startswith("llm.")) | {kind, level, payload, err: (.err.message // null)}' trajectory/agent.jsonl`
+  - `jq 'select(.level != "info") | {ts, level, kind, err: (.err.message // null)}' trajectory/agent.jsonl` — quick sweep for LLM issues or other failures.
+  - `jq 'select(.kind == "transcript.write") | {op: .payload.op, bytes: .payload.written_bytes, decision: (.payload.decision // null), path: .payload.path}' trajectory/agent.jsonl`
 
 Run locally
 ```

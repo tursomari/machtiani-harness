@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
@@ -102,5 +103,56 @@ func TestRetryDelayCapsRetryAfter(t *testing.T) {
 	delay := retryDelay(err, time.Second)
 	if delay != retryAfterCap {
 		t.Fatalf("unexpected capped delay: got %v want %v", delay, retryAfterCap)
+	}
+}
+
+func TestChatWithResolvedFallback_SwitchesOnHTTP400(t *testing.T) {
+	originalTransport := http.DefaultClient.Transport
+	defer func() { http.DefaultClient.Transport = originalTransport }()
+
+	var seen []string
+	http.DefaultClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body, _ := io.ReadAll(req.Body)
+		_ = req.Body.Close()
+		var payload struct {
+			Model string `json:"model"`
+		}
+		_ = json.Unmarshal(body, &payload)
+		seen = append(seen, payload.Model)
+		switch payload.Model {
+		case "bad-model":
+			resp := &http.Response{
+				StatusCode: http.StatusBadRequest,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"not valid"}}`)),
+				Request:    req,
+			}
+			return resp, nil
+		case "good-model":
+			resp := &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(`{"choices":[{"message":{"content":"fallback ok"}}]}`)),
+				Request:    req,
+			}
+			return resp, nil
+		default:
+			return nil, nil
+		}
+	})
+
+	primary := ResolvedModel{Alias: "bad", BaseURL: "http://example.com", Endpoint: "/chat/completions", Model: "bad-model"}
+	fallback := ResolvedModel{Alias: "good", BaseURL: "http://example.com", Endpoint: "/chat/completions", Model: "good-model"}
+	messages := []Message{{Role: "user", Content: "hi"}}
+
+	got, err := ChatWithResolvedFallback(context.Background(), primary, nil, []ResolvedModel{fallback}, nil, messages)
+	if err != nil {
+		t.Fatalf("ChatWithResolvedFallback error: %v", err)
+	}
+	if got != "fallback ok" {
+		t.Fatalf("unexpected response: %q", got)
+	}
+	if len(seen) != 2 || seen[0] != "bad-model" || seen[1] != "good-model" {
+		t.Fatalf("unexpected request order: %v", seen)
 	}
 }

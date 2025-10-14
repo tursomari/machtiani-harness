@@ -11,12 +11,13 @@ import (
 )
 
 const (
-	machtianiRootDir = ".machtiani"
-	sessionsDirName  = "sessions"
-	chatDirName      = "chat"
-	readmeDirName    = "readme"
-	artifactDirName  = "artifacts"
-	patchesDirName   = "patches"
+	machtianiRootDir  = ".machtiani"
+	sessionsDirName   = "sessions"
+	chatDirName       = "chat"
+	readmeDirName     = "readme"
+	artifactDirName   = "artifacts"
+	patchesDirName    = "patches"
+	trajectoryDirName = "trajectory"
 )
 
 // SessionDirectory resolves the root directory for a session-scoped run.
@@ -59,6 +60,31 @@ func SessionArtifactsDirectory(sessionID string) (string, error) {
 		return "", err
 	}
 	return filepath.Join(root, artifactDirName), nil
+}
+
+// SessionTrajectoryDirectory returns the directory for trajectory JSONL files
+// under the session root. The directory may not exist; callers should ensure it
+// is created before writing files.
+func SessionTrajectoryDirectory(sessionID string) (string, error) {
+	root, err := SessionDirectory(sessionID)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(root, trajectoryDirName), nil
+}
+
+// SessionTrajectoryFile constructs the canonical JSONL path for a named
+// trajectory stream in the session directory.
+func SessionTrajectoryFile(sessionID, name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", errors.New("trajectory file name required")
+	}
+	dir, err := SessionTrajectoryDirectory(sessionID)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, name+".jsonl"), nil
 }
 
 // SessionPatchesDirectory returns the directory under the session artifacts

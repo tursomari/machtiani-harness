@@ -32,4 +32,15 @@ The script emits high-level progress logs and exits non-zero if any scenario fai
 - `DISABLE_MCT_STUBS=true` — force real LLM usage (requires `OPENAI_*` config to resolve).
 - `MODEL_ALIAS` — pass a `.machtiani/config.toml` model alias when running without stubs.
 
-Artifacts are left in `tests/artifacts/agent-undici/` for inspection. Set `KEEP_AGENT_TMP=true` to keep the full temp workspace (including the transient `.machtiani` state) after the script finishes.
+Artifacts are left in `tests/artifacts/agent-undici/` for inspection. Each run writes the agent trajectory to the scratch repo under `.machtiani/sessions/<session-id>/trajectory/agent.jsonl`; after a run you can locate it with `find tests/tmp -name agent.jsonl` (requires `KEEP_AGENT_TMP=true`). Helpful `jq` filters:
+- `jq -r '.kind' trajectory/agent.jsonl | sort -u` — enumerate agent event kinds for the session.
+- `jq 'select(.kind == "agent.turn.end") | {step: .payload.step, decision: .payload.decision, status: .payload.status, finalized: (.payload.finalized // false), err: (.err.message // null)}' trajectory/agent.jsonl`
+- `jq 'select(.level != "info") | {ts, level, kind, err: (.err.message // null)}' trajectory/agent.jsonl` — surfaces LLM errors, planner parse failures, or fallback finalizations quickly.
+- `jq 'select(.kind | startswith("llm.")) | {kind, level, payload, err: (.err.message // null)}' trajectory/agent.jsonl`
+
+File discovery artifacts land in `<case>/file-discovery/file-discovery.jsonl`. Sample probes:
+- `jq -r '.type' file-discovery.jsonl | sort -u`
+- `jq 'select(.type == "llm_request") | {round, messages: (.messages | length)}' file-discovery.jsonl`
+- `jq 'select(.type == "run_end" and .exit_code != 0) | {round, exit_code: .exit_code, reason: .reason}' file-discovery.jsonl`
+
+Set `KEEP_AGENT_TMP=true` to keep the full temp workspace (including the transient `.machtiani` state) after the script finishes.

@@ -1,6 +1,8 @@
 package integration
 
 import (
+	"context"
+
 	cfgpkg "github.com/tursomari/machtiani/agent/internal/file-discovery/internal/config"
 	discoverypkg "github.com/tursomari/machtiani/agent/internal/file-discovery/internal/discovery"
 )
@@ -16,6 +18,6 @@ const (
 	ToolCallModeSimple = cfgpkg.ToolCallModeSimple
 )
 
-func Run(cfg Config, llmCfg LLMSettings) int {
-	return discoverypkg.Run(cfg, llmCfg)
+func Run(ctx context.Context, cfg Config, llmCfg LLMSettings) int {
+	return discoverypkg.Run(ctx, cfg, llmCfg)
 }
