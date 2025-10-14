@@ -42,18 +42,7 @@ func MakeTextExcerpt(text string, limit int) TextExcerpt {
 // MergeExcerpt copies the excerpt fields into the provided payload map using
 // the canonical key names. The map is created if nil.
 func MergeExcerpt(payload map[string]any, excerpt TextExcerpt) map[string]any {
-	if payload == nil {
-		payload = map[string]any{}
-	}
-	if excerpt.First != "" {
-		payload["text_excerpt_first"] = excerpt.First
-	}
-	if excerpt.Last != "" {
-		payload["text_excerpt_last"] = excerpt.Last
-	}
-	payload["text_len"] = excerpt.Len
-	payload["text_sha256"] = excerpt.SHA
-	return payload
+	return MergeExcerptWithPrefix(payload, excerpt, "")
 }
 
 // MergeExcerptWithPrefix copies excerpt fields using a prefix (e.g., "prompt"
@@ -62,16 +51,25 @@ func MergeExcerptWithPrefix(payload map[string]any, excerpt TextExcerpt, prefix 
 	if payload == nil {
 		payload = map[string]any{}
 	}
-	if prefix == "" {
-		return MergeExcerpt(payload, excerpt)
+
+	firstKey := "text_excerpt_first"
+	lastKey := "text_excerpt_last"
+	lenKey := "text_len"
+	shaKey := "text_sha256"
+	if prefix != "" {
+		firstKey = prefix + "_excerpt_first"
+		lastKey = prefix + "_excerpt_last"
+		lenKey = prefix + "_len"
+		shaKey = prefix + "_sha256"
 	}
+
 	if excerpt.First != "" {
-		payload[prefix+"_excerpt_first"] = excerpt.First
+		payload[firstKey] = excerpt.First
 	}
 	if excerpt.Last != "" {
-		payload[prefix+"_excerpt_last"] = excerpt.Last
+		payload[lastKey] = excerpt.Last
 	}
-	payload[prefix+"_len"] = excerpt.Len
-	payload[prefix+"_sha256"] = excerpt.SHA
+	payload[lenKey] = excerpt.Len
+	payload[shaKey] = excerpt.SHA
 	return payload
 }
