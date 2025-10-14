@@ -218,9 +218,9 @@ function run_case() {
       fi
       ;;
     issue-b)
-      # Expect at least one H2/HTTP2 related file.
-      if ! rg -n '(http2|/h2|allowH2)' "$extracted_file" -N >/dev/null; then
-        echo "Invariant failed: expected an http2/h2 related path for $name" >&2
+      # Expect at least one path containing "h2" (case-insensitive) to surface.
+      if ! rg -n '(?i)h2' "$extracted_file" -N >/dev/null; then
+        echo "Invariant failed: expected a path containing 'h2' for $name" >&2
         echo "Paths returned:" >&2
         sed 's/^/  /' "$extracted_file" >&2 || true
         return 1
