@@ -15,16 +15,16 @@ import (
 	"time"
 
 	"github.com/charmbracelet/glamour"
+	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
+	"github.com/tursomari/machtiani/agent/internal/mct/llm"
+	mctpatcher "github.com/tursomari/machtiani/agent/internal/mct/patcher"
+	promptsvc "github.com/tursomari/machtiani/agent/internal/mct/prompt"
 	"github.com/tursomari/machtiani/agent/internal/parser"
+	patchersvc "github.com/tursomari/machtiani/agent/internal/patcher"
 	"github.com/tursomari/machtiani/agent/internal/planner"
 	"github.com/tursomari/machtiani/agent/internal/runner"
 	"github.com/tursomari/machtiani/agent/internal/transcript"
 	"github.com/tursomari/machtiani/agent/internal/ui"
-	"github.com/tursomari/machtiani/mct/artifacts"
-	"github.com/tursomari/machtiani/mct/llm"
-	mctpatcher "github.com/tursomari/machtiani/mct/patcher"
-	promptsvc "github.com/tursomari/machtiani/mct/prompt"
-	patchersvc "github.com/tursomari/machtiani/patcher"
 )
 
 var (

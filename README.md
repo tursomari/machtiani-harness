@@ -1,24 +1,19 @@
 # mct-agent Monorepo — Build, Install, and Use
 
-This repository contains three pieces that work together:
+This repository now houses the full Machtiani toolchain inside a single Go module:
 
-1) mct — a local prompting CLI that discovers relevant files and queries an OpenAI‑compatible LLM.
-2) file-discovery — a helper binary (submodule) that performs LLM-guided file discovery using a strict RG> protocol.
-3) mct-agent — an "agent orchestrator" that drives the loop and now embeds the other components directly via their Go packages.
+1) `agent/internal/mct` — the local prompting CLI that discovers relevant files and queries an OpenAI‑compatible LLM.
+2) `agent/internal/file-discovery` — the helper binary that performs LLM-guided file discovery using a strict RG> protocol.
+3) `agent` — the orchestrator that drives the loop and links against the internal libraries directly.
 
 Most users only need the `mct-agent` binary. The install script builds `mct-agent` by default and exposes an opt-in flag when you want the standalone `mct`, `file-discovery`, and `patcher` binaries.
 
 ## Prerequisites
-- Go: install Go 1.23+ (to satisfy all modules; `mct` builds with 1.22+, `file-discovery` with 1.23).
+- Go: install Go 1.23+ (to satisfy all internal packages; `mct` builds with 1.22+, `file-discovery` with 1.23).
 - ripgrep: `rg` must be on PATH (used by `file-discovery`).
 - OpenAI‑compatible API access:
   - API key and base URL for models used by `mct` and/or the agent.
 - A writable bin directory on PATH (e.g., `~/.local/bin`).
-
-If you cloned without submodules, initialize them before building:
-```
-git submodule update --init --recursive
-```
 
 ## Quick Install (mct-agent)
 Run the installer from the repo root to build **mct-agent** into `~/.local/bin`:
@@ -52,10 +47,10 @@ hash -r 2>/dev/null || true
 To manually build the additional CLIs, run the block above and then:
 
 ```bash
-( cd mct && ./build.sh )
-install -m 0755 mct/bin/mct "$BIN_DIR/mct"
-install -m 0755 mct/bin/file-discovery "$BIN_DIR/file-discovery"
-( cd patcher && go build -o "$BIN_DIR/patcher" ./cmd/patcher )
+( cd agent/internal/mct && ./build.sh )
+install -m 0755 agent/internal/mct/bin/mct "$BIN_DIR/mct"
+install -m 0755 agent/internal/mct/bin/file-discovery "$BIN_DIR/file-discovery"
+( cd agent/internal/patcher && go build -o "$BIN_DIR/patcher" ./cmd/patcher )
 ```
 
 The manual snippets skip the ldflags metadata that the installer uses, so version commands will show `dev`/`unknown` fields—this is expected.
@@ -124,7 +119,7 @@ mct prompt "Summarize architecture" --max-input-tokens 6000
 mct prompt --mode=answer-only -f prompt.md
 ```
 
-See `patcher/README.md` for patch workflows and `mct/submodules/file-discovery/README.md` for direct `file-discovery` usage.
+See `agent/internal/patcher/README.md` for patch workflows and `agent/internal/file-discovery/README.md` for direct `file-discovery` usage.
 
 ## Troubleshooting
 - Command not found
@@ -139,8 +134,8 @@ See `patcher/README.md` for patch workflows and `mct/submodules/file-discovery/R
   - If you are using the optional `mct` CLI, ensure it completed successfully and wrote `.machtiani/sessions/<session-id>/chat/machtiani-response.md`.
 
 ## Notes and Pointers
-- Detailed `mct` docs: see `mct/README.md` for configuration, discovery rules, and troubleshooting.
-- `file-discovery` internals and flags: see `mct/submodules/file-discovery/README.md`.
+- Detailed `mct` docs: see `agent/internal/mct/README.md` for configuration, discovery rules, and troubleshooting.
+- `file-discovery` internals and flags: see `agent/internal/file-discovery/README.md`.
 - Agent specifics (flags, behavior): see `agent/README.md`.
 - If you installed the `mct` CLI, it falls back to a bundled `file-discovery` if it can’t find one on PATH and was built via `build.sh`.
 

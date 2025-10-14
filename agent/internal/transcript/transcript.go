@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/tursomari/machtiani/mct/artifacts"
+	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
 )
 
 type Transcript struct {

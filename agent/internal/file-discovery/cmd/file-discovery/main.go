@@ -1,0 +1,238 @@
+package main
+
+import (
+	"flag"
+	"fmt"
+	"log"
+	"os"
+	"strings"
+
+	cfgpkg "github.com/tursomari/machtiani/agent/internal/file-discovery/internal/config"
+	"github.com/tursomari/machtiani/agent/internal/file-discovery/internal/discovery"
+	"github.com/tursomari/machtiani/agent/internal/mct/llm"
+)
+
+// version metadata is injected at build time via ldflags in mct/build.sh
+var (
+	version = "dev"
+	commit  = "unknown"
+	builtAt = "unknown"
+	dirty   = "unknown"
+)
+
+type multiString []string
+
+func (m *multiString) String() string {
+	return strings.Join(*m, ",")
+}
+
+func (m *multiString) Set(value string) error {
+	*m = append(*m, value)
+	return nil
+}
+
+func usage() {
+	fmt.Fprintf(os.Stderr, "file-discovery %s\n", version)
+	fmt.Fprintln(os.Stderr, "Usage: cat issue.txt | file-discovery [flags]")
+	fmt.Fprintln(os.Stderr, "\nAuth & model (env or flags):")
+	fmt.Fprintln(os.Stderr, "  -api-key, --openai-api-key    or OPENAI_API_KEY    API key")
+	fmt.Fprintln(os.Stderr, "  -base-url, --openai-base-url  or OPENAI_BASE_URL   API base URL (required)")
+	fmt.Fprintln(os.Stderr, "  -model, --openai-model        or OPENAI_MODEL      Model name (required)")
+	fmt.Fprintln(os.Stderr, "\nCore flags:")
+	fmt.Fprintln(os.Stderr, "  -max-rounds <n>         Maximum LLM rounds (default 20)")
+	fmt.Fprintln(os.Stderr, "  -cmd-timeout <sec>      Per-command timeout seconds (default 30)")
+	fmt.Fprintln(os.Stderr, "  -max-stdout <bytes>     Per-command RG_OUT cap bytes (default 20480)")
+	fmt.Fprintln(os.Stderr, "  -max-transcript <bytes> Global transcript cap bytes (default 300000)")
+	fmt.Fprintln(os.Stderr, "  -log-json               Log JSON to stderr (default false)")
+	fmt.Fprintln(os.Stderr, "  -v                      Verbose logging (default false)")
+	fmt.Fprintln(os.Stderr, "  -no-json               Use bracket tool-call syntax instead of JSON function calls")
+	fmt.Fprintln(os.Stderr, "\nDry-run (no network):")
+	fmt.Fprintln(os.Stderr, "  -dry-run-rg             Run ripgrep locally and print RG_OUT to stderr; skip API")
+	fmt.Fprintln(os.Stderr, "  -pattern <regex>        Regex to filter paths (mirrors 'RG> rg --files | rg \"pattern\"' protocol)")
+	fmt.Fprintln(os.Stderr, "\nTrajectory:")
+	fmt.Fprintln(os.Stderr, "  -trajectory <path>      Path to trajectory JSONL file (default auto-named)")
+	fmt.Fprintln(os.Stderr, "  -no-trajectory          Disable trajectory recording")
+	fmt.Fprintln(os.Stderr, "  env: FILE_DISCOVERY_TRAJECTORY used if -trajectory not set")
+	fmt.Fprintln(os.Stderr, "\nOther:")
+	fmt.Fprintln(os.Stderr, "  -session-id, -s        Optional session ID; first 5 characters tag BEGIN/END markers")
+	fmt.Fprintln(os.Stderr, "  -version               Print version and exit")
+}
+
+func main() {
+	// Configure std logger to write cleanly to stderr with no timestamps/prefixes
+	log.SetOutput(os.Stderr)
+	log.SetFlags(0)
+
+	var cfg cfgpkg.Config
+	var showVersion bool
+	var noJSON bool
+
+	flag.Usage = usage
+	flag.IntVar(&cfg.MaxRounds, "max-rounds", 20, "Maximum LLM rounds")
+	flag.IntVar(&cfg.CmdTimeoutSec, "cmd-timeout", 30, "Per-command timeout seconds")
+	flag.IntVar(&cfg.MaxStdoutBytes, "max-stdout", 20480, "Per-command RG_OUT cap bytes")
+	flag.IntVar(&cfg.MaxTranscript, "max-transcript", 300000, "Global transcript cap bytes")
+	flag.BoolVar(&cfg.LogJSON, "log-json", false, "Log JSON to stderr")
+	flag.BoolVar(&cfg.Verbose, "v", false, "Verbose logging")
+	flag.BoolVar(&noJSON, "no-json", false, "Use bracket tool-call syntax instead of JSON function calls")
+	flag.BoolVar(&cfg.DryRunRG, "dry-run-rg", false, "Run ripgrep locally and print RG_OUT to stderr; skip API")
+	flag.StringVar(&cfg.DryPattern, "pattern", "", "Regex for dry-run-rg to filter paths (mirrors 'RG> rg --files | rg \"pattern\"')")
+	flag.StringVar(&cfg.TrajectoryPath, "trajectory", "", "Path to trajectory JSONL file; defaults to auto-named in cwd")
+	flag.BoolVar(&cfg.NoTrajectory, "no-trajectory", false, "Disable trajectory recording")
+	flag.StringVar(&cfg.APIKey, "api-key", "", "API key (overrides OPENAI_API_KEY)")
+	flag.StringVar(&cfg.APIKey, "openai-api-key", "", "Alias for --api-key")
+	flag.StringVar(&cfg.BaseURL, "base-url", "", "OpenAI-compatible API base URL (overrides OPENAI_BASE_URL)")
+	flag.StringVar(&cfg.BaseURL, "openai-base-url", "", "Alias for --base-url")
+	var modelAlias string
+	var fileDiscoveryAlias string
+	var openAIModel string
+	flag.StringVar(&modelAlias, "model", "", "Model alias defined in .machtiani/config.toml")
+	flag.StringVar(&fileDiscoveryAlias, "file-discovery-model", "", "Model alias override (defaults to --model or config)")
+	flag.StringVar(&openAIModel, "openai-model", "", "Direct upstream model name (deprecated; prefer --model)")
+	var paramFlags multiString
+	var paramJSON multiString
+	flag.Var(&paramFlags, "param", "Additional request parameter key=value (repeatable)")
+	flag.Var(&paramJSON, "param-json", "Merge JSON object of additional parameters (repeatable)")
+	flag.BoolVar(&showVersion, "version", false, "Print version and exit")
+	// Session-scoped markers
+	flag.StringVar(&cfg.SessionID, "session-id", "", "Optional session ID; first 5 characters tag BEGIN/END markers")
+	flag.StringVar(&cfg.SessionID, "s", "", "Alias for -session-id")
+	cfg.ToolCallMode = cfgpkg.ToolCallModeJSON
+	flag.Parse()
+	if noJSON {
+		cfg.ToolCallMode = cfgpkg.ToolCallModeSimple
+	}
+
+	if showVersion {
+		fmt.Printf("file-discovery %s\ncommit: %s\nbuilt: %s\ndirty: %s\n", version, commit, builtAt, dirty)
+		os.Exit(0)
+	}
+
+	paramPairs := append([]string(nil), paramFlags...)
+	paramJSONVals := append([]string(nil), paramJSON...)
+
+	effectiveAlias := firstNonEmpty(strings.TrimSpace(fileDiscoveryAlias), strings.TrimSpace(modelAlias))
+	runtime, err := resolveModelRuntime(&cfg, effectiveAlias, openAIModel, paramPairs, paramJSONVals)
+	if err != nil {
+		if cfg.DryRunRG {
+			runtime = modelRuntime{}
+		} else if miss, ok := err.(*missingConfigError); ok {
+			fmt.Fprintln(os.Stderr, "Missing model config: set:")
+			for _, item := range miss.items {
+				fmt.Fprintln(os.Stderr, " - ", item)
+			}
+			os.Exit(2)
+		} else {
+			fmt.Fprintln(os.Stderr, "Model resolution error:", err)
+			os.Exit(1)
+		}
+	}
+
+	if !cfg.DryRunRG {
+		cfg.APIKey = runtime.resolved.APIKey
+		cfg.BaseURL = runtime.resolved.BaseURL
+		cfg.Model = runtime.resolved.Model
+	}
+
+	llmSettings := discovery.LLMSettings{Model: runtime.resolved, Extras: runtime.extras}
+	os.Exit(discovery.Run(cfg, llmSettings))
+}
+
+type modelRuntime struct {
+	resolved   llm.ResolvedModel
+	alias      string
+	usingAlias bool
+	extras     map[string]any
+}
+
+func resolveModelRuntime(cfg *cfgpkg.Config, aliasFlag, directModelFlag string, paramPairs, paramJSON []string) (modelRuntime, error) {
+	extras, err := llm.ParseParamOverrides(paramPairs, paramJSON)
+	if err != nil {
+		return modelRuntime{}, err
+	}
+	runtime := modelRuntime{extras: extras}
+
+	alias := firstNonEmpty(strings.TrimSpace(aliasFlag), strings.TrimSpace(os.Getenv("MCT_FILE_DISCOVERY_MODEL")))
+	hasDirectFlags := strings.TrimSpace(cfg.APIKey) != "" || strings.TrimSpace(cfg.BaseURL) != "" || strings.TrimSpace(directModelFlag) != ""
+
+	directAPIKey := firstNonEmpty(strings.TrimSpace(cfg.APIKey), strings.TrimSpace(os.Getenv("OPENAI_API_KEY")))
+	directBaseURL := firstNonEmpty(strings.TrimSpace(cfg.BaseURL), strings.TrimSpace(os.Getenv("OPENAI_BASE_URL")))
+	directModel := firstNonEmpty(strings.TrimSpace(directModelFlag), strings.TrimSpace(os.Getenv("OPENAI_MODEL")))
+
+	if hasDirectFlags {
+		missing := missingDirect(directAPIKey, directBaseURL, directModel)
+		if len(missing) > 0 {
+			return runtime, &missingConfigError{items: missing}
+		}
+		resolved, err := llm.NewDirectModel(directBaseURL, directAPIKey, directModel)
+		if err != nil {
+			return runtime, err
+		}
+		runtime.resolved = resolved
+		runtime.usingAlias = false
+		return runtime, nil
+	}
+
+	if alias != "" {
+		resolved, err := llm.ResolveModel(alias)
+		if err != nil {
+			return runtime, err
+		}
+		runtime.resolved = resolved
+		runtime.alias = alias
+		runtime.usingAlias = true
+		return runtime, nil
+	}
+
+	if defaultAlias, err := llm.DefaultModelAlias(); err == nil {
+		if resolved, err2 := llm.ResolveModel(defaultAlias); err2 == nil {
+			runtime.resolved = resolved
+			runtime.alias = defaultAlias
+			runtime.usingAlias = true
+			return runtime, nil
+		}
+	}
+
+	missing := missingDirect(directAPIKey, directBaseURL, directModel)
+	if len(missing) > 0 {
+		return runtime, &missingConfigError{items: missing}
+	}
+	resolved, err := llm.NewDirectModel(directBaseURL, directAPIKey, directModel)
+	if err != nil {
+		return runtime, err
+	}
+	runtime.resolved = resolved
+	runtime.usingAlias = false
+	return runtime, nil
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func missingDirect(apiKey, baseURL, model string) []string {
+	var missing []string
+	if strings.TrimSpace(apiKey) == "" {
+		missing = append(missing, "--openai-api-key or OPENAI_API_KEY")
+	}
+	if strings.TrimSpace(baseURL) == "" {
+		missing = append(missing, "--openai-base-url or OPENAI_BASE_URL")
+	}
+	if strings.TrimSpace(model) == "" {
+		missing = append(missing, "--openai-model or OPENAI_MODEL")
+	}
+	return missing
+}
+
+type missingConfigError struct {
+	items []string
+}
+
+func (e *missingConfigError) Error() string {
+	return "missing model configuration"
+}

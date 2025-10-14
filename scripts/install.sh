@@ -85,30 +85,30 @@ AGENT_LDFLAGS="-X main.Version=${AGENT_VERSION} -X main.Commit=${AGENT_COMMIT} -
 if $INSTALL_PERIPHERALS; then
   log "Building mct and file-discovery"
   (
-    cd "$REPO_ROOT/mct"
+    cd "$REPO_ROOT/agent/internal/mct"
     ./build.sh
   )
-  if [ ! -f "$REPO_ROOT/mct/bin/mct" ]; then
+  if [ ! -f "$REPO_ROOT/agent/internal/mct/bin/mct" ]; then
     echo "mct build did not produce bin/mct" >&2
     exit 1
   fi
-  if [ ! -f "$REPO_ROOT/mct/bin/file-discovery" ]; then
+  if [ ! -f "$REPO_ROOT/agent/internal/mct/bin/file-discovery" ]; then
     echo "mct build did not produce file-discovery" >&2
     exit 1
   fi
-  install -m 0755 "$REPO_ROOT/mct/bin/mct" "$BIN_DIR/mct"
-  install -m 0755 "$REPO_ROOT/mct/bin/file-discovery" "$BIN_DIR/file-discovery"
+  install -m 0755 "$REPO_ROOT/agent/internal/mct/bin/mct" "$BIN_DIR/mct"
+  install -m 0755 "$REPO_ROOT/agent/internal/mct/bin/file-discovery" "$BIN_DIR/file-discovery"
 
   log "Building patcher"
-  PATCHER_COMMIT="$(git_short_commit "$REPO_ROOT/patcher")"
-  PATCHER_DIRTY="$(git_dirty_flag "$REPO_ROOT/patcher")"
+  PATCHER_COMMIT="$(git_short_commit "$REPO_ROOT/agent/internal/patcher")"
+  PATCHER_DIRTY="$(git_dirty_flag "$REPO_ROOT/agent/internal/patcher")"
   PATCHER_VERSION="dev-${PATCHER_COMMIT}"
   if [ "$PATCHER_DIRTY" = "dirty" ]; then
     PATCHER_VERSION="${PATCHER_VERSION}-dirty"
   fi
   PATCHER_LDFLAGS="-X main.Version=${PATCHER_VERSION} -X main.Commit=${PATCHER_COMMIT} -X main.BuiltAt=${BUILD_AT} -X main.Dirty=${PATCHER_DIRTY}"
   (
-    cd "$REPO_ROOT/patcher"
+    cd "$REPO_ROOT/agent/internal/patcher"
     go build -buildvcs=true -ldflags "$PATCHER_LDFLAGS" -o "$BIN_DIR/patcher" ./cmd/patcher
   )
 fi

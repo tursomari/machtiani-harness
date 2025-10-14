@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 
-	mctpatcher "github.com/tursomari/machtiani/mct/patcher"
-	promptsvc "github.com/tursomari/machtiani/mct/prompt"
-	patchersvc "github.com/tursomari/machtiani/patcher"
+	mctpatcher "github.com/tursomari/machtiani/agent/internal/mct/patcher"
+	promptsvc "github.com/tursomari/machtiani/agent/internal/mct/prompt"
+	patchersvc "github.com/tursomari/machtiani/agent/internal/patcher"
 )
 
 // PatcherRunner orchestrates applying planner-provided instructions using the

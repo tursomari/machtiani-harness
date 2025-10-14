@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tursomari/machtiani/mct/llm"
+	"github.com/tursomari/machtiani/agent/internal/mct/llm"
 )
 
 type Decision string

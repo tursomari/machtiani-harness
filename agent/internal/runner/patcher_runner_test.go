@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	mctpatcher "github.com/tursomari/machtiani/mct/patcher"
+	mctpatcher "github.com/tursomari/machtiani/agent/internal/mct/patcher"
 )
 
 type stubService struct {

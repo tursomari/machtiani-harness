@@ -1,6 +1,6 @@
-[submodule "mct/submodules/file-discovery"]
-	path = mct/submodules/file-discovery
-	url = https://codeberg.org/cacherevolter/file-discovery
 [submodule "tests/repositories/undici"]
 	path = tests/repositories/undici
+	url = https://github.com/nodejs/undici.git
+[submodule "agent/internal/file-discovery/tests/undici"]
+	path = agent/internal/file-discovery/tests/undici
 	url = https://github.com/nodejs/undici.git

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tursomari/machtiani/mct/llm"
-	promptsvc "github.com/tursomari/machtiani/mct/prompt"
+	"github.com/tursomari/machtiani/agent/internal/mct/llm"
+	promptsvc "github.com/tursomari/machtiani/agent/internal/mct/prompt"
 )
 
 type Runner struct {
