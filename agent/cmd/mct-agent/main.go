@@ -25,6 +25,7 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/planner"
 	"github.com/tursomari/machtiani/agent/internal/runner"
 	"github.com/tursomari/machtiani/agent/internal/trajectory"
+	"github.com/tursomari/machtiani/agent/internal/trajectory/listener"
 	"github.com/tursomari/machtiani/agent/internal/transcript"
 	"github.com/tursomari/machtiani/agent/internal/ui"
 )
@@ -163,6 +164,26 @@ func run() int {
 	if trajectoryWriter != nil {
 		fmt.Fprintln(os.Stderr, "[trajectory] unified stream:", trajectoryWriter.Config().Path)
 	}
+	display := ui.NewTerminalDisplay(os.Stdout)
+	var failoverCancel context.CancelFunc
+	var failoverDone <-chan struct{}
+	if trajectoryWriter != nil {
+		cancel, done, err := startLLMFailoverLogger(display, trajectoryWriter.Config().Path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[trajectory] failover listener setup error: %v\n", err)
+		} else {
+			failoverCancel = cancel
+			failoverDone = done
+		}
+	}
+	defer func() {
+		if failoverCancel != nil {
+			failoverCancel()
+		}
+		if failoverDone != nil {
+			<-failoverDone
+		}
+	}()
 	sessTelemetry := newSessionTelemetry(trajectoryWriter, sessionID, goal, cfg, repoRoot)
 	defer func() {
 		if sessTelemetry != nil {
@@ -275,7 +296,6 @@ func run() int {
 		return 1
 	}
 
-	display := ui.NewTerminalDisplay(os.Stdout)
 	display.StartSession(goal)
 	sessionClosed := false
 	defer func() {
@@ -1879,4 +1899,169 @@ func renderWithGlow(content string) (string, bool, error) {
 		return strings.TrimSpace(content), false, nil
 	}
 	return rendered, false, nil
+}
+
+func startLLMFailoverLogger(display *ui.TerminalDisplay, path string) (context.CancelFunc, <-chan struct{}, error) {
+	sub, err := listener.New(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	opts := listener.SubscribeOptions{
+		FollowFromLatest: true,
+		Kinds:            []string{"llm.failover.start", "llm.failover.result", "llm.failover.resolve_error"},
+		ErrorHandler: func(err error) {
+			fmt.Fprintf(os.Stderr, "[trajectory] failover listener error: %v\n", err)
+		},
+	}
+	go func() {
+		defer close(done)
+		err := sub.Subscribe(ctx, opts, func(ctx context.Context, evt listener.Event) error {
+			logLLMFailoverEvent(display, evt)
+			return nil
+		})
+		if err != nil && !errors.Is(err, context.Canceled) {
+			fmt.Fprintf(os.Stderr, "[trajectory] failover listener stopped: %v\n", err)
+		}
+	}()
+	return cancel, done, nil
+}
+
+func logLLMFailoverEvent(display *ui.TerminalDisplay, evt listener.Event) {
+	msg := formatLLMFailoverEvent(evt)
+	if strings.TrimSpace(msg) == "" {
+		return
+	}
+	display.Notify(msg)
+}
+
+func formatLLMFailoverEvent(evt listener.Event) string {
+	payload := evt.Payload
+	alias := strings.TrimSpace(stringFromAny(payload["alias"]))
+	source := strings.TrimSpace(stringFromAny(payload["source"]))
+	meta := formatFailoverMeta(alias, source)
+	switch evt.Kind {
+	case "llm.failover.start":
+		from := describeFailoverModel(payload["from"])
+		to := describeFailoverModel(payload["to"])
+		reason := strings.TrimSpace(errorMessageFromEvent(evt))
+		msg := "[llm failover] triggered"
+		if meta != "" {
+			msg += " " + meta
+		}
+		msg += fmt.Sprintf(": %s -> %s", from, to)
+		if reason != "" {
+			msg += fmt.Sprintf(" (reason: %s)", reason)
+		}
+		return msg
+	case "llm.failover.result":
+		from := describeFailoverModel(payload["from"])
+		to := describeFailoverModel(payload["to"])
+		success, _ := payload["success"].(bool)
+		msg := "[llm failover]"
+		if success {
+			msg += " succeeded"
+			if meta != "" {
+				msg += " " + meta
+			}
+			msg += fmt.Sprintf(": now using %s (previous %s)", to, from)
+			return msg
+		}
+		msg += " failed"
+		if meta != "" {
+			msg += " " + meta
+		}
+		reason := strings.TrimSpace(errorMessageFromEvent(evt))
+		if reason == "" {
+			reason = "unknown error"
+		}
+		if status := strings.TrimSpace(stringFromAny(payload["status"])); status != "" && status != "0" {
+			reason = fmt.Sprintf("%s (status %s)", reason, status)
+		}
+		msg += fmt.Sprintf(": attempted %s (fallback from %s); %s", to, from, reason)
+		if url := strings.TrimSpace(stringFromAny(payload["url"])); url != "" {
+			msg += fmt.Sprintf(" [%s]", url)
+		}
+		return msg
+	case "llm.failover.resolve_error":
+		alias := strings.TrimSpace(stringFromAny(payload["alias"]))
+		meta := formatFailoverMeta(alias, "")
+		reason := strings.TrimSpace(errorMessageFromEvent(evt))
+		if reason == "" {
+			reason = "failed to resolve fallback model"
+		}
+		msg := "[llm failover] resolution error"
+		if meta != "" {
+			msg += " " + meta
+		}
+		msg += ": " + reason
+		return msg
+	default:
+		return ""
+	}
+}
+
+func describeFailoverModel(value any) string {
+	m, ok := value.(map[string]any)
+	if !ok || len(m) == 0 {
+		return "unknown model"
+	}
+	alias := strings.TrimSpace(stringFromAny(m["alias"]))
+	model := strings.TrimSpace(stringFromAny(m["model"]))
+	provider := strings.TrimSpace(stringFromAny(m["provider"]))
+	parts := make([]string, 0, 3)
+	if alias != "" {
+		parts = append(parts, alias)
+	}
+	if model != "" && !strings.EqualFold(model, alias) {
+		parts = append(parts, model)
+	}
+	if provider != "" {
+		parts = append(parts, fmt.Sprintf("(%s)", provider))
+	}
+	if len(parts) == 0 {
+		return "unknown model"
+	}
+	return strings.Join(parts, " ")
+}
+
+func errorMessageFromEvent(evt listener.Event) string {
+	if evt.Err != nil {
+		return evt.Err.Message
+	}
+	if msg := strings.TrimSpace(stringFromAny(evt.Payload["error_message"])); msg != "" {
+		return msg
+	}
+	return ""
+}
+
+func formatFailoverMeta(alias, source string) string {
+	var parts []string
+	if alias = strings.TrimSpace(alias); alias != "" {
+		parts = append(parts, "alias="+alias)
+	}
+	if source = strings.TrimSpace(source); source != "" {
+		parts = append(parts, "source="+source)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
+}
+
+func stringFromAny(v any) string {
+	switch val := v.(type) {
+	case string:
+		return val
+	case fmt.Stringer:
+		return val.String()
+	case float64, float32, int, int32, int64, uint, uint32, uint64, bool:
+		return fmt.Sprint(val)
+	default:
+		if v == nil {
+			return ""
+		}
+		return fmt.Sprint(v)
+	}
 }

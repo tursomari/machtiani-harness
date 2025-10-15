@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 
 	"golang.org/x/term"
 )
@@ -15,10 +16,12 @@ const defaultWidth = 80
 // TerminalDisplay manages the structured streaming output for mct-agent.
 type TerminalDisplay struct {
 	out       io.Writer
+	mu        sync.Mutex
 	started   bool
 	closed    bool
 	hasPrompt bool
 	width     int
+	current   *PromptStream
 }
 
 // PromptStream coordinates streaming tokens for a single prompt turn.
@@ -45,105 +48,144 @@ func NewTerminalDisplay(out io.Writer) *TerminalDisplay {
 
 // StartSession marks the start of a session. Prompt lines are printed by BeginPrompt.
 func (t *TerminalDisplay) StartSession(goal string) {
-	if t.started {
-		return
-	}
-	t.started = true
-	// The initial prompt is printed when BeginPrompt is called.
+	t.withLock(func() {
+		if t.started {
+			return
+		}
+		t.started = true
+	})
+	_ = goal // goal only used for symmetry with BeginPrompt
 }
 
 // BeginPrompt prepares the stream for a prompt/question block.
 func (t *TerminalDisplay) BeginPrompt(prompt string, opts *PromptOptions) *PromptStream {
-	if !t.started {
-		t.StartSession(prompt)
-	}
-	// Link from previous answer to next prompt, if any.
-	if t.hasPrompt {
-		fmt.Fprintln(t.out, "|")
-	}
-	// Print the prompt itself (no indentation).
-	fmt.Fprintln(t.out, strings.TrimSpace(prompt))
-	if opts != nil {
-		for _, meta := range opts.Metadata {
-			clean := strings.TrimSpace(meta)
-			if clean == "" {
-				continue
-			}
-			fmt.Fprintf(t.out, "|  %s\n", clean)
-		}
-	}
-	// Link prompt to its answer preview.
-	fmt.Fprintln(t.out, "|")
 	stream := &PromptStream{display: t}
-	t.hasPrompt = true
+	t.withLock(func() {
+		if !t.started {
+			t.started = true
+		}
+		if t.current != nil {
+			t.current.flushLineLocked()
+		}
+		if t.hasPrompt {
+			fmt.Fprintln(t.out, "|")
+		}
+		fmt.Fprintln(t.out, strings.TrimSpace(prompt))
+		if opts != nil {
+			for _, meta := range opts.Metadata {
+				clean := strings.TrimSpace(meta)
+				if clean == "" {
+					continue
+				}
+				fmt.Fprintf(t.out, "|  %s\n", clean)
+			}
+		}
+		fmt.Fprintln(t.out, "|")
+		t.hasPrompt = true
+		t.current = stream
+	})
 	return stream
 }
 
 // ShowFinal prints the final rendered answer (expected to be glow-rendered).
 func (t *TerminalDisplay) ShowFinal(rendered string) {
-	if !t.started {
-		t.StartSession("")
-	}
-	// Do not emit labels or extra leading newlines; present the answer as-is.
-	final := strings.Trim(rendered, "\n")
-	if strings.TrimSpace(final) == "" {
-		return
-	}
-	// Print a single leading newline before the final answer for separation.
-	fmt.Fprintln(t.out)
-	fmt.Fprintln(t.out, "===> FINAL RESPONSE <===")
-	fmt.Fprintln(t.out, final)
+	t.withLock(func() {
+		if !t.started {
+			t.started = true
+		}
+		final := strings.Trim(rendered, "\n")
+		if strings.TrimSpace(final) == "" {
+			return
+		}
+		if t.current != nil {
+			t.current.flushLineLocked()
+		}
+		fmt.Fprintln(t.out)
+		fmt.Fprintln(t.out, "===> FINAL RESPONSE <===")
+		fmt.Fprintln(t.out, final)
+	})
 }
 
 // EndSession prints the trailing border once.
 func (t *TerminalDisplay) EndSession() {
-	if t.closed {
+	t.withLock(func() {
+		if t.closed {
+			return
+		}
+		t.closed = true
+	})
+}
+
+// Notify prints an informational line within the current session timeline.
+func (t *TerminalDisplay) Notify(message string) {
+	clean := strings.TrimSpace(message)
+	if clean == "" {
 		return
 	}
-	t.closed = true
+	t.withLock(func() {
+		if !t.started {
+			t.started = true
+		}
+		if t.current != nil {
+			t.current.flushLineLocked()
+		}
+		if t.hasPrompt {
+			fmt.Fprintf(t.out, "|  %s\n", clean)
+			return
+		}
+		fmt.Fprintln(t.out, clean)
+	})
 }
 
 // OnChunk ingests a header/token chunk while streaming.
 func (s *PromptStream) OnChunk(chunk string) {
-	if s.done {
-		return
-	}
-	s.buffer.WriteString(chunk)
-	s.renderCurrent()
+	s.display.withLock(func() {
+		if s.done {
+			return
+		}
+		s.buffer.WriteString(chunk)
+		s.renderCurrentLocked()
+	})
 }
 
 // Complete flushes the stream and prints a condensed summary.
 func (s *PromptStream) Complete(finalText string) {
-	if s.done {
-		return
-	}
-	if strings.TrimSpace(finalText) == "" {
-		finalText = s.buffer.String()
-	}
-	line := firstLine(finalText)
-	if line == "" {
-		line = "(empty response)"
-	}
-	s.printLine(line)
-	fmt.Fprintln(s.display.out)
-	s.done = true
+	s.display.withLock(func() {
+		if s.done {
+			return
+		}
+		if strings.TrimSpace(finalText) == "" {
+			finalText = s.buffer.String()
+		}
+		line := firstLine(finalText)
+		if line == "" {
+			line = "(empty response)"
+		}
+		s.printLineLocked(line)
+		fmt.Fprintln(s.display.out)
+		s.done = true
+		s.display.current = nil
+	})
 }
 
 // Abort stops the stream and prints an error line.
 func (s *PromptStream) Abort(message string) {
-	if s.done {
-		return
-	}
-	text := message
-	if !strings.HasPrefix(strings.ToLower(text), "error") {
-		text = "error: " + text
-	}
-	s.printLine(text)
-	fmt.Fprintln(s.display.out)
-	s.done = true
+	s.display.withLock(func() {
+		if s.done {
+			return
+		}
+		text := message
+		if !strings.HasPrefix(strings.ToLower(text), "error") {
+			text = "error: " + text
+		}
+		s.printLineLocked(text)
+		fmt.Fprintln(s.display.out)
+		s.done = true
+		s.display.current = nil
+	})
 }
 
-func (s *PromptStream) renderCurrent() {
+func (s *PromptStream) renderCurrentLocked() {
 	current := s.buffer.String()
 	preview := firstLine(current)
 	if preview == "" {
@@ -152,10 +194,10 @@ func (s *PromptStream) renderCurrent() {
 	if preview == "" {
 		preview = "..."
 	}
-	s.printLine(preview)
+	s.printLineLocked(preview)
 }
 
-func (s *PromptStream) printLine(text string) {
+func (s *PromptStream) printLineLocked(text string) {
 	prefix := "`-- "
 	cleaned := sanitizeLine(text)
 	maxWidth := s.display.width - len(prefix)
@@ -171,13 +213,27 @@ func (s *PromptStream) printLine(text string) {
 		return
 	}
 	fmt.Fprintf(s.display.out, "\r%s", full)
-	// Clear leftovers if the new text is shorter than previous.
 	if s.lastLen > len(full) {
 		diff := s.lastLen - len(full)
 		fmt.Fprint(s.display.out, strings.Repeat(" ", diff))
 		fmt.Fprintf(s.display.out, "\r%s", full)
 	}
 	s.lastLen = len(full)
+}
+
+func (s *PromptStream) flushLineLocked() {
+	if !s.started || s.done {
+		return
+	}
+	fmt.Fprintln(s.display.out)
+	s.started = false
+	s.lastLen = 0
+}
+
+func (t *TerminalDisplay) withLock(fn func()) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	fn()
 }
 
 func sanitizeLine(text string) string {
@@ -187,7 +243,6 @@ func sanitizeLine(text string) string {
 	if text == "" {
 		return ""
 	}
-	// Collapse consecutive whitespace
 	fields := strings.Fields(text)
 	return strings.Join(fields, " ")
 }

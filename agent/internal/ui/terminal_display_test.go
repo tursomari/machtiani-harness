@@ -74,3 +74,36 @@ func TestShowFinalWithoutMarker(t *testing.T) {
 		t.Fatalf("final output should include answer text, got %q", output)
 	}
 }
+
+func TestNotifyDuringStream(t *testing.T) {
+	var buf bytes.Buffer
+	display := NewTerminalDisplay(&buf)
+	display.width = 120
+	stream := display.BeginPrompt("Prompt", nil)
+	stream.OnChunk("partial answer")
+	display.Notify("[llm failover] triggered: alias=test from primary")
+	stream.OnChunk(" with continuation")
+	stream.Complete("partial answer with continuation")
+
+	output := buf.String()
+	if !strings.Contains(output, "|  [llm failover] triggered: alias=test from primary") {
+		t.Fatalf("expected notify line in output, got %q", output)
+	}
+	if strings.Count(output, "`-- ") == 0 {
+		t.Fatalf("expected prompt preview line, got %q", output)
+	}
+	if !strings.Contains(output, "partial answer with continuation") {
+		t.Fatalf("expected completion text, got %q", output)
+	}
+}
+
+func TestNotifyBeforePrompt(t *testing.T) {
+	var buf bytes.Buffer
+	display := NewTerminalDisplay(&buf)
+	display.Notify("[llm failover] triggered early")
+
+	output := buf.String()
+	if strings.TrimSpace(output) != "[llm failover] triggered early" {
+		t.Fatalf("expected notify output before prompt, got %q", output)
+	}
+}
