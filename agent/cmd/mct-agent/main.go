@@ -99,7 +99,7 @@ func run() int {
 	fs.IntVar(&cfg.maxSteps, "max-steps", 4, "maximum number of turns before finalizing")
 	fs.StringVar(&cfg.orchModel, "model", "", "Model alias defined in .machtiani/config.toml (alias for --orch-model)")
 	fs.StringVar(&cfg.orchModel, "orch-model", "", "Model alias for orchestration/planner steps (default: config or env)")
-	fs.StringVar(&cfg.patcherModel, "patcher-model", "", "Model alias for patch planning/execution (default: orchestration model)")
+	fs.StringVar(&cfg.patcherModel, "patcher-model", "", "Reserved placeholder; patch instructions currently use the orchestrator model")
 	fs.StringVar(&cfg.fileDiscoveryModel, "file-discovery-model", "", "Model alias for file discovery runs (default: orchestration model)")
 	fs.StringVar(&cfg.agentModel, "agent-model", "", "Legacy planner model alias (deprecated; use --orch-model)")
 	fs.IntVar(&cfg.timeoutPerTurn, "timeout-per-turn", 120, "per-turn timeout in seconds (set 0 for no timeout)")

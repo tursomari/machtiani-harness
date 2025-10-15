@@ -66,7 +66,7 @@ Flags:
 - `--openai-api-key string`: API key for OpenAI-compatible endpoint
 - `--openai-base-url string`: Base URL for OpenAI-compatible endpoint
 - `--orch-model string`: Model alias for planner/finalizer turns (alias: `--model`)
-- `--patcher-model string`: Model alias for patch planning/execution (default: orchestration model)
+- `--patcher-model string`: Reserved placeholder; patch instructions are generated via the orchestrator model
 - `--file-discovery-model string`: Model alias for file discovery runs (default: orchestration model)
 - `--openai-model string`: Direct upstream model name for orchestrator (deprecated; prefer aliases)
 - `--timeout-per-turn int`: per-turn timeout in seconds (default: 120; set 0 for unlimited)
@@ -94,7 +94,7 @@ Flags:
   - Flags `--openai-*` override
   - Then `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL`
   - Legacy envs `AGENT_MODEL_*` accepted as fallback with a deprecation warning
-- The orchestrator, patcher, and discovery paths each resolve their effective model; unset component flags fall back to the orchestrator configuration.
+- The orchestrator and discovery paths resolve their effective model; the patcher flag is a placeholder today and falls back to the orchestrator configuration.
 - `MACHTIANI_SESSION_ID` is generated per run and passed into the discovery service for correlation across artifacts.
 - `--timeout-per-turn` applies to both the discovery steps and the planner/finalizer LLM calls. Set to `0` to disable the deadline for all per-turn operations.
 
@@ -114,6 +114,7 @@ Flags:
 - `--dry-run` simulates planning and discovery without making outbound LLM requests.
 - Patch planning is opt-in. Pass `--patch` to enable planner patch requests; without it the agent skips patch instructions entirely.
 - Use `--patch-no-apply` to capture patch diagnostics and transcript turns without touching the working tree.
+- `--patcher-model` is currently informational only; the planner (orchestrator model) generates patch instructions and the runner ignores this alias.
 
 ## Testing
 
