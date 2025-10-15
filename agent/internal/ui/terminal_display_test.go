@@ -2,6 +2,7 @@ package ui
 
 import (
 	"bytes"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -35,7 +36,8 @@ func TestPromptStreamCompleteTruncatesLongLine(t *testing.T) {
 	answer := "Goroutines are lightweight managed threads in Go that scale."
 	stream.Complete(answer)
 
-	lines := strings.Split(buf.String(), "\n")
+	raw := buf.String()
+	lines := strings.Split(stripANSI(raw), "\n")
 	var preview string
 	for _, line := range lines {
 		if strings.HasPrefix(line, "`-- ") {
@@ -43,7 +45,7 @@ func TestPromptStreamCompleteTruncatesLongLine(t *testing.T) {
 		}
 	}
 	if preview == "" {
-		t.Fatalf("did not capture preview line in output: %q", buf.String())
+		t.Fatalf("did not capture preview line in output: %q", raw)
 	}
 	if len([]rune(preview)) > display.width {
 		t.Fatalf("preview exceeds width: got %q (len=%d) width=%d", preview, len([]rune(preview)), display.width)
@@ -85,8 +87,8 @@ func TestNotifyDuringStream(t *testing.T) {
 	stream.OnChunk(" with continuation")
 	stream.Complete("partial answer with continuation")
 
-	output := buf.String()
-	if !strings.Contains(output, "|  [llm failover] triggered: alias=test from primary") {
+	output := stripANSI(buf.String())
+	if !strings.Contains(output, "|   [llm failover] triggered: alias=test from primary") {
 		t.Fatalf("expected notify line in output, got %q", output)
 	}
 	if strings.Count(output, "`-- ") == 0 {
@@ -95,6 +97,12 @@ func TestNotifyDuringStream(t *testing.T) {
 	if !strings.Contains(output, "partial answer with continuation") {
 		t.Fatalf("expected completion text, got %q", output)
 	}
+}
+
+var ansiCodes = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+func stripANSI(s string) string {
+	return ansiCodes.ReplaceAllString(s, "")
 }
 
 func TestNotifyBeforePrompt(t *testing.T) {

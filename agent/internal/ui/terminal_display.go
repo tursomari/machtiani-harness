@@ -11,7 +11,11 @@ import (
 	"golang.org/x/term"
 )
 
-const defaultWidth = 80
+const (
+	defaultWidth = 80
+	ansiReset    = "\033[0m"
+	ansiGray     = "\033[37m"
+)
 
 // TerminalDisplay manages the structured streaming output for mct-agent.
 type TerminalDisplay struct {
@@ -67,20 +71,23 @@ func (t *TerminalDisplay) BeginPrompt(prompt string, opts *PromptOptions) *Promp
 		if t.current != nil {
 			t.current.flushLineLocked()
 		}
-		if t.hasPrompt {
-			fmt.Fprintln(t.out, "|")
-		}
+		fmt.Fprintln(t.out)
 		fmt.Fprintln(t.out, strings.TrimSpace(prompt))
+		printedMeta := false
 		if opts != nil {
 			for _, meta := range opts.Metadata {
 				clean := strings.TrimSpace(meta)
 				if clean == "" {
 					continue
 				}
-				fmt.Fprintf(t.out, "|  %s\n", clean)
+				if !printedMeta {
+					fmt.Fprintf(t.out, "%s|%s\n", ansiGray, ansiReset)
+					printedMeta = true
+				}
+				fmt.Fprintf(t.out, "%s|   %s%s\n", ansiGray, clean, ansiReset)
 			}
 		}
-		fmt.Fprintln(t.out, "|")
+		fmt.Fprintf(t.out, "%s|%s\n", ansiGray, ansiReset)
 		t.hasPrompt = true
 		t.current = stream
 	})
@@ -130,7 +137,7 @@ func (t *TerminalDisplay) Notify(message string) {
 			t.current.flushLineLocked()
 		}
 		if t.hasPrompt {
-			fmt.Fprintf(t.out, "|  %s\n", clean)
+			fmt.Fprintf(t.out, "%s|   %s%s\n", ansiGray, clean, ansiReset)
 			return
 		}
 		fmt.Fprintln(t.out, clean)
@@ -206,17 +213,18 @@ func (s *PromptStream) printLineLocked(text string) {
 	}
 	cleaned = truncate(cleaned, maxWidth)
 	full := prefix + cleaned
+	colored := ansiGray + full + ansiReset
 	if !s.started {
-		fmt.Fprint(s.display.out, full)
+		fmt.Fprint(s.display.out, colored)
 		s.started = true
 		s.lastLen = len(full)
 		return
 	}
-	fmt.Fprintf(s.display.out, "\r%s", full)
+	fmt.Fprintf(s.display.out, "\r%s", colored)
 	if s.lastLen > len(full) {
 		diff := s.lastLen - len(full)
 		fmt.Fprint(s.display.out, strings.Repeat(" ", diff))
-		fmt.Fprintf(s.display.out, "\r%s", full)
+		fmt.Fprintf(s.display.out, "\r%s", colored)
 	}
 	s.lastLen = len(full)
 }
