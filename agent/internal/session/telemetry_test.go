@@ -1,4 +1,4 @@
-package main
+package session
 
 import (
 	"context"
@@ -20,8 +20,8 @@ func TestOfflineLLMProducesTrajectoryEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("trajectory: %v", err)
 	}
-	cfg := config{trajectoryExcerpt: 128}
-	sess := newSessionTelemetry(writer, sessionID, "offline goal", cfg, "")
+	cfg := legacyConfig{trajectoryExcerpt: 128}
+	sess := newSessionTelemetry(writer, sessionID, "offline goal", cfg, "", BuildInfo{})
 	if sess == nil {
 		t.Fatalf("expected session telemetry")
 	}
