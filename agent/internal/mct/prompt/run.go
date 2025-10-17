@@ -16,6 +16,8 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/mct/llm"
 )
 
+var chatStreamWithRuntime = llm.ChatStreamWithResolvedFallback
+
 // Run executes the core prompt flow used by the mct CLI and mct-agent.
 // It handles context building, file discovery, streaming, transcript
 // persistence, and chat file saving based on the provided options.
@@ -94,7 +96,11 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 	}
 
 	messages := []llm.Message{{Role: "user", Content: combined}}
-	assistant, err := llm.ChatStreamWithResolvedFallback(ctx, opts.Runtime.Resolved, opts.Runtime.FallbackAliases, opts.Runtime.FallbackResolved, opts.Runtime.Extras, messages, opts.OnToken)
+	answerRuntime := opts.AnswerRuntime
+	if runtimeIsZero(answerRuntime) {
+		answerRuntime = opts.Runtime
+	}
+	assistant, err := chatStreamWithRuntime(ctx, answerRuntime.Resolved, answerRuntime.FallbackAliases, answerRuntime.FallbackResolved, copyExtrasMap(answerRuntime.Extras), messages, opts.OnToken)
 	if err != nil {
 		return res, err
 	}
@@ -221,4 +227,32 @@ func cloneResolvedModels(src []llm.ResolvedModel) []llm.ResolvedModel {
 		out = append(out, llm.CloneResolvedModel(m))
 	}
 	return out
+}
+
+func runtimeIsZero(rt ModelRuntime) bool {
+	if strings.TrimSpace(rt.Resolved.Model) != "" {
+		return false
+	}
+	if strings.TrimSpace(rt.Resolved.BaseURL) != "" {
+		return false
+	}
+	if strings.TrimSpace(rt.Alias) != "" {
+		return false
+	}
+	if len(rt.FallbackAliases) > 0 {
+		return false
+	}
+	if len(rt.FallbackResolved) > 0 {
+		return false
+	}
+	if len(rt.ParamPairs) > 0 {
+		return false
+	}
+	if len(rt.ParamJSON) > 0 {
+		return false
+	}
+	if len(rt.Extras) > 0 {
+		return false
+	}
+	return true
 }

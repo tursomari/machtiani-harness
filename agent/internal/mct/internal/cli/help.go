@@ -20,6 +20,7 @@ Prompt:
   Flags:
     -f, --file <path>        Markdown file used as the prompt. Required if no positional message is provided.
         --model <string>     Model alias defined in .machtiani/config.toml.
+        --answer-model <str> Answer-generation model alias (defaults to --model).
         --openai-model <str> Direct upstream model name (deprecated; prefer --model).
         --openai-api-key     OpenAI-compatible API key (overrides env OPENAI_API_KEY).
         --openai-base-url    OpenAI-compatible base URL (overrides env OPENAI_BASE_URL).

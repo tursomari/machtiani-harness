@@ -54,6 +54,7 @@ func (m modelRuntime) displayLabel() string {
 
 type componentModelRuntimes struct {
 	orchestrator  modelRuntime
+	answer        modelRuntime
 	patcher       modelRuntime
 	fileDiscovery modelRuntime
 }
@@ -239,8 +240,10 @@ func resolveModelRuntimes(cfg legacyConfig, paramPairs, paramJSON []string) (com
 		cfg.agentModel,
 		cfg.patcherModel,
 		cfg.fileDiscoveryModel,
+		cfg.answerModel,
 		os.Getenv("MCT_MODEL"),
 		os.Getenv("MCT_ORCH_MODEL"),
+		os.Getenv("MCT_ANSWER_MODEL"),
 	}, directBaseURL, directAPIKey, directModel)
 
 	patcher := cloneModelRuntime(primary)
@@ -269,8 +272,24 @@ func resolveModelRuntimes(cfg legacyConfig, paramPairs, paramJSON []string) (com
 	ensureFallbackToPrimary(&patcher, primary)
 	ensureFallbackToPrimary(&fileDiscovery, primary)
 
+	answer := cloneModelRuntime(primary)
+	answerAlias := firstNonEmpty(strings.TrimSpace(cfg.answerModel), strings.TrimSpace(os.Getenv("MCT_ANSWER_MODEL")))
+	if strings.TrimSpace(answerAlias) != "" {
+		resolved, err := llm.ResolveModel(answerAlias)
+		if err != nil {
+			return componentModelRuntimes{}, err
+		}
+		answer.resolved = resolved
+		answer.alias = answerAlias
+		answer.usingAlias = true
+		answer.fallbackAliases = nil
+		answer.fallbackResolved = nil
+	}
+	ensureFallbackToPrimary(&answer, primary)
+
 	return componentModelRuntimes{
 		orchestrator:  primary,
+		answer:        answer,
 		patcher:       patcher,
 		fileDiscovery: fileDiscovery,
 	}, nil

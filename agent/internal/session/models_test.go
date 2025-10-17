@@ -3,6 +3,7 @@ package session
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
@@ -133,5 +134,76 @@ func TestEnsureFallbackToPrimaryNoDuplicates(t *testing.T) {
 	}
 	if got, want := len(target.fallbackResolved), 1; got != want {
 		t.Fatalf("unexpected fallback resolved count: got %d want %d", got, want)
+	}
+}
+
+func TestResolveModelRuntimesAnswerAlias(t *testing.T) {
+	configDir := t.TempDir()
+	configPath := filepath.Join(configDir, "config.toml")
+	writeTestConfig(t, configPath)
+	t.Setenv("MACHTIANI_CONFIG", configPath)
+
+	cfg := legacyConfig{
+		orchModel:   "orch",
+		answerModel: "answer",
+	}
+	models, err := resolveModelRuntimes(cfg, nil, nil)
+	if err != nil {
+		t.Fatalf("resolveModelRuntimes returned error: %v", err)
+	}
+	if models.answer.alias != "answer" {
+		t.Fatalf("expected answer alias 'answer', got %q", models.answer.alias)
+	}
+	if got := strings.TrimSpace(models.answer.resolved.Model); got != "answer-model" {
+		t.Fatalf("expected answer model 'answer-model', got %q", got)
+	}
+	if len(models.answer.fallbackAliases) == 0 || models.answer.fallbackAliases[0] != "orch" {
+		t.Fatalf("expected orchestrator fallback alias, got %v", models.answer.fallbackAliases)
+	}
+	if len(models.answer.fallbackResolved) == 0 || models.answer.fallbackResolved[0].Model != "orch-model" {
+		t.Fatalf("expected orchestrator fallback model, got %+v", models.answer.fallbackResolved)
+	}
+}
+
+func TestResolveModelRuntimesAnswerDefaultsToOrchestrator(t *testing.T) {
+	configDir := t.TempDir()
+	configPath := filepath.Join(configDir, "config.toml")
+	writeTestConfig(t, configPath)
+	t.Setenv("MACHTIANI_CONFIG", configPath)
+
+	cfg := legacyConfig{orchModel: "orch"}
+	models, err := resolveModelRuntimes(cfg, nil, nil)
+	if err != nil {
+		t.Fatalf("resolveModelRuntimes returned error: %v", err)
+	}
+	if models.answer.resolved.Model != models.orchestrator.resolved.Model {
+		t.Fatalf("expected answer model to match orchestrator, got %q vs %q", models.answer.resolved.Model, models.orchestrator.resolved.Model)
+	}
+	if models.answer.alias != models.orchestrator.alias {
+		t.Fatalf("expected answer alias to match orchestrator, got %q vs %q", models.answer.alias, models.orchestrator.alias)
+	}
+}
+
+func writeTestConfig(t *testing.T, path string) {
+	t.Helper()
+	content := `default_model = "orch"
+
+[providers.fake]
+base_url = "https://example.com"
+api_key = "test-key"
+
+[models.orch]
+provider = "fake"
+model = "orch-model"
+
+[models.answer]
+provider = "fake"
+model = "answer-model"
+`
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
 	}
 }

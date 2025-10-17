@@ -17,6 +17,7 @@ type Runner struct {
 	Verbose                 bool
 	DryRun                  bool
 	Runtime                 promptsvc.ModelRuntime
+	AnswerRuntime           promptsvc.ModelRuntime
 	FileDiscoveryRuntime    promptsvc.ModelRuntime
 	FileDiscoveryTrajectory string
 }
@@ -123,6 +124,7 @@ func (r *Runner) RunPrompt(ctx context.Context, sessionID string, in PromptInput
 		SessionID:               sessionID,
 		SourceFile:              in.SourceFile,
 		Runtime:                 r.Runtime,
+		AnswerRuntime:           r.AnswerRuntime,
 		FileDiscoveryRuntime:    fdRuntime,
 		OnHeader:                onHeader,
 		OnToken:                 onToken,

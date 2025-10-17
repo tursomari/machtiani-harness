@@ -35,6 +35,7 @@ func handlePrompt(args []string) {
 	// Supported flags
 	modelFlag := fs.String("model", "", "Model alias defined in .machtiani/config.toml")
 	orchModelFlag := fs.String("orch-model", "", "Fallback model alias to try if the primary model fails")
+	answerModelFlag := fs.String("answer-model", "", "Model alias for answer generation (defaults to --model)")
 	openAIModelFlag := fs.String("openai-model", "", "Direct upstream model name (deprecated; prefer --model)")
 	openAIAPIKeyFlag := fs.String("openai-api-key", "", "OpenAI-compatible API key (overrides env, deprecated)")
 	openAIBaseURLFlag := fs.String("openai-base-url", "", "OpenAI-compatible base URL (overrides env, deprecated)")
@@ -145,8 +146,29 @@ func handlePrompt(args []string) {
 		os.Exit(2)
 	}
 
+	answerAlias := strings.TrimSpace(*answerModelFlag)
+	answerDisplay := runtime.displayName()
+	var answerPromptRuntime promptsvc.ModelRuntime
+	if answerAlias != "" {
+		answerRuntime := runtime
+		answerRuntime.alias = answerAlias
+		answerRuntime.usingAlias = true
+		answerRuntime.fallbackAliases = nil
+		answerRuntime.fallbackResolved = nil
+		if strings.TrimSpace(os.Getenv("MCT_LLM_TEST_STUB")) == "" {
+			resolved, err := llm.ResolveModel(answerAlias)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error resolving answer model: %v\n", err)
+				os.Exit(2)
+			}
+			answerRuntime.resolved = resolved
+		}
+		answerDisplay = answerRuntime.displayName()
+		answerPromptRuntime = toPromptModelRuntime(answerRuntime)
+	}
+
 	if *verboseFlag && *modeFlag != "answer-only" {
-		printVerboseInfo(*fileFlag, runtime.displayName(), *matchStrengthFlag, *modeFlag, prompt)
+		printVerboseInfo(*fileFlag, runtime.displayName(), answerDisplay, *matchStrengthFlag, *modeFlag, prompt)
 	}
 
 	ctx := context.Background()
@@ -167,24 +189,17 @@ func handlePrompt(args []string) {
 		}
 	}
 
-	modelRuntime := promptsvc.ModelRuntime{
-		Resolved:         runtime.resolved,
-		Alias:            runtime.alias,
-		UsingAlias:       runtime.usingAlias,
-		Extras:           runtime.extras,
-		ParamPairs:       runtime.paramPairs,
-		ParamJSON:        runtime.paramJSON,
-		FallbackAliases:  append([]string(nil), runtime.fallbackAliases...),
-		FallbackResolved: cloneResolvedModels(runtime.fallbackResolved),
-	}
+	primaryRuntime := toPromptModelRuntime(runtime)
+	fileDiscoveryRuntime := primaryRuntime
 	result, err := promptsvc.Run(ctx, promptsvc.RunOptions{
 		Prompt:               prompt,
 		Mode:                 *modeFlag,
 		IncludeHistory:       *includeHistoryFlag,
 		SessionID:            sessionID,
 		SourceFile:           *fileFlag,
-		Runtime:              modelRuntime,
-		FileDiscoveryRuntime: modelRuntime,
+		Runtime:              primaryRuntime,
+		AnswerRuntime:        answerPromptRuntime,
+		FileDiscoveryRuntime: fileDiscoveryRuntime,
 		OnHeader:             streamHeader,
 		OnToken:              streamToken,
 		Verbose:              *verboseFlag,
@@ -214,7 +229,7 @@ func handlePrompt(args []string) {
 
 // printVerboseInfo - unchanged
 
-func printVerboseInfo(markdown, model, matchStrength, mode, prompt string) {
+func printVerboseInfo(markdown, plannerModel, answerModel, matchStrength, mode, prompt string) {
 	ignoreFiles, err := utils.ReadIgnoreFile(".machtiani.ignore")
 	if err != nil {
 		log.Printf("Warning: Error loading ignore file for verbose info: %v", err)
@@ -232,7 +247,16 @@ func printVerboseInfo(markdown, model, matchStrength, mode, prompt string) {
 
 	fmt.Println("Arguments passed:")
 	fmt.Printf("  Markdown file: %s\n", markdown)
-	fmt.Printf("  Model: %s\n", model)
+	plannerDisplay := strings.TrimSpace(plannerModel)
+	if plannerDisplay == "" {
+		plannerDisplay = "(unresolved)"
+	}
+	answerDisplay := strings.TrimSpace(answerModel)
+	if answerDisplay == "" {
+		answerDisplay = "(uses planner model)"
+	}
+	fmt.Printf("  Planner model: %s\n", plannerDisplay)
+	fmt.Printf("  Answer model: %s\n", answerDisplay)
 	fmt.Printf("  Match strength: %s\n", matchStrength)
 	fmt.Printf("  Mode: %s\n", mode)
 	// Truncate long prompts in verbose output?
@@ -263,6 +287,30 @@ func cloneResolvedModels(in []llm.ResolvedModel) []llm.ResolvedModel {
 	out := make([]llm.ResolvedModel, 0, len(in))
 	for _, m := range in {
 		out = append(out, llm.CloneResolvedModel(m))
+	}
+	return out
+}
+
+func toPromptModelRuntime(rt modelRuntime) promptsvc.ModelRuntime {
+	return promptsvc.ModelRuntime{
+		Resolved:         llm.CloneResolvedModel(rt.resolved),
+		Alias:            rt.alias,
+		UsingAlias:       rt.usingAlias,
+		Extras:           cloneExtrasMap(rt.extras),
+		ParamPairs:       append([]string(nil), rt.paramPairs...),
+		ParamJSON:        append([]string(nil), rt.paramJSON...),
+		FallbackAliases:  append([]string(nil), rt.fallbackAliases...),
+		FallbackResolved: cloneResolvedModels(rt.fallbackResolved),
+	}
+}
+
+func cloneExtrasMap(src map[string]any) map[string]any {
+	if len(src) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(src))
+	for k, v := range src {
+		out[k] = v
 	}
 	return out
 }

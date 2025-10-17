@@ -3,6 +3,7 @@ package session
 type Config struct {
 	MaxSteps                int
 	OrchModel               string
+	AnswerModel             string
 	PatcherModel            string
 	FileDiscoveryModel      string
 	AgentModel              string
@@ -54,6 +55,7 @@ type Result struct {
 type legacyConfig struct {
 	maxSteps                int
 	orchModel               string
+	answerModel             string
 	patcherModel            string
 	fileDiscoveryModel      string
 	agentModel              string
@@ -82,6 +84,7 @@ func newLegacyConfig(cfg Config) legacyConfig {
 	return legacyConfig{
 		maxSteps:                cfg.MaxSteps,
 		orchModel:               cfg.OrchModel,
+		answerModel:             cfg.AnswerModel,
 		patcherModel:            cfg.PatcherModel,
 		fileDiscoveryModel:      cfg.FileDiscoveryModel,
 		agentModel:              cfg.AgentModel,

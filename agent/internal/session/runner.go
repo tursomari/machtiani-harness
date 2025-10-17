@@ -116,6 +116,7 @@ func Run(ctx context.Context, opts Options) Result {
 	}
 	orchPromptOpts := promptOptions(
 		describeModel("orchestrator", models.orchestrator),
+		describeModel("answer", models.answer),
 		describeModel("file discovery", models.fileDiscovery),
 	)
 	patcherPromptOpts := promptOptions(
@@ -126,6 +127,7 @@ func Run(ctx context.Context, opts Options) Result {
 		Verbose:                 cfg.verbose,
 		DryRun:                  cfg.dryRun,
 		Runtime:                 models.orchestrator.toPromptRuntime(),
+		AnswerRuntime:           models.answer.toPromptRuntime(),
 		FileDiscoveryRuntime:    models.fileDiscovery.toPromptRuntime(),
 		FileDiscoveryTrajectory: trajectoryPath,
 	}

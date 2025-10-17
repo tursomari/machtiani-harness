@@ -73,6 +73,16 @@ Answer‑only mode (no discovery, no saving):
 mct prompt --mode=answer-only -f prompt.md
 ```
 
+Model selection examples:
+```
+# Use claude for orchestration and gpt-4o for the final answer
+mct prompt "Summarize the architecture" \
+  --model claude-orchestrator \
+  --answer-model openai-gpt4o
+```
+
+`--model` continues to control planning/orchestration (with `--orch-model` as a fallback alias), while `--answer-model` lets you target a different LLM for the final answer. When omitted, answer generation defaults to the planner model.
+
 ## How It Works (prompt)
 1. Runs `file-discovery` in the repo to select relevant files.
 2. Filters file paths via `.machtiani.ignore` rules:

@@ -66,6 +66,7 @@ Flags:
 - `--openai-api-key string`: API key for OpenAI-compatible endpoint
 - `--openai-base-url string`: Base URL for OpenAI-compatible endpoint
 - `--orch-model string`: Model alias for planner/finalizer turns (alias: `--model`)
+- `--answer-model string`: Model alias for final answer generation (default: `--orch-model`)
 - `--patcher-model string`: Reserved placeholder; patch instructions are generated via the orchestrator model
 - `--file-discovery-model string`: Model alias for file discovery runs (default: orchestration model)
 - `--openai-model string`: Direct upstream model name for orchestrator (deprecated; prefer aliases)
@@ -87,8 +88,8 @@ Flags:
 
 ## Environment Details
 - Component model selection precedence:
-  - Flags `--orch-model`, `--patcher-model`, `--file-discovery-model`
-  - Environment variables `MCT_ORCH_MODEL`, `MCT_PATCHER_MODEL`, `MCT_FILE_DISCOVERY_MODEL` (planner also honors `MCT_MODEL` as a legacy alias)
+  - Flags `--orch-model`, `--answer-model`, `--patcher-model`, `--file-discovery-model`
+  - Environment variables `MCT_ORCH_MODEL`, `MCT_ANSWER_MODEL`, `MCT_PATCHER_MODEL`, `MCT_FILE_DISCOVERY_MODEL` (planner also honors `MCT_MODEL` as a legacy alias)
   - Shared `.machtiani/config.toml` defaults or legacy `--agent-model`
 - `OPENAI_*` resolution controls direct upstream credentials when skipping aliases:
   - Flags `--openai-*` override
