@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"github.com/spf13/pflag"
+	"github.com/tursomari/machtiani/agent/internal/mct/internal/git"
+	"github.com/tursomari/machtiani/agent/internal/mct/internal/readme"
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/utils"
 	"github.com/tursomari/machtiani/agent/internal/mct/llm"
 	promptsvc "github.com/tursomari/machtiani/agent/internal/mct/prompt"
@@ -191,6 +193,16 @@ func handlePrompt(args []string) {
 
 	primaryRuntime := toPromptModelRuntime(runtime)
 	fileDiscoveryRuntime := primaryRuntime
+
+	var readmeOpts *promptsvc.ReadmeOptions
+	skipReadme := strings.TrimSpace(os.Getenv(readme.SkipReadmeManagerEnv)) != ""
+	if !skipReadme && !isAnswerOnlyMode {
+		if headCommit, err := git.GetHeadCommitHash(); err == nil {
+			readmeOpts = &promptsvc.ReadmeOptions{Enabled: true, ProjectCommitSHA: headCommit}
+		} else if err != nil && !strings.Contains(strings.ToLower(err.Error()), "not a git repository") {
+			utils.LogErrorIfNotAnswerOnly(isAnswerOnlyMode, err, "Failed to determine project commit for README management")
+		}
+	}
 	result, err := promptsvc.Run(ctx, promptsvc.RunOptions{
 		Prompt:               prompt,
 		Mode:                 *modeFlag,
@@ -204,6 +216,7 @@ func handlePrompt(args []string) {
 		OnToken:              streamToken,
 		Verbose:              *verboseFlag,
 		MaxInputTokens:       *maxInputTokensFlag,
+		Readme:               readmeOpts,
 	})
 	if ms != nil {
 		_ = ms.Flush()

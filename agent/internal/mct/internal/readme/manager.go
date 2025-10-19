@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/git"
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/utils"
@@ -25,6 +24,8 @@ const (
 	verboseEnv           = "MCT_INTERNAL_README_VERBOSE"
 )
 
+type PromptExecutor func(ctx context.Context, prompt string) (string, error)
+
 // Manager coordinates readme repository state against the project repository.
 type Manager struct {
 	ProjectRoot      string
@@ -34,6 +35,7 @@ type Manager struct {
 	LastCommitPath   string
 	IsAnswerOnlyMode bool
 	Verbose          bool
+	PromptExecutor   PromptExecutor
 }
 
 // NewManager returns a manager rooted at the git toplevel containing cwd.
@@ -59,6 +61,11 @@ func NewManager(isAnswerOnly bool, verbose bool) (*Manager, error) {
 		IsAnswerOnlyMode: isAnswerOnly,
 		Verbose:          verbose || envVerbose,
 	}, nil
+}
+
+// SetPromptExecutor configures the callback used to generate README content.
+func (m *Manager) SetPromptExecutor(exec PromptExecutor) {
+	m.PromptExecutor = exec
 }
 
 // Run executes the management workflow using the supplied project commit hash.
@@ -326,27 +333,18 @@ func (m *Manager) buildReadmeContent(ctx context.Context, projectCommitHash, las
 
 	fullPrompt := composeMCTPrompt(systemPrompt, dynamicContext, lastProcessed)
 
-	cmdCtx, cancel := context.WithTimeout(ctx, 8*time.Minute)
-	defer cancel()
-
-	args := []string{"run", "--max-steps=1", "--final-file=" + m.ReadmeFilePath, "--timeout-per-turn=0", fullPrompt}
-	cmd := exec.CommandContext(cmdCtx, "mct-agent", args...)
-	cmd.Dir = m.ProjectRoot
-	cmd.Env = append(os.Environ(), fmt.Sprintf("%s=1", SkipReadmeManagerEnv))
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("mct-agent run failed: %w: %s", err, strings.TrimSpace(stderr.String()))
+	if m.PromptExecutor == nil {
+		return "", errors.New("readme prompt executor is not configured")
 	}
-	if fileContent, err := os.ReadFile(m.ReadmeFilePath); err == nil && strings.TrimSpace(string(fileContent)) != "" {
-		return strings.TrimSpace(string(fileContent)), nil
+	content, err := m.PromptExecutor(ctx, fullPrompt)
+	if err != nil {
+		return "", fmt.Errorf("generate readme content: %w", err)
 	}
-	if content, err := m.readLatestResponse(); err == nil && strings.TrimSpace(content) != "" {
-		return strings.TrimSpace(content), nil
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" {
+		return "", errors.New("readme prompt executor returned empty content")
 	}
-	return strings.TrimSpace(extractAssistantContent(stdout.String())), nil
+	return trimmed, nil
 }
 
 func composeMCTPrompt(systemPrompt, dynamicContext, lastProcessed string) string {
@@ -534,28 +532,6 @@ func runGitCommand(dir string, args ...string) error {
 	return nil
 }
 
-func extractAssistantContent(raw string) string {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
-		return trimmed
-	}
-	lines := strings.Split(trimmed, "\n")
-	markerIdx := -1
-	for i, line := range lines {
-		if strings.TrimSpace(line) == "# Assistant" {
-			markerIdx = i
-		}
-	}
-	if markerIdx == -1 {
-		return trimmed
-	}
-	if markerIdx+1 >= len(lines) {
-		return ""
-	}
-	section := strings.Join(lines[markerIdx+1:], "\n")
-	return strings.TrimSpace(section)
-}
-
 func shortHash(hash string) string {
 	clean := strings.TrimSpace(hash)
 	if len(clean) <= 12 {
@@ -569,13 +545,4 @@ func (m *Manager) verbosef(format string, args ...interface{}) {
 		return
 	}
 	fmt.Fprintf(os.Stderr, "[readme] "+format+"\n", args...)
-}
-
-func (m *Manager) readLatestResponse() (string, error) {
-	path := filepath.Join(m.ProjectRoot, ".machtiani", "chat", "machtiani-response.md")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-	return string(data), nil
 }

@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"os"
 	"strconv"
 	"strings"
@@ -9,7 +8,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/git"
-	"github.com/tursomari/machtiani/agent/internal/mct/internal/readme"
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/utils"
 )
 
@@ -38,8 +36,6 @@ func Execute() {
 	}
 
 	isAnswerOnlyMode := utils.IsAnswerOnlyMode()
-	skipReadmeManager := strings.TrimSpace(os.Getenv(readme.SkipReadmeManagerEnv)) != ""
-	verboseRequested := hasVerboseFlag(os.Args[1:])
 
 	frequencyHours, err := strconv.Atoi(SystemMessageFrequencyHours)
 	if err != nil {
@@ -72,21 +68,6 @@ func Execute() {
 			}
 		} else if fetchErr != nil {
 			utils.LogErrorIfNotAnswerOnly(isAnswerOnlyMode, fetchErr, "Failed to fetch system message")
-		}
-	}
-
-	if !skipReadmeManager {
-		if headCommitHash, err := git.GetHeadCommitHash(); err == nil {
-			if mgr, mgrErr := readme.NewManager(isAnswerOnlyMode, verboseRequested); mgrErr == nil {
-				ctx := context.Background()
-				if runErr := mgr.Run(ctx, headCommitHash); runErr != nil {
-					utils.LogErrorIfNotAnswerOnly(isAnswerOnlyMode, runErr, "Internal README management failed")
-				}
-			} else if !strings.Contains(strings.ToLower(mgrErr.Error()), "not a git repository") {
-				utils.LogErrorIfNotAnswerOnly(isAnswerOnlyMode, mgrErr, "Failed to initialize internal README manager")
-			}
-		} else if err != nil && !strings.Contains(strings.ToLower(err.Error()), "not a git repository") {
-			utils.LogErrorIfNotAnswerOnly(isAnswerOnlyMode, err, "Failed to determine project commit for README management")
 		}
 	}
 

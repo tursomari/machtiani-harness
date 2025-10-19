@@ -33,6 +33,13 @@ type RunOptions struct {
 	OnToken                 func(string)
 	Verbose                 bool
 	MaxInputTokens          int
+	Readme                  *ReadmeOptions
+}
+
+// ReadmeOptions configure optional internal README management hooks.
+type ReadmeOptions struct {
+	Enabled          bool
+	ProjectCommitSHA string
 }
 
 // Result captures the outcome of a prompt execution.

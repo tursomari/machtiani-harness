@@ -117,6 +117,10 @@ func (r *Runner) RunPrompt(ctx context.Context, sessionID string, in PromptInput
 	}
 	start := time.Now()
 	childCtx := trajectory.ContextWithParentSpan(ctx, span.ID)
+	var readmeOpts *promptsvc.ReadmeOptions
+	if !r.DryRun && safeMode != "answer-only" {
+		readmeOpts = &promptsvc.ReadmeOptions{Enabled: true}
+	}
 	res, err := promptsvc.Run(childCtx, promptsvc.RunOptions{
 		Prompt:                  in.Prompt,
 		Mode:                    safeMode,
@@ -131,6 +135,7 @@ func (r *Runner) RunPrompt(ctx context.Context, sessionID string, in PromptInput
 		Verbose:                 r.Verbose,
 		FileDiscoveryTrajectory: r.FileDiscoveryTrajectory,
 		MaxInputTokens:          in.MaxInputTokens,
+		Readme:                  readmeOpts,
 	})
 	if useMarkdown && ms != nil {
 		_ = ms.Flush()

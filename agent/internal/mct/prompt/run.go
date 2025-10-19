@@ -10,7 +10,9 @@ import (
 
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/contextbuilder"
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/discoveryrunner"
+	"github.com/tursomari/machtiani/agent/internal/mct/internal/git"
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/naming"
+	"github.com/tursomari/machtiani/agent/internal/mct/internal/readme"
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/session"
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/utils"
 	"github.com/tursomari/machtiani/agent/internal/mct/llm"
@@ -115,6 +117,10 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 	_ = session.AddMessage("user", opts.Prompt, nil)
 	_ = session.AddMessage("assistant", assistant, included)
 
+	if err := runReadmeManager(ctx, opts, isAnswerOnly); err != nil {
+		utils.LogErrorIfNotAnswerOnly(isAnswerOnly, err, "internal README management failed")
+	}
+
 	if isAnswerOnly {
 		return res, nil
 	}
@@ -135,6 +141,87 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 	}
 	res.SavedPath = savedPath
 	return res, nil
+}
+
+func runReadmeManager(ctx context.Context, opts RunOptions, isAnswerOnly bool) error {
+	if opts.Readme == nil || !opts.Readme.Enabled {
+		return nil
+	}
+	if isAnswerOnly {
+		return nil
+	}
+	if strings.TrimSpace(os.Getenv(readme.SkipReadmeManagerEnv)) != "" {
+		return nil
+	}
+	commit := ""
+	if opts.Readme != nil {
+		commit = strings.TrimSpace(opts.Readme.ProjectCommitSHA)
+	}
+	if commit == "" {
+		resolved, err := git.GetHeadCommitHash()
+		if err != nil {
+			if strings.Contains(strings.ToLower(err.Error()), "not a git repository") {
+				return nil
+			}
+			return fmt.Errorf("resolve project commit: %w", err)
+		}
+		commit = strings.TrimSpace(resolved)
+	}
+	if commit == "" {
+		return fmt.Errorf("readme: unable to determine project commit hash")
+	}
+	mgr, err := readme.NewManager(isAnswerOnly, opts.Verbose)
+	if err != nil {
+		return err
+	}
+	mgr.SetPromptExecutor(func(execCtx context.Context, prompt string) (string, error) {
+		prev, hadPrev := os.LookupEnv(readme.SkipReadmeManagerEnv)
+		if err := os.Setenv(readme.SkipReadmeManagerEnv, "1"); err != nil {
+			return "", fmt.Errorf("set %s: %w", readme.SkipReadmeManagerEnv, err)
+		}
+		defer func() {
+			if hadPrev {
+				_ = os.Setenv(readme.SkipReadmeManagerEnv, prev)
+			} else {
+				_ = os.Unsetenv(readme.SkipReadmeManagerEnv)
+			}
+		}()
+
+		innerSessionID := deriveReadmeSessionID(commit)
+		innerOpts := RunOptions{
+			Prompt:               prompt,
+			Mode:                 "default",
+			IncludeHistory:       false,
+			SessionID:            innerSessionID,
+			ExplicitName:         "internal-readme",
+			Runtime:              opts.Runtime,
+			AnswerRuntime:        opts.AnswerRuntime,
+			FileDiscoveryRuntime: opts.FileDiscoveryRuntime,
+			Verbose:              opts.Verbose,
+			MaxInputTokens:       opts.MaxInputTokens,
+		}
+		res, err := Run(execCtx, innerOpts)
+		if err != nil {
+			return "", err
+		}
+		assistant := strings.TrimSpace(res.Assistant)
+		if assistant != "" {
+			return assistant, nil
+		}
+		return strings.TrimSpace(res.FullText), nil
+	})
+	return mgr.Run(ctx, commit)
+}
+
+func deriveReadmeSessionID(commit string) string {
+	trimmed := strings.TrimSpace(commit)
+	if trimmed == "" {
+		return "readme"
+	}
+	if len(trimmed) > 12 {
+		trimmed = trimmed[:12]
+	}
+	return fmt.Sprintf("readme-%s", trimmed)
 }
 
 func buildHeader(combined string) string {
