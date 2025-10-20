@@ -97,9 +97,34 @@ RESET_STATE() {
 }
 
 ensure_readme_repo_exists() {
-  if [[ ! -d "$TEST_REPO/.machtiani/artifacts/readme/.git" ]]; then
-    fail "Expected internal README repo to exist after run"
+  local label="${1:-}"
+  local exit_code="${2:-}"
+  local stage="${3:-run}"
+  local repo_dir="$TEST_REPO/.machtiani/artifacts/readme/.git"
+  if [[ -d "$repo_dir" ]]; then
+    return
   fi
+
+  local msg="Expected internal README repo to exist after ${stage}"
+  if [[ -n "$label" ]]; then
+    msg+=" ($label)"
+  fi
+  if [[ -n "$exit_code" ]]; then
+    msg+="; mct-agent exit code $exit_code"
+  fi
+  if [[ -n "${sync_stdout_file:-}" ]]; then
+    msg+="; inspect $sync_stdout_file"
+  fi
+  if [[ -n "${sync_stderr_file:-}" ]]; then
+    msg+="; inspect $sync_stderr_file"
+  fi
+  if [[ -n "${stdout_file:-}" ]]; then
+    msg+="; inspect $stdout_file"
+  fi
+  if [[ -n "${stderr_file:-}" ]]; then
+    msg+="; inspect $stderr_file"
+  fi
+  fail "$msg"
 }
 
 get_readme_repo() {
@@ -186,10 +211,69 @@ run_case() {
   mkdir -p "$case_dir"
   local stdout_file="$case_dir/stdout.txt"
   local stderr_file="$case_dir/stderr.txt"
+  local sync_stdout_file="$case_dir/sync-stdout.txt"
+  local sync_stderr_file="$case_dir/sync-stderr.txt"
   local transcript_file="$case_dir/agent-transcript.md"
   local final_file="$case_dir/agent-final.txt"
   local fd_dir="$case_dir/file-discovery"
   mkdir -p "$fd_dir"
+
+  local sync_cmd=("$BIN_DIR/mct-agent" sync "--commit" "$project_commit")
+  if [[ -n "$MODEL_ALIAS" ]]; then
+    sync_cmd+=(--model "$MODEL_ALIAS")
+  fi
+  sync_cmd+=(
+    --timeout-per-turn "$TIMEOUT_PER_TURN"
+    --verbose
+  )
+
+  (
+    cd "$TEST_REPO"
+    "${sync_cmd[@]}" >"$sync_stdout_file" 2>"$sync_stderr_file"
+  )
+  local sync_rc=$?
+
+  if [[ $sync_rc -ne 0 ]]; then
+    fail "mct-agent sync failed for $label (exit $sync_rc); inspect $sync_stdout_file and $sync_stderr_file"
+  fi
+
+  ensure_readme_repo_exists "$label" "$sync_rc" "sync"
+
+  local post_sync_count post_sync_head post_sync_content post_sync_state
+  post_sync_count=$(get_commit_count)
+  post_sync_head=$(get_head_oid)
+  post_sync_content=$(get_readme_content)
+  post_sync_state=$(read_state_commit)
+
+  if [[ "$post_sync_state" != "$project_commit" ]]; then
+    fail "State tracking mismatch after sync for $label: expected $project_commit, got ${post_sync_state:-<none>}"
+  fi
+
+  if [[ "$expect_regen" == "true" ]]; then
+    if [[ "$post_sync_count" -ne $(( pre_count + 1 )) ]]; then
+      fail "Expected new README commit for $label during sync (pre=$pre_count post-sync=$post_sync_count)"
+    fi
+    if [[ -n "$pre_head" && "$post_sync_head" == "$pre_head" ]]; then
+      fail "Expected different HEAD in readme repo for $label after sync"
+    fi
+    if [[ "$pre_content" == "$post_sync_content" && -n "$pre_head" ]]; then
+      fail "README content did not change for $label after sync"
+    fi
+    if [[ -z "$post_sync_content" ]]; then
+      fail "Missing README content for $label after sync"
+    fi
+    assert_word_limit "$post_sync_content" 600
+  else
+    if [[ "$post_sync_count" -ne "$pre_count" ]]; then
+      fail "Unexpected new README commit for $label during sync (pre=$pre_count post-sync=$post_sync_count)"
+    fi
+    if [[ "$post_sync_head" != "$pre_head" ]]; then
+      fail "Readme HEAD changed unexpectedly for $label after sync"
+    fi
+    if [[ "$pre_content" != "$post_sync_content" ]]; then
+      fail "README content changed unexpectedly for $label after sync"
+    fi
+  fi
 
   local cmd=("$BIN_DIR/mct-agent" run)
   if [[ -n "$MODEL_ALIAS" ]]; then
@@ -211,11 +295,10 @@ run_case() {
     "${cmd[@]}" >"$stdout_file" 2>"$stderr_file"
   )
   local rc=$?
-  if [[ $rc -ne 0 ]]; then
-    fail "mct-agent run failed for $label (exit $rc)"
-  fi
 
-  ensure_readme_repo_exists
+  if [[ $rc -ne 0 ]]; then
+    fail "mct-agent run failed for $label (exit $rc); inspect $stdout_file and $stderr_file"
+  fi
 
   local post_count post_head post_content post_state
   post_count=$(get_commit_count)
@@ -224,33 +307,17 @@ run_case() {
   post_state=$(read_state_commit)
 
   if [[ "$post_state" != "$project_commit" ]]; then
-    fail "State tracking mismatch for $label: expected $project_commit, got ${post_state:-<none>}"
+    fail "State tracking mismatch after run for $label: expected $project_commit, got ${post_state:-<none>}"
   fi
 
-  if [[ "$expect_regen" == "true" ]]; then
-    if [[ "$post_count" -ne $(( pre_count + 1 )) ]]; then
-      fail "Expected new README commit for $label (pre=$pre_count post=$post_count)"
-    fi
-    if [[ -n "$pre_head" && "$post_head" == "$pre_head" ]]; then
-      fail "Expected different HEAD in readme repo for $label"
-    fi
-    if [[ "$pre_content" == "$post_content" && -n "$pre_head" ]]; then
-      fail "README content did not change for $label"
-    fi
-    if [[ -z "$post_content" ]]; then
-      fail "Missing README content for $label"
-    fi
-    assert_word_limit "$post_content" 600
-  else
-    if [[ "$post_count" -ne "$pre_count" ]]; then
-      fail "Unexpected new README commit for $label (pre=$pre_count post=$post_count)"
-    fi
-    if [[ "$post_head" != "$pre_head" ]]; then
-      fail "Readme HEAD changed unexpectedly for $label"
-    fi
-    if [[ "$pre_content" != "$post_content" ]]; then
-      fail "README content changed unexpectedly for $label"
-    fi
+  if [[ "$post_count" -ne "$post_sync_count" ]]; then
+    fail "Unexpected README commit delta after run for $label (post-sync=$post_sync_count post-run=$post_count)"
+  fi
+  if [[ "$post_head" != "$post_sync_head" ]]; then
+    fail "Readme HEAD changed during run for $label"
+  fi
+  if [[ "$post_content" != "$post_sync_content" ]]; then
+    fail "README content changed during run for $label"
   fi
 
   if [[ -n "$post_head" ]]; then

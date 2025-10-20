@@ -59,6 +59,30 @@ type componentModelRuntimes struct {
 	fileDiscovery modelRuntime
 }
 
+// PromptRuntimes exposes resolved model runtimes for callers outside the
+// session package without leaking internal types.
+type PromptRuntimes struct {
+	Orchestrator  promptsvc.ModelRuntime
+	Answer        promptsvc.ModelRuntime
+	Patcher       promptsvc.ModelRuntime
+	FileDiscovery promptsvc.ModelRuntime
+}
+
+// ResolvePromptRuntimes returns the resolved model runtimes used for prompt
+// execution based on the supplied session config and parameter overrides.
+func ResolvePromptRuntimes(cfg Config, paramPairs, paramJSON []string) (PromptRuntimes, error) {
+	models, err := resolveModelRuntimes(newLegacyConfig(cfg), paramPairs, paramJSON)
+	if err != nil {
+		return PromptRuntimes{}, err
+	}
+	return PromptRuntimes{
+		Orchestrator:  models.orchestrator.toPromptRuntime(),
+		Answer:        models.answer.toPromptRuntime(),
+		Patcher:       models.patcher.toPromptRuntime(),
+		FileDiscovery: models.fileDiscovery.toPromptRuntime(),
+	}, nil
+}
+
 func (m modelRuntime) toPromptRuntime() promptsvc.ModelRuntime {
 	return promptsvc.ModelRuntime{
 		Resolved:         llm.CloneResolvedModel(m.resolved),
@@ -315,6 +339,19 @@ type missingConfigError struct {
 
 func (e *missingConfigError) Error() string {
 	return "missing model configuration"
+}
+
+// MissingConfigItems unwraps a missing configuration error and returns the
+// actionable flag/env suggestions when available.
+func MissingConfigItems(err error) ([]string, bool) {
+	if err == nil {
+		return nil, false
+	}
+	var miss *missingConfigError
+	if errors.As(err, &miss) {
+		return append([]string(nil), miss.items...), true
+	}
+	return nil, false
 }
 
 func applyFallbacks(rt *modelRuntime, candidates []string, directBase, directKey, directModel string) {

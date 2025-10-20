@@ -436,6 +436,40 @@ func GetHeadCommitHash() (string, error) {
 	return commitHash, nil
 }
 
+// ResolveCommitHash resolves the provided reference to a full commit hash and
+// validates that it exists within the current repository.
+func ResolveCommitHash(ref string) (string, error) {
+	trimmed := strings.TrimSpace(ref)
+	if trimmed == "" {
+		return "", errors.New("empty commit reference")
+	}
+	verifyRef := fmt.Sprintf("%s^{commit}", trimmed)
+	cmd := exec.Command("git", "rev-parse", "--verify", verifyRef)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		stderrStr := strings.TrimSpace(stderr.String())
+		switch {
+		case strings.Contains(stderrStr, "not a git repository"):
+			return "", errors.New("not a git repository")
+		case strings.Contains(stderrStr, "unknown revision"), strings.Contains(stderrStr, "ambiguous argument"):
+			return "", fmt.Errorf("unknown revision %q", trimmed)
+		case strings.Contains(stderrStr, "bad revision"):
+			return "", fmt.Errorf("invalid commit reference %q", trimmed)
+		default:
+			return "", fmt.Errorf("git rev-parse --verify %s failed: %w: %s", trimmed, err, stderrStr)
+		}
+	}
+
+	commitHash := strings.TrimSpace(stdout.String())
+	if commitHash == "" {
+		return "", fmt.Errorf("empty commit hash resolved for %q", trimmed)
+	}
+	return commitHash, nil
+}
+
 // IsDetachedHead checks if the current git repository is in detached HEAD state.
 func IsDetachedHead() (bool, error) {
 	// Run the git command to get the current branch name

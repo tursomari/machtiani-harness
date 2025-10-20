@@ -16,6 +16,7 @@ import (
 type Runner struct {
 	Verbose                 bool
 	DryRun                  bool
+	EnableReadme            bool
 	Runtime                 promptsvc.ModelRuntime
 	AnswerRuntime           promptsvc.ModelRuntime
 	FileDiscoveryRuntime    promptsvc.ModelRuntime
@@ -118,7 +119,7 @@ func (r *Runner) RunPrompt(ctx context.Context, sessionID string, in PromptInput
 	start := time.Now()
 	childCtx := trajectory.ContextWithParentSpan(ctx, span.ID)
 	var readmeOpts *promptsvc.ReadmeOptions
-	if !r.DryRun && safeMode != "answer-only" {
+	if r.EnableReadme && !r.DryRun && safeMode != "answer-only" {
 		readmeOpts = &promptsvc.ReadmeOptions{Enabled: true}
 	}
 	res, err := promptsvc.Run(childCtx, promptsvc.RunOptions{
