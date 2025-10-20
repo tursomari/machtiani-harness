@@ -2,10 +2,10 @@ package readme
 
 import "testing"
 
-const systemPromptText = "You are Machtiani's internal documentation agent. Write a precise, factual internal README for the engineering team. Capture architecture, key services, and any material code changes relevant to this commit. Keep it under 600 words. Use markdown."
+const systemPromptText = "You are Machtiani's internal documentation agent. Write a cohesive internal README that reflects the current system state for engineers. Incorporate material architectural or service updates implied by the context, but do not mention commits, hashes, diffs, or change logs. The README must stand on its own, stay under 600 words, and use markdown."
 
 func TestComposeMCTPromptInitialGeneration(t *testing.T) {
-	dynamicContext := "Project commit: abc123\n"
+	dynamicContext := "Current commit (context only): abc123\n"
 	got := composeMCTPrompt(systemPromptText, dynamicContext, "")
 	if got != systemPromptText {
 		t.Fatalf("expected only system prompt for initial generation, got %q", got)
@@ -13,7 +13,7 @@ func TestComposeMCTPromptInitialGeneration(t *testing.T) {
 }
 
 func TestComposeMCTPromptIncrementalGeneration(t *testing.T) {
-	dynamicContext := "Project commit: abc123\nPrevious internal README: ..."
+	dynamicContext := "Current commit (context only): abc123\nPrevious internal README: ..."
 	got := composeMCTPrompt(systemPromptText, dynamicContext, "abc123")
 	expected := systemPromptText + "\n\n" + dynamicContext
 	if got != expected {

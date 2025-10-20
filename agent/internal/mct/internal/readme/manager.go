@@ -282,25 +282,28 @@ func (m *Manager) buildReadmeContent(ctx context.Context, projectCommitHash, las
 		return buildMockReadme(stub, projectCommitHash, base, prevContent, significantFiles, diffStat, summary, diffDetail), nil
 	}
 
-	systemPrompt := "You are Machtiani's internal documentation agent. Write a precise, factual internal README for the engineering team. Capture architecture, key services, and any material code changes relevant to this commit. Keep it under 600 words. Use markdown."
+	systemPrompt := "You are Machtiani's internal documentation agent. Write a cohesive internal README that reflects the current system state for engineers. Incorporate material architectural or service updates implied by the context, but do not mention commits, hashes, diffs, or change logs. The README must stand on its own, stay under 600 words, and use markdown."
 
 	hasExistingReadme := strings.TrimSpace(prevContent) != ""
 	var dynamicContext string
 	if hasExistingReadme {
 		builder := &strings.Builder{}
-		builder.WriteString("Project commit: ")
-		builder.WriteString(projectCommitHash)
-		builder.WriteString("\n\n")
-		if lastProcessed != "" {
-			builder.WriteString("Previous processed commit: ")
-			builder.WriteString(lastProcessed)
-			builder.WriteString("\n\n")
+		builder.WriteString("Update the internal README so it reads as comprehensive documentation of the current system. Use the following cues only to understand what materially changed; do not refer to commits, hashes, diffs, or change logs in the README output.\n\n")
+		if strings.TrimSpace(projectCommitHash) != "" {
+			builder.WriteString("Current commit (context only): ")
+			builder.WriteString(projectCommitHash)
+			builder.WriteString("\n")
 		}
-		builder.WriteString("Previous internal README:\n````markdown\n")
+		if strings.TrimSpace(lastProcessed) != "" {
+			builder.WriteString("Last processed commit (context only): ")
+			builder.WriteString(lastProcessed)
+			builder.WriteString("\n")
+		}
+		builder.WriteString("\nPrevious internal README:\n````markdown\n")
 		builder.WriteString(prevContent)
 		builder.WriteString("\n````\n\n")
 		if len(significantFiles) > 0 {
-			builder.WriteString("Files with significant changes since the previous commit:\n")
+			builder.WriteString("Files with significant changes (use as guidance only; do not enumerate these files verbatim in the README):\n")
 			for _, f := range significantFiles {
 				builder.WriteString("- ")
 				builder.WriteString(f)
@@ -309,12 +312,12 @@ func (m *Manager) buildReadmeContent(ctx context.Context, projectCommitHash, las
 			builder.WriteString("\n")
 		}
 		if strings.TrimSpace(diffStat) != "" {
-			builder.WriteString("Diff summary (git diff --stat):\n````\n")
+			builder.WriteString("Diff summary (context only, do not restate in README):\n````\n")
 			builder.WriteString(diffStat)
 			builder.WriteString("\n````\n\n")
 		}
 		if strings.TrimSpace(summary) != "" {
-			builder.WriteString("Commit log between previous and current:\n````\n")
+			builder.WriteString("Commit log highlights (context only, translate into timeless documentation):\n````\n")
 			builder.WriteString(summary)
 			builder.WriteString("\n````\n\n")
 		}
@@ -324,7 +327,7 @@ func (m *Manager) buildReadmeContent(ctx context.Context, projectCommitHash, las
 			detail = detail[:20000] + "\n...\n[diff truncated]"
 		}
 		if detail != "" {
-			builder.WriteString("Relevant diff excerpt:\n````diff\n")
+			builder.WriteString("Relevant diff excerpt (context only; extract concepts rather than quoting diffs):\n````diff\n")
 			builder.WriteString(detail)
 			builder.WriteString("\n````\n")
 		}
