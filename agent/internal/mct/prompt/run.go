@@ -174,6 +174,7 @@ func runReadmeManager(ctx context.Context, opts RunOptions, isAnswerOnly bool) e
 	if err != nil {
 		return err
 	}
+	mgr.SetMaxInputTokens(opts.MaxInputTokens)
 	mgr.SetPromptExecutor(func(execCtx context.Context, prompt string) (string, error) {
 		prev, hadPrev := os.LookupEnv(readme.SkipReadmeManagerEnv)
 		if err := os.Setenv(readme.SkipReadmeManagerEnv, "1"); err != nil {

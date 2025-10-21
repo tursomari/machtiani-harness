@@ -42,6 +42,7 @@ func Run(ctx context.Context, opts Options) error {
 	if err != nil {
 		return err
 	}
+	mgr.SetMaxInputTokens(opts.MaxInputTokens)
 
 	mgr.SetPromptExecutor(func(execCtx context.Context, promptText string) (string, error) {
 		prev, hadPrev := os.LookupEnv(readme.SkipReadmeManagerEnv)

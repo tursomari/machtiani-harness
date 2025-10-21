@@ -12,6 +12,7 @@ import (
 
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/git"
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/utils"
+	"github.com/tursomari/machtiani/agent/internal/mct/llm"
 )
 
 const (
@@ -36,6 +37,7 @@ type Manager struct {
 	IsAnswerOnlyMode bool
 	Verbose          bool
 	PromptExecutor   PromptExecutor
+	maxInputTokens   int
 }
 
 // NewManager returns a manager rooted at the git toplevel containing cwd.
@@ -66,6 +68,11 @@ func NewManager(isAnswerOnly bool, verbose bool) (*Manager, error) {
 // SetPromptExecutor configures the callback used to generate README content.
 func (m *Manager) SetPromptExecutor(exec PromptExecutor) {
 	m.PromptExecutor = exec
+}
+
+// SetMaxInputTokens propagates the maximum prompt size constraint from the agent runtime.
+func (m *Manager) SetMaxInputTokens(tokens int) {
+	m.maxInputTokens = tokens
 }
 
 // Run executes the management workflow using the supplied project commit hash.
@@ -284,7 +291,7 @@ func (m *Manager) buildReadmeContent(ctx context.Context, projectCommitHash, las
 
 	systemPrompt := "You are an internal documentation agent for this project. Write a cohesive internal README that reflects the current system state for engineers. Incorporate material architectural or service updates implied by the context, but do not mention commits, hashes, diffs, or change logs. The README must stand on its own, stay under 600 words, and use markdown."
 
-	hasExistingReadme := strings.TrimSpace(prevContent) != ""
+	hasExistingReadme := strings.TrimSpace(prevContent) != "" && strings.TrimSpace(lastProcessed) != ""
 	var dynamicContext string
 	if hasExistingReadme {
 		builder := &strings.Builder{}
@@ -323,9 +330,6 @@ func (m *Manager) buildReadmeContent(ctx context.Context, projectCommitHash, las
 		}
 
 		detail := strings.TrimSpace(diffDetail)
-		if len(detail) > 20000 {
-			detail = detail[:20000] + "\n...\n[diff truncated]"
-		}
 		if detail != "" {
 			builder.WriteString("Relevant diff excerpt (context only; extract concepts rather than quoting diffs):\n````diff\n")
 			builder.WriteString(detail)
@@ -335,6 +339,18 @@ func (m *Manager) buildReadmeContent(ctx context.Context, projectCommitHash, las
 	}
 
 	fullPrompt := composeMCTPrompt(systemPrompt, dynamicContext, lastProcessed)
+	if m.maxInputTokens > 0 {
+		estimated := llm.EstimateTokens(fullPrompt)
+		if estimated > m.maxInputTokens {
+			isFirstCreation := strings.TrimSpace(lastProcessed) == "" && len(significantFiles) == 0
+			if isFirstCreation {
+				m.verbosef("prompt exceeds max tokens even in first-creation mode (%d > %d); proceeding with minimal context", estimated, m.maxInputTokens)
+			} else {
+				m.infof("prompt exceeded max input tokens (%d > %d); regenerating internal README with minimal context", estimated, m.maxInputTokens)
+				return m.buildReadmeContent(ctx, projectCommitHash, "", nil)
+			}
+		}
+	}
 
 	if m.PromptExecutor == nil {
 		return "", errors.New("readme prompt executor is not configured")
@@ -545,6 +561,13 @@ func shortHash(hash string) string {
 
 func (m *Manager) verbosef(format string, args ...interface{}) {
 	if !m.Verbose {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "[readme] "+format+"\n", args...)
+}
+
+func (m *Manager) infof(format string, args ...interface{}) {
+	if m.IsAnswerOnlyMode {
 		return
 	}
 	fmt.Fprintf(os.Stderr, "[readme] "+format+"\n", args...)

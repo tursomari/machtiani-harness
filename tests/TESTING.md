@@ -1,6 +1,6 @@
 # Agent + README Manager Integration Harness
 
-This directory hosts the `run-agent-undici.sh` script, which exercises `mct-agent` against the undici fixture repo to validate the internal README manager in a near-real workflow. It reproduces the state assertions from `agent/internal/mct/tests/run-readme-integration.sh` but swaps stubbed CLI calls for end-to-end agent runs.
+This directory hosts the `run-agent-undici.sh` script, which exercises `mct-agent` against the undici fixture repo to validate the internal README manager in a near-real workflow. It reproduces the state assertions from `agent/internal/mct/tests/run-undici-readme-integration.sh` but swaps stubbed CLI calls for end-to-end agent runs.
 
 ## What the Script Does
 - Builds local `mct`, `mct-agent`, `patcher`, and `file-discovery` binaries into an isolated temp bin directory.

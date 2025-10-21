@@ -1,12 +1,12 @@
 #!/bin/bash
 set -euo pipefail
 
-# Integration harness for validating internal README management.
+# Integration harness for validating internal README management against the undici fixture repository.
 # Uses offline LLM stubs (`MCT_LLM_TEST_STUB`, `MCT_README_TEST_STUB`) so no network access is required.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}" )" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
-MCT_SRC_DIR="$REPO_ROOT/agent/internal/mct"
+MCT_SRC_DIR="$REPO_ROOT/agent"
 UNDICI_SOURCE="$REPO_ROOT/tests/repositories/undici"
 ARTIFACT_ROOT="$SCRIPT_DIR/artifacts/readme"
 TMP_BASE="$SCRIPT_DIR/tmp"
@@ -43,18 +43,21 @@ if [[ ! -e "$UNDICI_SOURCE/.git" ]]; then
   fail "Undici fixture repository missing at $UNDICI_SOURCE"
 fi
 
-info "Building mct binary"
+info "Building mct-agent binary"
 BIN_DIR="$WORK_ROOT/bin"
 mkdir -p "$BIN_DIR"
 MCT_BIN="$BIN_DIR/mct"
 (
   cd "$MCT_SRC_DIR"
-  GOCACHE="$WORK_ROOT/.gocache" go build -buildvcs=true -o "$MCT_BIN" ./cmd/mct
+  GOCACHE="$WORK_ROOT/.gocache" go build -buildvcs=true -o "$MCT_BIN" ./cmd/mct-agent
 ) || fail "Go build failed"
 chmod +x "$MCT_BIN"
 
 export MCT_README_TEST_STUB="mock"
 export MCT_LLM_TEST_STUB="stub-echo"
+export OPENAI_API_KEY="${OPENAI_API_KEY:-stub-key}"
+export OPENAI_BASE_URL="${OPENAI_BASE_URL:-https://example.com/api}"
+export OPENAI_MODEL="${OPENAI_MODEL:-stub-model}"
 
 info "Preparing undici working copy"
 TEST_REPO="$WORK_ROOT/undici"
@@ -159,7 +162,7 @@ run_case() {
   set +e
   (
     cd "$TEST_REPO"
-    "$MCT_BIN" prompt "Summarize repository for README" --mode=answer-only >"$case_dir/stdout.txt" 2>"$case_dir/stderr.txt"
+    "$MCT_BIN" sync >"$case_dir/stdout.txt" 2>"$case_dir/stderr.txt"
   )
   local rc=$?
   set -e
