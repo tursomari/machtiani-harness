@@ -25,32 +25,42 @@ func IsRepoRoot(path string) (bool, error) {
 // MakeTempMirror writes the after-state content into a temp directory structure
 // mirroring the repo paths for changed files only. A nil content denotes deletion
 // and thus is not written.
-func MakeTempMirror(repo string, after map[string][]byte) (string, func(), error) {
+func MakeTempMirror(after map[string][]byte) (string, func(), error) {
 	dir, err := os.MkdirTemp("", "patcher-mirror-*")
 	if err != nil {
 		return "", func() {}, err
 	}
 	cleanup := func() { _ = os.RemoveAll(dir) }
-	for rel, content := range after {
-		if content == nil {
-			// Deletion: do not write file; absence signals delete in diff.
-			continue
-		}
-		abs := filepath.Join(dir, filepath.FromSlash(rel))
-		if !strings.HasPrefix(abs, dir+string(filepath.Separator)) && abs != dir {
-			cleanup()
-			return "", func() {}, fmt.Errorf("mirror path escapes temp dir: %s", rel)
-		}
-		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
-			cleanup()
-			return "", func() {}, err
-		}
-		if err := os.WriteFile(abs, content, 0o644); err != nil {
-			cleanup()
-			return "", func() {}, err
-		}
+	if err := WriteMirror(dir, after); err != nil {
+		cleanup()
+		return "", func() {}, err
 	}
 	return dir, cleanup, nil
+}
+
+// WriteMirror materializes the provided after-state map into the target
+// directory, ensuring all paths remain within the mirror root. Nil entries signal
+// deletions and are therefore skipped.
+func WriteMirror(root string, after map[string][]byte) error {
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return err
+	}
+	for rel, content := range after {
+		if content == nil {
+			continue
+		}
+		abs := filepath.Join(root, filepath.FromSlash(rel))
+		if !strings.HasPrefix(abs, root+string(filepath.Separator)) && abs != root {
+			return fmt.Errorf("mirror path escapes target dir: %s", rel)
+		}
+		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(abs, content, 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // PatchFilename generates a timestamped filename with a short random suffix.

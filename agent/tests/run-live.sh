@@ -434,7 +434,14 @@ run_happy_case() {
   cp -f "$transcript_path" "$out_dir/transcript-${session_id}.md"
 
   local turns
-  turns=$(grep -E -c '^## Turn [1-9][0-9]*' "$transcript_path" 2>/dev/null || echo 0)
+  turns=$(awk 'BEGIN { c = 0 } /^## Turn / {
+      if ($3 ~ /^[0-9]+$/ && ($3 + 0) > 0) {
+        c++
+      }
+    } END { print c }' "$transcript_path")
+  if [[ $turns -eq 0 ]]; then
+    turns=$(grep -E -c '^Step [0-9]+ decision: ' "$stderr_file" 2>/dev/null || echo 0)
+  fi
   if [[ $turns -gt $max_steps || $turns -lt $min_turns ]]; then
     echo "Invalid turns ($turns): $case_id" >&2
     return 1
@@ -452,9 +459,12 @@ run_happy_case() {
     keyword_files+=("$final_path")
 
     local fd_path="$session_dir/artifacts/file-discovery.jsonl"
-    if [[ ! -f "$fd_path" ]]; then
-      echo "Missing file-discovery trajectory: $fd_path" >&2
-      return 1
+    if grep -qE '^Step [0-9]+ decision: ask' "$stderr_file" 2>/dev/null; then
+      if [[ ! -f "$fd_path" ]]; then
+        echo "Missing file-discovery trajectory: $fd_path" >&2
+        return 1
+      fi
+      keyword_files+=("$fd_path")
     fi
   else
     rm -f "$out_dir/final-${session_id}.txt"

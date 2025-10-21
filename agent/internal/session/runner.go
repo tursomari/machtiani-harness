@@ -210,10 +210,9 @@ func Run(ctx context.Context, opts Options) Result {
 		}
 	}()
 
-	step := 0
 	parentSpanID := ""
 	for {
-		step++
+		step := userTurnCounter + 1
 		var turn *turnTelemetry
 		if sessTelemetry != nil {
 			turn = sessTelemetry.StartTurn(step, cfg.maxSteps)
@@ -243,6 +242,8 @@ func Run(ctx context.Context, opts Options) Result {
 			if strings.Contains(perrStr, "unable to parse decision from model output") {
 				fmt.Fprintln(os.Stderr, "Planner error:", perr)
 				turnDecision = "planner"
+				turnInfo["is_retry"] = true
+				turnInfo["retry_reason"] = "planner_parse_error"
 				finishTurn(sessTelemetry, turn, turnDecision, "error", turnInfo, perr)
 				continue
 			}
@@ -459,7 +460,9 @@ func Run(ctx context.Context, opts Options) Result {
 				}
 			}
 			patchOutcome := func(status string, err error, extra map[string]any) {
-				markTurnCounted()
+				if status == "success" {
+					markTurnCounted()
+				}
 				if extra == nil {
 					extra = map[string]any{}
 				}
@@ -480,6 +483,8 @@ func Run(ctx context.Context, opts Options) Result {
 				if err != nil {
 					extra["patch_error"] = err.Error()
 				}
+				extra["is_retry"] = !turnCounted
+				extra["retry_reason"] = kind
 				patchOutcome("error", err, extra)
 			}
 			jsonBytes, jerr := parser.ExtractPatchJSONPayload(question)

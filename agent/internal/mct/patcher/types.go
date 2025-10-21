@@ -26,6 +26,8 @@ type PatchResult struct {
 	Insertions    int
 	Deletions     int
 	Description   string
+	AfterStateDir string
+	ManifestPath  string
 }
 
 // Instructions encodes the set of file edits that should be applied.

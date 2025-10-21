@@ -2,12 +2,16 @@ package patcher
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -103,7 +107,7 @@ func (s *Service) ApplyAndGeneratePatch(ctx context.Context, params mctpatcher.P
 	}
 
 	s.logf(params.Verbose, "generating patch via git diff --no-index")
-	mirrorDir, cleanup, err := fsutil.MakeTempMirror(repoAbs, afterMap)
+	mirrorDir, cleanup, err := fsutil.MakeTempMirror(afterMap)
 	if err != nil {
 		return nil, &mctpatcher.PatchGenerationError{Err: err}
 	}
@@ -134,6 +138,11 @@ func (s *Service) ApplyAndGeneratePatch(ctx context.Context, params mctpatcher.P
 		return nil, &mctpatcher.PatchGenerationError{Err: err}
 	}
 
+	afterDir, manifestPath, err := persistAfterState(afterMap, outDir, patchPath, ts)
+	if err != nil {
+		return nil, &mctpatcher.PatchGenerationError{Err: err}
+	}
+
 	s.logf(params.Verbose, "validating patch with git apply --check")
 	if err := check.ApplyCheck(repoAbs, patchPath); err != nil {
 		raw := strings.TrimSpace(err.Error())
@@ -158,6 +167,8 @@ func (s *Service) ApplyAndGeneratePatch(ctx context.Context, params mctpatcher.P
 		FilesModified: stats.FilesModified,
 		Insertions:    stats.Insertions,
 		Deletions:     stats.Deletions,
+		AfterStateDir: afterDir,
+		ManifestPath:  manifestPath,
 	}
 	if params.Instructions.Metadata != nil {
 		res.Description = strings.TrimSpace(params.Instructions.Metadata.Description)
@@ -197,4 +208,59 @@ func (s *Service) logf(verbose bool, format string, args ...any) {
 		return
 	}
 	s.logger.Printf(format, args...)
+}
+
+type afterManifest struct {
+	GeneratedAt time.Time           `json:"generated_at"`
+	PatchFile   string              `json:"patch_file"`
+	Files       []afterManifestFile `json:"files"`
+}
+
+type afterManifestFile struct {
+	Path    string `json:"path"`
+	SHA256  string `json:"sha256,omitempty"`
+	Size    int    `json:"size,omitempty"`
+	Deleted bool   `json:"deleted,omitempty"`
+}
+
+func persistAfterState(after map[string][]byte, outDir, patchPath string, ts time.Time) (string, string, error) {
+	baseName := strings.TrimSuffix(filepath.Base(patchPath), filepath.Ext(patchPath))
+	root := filepath.Join(outDir, baseName+"-after")
+	if err := os.RemoveAll(root); err != nil {
+		return "", "", err
+	}
+	filesDir := filepath.Join(root, "files")
+	if err := fsutil.WriteMirror(filesDir, after); err != nil {
+		return "", "", err
+	}
+	keys := make([]string, 0, len(after))
+	for rel := range after {
+		keys = append(keys, rel)
+	}
+	sort.Strings(keys)
+	manifest := afterManifest{
+		GeneratedAt: ts.UTC(),
+		PatchFile:   filepath.Base(patchPath),
+		Files:       make([]afterManifestFile, 0, len(keys)),
+	}
+	for _, rel := range keys {
+		entry := afterManifestFile{Path: rel}
+		if content := after[rel]; content == nil {
+			entry.Deleted = true
+		} else {
+			sum := sha256.Sum256(content)
+			entry.SHA256 = hex.EncodeToString(sum[:])
+			entry.Size = len(content)
+		}
+		manifest.Files = append(manifest.Files, entry)
+	}
+	manifestPath := filepath.Join(root, "manifest.json")
+	data, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return "", "", err
+	}
+	if err := os.WriteFile(manifestPath, data, 0o644); err != nil {
+		return "", "", err
+	}
+	return root, manifestPath, nil
 }

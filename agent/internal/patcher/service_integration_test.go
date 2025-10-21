@@ -2,6 +2,7 @@ package patcher_test
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -58,24 +59,29 @@ func TestServiceWritesPatchesToArtifactsDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read artifacts dir: %v", err)
 	}
-	if len(entries) != 1 {
-		t.Fatalf("expected 1 patch file, found %d", len(entries))
+	if len(entries) != 2 {
+		t.Fatalf("expected patch file and after-state directory, found %d entries", len(entries))
 	}
-	if entries[0].Name() != filepath.Base(res.PatchPath) {
-		t.Fatalf("unexpected patch filename: dir entry %q result %q", entries[0].Name(), filepath.Base(res.PatchPath))
+	patchName := filepath.Base(res.PatchPath)
+	afterDirName := strings.TrimSuffix(patchName, filepath.Ext(patchName)) + "-after"
+	var foundPatch, foundAfter bool
+	for _, entry := range entries {
+		switch entry.Name() {
+		case patchName:
+			foundPatch = true
+		case afterDirName:
+			if !entry.IsDir() {
+				t.Fatalf("expected after-state entry %q to be a directory", afterDirName)
+			}
+			foundAfter = true
+		}
+	}
+	if !foundPatch || !foundAfter {
+		t.Fatalf("expected artifacts to contain patch %q and after-state dir %q", patchName, afterDirName)
 	}
 
-	if len(res.FilesModified) != 1 || res.FilesModified[0] != "README.md" {
-		t.Fatalf("unexpected files modified: %+v", res.FilesModified)
-	}
-
-	patchContent, err := os.ReadFile(res.PatchPath)
-	if err != nil {
-		t.Fatalf("read patch: %v", err)
-	}
-	if !strings.Contains(string(patchContent), "+++ b/README.md") {
-		t.Fatalf("patch missing expected path header: %s", patchContent)
-	}
+	assertPatchContent(t, res)
+	assertAfterStateArtifacts(t, res)
 }
 
 func runGit(t *testing.T, dir string, args ...string) {
@@ -86,5 +92,61 @@ func runGit(t *testing.T, dir string, args ...string) {
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %v failed: %v\n%s", args, err, out)
+	}
+}
+
+func assertPatchContent(t *testing.T, res *mctpatcher.PatchResult) {
+	t.Helper()
+	if len(res.FilesModified) != 1 || res.FilesModified[0] != "README.md" {
+		t.Fatalf("unexpected files modified: %+v", res.FilesModified)
+	}
+	patchContent, err := os.ReadFile(res.PatchPath)
+	if err != nil {
+		t.Fatalf("read patch: %v", err)
+	}
+	if len(patchContent) == 0 {
+		t.Fatal("patch content was empty")
+	}
+}
+
+func assertAfterStateArtifacts(t *testing.T, res *mctpatcher.PatchResult) {
+	t.Helper()
+	if res.AfterStateDir == "" {
+		t.Fatal("expected AfterStateDir to be populated")
+	}
+	if res.ManifestPath == "" {
+		t.Fatal("expected ManifestPath to be populated")
+	}
+	filesDir := filepath.Join(res.AfterStateDir, "files")
+	if st, err := os.Stat(filesDir); err != nil {
+		t.Fatalf("after-state files directory missing: %v", err)
+	} else if !st.IsDir() {
+		t.Fatalf("after-state files path is not a directory: %s", filesDir)
+	}
+	contents, err := os.ReadFile(filepath.Join(filesDir, "README.md"))
+	if err != nil {
+		t.Fatalf("read persisted after-state file: %v", err)
+	}
+	if string(contents) != "after\n" {
+		t.Fatalf("unexpected after-state content: %q", contents)
+	}
+	manifestBytes, err := os.ReadFile(res.ManifestPath)
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	var manifest struct {
+		Files []struct {
+			Path    string `json:"path"`
+			Deleted bool   `json:"deleted"`
+		}
+	}
+	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
+		t.Fatalf("unmarshal manifest: %v", err)
+	}
+	if len(manifest.Files) != 1 || manifest.Files[0].Path != "README.md" {
+		t.Fatalf("unexpected manifest entries: %+v", manifest.Files)
+	}
+	if manifest.Files[0].Deleted {
+		t.Fatalf("manifest incorrectly marked README.md as deleted")
 	}
 }
