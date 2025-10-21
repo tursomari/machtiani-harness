@@ -15,6 +15,65 @@ Most users only need the `mct-agent` binary. The install script builds `mct-agen
   - API key and base URL for models used by `mct` and/or the agent.
 - A writable bin directory on PATH (e.g., `~/.local/bin`).
 
+## Testing
+
+### Unit Tests (Core Components)
+Run from the repo root to exercise all Go packages without the integration harnesses:
+
+```bash
+cd agent
+GOCACHE=$(pwd)/.gocache go test ./...
+cd ..
+```
+
+These tests complete quickly and require no environment variables.
+
+### Integration Tests
+The integration suites fall back to deterministic stub or dry-run behavior when the required environment variables are missing. Export the variables below to enable live LLM calls.
+
+**Live Agent Integration Tests** (`agent/tests/run-live.sh`):
+
+```bash
+export OPENAI_API_KEY=sk_...
+export OPENAI_BASE_URL=https://api.openai.com/v1
+export OPENAI_MODEL=gpt-4o-mini
+./scripts/install.sh && bash agent/tests/run-live.sh
+```
+
+- Installs `mct-agent` on PATH and exercises Issue A/B/C scenarios plus error paths.
+- Writes `test-out-*` directories containing logs, transcripts, and artifacts in the repo root.
+- When `OPENAI_*` variables are unset the script injects stub credentials and forces `--dry-run`.
+
+**Undici Harness** (`tests/run-agent-undici.sh`):
+
+```bash
+export OPENAI_API_KEY=sk_...
+export OPENAI_BASE_URL=https://api.openai.com/v1
+export OPENAI_MODEL=gpt-4o-mini
+MACHTIANI_CONFIG=$HOME/.machtiani/config.toml \
+MODEL_ALIAS=qwen3-coder-plus \
+./tests/run-agent-undici.sh
+```
+
+- Builds the toolchain into an isolated temp PATH and clones the undici fixture repository.
+- Defaults to offline stubs unless `DISABLE_MCT_STUBS=true` is exported; live runs require the `OPENAI_*` variables above.
+- Leaves artifacts under `tests/artifacts/agent-undici/` and preserves scratch work with `KEEP_AGENT_TMP=true`.
+
+**Internal Undici Regression Harness** (`agent/internal/mct/tests/run-undici-readme-integration.sh`):
+
+```bash
+export OPENAI_API_KEY=sk_...
+export OPENAI_BASE_URL=https://api.openai.com/v1
+export OPENAI_MODEL=gpt-4o-mini
+bash agent/internal/mct/tests/run-undici-readme-integration.sh
+```
+
+- Uses stub providers by default (`MCT_LLM_TEST_STUB`, `MCT_README_TEST_STUB`); set the `OPENAI_*` variables for live validation.
+- Accepts `KEEP_README_TEST_TMP=true` to retain the temporary workspace.
+- Produces artifacts under `agent/internal/mct/tests/artifacts/readme/`.
+
+See `TESTING.md` for a full matrix of options and links to component-specific guides (`agent/TESTING.md`, `tests/TESTING.md`).
+
 ## Quick Install (mct-agent)
 Run the installer from the repo root to build **mct-agent** into `~/.local/bin`:
 
@@ -169,25 +228,7 @@ See `agent/internal/patcher/README.md` for patch workflows and `agent/internal/f
 - If you installed the `mct` CLI, it falls back to a bundled `file-discovery` if it can’t find one on PATH and was built via `build.sh`.
 
 ## Integration Tests (mct-agent)
-`agent/tests/run-live.sh` exercises the PATH-installed `mct-agent` binary end-to-end. The default install is sufficient; add the peripherals only if you plan to use the standalone CLIs during the session.
-
-Prerequisites:
-1. Run `./scripts/install.sh` (add `--install-peripherals` if you also want the standalone CLIs on PATH).
-2. Optional for live mode: export `OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_MODEL`. Without these, the script forces deterministic dry-run mode.
-
-What the script does:
-- Performs a preflight that resolves `mct-agent` on PATH, prints `--version`/`go version -m` metadata, and fails if the commit/time does not match the current sources.
-- Generates a temporary `.machtiani/config.toml` under `agent/tests/tmp/` and exports `MACHTIANI_CONFIG` for the duration of the run. Live mode reuses your `OPENAI_*` values; dry-run mode writes stub credentials and appends `--dry-run`.
-- Runs Issue A/B/C happy-path scenarios (1-turn and 3-turn variants) plus deterministic error cases (empty input, missing config when in live mode). Artifacts land under `test-out-*` directories in the repo root.
-
-Run from the repo root:
-```
-./scripts/install.sh
-bash agent/tests/run-live.sh
-```
-If you used the manual block instead of the installer, make sure `mct-agent` is on PATH before running `bash agent/tests/run-live.sh`.
-
-The script does not mutate PATH; ensure the install location is already exported. When `OPENAI_*` are absent it forces dry-run, so no network calls occur but transcripts remain for assertions. For full context (including CI guidance) see `agent/TESTING.md`.
+See the [Testing](#testing) section above or `TESTING.md` for up-to-date commands, environment requirements, and artifact locations for `agent/tests/run-live.sh` and the undici regression harnesses.
 
 ## Uninstall
 Remove the installed binaries (adjust paths to your environment):
