@@ -434,7 +434,7 @@ run_happy_case() {
   cp -f "$transcript_path" "$out_dir/transcript-${session_id}.md"
 
   local turns
-  turns=$(grep -c '^## Turn ' "$transcript_path" 2>/dev/null || echo 0)
+  turns=$(grep -E -c '^## Turn [1-9][0-9]*' "$transcript_path" 2>/dev/null || echo 0)
   if [[ $turns -gt $max_steps || $turns -lt $min_turns ]]; then
     echo "Invalid turns ($turns): $case_id" >&2
     return 1

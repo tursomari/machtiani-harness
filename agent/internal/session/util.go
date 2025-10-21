@@ -29,13 +29,21 @@ func trimTo(s string, n int) string {
 
 func countTurns(md string) int {
 	lines := strings.Split(md, "\n")
-	n := 0
+	count := 0
+	hasTurnZero := false
 	for _, l := range lines {
-		if strings.HasPrefix(strings.TrimSpace(l), "## Turn ") {
-			n++
+		trimmed := strings.TrimSpace(l)
+		if strings.HasPrefix(trimmed, "## Turn ") {
+			count++
+			if strings.HasPrefix(trimmed, "## Turn 0") {
+				hasTurnZero = true
+			}
 		}
 	}
-	return n
+	if hasTurnZero && count > 0 {
+		count--
+	}
+	return count
 }
 
 func convertPatchMessages(msgs []mctpatcher.PatchValidationMessage) []transcript.PatchValidationMessage {
