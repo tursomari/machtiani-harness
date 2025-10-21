@@ -55,6 +55,17 @@ Overview
 - Exercise `file-discovery` against a real repository (Undici submodule) using Docker. Requires a valid OpenAI-compatible API key for live calls. The runner performs loose, structure-focused assertions on the final block and trajectory. The container’s entrypoint defaults to `run-live.sh`.
 
 Run
+- Local quick run (no Docker):
+  ```bash
+  ./scripts/install.sh --install-peripherals
+  cd agent/internal/file-discovery/tests/undici
+  export OPENAI_API_KEY=...
+  export OPENAI_BASE_URL=...
+  export OPENAI_MODEL=...
+  bash ../run-live.sh
+  ```
+  - The install script drops freshly built binaries (including `file-discovery`) into `~/.local/bin`; ensure that directory is on `PATH` before invoking the runner.
+  - Adjust the exported `OPENAI_BASE_URL`/`OPENAI_MODEL` values as needed for your endpoint; unset them only if you want the binary to fall back to its defaults.
 - Provide your API key (and optionally base URL/model) and mount the host-built Linux/amd64 binary:
   `docker run --rm \
     -e OPENAI_API_KEY -e OPENAI_BASE_URL -e OPENAI_MODEL \
