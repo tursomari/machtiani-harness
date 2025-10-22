@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -16,6 +17,10 @@ var (
 	Commit  = "unknown"
 	BuiltAt = "unknown"
 	Dirty   = "unknown"
+
+	readmeHeadCommitFn       = readmesync.HeadCommit
+	readmeCommitForProjectFn = readmesync.READMECommitForProject
+	sessionRunFn             = session.Run
 )
 
 type multiString []string
@@ -78,6 +83,20 @@ func handleRunCommand(args []string) int {
 		return 2
 	}
 
+	warning, err := ensureInternalReadmeCurrent()
+	if err != nil {
+		var exitErr exitError
+		if errors.As(err, &exitErr) {
+			fmt.Fprintln(os.Stderr, exitErr.msg)
+			return exitErr.code
+		}
+		fmt.Fprintln(os.Stderr, "Error: unable to validate internal README:", err)
+		return 1
+	}
+	if warning != "" {
+		fmt.Fprintln(os.Stderr, warning)
+	}
+
 	opts := session.Options{
 		Config:     cfg,
 		Goal:       goal,
@@ -91,11 +110,116 @@ func handleRunCommand(args []string) int {
 		},
 	}
 
-	res := session.Run(context.Background(), opts)
+	res := sessionRunFn(context.Background(), opts)
 	if res.Err != nil && res.ExitCode == 0 {
 		return 1
 	}
 	return res.ExitCode
+}
+
+type exitError struct {
+	msg  string
+	code int
+}
+
+func (e exitError) Error() string {
+	return e.msg
+}
+
+func ensureInternalReadmeCurrent() (string, error) {
+	headCommit, err := readmeHeadCommitFn()
+	if err != nil {
+		if mapped, ok := mapHeadCommitError(err); ok {
+			return "", mapped
+		}
+		return "", exitError{
+			msg:  fmt.Sprintf("Error: Unable to resolve project HEAD commit: %v", err),
+			code: 1,
+		}
+	}
+	headCommit = strings.TrimSpace(headCommit)
+	if headCommit == "" {
+		return "", exitError{
+			msg:  "Error: Unable to resolve project HEAD commit: empty value",
+			code: 1,
+		}
+	}
+
+	shortHead := shortSHA(headCommit, 7)
+
+	readmeCommit, err := readmeCommitForProjectFn(headCommit)
+	if err != nil {
+		if isReadmeMissing(err) {
+			return "", exitError{
+				msg:  formatSyncRequiredMessage(shortHead),
+				code: 1,
+			}
+		}
+		return "", exitError{
+			msg:  fmt.Sprintf("Error: Unable to determine internal README state: %v", err),
+			code: 1,
+		}
+	}
+	readmeCommit = strings.TrimSpace(readmeCommit)
+	if readmeCommit == "" {
+		return "", exitError{
+			msg:  formatSyncRequiredMessage(shortHead),
+			code: 1,
+		}
+	}
+
+	return "", nil
+}
+
+func mapHeadCommitError(err error) (exitError, bool) {
+	lower := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(lower, "not a git repository"):
+		return exitError{
+			msg:  "Error: Not in a Git repository. Run 'git init' first.",
+			code: 1,
+		}, true
+	case strings.Contains(lower, "no commits"):
+		return exitError{
+			msg:  "Error: Git repository has no commits yet. Make an initial commit before running 'mct-agent run'.",
+			code: 1,
+		}, true
+	case strings.Contains(lower, "ambiguous argument 'head'"):
+		return exitError{
+			msg:  "Error: Git repository has no commits yet. Make an initial commit before running 'mct-agent run'.",
+			code: 1,
+		}, true
+	}
+	return exitError{}, false
+}
+
+func isReadmeMissing(err error) bool {
+	lower := strings.ToLower(err.Error())
+	return strings.Contains(lower, "unknown revision") ||
+		strings.Contains(lower, "ambiguous argument") ||
+		strings.Contains(lower, "cannot change to") ||
+		strings.Contains(lower, "no such file") ||
+		strings.Contains(lower, "not a git repository") ||
+		strings.Contains(lower, "did not match any file")
+}
+
+func formatSyncRequiredMessage(shortHead string) string {
+	trimmed := strings.TrimSpace(shortHead)
+	if trimmed == "" {
+		trimmed = "unknown"
+	}
+	return fmt.Sprintf("\nError: mct is not synced at current git state %s.\n\nRun \u001b[1mmct-agent sync\u001b[0m before proceeding.", trimmed)
+}
+
+func shortSHA(hash string, length int) string {
+	trimmed := strings.TrimSpace(hash)
+	if trimmed == "" || length <= 0 {
+		return ""
+	}
+	if len(trimmed) > length {
+		return trimmed[:length]
+	}
+	return trimmed
 }
 
 func handleSyncCommand(args []string) int {

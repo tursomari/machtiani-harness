@@ -1,10 +1,16 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/tursomari/machtiani/agent/internal/session"
 )
 
 func TestSyncCommandUsesHeadCommit(t *testing.T) {
@@ -58,6 +64,113 @@ func TestSyncCommandRequiresGitRepository(t *testing.T) {
 	}
 }
 
+func TestRunCommandSucceedsWhenReadmeTagPresent(t *testing.T) {
+	origHead := readmeHeadCommitFn
+	origCommit := readmeCommitForProjectFn
+	origSession := sessionRunFn
+	t.Cleanup(func() {
+		readmeHeadCommitFn = origHead
+		readmeCommitForProjectFn = origCommit
+		sessionRunFn = origSession
+	})
+
+	readmeHeadCommitFn = func() (string, error) {
+		return "abcdef123456", nil
+	}
+	readmeCommitForProjectFn = func(string) (string, error) {
+		return "deadbeef", nil
+	}
+	called := false
+	sessionRunFn = func(context.Context, session.Options) session.Result {
+		called = true
+		return session.Result{ExitCode: 0}
+	}
+
+	var exitCode int
+	stderr := captureStderr(t, func() {
+		exitCode = handleRunCommand([]string{"Investigate bug"})
+	})
+	if exitCode != 0 {
+		t.Fatalf("expected exit code 0, got %d", exitCode)
+	}
+	if !called {
+		t.Fatalf("expected sessionRunFn to be called when README tag present")
+	}
+	if trimmed := strings.TrimSpace(stderr); trimmed != "" {
+		t.Fatalf("expected no stderr output, got: %q", trimmed)
+	}
+}
+
+func TestRunCommandFailsWhenReadmeMissing(t *testing.T) {
+	origHead := readmeHeadCommitFn
+	origCommit := readmeCommitForProjectFn
+	origSession := sessionRunFn
+	t.Cleanup(func() {
+		readmeHeadCommitFn = origHead
+		readmeCommitForProjectFn = origCommit
+		sessionRunFn = origSession
+	})
+
+	readmeHeadCommitFn = func() (string, error) {
+		return "abcdef123456", nil
+	}
+	readmeCommitForProjectFn = func(string) (string, error) {
+		return "", errors.New("git rev-parse oid-abc123 failed: exit status 1: fatal: ambiguous argument 'oid-abc123': unknown revision")
+	}
+	sessionRunFn = func(context.Context, session.Options) session.Result {
+		t.Fatalf("sessionRunFn should not be called when README is missing")
+		return session.Result{ExitCode: 0}
+	}
+
+	var exitCode int
+	stderr := captureStderr(t, func() {
+		exitCode = handleRunCommand([]string{"--dry-run", "Document behavior"})
+	})
+	if exitCode != 1 {
+		t.Fatalf("expected exit code 1, got %d", exitCode)
+	}
+	if !strings.Contains(stderr, "Error: mct is not synced at current git state abcdef1.") {
+		t.Fatalf("expected sync-required message, got: %q", stderr)
+	}
+	if !strings.Contains(stderr, "Run \u001b[1mmct-agent sync\u001b[0m before proceeding.") {
+		t.Fatalf("expected sync instruction, got: %q", stderr)
+	}
+}
+
+func TestRunCommandFailsWhenRepoHasNoCommits(t *testing.T) {
+	origHead := readmeHeadCommitFn
+	origCommit := readmeCommitForProjectFn
+	origSession := sessionRunFn
+	t.Cleanup(func() {
+		readmeHeadCommitFn = origHead
+		readmeCommitForProjectFn = origCommit
+		sessionRunFn = origSession
+	})
+
+	readmeHeadCommitFn = func() (string, error) {
+		return "", errors.New("git repository exists but has no commits yet")
+	}
+	readmeCommitForProjectFn = func(string) (string, error) {
+		t.Fatalf("README lookup should not be attempted when HEAD is unavailable")
+		return "", nil
+	}
+	sessionRunFn = func(context.Context, session.Options) session.Result {
+		t.Fatalf("sessionRunFn should not be called when HEAD is unavailable")
+		return session.Result{}
+	}
+
+	var exitCode int
+	stderr := captureStderr(t, func() {
+		exitCode = handleRunCommand([]string{"Assess repo"})
+	})
+	if exitCode != 1 {
+		t.Fatalf("expected exit code 1, got %d", exitCode)
+	}
+	if !strings.Contains(stderr, "Git repository has no commits yet") {
+		t.Fatalf("expected no commits message, got: %q", stderr)
+	}
+}
+
 func initTestRepo(t *testing.T) string {
 	t.Helper()
 	repoDir := t.TempDir()
@@ -93,4 +206,29 @@ func mustChdir(t *testing.T, dir string) string {
 		t.Fatalf("chdir %s: %v", dir, err)
 	}
 	return orig
+}
+
+func captureStderr(t *testing.T, fn func()) (captured string) {
+	t.Helper()
+	orig := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	var builder strings.Builder
+	done := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(&builder, r)
+		r.Close()
+		close(done)
+	}()
+	os.Stderr = w
+	defer func() {
+		_ = w.Close()
+		<-done
+		os.Stderr = orig
+		captured = builder.String()
+	}()
+	fn()
+	return
 }
