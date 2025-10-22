@@ -163,7 +163,7 @@ Useful flags (agent):
 
 ### Session Artifacts & Trajectory Logs
 
-Every run stores artifacts under `.machtiani/sessions/<session-id>/`, including the transcript (`chat/agent.md`), final answer, and a unified trajectory JSONL stream at `trajectory/agent.jsonl`. The trajectory is enabled by default and can be controlled with the following flags (or their matching `MACHTIANI_TRAJECTORY_*` env vars):
+Every run stores artifacts under `.machtiani/sessions/<session-id>/`, including the transcript (`chat/agent-transcript.md`), final answer (`chat/agent-final-answer.md`), and a unified trajectory JSONL stream at `trajectory/agent.jsonl`. The trajectory is enabled by default and can be controlled with the following flags (or their matching `MACHTIANI_TRAJECTORY_*` env vars):
 
 - `--trajectory-file` — override the output path.
 - `--no-trajectory` — disable emission entirely.

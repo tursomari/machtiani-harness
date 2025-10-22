@@ -425,7 +425,7 @@ run_happy_case() {
     return 1
   fi
 
-  local transcript_path="$chat_dir/agent.md"
+  local transcript_path="$chat_dir/agent-transcript.md"
   if [[ ! -s "$transcript_path" ]]; then
     echo "Transcript missing or empty: $transcript_path" >&2
     return 1
@@ -450,12 +450,12 @@ run_happy_case() {
 
   local final_path=""
   if [[ "$LIVE_MODE" == true ]]; then
-    final_path="$chat_dir/agent-final.txt"
+    final_path="$chat_dir/agent-final-answer.md"
     if [[ ! -s "$final_path" ]]; then
       echo "Missing final artifact in session directory: $final_path" >&2
       return 1
     fi
-    cp -f "$final_path" "$out_dir/final-${session_id}.txt"
+    cp -f "$final_path" "$out_dir/final-${session_id}.md"
     keyword_files+=("$final_path")
 
     local fd_path="$session_dir/artifacts/file-discovery.jsonl"
@@ -467,7 +467,7 @@ run_happy_case() {
       keyword_files+=("$fd_path")
     fi
   else
-    rm -f "$out_dir/final-${session_id}.txt"
+    rm -f "$out_dir/final-${session_id}.md"
   fi
 
   local patches_dir="$session_dir/artifacts/patches"
@@ -477,7 +477,7 @@ run_happy_case() {
   fi
 
   if [[ "$LIVE_MODE" == true ]]; then
-    keyword_files+=("$out_dir/final-${session_id}.txt")
+    keyword_files+=("$out_dir/final-${session_id}.md")
   fi
   if ! contains_keywords "$expected_keywords" "${keyword_files[@]}"; then
     echo "Missing keywords: $case_id" >&2
@@ -487,7 +487,7 @@ run_happy_case() {
     echo "Missing transcript: $case_id" >&2
     return 1
   fi
-  if [[ "$LIVE_MODE" == true && ! -s "$out_dir/final-${session_id}.txt" ]]; then
+  if [[ "$LIVE_MODE" == true && ! -s "$out_dir/final-${session_id}.md" ]]; then
     echo "Missing final artifact: $case_id" >&2
     return 1
   fi

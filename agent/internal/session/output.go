@@ -21,7 +21,7 @@ func writeFinalAnswer(sessionID, answer, finalFileFlag string, verbose bool, dry
 		if err != nil {
 			return err
 		}
-		path = filepath.Join(dir, "agent-final.txt")
+		path = filepath.Join(dir, "agent-final-answer.md")
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err

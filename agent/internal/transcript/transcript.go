@@ -46,7 +46,7 @@ func New(sessionID string) (*Transcript, error) {
 	if err := os.MkdirAll(chatDir, 0o755); err != nil {
 		return nil, err
 	}
-	path := filepath.Join(chatDir, "agent.md")
+	path := filepath.Join(chatDir, "agent-transcript.md")
 	f, err := os.Create(path)
 	if err != nil {
 		return nil, err

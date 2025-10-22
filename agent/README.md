@@ -75,7 +75,7 @@ Flags:
 - `--dry-run`: print intended discovery calls; no remote LLM requests executed
 - `--verbose`: verbose agent logging (includes discovery and planner context)
 - `--final-file string`: path to write final answer-only artifact
-- `--transcript-file string`: path to write transcript (default: `.machtiani/sessions/<session-id>/chat/agent.md`)
+- `--transcript-file string`: path to write transcript (default: `.machtiani/sessions/<session-id>/chat/agent-transcript.md`)
 - `--file-discovery-trajectory string`: absolute/relative file path for the file-discovery trajectory JSONL
 - `--file-discovery-output-dir string`: directory to place file-discovery artifacts (default: `.machtiani/sessions/<session-id>/artifacts`)
 
@@ -84,7 +84,7 @@ Flags:
 - On `ask`, it runs the `mct` prompt service via Go packages, retrieving the answer text and retrieved-path metadata without invoking external binaries. The service still writes `.machtiani/sessions/<session-id>/chat/machtiani-response.md` for compatibility, and the agent records the paths plus answer payload directly from memory.
 - It maintains a concise evolving summary/evidence log across turns.
 - On finalize (or at `--max-steps`), the agent composes the final answer via its own LLM and prints it.
-- A transcript is saved to `.machtiani/sessions/<session-id>/chat/agent.md` with per-turn entries and the final conclusion.
+- A transcript is saved to `.machtiani/sessions/<session-id>/chat/agent-transcript.md` with per-turn entries and the final conclusion.
 
 ## Environment Details
 - Component model selection precedence:
