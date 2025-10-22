@@ -12,9 +12,13 @@ import (
 )
 
 const (
-	defaultWidth = 80
-	ansiReset    = "\033[0m"
-	ansiGray     = "\033[37m"
+	defaultWidth          = 80
+	ansiReset             = "\033[0m"
+	ansiGray              = "\033[37m"
+	promptWindowLines     = 9
+	promptContentLines    = promptWindowLines - 1
+	promptFirstLinePrefix = "`-- "
+	promptSpacerPrefix    = "    "
 )
 
 // TerminalDisplay manages the structured streaming output for mct-agent.
@@ -30,11 +34,12 @@ type TerminalDisplay struct {
 
 // PromptStream coordinates streaming tokens for a single prompt turn.
 type PromptStream struct {
-	display *TerminalDisplay
-	buffer  strings.Builder
-	started bool
-	done    bool
-	lastLen int
+	display       *TerminalDisplay
+	buffer        strings.Builder
+	started       bool
+	done          bool
+	linesPrinted  int
+	renderedLines []string
 }
 
 // PromptOptions controls how prompts are rendered in the terminal chain.
@@ -164,11 +169,22 @@ func (s *PromptStream) Complete(finalText string) {
 		if strings.TrimSpace(finalText) == "" {
 			finalText = s.buffer.String()
 		}
-		line := firstLine(finalText)
-		if line == "" {
-			line = "(empty response)"
+		lines := lastNLines(finalText, promptContentLines)
+		if len(lines) == 0 {
+			lines = []string{"(empty response)"}
+		} else {
+			hasContent := false
+			for _, line := range lines {
+				if sanitizeLine(line) != "" {
+					hasContent = true
+					break
+				}
+			}
+			if !hasContent {
+				lines = []string{"(empty response)"}
+			}
 		}
-		s.printLineLocked(line)
+		s.printLinesLocked(lines)
 		fmt.Fprintln(s.display.out)
 		s.done = true
 		s.display.current = nil
@@ -185,7 +201,7 @@ func (s *PromptStream) Abort(message string) {
 		if !strings.HasPrefix(strings.ToLower(text), "error") {
 			text = "error: " + text
 		}
-		s.printLineLocked(text)
+		s.printLinesLocked([]string{text})
 		fmt.Fprintln(s.display.out)
 		s.done = true
 		s.display.current = nil
@@ -194,39 +210,83 @@ func (s *PromptStream) Abort(message string) {
 
 func (s *PromptStream) renderCurrentLocked() {
 	current := s.buffer.String()
-	preview := firstLine(current)
-	if preview == "" {
-		preview = sanitizeLine(current)
+	lines := lastNLines(current, promptContentLines)
+	if len(lines) == 0 {
+		placeholder := sanitizeLine(current)
+		if placeholder == "" {
+			lines = []string{"..."}
+		} else {
+			lines = []string{placeholder}
+		}
+	} else {
+		hasContent := false
+		for _, line := range lines {
+			if sanitizeLine(line) != "" {
+				hasContent = true
+				break
+			}
+		}
+		if !hasContent {
+			lines = []string{"..."}
+		}
 	}
-	if preview == "" {
-		preview = "..."
-	}
-	s.printLineLocked(preview)
+	s.printLinesLocked(lines)
 }
 
-func (s *PromptStream) printLineLocked(text string) {
-	prefix := "`-- "
-	cleaned := sanitizeLine(text)
-	maxWidth := s.display.width - len(prefix)
+func (s *PromptStream) printLinesLocked(lines []string) {
+	if len(lines) > promptContentLines {
+		lines = lines[len(lines)-promptContentLines:]
+	}
+	window := make([]string, promptWindowLines)
+	window[0] = ""
+	copy(window[1:], lines)
+	maxWidth := s.display.width - len(promptFirstLinePrefix)
 	if maxWidth <= 0 {
 		maxWidth = 1
 	}
-	cleaned = truncate(cleaned, maxWidth)
-	full := prefix + cleaned
-	colored := ansiGray + full + ansiReset
-	if !s.started {
+	sanitized := make([]string, len(window))
+	for i, line := range window {
+		cleaned := sanitizeLine(line)
+		sanitized[i] = truncate(cleaned, maxWidth)
+	}
+	s.clearPreviousLinesLocked()
+	for i, line := range sanitized {
+		prefix := promptSpacerPrefix
+		if i == 0 {
+			prefix = promptFirstLinePrefix
+		}
+		full := prefix + line
+		colored := ansiGray + full + ansiReset
 		fmt.Fprint(s.display.out, colored)
-		s.started = true
-		s.lastLen = len(full)
+		if i < len(sanitized)-1 {
+			fmt.Fprint(s.display.out, "\n")
+		}
+	}
+	s.started = true
+	s.linesPrinted = len(sanitized)
+	s.renderedLines = append(s.renderedLines[:0], sanitized...)
+}
+
+// clearPreviousLinesLocked rewinds the terminal cursor and removes the prior
+// preview block so we can redraw the sliding window in place.
+func (s *PromptStream) clearPreviousLinesLocked() {
+	if !s.started || s.linesPrinted == 0 {
 		return
 	}
-	fmt.Fprintf(s.display.out, "\r%s", colored)
-	if s.lastLen > len(full) {
-		diff := s.lastLen - len(full)
-		fmt.Fprint(s.display.out, strings.Repeat(" ", diff))
-		fmt.Fprintf(s.display.out, "\r%s", colored)
+	fmt.Fprint(s.display.out, "\r")
+	if s.linesPrinted > 1 {
+		fmt.Fprintf(s.display.out, "\033[%dA", s.linesPrinted-1)
 	}
-	s.lastLen = len(full)
+	for i := 0; i < s.linesPrinted; i++ {
+		fmt.Fprint(s.display.out, "\033[2K")
+		if i < s.linesPrinted-1 {
+			fmt.Fprint(s.display.out, "\n")
+		}
+	}
+	if s.linesPrinted > 1 {
+		fmt.Fprintf(s.display.out, "\033[%dA", s.linesPrinted-1)
+	}
+	fmt.Fprint(s.display.out, "\r")
 }
 
 func (s *PromptStream) flushLineLocked() {
@@ -235,7 +295,8 @@ func (s *PromptStream) flushLineLocked() {
 	}
 	fmt.Fprintln(s.display.out)
 	s.started = false
-	s.lastLen = 0
+	s.linesPrinted = 0
+	s.renderedLines = s.renderedLines[:0]
 }
 
 func (t *TerminalDisplay) withLock(fn func()) {
@@ -305,4 +366,27 @@ func truncate(text string, width int) string {
 		return string(runes[:width])
 	}
 	return string(runes[:width-3]) + "..."
+}
+
+func lastNLines(text string, n int) []string {
+	if n <= 0 {
+		return nil
+	}
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	text = strings.TrimRight(text, "\n")
+	if text == "" {
+		return nil
+	}
+	lines := strings.Split(text, "\n")
+	if len(lines) == 1 && lines[0] == "" {
+		return nil
+	}
+	start := len(lines) - n
+	if start < 0 {
+		start = 0
+	}
+	result := make([]string, len(lines)-start)
+	copy(result, lines[start:])
+	return result
 }

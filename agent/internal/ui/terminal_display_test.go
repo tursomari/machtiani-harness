@@ -7,22 +7,26 @@ import (
 	"testing"
 )
 
-func TestPromptStreamCompleteShowsOnlyFirstLine(t *testing.T) {
+func TestPromptStreamCompleteShowsLastLinesWithBlankHeader(t *testing.T) {
 	var buf bytes.Buffer
 	display := NewTerminalDisplay(&buf)
 	display.width = 120
 	display.StartSession("Primary goal")
 	stream := display.BeginPrompt("What is concurrency?", nil)
 
-	answer := "Concurrency lets multiple tasks make progress.\nIt does not guarantee parallel execution."
+	answer := strings.Join([]string{
+		"Line1",
+		"Line2",
+		"Line3",
+		"Line4",
+		"Line5",
+		"Line6",
+	}, "\n")
 	stream.Complete(answer)
 
-	output := buf.String()
-	if !strings.Contains(output, "Concurrency lets multiple tasks make progress.") {
-		t.Fatalf("expected first line preview, got %q", output)
-	}
-	if strings.Contains(output, "It does not guarantee parallel execution.") {
-		t.Fatalf("unexpected multi-line preview in output: %q", output)
+	expected := []string{"", "Line1", "Line2", "Line3", "Line4", "Line5", "Line6", "", ""}
+	if !slicesEqual(stream.renderedLines, expected) {
+		t.Fatalf("expected last five lines %v, got %v", expected, stream.renderedLines)
 	}
 }
 
@@ -36,22 +40,61 @@ func TestPromptStreamCompleteTruncatesLongLine(t *testing.T) {
 	answer := "Goroutines are lightweight managed threads in Go that scale."
 	stream.Complete(answer)
 
-	raw := buf.String()
-	lines := strings.Split(stripANSI(raw), "\n")
+	if len(stream.renderedLines) != promptWindowLines {
+		t.Fatalf("expected %d preview lines, got %v", promptWindowLines, stream.renderedLines)
+	}
 	var preview string
-	for _, line := range lines {
-		if strings.HasPrefix(line, "`-- ") {
+	for _, line := range stream.renderedLines {
+		if strings.TrimSpace(line) != "" {
 			preview = line
+			break
 		}
 	}
 	if preview == "" {
-		t.Fatalf("did not capture preview line in output: %q", raw)
+		t.Fatalf("did not capture preview line in output: %v", stream.renderedLines)
 	}
-	if len([]rune(preview)) > display.width {
-		t.Fatalf("preview exceeds width: got %q (len=%d) width=%d", preview, len([]rune(preview)), display.width)
+	if len([]rune(promptFirstLinePrefix+preview)) > display.width {
+		t.Fatalf("preview exceeds width: got %q (len=%d) width=%d", preview, len([]rune(promptFirstLinePrefix+preview)), display.width)
 	}
 	if !strings.HasSuffix(preview, "...") {
 		t.Fatalf("expected truncated preview to end with ellipsis: %q", preview)
+	}
+}
+
+func TestPromptStreamCompleteShowsAllLinesWhenFewerThanWindow(t *testing.T) {
+	var buf bytes.Buffer
+	display := NewTerminalDisplay(&buf)
+	display.width = 120
+	display.StartSession("Primary goal")
+	stream := display.BeginPrompt("Explain channels", nil)
+
+	answer := strings.Join([]string{"Line1", "Line2", "Line3"}, "\n")
+	stream.Complete(answer)
+
+	expected := []string{"", "Line1", "Line2", "Line3", "", "", "", "", ""}
+	if !slicesEqual(stream.renderedLines, expected) {
+		t.Fatalf("expected all lines %v, got %v", expected, stream.renderedLines)
+	}
+}
+
+func TestPromptStreamOnChunkSlidingWindow(t *testing.T) {
+	var buf bytes.Buffer
+	display := NewTerminalDisplay(&buf)
+	display.width = 120
+	display.StartSession("Primary goal")
+	stream := display.BeginPrompt("Explain select", nil)
+
+	chunks := []string{
+		"Line1\nLine2\nLine3\nLine4\nLine5\n",
+		"Line6\n",
+	}
+	for _, chunk := range chunks {
+		stream.OnChunk(chunk)
+	}
+
+	expected := []string{"", "Line1", "Line2", "Line3", "Line4", "Line5", "Line6", "", ""}
+	if !slicesEqual(stream.renderedLines, expected) {
+		t.Fatalf("expected sliding window %v, got %v", expected, stream.renderedLines)
 	}
 }
 
@@ -102,7 +145,21 @@ func TestNotifyDuringStream(t *testing.T) {
 var ansiCodes = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
 func stripANSI(s string) string {
-	return ansiCodes.ReplaceAllString(s, "")
+	replaced := ansiCodes.ReplaceAllString(s, "")
+	replaced = strings.ReplaceAll(replaced, "\r", "")
+	return replaced
+}
+
+func slicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func TestNotifyBeforePrompt(t *testing.T) {
