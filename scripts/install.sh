@@ -11,7 +11,7 @@ usage() {
 Usage: $(basename "$0") [--install-peripherals]
 
 Installs the mct-agent binary by default. Pass --install-peripherals to also
-build and install mct, file-discovery, and patcher.
+build and install mct, file-discovery, shell-agent, and patcher.
 Environment:
   PREFIX   Destination prefix for the install (default: \$HOME/.local)
 EOF
@@ -111,6 +111,12 @@ if $INSTALL_PERIPHERALS; then
     cd "$REPO_ROOT/agent/internal/patcher"
     go build -buildvcs=true -ldflags "$PATCHER_LDFLAGS" -o "$BIN_DIR/patcher" ./cmd/patcher
   )
+
+  log "Building shell-agent"
+  (
+    cd "$REPO_ROOT/agent/internal/shell-agent"
+    go build -buildvcs=true -o "$BIN_DIR/shell-agent" ./cmd/shell-agent
+  )
 fi
 
 hash -r 2>/dev/null || true
@@ -126,4 +132,6 @@ if $INSTALL_PERIPHERALS; then
   "$BIN_DIR/patcher" --version 2>/dev/null || log "  (patcher not executable?)"
   log "file-discovery -version =>"
   "$BIN_DIR/file-discovery" -version 2>/dev/null || log "  (file-discovery not executable?)"
+  log "shell-agent --help (usage) =>"
+  "$BIN_DIR/shell-agent" --help 2>/dev/null | head -n 1 || log "  (shell-agent not executable?)"
 fi

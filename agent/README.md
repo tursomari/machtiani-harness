@@ -8,7 +8,7 @@ Agent “composer” that iteratively asks focused questions using the embedded 
   - `OPENAI_API_KEY` (required)
   - `OPENAI_BASE_URL` (required)
   - `OPENAI_MODEL` (required)
-- Optional standalone CLIs (`mct`, `file-discovery`, `patcher`) are only needed for direct use; install them with `./scripts/install.sh --install-peripherals`.
+- Optional standalone CLIs (`mct`, `file-discovery`, `shell-agent`, `patcher`) are only needed for direct use; install them with `./scripts/install.sh --install-peripherals`.
 
 ## Install
 
@@ -18,7 +18,7 @@ From the repo root, run the installer to build **mct-agent** into `~/.local/bin`
 ./scripts/install.sh
 ```
 
-Need the standalone CLIs too? Append `--install-peripherals` to build **mct**, **file-discovery**, and **patcher** alongside `mct-agent`:
+Need the standalone CLIs too? Append `--install-peripherals` to build **mct**, **file-discovery**, **shell-agent**, and **patcher** alongside `mct-agent`:
 
 ```
 ./scripts/install.sh --install-peripherals

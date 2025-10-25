@@ -6,7 +6,7 @@ This repository now houses the full Machtiani toolchain inside a single Go modul
 2) `agent/internal/file-discovery` — the helper binary that performs LLM-guided file discovery using a strict RG> protocol.
 3) `agent` — the orchestrator that drives the loop and links against the internal libraries directly.
 
-Most users only need the `mct-agent` binary. The install script builds `mct-agent` by default and exposes an opt-in flag when you want the standalone `mct`, `file-discovery`, and `patcher` binaries.
+Most users only need the `mct-agent` binary. The install script builds `mct-agent` by default and exposes an opt-in flag when you want the standalone `mct`, `file-discovery`, `shell-agent`, and `patcher` binaries.
 
 ## Prerequisites
 - Go: install Go 1.23+ (to satisfy all internal packages; `mct` builds with 1.22+, `file-discovery` with 1.23).
@@ -83,7 +83,7 @@ Run the installer from the repo root to build **mct-agent** into `~/.local/bin`:
 
 Prefer a different prefix? Supply `PREFIX=...` and add the resulting `bin` directory to PATH.
 
-Need the standalone CLIs? Append `--install-peripherals` to also build **mct**, **file-discovery**, and **patcher**:
+Need the standalone CLIs? Append `--install-peripherals` to also build **mct**, **file-discovery**, **shell-agent**, and **patcher**:
 
 ```
 ./scripts/install.sh --install-peripherals
@@ -109,6 +109,7 @@ To manually build the additional CLIs, run the block above and then:
 ( cd agent/internal/mct && ./build.sh )
 install -m 0755 agent/internal/mct/bin/mct "$BIN_DIR/mct"
 install -m 0755 agent/internal/mct/bin/file-discovery "$BIN_DIR/file-discovery"
+( cd agent/internal/shell-agent && go build -o "$BIN_DIR/shell-agent" ./cmd/shell-agent )
 ( cd agent/internal/patcher && go build -o "$BIN_DIR/patcher" ./cmd/patcher )
 ```
 
@@ -217,6 +218,8 @@ The `--shell-agent` flag expects a `shell-agent` binary on PATH. Build the inclu
 cd agent/internal/shell-agent
 GOCACHE=$(pwd)/../../.gocache go build -o ~/.local/bin/shell-agent ./cmd/shell-agent
 ```
+
+If you installed with `--install-peripherals`, the installer already places `shell-agent` alongside the other binaries so you can invoke it directly (`shell-agent --help`).
 
 See `agent/internal/patcher/README.md` for patch workflows and `agent/internal/file-discovery/README.md` for direct `file-discovery` usage.
 
