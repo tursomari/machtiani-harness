@@ -160,6 +160,7 @@ Useful flags (agent):
 - `--version`: print build metadata for the agent and exit.
 - `--dry-run`: print intended calls without executing.
 - `--verbose`: verbose logging.
+- `--shell-agent`: gather terminal context by running the standalone `shell-agent` binary first, append its transcript to the prompt, and then ask the LLM for the final answer (requires `shell-agent` on PATH).
 
 ### Session Artifacts & Trajectory Logs
 
@@ -205,6 +206,16 @@ mct prompt "Summarize architecture" --max-input-tokens 6000
 
 # Answer-only mode (no discovery/saving)
 mct prompt --mode=answer-only -f prompt.md
+
+# Shell-agent context first, then LLM response
+mct prompt --shell-agent "Upgrade dependencies and report any issues"
+```
+
+The `--shell-agent` flag expects a `shell-agent` binary on PATH. Build the included implementation with:
+
+```
+cd agent/internal/shell-agent
+GOCACHE=$(pwd)/../../.gocache go build -o ~/.local/bin/shell-agent ./cmd/shell-agent
 ```
 
 See `agent/internal/patcher/README.md` for patch workflows and `agent/internal/file-discovery/README.md` for direct `file-discovery` usage.

@@ -71,6 +71,9 @@ The flag keeps the combined prompt (history, user text, and discovered files) wi
 Answer‑only mode (no discovery, no saving):
 ```
 mct prompt --mode=answer-only -f prompt.md
+
+# Shell-agent mode: run the CLI subprocess for context, then hand results to the model
+mct prompt --shell-agent "Investigate the flaky integration test"
 ```
 
 Model selection examples:
@@ -95,6 +98,13 @@ mct prompt "Summarize the architecture" \
    - Optional `--max-input-tokens` enforces an estimated token budget and replaces truncated sections with a stamped marker showing line numbers of the omission.
 4. Streams tokens from your LLM endpoint and renders Markdown in the terminal.
 5. Saves output to `.machtiani/sessions/<session-id>/chat/<generated-name>.md` and updates `.machtiani/sessions/<session-id>/chat/machtiani-response.md`.
+
+### Shell-agent context mode
+- Enable with `mct prompt --shell-agent "..."`.
+- `mct` invokes the standalone `shell-agent` binary as a subprocess, passing it the assembled prompt (with any discovered files) and streaming its transcript output.
+- The transcript is wrapped under the prefix `Here is possibly relevant information from the shell agent.` and appended to the normal user prompt before the configured LLM is called.
+- The final LLM answer is still produced by the model defined via `--model` / `--answer-model`, and the combined exchange is saved to the usual session chat file.
+- Ensure `shell-agent` is installed on PATH (see repository root instructions for building it into `~/.local/bin`).
 
 ### Git‑Only Discovery Sandbox
 - By default, `mct` creates a temporary workspace containing only Git‑tracked files (committed or staged) and runs `file-discovery` there.
