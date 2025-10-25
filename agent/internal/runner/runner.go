@@ -111,6 +111,8 @@ func (r *Runner) RunPrompt(ctx context.Context, sessionID string, in PromptInput
 		if in.MaxInputTokens == 0 {
 			delete(payload, "max_input_tokens")
 		}
+		payload["shell_agent_enabled"] = r.ShellAgent
+		payload["file_discovery_enabled"] = !r.ShellAgent && safeMode != "answer-only"
 		payload = trajectory.MergeExcerptWithPrefix(payload, trajectory.MakeTextExcerpt(in.Prompt, w.ExcerptLen()), "prompt")
 		evt := trajectory.Event{Kind: "mct.prompt.start", SpanID: span.ID, ParentSpanID: parentSpan, Payload: payload}
 		if err := w.Emit(ctx, evt); err != nil {
@@ -201,6 +203,8 @@ func (r *Runner) RunPrompt(ctx context.Context, sessionID string, in PromptInput
 		if strings.TrimSpace(res.TrajectoryPath) != "" {
 			payload["shell_agent_trajectory_path"] = strings.TrimSpace(res.TrajectoryPath)
 		}
+		payload["file_discovery_used"] = res.FileDiscoveryRan
+		payload["shell_agent_used"] = res.ShellAgentUsed
 		if retrieved > 0 && retrieved <= 10 {
 			payload["retrieved_paths"] = append([]string(nil), res.RetrievedFiles...)
 		}

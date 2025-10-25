@@ -65,8 +65,9 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 
 	combined := opts.Prompt
 	included := []string(nil)
+	fileDiscoveryRan := false
 
-	if isAnswerOnly {
+	if isAnswerOnly || opts.ShellAgent {
 		combined, included = contextbuilder.Build(opts.Prompt, nil, hist, contextbuilder.Options{IncludeHistory: includeHistory, MaxInputTokens: opts.MaxInputTokens})
 	} else {
 		ignoreFiles, err := utils.ReadIgnoreFile(".machtiani.ignore")
@@ -95,15 +96,18 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 		}
 		filtered := filterPaths(dr.Paths, ignoreFiles)
 		combined, included = contextbuilder.Build(opts.Prompt, filtered, hist, contextbuilder.Options{IncludeHistory: includeHistory, MaxInputTokens: opts.MaxInputTokens})
+		fileDiscoveryRan = true
 	}
 
 	shellTrajectory := ""
+	shellAgentUsed := false
 	if opts.ShellAgent {
 		contextBlock, trajectoryPath, err := invokeShellAgent(ctx, combined, opts)
 		if err != nil {
 			return res, err
 		}
 		shellTrajectory = trajectoryPath
+		shellAgentUsed = true
 		if strings.TrimSpace(contextBlock) != "" {
 			if strings.TrimSpace(combined) != "" {
 				combined = combined + "\n\n" + contextBlock
@@ -137,6 +141,8 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 	if shellTrajectory != "" {
 		res.TrajectoryPath = shellTrajectory
 	}
+	res.FileDiscoveryRan = fileDiscoveryRan
+	res.ShellAgentUsed = shellAgentUsed
 
 	_ = session.AddMessage("user", opts.Prompt, nil)
 	_ = session.AddMessage("assistant", res.Assistant, included)

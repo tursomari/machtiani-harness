@@ -45,12 +45,14 @@ type ReadmeOptions struct {
 
 // Result captures the outcome of a prompt execution.
 type Result struct {
-	Header         string
-	Assistant      string
-	FullText       string
-	RetrievedFiles []string
-	SavedPath      string
-	Filename       string
-	SaveError      error
-	TrajectoryPath string
+	Header           string
+	Assistant        string
+	FullText         string
+	RetrievedFiles   []string
+	SavedPath        string
+	Filename         string
+	SaveError        error
+	TrajectoryPath   string
+	FileDiscoveryRan bool
+	ShellAgentUsed   bool
 }
