@@ -1,11 +1,15 @@
 package prompt
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/contextbuilder"
@@ -19,6 +23,8 @@ import (
 )
 
 var chatStreamWithRuntime = llm.ChatStreamWithResolvedFallback
+
+const shellAgentContextPrefix = "Here is possibly relevant information from the shell agent."
 
 // Run executes the core prompt flow used by the mct CLI and mct-agent.
 // It handles context building, file discovery, streaming, transcript
@@ -91,6 +97,22 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 		combined, included = contextbuilder.Build(opts.Prompt, filtered, hist, contextbuilder.Options{IncludeHistory: includeHistory, MaxInputTokens: opts.MaxInputTokens})
 	}
 
+	shellTrajectory := ""
+	if opts.ShellAgent {
+		contextBlock, trajectoryPath, err := invokeShellAgent(ctx, combined, opts)
+		if err != nil {
+			return res, err
+		}
+		shellTrajectory = trajectoryPath
+		if strings.TrimSpace(contextBlock) != "" {
+			if strings.TrimSpace(combined) != "" {
+				combined = combined + "\n\n" + contextBlock
+			} else {
+				combined = contextBlock
+			}
+		}
+	}
+
 	header := buildHeader(combined)
 	res.Header = header
 	if opts.OnHeader != nil {
@@ -108,14 +130,16 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 	}
 	res.Assistant = assistant
 	res.FullText = header + assistant
-
 	if len(included) > 0 {
 		res.FullText += formatRetrievedSection(included)
 	}
 	res.RetrievedFiles = append([]string(nil), included...)
+	if shellTrajectory != "" {
+		res.TrajectoryPath = shellTrajectory
+	}
 
 	_ = session.AddMessage("user", opts.Prompt, nil)
-	_ = session.AddMessage("assistant", assistant, included)
+	_ = session.AddMessage("assistant", res.Assistant, included)
 
 	if err := runReadmeManager(ctx, opts, isAnswerOnly); err != nil {
 		utils.LogErrorIfNotAnswerOnly(isAnswerOnly, err, "internal README management failed")
@@ -143,8 +167,159 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 	return res, nil
 }
 
+func invokeShellAgent(ctx context.Context, prompt string, opts RunOptions) (string, string, error) {
+	args := []string{"-output-format=json"}
+	if opts.Verbose {
+		args = append(args, "-verbose")
+	}
+	args = append(args, prompt)
+
+	cmd := exec.CommandContext(ctx, "shell-agent", args...)
+	cmd.Env = append(os.Environ(), runtimeEnvFrom(opts.Runtime)...)
+
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		return "", "", fmt.Errorf("shell-agent stdout pipe: %w", err)
+	}
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		return "", "", fmt.Errorf("shell-agent stderr pipe: %w", err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		return "", "", fmt.Errorf("shell-agent start: %w", err)
+	}
+
+	var stdoutBuf bytes.Buffer
+	var writer io.Writer = &stdoutBuf
+	if opts.OnToken != nil {
+		writer = io.MultiWriter(&stdoutBuf, &tokenWriter{onToken: opts.OnToken})
+	}
+
+	var stderrBuf bytes.Buffer
+	stderrDone := make(chan struct{})
+	var stderrErr error
+	go func() {
+		_, stderrErr = io.Copy(&stderrBuf, stderrPipe)
+		close(stderrDone)
+	}()
+
+	if _, err := io.Copy(writer, stdoutPipe); err != nil {
+		_ = cmd.Process.Kill()
+		<-stderrDone
+		_ = cmd.Wait()
+		return "", "", fmt.Errorf("shell-agent read stdout: %w", err)
+	}
+
+	err = cmd.Wait()
+	<-stderrDone
+	if stderrErr != nil {
+		return "", "", fmt.Errorf("shell-agent read stderr: %w", stderrErr)
+	}
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			stderrMsg := strings.TrimSpace(stderrBuf.String())
+			if stderrMsg == "" {
+				stderrMsg = strings.TrimSpace(stdoutBuf.String())
+			}
+			if stderrMsg != "" {
+				return "", "", fmt.Errorf("shell-agent exited with code %d: %s", exitErr.ExitCode(), stderrMsg)
+			}
+			return "", "", fmt.Errorf("shell-agent exited with code %d", exitErr.ExitCode())
+		}
+		return "", "", fmt.Errorf("shell-agent wait: %w", err)
+	}
+
+	stdoutText := strings.TrimSpace(stdoutBuf.String())
+	stderrText := strings.TrimSpace(stderrBuf.String())
+	contextBlock := formatShellAgentContext(stdoutText, stderrText)
+	trajectory := extractTrajectoryPath(stdoutText, stderrText)
+	return contextBlock, trajectory, nil
+}
+
+func formatShellAgentContext(stdoutText, stderrText string) string {
+	var b strings.Builder
+	b.WriteString(shellAgentContextPrefix)
+	b.WriteString("\n\n")
+	if stdoutText != "" {
+		b.WriteString(stdoutText)
+		b.WriteString("\n")
+	}
+	if stderrText != "" {
+		if stdoutText != "" {
+			b.WriteString("\n")
+		}
+		b.WriteString("[stderr]\n")
+		b.WriteString(stderrText)
+		b.WriteString("\n")
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func extractTrajectoryPath(outputs ...string) string {
+	trajectoryLine := regexp.MustCompile(`Trajectory:\s*(.+\.json)`) // e.g. "Trajectory: trajectory-20240930-120000.json"
+	filePattern := regexp.MustCompile(`trajectory-\d{8}-\d{6}\.json`)
+	for _, out := range outputs {
+		if strings.TrimSpace(out) == "" {
+			continue
+		}
+		if match := trajectoryLine.FindStringSubmatch(out); len(match) == 2 {
+			candidate := strings.TrimSpace(match[1])
+			if candidate != "" {
+				if abs, err := filepath.Abs(candidate); err == nil {
+					return abs
+				}
+				return candidate
+			}
+		}
+	}
+	for _, out := range outputs {
+		if strings.TrimSpace(out) == "" {
+			continue
+		}
+		if match := filePattern.FindString(out); match != "" {
+			if abs, err := filepath.Abs(match); err == nil {
+				return abs
+			}
+			return match
+		}
+	}
+	return ""
+}
+
+func runtimeEnvFrom(rt ModelRuntime) []string {
+	env := []string{}
+	apiKey := strings.TrimSpace(rt.Resolved.APIKey)
+	if apiKey != "" {
+		env = append(env, "OPENAI_API_KEY="+apiKey)
+	}
+	baseURL := strings.TrimSpace(rt.Resolved.BaseURL)
+	if baseURL != "" {
+		env = append(env, "OPENAI_BASE_URL="+baseURL)
+	}
+	model := strings.TrimSpace(rt.Resolved.Model)
+	if model != "" {
+		env = append(env, "OPENAI_MODEL="+model)
+	}
+	return env
+}
+
+type tokenWriter struct {
+	onToken func(string)
+}
+
+func (w *tokenWriter) Write(p []byte) (int, error) {
+	if w.onToken != nil && len(p) > 0 {
+		w.onToken(string(p))
+	}
+	return len(p), nil
+}
+
 func runReadmeManager(ctx context.Context, opts RunOptions, isAnswerOnly bool) error {
 	if opts.Readme == nil || !opts.Readme.Enabled {
+		return nil
+	}
+	if opts.ShellAgent {
 		return nil
 	}
 	if isAnswerOnly {

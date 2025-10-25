@@ -21,6 +21,7 @@ type Runner struct {
 	AnswerRuntime           promptsvc.ModelRuntime
 	FileDiscoveryRuntime    promptsvc.ModelRuntime
 	FileDiscoveryTrajectory string
+	ShellAgent              bool
 }
 
 type PromptInput struct {
@@ -137,6 +138,7 @@ func (r *Runner) RunPrompt(ctx context.Context, sessionID string, in PromptInput
 		FileDiscoveryTrajectory: r.FileDiscoveryTrajectory,
 		MaxInputTokens:          in.MaxInputTokens,
 		Readme:                  readmeOpts,
+		ShellAgent:              r.ShellAgent,
 	})
 	if useMarkdown && ms != nil {
 		_ = ms.Flush()
@@ -195,6 +197,9 @@ func (r *Runner) RunPrompt(ctx context.Context, sessionID string, in PromptInput
 		}
 		if res.SaveError != nil {
 			payload["save_error"] = res.SaveError.Error()
+		}
+		if strings.TrimSpace(res.TrajectoryPath) != "" {
+			payload["shell_agent_trajectory_path"] = strings.TrimSpace(res.TrajectoryPath)
 		}
 		if retrieved > 0 && retrieved <= 10 {
 			payload["retrieved_paths"] = append([]string(nil), res.RetrievedFiles...)

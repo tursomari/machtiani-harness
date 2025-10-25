@@ -34,6 +34,7 @@ type RunOptions struct {
 	Verbose                 bool
 	MaxInputTokens          int
 	Readme                  *ReadmeOptions
+	ShellAgent              bool
 }
 
 // ReadmeOptions configure optional internal README management hooks.
@@ -51,4 +52,5 @@ type Result struct {
 	SavedPath      string
 	Filename       string
 	SaveError      error
+	TrajectoryPath string
 }

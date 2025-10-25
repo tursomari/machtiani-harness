@@ -142,6 +142,7 @@ func Run(ctx context.Context, opts Options) Result {
 		AnswerRuntime:           models.answer.toPromptRuntime(),
 		FileDiscoveryRuntime:    models.fileDiscovery.toPromptRuntime(),
 		FileDiscoveryTrajectory: trajectoryPath,
+		ShellAgent:              cfg.shellAgent,
 	}
 	if err := mctRunner.Resolve(); err != nil {
 		fmt.Fprintln(os.Stderr, "mct resolution error:", err)

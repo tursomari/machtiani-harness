@@ -300,6 +300,7 @@ func configureSessionFlags(fs *flag.FlagSet, cfg *session.Config, paramFlags, pa
 	fs.IntVar(&cfg.TimeoutPerTurn, "timeout-per-turn", 120, "per-turn timeout in seconds (set 0 for no timeout)")
 	fs.BoolVar(&cfg.DryRun, "dry-run", false, "print intended mct calls; don’t execute")
 	fs.BoolVar(&cfg.Verbose, "verbose", false, "verbose agent logging")
+	fs.BoolVar(&cfg.ShellAgent, "shell-agent", false, "Enable shell-agent mode: invoke shell-agent subprocess binary for task execution")
 	fs.StringVar(&cfg.FinalFile, "final-file", "", "path to write final answer-only artifact (default: .machtiani/sessions/<sessionID>/chat/agent-final-answer.md)")
 	fs.StringVar(&cfg.TranscriptFile, "transcript-file", "", "path to write transcript file (default: .machtiani/sessions/<sessionID>/chat/agent-transcript.md)")
 	fs.StringVar(&cfg.FileDiscoveryTrajectory, "file-discovery-trajectory", "", "path to write file-discovery trajectory JSONL (default: auto-named under session artifacts)")

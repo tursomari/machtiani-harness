@@ -26,6 +26,7 @@ type Config struct {
 	OpenAIAPIKey            string
 	OpenAIBaseURL           string
 	OpenAIModel             string
+	ShellAgent              bool
 }
 
 type BuildInfo struct {
@@ -78,6 +79,7 @@ type legacyConfig struct {
 	openAIAPIKey            string
 	openAIBaseURL           string
 	openAIModel             string
+	shellAgent              bool
 }
 
 func newLegacyConfig(cfg Config) legacyConfig {
@@ -107,5 +109,6 @@ func newLegacyConfig(cfg Config) legacyConfig {
 		openAIAPIKey:            cfg.OpenAIAPIKey,
 		openAIBaseURL:           cfg.OpenAIBaseURL,
 		openAIModel:             cfg.OpenAIModel,
+		shellAgent:              cfg.ShellAgent,
 	}
 }

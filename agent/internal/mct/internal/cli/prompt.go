@@ -51,6 +51,7 @@ func handlePrompt(args []string) {
 	maxInputTokensFlag := fs.Int("max-input-tokens", 0, "Maximum number of tokens allowed in the constructed prompt (0 disables truncation)")
 	// flags retained for compatibility in other subcommands; not used in local prompt path
 	verboseFlag := fs.Bool("verbose", false, "Enable verbose output")
+	shellAgentFlag := fs.Bool("shell-agent", false, "Enable shell-agent mode: invoke shell-agent subprocess binary for task execution")
 	// remote not needed for local prompt path
 
 	_ = fs.MarkHidden("include-history")
@@ -217,6 +218,7 @@ func handlePrompt(args []string) {
 		Verbose:              *verboseFlag,
 		MaxInputTokens:       *maxInputTokensFlag,
 		Readme:               readmeOpts,
+		ShellAgent:           *shellAgentFlag,
 	})
 	if ms != nil {
 		_ = ms.Flush()
