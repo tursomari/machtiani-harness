@@ -131,6 +131,14 @@ func Run(ctx context.Context, opts Options) Result {
 		describeModel("answer", models.answer),
 		describeModel("file discovery", models.fileDiscovery),
 	)
+	modeIndicator := "file"
+	if cfg.shellAgent {
+		modeIndicator = "shell"
+	}
+	if orchPromptOpts == nil {
+		orchPromptOpts = &ui.PromptOptions{}
+	}
+	orchPromptOpts.ModeIndicator = modeIndicator
 	patcherPromptOpts := promptOptions(
 		describeModel("patcher", models.patcher),
 	)

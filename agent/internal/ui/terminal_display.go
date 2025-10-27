@@ -44,7 +44,8 @@ type PromptStream struct {
 
 // PromptOptions controls how prompts are rendered in the terminal chain.
 type PromptOptions struct {
-	Metadata []string
+	Metadata      []string
+	ModeIndicator string
 }
 
 // NewTerminalDisplay constructs a TerminalDisplay writing to out (defaults to STDOUT).
@@ -80,6 +81,11 @@ func (t *TerminalDisplay) BeginPrompt(prompt string, opts *PromptOptions) *Promp
 		fmt.Fprintln(t.out, strings.TrimSpace(prompt))
 		printedMeta := false
 		if opts != nil {
+			mode := strings.TrimSpace(opts.ModeIndicator)
+			if mode != "" {
+				fmt.Fprintf(t.out, "%s|   [mct:%s]%s\n", ansiGray, mode, ansiReset)
+				printedMeta = true
+			}
 			for _, meta := range opts.Metadata {
 				clean := strings.TrimSpace(meta)
 				if clean == "" {
