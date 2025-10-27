@@ -178,7 +178,7 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 }
 
 func invokeShellAgent(ctx context.Context, prompt string, opts RunOptions) (string, string, error) {
-	args := []string{"-output-format=json"}
+	args := []string{"-output-format=markdown"}
 	if opts.Verbose {
 		args = append(args, "-verbose")
 	}
