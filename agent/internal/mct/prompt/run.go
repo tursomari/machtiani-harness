@@ -94,7 +94,7 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 			FallbackResolved:   cloneResolvedModels(fdRuntime.FallbackResolved),
 			TrajectoryOverride: strings.TrimSpace(opts.FileDiscoveryTrajectory),
 		}
-	dr, err := discoveryRunnerRun(ctx, opts.Prompt, drModel, opts.SessionID, opts.Verbose)
+		dr, err := discoveryRunnerRun(ctx, opts.Prompt, drModel, opts.SessionID, opts.Verbose)
 		if err != nil {
 			return res, fmt.Errorf("file discovery: %w", err)
 		}
@@ -178,7 +178,7 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 }
 
 func invokeShellAgent(ctx context.Context, prompt string, opts RunOptions) (string, string, error) {
-	args := []string{"-output-format=markdown"}
+	args := []string{"-output-format=simple"}
 	if opts.Verbose {
 		args = append(args, "-verbose")
 	}
