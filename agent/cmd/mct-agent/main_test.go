@@ -171,6 +171,65 @@ func TestRunCommandFailsWhenRepoHasNoCommits(t *testing.T) {
 	}
 }
 
+func TestRunCommandPropagatesShellAgentFlag(t *testing.T) {
+	origHead := readmeHeadCommitFn
+	origCommit := readmeCommitForProjectFn
+	origSession := sessionRunFn
+	t.Cleanup(func() {
+		readmeHeadCommitFn = origHead
+		readmeCommitForProjectFn = origCommit
+		sessionRunFn = origSession
+	})
+
+	readmeHeadCommitFn = func() (string, error) { return "abcdef123456", nil }
+	readmeCommitForProjectFn = func(string) (string, error) { return "deadbeef", nil }
+
+	var received session.Options
+	sessionRunFn = func(ctx context.Context, opts session.Options) session.Result {
+		received = opts
+		return session.Result{ExitCode: 0}
+	}
+
+	if exit := handleRunCommand([]string{"--shell-agent", "Investigate env drift"}); exit != 0 {
+		t.Fatalf("expected exit code 0, got %d", exit)
+	}
+
+	if !received.Config.ShellAgent {
+		t.Fatalf("expected ShellAgent flag to propagate to session config")
+	}
+	if received.Goal != "Investigate env drift" {
+		t.Fatalf("unexpected goal: %q", received.Goal)
+	}
+}
+
+func TestRunCommandDefaultsToFileDiscoveryMode(t *testing.T) {
+	origHead := readmeHeadCommitFn
+	origCommit := readmeCommitForProjectFn
+	origSession := sessionRunFn
+	t.Cleanup(func() {
+		readmeHeadCommitFn = origHead
+		readmeCommitForProjectFn = origCommit
+		sessionRunFn = origSession
+	})
+
+	readmeHeadCommitFn = func() (string, error) { return "abcdef123456", nil }
+	readmeCommitForProjectFn = func(string) (string, error) { return "deadbeef", nil }
+
+	var received session.Options
+	sessionRunFn = func(ctx context.Context, opts session.Options) session.Result {
+		received = opts
+		return session.Result{ExitCode: 0}
+	}
+
+	if exit := handleRunCommand([]string{"Audit service rollout"}); exit != 0 {
+		t.Fatalf("expected exit code 0, got %d", exit)
+	}
+
+	if received.Config.ShellAgent {
+		t.Fatalf("expected shell agent to be disabled by default")
+	}
+}
+
 func initTestRepo(t *testing.T) string {
 	t.Helper()
 	repoDir := t.TempDir()

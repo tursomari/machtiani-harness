@@ -22,7 +22,11 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/mct/llm"
 )
 
-var chatStreamWithRuntime = llm.ChatStreamWithResolvedFallback
+var (
+	chatStreamWithRuntime    = llm.ChatStreamWithResolvedFallback
+	discoveryRunnerRun       = discoveryrunner.Run
+	shellAgentCommandContext = exec.CommandContext
+)
 
 const shellAgentContextPrefix = "Here is possibly relevant information from the shell agent."
 
@@ -90,7 +94,7 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 			FallbackResolved:   cloneResolvedModels(fdRuntime.FallbackResolved),
 			TrajectoryOverride: strings.TrimSpace(opts.FileDiscoveryTrajectory),
 		}
-		dr, err := discoveryrunner.Run(ctx, opts.Prompt, drModel, opts.SessionID, opts.Verbose)
+	dr, err := discoveryRunnerRun(ctx, opts.Prompt, drModel, opts.SessionID, opts.Verbose)
 		if err != nil {
 			return res, fmt.Errorf("file discovery: %w", err)
 		}
@@ -180,7 +184,7 @@ func invokeShellAgent(ctx context.Context, prompt string, opts RunOptions) (stri
 	}
 	args = append(args, prompt)
 
-	cmd := exec.CommandContext(ctx, "shell-agent", args...)
+	cmd := shellAgentCommandContext(ctx, "shell-agent", args...)
 	cmd.Env = append(os.Environ(), runtimeEnvFrom(opts.Runtime)...)
 
 	stdoutPipe, err := cmd.StdoutPipe()
