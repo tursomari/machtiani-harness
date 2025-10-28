@@ -88,8 +88,8 @@ func TestShellAgentModeInvokesShellAgentAndSkipsFileDiscovery(t *testing.T) {
 		t.Fatalf("read shell-agent log: %v", err)
 	}
 	logLine := strings.TrimSpace(string(data))
-	if !strings.Contains(logLine, "-output-format=simple") {
-		t.Fatalf("shell-agent invocation missing -output-format flag: %q", logLine)
+	if strings.Contains(logLine, "-output-format") {
+		t.Fatalf("shell-agent invocation unexpectedly set output format: %q", logLine)
 	}
 	if !strings.HasSuffix(logLine, "Collect deployment diagnostics") {
 		t.Fatalf("shell-agent invocation missing prompt: %q", logLine)
