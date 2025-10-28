@@ -10,7 +10,7 @@ import (
 
 	cfgpkg "github.com/tursomari/machtiani/agent/internal/file-discovery/internal/config"
 	"github.com/tursomari/machtiani/agent/internal/file-discovery/internal/discovery"
-	"github.com/tursomari/machtiani/agent/internal/mct/llm"
+	"github.com/tursomari/machtiani/agent/internal/llm"
 )
 
 // version metadata is injected at build time via ldflags in mct/build.sh

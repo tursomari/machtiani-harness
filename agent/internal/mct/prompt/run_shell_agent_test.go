@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/discoveryrunner"
-	"github.com/tursomari/machtiani/agent/internal/mct/llm"
 )
 
 func TestShellAgentModeInvokesShellAgentAndSkipsFileDiscovery(t *testing.T) {

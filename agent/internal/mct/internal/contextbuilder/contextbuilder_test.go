@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tursomari/machtiani/agent/internal/mct/llm"
+	"github.com/tursomari/machtiani/agent/internal/llm"
 )
 
 func TestBuildIncludesConversationHistory(t *testing.T) {

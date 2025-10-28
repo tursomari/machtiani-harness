@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"github.com/tursomari/machtiani/agent/internal/mct/llm"
+	"github.com/tursomari/machtiani/agent/internal/llm"
 )
 
 func main() {

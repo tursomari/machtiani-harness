@@ -15,9 +15,9 @@ import (
 
 	"github.com/google/uuid"
 	integration "github.com/tursomari/machtiani/agent/internal/file-discovery/integration"
+	gitpkg "github.com/tursomari/machtiani/agent/internal/git"
+	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
-	gitpkg "github.com/tursomari/machtiani/agent/internal/mct/internal/git"
-	"github.com/tursomari/machtiani/agent/internal/mct/llm"
 )
 
 // Result holds parsed file paths from file-discovery output

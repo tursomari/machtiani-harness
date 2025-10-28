@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/tursomari/machtiani/agent/internal/mct/internal/git"
+	"github.com/tursomari/machtiani/agent/internal/git"
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/utils"
 )
 

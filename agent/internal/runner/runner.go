@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tursomari/machtiani/agent/internal/mct/llm"
+	"github.com/tursomari/machtiani/agent/internal/llm"
 	promptsvc "github.com/tursomari/machtiani/agent/internal/mct/prompt"
 	"github.com/tursomari/machtiani/agent/internal/trajectory"
 )

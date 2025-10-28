@@ -7,7 +7,7 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/tursomari/machtiani/agent/internal/mct/llm"
+	"github.com/tursomari/machtiani/agent/internal/llm"
 )
 
 var stopwords = map[string]bool{

@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/tursomari/machtiani/agent/internal/mct/llm"
+	"github.com/tursomari/machtiani/agent/internal/llm"
 )
 
 func TestRunUsesAnswerRuntime(t *testing.T) {

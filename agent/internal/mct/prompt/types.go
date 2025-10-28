@@ -1,6 +1,6 @@
 package prompt
 
-import "github.com/tursomari/machtiani/agent/internal/mct/llm"
+import "github.com/tursomari/machtiani/agent/internal/llm"
 
 // ModelRuntime captures the resolved model configuration used for LLM calls
 // and file discovery. It mirrors the data produced by the existing runtime

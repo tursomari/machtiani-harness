@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/tursomari/machtiani/agent/internal/mct/internal/git"
+	"github.com/tursomari/machtiani/agent/internal/git"
 )
 
 const (

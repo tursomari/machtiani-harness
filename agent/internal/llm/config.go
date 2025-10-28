@@ -9,7 +9,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 
-	"github.com/tursomari/machtiani/agent/internal/mct/internal/git"
+	"github.com/tursomari/machtiani/agent/internal/git"
 )
 
 type Config struct {

@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/tursomari/machtiani/agent/internal/mct/internal/git"
+	"github.com/tursomari/machtiani/agent/internal/git"
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/readme"
 	promptsvc "github.com/tursomari/machtiani/agent/internal/mct/prompt"
 )

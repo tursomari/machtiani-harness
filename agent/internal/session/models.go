@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
-	"github.com/tursomari/machtiani/agent/internal/mct/llm"
 	promptsvc "github.com/tursomari/machtiani/agent/internal/mct/prompt"
 	"github.com/tursomari/machtiani/agent/internal/ui"
 )

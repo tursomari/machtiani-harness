@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tursomari/machtiani/agent/internal/mct/llm"
+	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/trajectory"
 )
 

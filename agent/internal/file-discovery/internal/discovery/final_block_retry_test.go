@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	cfgpkg "github.com/tursomari/machtiani/agent/internal/file-discovery/internal/config"
-	"github.com/tursomari/machtiani/agent/internal/mct/llm"
+	"github.com/tursomari/machtiani/agent/internal/llm"
 )
 
 func TestRun_FinalBlockRetryInvalidThenMissing(t *testing.T) {

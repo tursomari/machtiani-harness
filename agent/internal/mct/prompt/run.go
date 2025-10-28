@@ -12,14 +12,14 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/tursomari/machtiani/agent/internal/git"
+	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/contextbuilder"
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/discoveryrunner"
-	"github.com/tursomari/machtiani/agent/internal/mct/internal/git"
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/naming"
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/readme"
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/session"
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/utils"
-	"github.com/tursomari/machtiani/agent/internal/mct/llm"
 )
 
 var (
