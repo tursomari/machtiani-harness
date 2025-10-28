@@ -144,14 +144,13 @@ func (t *TerminalDisplay) Notify(message string) {
 		if !t.started {
 			t.started = true
 		}
+		if t.current != nil && t.current.interruptWithNotificationLocked(clean) {
+			return
+		}
 		if t.current != nil {
 			t.current.flushLineLocked()
 		}
-		if t.hasPrompt {
-			fmt.Fprintf(t.out, "%s|   %s%s\n", ansiGray, clean, ansiReset)
-			return
-		}
-		fmt.Fprintln(t.out, clean)
+		t.printNotificationLineLocked(clean)
 	})
 }
 
@@ -256,21 +255,7 @@ func (s *PromptStream) printLinesLocked(lines []string) {
 		sanitized[i] = truncate(cleaned, maxWidth)
 	}
 	s.clearPreviousLinesLocked()
-	for i, line := range sanitized {
-		prefix := promptSpacerPrefix
-		if i == 0 {
-			prefix = promptFirstLinePrefix
-		}
-		full := prefix + line
-		colored := ansiGray + full + ansiReset
-		fmt.Fprint(s.display.out, colored)
-		if i < len(sanitized)-1 {
-			fmt.Fprint(s.display.out, "\n")
-		}
-	}
-	s.started = true
-	s.linesPrinted = len(sanitized)
-	s.renderedLines = append(s.renderedLines[:0], sanitized...)
+	s.writeSanitizedLinesLocked(sanitized)
 }
 
 // clearPreviousLinesLocked rewinds the terminal cursor and removes the prior
@@ -303,6 +288,58 @@ func (s *PromptStream) flushLineLocked() {
 	s.started = false
 	s.linesPrinted = 0
 	s.renderedLines = s.renderedLines[:0]
+}
+
+func (t *TerminalDisplay) printNotificationLineLocked(message string) {
+	text := sanitizeLine(message)
+	if text == "" {
+		return
+	}
+	if t.hasPrompt {
+		maxWidth := t.width - len(promptSpacerPrefix)
+		if maxWidth <= 0 {
+			maxWidth = 1
+		}
+		text = truncate(text, maxWidth)
+		fmt.Fprintf(t.out, "%s|   %s%s\n", ansiGray, text, ansiReset)
+		return
+	}
+	fmt.Fprintln(t.out, text)
+}
+
+func (s *PromptStream) writeSanitizedLinesLocked(lines []string) {
+	if len(lines) == 0 {
+		s.started = false
+		s.linesPrinted = 0
+		s.renderedLines = s.renderedLines[:0]
+		return
+	}
+	for i, line := range lines {
+		prefix := promptSpacerPrefix
+		if i == 0 {
+			prefix = promptFirstLinePrefix
+		}
+		full := prefix + line
+		colored := ansiGray + full + ansiReset
+		fmt.Fprint(s.display.out, colored)
+		if i < len(lines)-1 {
+			fmt.Fprint(s.display.out, "\n")
+		}
+	}
+	s.started = true
+	s.linesPrinted = len(lines)
+	s.renderedLines = append(s.renderedLines[:0], lines...)
+}
+
+func (s *PromptStream) interruptWithNotificationLocked(message string) bool {
+	if s == nil || s.done || !s.started || s.linesPrinted == 0 {
+		return false
+	}
+	sanitizedSnapshot := append([]string(nil), s.renderedLines...)
+	s.clearPreviousLinesLocked()
+	s.display.printNotificationLineLocked(message)
+	s.writeSanitizedLinesLocked(sanitizedSnapshot)
+	return true
 }
 
 func (t *TerminalDisplay) withLock(fn func()) {
