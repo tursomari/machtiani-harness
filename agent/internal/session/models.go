@@ -57,6 +57,7 @@ type componentModelRuntimes struct {
 	answer        modelRuntime
 	patcher       modelRuntime
 	fileDiscovery modelRuntime
+	shellAgent    modelRuntime
 }
 
 // PromptRuntimes exposes resolved model runtimes for callers outside the
@@ -66,6 +67,7 @@ type PromptRuntimes struct {
 	Answer        promptsvc.ModelRuntime
 	Patcher       promptsvc.ModelRuntime
 	FileDiscovery promptsvc.ModelRuntime
+	ShellAgent    promptsvc.ModelRuntime
 }
 
 // ResolvePromptRuntimes returns the resolved model runtimes used for prompt
@@ -80,6 +82,7 @@ func ResolvePromptRuntimes(cfg Config, global llm.Config, paramPairs, paramJSON 
 		Answer:        models.answer.toPromptRuntime(),
 		Patcher:       models.patcher.toPromptRuntime(),
 		FileDiscovery: models.fileDiscovery.toPromptRuntime(),
+		ShellAgent:    models.shellAgent.toPromptRuntime(),
 	}, nil
 }
 
@@ -320,12 +323,103 @@ func resolveModelRuntimes(cfg legacyConfig, global llm.Config, paramPairs, param
 	}
 	ensureFallbackToPrimary(&answer, primary)
 
+	shellAgent := modelRuntime{}
+	if cfg.shellAgent || strings.TrimSpace(cfg.shellAgentModel) != "" {
+		sr, err := resolveShellAgentRuntime(global, cfg.shellAgentModel)
+		if err != nil {
+			return componentModelRuntimes{}, err
+		}
+		shellAgent = sr
+	}
+
 	return componentModelRuntimes{
 		orchestrator:  primary,
 		answer:        answer,
 		patcher:       patcher,
 		fileDiscovery: fileDiscovery,
+		shellAgent:    shellAgent,
 	}, nil
+}
+
+func resolveShellAgentRuntime(global llm.Config, override string) (modelRuntime, error) {
+	var rt modelRuntime
+	trimmedOverride := strings.TrimSpace(override)
+
+	var baseURL, endpoint, modelName string
+	if global.Model != nil {
+		modelName = strings.TrimSpace(global.Model.ModelName)
+		if trimmedOverride == "" && len(global.Model.ModelKwargs) > 0 {
+			baseURL = trimAny(global.Model.ModelKwargs["base_url"])
+			endpoint = trimAny(global.Model.ModelKwargs["endpoint"])
+			if modelName == "" {
+				modelName = trimAny(global.Model.ModelKwargs["model"])
+			}
+		}
+		if modelName == "" {
+			modelName = trimmedOverride
+		}
+	}
+
+	alias := trimmedOverride
+	if alias == "" {
+		alias = modelName
+	}
+
+	if baseURL != "" {
+		if endpoint == "" {
+			endpoint = "/chat/completions"
+		}
+		resolved := llm.ResolvedModel{
+			Alias:        strings.TrimSpace(alias),
+			ProviderName: "direct",
+			BaseURL:      baseURL,
+			Endpoint:     endpoint,
+			Model:        strings.TrimSpace(modelName),
+			Params:       map[string]any{},
+		}
+		rt.resolved = resolved
+		if strings.TrimSpace(alias) != "" {
+			rt.alias = strings.TrimSpace(alias)
+			rt.usingAlias = true
+		}
+		return rt, nil
+	}
+
+	if strings.TrimSpace(alias) == "" {
+		defaultAlias, err := llm.DefaultModelAlias()
+		if err != nil {
+			return modelRuntime{}, fmt.Errorf("resolve default shell agent model: %w", err)
+		}
+		alias = strings.TrimSpace(defaultAlias)
+		if alias == "" {
+			return modelRuntime{}, fmt.Errorf("resolve default shell agent model: empty alias")
+		}
+	}
+
+	resolved, err := llm.ResolveModel(alias)
+	if err != nil {
+		return modelRuntime{}, fmt.Errorf("resolve shell agent model %q: %w", alias, err)
+	}
+	rt.resolved = resolved
+	rt.alias = alias
+	rt.usingAlias = true
+	return rt, nil
+}
+
+func trimAny(val any) string {
+	switch v := val.(type) {
+	case string:
+		return strings.TrimSpace(v)
+	case fmt.Stringer:
+		return strings.TrimSpace(v.String())
+	case []byte:
+		return strings.TrimSpace(string(v))
+	default:
+		if v == nil {
+			return ""
+		}
+		return strings.TrimSpace(fmt.Sprintf("%v", v))
+	}
 }
 
 func missingDirect(apiKey, baseURL, model string) []string {

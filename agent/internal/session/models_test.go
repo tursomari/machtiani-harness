@@ -142,6 +142,8 @@ func TestResolveModelRuntimesAnswerAlias(t *testing.T) {
 	configPath := filepath.Join(configDir, "config.toml")
 	writeTestConfig(t, configPath)
 	t.Setenv("MACHTIANI_CONFIG", configPath)
+	llm.ResetConfigForTesting()
+	t.Cleanup(llm.ResetConfigForTesting)
 
 	cfg := legacyConfig{
 		orchModel:   "orch",
@@ -170,6 +172,8 @@ func TestResolveModelRuntimesAnswerDefaultsToOrchestrator(t *testing.T) {
 	configPath := filepath.Join(configDir, "config.toml")
 	writeTestConfig(t, configPath)
 	t.Setenv("MACHTIANI_CONFIG", configPath)
+	llm.ResetConfigForTesting()
+	t.Cleanup(llm.ResetConfigForTesting)
 
 	cfg := legacyConfig{orchModel: "orch"}
 	models, err := resolveModelRuntimes(cfg, llm.Config{}, nil, nil)
@@ -181,6 +185,74 @@ func TestResolveModelRuntimesAnswerDefaultsToOrchestrator(t *testing.T) {
 	}
 	if models.answer.alias != models.orchestrator.alias {
 		t.Fatalf("expected answer alias to match orchestrator, got %q vs %q", models.answer.alias, models.orchestrator.alias)
+	}
+}
+
+func TestResolveModelRuntimesShellAgentDefaultAlias(t *testing.T) {
+	configDir := t.TempDir()
+	configPath := filepath.Join(configDir, "config.toml")
+	writeTestConfig(t, configPath)
+	t.Setenv("MACHTIANI_CONFIG", configPath)
+	llm.ResetConfigForTesting()
+	t.Cleanup(llm.ResetConfigForTesting)
+
+	cfg := legacyConfig{shellAgent: true}
+	models, err := resolveModelRuntimes(cfg, llm.Config{}, nil, nil)
+	if err != nil {
+		t.Fatalf("resolveModelRuntimes returned error: %v", err)
+	}
+	if got := strings.TrimSpace(models.shellAgent.alias); got != "orch" {
+		t.Fatalf("expected shell agent alias 'orch', got %q", got)
+	}
+	if got := strings.TrimSpace(models.shellAgent.resolved.Model); got != "orch-model" {
+		t.Fatalf("expected shell agent model 'orch-model', got %q", got)
+	}
+}
+
+func TestResolveModelRuntimesShellAgentOverrideAlias(t *testing.T) {
+	configDir := t.TempDir()
+	configPath := filepath.Join(configDir, "config.toml")
+	writeTestConfig(t, configPath)
+	t.Setenv("MACHTIANI_CONFIG", configPath)
+	llm.ResetConfigForTesting()
+	t.Cleanup(llm.ResetConfigForTesting)
+
+	cfg := legacyConfig{shellAgent: true, shellAgentModel: "answer"}
+	models, err := resolveModelRuntimes(cfg, llm.Config{}, nil, nil)
+	if err != nil {
+		t.Fatalf("resolveModelRuntimes returned error: %v", err)
+	}
+	if got := strings.TrimSpace(models.shellAgent.alias); got != "answer" {
+		t.Fatalf("expected shell agent alias 'answer', got %q", got)
+	}
+	if got := strings.TrimSpace(models.shellAgent.resolved.Model); got != "answer-model" {
+		t.Fatalf("expected shell agent model 'answer-model', got %q", got)
+	}
+}
+
+func TestResolveShellAgentRuntimeDirectConfig(t *testing.T) {
+	global := llm.Config{
+		Model: &llm.ModelConfig{
+			ModelName: "direct-shell",
+			ModelKwargs: map[string]any{
+				"base_url": "https://shell.example",
+				"endpoint": "/v1/chat",
+			},
+		},
+	}
+
+	rt, err := resolveShellAgentRuntime(global, "")
+	if err != nil {
+		t.Fatalf("resolveShellAgentRuntime returned error: %v", err)
+	}
+	if got := strings.TrimSpace(rt.resolved.BaseURL); got != "https://shell.example" {
+		t.Fatalf("expected base URL https://shell.example, got %q", got)
+	}
+	if got := strings.TrimSpace(rt.resolved.Endpoint); got != "/v1/chat" {
+		t.Fatalf("expected endpoint /v1/chat, got %q", got)
+	}
+	if got := strings.TrimSpace(rt.resolved.Model); got != "direct-shell" {
+		t.Fatalf("expected model direct-shell, got %q", got)
 	}
 }
 

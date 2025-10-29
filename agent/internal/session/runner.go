@@ -126,11 +126,15 @@ func Run(ctx context.Context, opts Options) Result {
 		fmt.Fprintln(os.Stderr, "Model resolution error:", err)
 		return Result{ExitCode: 1, Err: err}
 	}
-	orchPromptOpts := promptOptions(
+	metaLines := []string{
 		describeModel("orchestrator", models.orchestrator),
 		describeModel("answer", models.answer),
 		describeModel("file discovery", models.fileDiscovery),
-	)
+	}
+	if cfg.shellAgent {
+		metaLines = append(metaLines, describeModel("shell agent", models.shellAgent))
+	}
+	orchPromptOpts := promptOptions(metaLines...)
 	modeIndicator := "file"
 	if cfg.shellAgent {
 		modeIndicator = "shell"
