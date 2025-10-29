@@ -132,11 +132,11 @@ model = "gpt-4"
 
 func TestValidateAPIKeyOverrideProviderValidatesMatch(t *testing.T) {
 	tests := []struct {
-		name              string
-		overrides         map[string]string
+		name               string
+		overrides          map[string]string
 		configuredProvider string
-		shouldFail        bool
-		errorContains     string
+		shouldFail         bool
+		errorContains      string
 	}{
 		{
 			name:               "matching provider passes",
@@ -151,11 +151,23 @@ func TestValidateAPIKeyOverrideProviderValidatesMatch(t *testing.T) {
 			shouldFail:         false,
 		},
 		{
-			name:               "mismatched provider fails",
+			name:               "alias override passes",
+			overrides:          map[string]string{"test-model": "alias-key"},
+			configuredProvider: "openai",
+			shouldFail:         false,
+		},
+		{
+			name:               "single mismatched provider fails",
 			overrides:          map[string]string{"openrouter": "key"},
 			configuredProvider: "openai",
 			shouldFail:         true,
 			errorContains:      "openrouter",
+		},
+		{
+			name:               "multiple providers including match passes",
+			overrides:          map[string]string{"openrouter": "key1", "openai": "key2"},
+			configuredProvider: "openai",
+			shouldFail:         false,
 		},
 		{
 			name:               "no overrides passes",
@@ -170,11 +182,10 @@ func TestValidateAPIKeyOverrideProviderValidatesMatch(t *testing.T) {
 			shouldFail:         false,
 		},
 		{
-			name:               "multiple mismatched providers fail",
+			name:               "multiple mismatched providers ignored",
 			overrides:          map[string]string{"anthropic": "key1", "openrouter": "key2"},
 			configuredProvider: "openai",
-			shouldFail:         true,
-			errorContains:      "does not match",
+			shouldFail:         false,
 		},
 	}
 

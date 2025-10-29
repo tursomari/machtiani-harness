@@ -81,6 +81,16 @@ Flags:
 - `--file-discovery-trajectory string`: absolute/relative file path for the file-discovery trajectory JSONL
 - `--file-discovery-output-dir string`: directory to place file-discovery artifacts (default: `.machtiani/sessions/<session-id>/artifacts`)
 
+Example: mix models from different providers by repeating `--api-key` for each provider referenced by your aliases:
+
+```
+mct-agent run "triage regression" \
+  --orch-model gpt-5-nano \
+  --file-discovery-model haiku \
+  --api-key openai:sk-openai-xxx \
+  --api-key openrouter:sk-openrouter-yyy
+```
+
 ## How It Works
 - The agent controls the loop: it plans either `Decision: ask` with one next question or `Decision: finalize`.
 - On `ask`, it runs the `mct` prompt service via Go packages, retrieving the answer text and retrieved-path metadata without invoking external binaries. The service still writes `.machtiani/sessions/<session-id>/chat/machtiani-response.md` for compatibility, and the agent records the paths plus answer payload directly from memory.

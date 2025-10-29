@@ -111,10 +111,22 @@ func ValidateAPIKeyOverrideProvider(overrides map[string]string, modelAlias, con
 		return nil
 	}
 
-	// Check if there are any overrides that don't match the model's configured provider
-	for overrideProvider := range overrides {
-		if overrideProvider != normalizedConfigured {
-			// User specified an override for a different provider
+	aliasKey := normalizeProviderKey(modelAlias)
+
+	if _, ok := overrides[normalizedConfigured]; ok {
+		return nil
+	}
+	if aliasKey != "" {
+		if _, ok := overrides[aliasKey]; ok {
+			return nil
+		}
+	}
+
+	if len(overrides) == 1 {
+		for overrideProvider := range overrides {
+			if overrideProvider == aliasKey {
+				return nil
+			}
 			return fmt.Errorf(
 				"API key override provider %q does not match model %q configured provider %q. "+
 					"Specify --api-key=%s:<api-key> instead",

@@ -195,6 +195,16 @@ Useful flags (agent):
 - `--verbose`: verbose logging.
 - `--shell-agent`: gather terminal context by running the standalone `shell-agent` binary first, append its transcript to the prompt, and then ask the LLM for the final answer (requires `shell-agent` on PATH; the subprocess automatically receives the current `MACHTIANI_CONFIG`).
 
+To mix providers in a single invocation, repeat `--api-key` once per provider referenced by your model aliases:
+
+```
+mct-agent run "triage regression" \
+  --orch-model gpt-5-nano \
+  --file-discovery-model haiku \
+  --api-key openai:sk-openai-xxx \
+  --api-key openrouter:sk-openrouter-yyy
+```
+
 ### Session Artifacts & Trajectory Logs
 
 Every run stores artifacts under `.machtiani/sessions/<session-id>/`, including the transcript (`chat/agent-transcript.md`), final answer (`chat/agent-final-answer.md`), and a unified trajectory JSONL stream at `trajectory/agent.jsonl`. The trajectory is enabled by default and can be controlled with the following flags (or their matching `MACHTIANI_TRAJECTORY_*` env vars):
