@@ -114,7 +114,7 @@ func Run(ctx context.Context, opts Options) Result {
 	paramPairs := append([]string(nil), opts.ParamPairs...)
 	paramJSONVals := append([]string(nil), opts.ParamJSON...)
 
-	models, err := resolveModelRuntimes(cfg, paramPairs, paramJSONVals)
+	models, err := resolveModelRuntimes(cfg, opts.GlobalConfig, paramPairs, paramJSONVals)
 	if err != nil {
 		if miss, ok := err.(*missingConfigError); ok {
 			fmt.Fprintln(os.Stderr, "Missing model config: set:")
@@ -151,6 +151,8 @@ func Run(ctx context.Context, opts Options) Result {
 		FileDiscoveryRuntime:    models.fileDiscovery.toPromptRuntime(),
 		FileDiscoveryTrajectory: trajectoryPath,
 		ShellAgent:              cfg.shellAgent,
+		ShellAgentModel:         cfg.shellAgentModel,
+		GlobalConfigPath:        opts.GlobalConfigPath,
 	}
 	if err := mctRunner.Resolve(); err != nil {
 		fmt.Fprintln(os.Stderr, "mct resolution error:", err)

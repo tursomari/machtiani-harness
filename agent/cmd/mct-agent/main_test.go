@@ -10,10 +10,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/session"
 )
 
 func TestSyncCommandUsesHeadCommit(t *testing.T) {
+	prepareTestConfig(t)
 	t.Setenv("OPENAI_API_KEY", "test-key")
 	t.Setenv("OPENAI_BASE_URL", "https://example.com/v1")
 	t.Setenv("OPENAI_MODEL", "test-model")
@@ -35,6 +37,7 @@ func TestSyncCommandUsesHeadCommit(t *testing.T) {
 }
 
 func TestSyncCommandInvalidCommit(t *testing.T) {
+	prepareTestConfig(t)
 	t.Setenv("OPENAI_API_KEY", "test-key")
 	t.Setenv("OPENAI_BASE_URL", "https://example.com/v1")
 	t.Setenv("OPENAI_MODEL", "test-model")
@@ -49,6 +52,7 @@ func TestSyncCommandInvalidCommit(t *testing.T) {
 }
 
 func TestSyncCommandRequiresGitRepository(t *testing.T) {
+	prepareTestConfig(t)
 	t.Setenv("OPENAI_API_KEY", "test-key")
 	t.Setenv("OPENAI_BASE_URL", "https://example.com/v1")
 	t.Setenv("OPENAI_MODEL", "test-model")
@@ -73,6 +77,8 @@ func TestRunCommandSucceedsWhenReadmeTagPresent(t *testing.T) {
 		readmeCommitForProjectFn = origCommit
 		sessionRunFn = origSession
 	})
+
+	prepareTestConfig(t)
 
 	readmeHeadCommitFn = func() (string, error) {
 		return "abcdef123456", nil
@@ -111,6 +117,8 @@ func TestRunCommandFailsWhenReadmeMissing(t *testing.T) {
 		sessionRunFn = origSession
 	})
 
+	prepareTestConfig(t)
+
 	readmeHeadCommitFn = func() (string, error) {
 		return "abcdef123456", nil
 	}
@@ -147,6 +155,8 @@ func TestRunCommandFailsWhenRepoHasNoCommits(t *testing.T) {
 		sessionRunFn = origSession
 	})
 
+	prepareTestConfig(t)
+
 	readmeHeadCommitFn = func() (string, error) {
 		return "", errors.New("git repository exists but has no commits yet")
 	}
@@ -181,6 +191,8 @@ func TestRunCommandPropagatesShellAgentFlag(t *testing.T) {
 		sessionRunFn = origSession
 	})
 
+	prepareTestConfig(t)
+
 	readmeHeadCommitFn = func() (string, error) { return "abcdef123456", nil }
 	readmeCommitForProjectFn = func(string) (string, error) { return "deadbeef", nil }
 
@@ -202,6 +214,40 @@ func TestRunCommandPropagatesShellAgentFlag(t *testing.T) {
 	}
 }
 
+func TestRunCommandPropagatesShellAgentModel(t *testing.T) {
+	origHead := readmeHeadCommitFn
+	origCommit := readmeCommitForProjectFn
+	origSession := sessionRunFn
+	t.Cleanup(func() {
+		readmeHeadCommitFn = origHead
+		readmeCommitForProjectFn = origCommit
+		sessionRunFn = origSession
+	})
+
+	prepareTestConfig(t)
+
+	readmeHeadCommitFn = func() (string, error) { return "abcdef123456", nil }
+	readmeCommitForProjectFn = func(string) (string, error) { return "deadbeef", nil }
+
+	var received session.Options
+	sessionRunFn = func(ctx context.Context, opts session.Options) session.Result {
+		received = opts
+		return session.Result{ExitCode: 0}
+	}
+
+	args := []string{"--shell-agent", "--shell-agent-model", "gpt-shell", "Diagnose drift"}
+	if exit := handleRunCommand(args); exit != 0 {
+		t.Fatalf("expected exit code 0, got %d", exit)
+	}
+
+	if received.Config.ShellAgentModel != "gpt-shell" {
+		t.Fatalf("expected shell agent model override, got %q", received.Config.ShellAgentModel)
+	}
+	if received.Goal != "Diagnose drift" {
+		t.Fatalf("unexpected goal: %q", received.Goal)
+	}
+}
+
 func TestRunCommandDefaultsToFileDiscoveryMode(t *testing.T) {
 	origHead := readmeHeadCommitFn
 	origCommit := readmeCommitForProjectFn
@@ -211,6 +257,8 @@ func TestRunCommandDefaultsToFileDiscoveryMode(t *testing.T) {
 		readmeCommitForProjectFn = origCommit
 		sessionRunFn = origSession
 	})
+
+	prepareTestConfig(t)
 
 	readmeHeadCommitFn = func() (string, error) { return "abcdef123456", nil }
 	readmeCommitForProjectFn = func(string) (string, error) { return "deadbeef", nil }
@@ -290,4 +338,15 @@ func captureStderr(t *testing.T, fn func()) (captured string) {
 	}()
 	fn()
 	return
+}
+
+func prepareTestConfig(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(path, []byte(""), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	t.Setenv("MACHTIANI_CONFIG", path)
+	llm.ResetConfigForTesting()
 }

@@ -182,10 +182,16 @@ func invokeShellAgent(ctx context.Context, prompt string, opts RunOptions) (stri
 	if opts.Verbose {
 		args = append(args, "-verbose")
 	}
+	if model := strings.TrimSpace(opts.ShellAgentModel); model != "" {
+		args = append(args, "--shell-agent-model", model)
+	}
 	args = append(args, prompt)
 
 	cmd := shellAgentCommandContext(ctx, "shell-agent", args...)
 	cmd.Env = append(os.Environ(), runtimeEnvFrom(opts.Runtime)...)
+	if configPath := strings.TrimSpace(opts.GlobalConfigPath); configPath != "" {
+		cmd.Env = append(cmd.Env, "MACHTIANI_CONFIG="+configPath)
+	}
 
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
@@ -385,6 +391,7 @@ func runReadmeManager(ctx context.Context, opts RunOptions, isAnswerOnly bool) e
 			FileDiscoveryRuntime: opts.FileDiscoveryRuntime,
 			Verbose:              opts.Verbose,
 			MaxInputTokens:       opts.MaxInputTokens,
+			GlobalConfigPath:     opts.GlobalConfigPath,
 		}
 		res, err := Run(execCtx, innerOpts)
 		if err != nil {

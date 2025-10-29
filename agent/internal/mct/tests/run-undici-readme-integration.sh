@@ -58,6 +58,7 @@ export MCT_LLM_TEST_STUB="stub-echo"
 export OPENAI_API_KEY="${OPENAI_API_KEY:-stub-key}"
 export OPENAI_BASE_URL="${OPENAI_BASE_URL:-https://example.com/api}"
 export OPENAI_MODEL="${OPENAI_MODEL:-stub-model}"
+export MACHTIANI_CONFIG="${MACHTIANI_CONFIG:-$REPO_ROOT/.machtiani/config.toml}"
 
 info "Preparing undici working copy"
 TEST_REPO="$WORK_ROOT/undici"

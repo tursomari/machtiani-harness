@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/mct/readmesync"
 	"github.com/tursomari/machtiani/agent/internal/session"
 )
@@ -83,6 +84,12 @@ func handleRunCommand(args []string) int {
 		return 2
 	}
 
+	globalCfg, configPath, err := llm.LoadGlobalConfig()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		return 1
+	}
+
 	warning, err := ensureInternalReadmeCurrent()
 	if err != nil {
 		var exitErr exitError
@@ -108,6 +115,8 @@ func handleRunCommand(args []string) int {
 			BuiltAt: BuiltAt,
 			Dirty:   Dirty,
 		},
+		GlobalConfig:     globalCfg,
+		GlobalConfigPath: configPath,
 	}
 
 	res := sessionRunFn(context.Background(), opts)
@@ -260,7 +269,13 @@ func handleSyncCommand(args []string) int {
 
 	paramPairs := append([]string(nil), paramFlags...)
 	paramJSONVals := append([]string(nil), paramJSON...)
-	runtimes, err := session.ResolvePromptRuntimes(cfg, paramPairs, paramJSONVals)
+	globalCfg, _, err := llm.LoadGlobalConfig()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		return 1
+	}
+
+	runtimes, err := session.ResolvePromptRuntimes(cfg, globalCfg, paramPairs, paramJSONVals)
 	if err != nil {
 		if missing, ok := session.MissingConfigItems(err); ok && len(missing) > 0 {
 			fmt.Fprintln(os.Stderr, "Missing model config: set:")
@@ -301,6 +316,7 @@ func configureSessionFlags(fs *flag.FlagSet, cfg *session.Config, paramFlags, pa
 	fs.BoolVar(&cfg.DryRun, "dry-run", false, "print intended mct calls; don’t execute")
 	fs.BoolVar(&cfg.Verbose, "verbose", false, "verbose agent logging")
 	fs.BoolVar(&cfg.ShellAgent, "shell-agent", false, "Enable shell-agent mode: invoke shell-agent subprocess binary for task execution")
+	fs.StringVar(&cfg.ShellAgentModel, "shell-agent-model", "", "Model alias override for shell-agent subprocesses (default: config)")
 	fs.StringVar(&cfg.FinalFile, "final-file", "", "path to write final answer-only artifact (default: .machtiani/sessions/<sessionID>/chat/agent-final-answer.md)")
 	fs.StringVar(&cfg.TranscriptFile, "transcript-file", "", "path to write transcript file (default: .machtiani/sessions/<sessionID>/chat/agent-transcript.md)")
 	fs.StringVar(&cfg.FileDiscoveryTrajectory, "file-discovery-trajectory", "", "path to write file-discovery trajectory JSONL (default: auto-named under session artifacts)")

@@ -147,7 +147,7 @@ func TestResolveModelRuntimesAnswerAlias(t *testing.T) {
 		orchModel:   "orch",
 		answerModel: "answer",
 	}
-	models, err := resolveModelRuntimes(cfg, nil, nil)
+	models, err := resolveModelRuntimes(cfg, llm.Config{}, nil, nil)
 	if err != nil {
 		t.Fatalf("resolveModelRuntimes returned error: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestResolveModelRuntimesAnswerDefaultsToOrchestrator(t *testing.T) {
 	t.Setenv("MACHTIANI_CONFIG", configPath)
 
 	cfg := legacyConfig{orchModel: "orch"}
-	models, err := resolveModelRuntimes(cfg, nil, nil)
+	models, err := resolveModelRuntimes(cfg, llm.Config{}, nil, nil)
 	if err != nil {
 		t.Fatalf("resolveModelRuntimes returned error: %v", err)
 	}

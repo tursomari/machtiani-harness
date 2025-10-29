@@ -102,6 +102,64 @@ func TestShellAgentModeInvokesShellAgentAndSkipsFileDiscovery(t *testing.T) {
 	}
 }
 
+func TestShellAgentModeForwardsModelOverride(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	workDir := t.TempDir()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	if err := os.Chdir(workDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+
+	sessionID := "shell-agent-model"
+	t.Setenv("MACHTIANI_SESSION_ID", sessionID)
+
+	origChat := chatStreamWithRuntime
+	chatStreamWithRuntime = func(ctx context.Context, resolved llm.ResolvedModel, aliases []string, fallbacks []llm.ResolvedModel, extras map[string]any, msgs []llm.Message, onToken func(string)) (string, error) {
+		return "assistant", nil
+	}
+	t.Cleanup(func() { chatStreamWithRuntime = origChat })
+
+	binDir := t.TempDir()
+	logPath := filepath.Join(binDir, "shell-agent-model.log")
+	scriptPath := filepath.Join(binDir, "shell-agent")
+	script := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$@\" > \"$SHELL_AGENT_TEST_LOG\"\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write shell-agent stub: %v", err)
+	}
+	t.Setenv("PATH", binDir+":"+os.Getenv("PATH"))
+	t.Setenv("SHELL_AGENT_TEST_LOG", logPath)
+
+	opts := RunOptions{
+		Prompt:          "Enumerate hosts",
+		Mode:            "default",
+		SessionID:       sessionID,
+		Runtime:         ModelRuntime{Resolved: llm.ResolvedModel{Model: "foo", APIKey: "key"}},
+		ShellAgent:      true,
+		ShellAgentModel: "shell-mini",
+	}
+
+	if _, err := Run(context.Background(), opts); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read shell-agent log: %v", err)
+	}
+	line := strings.TrimSpace(string(data))
+	if !strings.Contains(line, "--shell-agent-model") {
+		t.Fatalf("expected shell-agent-model flag in invocation: %q", line)
+	}
+	if !strings.Contains(line, "shell-mini") {
+		t.Fatalf("expected shell-agent model name in invocation: %q", line)
+	}
+}
+
 func TestShellAgentModePropagatesError(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	workDir := t.TempDir()

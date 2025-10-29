@@ -35,6 +35,8 @@ type RunOptions struct {
 	MaxInputTokens          int
 	Readme                  *ReadmeOptions
 	ShellAgent              bool
+	ShellAgentModel         string
+	GlobalConfigPath        string
 }
 
 // ReadmeOptions configure optional internal README management hooks.

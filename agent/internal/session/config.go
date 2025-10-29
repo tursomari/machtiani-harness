@@ -1,5 +1,7 @@
 package session
 
+import "github.com/tursomari/machtiani/agent/internal/llm"
+
 type Config struct {
 	MaxSteps                int
 	OrchModel               string
@@ -27,6 +29,7 @@ type Config struct {
 	OpenAIBaseURL           string
 	OpenAIModel             string
 	ShellAgent              bool
+	ShellAgentModel         string
 }
 
 type BuildInfo struct {
@@ -38,11 +41,13 @@ type BuildInfo struct {
 
 // Options groups the inputs required to run an agent session.
 type Options struct {
-	Config     Config
-	Goal       string
-	ParamPairs []string
-	ParamJSON  []string
-	Build      BuildInfo
+	Config           Config
+	Goal             string
+	ParamPairs       []string
+	ParamJSON        []string
+	Build            BuildInfo
+	GlobalConfig     llm.Config
+	GlobalConfigPath string
 }
 
 type Result struct {
@@ -80,6 +85,7 @@ type legacyConfig struct {
 	openAIBaseURL           string
 	openAIModel             string
 	shellAgent              bool
+	shellAgentModel         string
 }
 
 func newLegacyConfig(cfg Config) legacyConfig {
@@ -110,5 +116,6 @@ func newLegacyConfig(cfg Config) legacyConfig {
 		openAIBaseURL:           cfg.OpenAIBaseURL,
 		openAIModel:             cfg.OpenAIModel,
 		shellAgent:              cfg.ShellAgent,
+		shellAgentModel:         cfg.ShellAgentModel,
 	}
 }

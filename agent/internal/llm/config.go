@@ -15,8 +15,48 @@ import (
 type Config struct {
 	Listen       string                     `toml:"listen"`
 	DefaultModel string                     `toml:"default_model"`
+	Model        *ModelConfig               `toml:"model"`
+	Agent        *AgentConfig               `toml:"agent"`
+	Environment  *EnvironmentConfig         `toml:"environment"`
 	Providers    map[string]ProviderConfig  `toml:"providers"`
 	Models       map[string]ModelDefinition `toml:"models"`
+}
+
+// AgentConfig mirrors the shell-agent agent configuration section and is loaded
+// from the global TOML configuration under [agent].
+type AgentConfig struct {
+	SystemTemplate            string  `toml:"system_template"`
+	InstanceTemplate          string  `toml:"instance_template"`
+	TimeoutTemplate           string  `toml:"timeout_template"`
+	FormatErrorTemplate       string  `toml:"format_error_template"`
+	ActionObservationTemplate string  `toml:"action_observation_template"`
+	LightweightSystemTemplate string  `toml:"lightweight_system_template"`
+	LightweightIntentTemplate string  `toml:"lightweight_intent_template"`
+	LightweightErrorTemplate  string  `toml:"lightweight_error_template"`
+	LightweightMaxAttempts    int     `toml:"lightweight_max_attempts"`
+	StepLimit                 int     `toml:"step_limit"`
+	CostLimit                 float64 `toml:"cost_limit"`
+}
+
+// ModelConfig captures direct model overrides under the top-level [model]
+// section. These values are used by shell-agent and can provide fallback
+// OpenAI-compatible settings for the orchestrator when aliases are absent.
+type ModelConfig struct {
+	ModelName   string         `toml:"model_name"`
+	APIKey      string         `toml:"api_key"`
+	ModelKwargs map[string]any `toml:"model_kwargs"`
+}
+
+// EnvironmentConfig describes shell execution settings loaded from the
+// [environment] section of the unified configuration.
+type EnvironmentConfig struct {
+	Type          string            `toml:"type"`
+	Timeout       int               `toml:"timeout"`
+	CWD           string            `toml:"cwd"`
+	EnvVars       map[string]string `toml:"env_vars"`
+	Image         string            `toml:"image"`
+	Runtime       string            `toml:"runtime"`
+	TrajectoryDir string            `toml:"trajectory_dir"`
 }
 
 type ProviderConfig struct {
@@ -225,6 +265,27 @@ func parseConfig(path string) (Config, error) {
 	if v, ok := raw["default_model"].(string); ok {
 		cfg.DefaultModel = v
 	}
+	if modelRaw, ok := toMap(raw["model"]); ok {
+		modelCfg, err := parseModelSection(path, modelRaw)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.Model = modelCfg
+	}
+	if agentRaw, ok := toMap(raw["agent"]); ok {
+		agentCfg, err := parseAgentSection(path, agentRaw)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.Agent = agentCfg
+	}
+	if envRaw, ok := toMap(raw["environment"]); ok {
+		envCfg, err := parseEnvironmentSection(path, envRaw)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.Environment = envCfg
+	}
 	if provRaw, ok := toMap(raw["providers"]); ok {
 		for name, entry := range provRaw {
 			entryMap, ok := toMap(entry)
@@ -302,6 +363,88 @@ func parseConfig(path string) (Config, error) {
 	return cfg, nil
 }
 
+func parseModelSection(path string, data map[string]any) (*ModelConfig, error) {
+	model := &ModelConfig{}
+	if v, ok := data["model_name"].(string); ok {
+		model.ModelName = v
+	}
+	if v, ok := data["api_key"].(string); ok {
+		model.APIKey = v
+	}
+	if kwargs, ok := toMap(data["model_kwargs"]); ok {
+		model.ModelKwargs = deepCopyMap(kwargs)
+	}
+	return model, nil
+}
+
+func parseAgentSection(path string, data map[string]any) (*AgentConfig, error) {
+	agent := &AgentConfig{}
+	if v, ok := data["system_template"].(string); ok {
+		agent.SystemTemplate = v
+	}
+	if v, ok := data["instance_template"].(string); ok {
+		agent.InstanceTemplate = v
+	}
+	if v, ok := data["timeout_template"].(string); ok {
+		agent.TimeoutTemplate = v
+	}
+	if v, ok := data["format_error_template"].(string); ok {
+		agent.FormatErrorTemplate = v
+	}
+	if v, ok := data["action_observation_template"].(string); ok {
+		agent.ActionObservationTemplate = v
+	}
+	if v, ok := data["lightweight_system_template"].(string); ok {
+		agent.LightweightSystemTemplate = v
+	}
+	if v, ok := data["lightweight_intent_template"].(string); ok {
+		agent.LightweightIntentTemplate = v
+	}
+	if v, ok := data["lightweight_error_template"].(string); ok {
+		agent.LightweightErrorTemplate = v
+	}
+	if v, ok := toInt(data["lightweight_max_attempts"]); ok {
+		agent.LightweightMaxAttempts = v
+	}
+	if v, ok := toInt(data["step_limit"]); ok {
+		agent.StepLimit = v
+	}
+	if v, ok := toFloat(data["cost_limit"]); ok {
+		agent.CostLimit = v
+	}
+	return agent, nil
+}
+
+func parseEnvironmentSection(path string, data map[string]any) (*EnvironmentConfig, error) {
+	env := &EnvironmentConfig{}
+	if v, ok := data["type"].(string); ok {
+		env.Type = v
+	}
+	if v, ok := toInt(data["timeout"]); ok {
+		env.Timeout = v
+	}
+	if v, ok := data["cwd"].(string); ok {
+		env.CWD = v
+	}
+	if vars, ok := toMap(data["env_vars"]); ok {
+		stringMap, err := mapStringString(vars)
+		if err != nil {
+			return nil, fmt.Errorf("parse %s [environment.env_vars]: %w", path, err)
+		}
+		env.EnvVars = stringMap
+	}
+	if v, ok := data["image"].(string); ok {
+		env.Image = v
+	}
+	if v, ok := data["runtime"].(string); ok {
+		env.Runtime = v
+	}
+	if v, ok := data["trajectory_dir"].(string); ok {
+		env.TrajectoryDir = v
+	}
+	return env, nil
+}
+
 func toMap(v any) (map[string]any, bool) {
 	m, ok := v.(map[string]any)
 	return m, ok
@@ -373,6 +516,102 @@ func mergeMaps(base, override map[string]any) map[string]any {
 		out[k] = deepCopyValue(v)
 	}
 	return out
+}
+
+func toInt(v any) (int, bool) {
+	switch val := v.(type) {
+	case int:
+		return val, true
+	case int64:
+		return int(val), true
+	case float64:
+		return int(val), true
+	default:
+		return 0, false
+	}
+}
+
+func toFloat(v any) (float64, bool) {
+	switch val := v.(type) {
+	case float64:
+		return val, true
+	case int:
+		return float64(val), true
+	case int64:
+		return float64(val), true
+	default:
+		return 0, false
+	}
+}
+
+func cloneConfig(in Config) Config {
+	clone := Config{
+		Listen:       in.Listen,
+		DefaultModel: in.DefaultModel,
+		Providers:    make(map[string]ProviderConfig, len(in.Providers)),
+		Models:       make(map[string]ModelDefinition, len(in.Models)),
+	}
+	if in.Agent != nil {
+		agent := *in.Agent
+		clone.Agent = &agent
+	}
+	if in.Environment != nil {
+		env := *in.Environment
+		if len(env.EnvVars) > 0 {
+			env.EnvVars = copyStringMap(env.EnvVars)
+		}
+		clone.Environment = &env
+	}
+	if in.Model != nil {
+		model := *in.Model
+		if len(model.ModelKwargs) > 0 {
+			model.ModelKwargs = deepCopyMap(model.ModelKwargs)
+		}
+		clone.Model = &model
+	}
+	for name, prov := range in.Providers {
+		copyProv := ProviderConfig{
+			BaseURL:  prov.BaseURL,
+			APIKey:   prov.APIKey,
+			Endpoint: prov.Endpoint,
+		}
+		if len(prov.Headers) > 0 {
+			copyProv.Headers = copyStringMap(prov.Headers)
+		}
+		if len(prov.Query) > 0 {
+			copyProv.Query = copyStringMap(prov.Query)
+		}
+		clone.Providers[name] = copyProv
+	}
+	for name, model := range in.Models {
+		copyModel := ModelDefinition{
+			Provider: model.Provider,
+			Model:    model.Model,
+		}
+		if len(model.Params) > 0 {
+			copyModel.Params = deepCopyMap(model.Params)
+		}
+		clone.Models[name] = copyModel
+	}
+	return clone
+}
+
+// LoadGlobalConfig returns a deep copy of the parsed configuration and the
+// resolved file path. Callers may safely mutate the returned config.
+func LoadGlobalConfig() (Config, string, error) {
+	data, err := loadConfig()
+	if err != nil {
+		return Config{}, "", err
+	}
+	return cloneConfig(data.config), data.path, nil
+}
+
+// ResetConfigForTesting clears cached configuration state. It is intended for
+// use in tests that need to swap configuration fixtures.
+func ResetConfigForTesting() {
+	configOnce = sync.Once{}
+	cfgData = nil
+	cfgErr = nil
 }
 
 // CloneResolvedModel returns a deep copy of the provided resolved model so callers

@@ -22,6 +22,8 @@ type Runner struct {
 	FileDiscoveryRuntime    promptsvc.ModelRuntime
 	FileDiscoveryTrajectory string
 	ShellAgent              bool
+	ShellAgentModel         string
+	GlobalConfigPath        string
 }
 
 type PromptInput struct {
@@ -141,6 +143,8 @@ func (r *Runner) RunPrompt(ctx context.Context, sessionID string, in PromptInput
 		MaxInputTokens:          in.MaxInputTokens,
 		Readme:                  readmeOpts,
 		ShellAgent:              r.ShellAgent,
+		ShellAgentModel:         strings.TrimSpace(r.ShellAgentModel),
+		GlobalConfigPath:        r.GlobalConfigPath,
 	})
 	if useMarkdown && ms != nil {
 		_ = ms.Flush()

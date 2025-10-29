@@ -6,7 +6,7 @@ This repository now houses the full Machtiani toolchain inside a single Go modul
 2) `agent/internal/file-discovery` — the helper binary that performs LLM-guided file discovery using a strict RG> protocol.
 3) `agent` — the orchestrator that drives the loop and links against the internal libraries directly.
 
-Most users only need the `mct-agent` binary. The install script builds `mct-agent` by default and exposes an opt-in flag when you want the standalone `mct`, `file-discovery`, `shell-agent`, and `patcher` binaries.
+Most users only need the `mct-agent` binary. The install script builds `mct-agent` by default and exposes an opt-in flag when you want the standalone `mct`, `file-discovery`, `shell-agent`, and `patcher` binaries. All of these tools now share one configuration source (`.machtiani/config.toml` or `MACHTIANI_CONFIG`).
 
 ## Prerequisites
 - Go: install Go 1.23+ (to satisfy all internal packages; `mct` builds with 1.22+, `file-discovery` with 1.23).
@@ -14,6 +14,7 @@ Most users only need the `mct-agent` binary. The install script builds `mct-agen
 - OpenAI‑compatible API access:
   - API key and base URL for models used by `mct` and/or the agent.
 - A writable bin directory on PATH (e.g., `~/.local/bin`).
+- A `.machtiani/config.toml` (or `MACHTIANI_CONFIG` path) describing your agent, model, and environment settings. See the *Global Configuration* section below.
 
 ## Testing
 
@@ -115,22 +116,51 @@ install -m 0755 agent/internal/mct/bin/file-discovery "$BIN_DIR/file-discovery"
 
 The manual snippets skip the ldflags metadata that the installer uses, so version commands will show `dev`/`unknown` fields—this is expected.
 
-## Environment Setup
-`mct-agent` resolves OpenAI-compatible configuration via `OPENAI_*`. Provide all three values explicitly (no implicit defaults). If you also installed the standalone `mct` CLI, it honors the same variables.
+## Global Configuration (.machtiani/config.toml)
+All binaries now read a unified TOML configuration. By default `mct-agent`, `mct`, and `shell-agent` look for:
 
+1. The path set in `MACHTIANI_CONFIG` (recommended for scripts/CI), or
+2. `.machtiani/config.toml` at the repo root, or
+3. `$HOME/.machtiani/config.toml`.
+
+Create one of these files before your first run. A minimal example that targets an OpenRouter alias and runs shell commands locally:
+
+```toml
+listen = "127.0.0.1:8042"
+default_model = "foo"
+
+[agent]
+step_limit = 6
+system_template = "You are the planning layer for the Machtiani shell agent."
+instance_template = "Task: {{.Task}}\n\nMachine: {{.Machine}}\n"
+
+[model]
+model_name = "foo"        # alias defined under [models]
+api_key = ""              # omit to fall back to OPENROUTER_API_KEY / OPENAI_API_KEY
+
+[environment]
+type = "local"
+timeout = 30
+cwd = "."
+
+[providers.openrouter]
+base_url = "https://openrouter.ai/api/v1"
+api_key = "${OPENROUTER_API_KEY}"
+
+[models.foo]
+provider = "openrouter"
+model    = "openai/gpt-5-nano"
 ```
-export OPENAI_API_KEY=sk_...
-export OPENAI_BASE_URL=https://api.openai.com/v1   # or your gateway
-export OPENAI_MODEL=gpt-4o-mini
-```
 
-Notes:
-- Agent flag precedence: `--openai-*` flags override env vars.
-- Legacy envs `AGENT_MODEL_*` are still accepted as a fallback with a deprecation warning.
+Keys inside `[agent]`, `[model]`, and `[environment]` are shared with the shell-agent implementation; omit `model.api_key` to keep credentials out of the file. When you need an alternate model temporarily, pass `--shell-agent-model <alias>` to `mct-agent run --shell-agent` or to the standalone `shell-agent` binary.
 
-Optional knobs:
-- If you installed the standalone `mct` CLI, `FILE_DISCOVERY_BIN` overrides the `file-discovery` binary it invokes (otherwise it resolves one on PATH or its own bundled copy).
+### Environment Variables and Flags
+`OPENAI_*` (or the legacy `AGENT_MODEL_*`) environment variables still work; they override missing parts of `[model]` and remain useful for secrets. Command-line flags such as `--openai-api-key` continue to take highest precedence.
+
+Other helpful overrides:
+- `MACHTIANI_CONFIG`: explicit path to the config file.
 - `MACHTIANI_SESSION_ID`: correlation tag propagated to sub-tools.
+- `FILE_DISCOVERY_BIN`: override the discovery binary that `mct` invokes.
 
 ## Verify Installation
 ```
@@ -156,12 +186,13 @@ Useful flags (agent):
 - `--openai-api-key string`: API key for OpenAI‑compatible endpoint.
 - `--openai-base-url string`: Base URL for OpenAI‑compatible endpoint.
 - `--openai-model string`: Model name used by the planner and discovery pipeline (alias: `--model`).
+- `--shell-agent-model string`: Override the shell-agent model alias for the current run (default comes from `[model].model_name`).
 - `--max-input-tokens int`: cap the estimated prompt size that discovery may build from results; truncates file tails and inserts stamps when necessary.
 - `--timeout-per-turn int`: seconds per turn for the agent loop.
 - `--version`: print build metadata for the agent and exit.
 - `--dry-run`: print intended calls without executing.
 - `--verbose`: verbose logging.
-- `--shell-agent`: gather terminal context by running the standalone `shell-agent` binary first, append its transcript to the prompt, and then ask the LLM for the final answer (requires `shell-agent` on PATH).
+- `--shell-agent`: gather terminal context by running the standalone `shell-agent` binary first, append its transcript to the prompt, and then ask the LLM for the final answer (requires `shell-agent` on PATH; the subprocess automatically receives the current `MACHTIANI_CONFIG`).
 
 ### Session Artifacts & Trajectory Logs
 

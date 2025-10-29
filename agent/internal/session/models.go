@@ -70,8 +70,8 @@ type PromptRuntimes struct {
 
 // ResolvePromptRuntimes returns the resolved model runtimes used for prompt
 // execution based on the supplied session config and parameter overrides.
-func ResolvePromptRuntimes(cfg Config, paramPairs, paramJSON []string) (PromptRuntimes, error) {
-	models, err := resolveModelRuntimes(newLegacyConfig(cfg), paramPairs, paramJSON)
+func ResolvePromptRuntimes(cfg Config, global llm.Config, paramPairs, paramJSON []string) (PromptRuntimes, error) {
+	models, err := resolveModelRuntimes(newLegacyConfig(cfg), global, paramPairs, paramJSON)
 	if err != nil {
 		return PromptRuntimes{}, err
 	}
@@ -193,7 +193,7 @@ func promptOptions(lines ...string) *ui.PromptOptions {
 	return &ui.PromptOptions{Metadata: meta}
 }
 
-func resolveModelRuntimes(cfg legacyConfig, paramPairs, paramJSON []string) (componentModelRuntimes, error) {
+func resolveModelRuntimes(cfg legacyConfig, global llm.Config, paramPairs, paramJSON []string) (componentModelRuntimes, error) {
 	extras, err := llm.ParseParamOverrides(paramPairs, paramJSON)
 	if err != nil {
 		return componentModelRuntimes{}, err
@@ -211,17 +211,27 @@ func resolveModelRuntimes(cfg legacyConfig, paramPairs, paramJSON []string) (com
 		strings.TrimSpace(cfg.agentModel),
 	)
 
-	hasDirectFlags := strings.TrimSpace(cfg.openAIAPIKey) != "" || strings.TrimSpace(cfg.openAIBaseURL) != "" || strings.TrimSpace(cfg.openAIModel) != ""
+	cliAPIKey := strings.TrimSpace(cfg.openAIAPIKey)
+	cliBaseURL := strings.TrimSpace(cfg.openAIBaseURL)
+	cliModel := strings.TrimSpace(cfg.openAIModel)
 
-	directAPIKey := firstNonEmpty(strings.TrimSpace(cfg.openAIAPIKey), strings.TrimSpace(os.Getenv("OPENAI_API_KEY")), strings.TrimSpace(os.Getenv("AGENT_MODEL_API_KEY")))
-	directBaseURL := firstNonEmpty(strings.TrimSpace(cfg.openAIBaseURL), strings.TrimSpace(os.Getenv("OPENAI_BASE_URL")), strings.TrimSpace(os.Getenv("AGENT_MODEL_BASE_URL")))
-	directModel := firstNonEmpty(strings.TrimSpace(cfg.openAIModel), strings.TrimSpace(os.Getenv("OPENAI_MODEL")), strings.TrimSpace(os.Getenv("AGENT_MODEL")))
+	envAPIKey := firstNonEmpty(strings.TrimSpace(os.Getenv("OPENAI_API_KEY")), strings.TrimSpace(os.Getenv("AGENT_MODEL_API_KEY")))
+	envBaseURL := firstNonEmpty(strings.TrimSpace(os.Getenv("OPENAI_BASE_URL")), strings.TrimSpace(os.Getenv("AGENT_MODEL_BASE_URL")))
+	envModel := firstNonEmpty(strings.TrimSpace(os.Getenv("OPENAI_MODEL")), strings.TrimSpace(os.Getenv("AGENT_MODEL")))
+
+	configAPIKey, configBaseURL, configModel := configModelDefaults(global)
+
+	directAPIKey := strings.TrimSpace(firstNonEmpty(envAPIKey, cliAPIKey, configAPIKey))
+	directBaseURL := strings.TrimSpace(firstNonEmpty(envBaseURL, cliBaseURL, configBaseURL))
+	directModel := strings.TrimSpace(firstNonEmpty(envModel, cliModel, configModel))
+
+	explicitDirect := cliAPIKey != "" || cliBaseURL != "" || cliModel != ""
+	missingDirectValues := missingDirect(directAPIKey, directBaseURL, directModel)
 
 	switch {
-	case hasDirectFlags:
-		missing := missingDirect(directAPIKey, directBaseURL, directModel)
-		if len(missing) > 0 {
-			return componentModelRuntimes{}, &missingConfigError{items: missing}
+	case explicitDirect:
+		if len(missingDirectValues) > 0 {
+			return componentModelRuntimes{}, &missingConfigError{items: missingDirectValues}
 		}
 		resolved, err := llm.NewDirectModel(directBaseURL, directAPIKey, directModel)
 		if err != nil {
@@ -248,9 +258,8 @@ func resolveModelRuntimes(cfg legacyConfig, paramPairs, paramJSON []string) (com
 	}
 
 	if strings.TrimSpace(primary.resolved.Model) == "" {
-		missing := missingDirect(directAPIKey, directBaseURL, directModel)
-		if len(missing) > 0 {
-			return componentModelRuntimes{}, &missingConfigError{items: missing}
+		if len(missingDirectValues) > 0 {
+			return componentModelRuntimes{}, &missingConfigError{items: missingDirectValues}
 		}
 		resolved, err := llm.NewDirectModel(directBaseURL, directAPIKey, directModel)
 		if err != nil {
@@ -384,6 +393,30 @@ func applyFallbacks(rt *modelRuntime, candidates []string, directBase, directKey
 			rt.fallbackResolved = append(rt.fallbackResolved, resolved)
 		}
 	}
+}
+
+func configModelDefaults(global llm.Config) (apiKey, baseURL, model string) {
+	if global.Model == nil {
+		return "", "", ""
+	}
+	apiKey = strings.TrimSpace(global.Model.APIKey)
+	if kwargs := global.Model.ModelKwargs; kwargs != nil {
+		if v, ok := kwargs["api_key"].(string); ok {
+			if trimmed := strings.TrimSpace(v); trimmed != "" {
+				apiKey = trimmed
+			}
+		}
+		if v, ok := kwargs["base_url"].(string); ok {
+			baseURL = strings.TrimSpace(v)
+		}
+		if v, ok := kwargs["model"].(string); ok {
+			model = strings.TrimSpace(v)
+		}
+	}
+	if model == "" {
+		model = strings.TrimSpace(global.Model.ModelName)
+	}
+	return apiKey, baseURL, model
 }
 
 func resolveFileDiscoveryTrajectory(cfg legacyConfig, sessionID string) (string, error) {

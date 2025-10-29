@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -58,6 +59,75 @@ func TestLocateConfigFallsBackToGlobalConfig(t *testing.T) {
 			t.Fatalf("expected global config %s, got %s", globalConfig, path)
 		}
 	})
+}
+
+func TestLoadGlobalConfigParsesSections(t *testing.T) {
+	content := `listen = "127.0.0.1:0"
+
+[agent]
+step_limit = 7
+cost_limit = 2.5
+
+[model]
+model_name = "alias-model"
+api_key = "direct-key"
+
+[model.model_kwargs]
+base_url = "https://example.com/v1"
+
+[environment]
+type = "local"
+timeout = 45
+cwd = "."
+
+[environment.env_vars]
+FOO = "bar"
+
+[providers.fake]
+base_url = "https://example.com/v1"
+api_key = "provider-key"
+
+[models.alias]
+provider = "fake"
+model = "alias-impl"
+`
+
+	path := filepath.Join(t.TempDir(), "config.toml")
+	mustWriteFile(t, path, content)
+	t.Setenv("MACHTIANI_CONFIG", path)
+	ResetConfigForTesting()
+
+	cfg, loadedPath, err := LoadGlobalConfig()
+	if err != nil {
+		t.Fatalf("LoadGlobalConfig: %v", err)
+	}
+	if loadedPath != path {
+		t.Fatalf("expected loaded path %q, got %q", path, loadedPath)
+	}
+	if cfg.Agent == nil || cfg.Agent.StepLimit != 7 {
+		t.Fatalf("expected agent step_limit 7, got %+v", cfg.Agent)
+	}
+	if cfg.Agent.CostLimit != 2.5 {
+		t.Fatalf("expected agent cost_limit 2.5, got %v", cfg.Agent.CostLimit)
+	}
+	if cfg.Model == nil || strings.TrimSpace(cfg.Model.ModelName) != "alias-model" {
+		t.Fatalf("expected model name alias-model, got %+v", cfg.Model)
+	}
+	if cfg.Model == nil || strings.TrimSpace(cfg.Model.APIKey) != "direct-key" {
+		t.Fatalf("expected model api key direct-key, got %+v", cfg.Model)
+	}
+	if cfg.Model == nil || cfg.Model.ModelKwargs["base_url"] != "https://example.com/v1" {
+		t.Fatalf("expected model_kwargs.base_url present, got %+v", cfg.Model)
+	}
+	if cfg.Environment == nil || strings.TrimSpace(cfg.Environment.Type) != "local" {
+		t.Fatalf("expected environment type local, got %+v", cfg.Environment)
+	}
+	if cfg.Environment == nil || cfg.Environment.Timeout != 45 {
+		t.Fatalf("expected environment timeout 45, got %+v", cfg.Environment)
+	}
+	if cfg.Environment == nil || cfg.Environment.EnvVars["FOO"] != "bar" {
+		t.Fatalf("expected environment env_vars FOO=bar, got %+v", cfg.Environment)
+	}
 }
 
 func mustWriteFile(t *testing.T, path string, content string) {
