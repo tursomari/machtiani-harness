@@ -139,6 +139,11 @@ func ResolveModelWithOverrides(alias string, overrides map[string]string) (Resol
 		return ResolvedModel{}, fmt.Errorf("provider %q missing base_url in %s", providerName, cfg.path)
 	}
 
+	// Validate that any API key overrides match the model's configured provider
+	if err := ValidateAPIKeyOverrideProvider(overrides, effectiveAlias, providerName); err != nil {
+		return ResolvedModel{}, err
+	}
+
 	resolved := ResolvedModel{
 		Alias:        effectiveAlias,
 		ProviderName: providerName,

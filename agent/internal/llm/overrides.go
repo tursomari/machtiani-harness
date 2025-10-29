@@ -96,6 +96,36 @@ func lookupAPIKeyOverride(overrides map[string]string, names ...string) (string,
 	return "", false
 }
 
+// ValidateAPIKeyOverrideProvider checks if any provider-specific overrides were
+// provided that don't match the model's configured provider. If a mismatch is
+// detected, it returns a clear error message indicating what the user should do.
+// This ensures users get immediate feedback if they specify an API key override
+// for the wrong provider.
+func ValidateAPIKeyOverrideProvider(overrides map[string]string, modelAlias, configuredProvider string) error {
+	if len(overrides) == 0 {
+		return nil
+	}
+
+	normalizedConfigured := normalizeProviderKey(configuredProvider)
+	if normalizedConfigured == "" {
+		return nil
+	}
+
+	// Check if there are any overrides that don't match the model's configured provider
+	for overrideProvider := range overrides {
+		if overrideProvider != normalizedConfigured {
+			// User specified an override for a different provider
+			return fmt.Errorf(
+				"API key override provider %q does not match model %q configured provider %q. "+
+					"Specify --api-key=%s:<api-key> instead",
+				overrideProvider, modelAlias, normalizedConfigured, normalizedConfigured,
+			)
+		}
+	}
+
+	return nil
+}
+
 func providerEnvVarName(provider string) string {
 	trimmed := strings.TrimSpace(provider)
 	if trimmed == "" {
