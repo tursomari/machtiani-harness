@@ -449,7 +449,7 @@ func emitPrefixMismatchEvent(ctx context.Context, model ResolvedModel, expectedL
 }
 
 func Chat(ctx context.Context, modelAlias string, extraParams map[string]any, messages []Message) (string, error) {
-	resolved, err := ResolveModel(modelAlias)
+	resolved, err := ResolveModelWithOverrides(modelAlias, apiKeyOverridesFromContext(ctx))
 	if err != nil {
 		return "", err
 	}
@@ -457,7 +457,7 @@ func Chat(ctx context.Context, modelAlias string, extraParams map[string]any, me
 }
 
 func ChatStream(ctx context.Context, modelAlias string, extraParams map[string]any, messages []Message, onToken func(string)) (string, error) {
-	resolved, err := ResolveModel(modelAlias)
+	resolved, err := ResolveModelWithOverrides(modelAlias, apiKeyOverridesFromContext(ctx))
 	if err != nil {
 		return "", err
 	}
@@ -473,7 +473,7 @@ func ChatStreamWithResolved(ctx context.Context, model ResolvedModel, extraParam
 }
 
 func ChatWithFallback(ctx context.Context, primaryAlias string, fallbackAliases []string, extraParams map[string]any, messages []Message) (string, error) {
-	resolved, err := ResolveModel(primaryAlias)
+	resolved, err := ResolveModelWithOverrides(primaryAlias, apiKeyOverridesFromContext(ctx))
 	if err != nil {
 		return "", err
 	}
@@ -481,7 +481,7 @@ func ChatWithFallback(ctx context.Context, primaryAlias string, fallbackAliases 
 }
 
 func ChatStreamWithFallback(ctx context.Context, primaryAlias string, fallbackAliases []string, extraParams map[string]any, messages []Message, onToken func(string)) (string, error) {
-	resolved, err := ResolveModel(primaryAlias)
+	resolved, err := ResolveModelWithOverrides(primaryAlias, apiKeyOverridesFromContext(ctx))
 	if err != nil {
 		return "", err
 	}
@@ -507,6 +507,7 @@ func chatWithResolvedFallback(ctx context.Context, primary ResolvedModel, fallba
 	if err := validateResolvedModel(primary); err != nil {
 		return "", err
 	}
+	overrides := apiKeyOverridesFromContext(ctx)
 	normalizedFallbacks := normalizeFallbackAliases(primary, fallbackAliases)
 	targets := buildFallbackTargets(primary, normalizedFallbacks, fallbackModels)
 
@@ -574,7 +575,7 @@ func chatWithResolvedFallback(ctx context.Context, primary ResolvedModel, fallba
 				alias = strings.TrimSpace(fallbackModel.Alias)
 			}
 		} else {
-			resolved, err := ResolveModel(target.alias)
+			resolved, err := ResolveModelWithOverrides(target.alias, overrides)
 			if err != nil {
 				lastErr = fmt.Errorf("resolve fallback model %q: %w", target.alias, err)
 				emitFallbackResolutionErrorEvent(ctx, target.alias, err)

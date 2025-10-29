@@ -23,19 +23,20 @@ const (
 
 // Config holds CLI and environment configuration.
 type Config struct {
-	BaseURL        string
-	APIKey         string
-	Model          string
-	MaxRounds      int
-	CmdTimeoutSec  int
-	MaxStdoutBytes int
-	MaxTranscript  int
-	LogJSON        bool
-	Verbose        bool
-	DryRunRG       bool
-	DryPattern     string
-	TrajectoryPath string
-	NoTrajectory   bool
+	BaseURL         string
+	APIKey          string
+	APIKeyOverrides map[string]string
+	Model           string
+	MaxRounds       int
+	CmdTimeoutSec   int
+	MaxStdoutBytes  int
+	MaxTranscript   int
+	LogJSON         bool
+	Verbose         bool
+	DryRunRG        bool
+	DryPattern      string
+	TrajectoryPath  string
+	NoTrajectory    bool
 	// SessionID optionally scopes BEGIN/END markers; first 5 chars are used
 	SessionID    string
 	ToolCallMode ToolCallMode

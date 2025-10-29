@@ -14,6 +14,7 @@ type ModelRuntime struct {
 	ParamJSON        []string
 	FallbackAliases  []string
 	FallbackResolved []llm.ResolvedModel
+	APIKeyOverrides  map[string]string
 }
 
 // RunOptions configures the execution of a prompt, including streaming

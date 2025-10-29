@@ -35,6 +35,7 @@ type ModelSettings struct {
 	FallbackAliases    []string
 	FallbackResolved   []llm.ResolvedModel
 	TrajectoryOverride string
+	APIKeyOverrides    map[string]string
 }
 
 // Matches blocks like:
@@ -122,6 +123,7 @@ func Run(ctx context.Context, prompt string, model ModelSettings, sessionID stri
 		Extras:           mergedExtras,
 		FallbackAliases:  append([]string(nil), model.FallbackAliases...),
 		FallbackResolved: cloneResolvedModels(model.FallbackResolved),
+		APIKeyOverrides:  llm.CopyAPIKeyOverridesForRuntime(model.APIKeyOverrides),
 	}
 	debugf(verbose, "mct: using embedded file-discovery module")
 

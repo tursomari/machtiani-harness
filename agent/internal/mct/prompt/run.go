@@ -10,6 +10,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/tursomari/machtiani/agent/internal/git"
@@ -93,8 +94,10 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 			FallbackAliases:    append([]string(nil), fdRuntime.FallbackAliases...),
 			FallbackResolved:   cloneResolvedModels(fdRuntime.FallbackResolved),
 			TrajectoryOverride: strings.TrimSpace(opts.FileDiscoveryTrajectory),
+			APIKeyOverrides:    llm.CopyAPIKeyOverridesForRuntime(fdRuntime.APIKeyOverrides),
 		}
-		dr, err := discoveryRunnerRun(ctx, opts.Prompt, drModel, opts.SessionID, opts.Verbose)
+		discoCtx := llm.WithAPIKeyOverrides(ctx, fdRuntime.APIKeyOverrides)
+		dr, err := discoveryRunnerRun(discoCtx, opts.Prompt, drModel, opts.SessionID, opts.Verbose)
 		if err != nil {
 			return res, fmt.Errorf("file discovery: %w", err)
 		}
@@ -132,7 +135,8 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 	if runtimeIsZero(answerRuntime) {
 		answerRuntime = opts.Runtime
 	}
-	assistant, err := chatStreamWithRuntime(ctx, answerRuntime.Resolved, answerRuntime.FallbackAliases, answerRuntime.FallbackResolved, copyExtrasMap(answerRuntime.Extras), messages, opts.OnToken)
+	chatCtx := llm.WithAPIKeyOverrides(ctx, answerRuntime.APIKeyOverrides)
+	assistant, err := chatStreamWithRuntime(chatCtx, answerRuntime.Resolved, answerRuntime.FallbackAliases, answerRuntime.FallbackResolved, copyExtrasMap(answerRuntime.Extras), messages, opts.OnToken)
 	if err != nil {
 		return res, err
 	}
@@ -184,6 +188,26 @@ func invokeShellAgent(ctx context.Context, prompt string, opts RunOptions) (stri
 	}
 	if model := strings.TrimSpace(opts.ShellAgentModel); model != "" {
 		args = append(args, "--shell-agent-model", model)
+	}
+	if overrides := firstNonEmptyOverrides(opts.Runtime, opts.FileDiscoveryRuntime, opts.AnswerRuntime); len(overrides) > 0 {
+		providers := make([]string, 0, len(overrides))
+		trimmed := make(map[string]string, len(overrides))
+		for provider, key := range overrides {
+			p := strings.TrimSpace(provider)
+			k := strings.TrimSpace(key)
+			if p == "" || k == "" {
+				continue
+			}
+			if _, exists := trimmed[p]; exists {
+				continue
+			}
+			providers = append(providers, p)
+			trimmed[p] = k
+		}
+		sort.Strings(providers)
+		for _, provider := range providers {
+			args = append(args, "--api-key", fmt.Sprintf("%s:%s", provider, trimmed[provider]))
+		}
 	}
 	args = append(args, prompt)
 
@@ -301,6 +325,15 @@ func extractTrajectoryPath(outputs ...string) string {
 		}
 	}
 	return ""
+}
+
+func firstNonEmptyOverrides(runtimes ...ModelRuntime) map[string]string {
+	for _, rt := range runtimes {
+		if len(rt.APIKeyOverrides) > 0 {
+			return rt.APIKeyOverrides
+		}
+	}
+	return nil
 }
 
 func runtimeEnvFrom(rt ModelRuntime) []string {
@@ -532,6 +565,9 @@ func runtimeIsZero(rt ModelRuntime) bool {
 		return false
 	}
 	if len(rt.Extras) > 0 {
+		return false
+	}
+	if len(rt.APIKeyOverrides) > 0 {
 		return false
 	}
 	return true

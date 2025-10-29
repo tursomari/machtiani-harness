@@ -160,6 +160,85 @@ func TestShellAgentModeForwardsModelOverride(t *testing.T) {
 	}
 }
 
+func TestShellAgentModeForwardsAPIKeyOverrides(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	workDir := t.TempDir()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	if err := os.Chdir(workDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+
+	sessionID := "shell-agent-api-key"
+	t.Setenv("MACHTIANI_SESSION_ID", sessionID)
+
+	origChat := chatStreamWithRuntime
+	chatStreamWithRuntime = func(ctx context.Context, resolved llm.ResolvedModel, aliases []string, fallbacks []llm.ResolvedModel, extras map[string]any, msgs []llm.Message, onToken func(string)) (string, error) {
+		return "assistant", nil
+	}
+	t.Cleanup(func() { chatStreamWithRuntime = origChat })
+
+	binDir := t.TempDir()
+	logPath := filepath.Join(binDir, "shell-agent-api.log")
+	trajPath := filepath.Join(binDir, "trajectory-20241011-123000.json")
+	scriptPath := filepath.Join(binDir, "shell-agent")
+	script := "#!/bin/sh\n" +
+		"set -e\n" +
+		"printf '%s\\n' \"$@\" > \"$SHELL_AGENT_TEST_LOG\"\n" +
+		"printf 'Trajectory: %s\\n' \"$SHELL_AGENT_TEST_TRAJ\"\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write shell-agent stub: %v", err)
+	}
+	t.Setenv("PATH", binDir+":"+os.Getenv("PATH"))
+	t.Setenv("SHELL_AGENT_TEST_LOG", logPath)
+	t.Setenv("SHELL_AGENT_TEST_TRAJ", trajPath)
+
+	overrides := map[string]string{
+		"openrouter": "override-1",
+		"anthropic":  " override-2 ",
+	}
+	opts := RunOptions{
+		Prompt:    "Collect metrics",
+		Mode:      "default",
+		SessionID: sessionID,
+		Runtime: ModelRuntime{
+			Resolved:        llm.ResolvedModel{Model: "test-model", APIKey: "key", BaseURL: "https://example.com"},
+			APIKeyOverrides: overrides,
+		},
+		ShellAgent: true,
+	}
+
+	if _, err := Run(context.Background(), opts); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read shell-agent log: %v", err)
+	}
+	line := strings.TrimSpace(string(data))
+	gotAnthropic := false
+	gotOpenRouter := false
+	parts := strings.Split(line, "\n")
+	for i := 0; i < len(parts)-1; i++ {
+		switch {
+		case strings.TrimSpace(parts[i]) == "--api-key" && strings.TrimSpace(parts[i+1]) == "anthropic:override-2":
+			gotAnthropic = true
+		case strings.TrimSpace(parts[i]) == "--api-key" && strings.TrimSpace(parts[i+1]) == "openrouter:override-1":
+			gotOpenRouter = true
+		}
+	}
+	if !gotAnthropic {
+		t.Fatalf("expected anthropic api-key override in invocation: %q", line)
+	}
+	if !gotOpenRouter {
+		t.Fatalf("expected openrouter api-key override in invocation: %q", line)
+	}
+}
+
 func TestShellAgentModePropagatesError(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	workDir := t.TempDir()

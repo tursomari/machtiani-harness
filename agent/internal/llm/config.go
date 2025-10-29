@@ -97,10 +97,20 @@ var (
 )
 
 func ResolveModel(alias string) (ResolvedModel, error) {
+	return ResolveModelWithOverrides(alias, nil)
+}
+
+// ResolveModelWithOverrides resolves the model alias using the unified
+// configuration, applying API key overrides provided via CLI flags. The lookup
+// order for API keys is: overrides map > config file > environment variables.
+// Environment variables are derived from the provider and alias names (e.g.
+// OPENAI_API_KEY).
+func ResolveModelWithOverrides(alias string, overrides map[string]string) (ResolvedModel, error) {
 	cfg, err := loadConfig()
 	if err != nil {
 		return ResolvedModel{}, err
 	}
+
 	effectiveAlias := strings.TrimSpace(alias)
 	if effectiveAlias == "" {
 		effectiveAlias = strings.TrimSpace(cfg.config.DefaultModel)
@@ -108,41 +118,77 @@ func ResolveModel(alias string) (ResolvedModel, error) {
 			return ResolvedModel{}, fmt.Errorf("no model alias provided and default_model not set in %s", cfg.path)
 		}
 	}
+
 	modelDef, ok := cfg.config.Models[effectiveAlias]
 	if !ok {
 		return ResolvedModel{}, fmt.Errorf("model alias %q not found in %s", effectiveAlias, cfg.path)
 	}
+
 	providerName := strings.TrimSpace(modelDef.Provider)
 	if providerName == "" {
 		providerName = effectiveAlias
 	}
+
 	provider, ok := cfg.config.Providers[providerName]
 	if !ok {
 		return ResolvedModel{}, fmt.Errorf("provider %q for model %q not defined in %s", providerName, effectiveAlias, cfg.path)
 	}
-	if strings.TrimSpace(provider.BaseURL) == "" {
+
+	baseURL := strings.TrimSpace(provider.BaseURL)
+	if baseURL == "" {
 		return ResolvedModel{}, fmt.Errorf("provider %q missing base_url in %s", providerName, cfg.path)
 	}
-	if strings.TrimSpace(provider.APIKey) == "" {
-		return ResolvedModel{}, fmt.Errorf("provider %q missing api_key in %s", providerName, cfg.path)
-	}
+
 	resolved := ResolvedModel{
 		Alias:        effectiveAlias,
 		ProviderName: providerName,
-		BaseURL:      strings.TrimSpace(provider.BaseURL),
-		APIKey:       strings.TrimSpace(provider.APIKey),
+		BaseURL:      baseURL,
 		Headers:      copyStringMap(provider.Headers),
 		Query:        copyStringMap(provider.Query),
 		Endpoint:     strings.TrimSpace(provider.Endpoint),
 		Model:        strings.TrimSpace(modelDef.Model),
 		Params:       deepCopyMap(modelDef.Params),
 	}
+
+	configKey := strings.TrimSpace(provider.APIKey)
+	envCandidates := []string{providerEnvVarName(providerName)}
+	if aliasEnv := providerEnvVarName(effectiveAlias); aliasEnv != "" && aliasEnv != envCandidates[0] {
+		envCandidates = append(envCandidates, aliasEnv)
+	}
+
+	if overrideKey, ok := lookupAPIKeyOverride(overrides, providerName, effectiveAlias); ok {
+		resolved.APIKey = overrideKey
+	} else if configKey != "" {
+		resolved.APIKey = configKey
+	} else {
+		for _, envName := range envCandidates {
+			if strings.TrimSpace(envName) == "" {
+				continue
+			}
+			if val := strings.TrimSpace(os.Getenv(envName)); val != "" {
+				resolved.APIKey = val
+				break
+			}
+		}
+	}
+
+	resolved.APIKey = strings.TrimSpace(resolved.APIKey)
+
+	if resolved.APIKey == "" {
+		envHint := envCandidates[0]
+		if envHint == "" {
+			envHint = "<PROVIDER>_API_KEY"
+		}
+		return ResolvedModel{}, fmt.Errorf("provider %q missing api_key in %s (set %s or use --api-key)", providerName, cfg.path, envHint)
+	}
+
 	if resolved.Model == "" {
 		resolved.Model = effectiveAlias
 	}
 	if resolved.Endpoint == "" {
 		resolved.Endpoint = "/chat/completions"
 	}
+
 	return resolved, nil
 }
 

@@ -201,6 +201,7 @@ type LLMSettings struct {
 	Extras           map[string]any
 	FallbackAliases  []string
 	FallbackResolved []llm.ResolvedModel
+	APIKeyOverrides  map[string]string
 }
 
 func readAllStdin(limit int) (string, bool, error) {
@@ -904,7 +905,8 @@ func callChat(ctx context.Context, llmCfg LLMSettings, msgs []chatMessage) (stri
 	if _, ok := extras["max_completion_tokens"]; !ok {
 		extras["max_completion_tokens"] = 2048
 	}
-	return llm.ChatWithResolvedFallback(ctx, llmCfg.Model, llmCfg.FallbackAliases, llmCfg.FallbackResolved, extras, llmMsgs)
+	chatCtx := llm.WithAPIKeyOverrides(ctx, llmCfg.APIKeyOverrides)
+	return llm.ChatWithResolvedFallback(chatCtx, llmCfg.Model, llmCfg.FallbackAliases, llmCfg.FallbackResolved, extras, llmMsgs)
 }
 
 var chatInvoker = callChat

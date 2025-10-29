@@ -30,6 +30,7 @@ type Config struct {
 	OpenAIModel             string
 	ShellAgent              bool
 	ShellAgentModel         string
+	APIKeyOverrides         map[string]string
 }
 
 type BuildInfo struct {
@@ -48,6 +49,7 @@ type Options struct {
 	Build            BuildInfo
 	GlobalConfig     llm.Config
 	GlobalConfigPath string
+	APIKeyOverrides  map[string]string
 }
 
 type Result struct {
@@ -86,6 +88,7 @@ type legacyConfig struct {
 	openAIModel             string
 	shellAgent              bool
 	shellAgentModel         string
+	apiKeyOverrides         map[string]string
 }
 
 func newLegacyConfig(cfg Config) legacyConfig {
@@ -117,5 +120,6 @@ func newLegacyConfig(cfg Config) legacyConfig {
 		openAIModel:             cfg.OpenAIModel,
 		shellAgent:              cfg.ShellAgent,
 		shellAgentModel:         cfg.ShellAgentModel,
+		apiKeyOverrides:         llm.CopyAPIKeyOverridesForRuntime(cfg.APIKeyOverrides),
 	}
 }

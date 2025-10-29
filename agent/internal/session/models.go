@@ -22,6 +22,7 @@ type modelRuntime struct {
 	paramJSON        []string
 	fallbackAliases  []string
 	fallbackResolved []llm.ResolvedModel
+	apiKeyOverrides  map[string]string
 }
 
 func (m modelRuntime) displayLabel() string {
@@ -72,8 +73,8 @@ type PromptRuntimes struct {
 
 // ResolvePromptRuntimes returns the resolved model runtimes used for prompt
 // execution based on the supplied session config and parameter overrides.
-func ResolvePromptRuntimes(cfg Config, global llm.Config, paramPairs, paramJSON []string) (PromptRuntimes, error) {
-	models, err := resolveModelRuntimes(newLegacyConfig(cfg), global, paramPairs, paramJSON)
+func ResolvePromptRuntimes(cfg Config, global llm.Config, paramPairs, paramJSON []string, apiKeyOverrides map[string]string) (PromptRuntimes, error) {
+	models, err := resolveModelRuntimes(newLegacyConfig(cfg), global, paramPairs, paramJSON, apiKeyOverrides)
 	if err != nil {
 		return PromptRuntimes{}, err
 	}
@@ -96,6 +97,7 @@ func (m modelRuntime) toPromptRuntime() promptsvc.ModelRuntime {
 		ParamJSON:        append([]string(nil), m.paramJSON...),
 		FallbackAliases:  append([]string(nil), m.fallbackAliases...),
 		FallbackResolved: cloneResolvedModels(m.fallbackResolved),
+		APIKeyOverrides:  llm.CopyAPIKeyOverridesForRuntime(m.apiKeyOverrides),
 	}
 }
 
@@ -109,6 +111,7 @@ func cloneModelRuntime(m modelRuntime) modelRuntime {
 		paramJSON:        append([]string(nil), m.paramJSON...),
 		fallbackAliases:  append([]string(nil), m.fallbackAliases...),
 		fallbackResolved: cloneResolvedModels(m.fallbackResolved),
+		apiKeyOverrides:  llm.CopyAPIKeyOverridesForRuntime(m.apiKeyOverrides),
 	}
 }
 
@@ -196,15 +199,16 @@ func promptOptions(lines ...string) *ui.PromptOptions {
 	return &ui.PromptOptions{Metadata: meta}
 }
 
-func resolveModelRuntimes(cfg legacyConfig, global llm.Config, paramPairs, paramJSON []string) (componentModelRuntimes, error) {
+func resolveModelRuntimes(cfg legacyConfig, global llm.Config, paramPairs, paramJSON []string, apiKeyOverrides map[string]string) (componentModelRuntimes, error) {
 	extras, err := llm.ParseParamOverrides(paramPairs, paramJSON)
 	if err != nil {
 		return componentModelRuntimes{}, err
 	}
 	primary := modelRuntime{
-		extras:     extras,
-		paramPairs: append([]string(nil), paramPairs...),
-		paramJSON:  append([]string(nil), paramJSON...),
+		extras:          extras,
+		paramPairs:      append([]string(nil), paramPairs...),
+		paramJSON:       append([]string(nil), paramJSON...),
+		apiKeyOverrides: llm.CopyAPIKeyOverridesForRuntime(apiKeyOverrides),
 	}
 
 	orchAlias := firstNonEmpty(
@@ -243,7 +247,7 @@ func resolveModelRuntimes(cfg legacyConfig, global llm.Config, paramPairs, param
 		primary.resolved = resolved
 		primary.usingAlias = false
 	case strings.TrimSpace(orchAlias) != "":
-		resolved, err := llm.ResolveModel(orchAlias)
+		resolved, err := llm.ResolveModelWithOverrides(orchAlias, apiKeyOverrides)
 		if err != nil {
 			return componentModelRuntimes{}, err
 		}
@@ -252,7 +256,7 @@ func resolveModelRuntimes(cfg legacyConfig, global llm.Config, paramPairs, param
 		primary.usingAlias = true
 	default:
 		if defaultAlias, err := llm.DefaultModelAlias(); err == nil {
-			if resolved, err2 := llm.ResolveModel(defaultAlias); err2 == nil {
+			if resolved, err2 := llm.ResolveModelWithOverrides(defaultAlias, apiKeyOverrides); err2 == nil {
 				primary.resolved = resolved
 				primary.alias = defaultAlias
 				primary.usingAlias = true
@@ -285,7 +289,7 @@ func resolveModelRuntimes(cfg legacyConfig, global llm.Config, paramPairs, param
 	patcher := cloneModelRuntime(primary)
 	patcherAlias := firstNonEmpty(strings.TrimSpace(cfg.patcherModel), strings.TrimSpace(os.Getenv("MCT_PATCHER_MODEL")))
 	if strings.TrimSpace(patcherAlias) != "" {
-		resolved, err := llm.ResolveModel(patcherAlias)
+		resolved, err := llm.ResolveModelWithOverrides(patcherAlias, apiKeyOverrides)
 		if err != nil {
 			return componentModelRuntimes{}, err
 		}
@@ -297,7 +301,7 @@ func resolveModelRuntimes(cfg legacyConfig, global llm.Config, paramPairs, param
 	fileDiscovery := cloneModelRuntime(primary)
 	fdAlias := firstNonEmpty(strings.TrimSpace(cfg.fileDiscoveryModel), strings.TrimSpace(os.Getenv("MCT_FILE_DISCOVERY_MODEL")))
 	if strings.TrimSpace(fdAlias) != "" {
-		resolved, err := llm.ResolveModel(fdAlias)
+		resolved, err := llm.ResolveModelWithOverrides(fdAlias, apiKeyOverrides)
 		if err != nil {
 			return componentModelRuntimes{}, err
 		}
@@ -311,7 +315,7 @@ func resolveModelRuntimes(cfg legacyConfig, global llm.Config, paramPairs, param
 	answer := cloneModelRuntime(primary)
 	answerAlias := firstNonEmpty(strings.TrimSpace(cfg.answerModel), strings.TrimSpace(os.Getenv("MCT_ANSWER_MODEL")))
 	if strings.TrimSpace(answerAlias) != "" {
-		resolved, err := llm.ResolveModel(answerAlias)
+		resolved, err := llm.ResolveModelWithOverrides(answerAlias, apiKeyOverrides)
 		if err != nil {
 			return componentModelRuntimes{}, err
 		}
@@ -325,7 +329,7 @@ func resolveModelRuntimes(cfg legacyConfig, global llm.Config, paramPairs, param
 
 	shellAgent := modelRuntime{}
 	if cfg.shellAgent || strings.TrimSpace(cfg.shellAgentModel) != "" {
-		sr, err := resolveShellAgentRuntime(global, cfg.shellAgentModel)
+		sr, err := resolveShellAgentRuntime(global, cfg.shellAgentModel, apiKeyOverrides)
 		if err != nil {
 			return componentModelRuntimes{}, err
 		}
@@ -341,9 +345,10 @@ func resolveModelRuntimes(cfg legacyConfig, global llm.Config, paramPairs, param
 	}, nil
 }
 
-func resolveShellAgentRuntime(global llm.Config, override string) (modelRuntime, error) {
+func resolveShellAgentRuntime(global llm.Config, override string, apiKeyOverrides map[string]string) (modelRuntime, error) {
 	var rt modelRuntime
 	trimmedOverride := strings.TrimSpace(override)
+	rt.apiKeyOverrides = llm.CopyAPIKeyOverridesForRuntime(apiKeyOverrides)
 
 	var baseURL, endpoint, modelName string
 	if global.Model != nil {
@@ -396,7 +401,7 @@ func resolveShellAgentRuntime(global llm.Config, override string) (modelRuntime,
 		}
 	}
 
-	resolved, err := llm.ResolveModel(alias)
+	resolved, err := llm.ResolveModelWithOverrides(alias, apiKeyOverrides)
 	if err != nil {
 		return modelRuntime{}, fmt.Errorf("resolve shell agent model %q: %w", alias, err)
 	}

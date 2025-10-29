@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -154,5 +156,45 @@ func TestChatWithResolvedFallback_SwitchesOnHTTP400(t *testing.T) {
 	}
 	if len(seen) != 2 || seen[0] != "bad-model" || seen[1] != "good-model" {
 		t.Fatalf("unexpected request order: %v", seen)
+	}
+}
+
+func TestChatRespectsAPIKeyOverridesFromContext(t *testing.T) {
+	ResetConfigForTesting()
+	t.Cleanup(ResetConfigForTesting)
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.toml")
+	config := []byte(`default_model = "orch"
+
+[providers.openai]
+base_url = "https://stub.example"
+api_key = ""
+
+[models.orch]
+provider = "openai"
+model = "gpt-4"
+`)
+	if err := os.WriteFile(configPath, config, 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	t.Setenv("MACHTIANI_CONFIG", configPath)
+	t.Setenv("MCT_LLM_TEST_STUB", "context-override")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("ORCH_API_KEY", "")
+
+	msgs := []Message{{Role: "user", Content: "Hello"}}
+	if _, err := Chat(context.Background(), "orch", nil, msgs); err == nil {
+		t.Fatalf("expected error without API key override")
+	}
+
+	overrides := map[string]string{"openai": "cli-key"}
+	ctx := WithAPIKeyOverrides(context.Background(), overrides)
+	resp, err := Chat(ctx, "orch", nil, msgs)
+	if err != nil {
+		t.Fatalf("Chat with overrides returned error: %v", err)
+	}
+	if resp == "" {
+		t.Fatalf("expected stub response, got empty string")
 	}
 }

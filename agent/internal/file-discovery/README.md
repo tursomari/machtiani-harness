@@ -36,7 +36,7 @@ cat issue.txt | ./file-discovery
 ```
 
 Authentication and model:
-- `-api-key`/`--openai-api-key` or `OPENAI_API_KEY`: API key
+- `-api-key`/`--openai-api-key` or `OPENAI_API_KEY`: API key. When the value includes `provider:key`, it overrides the matching provider in the shared config for this run (flag is repeatable).
 - `-base-url`/`--openai-base-url` or `OPENAI_BASE_URL`: OpenAI-compatible base URL (required)
 - `-model`/`--openai-model` or `OPENAI_MODEL`: Model name (required)
   - Precedence: CLI flags override the corresponding `OPENAI_*` env vars.
@@ -48,7 +48,7 @@ Flags:
 - `-max-transcript` bytes global (default 300000)
 - `-log-json` or `-v` for logging
 - `-no-json`: switch the assistant instructions to the bracket-based tool-call syntax (JSON envelopes remain accepted in this mode)
- - `-api-key`, `--openai-api-key` (overrides `OPENAI_API_KEY`)
+- `-api-key`, `--openai-api-key` (overrides `OPENAI_API_KEY`; accept `provider:key` overrides)
  - `-base-url`, `--openai-base-url` (overrides `OPENAI_BASE_URL`)
  - `-model`, `--openai-model` (overrides `OPENAI_MODEL`)
 - `-session-id`, `-s` (optional): if provided, the first 5 characters tag the BEGIN/END markers for correlation across concurrent runs

@@ -63,6 +63,7 @@ mct-agent run "<issue or question>" [flags]
 ```
 Flags:
 - `--max-steps int`: maximum turns before finalizing (default: 4)
+- `--api-key provider:key`: provider-specific API key override for this invocation (repeatable; takes precedence over config/env)
 - `--openai-api-key string`: API key for OpenAI-compatible endpoint
 - `--openai-base-url string`: Base URL for OpenAI-compatible endpoint
 - `--orch-model string`: Model alias for planner/finalizer turns (alias: `--model`)

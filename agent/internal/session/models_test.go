@@ -149,7 +149,7 @@ func TestResolveModelRuntimesAnswerAlias(t *testing.T) {
 		orchModel:   "orch",
 		answerModel: "answer",
 	}
-	models, err := resolveModelRuntimes(cfg, llm.Config{}, nil, nil)
+	models, err := resolveModelRuntimes(cfg, llm.Config{}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("resolveModelRuntimes returned error: %v", err)
 	}
@@ -176,7 +176,7 @@ func TestResolveModelRuntimesAnswerDefaultsToOrchestrator(t *testing.T) {
 	t.Cleanup(llm.ResetConfigForTesting)
 
 	cfg := legacyConfig{orchModel: "orch"}
-	models, err := resolveModelRuntimes(cfg, llm.Config{}, nil, nil)
+	models, err := resolveModelRuntimes(cfg, llm.Config{}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("resolveModelRuntimes returned error: %v", err)
 	}
@@ -197,7 +197,7 @@ func TestResolveModelRuntimesShellAgentDefaultAlias(t *testing.T) {
 	t.Cleanup(llm.ResetConfigForTesting)
 
 	cfg := legacyConfig{shellAgent: true}
-	models, err := resolveModelRuntimes(cfg, llm.Config{}, nil, nil)
+	models, err := resolveModelRuntimes(cfg, llm.Config{}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("resolveModelRuntimes returned error: %v", err)
 	}
@@ -218,7 +218,7 @@ func TestResolveModelRuntimesShellAgentOverrideAlias(t *testing.T) {
 	t.Cleanup(llm.ResetConfigForTesting)
 
 	cfg := legacyConfig{shellAgent: true, shellAgentModel: "answer"}
-	models, err := resolveModelRuntimes(cfg, llm.Config{}, nil, nil)
+	models, err := resolveModelRuntimes(cfg, llm.Config{}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("resolveModelRuntimes returned error: %v", err)
 	}
@@ -241,7 +241,7 @@ func TestResolveShellAgentRuntimeDirectConfig(t *testing.T) {
 		},
 	}
 
-	rt, err := resolveShellAgentRuntime(global, "")
+	rt, err := resolveShellAgentRuntime(global, "", nil)
 	if err != nil {
 		t.Fatalf("resolveShellAgentRuntime returned error: %v", err)
 	}

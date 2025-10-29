@@ -32,11 +32,40 @@ func (m *multiString) Set(value string) error {
 	return nil
 }
 
+type apiKeyFlag struct {
+	direct    *string
+	overrides *multiString
+}
+
+func (f *apiKeyFlag) String() string {
+	if f == nil || f.direct == nil {
+		return ""
+	}
+	return *f.direct
+}
+
+func (f *apiKeyFlag) Set(value string) error {
+	if f == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(value)
+	if strings.Contains(trimmed, ":") {
+		if f.overrides != nil {
+			*f.overrides = append(*f.overrides, trimmed)
+		}
+		return nil
+	}
+	if f.direct != nil {
+		*f.direct = trimmed
+	}
+	return nil
+}
+
 func usage() {
 	fmt.Fprintf(os.Stderr, "file-discovery %s\n", version)
 	fmt.Fprintln(os.Stderr, "Usage: cat issue.txt | file-discovery [flags]")
 	fmt.Fprintln(os.Stderr, "\nAuth & model (env or flags):")
-	fmt.Fprintln(os.Stderr, "  -api-key, --openai-api-key    or OPENAI_API_KEY    API key")
+	fmt.Fprintln(os.Stderr, "  -api-key, --openai-api-key    direct API key or provider override (provider:key); OR OPENAI_API_KEY env")
 	fmt.Fprintln(os.Stderr, "  -base-url, --openai-base-url  or OPENAI_BASE_URL   API base URL (required)")
 	fmt.Fprintln(os.Stderr, "  -model, --openai-model        or OPENAI_MODEL      Model name (required)")
 	fmt.Fprintln(os.Stderr, "\nCore flags:")
@@ -80,8 +109,10 @@ func main() {
 	flag.StringVar(&cfg.DryPattern, "pattern", "", "Regex for dry-run-rg to filter paths (mirrors 'RG> rg --files | rg \"pattern\"')")
 	flag.StringVar(&cfg.TrajectoryPath, "trajectory", "", "Path to trajectory JSONL file; defaults to auto-named in cwd")
 	flag.BoolVar(&cfg.NoTrajectory, "no-trajectory", false, "Disable trajectory recording")
-	flag.StringVar(&cfg.APIKey, "api-key", "", "API key (overrides OPENAI_API_KEY)")
-	flag.StringVar(&cfg.APIKey, "openai-api-key", "", "Alias for --api-key")
+	var apiKeyOverrideFlags multiString
+	apiCollector := &apiKeyFlag{direct: &cfg.APIKey, overrides: &apiKeyOverrideFlags}
+	flag.Var(apiCollector, "api-key", "API key (direct) or provider override in provider:key format (repeatable)")
+	flag.Var(apiCollector, "openai-api-key", "Alias for --api-key")
 	flag.StringVar(&cfg.BaseURL, "base-url", "", "OpenAI-compatible API base URL (overrides OPENAI_BASE_URL)")
 	flag.StringVar(&cfg.BaseURL, "openai-base-url", "", "Alias for --base-url")
 	var modelAlias string
@@ -111,9 +142,15 @@ func main() {
 
 	paramPairs := append([]string(nil), paramFlags...)
 	paramJSONVals := append([]string(nil), paramJSON...)
+	apiOverrides, err := llm.ParseAPIKeyOverrides(apiKeyOverrideFlags)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	cfg.APIKeyOverrides = apiOverrides
 
 	effectiveAlias := firstNonEmpty(strings.TrimSpace(fileDiscoveryAlias), strings.TrimSpace(modelAlias))
-	runtime, err := resolveModelRuntime(&cfg, effectiveAlias, openAIModel, paramPairs, paramJSONVals)
+	runtime, err := resolveModelRuntime(&cfg, effectiveAlias, openAIModel, paramPairs, paramJSONVals, apiOverrides)
 	if err != nil {
 		if cfg.DryRunRG {
 			runtime = modelRuntime{}
@@ -140,6 +177,7 @@ func main() {
 		Extras:           runtime.extras,
 		FallbackAliases:  runtime.fallbackAliases,
 		FallbackResolved: runtime.fallbackResolved,
+		APIKeyOverrides:  llm.CopyAPIKeyOverridesForRuntime(runtime.apiKeyOverrides),
 	}
 	os.Exit(discovery.Run(context.Background(), cfg, llmSettings))
 }
@@ -151,14 +189,15 @@ type modelRuntime struct {
 	extras           map[string]any
 	fallbackAliases  []string
 	fallbackResolved []llm.ResolvedModel
+	apiKeyOverrides  map[string]string
 }
 
-func resolveModelRuntime(cfg *cfgpkg.Config, aliasFlag, directModelFlag string, paramPairs, paramJSON []string) (modelRuntime, error) {
+func resolveModelRuntime(cfg *cfgpkg.Config, aliasFlag, directModelFlag string, paramPairs, paramJSON []string, apiKeyOverrides map[string]string) (modelRuntime, error) {
 	extras, err := llm.ParseParamOverrides(paramPairs, paramJSON)
 	if err != nil {
 		return modelRuntime{}, err
 	}
-	runtime := modelRuntime{extras: extras}
+	runtime := modelRuntime{extras: extras, apiKeyOverrides: llm.CopyAPIKeyOverridesForRuntime(apiKeyOverrides)}
 
 	alias := firstNonEmpty(strings.TrimSpace(aliasFlag), strings.TrimSpace(os.Getenv("MCT_FILE_DISCOVERY_MODEL")))
 	hasDirectFlags := strings.TrimSpace(cfg.APIKey) != "" || strings.TrimSpace(cfg.BaseURL) != "" || strings.TrimSpace(directModelFlag) != ""
@@ -182,7 +221,7 @@ func resolveModelRuntime(cfg *cfgpkg.Config, aliasFlag, directModelFlag string, 
 	}
 
 	if alias != "" {
-		resolved, err := llm.ResolveModel(alias)
+		resolved, err := llm.ResolveModelWithOverrides(alias, apiKeyOverrides)
 		if err != nil {
 			return runtime, err
 		}

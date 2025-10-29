@@ -183,6 +183,7 @@ mct-agent run "Explain the architecture and identify main components" --verbose
 
 Useful flags (agent):
 - `--max-steps int`: max `mct` Q&A turns before finalizing (default ~4).
+- `--api-key provider:key`: provider-specific API key override for this run (repeatable; beats config/env).
 - `--openai-api-key string`: API key for OpenAI‑compatible endpoint.
 - `--openai-base-url string`: Base URL for OpenAI‑compatible endpoint.
 - `--openai-model string`: Model name used by the planner and discovery pipeline (alias: `--model`).

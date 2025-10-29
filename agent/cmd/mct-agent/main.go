@@ -65,11 +65,17 @@ func handleRunCommand(args []string) int {
 	fs := flag.NewFlagSet("mct-agent run", flag.ExitOnError)
 	var paramFlags multiString
 	var paramJSON multiString
-	configureSessionFlags(fs, &cfg, &paramFlags, &paramJSON)
+	var apiKeyFlags multiString
+	configureSessionFlags(fs, &cfg, &paramFlags, &paramJSON, &apiKeyFlags)
 	fs.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage: mct-agent run \"<issue or question>\" [flags]")
 	}
 	if err := fs.Parse(args); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 2
+	}
+	apiOverrides, err := llm.ParseAPIKeyOverrides(apiKeyFlags)
+	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
@@ -117,7 +123,9 @@ func handleRunCommand(args []string) int {
 		},
 		GlobalConfig:     globalCfg,
 		GlobalConfigPath: configPath,
+		APIKeyOverrides:  apiOverrides,
 	}
+	opts.Config.APIKeyOverrides = llm.CopyAPIKeyOverridesForRuntime(apiOverrides)
 
 	res := sessionRunFn(context.Background(), opts)
 	if res.Err != nil && res.ExitCode == 0 {
@@ -236,13 +244,19 @@ func handleSyncCommand(args []string) int {
 	fs := flag.NewFlagSet("mct-agent sync", flag.ExitOnError)
 	var paramFlags multiString
 	var paramJSON multiString
+	var apiKeyFlags multiString
 	commitRef := fs.String("commit", "", "project commit hash to sync")
-	configureSessionFlags(fs, &cfg, &paramFlags, &paramJSON)
+	configureSessionFlags(fs, &cfg, &paramFlags, &paramJSON, &apiKeyFlags)
 	fs.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage: mct-agent sync [--commit <hash>] [flags]")
 	}
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintln(os.Stderr, err)
+		return 2
+	}
+	apiOverrides, parseErr := llm.ParseAPIKeyOverrides(apiKeyFlags)
+	if parseErr != nil {
+		fmt.Fprintln(os.Stderr, parseErr)
 		return 2
 	}
 	if fs.NArg() > 0 {
@@ -274,8 +288,9 @@ func handleSyncCommand(args []string) int {
 		fmt.Fprintln(os.Stderr, "Error:", err)
 		return 1
 	}
+	cfg.APIKeyOverrides = llm.CopyAPIKeyOverridesForRuntime(apiOverrides)
 
-	runtimes, err := session.ResolvePromptRuntimes(cfg, globalCfg, paramPairs, paramJSONVals)
+	runtimes, err := session.ResolvePromptRuntimes(cfg, globalCfg, paramPairs, paramJSONVals, apiOverrides)
 	if err != nil {
 		if missing, ok := session.MissingConfigItems(err); ok && len(missing) > 0 {
 			fmt.Fprintln(os.Stderr, "Missing model config: set:")
@@ -304,7 +319,7 @@ func handleSyncCommand(args []string) int {
 	return 0
 }
 
-func configureSessionFlags(fs *flag.FlagSet, cfg *session.Config, paramFlags, paramJSON *multiString) {
+func configureSessionFlags(fs *flag.FlagSet, cfg *session.Config, paramFlags, paramJSON, apiKeyFlags *multiString) {
 	fs.IntVar(&cfg.MaxSteps, "max-steps", 4, "maximum number of turns before finalizing")
 	fs.StringVar(&cfg.OrchModel, "model", "", "Model alias defined in .machtiani/config.toml (alias for --orch-model)")
 	fs.StringVar(&cfg.OrchModel, "orch-model", "", "Model alias for orchestration/planner steps (default: config or env)")
@@ -333,6 +348,9 @@ func configureSessionFlags(fs *flag.FlagSet, cfg *session.Config, paramFlags, pa
 	fs.StringVar(&cfg.OpenAIAPIKey, "openai-api-key", "", "OpenAI-compatible API key (overrides env, deprecated)")
 	fs.StringVar(&cfg.OpenAIBaseURL, "openai-base-url", "", "OpenAI-compatible base URL (overrides env, deprecated)")
 	fs.StringVar(&cfg.OpenAIModel, "openai-model", "", "Direct upstream model name (deprecated; prefer --model)")
+	if apiKeyFlags != nil {
+		fs.Var(apiKeyFlags, "api-key", "Provider-specific API key override in provider:key format (repeatable)")
+	}
 	fs.Var(paramFlags, "param", "Additional request parameter key=value (repeatable)")
 	fs.Var(paramJSON, "param-json", "Merge JSON object of additional parameters (repeatable)")
 }

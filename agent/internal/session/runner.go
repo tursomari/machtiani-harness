@@ -114,7 +114,7 @@ func Run(ctx context.Context, opts Options) Result {
 	paramPairs := append([]string(nil), opts.ParamPairs...)
 	paramJSONVals := append([]string(nil), opts.ParamJSON...)
 
-	models, err := resolveModelRuntimes(cfg, opts.GlobalConfig, paramPairs, paramJSONVals)
+	models, err := resolveModelRuntimes(cfg, opts.GlobalConfig, paramPairs, paramJSONVals, opts.APIKeyOverrides)
 	if err != nil {
 		if miss, ok := err.(*missingConfigError); ok {
 			fmt.Fprintln(os.Stderr, "Missing model config: set:")
