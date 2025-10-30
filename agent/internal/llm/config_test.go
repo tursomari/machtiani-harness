@@ -282,6 +282,80 @@ step_limit = 9
 	}
 }
 
+func TestLoadGlobalConfigSupportsTemplateFiles(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "templates", "planner", "system.tpl"), "planner system file")
+	mustWriteFile(t, filepath.Join(root, "templates", "planner", "plan_prompt.tpl"), "plan prompt file")
+	mustWriteFile(t, filepath.Join(root, "templates", "shell-agent", "timeout.tpl"), "timeout file")
+	mustWriteFile(t, filepath.Join(root, "templates", "shell-agent", "format.tpl"), "format file")
+	mustWriteFile(t, filepath.Join(root, "templates", "file-discovery", "system.tpl"), "file discovery system")
+	mustWriteFile(t, filepath.Join(root, "templates", "mct", "context_prefix.tpl"), "context prefix")
+	mustWriteFile(t, filepath.Join(root, "templates", "mct", "header_user.tpl"), "header user")
+	mustWriteFile(t, filepath.Join(root, "templates", "mct", "header_existing.tpl"), "header existing")
+
+	content := `listen = "127.0.0.1:0"
+
+[prompts.planner]
+system_template = { file = "templates/planner/system.tpl" }
+plan_prompt = { file = "templates/planner/plan_prompt.tpl" }
+
+[prompts.shell-agent]
+timeout_template = { file = "templates/shell-agent/timeout.tpl" }
+format_error_template = { file = "templates/shell-agent/format.tpl" }
+
+[prompts.file_discovery]
+system_prompt_template = { file = "templates/file-discovery/system.tpl" }
+
+[prompts.mct]
+shell_agent_context_prefix = { file = "templates/mct/context_prefix.tpl" }
+header_user_template = { file = "templates/mct/header_user.tpl" }
+header_existing_template = { file = "templates/mct/header_existing.tpl" }
+`
+
+	configPath := filepath.Join(root, "config.toml")
+	mustWriteFile(t, configPath, content)
+	t.Setenv("MACHTIANI_CONFIG", configPath)
+	ResetConfigForTesting()
+
+	cfg, _, err := LoadGlobalConfig()
+	if err != nil {
+		t.Fatalf("LoadGlobalConfig: %v", err)
+	}
+	if cfg.Prompts == nil || cfg.Prompts.Planner == nil {
+		t.Fatalf("expected planner prompts from template files")
+	}
+	if cfg.Prompts.Planner.SystemTemplate != "planner system file" {
+		t.Fatalf("expected planner system template from file, got %q", cfg.Prompts.Planner.SystemTemplate)
+	}
+	if cfg.Prompts.Planner.PlanPrompt != "plan prompt file" {
+		t.Fatalf("expected planner plan prompt from file, got %q", cfg.Prompts.Planner.PlanPrompt)
+	}
+	if cfg.Prompts.ShellAgent == nil {
+		t.Fatalf("expected shell-agent prompts from template files")
+	}
+	if cfg.Prompts.ShellAgent.TimeoutTemplate != "timeout file" {
+		t.Fatalf("expected timeout template from file, got %q", cfg.Prompts.ShellAgent.TimeoutTemplate)
+	}
+	if cfg.Prompts.ShellAgent.FormatErrorTemplate != "format file" {
+		t.Fatalf("expected format template from file, got %q", cfg.Prompts.ShellAgent.FormatErrorTemplate)
+	}
+	if cfg.Prompts.FileDiscovery == nil || cfg.Prompts.FileDiscovery.SystemPromptTemplate != "file discovery system" {
+		t.Fatalf("expected file discovery system prompt from file, got %+v", cfg.Prompts.FileDiscovery)
+	}
+	if cfg.Prompts.MCT == nil {
+		t.Fatalf("expected mct prompts from template files")
+	}
+	if cfg.Prompts.MCT.ShellAgentContextPrefix != "context prefix" {
+		t.Fatalf("expected mct context prefix from file, got %q", cfg.Prompts.MCT.ShellAgentContextPrefix)
+	}
+	if cfg.Prompts.MCT.HeaderUserTemplate != "header user" {
+		t.Fatalf("expected mct header user template from file, got %q", cfg.Prompts.MCT.HeaderUserTemplate)
+	}
+	if cfg.Prompts.MCT.HeaderExistingTemplate != "header existing" {
+		t.Fatalf("expected mct header existing template from file, got %q", cfg.Prompts.MCT.HeaderExistingTemplate)
+	}
+}
+
 func mustWriteFile(t *testing.T, path string, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

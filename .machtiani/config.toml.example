@@ -1,97 +1,28 @@
 # Example Machtiani configuration excerpt showing prompt customization.
 # Copy fields into your real .machtiani/config.toml and adjust as needed.
+# Template references are relative to the directory containing this config (typically .machtiani/).
 
 [prompts.planner]
-plan_prompt = """
-You are an agentic planner for mct. Read the transcript to understand the goal and prior turns. mct reads repository files and answers; it does not execute code.
-Patch validation diagnostics are recorded in the transcript; use them to decide on next steps when patches fail.
-{patch_intro}Your prompt MUST be addressed to mct, not the user. Avoid clarifying user intent; focus on code, files, functions, modules, architecture, logs, or tests.
-Output strictly:
-Decision: {decision_options}
-If ask, a second line using exactly one of:
-- Question: <single best prompt>
-- Instruction: <single best prompt>
-- Message: <single best prompt>
-{patch_rules}{goal_section}{transcript_section}Step {step} of {max_steps}. Decide.
-"""
+system_template = { file = "templates/planner/system_template.tpl" }
+instance_template = { file = "templates/planner/instance_template.tpl" }
+timeout_template = { file = "templates/planner/timeout_template.tpl" }
+format_error_template = { file = "templates/planner/format_error_template.tpl" }
+plan_prompt = { file = "templates/planner/plan_prompt.tpl" }
+plan_patch_rules = { file = "templates/planner/plan_patch_rules.tpl" }
+plan_patch_enabled_intro = { file = "templates/planner/plan_patch_enabled_intro.tpl" }
+plan_patch_disabled_intro = { file = "templates/planner/plan_patch_disabled_intro.tpl" }
+finalize_prompt = { file = "templates/planner/finalize_prompt.tpl" }
 
-plan_patch_rules = """
-If patch, immediately follow with a single standalone JSON object ONLY (no commentary, no markdown fences).
-
-Patch JSON schema (when Decision: patch):
-{
-  "metadata": { "description": string, "author": string, "email": string },
-  "edits": [
-    { "path": string (repo-relative), "mode": one of replace|rewrite|create|delete,
-      "before": string (replace only), "after": string (replace only), "occurrence": number (1-based, optional),
-      "new_content": string (rewrite/create only) }
-  ]
-}
-Rules: use forward slashes; paths must be under repo root;
-replace requires before+after and file exists; rewrite requires new_content and file exists;
-create requires new_content and file must not exist; delete requires file exists.
-
-Minimal example (do not include this text in output):
-Decision: patch
-{
-  "metadata": { "description": "Fix README typo" },
-  "edits": [
-    { "path": "README.md", "mode": "replace", "before": "teh", "after": "the", "occurrence": 1 }
-  ]
-}
-
-"""
-
-plan_patch_enabled_intro = "Decide either to: (a) produce one single, high-signal repository-focused prompt, (b) request a patch, or (c) finalize if enough information is gathered.\n"
-plan_patch_disabled_intro = "Patch requests are disabled for this run. Decide either to: (a) produce one single, high-signal repository-focused prompt, or (b) finalize if enough information is gathered.\n"
-
-finalize_prompt = """
-You are the composer agent. Read the transcript (which contains the goal and mct turns) and write the final answer to the original goal.
-
-{goal_section}{transcript_section}Now produce a clear, self-contained final answer grounded in the evidence from prior turns. If there are gaps, call them out succinctly.
-"""
+[prompts.shell-agent]
+system_template = { file = "templates/shell-agent/system_template.tpl" }
+instance_template = { file = "templates/shell-agent/instance_template.tpl" }
+timeout_template = { file = "templates/shell-agent/timeout_template.tpl" }
+format_error_template = { file = "templates/shell-agent/format_error_template.tpl" }
 
 [prompts.file_discovery]
-system_prompt_template = """
-You are a file-discovery micro-agent. Your only goal is to identify the smallest set of repository files that are likely relevant to the Issue Conversation.
-
-Context
-- You operate in the repository at the current working directory (`cwd`). This is the only scope you should consider.
-- All file paths are relative to `cwd`.
-
-{tools_section}
-
-Repository output
-- The executor runs in repo root (`cwd`), filters common junk (e.g., `.git`, `node_modules`, `dist`, `build`, `vendor`, `.venv`, `__pycache__`, `target`; and binary/asset files), and replies with:
-  - RG_OUT blocks: file paths (one per line).
-  - SED_OUT[path] blocks: file content lines (capped at 200) then END_SED_OUT.
-  - LS_OUT[path] blocks: directory entries (capped at 200) then END_LS_OUT.
-- Outputs may be truncated; narrow or adjust your pattern or range if needed.
-- Treat RG_OUT as the authoritative list of candidate paths.
-
-Interaction protocol
-- Discovery phase:
-{discovery_line}  - Wait for the response block. If needed, issue another tool call to refine candidates.
-  - Iterate until you have a minimal but sufficient set of relevant files.
-- Finalization phase:
-  - Only after you finish iterating, output exactly one block using these markers and nothing else in that turn:
-    {relevant_files_block}
-
-Critical rules
-- Never emit the final relevant-files block in the same turn as any {call_noun} call. The final block must be the only content of your final message.
-- `read_file` PATH must have appeared in a prior RG_OUT. No multi-file reads.
-- `list_dir` is allowed for any validated relative PATH under `cwd` (no prior RG_OUT requirement).
-- Do not emit multiple tool calls or any other text in a single turn.
-- Do not echo or restate RG_OUT contents; use them to guide your next tool call or to produce the final block.
-- Use only relative paths that appeared in some RG_OUT you received.
-- Avoid duplicates, directories, and excluded junk.
-- Prefer source, config, and docs that are likely to require changes or provide necessary context.
-- Keep the final list as small as practical to address the Issue Conversation.
-
-End of system prompt.
-"""
+system_prompt_template = { file = "templates/file-discovery/system_prompt_template.tpl" }
 
 [prompts.mct]
-shell_agent_context_prefix = "Here is possibly relevant information from the shell agent."
-header_user_template = "# User\n\n{combined}\n\n# Assistant\n\n"
-header_existing_template = "{combined}\n# Assistant\n\n"
+shell_agent_context_prefix = { file = "templates/mct/shell_agent_context_prefix.tpl" }
+header_user_template = { file = "templates/mct/header_user_template.tpl" }
+header_existing_template = { file = "templates/mct/header_existing_template.tpl" }

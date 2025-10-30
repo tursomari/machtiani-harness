@@ -12,6 +12,9 @@ func TestParseDecisionVariants(t *testing.T) {
 		{"Decision: ask\nQuestion: text", DecisionAsk},
 		{"Decision: ask\nInstruction: text", DecisionAsk},
 		{"Decision: ask\nMessage: text", DecisionAsk},
+		{"Decision: instruction\nInstruction: text", DecisionAsk},
+		{"Decision: question\nQuestion: text", DecisionAsk},
+		{"Decision: message\nMessage: text", DecisionAsk},
 		{"Decision: patch\n{ }", DecisionPatch},
 		{"Decision: finalize", DecisionFinalize},
 	}

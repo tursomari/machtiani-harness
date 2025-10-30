@@ -317,15 +317,21 @@ func parseDecision(resp string, patchEnabled bool) (Decision, string) {
 	if len(parts) != 2 {
 		return "", ""
 	}
-	decision := Decision(strings.TrimSpace(strings.ToLower(parts[1])))
+	decisionStr := strings.TrimSpace(strings.ToLower(parts[1]))
+	var decision Decision
+	switch decisionStr {
+	case string(DecisionAsk), "question", "instruction", "message":
+		decision = DecisionAsk
+	case string(DecisionPatch):
+		decision = DecisionPatch
+	case string(DecisionFinalize):
+		decision = DecisionFinalize
+	default:
+		return "", ""
+	}
 	if !patchEnabled && decision == DecisionPatch {
 		// Fallback to a generic ask when patches are disabled to keep the agent progressing.
 		return DecisionAsk, "Question: Considering the current transcript, produce the single next high-signal repository-focused prompt for mct."
-	}
-	switch decision {
-	case DecisionAsk, DecisionPatch, DecisionFinalize:
-	default:
-		return "", ""
 	}
 	remainder := strings.TrimSpace(strings.Join(lines[1:], "\n"))
 	return decision, remainder

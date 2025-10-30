@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -47,21 +48,39 @@ type PlannerConfig struct {
 
 // PromptsConfig captures the prompt templates referenced by planner and shell-agent.
 type PromptsConfig struct {
-	Planner    *PlannerPromptsConfig    `toml:"planner"`
-	ShellAgent *ShellAgentPromptsConfig `toml:"shell-agent"`
+	Planner       *PlannerPromptsConfig       `toml:"planner"`
+	ShellAgent    *ShellAgentPromptsConfig    `toml:"shell-agent"`
+	FileDiscovery *FileDiscoveryPromptsConfig `toml:"file_discovery"`
+	MCT           *MCTPromptsConfig           `toml:"mct"`
 }
 
 // PlannerPromptsConfig contains planner prompt templates.
 type PlannerPromptsConfig struct {
-	SystemTemplate   string `toml:"system_template"`
-	InstanceTemplate string `toml:"instance_template"`
+	SystemTemplate         string `toml:"system_template"`
+	InstanceTemplate       string `toml:"instance_template"`
+	TimeoutTemplate        string `toml:"timeout_template"`
+	FormatErrorTemplate    string `toml:"format_error_template"`
+	PlanPrompt             string `toml:"plan_prompt"`
+	PlanPatchRules         string `toml:"plan_patch_rules"`
+	PlanPatchEnabledIntro  string `toml:"plan_patch_enabled_intro"`
+	PlanPatchDisabledIntro string `toml:"plan_patch_disabled_intro"`
+	FinalizePrompt         string `toml:"finalize_prompt"`
 
-	systemTemplateSet   bool `toml:"-"`
-	instanceTemplateSet bool `toml:"-"`
+	systemTemplateSet         bool `toml:"-"`
+	instanceTemplateSet       bool `toml:"-"`
+	timeoutTemplateSet        bool `toml:"-"`
+	formatErrorTemplateSet    bool `toml:"-"`
+	planPromptSet             bool `toml:"-"`
+	planPatchRulesSet         bool `toml:"-"`
+	planPatchEnabledIntroSet  bool `toml:"-"`
+	planPatchDisabledIntroSet bool `toml:"-"`
+	finalizePromptSet         bool `toml:"-"`
 }
 
 // ShellAgentPromptsConfig contains shell-agent prompt templates.
 type ShellAgentPromptsConfig struct {
+	SystemTemplate            string `toml:"system_template"`
+	InstanceTemplate          string `toml:"instance_template"`
 	TimeoutTemplate           string `toml:"timeout_template"`
 	FormatErrorTemplate       string `toml:"format_error_template"`
 	ActionObservationTemplate string `toml:"action_observation_template"`
@@ -69,12 +88,32 @@ type ShellAgentPromptsConfig struct {
 	LightweightIntentTemplate string `toml:"lightweight_intent_template"`
 	LightweightErrorTemplate  string `toml:"lightweight_error_template"`
 
+	systemTemplateSet            bool `toml:"-"`
+	instanceTemplateSet          bool `toml:"-"`
 	timeoutTemplateSet           bool `toml:"-"`
 	formatErrorTemplateSet       bool `toml:"-"`
 	actionObservationTemplateSet bool `toml:"-"`
 	lightweightSystemTemplateSet bool `toml:"-"`
 	lightweightIntentTemplateSet bool `toml:"-"`
 	lightweightErrorTemplateSet  bool `toml:"-"`
+}
+
+// FileDiscoveryPromptsConfig contains prompt templates for the file discovery agent.
+type FileDiscoveryPromptsConfig struct {
+	SystemPromptTemplate string `toml:"system_prompt_template"`
+
+	systemPromptTemplateSet bool `toml:"-"`
+}
+
+// MCTPromptsConfig contains prompt templates for the mct agent wrapper.
+type MCTPromptsConfig struct {
+	ShellAgentContextPrefix string `toml:"shell_agent_context_prefix"`
+	HeaderUserTemplate      string `toml:"header_user_template"`
+	HeaderExistingTemplate  string `toml:"header_existing_template"`
+
+	shellAgentContextPrefixSet bool `toml:"-"`
+	headerUserTemplateSet      bool `toml:"-"`
+	headerExistingTemplateSet  bool `toml:"-"`
 }
 
 // ModelConfig captures direct model overrides under the top-level [model]
@@ -506,6 +545,7 @@ func parseShellAgentSection(path, section string, data map[string]any) (*ShellAg
 		shellPrompts   *ShellAgentPromptsConfig
 		plannerPrompts *PlannerPromptsConfig
 	)
+	allowShellPrompts := section != "agent"
 	ensureShellPrompts := func() *ShellAgentPromptsConfig {
 		if shellPrompts == nil {
 			shellPrompts = &ShellAgentPromptsConfig{}
@@ -520,76 +560,88 @@ func parseShellAgentSection(path, section string, data map[string]any) (*ShellAg
 	}
 
 	if raw, ok := data["system_template"]; ok {
-		str, ok := raw.(string)
-		if !ok {
-			return nil, nil, nil, fmt.Errorf("parse %s [%s]: system_template must be a string", path, section)
+		val, err := templateStringFromRaw(path, section, "system_template", raw)
+		if err != nil {
+			return nil, nil, nil, err
 		}
-		p := ensurePlannerPrompts()
-		p.SystemTemplate = str
-		p.systemTemplateSet = true
+		planner := ensurePlannerPrompts()
+		planner.SystemTemplate = val
+		planner.systemTemplateSet = true
+		if allowShellPrompts {
+			shell := ensureShellPrompts()
+			shell.SystemTemplate = val
+			shell.systemTemplateSet = true
+		}
 	}
 	if raw, ok := data["instance_template"]; ok {
-		str, ok := raw.(string)
-		if !ok {
-			return nil, nil, nil, fmt.Errorf("parse %s [%s]: instance_template must be a string", path, section)
+		val, err := templateStringFromRaw(path, section, "instance_template", raw)
+		if err != nil {
+			return nil, nil, nil, err
 		}
-		p := ensurePlannerPrompts()
-		p.InstanceTemplate = str
-		p.instanceTemplateSet = true
+		planner := ensurePlannerPrompts()
+		planner.InstanceTemplate = val
+		planner.instanceTemplateSet = true
+		if allowShellPrompts {
+			shell := ensureShellPrompts()
+			shell.InstanceTemplate = val
+			shell.instanceTemplateSet = true
+		}
 	}
-	if raw, ok := data["timeout_template"]; ok {
-		str, ok := raw.(string)
-		if !ok {
-			return nil, nil, nil, fmt.Errorf("parse %s [%s]: timeout_template must be a string", path, section)
+	if allowShellPrompts {
+		if raw, ok := data["timeout_template"]; ok {
+			val, err := templateStringFromRaw(path, section, "timeout_template", raw)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			p := ensureShellPrompts()
+			p.TimeoutTemplate = val
+			p.timeoutTemplateSet = true
 		}
-		p := ensureShellPrompts()
-		p.TimeoutTemplate = str
-		p.timeoutTemplateSet = true
-	}
-	if raw, ok := data["format_error_template"]; ok {
-		str, ok := raw.(string)
-		if !ok {
-			return nil, nil, nil, fmt.Errorf("parse %s [%s]: format_error_template must be a string", path, section)
+		if raw, ok := data["format_error_template"]; ok {
+			val, err := templateStringFromRaw(path, section, "format_error_template", raw)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			p := ensureShellPrompts()
+			p.FormatErrorTemplate = val
+			p.formatErrorTemplateSet = true
 		}
-		p := ensureShellPrompts()
-		p.FormatErrorTemplate = str
-		p.formatErrorTemplateSet = true
-	}
-	if raw, ok := data["action_observation_template"]; ok {
-		str, ok := raw.(string)
-		if !ok {
-			return nil, nil, nil, fmt.Errorf("parse %s [%s]: action_observation_template must be a string", path, section)
+		if raw, ok := data["action_observation_template"]; ok {
+			val, err := templateStringFromRaw(path, section, "action_observation_template", raw)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			p := ensureShellPrompts()
+			p.ActionObservationTemplate = val
+			p.actionObservationTemplateSet = true
 		}
-		p := ensureShellPrompts()
-		p.ActionObservationTemplate = str
-		p.actionObservationTemplateSet = true
-	}
-	if raw, ok := data["lightweight_system_template"]; ok {
-		str, ok := raw.(string)
-		if !ok {
-			return nil, nil, nil, fmt.Errorf("parse %s [%s]: lightweight_system_template must be a string", path, section)
+		if raw, ok := data["lightweight_system_template"]; ok {
+			val, err := templateStringFromRaw(path, section, "lightweight_system_template", raw)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			p := ensureShellPrompts()
+			p.LightweightSystemTemplate = val
+			p.lightweightSystemTemplateSet = true
 		}
-		p := ensureShellPrompts()
-		p.LightweightSystemTemplate = str
-		p.lightweightSystemTemplateSet = true
-	}
-	if raw, ok := data["lightweight_intent_template"]; ok {
-		str, ok := raw.(string)
-		if !ok {
-			return nil, nil, nil, fmt.Errorf("parse %s [%s]: lightweight_intent_template must be a string", path, section)
+		if raw, ok := data["lightweight_intent_template"]; ok {
+			val, err := templateStringFromRaw(path, section, "lightweight_intent_template", raw)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			p := ensureShellPrompts()
+			p.LightweightIntentTemplate = val
+			p.lightweightIntentTemplateSet = true
 		}
-		p := ensureShellPrompts()
-		p.LightweightIntentTemplate = str
-		p.lightweightIntentTemplateSet = true
-	}
-	if raw, ok := data["lightweight_error_template"]; ok {
-		str, ok := raw.(string)
-		if !ok {
-			return nil, nil, nil, fmt.Errorf("parse %s [%s]: lightweight_error_template must be a string", path, section)
+		if raw, ok := data["lightweight_error_template"]; ok {
+			val, err := templateStringFromRaw(path, section, "lightweight_error_template", raw)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			p := ensureShellPrompts()
+			p.LightweightErrorTemplate = val
+			p.lightweightErrorTemplateSet = true
 		}
-		p := ensureShellPrompts()
-		p.LightweightErrorTemplate = str
-		p.lightweightErrorTemplateSet = true
 	}
 	if val, ok := toInt(data["lightweight_max_attempts"]); ok {
 		agent.LightweightMaxAttempts = val
@@ -615,22 +667,85 @@ func parsePlannerSection(path, section string, data map[string]any) (*PlannerCon
 		return prompts
 	}
 	if raw, ok := data["system_template"]; ok {
-		str, ok := raw.(string)
-		if !ok {
-			return nil, nil, fmt.Errorf("parse %s [%s]: system_template must be a string", path, section)
+		val, err := templateStringFromRaw(path, section, "system_template", raw)
+		if err != nil {
+			return nil, nil, err
 		}
 		p := ensurePrompts()
-		p.SystemTemplate = str
+		p.SystemTemplate = val
 		p.systemTemplateSet = true
 	}
 	if raw, ok := data["instance_template"]; ok {
-		str, ok := raw.(string)
-		if !ok {
-			return nil, nil, fmt.Errorf("parse %s [%s]: instance_template must be a string", path, section)
+		val, err := templateStringFromRaw(path, section, "instance_template", raw)
+		if err != nil {
+			return nil, nil, err
 		}
 		p := ensurePrompts()
-		p.InstanceTemplate = str
+		p.InstanceTemplate = val
 		p.instanceTemplateSet = true
+	}
+	if raw, ok := data["timeout_template"]; ok {
+		val, err := templateStringFromRaw(path, section, "timeout_template", raw)
+		if err != nil {
+			return nil, nil, err
+		}
+		p := ensurePrompts()
+		p.TimeoutTemplate = val
+		p.timeoutTemplateSet = true
+	}
+	if raw, ok := data["format_error_template"]; ok {
+		val, err := templateStringFromRaw(path, section, "format_error_template", raw)
+		if err != nil {
+			return nil, nil, err
+		}
+		p := ensurePrompts()
+		p.FormatErrorTemplate = val
+		p.formatErrorTemplateSet = true
+	}
+	if raw, ok := data["plan_prompt"]; ok {
+		val, err := templateStringFromRaw(path, section, "plan_prompt", raw)
+		if err != nil {
+			return nil, nil, err
+		}
+		p := ensurePrompts()
+		p.PlanPrompt = val
+		p.planPromptSet = true
+	}
+	if raw, ok := data["plan_patch_rules"]; ok {
+		val, err := templateStringFromRaw(path, section, "plan_patch_rules", raw)
+		if err != nil {
+			return nil, nil, err
+		}
+		p := ensurePrompts()
+		p.PlanPatchRules = val
+		p.planPatchRulesSet = true
+	}
+	if raw, ok := data["plan_patch_enabled_intro"]; ok {
+		val, err := templateStringFromRaw(path, section, "plan_patch_enabled_intro", raw)
+		if err != nil {
+			return nil, nil, err
+		}
+		p := ensurePrompts()
+		p.PlanPatchEnabledIntro = val
+		p.planPatchEnabledIntroSet = true
+	}
+	if raw, ok := data["plan_patch_disabled_intro"]; ok {
+		val, err := templateStringFromRaw(path, section, "plan_patch_disabled_intro", raw)
+		if err != nil {
+			return nil, nil, err
+		}
+		p := ensurePrompts()
+		p.PlanPatchDisabledIntro = val
+		p.planPatchDisabledIntroSet = true
+	}
+	if raw, ok := data["finalize_prompt"]; ok {
+		val, err := templateStringFromRaw(path, section, "finalize_prompt", raw)
+		if err != nil {
+			return nil, nil, err
+		}
+		p := ensurePrompts()
+		p.FinalizePrompt = val
+		p.finalizePromptSet = true
 	}
 	if val, ok := toInt(data["step_limit"]); ok {
 		planner.StepLimit = val
@@ -668,7 +783,59 @@ func parsePromptsSection(path string, data map[string]any) (*PromptsConfig, erro
 			prompts.Planner = mergePlannerPromptSources(prompts.Planner, plannerOverrides)
 		}
 	}
-	if prompts.Planner == nil && prompts.ShellAgent == nil {
+	if raw, exists := data["file_discovery"]; exists {
+		fdRaw, ok := toMap(raw)
+		if !ok {
+			return nil, fmt.Errorf("parse %s [prompts.file_discovery]: expected table", path)
+		}
+		cfg := &FileDiscoveryPromptsConfig{}
+		if tplRaw, ok := fdRaw["system_prompt_template"]; ok {
+			val, err := templateStringFromRaw(path, "prompts.file_discovery", "system_prompt_template", tplRaw)
+			if err != nil {
+				return nil, err
+			}
+			cfg.SystemPromptTemplate = val
+			cfg.systemPromptTemplateSet = true
+		}
+		if cfg.systemPromptTemplateSet {
+			prompts.FileDiscovery = cfg
+		}
+	}
+	if raw, exists := data["mct"]; exists {
+		mctRaw, ok := toMap(raw)
+		if !ok {
+			return nil, fmt.Errorf("parse %s [prompts.mct]: expected table", path)
+		}
+		cfg := &MCTPromptsConfig{}
+		if tplRaw, ok := mctRaw["shell_agent_context_prefix"]; ok {
+			val, err := templateStringFromRaw(path, "prompts.mct", "shell_agent_context_prefix", tplRaw)
+			if err != nil {
+				return nil, err
+			}
+			cfg.ShellAgentContextPrefix = val
+			cfg.shellAgentContextPrefixSet = true
+		}
+		if tplRaw, ok := mctRaw["header_user_template"]; ok {
+			val, err := templateStringFromRaw(path, "prompts.mct", "header_user_template", tplRaw)
+			if err != nil {
+				return nil, err
+			}
+			cfg.HeaderUserTemplate = val
+			cfg.headerUserTemplateSet = true
+		}
+		if tplRaw, ok := mctRaw["header_existing_template"]; ok {
+			val, err := templateStringFromRaw(path, "prompts.mct", "header_existing_template", tplRaw)
+			if err != nil {
+				return nil, err
+			}
+			cfg.HeaderExistingTemplate = val
+			cfg.headerExistingTemplateSet = true
+		}
+		if cfg.shellAgentContextPrefixSet || cfg.headerUserTemplateSet || cfg.headerExistingTemplateSet {
+			prompts.MCT = cfg
+		}
+	}
+	if prompts.Planner == nil && prompts.ShellAgent == nil && prompts.FileDiscovery == nil && prompts.MCT == nil {
 		return nil, nil
 	}
 	return prompts, nil
@@ -697,7 +864,7 @@ func mergePromptsSources(base *PromptsConfig, plannerLegacy *PlannerPromptsConfi
 	}
 	base.Planner = mergePlannerPromptSources(base.Planner, plannerLegacy)
 	base.ShellAgent = mergeShellPromptSources(base.ShellAgent, shellLegacy)
-	if base.Planner == nil && base.ShellAgent == nil {
+	if base.Planner == nil && base.ShellAgent == nil && base.FileDiscovery == nil && base.MCT == nil {
 		return nil
 	}
 	return base
@@ -719,6 +886,34 @@ func mergePlannerPromptSources(base, override *PlannerPromptsConfig) *PlannerPro
 		base.InstanceTemplate = override.InstanceTemplate
 		base.instanceTemplateSet = true
 	}
+	if override.timeoutTemplateSet {
+		base.TimeoutTemplate = override.TimeoutTemplate
+		base.timeoutTemplateSet = true
+	}
+	if override.formatErrorTemplateSet {
+		base.FormatErrorTemplate = override.FormatErrorTemplate
+		base.formatErrorTemplateSet = true
+	}
+	if override.planPromptSet {
+		base.PlanPrompt = override.PlanPrompt
+		base.planPromptSet = true
+	}
+	if override.planPatchRulesSet {
+		base.PlanPatchRules = override.PlanPatchRules
+		base.planPatchRulesSet = true
+	}
+	if override.planPatchEnabledIntroSet {
+		base.PlanPatchEnabledIntro = override.PlanPatchEnabledIntro
+		base.planPatchEnabledIntroSet = true
+	}
+	if override.planPatchDisabledIntroSet {
+		base.PlanPatchDisabledIntro = override.PlanPatchDisabledIntro
+		base.planPatchDisabledIntroSet = true
+	}
+	if override.finalizePromptSet {
+		base.FinalizePrompt = override.FinalizePrompt
+		base.finalizePromptSet = true
+	}
 	return base
 }
 
@@ -729,6 +924,14 @@ func mergeShellPromptSources(base, override *ShellAgentPromptsConfig) *ShellAgen
 	if base == nil {
 		copy := *override
 		return &copy
+	}
+	if override.systemTemplateSet {
+		base.SystemTemplate = override.SystemTemplate
+		base.systemTemplateSet = true
+	}
+	if override.instanceTemplateSet {
+		base.InstanceTemplate = override.InstanceTemplate
+		base.instanceTemplateSet = true
 	}
 	if override.timeoutTemplateSet {
 		base.TimeoutTemplate = override.TimeoutTemplate
@@ -886,6 +1089,104 @@ func toFloat(v any) (float64, bool) {
 	}
 }
 
+func templateStringFromRaw(path, section, key string, raw any) (string, error) {
+	if raw == nil {
+		return "", fmt.Errorf("parse %s [%s]: %s must not be nil", path, section, key)
+	}
+	if str, ok := raw.(string); ok {
+		return str, nil
+	}
+	if table, ok := toMap(raw); ok {
+		src, exists := table["file"]
+		if !exists {
+			return "", fmt.Errorf("parse %s [%s]: %s table must contain file", path, section, key)
+		}
+		filePath, ok := src.(string)
+		if !ok {
+			return "", fmt.Errorf("parse %s [%s]: %s file must be a string", path, section, key)
+		}
+		content, err := readTemplateFile(path, filePath)
+		if err != nil {
+			return "", fmt.Errorf("parse %s [%s]: %w", path, section, err)
+		}
+		return content, nil
+	}
+	return "", fmt.Errorf("parse %s [%s]: %s must be a string or table", path, section, key)
+}
+
+func readTemplateFile(configPath, templatePath string) (string, error) {
+	trimmed := strings.TrimSpace(templatePath)
+	if trimmed == "" {
+		return "", fmt.Errorf("template file path is empty")
+	}
+	expanded, err := expandUserPath(trimmed)
+	if err != nil {
+		return "", err
+	}
+	cleaned := filepath.Clean(expanded)
+	if filepath.IsAbs(cleaned) {
+		data, err := os.ReadFile(cleaned)
+		if err != nil {
+			return "", fmt.Errorf("read template file %s: %w", cleaned, err)
+		}
+		return string(data), nil
+	}
+
+	configDir := filepath.Dir(configPath)
+	candidates := []string{filepath.Join(configDir, cleaned)}
+	triedRepo := false
+	if repoRoot, err := git.RepoRoot(configDir); err == nil {
+		repoCandidate := filepath.Join(repoRoot, cleaned)
+		if repoCandidate != candidates[0] {
+			candidates = append(candidates, repoCandidate)
+			triedRepo = true
+		}
+		machtianiCandidate := filepath.Join(repoRoot, ".machtiani", cleaned)
+		if machtianiCandidate != candidates[0] && machtianiCandidate != repoCandidate {
+			candidates = append(candidates, machtianiCandidate)
+			triedRepo = true
+		}
+	}
+	var lastErr error
+	for _, candidate := range candidates {
+		data, err := os.ReadFile(candidate)
+		if err == nil {
+			return string(data), nil
+		}
+		lastErr = err
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("read template file %s: %w", candidate, err)
+		}
+	}
+	if lastErr == nil {
+		lastErr = os.ErrNotExist
+	}
+	if triedRepo {
+		return "", fmt.Errorf("read template file %s relative to %s or repository root: %w", cleaned, configDir, lastErr)
+	}
+	return "", fmt.Errorf("read template file %s relative to %s: %w", cleaned, configDir, lastErr)
+}
+
+func expandUserPath(path string) (string, error) {
+	if path == "" {
+		return "", nil
+	}
+	if path[0] != '~' {
+		return path, nil
+	}
+	if len(path) > 1 && path[1] != '/' && path[1] != '\\' {
+		return "", fmt.Errorf("expand home in %q: user prefixes not supported", path)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("expand home in %q: %w", path, err)
+	}
+	if len(path) == 1 {
+		return home, nil
+	}
+	return filepath.Join(home, path[2:]), nil
+}
+
 func cloneConfig(in Config) Config {
 	clone := Config{
 		Listen:       in.Listen,
@@ -911,7 +1212,15 @@ func cloneConfig(in Config) Config {
 			shell := *in.Prompts.ShellAgent
 			copyPrompts.ShellAgent = &shell
 		}
-		if copyPrompts.Planner != nil || copyPrompts.ShellAgent != nil {
+		if in.Prompts.FileDiscovery != nil {
+			fd := *in.Prompts.FileDiscovery
+			copyPrompts.FileDiscovery = &fd
+		}
+		if in.Prompts.MCT != nil {
+			mct := *in.Prompts.MCT
+			copyPrompts.MCT = &mct
+		}
+		if copyPrompts.Planner != nil || copyPrompts.ShellAgent != nil || copyPrompts.FileDiscovery != nil || copyPrompts.MCT != nil {
 			clone.Prompts = copyPrompts
 		}
 	}
