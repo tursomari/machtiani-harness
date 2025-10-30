@@ -195,6 +195,49 @@ func handlePrompt(args []string) {
 	primaryRuntime := toPromptModelRuntime(runtime)
 	fileDiscoveryRuntime := primaryRuntime
 
+	shellAgent := *shellAgentFlag
+	shellAgentFlagChanged := fs.Changed("shell-agent")
+	preflightReply := ""
+	var preflightErr error
+	if !shellAgentFlagChanged && !isAnswerOnlyMode {
+		useShellAgent, reply, err := promptsvc.PreflightShellRouting(ctx, primaryRuntime, prompt)
+		preflightReply = strings.TrimSpace(reply)
+		preflightErr = err
+		if preflightErr != nil {
+			utils.LogErrorIfNotAnswerOnly(isAnswerOnlyMode, preflightErr, "preflight routing failed")
+		}
+		shellAgent = useShellAgent
+		route := "shell-agent"
+		if !shellAgent {
+			route = "default"
+		}
+		switch {
+		case preflightReply != "":
+			utils.LogIfNotAnswerOnly(isAnswerOnlyMode, "Preflight routing: %s (reply: %s)", route, preflightReply)
+		case preflightErr != nil:
+			utils.LogIfNotAnswerOnly(isAnswerOnlyMode, "Preflight routing: %s (error fallback)", route)
+		default:
+			utils.LogIfNotAnswerOnly(isAnswerOnlyMode, "Preflight routing: %s (empty reply)", route)
+		}
+	}
+	if !isAnswerOnlyMode {
+		modeIndicator := "mct:shell"
+		reason := " (preflight: shell-agent – something else, such as running a command in the shell)"
+		if !shellAgent {
+			modeIndicator = "mct:file"
+			reason = " (preflight: retrieving relevant files and context)"
+		}
+		if shellAgentFlagChanged {
+			modeIndicator = "mct:shell"
+			reason = " (explicit shell-agent flag)"
+			if !shellAgent {
+				modeIndicator = "mct:file"
+				reason = " (explicit default-mode flag)"
+			}
+		}
+		utils.PrintIfNotAnswerOnly(isAnswerOnlyMode, "[%s]%s\n", modeIndicator, reason)
+	}
+
 	var readmeOpts *promptsvc.ReadmeOptions
 	skipReadme := strings.TrimSpace(os.Getenv(readme.SkipReadmeManagerEnv)) != ""
 	if !skipReadme && !isAnswerOnlyMode {
@@ -218,7 +261,7 @@ func handlePrompt(args []string) {
 		Verbose:              *verboseFlag,
 		MaxInputTokens:       *maxInputTokensFlag,
 		Readme:               readmeOpts,
-		ShellAgent:           *shellAgentFlag,
+		ShellAgent:           shellAgent,
 	})
 	if ms != nil {
 		_ = ms.Flush()

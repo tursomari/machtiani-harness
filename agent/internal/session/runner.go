@@ -14,6 +14,7 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/gitops"
 	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
 	mctpatcher "github.com/tursomari/machtiani/agent/internal/mct/patcher"
+	promptsvc "github.com/tursomari/machtiani/agent/internal/mct/prompt"
 	"github.com/tursomari/machtiani/agent/internal/mct/readmesync"
 	"github.com/tursomari/machtiani/agent/internal/parser"
 	patchersvc "github.com/tursomari/machtiani/agent/internal/patcher"
@@ -135,14 +136,10 @@ func Run(ctx context.Context, opts Options) Result {
 		metaLines = append(metaLines, describeModel("shell agent", models.shellAgent))
 	}
 	orchPromptOpts := promptOptions(metaLines...)
-	modeIndicator := "file"
-	if cfg.shellAgent {
-		modeIndicator = "shell"
+	baseOrchMetadata := []string(nil)
+	if orchPromptOpts != nil {
+		baseOrchMetadata = append([]string(nil), orchPromptOpts.Metadata...)
 	}
-	if orchPromptOpts == nil {
-		orchPromptOpts = &ui.PromptOptions{}
-	}
-	orchPromptOpts.ModeIndicator = modeIndicator
 	patcherPromptOpts := promptOptions(
 		describeModel("patcher", models.patcher),
 	)
@@ -381,6 +378,54 @@ func Run(ctx context.Context, opts Options) Result {
 			}
 			if cfg.verbose {
 				fmt.Fprintln(os.Stderr, "Question:", question)
+			}
+			useShellAgent := cfg.shellAgent
+			preflightNote := ""
+			var preflightErr error
+			preflightReply := ""
+			if cfg.shellAgent {
+				preflightNote = "routing: shell (config override — something else, such as running a command in the shell)"
+			} else {
+				ctxPre, cancelPre := makeTurnContext(cfg.timeoutPerTurn)
+				ctxPre = attachTrajectory(ctxPre, trajectoryWriter, parentSpanID)
+				useShellAgent, preflightReply, preflightErr = promptsvc.PreflightShellRouting(ctxPre, mctRunner.Runtime, question)
+				cancelPre()
+				if preflightErr != nil && cfg.verbose {
+					fmt.Fprintln(os.Stderr, "Preflight routing error:", preflightErr)
+				}
+				routeLabel := "shell"
+				routeExplanation := "something else, such as running a command in the shell"
+				if !useShellAgent {
+					routeLabel = "file"
+					routeExplanation = "retrieving relevant files and context"
+				}
+				switch {
+				case strings.TrimSpace(preflightReply) != "":
+					preflightNote = fmt.Sprintf("preflight routing: %s (reply: %s) — %s", routeLabel, trimTo(preflightReply, 120), routeExplanation)
+				case preflightErr != nil:
+					preflightNote = fmt.Sprintf("preflight routing: %s (error fallback: %s) — %s", routeLabel, trimTo(preflightErr.Error(), 120), routeExplanation)
+				default:
+					preflightNote = fmt.Sprintf("preflight routing: %s (empty reply) — %s", routeLabel, routeExplanation)
+				}
+			}
+			mctRunner.ShellAgent = useShellAgent
+			indicator := "shell"
+			if !useShellAgent {
+				indicator = "file"
+			}
+			metadata := append([]string(nil), baseOrchMetadata...)
+			if preflightNote != "" {
+				metadata = append(metadata, preflightNote)
+			}
+			orchPromptOpts = &ui.PromptOptions{ModeIndicator: indicator, Metadata: metadata}
+			turnInfo["mct_shell_agent"] = useShellAgent
+			if !cfg.shellAgent {
+				if strings.TrimSpace(preflightReply) != "" {
+					turnInfo["mct_preflight_reply"] = trimTo(preflightReply, 200)
+				}
+				if preflightErr != nil {
+					turnInfo["mct_preflight_error"] = trimTo(preflightErr.Error(), 200)
+				}
 			}
 			stream := display.BeginPrompt(question, orchPromptOpts)
 			input := runner.PromptInput{

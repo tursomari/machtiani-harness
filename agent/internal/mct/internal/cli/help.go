@@ -43,6 +43,7 @@ Examples:
 
 More info:
   - File ignores: list paths in .machtiani.ignore to exclude from retrieval.
+  - Dynamic routing: a preflight LLM check routes between default retrieval and shell-agent execution automatically.
 
 Machtiani - code chat for real projects, thousands of files and commits.`
 	fmt.Println(helpText)
