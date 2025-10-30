@@ -1,0 +1,10 @@
+Attempt {{.Attempt}} failed for intent: {{.Intent}}
+Previous command:
+{{.PreviousCommand}}
+Return code: {{.ReturnCode}}
+Output:
+{{.Output}}
+
+Error: {{.Error}}
+
+Return a corrected Bash command wrapped in ```bash-command ... ```.

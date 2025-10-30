@@ -286,8 +286,12 @@ func TestLoadGlobalConfigSupportsTemplateFiles(t *testing.T) {
 	root := t.TempDir()
 	mustWriteFile(t, filepath.Join(root, "templates", "planner", "system.tpl"), "planner system file")
 	mustWriteFile(t, filepath.Join(root, "templates", "planner", "plan_prompt.tpl"), "plan prompt file")
-	mustWriteFile(t, filepath.Join(root, "templates", "shell-agent", "timeout.tpl"), "timeout file")
-	mustWriteFile(t, filepath.Join(root, "templates", "shell-agent", "format.tpl"), "format file")
+	mustWriteFile(t, filepath.Join(root, "templates", "shell-agent", "timeout_template.tpl"), "timeout file")
+	mustWriteFile(t, filepath.Join(root, "templates", "shell-agent", "format_error_template.tpl"), "format file")
+	mustWriteFile(t, filepath.Join(root, "templates", "shell-agent", "action_observation_template.txt"), "action observation file")
+	mustWriteFile(t, filepath.Join(root, "templates", "shell-agent", "lightweight_system_template.txt"), "lw system file")
+	mustWriteFile(t, filepath.Join(root, "templates", "shell-agent", "lightweight_intent_template.txt"), "lw intent file")
+	mustWriteFile(t, filepath.Join(root, "templates", "shell-agent", "lightweight_error_template.txt"), "lw error file")
 	mustWriteFile(t, filepath.Join(root, "templates", "file-discovery", "system.tpl"), "file discovery system")
 	mustWriteFile(t, filepath.Join(root, "templates", "mct", "context_prefix.tpl"), "context prefix")
 	mustWriteFile(t, filepath.Join(root, "templates", "mct", "header_user.tpl"), "header user")
@@ -300,8 +304,12 @@ system_template = { file = "templates/planner/system.tpl" }
 plan_prompt = { file = "templates/planner/plan_prompt.tpl" }
 
 [prompts.shell-agent]
-timeout_template = { file = "templates/shell-agent/timeout.tpl" }
-format_error_template = { file = "templates/shell-agent/format.tpl" }
+timeout_template = { file = "templates/shell-agent/timeout_template.tpl" }
+format_error_template = { file = "templates/shell-agent/format_error_template.tpl" }
+action_observation_template = { file = "templates/shell-agent/action_observation_template.txt" }
+lightweight_system_template = { file = "templates/shell-agent/lightweight_system_template.txt" }
+lightweight_intent_template = { file = "templates/shell-agent/lightweight_intent_template.txt" }
+lightweight_error_template = { file = "templates/shell-agent/lightweight_error_template.txt" }
 
 [prompts.file_discovery]
 system_prompt_template = { file = "templates/file-discovery/system.tpl" }
@@ -338,6 +346,18 @@ header_existing_template = { file = "templates/mct/header_existing.tpl" }
 	}
 	if cfg.Prompts.ShellAgent.FormatErrorTemplate != "format file" {
 		t.Fatalf("expected format template from file, got %q", cfg.Prompts.ShellAgent.FormatErrorTemplate)
+	}
+	if cfg.Prompts.ShellAgent.ActionObservationTemplate != "action observation file" {
+		t.Fatalf("expected action observation template from file, got %q", cfg.Prompts.ShellAgent.ActionObservationTemplate)
+	}
+	if cfg.Prompts.ShellAgent.LightweightSystemTemplate != "lw system file" {
+		t.Fatalf("expected lightweight system template from file, got %q", cfg.Prompts.ShellAgent.LightweightSystemTemplate)
+	}
+	if cfg.Prompts.ShellAgent.LightweightIntentTemplate != "lw intent file" {
+		t.Fatalf("expected lightweight intent template from file, got %q", cfg.Prompts.ShellAgent.LightweightIntentTemplate)
+	}
+	if cfg.Prompts.ShellAgent.LightweightErrorTemplate != "lw error file" {
+		t.Fatalf("expected lightweight error template from file, got %q", cfg.Prompts.ShellAgent.LightweightErrorTemplate)
 	}
 	if cfg.Prompts.FileDiscovery == nil || cfg.Prompts.FileDiscovery.SystemPromptTemplate != "file discovery system" {
 		t.Fatalf("expected file discovery system prompt from file, got %+v", cfg.Prompts.FileDiscovery)

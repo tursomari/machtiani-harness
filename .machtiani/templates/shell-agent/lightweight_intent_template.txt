@@ -1,0 +1,5 @@
+Intent: {{.Intent}}
+Working directory: {{.CWD}}
+
+Produce the Bash command that satisfies the intent and wrap it in ```bash-command ... ```.
+If this intent finalizes the task, write the final response to {{.FinalMarkerPath}} rather than printing it to stdout.
