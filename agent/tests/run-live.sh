@@ -250,6 +250,14 @@ generate_test_config() {
   local config_file="$config_dir/config.toml"
   mkdir -p "$config_dir"
 
+  local repo_config="$REPO_ROOT/.machtiani/config.toml"
+  if [[ ! -f "$repo_config" ]]; then
+    echo "Missing repository config: $repo_config" >&2
+    exit 1
+  fi
+
+  local test_provider_name="run-live-provider"
+
   local provider_base_url="https://api.openai.com/v1"
   local provider_api_key="sk-test-key-fake"
   local provider_endpoint="/chat/completions"
@@ -282,10 +290,11 @@ generate_test_config() {
     fd_remote_model="${patcher_remote_model}"
   fi
 
-  cat > "$config_file" <<EOF
-default_model = "${TEST_MODEL_ALIAS}"
+  cp "$repo_config" "$config_file"
 
-[providers.test-provider]
+  cat >> "$config_file" <<EOF
+
+[providers.${test_provider_name}]
 base_url = "${provider_base_url}"
 api_key = "${provider_api_key}"
 endpoint = "${provider_endpoint}"
@@ -308,10 +317,13 @@ EOF
     if [[ "$already" == true ]]; then
       return
     fi
+    if grep -Fq "[models.\"${alias}\"]" "$config_file"; then
+      return
+    fi
     cat >> "$config_file" <<EOF
 
 [models."${alias}"]
-provider = "test-provider"
+provider = "${test_provider_name}"
 model = "${remote}"
 EOF
     declared_aliases+=("$alias")

@@ -29,6 +29,16 @@ here_dir="$(cd "$(dirname "$0")" && pwd)"
 repo_root="$(cd "$here_dir/.." && pwd)"
 fixture_dir="$(pwd)"
 
+project_root="$(cd "$here_dir/../../../.." && pwd)"
+config_path="$project_root/.machtiani/config.toml"
+if [[ ! -f "$config_path" ]]; then
+  echo "Missing Machtiani config: $config_path" >&2
+  exit 1
+fi
+if [[ -z "${MACHTIANI_CONFIG:-}" ]]; then
+  export MACHTIANI_CONFIG="$config_path"
+fi
+
 # Where to write artifacts (stdout/stderr/trajectory). Defaults to cwd.
 artifact_dir="${ARTIFACT_DIR:-.}"
 mkdir -p "$artifact_dir"
