@@ -147,6 +147,11 @@ func Run(ctx context.Context, opts Options) Result {
 		describeModel("patcher", models.patcher),
 	)
 
+	shellAgentModel := strings.TrimSpace(cfg.shellAgentModel)
+	if shellAgentModel == "" && strings.TrimSpace(models.shellAgent.alias) != "" && models.shellAgent.usingAlias {
+		shellAgentModel = strings.TrimSpace(models.shellAgent.alias)
+	}
+
 	mctRunner := runner.Runner{
 		Verbose:                 cfg.verbose,
 		DryRun:                  cfg.dryRun,
@@ -155,7 +160,7 @@ func Run(ctx context.Context, opts Options) Result {
 		FileDiscoveryRuntime:    models.fileDiscovery.toPromptRuntime(),
 		FileDiscoveryTrajectory: trajectoryPath,
 		ShellAgent:              cfg.shellAgent,
-		ShellAgentModel:         cfg.shellAgentModel,
+		ShellAgentModel:         shellAgentModel,
 		GlobalConfigPath:        opts.GlobalConfigPath,
 	}
 	if err := mctRunner.Resolve(); err != nil {

@@ -329,7 +329,7 @@ func resolveModelRuntimes(cfg legacyConfig, global llm.Config, paramPairs, param
 
 	shellAgent := modelRuntime{}
 	if cfg.shellAgent || strings.TrimSpace(cfg.shellAgentModel) != "" {
-		sr, err := resolveShellAgentRuntime(global, cfg.shellAgentModel, apiKeyOverrides)
+		sr, err := resolveShellAgentRuntime(global, cfg.shellAgentModel, apiKeyOverrides, primary)
 		if err != nil {
 			return componentModelRuntimes{}, err
 		}
@@ -345,7 +345,7 @@ func resolveModelRuntimes(cfg legacyConfig, global llm.Config, paramPairs, param
 	}, nil
 }
 
-func resolveShellAgentRuntime(global llm.Config, override string, apiKeyOverrides map[string]string) (modelRuntime, error) {
+func resolveShellAgentRuntime(global llm.Config, override string, apiKeyOverrides map[string]string, primaryFallback modelRuntime) (modelRuntime, error) {
 	var rt modelRuntime
 	trimmedOverride := strings.TrimSpace(override)
 	rt.apiKeyOverrides = llm.CopyAPIKeyOverridesForRuntime(apiKeyOverrides)
@@ -391,6 +391,10 @@ func resolveShellAgentRuntime(global llm.Config, override string, apiKeyOverride
 	}
 
 	if strings.TrimSpace(alias) == "" {
+		resolved := primaryFallback.resolved
+		if strings.TrimSpace(resolved.Model) != "" || strings.TrimSpace(resolved.BaseURL) != "" || strings.TrimSpace(resolved.ProviderName) != "" {
+			return cloneModelRuntime(primaryFallback), nil
+		}
 		defaultAlias, err := llm.DefaultModelAlias()
 		if err != nil {
 			return modelRuntime{}, fmt.Errorf("resolve default shell agent model: %w", err)

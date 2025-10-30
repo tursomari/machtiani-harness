@@ -241,7 +241,7 @@ func TestResolveShellAgentRuntimeDirectConfig(t *testing.T) {
 		},
 	}
 
-	rt, err := resolveShellAgentRuntime(global, "", nil)
+	rt, err := resolveShellAgentRuntime(global, "", nil, modelRuntime{})
 	if err != nil {
 		t.Fatalf("resolveShellAgentRuntime returned error: %v", err)
 	}
@@ -253,6 +253,79 @@ func TestResolveShellAgentRuntimeDirectConfig(t *testing.T) {
 	}
 	if got := strings.TrimSpace(rt.resolved.Model); got != "direct-shell" {
 		t.Fatalf("expected model direct-shell, got %q", got)
+	}
+}
+
+func TestResolveModelRuntimesShellAgentInheritsPrimaryWithoutDefault(t *testing.T) {
+	configDir := t.TempDir()
+	configPath := filepath.Join(configDir, "config.toml")
+	writeConfigWithoutDefault(t, configPath)
+	t.Setenv("MACHTIANI_CONFIG", configPath)
+	llm.ResetConfigForTesting()
+	t.Cleanup(llm.ResetConfigForTesting)
+
+	cfg := legacyConfig{shellAgent: true, agentModel: "orch"}
+	models, err := resolveModelRuntimes(cfg, llm.Config{}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("resolveModelRuntimes returned error: %v", err)
+	}
+	if got := strings.TrimSpace(models.orchestrator.alias); got != "orch" {
+		t.Fatalf("expected orchestrator alias 'orch', got %q", got)
+	}
+	if got := strings.TrimSpace(models.shellAgent.alias); got != "orch" {
+		t.Fatalf("expected shell agent alias 'orch', got %q", got)
+	}
+	if got := strings.TrimSpace(models.shellAgent.resolved.Model); got != "orch-model" {
+		t.Fatalf("expected shell agent model 'orch-model', got %q", got)
+	}
+}
+
+func TestResolveShellAgentRuntimeFallsBackToPrimary(t *testing.T) {
+	configDir := t.TempDir()
+	configPath := filepath.Join(configDir, "config.toml")
+	writeConfigWithoutDefault(t, configPath)
+	t.Setenv("MACHTIANI_CONFIG", configPath)
+	llm.ResetConfigForTesting()
+	t.Cleanup(llm.ResetConfigForTesting)
+
+	primary := modelRuntime{
+		alias:      "orch",
+		usingAlias: true,
+		resolved: llm.ResolvedModel{
+			ProviderName: "fake",
+			Model:        "orch-model",
+			Endpoint:     "/v1/chat/completions",
+		},
+	}
+
+	rt, err := resolveShellAgentRuntime(llm.Config{}, "", nil, primary)
+	if err != nil {
+		t.Fatalf("resolveShellAgentRuntime returned error: %v", err)
+	}
+	if got := strings.TrimSpace(rt.alias); got != "orch" {
+		t.Fatalf("expected alias 'orch', got %q", got)
+	}
+	if got := strings.TrimSpace(rt.resolved.Model); got != "orch-model" {
+		t.Fatalf("expected model 'orch-model', got %q", got)
+	}
+}
+
+func writeConfigWithoutDefault(t *testing.T, path string) {
+	t.Helper()
+	content := `
+[providers.fake]
+base_url = "https://example.com"
+api_key = "test-key"
+
+[models.orch]
+provider = "fake"
+model = "orch-model"
+`
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
 	}
 }
 
