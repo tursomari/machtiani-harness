@@ -18,6 +18,7 @@ type Config struct {
 	Model        *ModelConfig               `toml:"model"`
 	Planner      *PlannerConfig             `toml:"planner"`
 	ShellAgent   *ShellAgentConfig          `toml:"shell-agent"`
+	Prompts      *PromptsConfig             `toml:"prompts"`
 	Environment  *EnvironmentConfig         `toml:"environment"`
 	Providers    map[string]ProviderConfig  `toml:"providers"`
 	Models       map[string]ModelDefinition `toml:"models"`
@@ -26,36 +27,54 @@ type Config struct {
 // ShellAgentConfig mirrors the shell-agent configuration section and is loaded
 // from the global TOML configuration under [shell-agent] (or legacy [agent]).
 type ShellAgentConfig struct {
-	SystemTemplate            string  `toml:"system_template"`
-	InstanceTemplate          string  `toml:"instance_template"`
-	TimeoutTemplate           string  `toml:"timeout_template"`
-	FormatErrorTemplate       string  `toml:"format_error_template"`
-	ActionObservationTemplate string  `toml:"action_observation_template"`
-	LightweightSystemTemplate string  `toml:"lightweight_system_template"`
-	LightweightIntentTemplate string  `toml:"lightweight_intent_template"`
-	LightweightErrorTemplate  string  `toml:"lightweight_error_template"`
-	LightweightMaxAttempts    int     `toml:"lightweight_max_attempts"`
-	StepLimit                 int     `toml:"step_limit"`
-	CostLimit                 float64 `toml:"cost_limit"`
+	LightweightMaxAttempts int     `toml:"lightweight_max_attempts"`
+	StepLimit              int     `toml:"step_limit"`
+	CostLimit              float64 `toml:"cost_limit"`
 
-	systemTemplateSet   bool `toml:"-"`
-	instanceTemplateSet bool `toml:"-"`
-	stepLimitSet        bool `toml:"-"`
-	costLimitSet        bool `toml:"-"`
+	stepLimitSet bool `toml:"-"`
+	costLimitSet bool `toml:"-"`
 }
 
 // PlannerConfig captures configuration intended for the orchestration planner
 // while also providing defaults for shell-agent where applicable.
 type PlannerConfig struct {
-	SystemTemplate   string  `toml:"system_template"`
-	InstanceTemplate string  `toml:"instance_template"`
-	StepLimit        int     `toml:"step_limit"`
-	CostLimit        float64 `toml:"cost_limit"`
+	StepLimit int     `toml:"step_limit"`
+	CostLimit float64 `toml:"cost_limit"`
+
+	stepLimitSet bool `toml:"-"`
+	costLimitSet bool `toml:"-"`
+}
+
+// PromptsConfig captures the prompt templates referenced by planner and shell-agent.
+type PromptsConfig struct {
+	Planner    *PlannerPromptsConfig    `toml:"planner"`
+	ShellAgent *ShellAgentPromptsConfig `toml:"shell-agent"`
+}
+
+// PlannerPromptsConfig contains planner prompt templates.
+type PlannerPromptsConfig struct {
+	SystemTemplate   string `toml:"system_template"`
+	InstanceTemplate string `toml:"instance_template"`
 
 	systemTemplateSet   bool `toml:"-"`
 	instanceTemplateSet bool `toml:"-"`
-	stepLimitSet        bool `toml:"-"`
-	costLimitSet        bool `toml:"-"`
+}
+
+// ShellAgentPromptsConfig contains shell-agent prompt templates.
+type ShellAgentPromptsConfig struct {
+	TimeoutTemplate           string `toml:"timeout_template"`
+	FormatErrorTemplate       string `toml:"format_error_template"`
+	ActionObservationTemplate string `toml:"action_observation_template"`
+	LightweightSystemTemplate string `toml:"lightweight_system_template"`
+	LightweightIntentTemplate string `toml:"lightweight_intent_template"`
+	LightweightErrorTemplate  string `toml:"lightweight_error_template"`
+
+	timeoutTemplateSet           bool `toml:"-"`
+	formatErrorTemplateSet       bool `toml:"-"`
+	actionObservationTemplateSet bool `toml:"-"`
+	lightweightSystemTemplateSet bool `toml:"-"`
+	lightweightIntentTemplateSet bool `toml:"-"`
+	lightweightErrorTemplateSet  bool `toml:"-"`
 }
 
 // ModelConfig captures direct model overrides under the top-level [model]
@@ -343,29 +362,46 @@ func parseConfig(path string) (Config, error) {
 		}
 		cfg.Model = modelCfg
 	}
+	var (
+		legacyPlannerPrompts    *PlannerPromptsConfig
+		legacyShellAgentPrompts *ShellAgentPromptsConfig
+	)
 	if shellAgentRaw, ok := toMap(raw["shell-agent"]); ok {
-		agentCfg, err := parseShellAgentSection(path, "shell-agent", shellAgentRaw)
+		agentCfg, shellPrompts, plannerOverrides, err := parseShellAgentSection(path, "shell-agent", shellAgentRaw)
 		if err != nil {
 			return Config{}, err
 		}
 		cfg.ShellAgent = agentCfg
+		legacyShellAgentPrompts = mergeShellPromptSources(legacyShellAgentPrompts, shellPrompts)
+		legacyPlannerPrompts = mergePlannerPromptSources(legacyPlannerPrompts, plannerOverrides)
 	} else if legacyAgentRaw, ok := toMap(raw["agent"]); ok {
-		agentCfg, err := parseShellAgentSection(path, "agent", legacyAgentRaw)
+		agentCfg, shellPrompts, plannerOverrides, err := parseShellAgentSection(path, "agent", legacyAgentRaw)
 		if err != nil {
 			return Config{}, err
 		}
 		cfg.ShellAgent = agentCfg
+		legacyShellAgentPrompts = mergeShellPromptSources(legacyShellAgentPrompts, shellPrompts)
+		legacyPlannerPrompts = mergePlannerPromptSources(legacyPlannerPrompts, plannerOverrides)
 	}
 	if plannerRaw, ok := toMap(raw["planner"]); ok {
-		plannerCfg, err := parsePlannerSection(path, plannerRaw)
+		plannerCfg, promptsCfg, err := parsePlannerSection(path, "planner", plannerRaw)
 		if err != nil {
 			return Config{}, err
 		}
 		cfg.Planner = plannerCfg
+		legacyPlannerPrompts = mergePlannerPromptSources(legacyPlannerPrompts, promptsCfg)
+	}
+	if promptsRaw, ok := toMap(raw["prompts"]); ok {
+		promptsCfg, err := parsePromptsSection(path, promptsRaw)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.Prompts = promptsCfg
 	}
 	if cfg.Planner != nil && cfg.ShellAgent != nil {
 		mergePlannerIntoShellAgent(cfg.ShellAgent, cfg.Planner)
 	}
+	cfg.Prompts = mergePromptsSources(cfg.Prompts, legacyPlannerPrompts, legacyShellAgentPrompts)
 	if envRaw, ok := toMap(raw["environment"]); ok {
 		envCfg, err := parseEnvironmentSection(path, envRaw)
 		if err != nil {
@@ -464,65 +500,96 @@ func parseModelSection(path string, data map[string]any) (*ModelConfig, error) {
 	return model, nil
 }
 
-func parseShellAgentSection(path, section string, data map[string]any) (*ShellAgentConfig, error) {
+func parseShellAgentSection(path, section string, data map[string]any) (*ShellAgentConfig, *ShellAgentPromptsConfig, *PlannerPromptsConfig, error) {
 	agent := &ShellAgentConfig{}
+	var (
+		shellPrompts   *ShellAgentPromptsConfig
+		plannerPrompts *PlannerPromptsConfig
+	)
+	ensureShellPrompts := func() *ShellAgentPromptsConfig {
+		if shellPrompts == nil {
+			shellPrompts = &ShellAgentPromptsConfig{}
+		}
+		return shellPrompts
+	}
+	ensurePlannerPrompts := func() *PlannerPromptsConfig {
+		if plannerPrompts == nil {
+			plannerPrompts = &PlannerPromptsConfig{}
+		}
+		return plannerPrompts
+	}
+
 	if raw, ok := data["system_template"]; ok {
 		str, ok := raw.(string)
 		if !ok {
-			return nil, fmt.Errorf("parse %s [%s]: system_template must be a string", path, section)
+			return nil, nil, nil, fmt.Errorf("parse %s [%s]: system_template must be a string", path, section)
 		}
-		agent.SystemTemplate = str
-		agent.systemTemplateSet = true
+		p := ensurePlannerPrompts()
+		p.SystemTemplate = str
+		p.systemTemplateSet = true
 	}
 	if raw, ok := data["instance_template"]; ok {
 		str, ok := raw.(string)
 		if !ok {
-			return nil, fmt.Errorf("parse %s [%s]: instance_template must be a string", path, section)
+			return nil, nil, nil, fmt.Errorf("parse %s [%s]: instance_template must be a string", path, section)
 		}
-		agent.InstanceTemplate = str
-		agent.instanceTemplateSet = true
+		p := ensurePlannerPrompts()
+		p.InstanceTemplate = str
+		p.instanceTemplateSet = true
 	}
 	if raw, ok := data["timeout_template"]; ok {
 		str, ok := raw.(string)
 		if !ok {
-			return nil, fmt.Errorf("parse %s [%s]: timeout_template must be a string", path, section)
+			return nil, nil, nil, fmt.Errorf("parse %s [%s]: timeout_template must be a string", path, section)
 		}
-		agent.TimeoutTemplate = str
+		p := ensureShellPrompts()
+		p.TimeoutTemplate = str
+		p.timeoutTemplateSet = true
 	}
 	if raw, ok := data["format_error_template"]; ok {
 		str, ok := raw.(string)
 		if !ok {
-			return nil, fmt.Errorf("parse %s [%s]: format_error_template must be a string", path, section)
+			return nil, nil, nil, fmt.Errorf("parse %s [%s]: format_error_template must be a string", path, section)
 		}
-		agent.FormatErrorTemplate = str
+		p := ensureShellPrompts()
+		p.FormatErrorTemplate = str
+		p.formatErrorTemplateSet = true
 	}
 	if raw, ok := data["action_observation_template"]; ok {
 		str, ok := raw.(string)
 		if !ok {
-			return nil, fmt.Errorf("parse %s [%s]: action_observation_template must be a string", path, section)
+			return nil, nil, nil, fmt.Errorf("parse %s [%s]: action_observation_template must be a string", path, section)
 		}
-		agent.ActionObservationTemplate = str
+		p := ensureShellPrompts()
+		p.ActionObservationTemplate = str
+		p.actionObservationTemplateSet = true
 	}
 	if raw, ok := data["lightweight_system_template"]; ok {
 		str, ok := raw.(string)
 		if !ok {
-			return nil, fmt.Errorf("parse %s [%s]: lightweight_system_template must be a string", path, section)
+			return nil, nil, nil, fmt.Errorf("parse %s [%s]: lightweight_system_template must be a string", path, section)
 		}
-		agent.LightweightSystemTemplate = str
+		p := ensureShellPrompts()
+		p.LightweightSystemTemplate = str
+		p.lightweightSystemTemplateSet = true
 	}
 	if raw, ok := data["lightweight_intent_template"]; ok {
 		str, ok := raw.(string)
 		if !ok {
-			return nil, fmt.Errorf("parse %s [%s]: lightweight_intent_template must be a string", path, section)
+			return nil, nil, nil, fmt.Errorf("parse %s [%s]: lightweight_intent_template must be a string", path, section)
 		}
-		agent.LightweightIntentTemplate = str
+		p := ensureShellPrompts()
+		p.LightweightIntentTemplate = str
+		p.lightweightIntentTemplateSet = true
 	}
 	if raw, ok := data["lightweight_error_template"]; ok {
 		str, ok := raw.(string)
 		if !ok {
-			return nil, fmt.Errorf("parse %s [%s]: lightweight_error_template must be a string", path, section)
+			return nil, nil, nil, fmt.Errorf("parse %s [%s]: lightweight_error_template must be a string", path, section)
 		}
-		agent.LightweightErrorTemplate = str
+		p := ensureShellPrompts()
+		p.LightweightErrorTemplate = str
+		p.lightweightErrorTemplateSet = true
 	}
 	if val, ok := toInt(data["lightweight_max_attempts"]); ok {
 		agent.LightweightMaxAttempts = val
@@ -535,26 +602,35 @@ func parseShellAgentSection(path, section string, data map[string]any) (*ShellAg
 		agent.CostLimit = val
 		agent.costLimitSet = true
 	}
-	return agent, nil
+	return agent, shellPrompts, plannerPrompts, nil
 }
 
-func parsePlannerSection(path string, data map[string]any) (*PlannerConfig, error) {
+func parsePlannerSection(path, section string, data map[string]any) (*PlannerConfig, *PlannerPromptsConfig, error) {
 	planner := &PlannerConfig{}
+	var prompts *PlannerPromptsConfig
+	ensurePrompts := func() *PlannerPromptsConfig {
+		if prompts == nil {
+			prompts = &PlannerPromptsConfig{}
+		}
+		return prompts
+	}
 	if raw, ok := data["system_template"]; ok {
 		str, ok := raw.(string)
 		if !ok {
-			return nil, fmt.Errorf("parse %s [planner]: system_template must be a string", path)
+			return nil, nil, fmt.Errorf("parse %s [%s]: system_template must be a string", path, section)
 		}
-		planner.SystemTemplate = str
-		planner.systemTemplateSet = true
+		p := ensurePrompts()
+		p.SystemTemplate = str
+		p.systemTemplateSet = true
 	}
 	if raw, ok := data["instance_template"]; ok {
 		str, ok := raw.(string)
 		if !ok {
-			return nil, fmt.Errorf("parse %s [planner]: instance_template must be a string", path)
+			return nil, nil, fmt.Errorf("parse %s [%s]: instance_template must be a string", path, section)
 		}
-		planner.InstanceTemplate = str
-		planner.instanceTemplateSet = true
+		p := ensurePrompts()
+		p.InstanceTemplate = str
+		p.instanceTemplateSet = true
 	}
 	if val, ok := toInt(data["step_limit"]); ok {
 		planner.StepLimit = val
@@ -564,20 +640,43 @@ func parsePlannerSection(path string, data map[string]any) (*PlannerConfig, erro
 		planner.CostLimit = val
 		planner.costLimitSet = true
 	}
-	return planner, nil
+	return planner, prompts, nil
+}
+
+func parsePromptsSection(path string, data map[string]any) (*PromptsConfig, error) {
+	prompts := &PromptsConfig{}
+	if raw, exists := data["planner"]; exists {
+		plannerRaw, ok := toMap(raw)
+		if !ok {
+			return nil, fmt.Errorf("parse %s [prompts.planner]: expected table", path)
+		}
+		if _, plannerPrompts, err := parsePlannerSection(path, "prompts.planner", plannerRaw); err != nil {
+			return nil, err
+		} else {
+			prompts.Planner = plannerPrompts
+		}
+	}
+	if raw, exists := data["shell-agent"]; exists {
+		shellRaw, ok := toMap(raw)
+		if !ok {
+			return nil, fmt.Errorf("parse %s [prompts.shell-agent]: expected table", path)
+		}
+		if _, shellPrompts, plannerOverrides, err := parseShellAgentSection(path, "prompts.shell-agent", shellRaw); err != nil {
+			return nil, err
+		} else {
+			prompts.ShellAgent = shellPrompts
+			prompts.Planner = mergePlannerPromptSources(prompts.Planner, plannerOverrides)
+		}
+	}
+	if prompts.Planner == nil && prompts.ShellAgent == nil {
+		return nil, nil
+	}
+	return prompts, nil
 }
 
 func mergePlannerIntoShellAgent(agent *ShellAgentConfig, planner *PlannerConfig) {
 	if agent == nil || planner == nil {
 		return
-	}
-	if !agent.systemTemplateSet && planner.systemTemplateSet {
-		agent.SystemTemplate = planner.SystemTemplate
-		agent.systemTemplateSet = true
-	}
-	if !agent.instanceTemplateSet && planner.instanceTemplateSet {
-		agent.InstanceTemplate = planner.InstanceTemplate
-		agent.instanceTemplateSet = true
 	}
 	if !agent.stepLimitSet && planner.stepLimitSet {
 		agent.StepLimit = planner.StepLimit
@@ -587,6 +686,75 @@ func mergePlannerIntoShellAgent(agent *ShellAgentConfig, planner *PlannerConfig)
 		agent.CostLimit = planner.CostLimit
 		agent.costLimitSet = true
 	}
+}
+
+func mergePromptsSources(base *PromptsConfig, plannerLegacy *PlannerPromptsConfig, shellLegacy *ShellAgentPromptsConfig) *PromptsConfig {
+	if plannerLegacy == nil && shellLegacy == nil {
+		return base
+	}
+	if base == nil {
+		base = &PromptsConfig{}
+	}
+	base.Planner = mergePlannerPromptSources(base.Planner, plannerLegacy)
+	base.ShellAgent = mergeShellPromptSources(base.ShellAgent, shellLegacy)
+	if base.Planner == nil && base.ShellAgent == nil {
+		return nil
+	}
+	return base
+}
+
+func mergePlannerPromptSources(base, override *PlannerPromptsConfig) *PlannerPromptsConfig {
+	if override == nil {
+		return base
+	}
+	if base == nil {
+		copy := *override
+		return &copy
+	}
+	if override.systemTemplateSet {
+		base.SystemTemplate = override.SystemTemplate
+		base.systemTemplateSet = true
+	}
+	if override.instanceTemplateSet {
+		base.InstanceTemplate = override.InstanceTemplate
+		base.instanceTemplateSet = true
+	}
+	return base
+}
+
+func mergeShellPromptSources(base, override *ShellAgentPromptsConfig) *ShellAgentPromptsConfig {
+	if override == nil {
+		return base
+	}
+	if base == nil {
+		copy := *override
+		return &copy
+	}
+	if override.timeoutTemplateSet {
+		base.TimeoutTemplate = override.TimeoutTemplate
+		base.timeoutTemplateSet = true
+	}
+	if override.formatErrorTemplateSet {
+		base.FormatErrorTemplate = override.FormatErrorTemplate
+		base.formatErrorTemplateSet = true
+	}
+	if override.actionObservationTemplateSet {
+		base.ActionObservationTemplate = override.ActionObservationTemplate
+		base.actionObservationTemplateSet = true
+	}
+	if override.lightweightSystemTemplateSet {
+		base.LightweightSystemTemplate = override.LightweightSystemTemplate
+		base.lightweightSystemTemplateSet = true
+	}
+	if override.lightweightIntentTemplateSet {
+		base.LightweightIntentTemplate = override.LightweightIntentTemplate
+		base.lightweightIntentTemplateSet = true
+	}
+	if override.lightweightErrorTemplateSet {
+		base.LightweightErrorTemplate = override.LightweightErrorTemplate
+		base.lightweightErrorTemplateSet = true
+	}
+	return base
 }
 
 func parseEnvironmentSection(path string, data map[string]any) (*EnvironmentConfig, error) {
@@ -732,6 +900,20 @@ func cloneConfig(in Config) Config {
 	if in.Planner != nil {
 		planner := *in.Planner
 		clone.Planner = &planner
+	}
+	if in.Prompts != nil {
+		copyPrompts := &PromptsConfig{}
+		if in.Prompts.Planner != nil {
+			planner := *in.Prompts.Planner
+			copyPrompts.Planner = &planner
+		}
+		if in.Prompts.ShellAgent != nil {
+			shell := *in.Prompts.ShellAgent
+			copyPrompts.ShellAgent = &shell
+		}
+		if copyPrompts.Planner != nil || copyPrompts.ShellAgent != nil {
+			clone.Prompts = copyPrompts
+		}
 	}
 	if in.Environment != nil {
 		env := *in.Environment

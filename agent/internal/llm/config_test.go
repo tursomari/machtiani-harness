@@ -64,14 +64,19 @@ func TestLocateConfigFallsBackToGlobalConfig(t *testing.T) {
 func TestLoadGlobalConfigParsesSections(t *testing.T) {
 	content := `listen = "127.0.0.1:0"
 
-[planner]
+[prompts.planner]
 system_template = "Planner system"
 instance_template = "Planner instance"
+
+[prompts.shell-agent]
+format_error_template = "format-error"
+action_observation_template = "Observation: {{.Output}}"
+
+[planner]
 step_limit = 7
 cost_limit = 2.5
 
 [shell-agent]
-format_error_template = "format-error"
 lightweight_max_attempts = 4
 
 [model]
@@ -125,11 +130,23 @@ model = "alias-impl"
 	if cfg.ShellAgent.CostLimit != 2.5 {
 		t.Fatalf("expected shell-agent cost_limit fallback 2.5, got %+v", cfg.ShellAgent)
 	}
-	if cfg.ShellAgent.SystemTemplate != "Planner system" {
-		t.Fatalf("expected shell-agent system template from planner, got %q", cfg.ShellAgent.SystemTemplate)
+	if cfg.Prompts == nil || cfg.Prompts.Planner == nil {
+		t.Fatalf("expected planner prompts to be parsed, got %+v", cfg.Prompts)
 	}
-	if cfg.ShellAgent.FormatErrorTemplate != "format-error" {
-		t.Fatalf("expected shell-agent format_error_template, got %q", cfg.ShellAgent.FormatErrorTemplate)
+	if cfg.Prompts.Planner.SystemTemplate != "Planner system" {
+		t.Fatalf("expected planner system template, got %q", cfg.Prompts.Planner.SystemTemplate)
+	}
+	if cfg.Prompts.Planner.InstanceTemplate != "Planner instance" {
+		t.Fatalf("expected planner instance template, got %q", cfg.Prompts.Planner.InstanceTemplate)
+	}
+	if cfg.Prompts.ShellAgent == nil {
+		t.Fatalf("expected shell-agent prompts to be parsed, got %+v", cfg.Prompts)
+	}
+	if cfg.Prompts.ShellAgent.FormatErrorTemplate != "format-error" {
+		t.Fatalf("expected shell-agent format_error_template, got %q", cfg.Prompts.ShellAgent.FormatErrorTemplate)
+	}
+	if cfg.Prompts.ShellAgent.ActionObservationTemplate != "Observation: {{.Output}}" {
+		t.Fatalf("expected shell-agent action_observation_template, got %q", cfg.Prompts.ShellAgent.ActionObservationTemplate)
 	}
 	if cfg.ShellAgent.LightweightMaxAttempts != 4 {
 		t.Fatalf("expected shell-agent lightweight_max_attempts 4, got %d", cfg.ShellAgent.LightweightMaxAttempts)
@@ -183,14 +200,85 @@ provider = "fake"
 	if cfg.ShellAgent == nil {
 		t.Fatalf("expected shell-agent config from legacy section")
 	}
-	if cfg.ShellAgent.SystemTemplate != "legacy system" {
-		t.Fatalf("expected system template from legacy section, got %q", cfg.ShellAgent.SystemTemplate)
-	}
 	if cfg.ShellAgent.StepLimit != 5 {
 		t.Fatalf("expected step_limit 5 from legacy section, got %d", cfg.ShellAgent.StepLimit)
 	}
+	if cfg.Prompts == nil || cfg.Prompts.Planner == nil {
+		t.Fatalf("expected planner prompts from legacy section")
+	}
+	if cfg.Prompts.Planner.SystemTemplate != "legacy system" {
+		t.Fatalf("expected planner system template from legacy section, got %q", cfg.Prompts.Planner.SystemTemplate)
+	}
+	if cfg.Prompts.Planner.InstanceTemplate != "legacy instance" {
+		t.Fatalf("expected planner instance template from legacy section, got %q", cfg.Prompts.Planner.InstanceTemplate)
+	}
+	if cfg.Prompts.ShellAgent != nil {
+		t.Fatalf("expected shell-agent prompts to be nil when using legacy agent section, got %+v", cfg.Prompts.ShellAgent)
+	}
 	if cfg.Planner != nil {
 		t.Fatalf("expected planner to be nil when only legacy agent section provided")
+	}
+}
+
+func TestLoadGlobalConfigPromotesLegacyShellAgentTemplates(t *testing.T) {
+	content := `listen = "127.0.0.1:0"
+
+[shell-agent]
+system_template = "agent system"
+instance_template = "agent instance"
+timeout_template = "legacy timeout"
+format_error_template = "legacy format"
+action_observation_template = "legacy action {{.Output}}"
+lightweight_system_template = "legacy lw system"
+lightweight_intent_template = "legacy lw intent"
+lightweight_error_template = "legacy lw error"
+lightweight_max_attempts = 3
+
+[planner]
+step_limit = 9
+`
+
+	path := filepath.Join(t.TempDir(), "config.toml")
+	mustWriteFile(t, path, content)
+	t.Setenv("MACHTIANI_CONFIG", path)
+	ResetConfigForTesting()
+
+	cfg, _, err := LoadGlobalConfig()
+	if err != nil {
+		t.Fatalf("LoadGlobalConfig: %v", err)
+	}
+	if cfg.Prompts == nil || cfg.Prompts.Planner == nil {
+		t.Fatalf("expected planner prompts from legacy shell-agent section")
+	}
+	if cfg.Prompts.Planner.SystemTemplate != "agent system" {
+		t.Fatalf("expected planner system template from legacy shell-agent section, got %q", cfg.Prompts.Planner.SystemTemplate)
+	}
+	if cfg.Prompts.Planner.InstanceTemplate != "agent instance" {
+		t.Fatalf("expected planner instance template from legacy shell-agent section, got %q", cfg.Prompts.Planner.InstanceTemplate)
+	}
+	if cfg.Prompts.ShellAgent == nil {
+		t.Fatalf("expected shell-agent prompts from legacy shell-agent section")
+	}
+	if cfg.Prompts.ShellAgent.FormatErrorTemplate != "legacy format" {
+		t.Fatalf("expected shell-agent format template, got %q", cfg.Prompts.ShellAgent.FormatErrorTemplate)
+	}
+	if cfg.Prompts.ShellAgent.ActionObservationTemplate != "legacy action {{.Output}}" {
+		t.Fatalf("expected shell-agent action template, got %q", cfg.Prompts.ShellAgent.ActionObservationTemplate)
+	}
+	if cfg.Prompts.ShellAgent.LightweightSystemTemplate != "legacy lw system" {
+		t.Fatalf("expected lightweight system template, got %q", cfg.Prompts.ShellAgent.LightweightSystemTemplate)
+	}
+	if cfg.Prompts.ShellAgent.LightweightIntentTemplate != "legacy lw intent" {
+		t.Fatalf("expected lightweight intent template, got %q", cfg.Prompts.ShellAgent.LightweightIntentTemplate)
+	}
+	if cfg.Prompts.ShellAgent.LightweightErrorTemplate != "legacy lw error" {
+		t.Fatalf("expected lightweight error template, got %q", cfg.Prompts.ShellAgent.LightweightErrorTemplate)
+	}
+	if cfg.ShellAgent.LightweightMaxAttempts != 3 {
+		t.Fatalf("expected lightweight max attempts to remain 3, got %d", cfg.ShellAgent.LightweightMaxAttempts)
+	}
+	if cfg.ShellAgent.StepLimit != 9 {
+		t.Fatalf("expected shell-agent step_limit to inherit 9, got %d", cfg.ShellAgent.StepLimit)
 	}
 }
 
