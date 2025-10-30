@@ -64,9 +64,15 @@ func TestLocateConfigFallsBackToGlobalConfig(t *testing.T) {
 func TestLoadGlobalConfigParsesSections(t *testing.T) {
 	content := `listen = "127.0.0.1:0"
 
-[agent]
+[planner]
+system_template = "Planner system"
+instance_template = "Planner instance"
 step_limit = 7
 cost_limit = 2.5
+
+[shell-agent]
+format_error_template = "format-error"
+lightweight_max_attempts = 4
 
 [model]
 model_name = "alias-model"
@@ -104,11 +110,29 @@ model = "alias-impl"
 	if loadedPath != path {
 		t.Fatalf("expected loaded path %q, got %q", path, loadedPath)
 	}
-	if cfg.Agent == nil || cfg.Agent.StepLimit != 7 {
-		t.Fatalf("expected agent step_limit 7, got %+v", cfg.Agent)
+	if cfg.Planner == nil || cfg.Planner.StepLimit != 7 {
+		t.Fatalf("expected planner step_limit 7, got %+v", cfg.Planner)
 	}
-	if cfg.Agent.CostLimit != 2.5 {
-		t.Fatalf("expected agent cost_limit 2.5, got %v", cfg.Agent.CostLimit)
+	if cfg.Planner.CostLimit != 2.5 {
+		t.Fatalf("expected planner cost_limit 2.5, got %v", cfg.Planner.CostLimit)
+	}
+	if cfg.ShellAgent == nil {
+		t.Fatalf("expected shell-agent config")
+	}
+	if cfg.ShellAgent.StepLimit != 7 {
+		t.Fatalf("expected shell-agent step_limit fallback 7, got %+v", cfg.ShellAgent)
+	}
+	if cfg.ShellAgent.CostLimit != 2.5 {
+		t.Fatalf("expected shell-agent cost_limit fallback 2.5, got %+v", cfg.ShellAgent)
+	}
+	if cfg.ShellAgent.SystemTemplate != "Planner system" {
+		t.Fatalf("expected shell-agent system template from planner, got %q", cfg.ShellAgent.SystemTemplate)
+	}
+	if cfg.ShellAgent.FormatErrorTemplate != "format-error" {
+		t.Fatalf("expected shell-agent format_error_template, got %q", cfg.ShellAgent.FormatErrorTemplate)
+	}
+	if cfg.ShellAgent.LightweightMaxAttempts != 4 {
+		t.Fatalf("expected shell-agent lightweight_max_attempts 4, got %d", cfg.ShellAgent.LightweightMaxAttempts)
 	}
 	if cfg.Model == nil || strings.TrimSpace(cfg.Model.ModelName) != "alias-model" {
 		t.Fatalf("expected model name alias-model, got %+v", cfg.Model)
@@ -127,6 +151,46 @@ model = "alias-impl"
 	}
 	if cfg.Environment == nil || cfg.Environment.EnvVars["FOO"] != "bar" {
 		t.Fatalf("expected environment env_vars FOO=bar, got %+v", cfg.Environment)
+	}
+}
+
+func TestLoadGlobalConfigSupportsLegacyAgentSection(t *testing.T) {
+	content := `listen = "127.0.0.1:0"
+
+[agent]
+system_template = "legacy system"
+instance_template = "legacy instance"
+step_limit = 5
+cost_limit = 1.5
+lightweight_max_attempts = 2
+
+[environment]
+type = "local"
+
+[models.foo]
+provider = "fake"
+`
+
+	path := filepath.Join(t.TempDir(), "config.toml")
+	mustWriteFile(t, path, content)
+	t.Setenv("MACHTIANI_CONFIG", path)
+	ResetConfigForTesting()
+
+	cfg, _, err := LoadGlobalConfig()
+	if err != nil {
+		t.Fatalf("LoadGlobalConfig: %v", err)
+	}
+	if cfg.ShellAgent == nil {
+		t.Fatalf("expected shell-agent config from legacy section")
+	}
+	if cfg.ShellAgent.SystemTemplate != "legacy system" {
+		t.Fatalf("expected system template from legacy section, got %q", cfg.ShellAgent.SystemTemplate)
+	}
+	if cfg.ShellAgent.StepLimit != 5 {
+		t.Fatalf("expected step_limit 5 from legacy section, got %d", cfg.ShellAgent.StepLimit)
+	}
+	if cfg.Planner != nil {
+		t.Fatalf("expected planner to be nil when only legacy agent section provided")
 	}
 }
 

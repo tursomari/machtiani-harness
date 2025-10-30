@@ -129,10 +129,14 @@ Create one of these files before your first run. A minimal example that targets 
 listen = "127.0.0.1:8042"
 default_model = "foo"
 
-[agent]
+[planner]
 step_limit = 6
 system_template = "You are the planning layer for the Machtiani shell agent."
-instance_template = "Task: {{.Task}}\n\nMachine: {{.Machine}}\n"
+instance_template = "Task: {{.Task}}"
+
+[shell-agent]
+format_error_template = "Please respond with a natural-language description of the next action."
+lightweight_max_attempts = 3
 
 [model]
 model_name = "foo"        # alias defined under [models]
@@ -152,7 +156,7 @@ provider = "openrouter"
 model    = "openai/gpt-5-nano"
 ```
 
-Keys inside `[agent]`, `[model]`, and `[environment]` are shared with the shell-agent implementation; omit `model.api_key` to keep credentials out of the file. When you need an alternate model temporarily, pass `--shell-agent-model <alias>` to `mct-agent run --shell-agent` or to the standalone `shell-agent` binary.
+Keys inside `[planner]`, `[shell-agent]`, `[model]`, and `[environment]` are shared across Machtiani binaries; omit `model.api_key` to keep credentials out of the file. When you need an alternate model temporarily, pass `--shell-agent-model <alias>` to `mct-agent run --shell-agent` or to the standalone `shell-agent` binary.
 
 ### Environment Variables and Flags
 `OPENAI_*` (or the legacy `AGENT_MODEL_*`) environment variables still work; they override missing parts of `[model]` and remain useful for secrets. Command-line flags such as `--openai-api-key` continue to take highest precedence.

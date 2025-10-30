@@ -16,15 +16,16 @@ type Config struct {
 	Listen       string                     `toml:"listen"`
 	DefaultModel string                     `toml:"default_model"`
 	Model        *ModelConfig               `toml:"model"`
-	Agent        *AgentConfig               `toml:"agent"`
+	Planner      *PlannerConfig             `toml:"planner"`
+	ShellAgent   *ShellAgentConfig          `toml:"shell-agent"`
 	Environment  *EnvironmentConfig         `toml:"environment"`
 	Providers    map[string]ProviderConfig  `toml:"providers"`
 	Models       map[string]ModelDefinition `toml:"models"`
 }
 
-// AgentConfig mirrors the shell-agent agent configuration section and is loaded
-// from the global TOML configuration under [agent].
-type AgentConfig struct {
+// ShellAgentConfig mirrors the shell-agent configuration section and is loaded
+// from the global TOML configuration under [shell-agent] (or legacy [agent]).
+type ShellAgentConfig struct {
 	SystemTemplate            string  `toml:"system_template"`
 	InstanceTemplate          string  `toml:"instance_template"`
 	TimeoutTemplate           string  `toml:"timeout_template"`
@@ -36,6 +37,25 @@ type AgentConfig struct {
 	LightweightMaxAttempts    int     `toml:"lightweight_max_attempts"`
 	StepLimit                 int     `toml:"step_limit"`
 	CostLimit                 float64 `toml:"cost_limit"`
+
+	systemTemplateSet   bool `toml:"-"`
+	instanceTemplateSet bool `toml:"-"`
+	stepLimitSet        bool `toml:"-"`
+	costLimitSet        bool `toml:"-"`
+}
+
+// PlannerConfig captures configuration intended for the orchestration planner
+// while also providing defaults for shell-agent where applicable.
+type PlannerConfig struct {
+	SystemTemplate   string  `toml:"system_template"`
+	InstanceTemplate string  `toml:"instance_template"`
+	StepLimit        int     `toml:"step_limit"`
+	CostLimit        float64 `toml:"cost_limit"`
+
+	systemTemplateSet   bool `toml:"-"`
+	instanceTemplateSet bool `toml:"-"`
+	stepLimitSet        bool `toml:"-"`
+	costLimitSet        bool `toml:"-"`
 }
 
 // ModelConfig captures direct model overrides under the top-level [model]
@@ -323,12 +343,28 @@ func parseConfig(path string) (Config, error) {
 		}
 		cfg.Model = modelCfg
 	}
-	if agentRaw, ok := toMap(raw["agent"]); ok {
-		agentCfg, err := parseAgentSection(path, agentRaw)
+	if shellAgentRaw, ok := toMap(raw["shell-agent"]); ok {
+		agentCfg, err := parseShellAgentSection(path, "shell-agent", shellAgentRaw)
 		if err != nil {
 			return Config{}, err
 		}
-		cfg.Agent = agentCfg
+		cfg.ShellAgent = agentCfg
+	} else if legacyAgentRaw, ok := toMap(raw["agent"]); ok {
+		agentCfg, err := parseShellAgentSection(path, "agent", legacyAgentRaw)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.ShellAgent = agentCfg
+	}
+	if plannerRaw, ok := toMap(raw["planner"]); ok {
+		plannerCfg, err := parsePlannerSection(path, plannerRaw)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.Planner = plannerCfg
+	}
+	if cfg.Planner != nil && cfg.ShellAgent != nil {
+		mergePlannerIntoShellAgent(cfg.ShellAgent, cfg.Planner)
 	}
 	if envRaw, ok := toMap(raw["environment"]); ok {
 		envCfg, err := parseEnvironmentSection(path, envRaw)
@@ -428,42 +464,129 @@ func parseModelSection(path string, data map[string]any) (*ModelConfig, error) {
 	return model, nil
 }
 
-func parseAgentSection(path string, data map[string]any) (*AgentConfig, error) {
-	agent := &AgentConfig{}
-	if v, ok := data["system_template"].(string); ok {
-		agent.SystemTemplate = v
+func parseShellAgentSection(path, section string, data map[string]any) (*ShellAgentConfig, error) {
+	agent := &ShellAgentConfig{}
+	if raw, ok := data["system_template"]; ok {
+		str, ok := raw.(string)
+		if !ok {
+			return nil, fmt.Errorf("parse %s [%s]: system_template must be a string", path, section)
+		}
+		agent.SystemTemplate = str
+		agent.systemTemplateSet = true
 	}
-	if v, ok := data["instance_template"].(string); ok {
-		agent.InstanceTemplate = v
+	if raw, ok := data["instance_template"]; ok {
+		str, ok := raw.(string)
+		if !ok {
+			return nil, fmt.Errorf("parse %s [%s]: instance_template must be a string", path, section)
+		}
+		agent.InstanceTemplate = str
+		agent.instanceTemplateSet = true
 	}
-	if v, ok := data["timeout_template"].(string); ok {
-		agent.TimeoutTemplate = v
+	if raw, ok := data["timeout_template"]; ok {
+		str, ok := raw.(string)
+		if !ok {
+			return nil, fmt.Errorf("parse %s [%s]: timeout_template must be a string", path, section)
+		}
+		agent.TimeoutTemplate = str
 	}
-	if v, ok := data["format_error_template"].(string); ok {
-		agent.FormatErrorTemplate = v
+	if raw, ok := data["format_error_template"]; ok {
+		str, ok := raw.(string)
+		if !ok {
+			return nil, fmt.Errorf("parse %s [%s]: format_error_template must be a string", path, section)
+		}
+		agent.FormatErrorTemplate = str
 	}
-	if v, ok := data["action_observation_template"].(string); ok {
-		agent.ActionObservationTemplate = v
+	if raw, ok := data["action_observation_template"]; ok {
+		str, ok := raw.(string)
+		if !ok {
+			return nil, fmt.Errorf("parse %s [%s]: action_observation_template must be a string", path, section)
+		}
+		agent.ActionObservationTemplate = str
 	}
-	if v, ok := data["lightweight_system_template"].(string); ok {
-		agent.LightweightSystemTemplate = v
+	if raw, ok := data["lightweight_system_template"]; ok {
+		str, ok := raw.(string)
+		if !ok {
+			return nil, fmt.Errorf("parse %s [%s]: lightweight_system_template must be a string", path, section)
+		}
+		agent.LightweightSystemTemplate = str
 	}
-	if v, ok := data["lightweight_intent_template"].(string); ok {
-		agent.LightweightIntentTemplate = v
+	if raw, ok := data["lightweight_intent_template"]; ok {
+		str, ok := raw.(string)
+		if !ok {
+			return nil, fmt.Errorf("parse %s [%s]: lightweight_intent_template must be a string", path, section)
+		}
+		agent.LightweightIntentTemplate = str
 	}
-	if v, ok := data["lightweight_error_template"].(string); ok {
-		agent.LightweightErrorTemplate = v
+	if raw, ok := data["lightweight_error_template"]; ok {
+		str, ok := raw.(string)
+		if !ok {
+			return nil, fmt.Errorf("parse %s [%s]: lightweight_error_template must be a string", path, section)
+		}
+		agent.LightweightErrorTemplate = str
 	}
-	if v, ok := toInt(data["lightweight_max_attempts"]); ok {
-		agent.LightweightMaxAttempts = v
+	if val, ok := toInt(data["lightweight_max_attempts"]); ok {
+		agent.LightweightMaxAttempts = val
 	}
-	if v, ok := toInt(data["step_limit"]); ok {
-		agent.StepLimit = v
+	if val, ok := toInt(data["step_limit"]); ok {
+		agent.StepLimit = val
+		agent.stepLimitSet = true
 	}
-	if v, ok := toFloat(data["cost_limit"]); ok {
-		agent.CostLimit = v
+	if val, ok := toFloat(data["cost_limit"]); ok {
+		agent.CostLimit = val
+		agent.costLimitSet = true
 	}
 	return agent, nil
+}
+
+func parsePlannerSection(path string, data map[string]any) (*PlannerConfig, error) {
+	planner := &PlannerConfig{}
+	if raw, ok := data["system_template"]; ok {
+		str, ok := raw.(string)
+		if !ok {
+			return nil, fmt.Errorf("parse %s [planner]: system_template must be a string", path)
+		}
+		planner.SystemTemplate = str
+		planner.systemTemplateSet = true
+	}
+	if raw, ok := data["instance_template"]; ok {
+		str, ok := raw.(string)
+		if !ok {
+			return nil, fmt.Errorf("parse %s [planner]: instance_template must be a string", path)
+		}
+		planner.InstanceTemplate = str
+		planner.instanceTemplateSet = true
+	}
+	if val, ok := toInt(data["step_limit"]); ok {
+		planner.StepLimit = val
+		planner.stepLimitSet = true
+	}
+	if val, ok := toFloat(data["cost_limit"]); ok {
+		planner.CostLimit = val
+		planner.costLimitSet = true
+	}
+	return planner, nil
+}
+
+func mergePlannerIntoShellAgent(agent *ShellAgentConfig, planner *PlannerConfig) {
+	if agent == nil || planner == nil {
+		return
+	}
+	if !agent.systemTemplateSet && planner.systemTemplateSet {
+		agent.SystemTemplate = planner.SystemTemplate
+		agent.systemTemplateSet = true
+	}
+	if !agent.instanceTemplateSet && planner.instanceTemplateSet {
+		agent.InstanceTemplate = planner.InstanceTemplate
+		agent.instanceTemplateSet = true
+	}
+	if !agent.stepLimitSet && planner.stepLimitSet {
+		agent.StepLimit = planner.StepLimit
+		agent.stepLimitSet = true
+	}
+	if !agent.costLimitSet && planner.costLimitSet {
+		agent.CostLimit = planner.CostLimit
+		agent.costLimitSet = true
+	}
 }
 
 func parseEnvironmentSection(path string, data map[string]any) (*EnvironmentConfig, error) {
@@ -602,9 +725,13 @@ func cloneConfig(in Config) Config {
 		Providers:    make(map[string]ProviderConfig, len(in.Providers)),
 		Models:       make(map[string]ModelDefinition, len(in.Models)),
 	}
-	if in.Agent != nil {
-		agent := *in.Agent
-		clone.Agent = &agent
+	if in.ShellAgent != nil {
+		agent := *in.ShellAgent
+		clone.ShellAgent = &agent
+	}
+	if in.Planner != nil {
+		planner := *in.Planner
+		clone.Planner = &planner
 	}
 	if in.Environment != nil {
 		env := *in.Environment
