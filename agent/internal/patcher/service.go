@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tursomari/machtiani/agent/internal/gitops"
 	mctpatcher "github.com/tursomari/machtiani/agent/internal/mct/patcher"
 	"github.com/tursomari/machtiani/agent/internal/patcher/internal/check"
 	"github.com/tursomari/machtiani/agent/internal/patcher/internal/diff"
@@ -84,13 +85,42 @@ func (s *Service) ApplyAndGeneratePatch(ctx context.Context, params mctpatcher.P
 		return nil, err
 	}
 
+	workspaceRoot := repoAbs
+	if strings.TrimSpace(params.WorkspaceRoot) != "" {
+		workspaceRoot, err = filepath.Abs(params.WorkspaceRoot)
+		if err != nil {
+			return nil, &mctpatcher.ValidationError{Err: fmt.Errorf("invalid workspace root: %w", err)}
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+	}
+
 	if ok, err := fsutil.IsRepoRoot(repoAbs); err != nil {
 		return nil, &mctpatcher.ValidationError{Err: fmt.Errorf("failed to inspect repo: %w", err)}
 	} else if !ok {
 		return nil, &mctpatcher.ValidationError{Err: fmt.Errorf("repo root must contain .git: %s", repoAbs)}
 	}
+	if workspaceRoot != repoAbs {
+		if ok, err := fsutil.IsRepoRoot(workspaceRoot); err != nil {
+			return nil, &mctpatcher.ValidationError{Err: fmt.Errorf("failed to inspect workspace: %w", err)}
+		} else if !ok {
+			return nil, &mctpatcher.ValidationError{Err: fmt.Errorf("workspace must contain .git: %s", workspaceRoot)}
+		}
+	}
 
-	if err := mctpatcher.Validate(repoAbs, params.Instructions); err != nil {
+	mirrorRoot := ""
+	if strings.TrimSpace(params.MirrorDir) != "" {
+		mirrorRoot, err = filepath.Abs(params.MirrorDir)
+		if err != nil {
+			return nil, &mctpatcher.ValidationError{Err: fmt.Errorf("invalid mirror dir: %w", err)}
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+	}
+
+	if err := mctpatcher.Validate(workspaceRoot, params.Instructions); err != nil {
 		return nil, &mctpatcher.ValidationError{Err: err}
 	}
 	if err := ctx.Err(); err != nil {
@@ -98,7 +128,7 @@ func (s *Service) ApplyAndGeneratePatch(ctx context.Context, params mctpatcher.P
 	}
 
 	s.logf(params.Verbose, "applying edits in memory")
-	afterMap, filesTouched, err := engine.ApplyAll(repoAbs, params.Instructions)
+	afterMap, filesTouched, err := engine.ApplyAll(workspaceRoot, params.Instructions)
 	if err != nil {
 		return nil, &mctpatcher.ValidationError{Err: err}
 	}
@@ -107,13 +137,13 @@ func (s *Service) ApplyAndGeneratePatch(ctx context.Context, params mctpatcher.P
 	}
 
 	s.logf(params.Verbose, "generating patch via git diff --no-index")
-	mirrorDir, cleanup, err := fsutil.MakeTempMirror(afterMap)
+	mirrorDir, cleanup, err := fsutil.MakeTempMirror(afterMap, mirrorRoot)
 	if err != nil {
 		return nil, &mctpatcher.PatchGenerationError{Err: err}
 	}
 	defer cleanup()
 
-	patchBytes, err := diff.Generate(repoAbs, mirrorDir, filesTouched)
+	patchBytes, err := diff.Generate(workspaceRoot, mirrorDir, filesTouched)
 	if err != nil {
 		return nil, &mctpatcher.PatchGenerationError{Err: err}
 	}
@@ -144,7 +174,7 @@ func (s *Service) ApplyAndGeneratePatch(ctx context.Context, params mctpatcher.P
 	}
 
 	s.logf(params.Verbose, "validating patch with git apply --check")
-	if err := check.ApplyCheck(repoAbs, patchPath); err != nil {
+	if err := check.ApplyCheck(workspaceRoot, patchPath); err != nil {
 		raw := strings.TrimSpace(err.Error())
 		diag := mctpatcher.PatchValidationDiagnostics{
 			Operation: "git apply --check",
@@ -155,6 +185,14 @@ func (s *Service) ApplyAndGeneratePatch(ctx context.Context, params mctpatcher.P
 		return nil, &mctpatcher.PatchNotCleanError{Err: err, Diagnostics: diag}
 	}
 
+	workspaceApplied := false
+	if strings.TrimSpace(params.WorkspaceRoot) != "" {
+		if err := gitops.ApplyPatchInDir(workspaceRoot, patchPath, params.Verbose); err != nil {
+			return nil, &mctpatcher.PatchGenerationError{Err: fmt.Errorf("apply patch in workspace: %w", err)}
+		}
+		workspaceApplied = true
+	}
+
 	stats := diff.ExtractStats(patchBytes)
 	// Prefer touched files list for stable relative paths
 	files := append([]string(nil), filesTouched...)
@@ -163,12 +201,14 @@ func (s *Service) ApplyAndGeneratePatch(ctx context.Context, params mctpatcher.P
 	}
 
 	res := &mctpatcher.PatchResult{
-		PatchPath:     patchPath,
-		FilesModified: stats.FilesModified,
-		Insertions:    stats.Insertions,
-		Deletions:     stats.Deletions,
-		AfterStateDir: afterDir,
-		ManifestPath:  manifestPath,
+		PatchPath:          patchPath,
+		FilesModified:      stats.FilesModified,
+		Insertions:         stats.Insertions,
+		Deletions:          stats.Deletions,
+		AfterStateDir:      afterDir,
+		ManifestPath:       manifestPath,
+		Sequence:           params.Sequence,
+		AppliedInWorkspace: workspaceApplied,
 	}
 	if params.Instructions.Metadata != nil {
 		res.Description = strings.TrimSpace(params.Instructions.Metadata.Description)

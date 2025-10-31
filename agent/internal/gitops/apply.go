@@ -8,10 +8,20 @@ import (
 	"strings"
 )
 
-// ApplyPatch invokes `git apply` against the provided patch file. When verbose is true,
-// it mirrors the original CLI logging behaviour from the legacy main.go implementation.
+// ApplyPatch invokes `git apply` against the provided patch file using the current
+// working directory.
 func ApplyPatch(patchPath string, verbose bool) error {
+	return ApplyPatchInDir("", patchPath, verbose)
+}
+
+// ApplyPatchInDir invokes `git apply` against the provided patch file from the
+// specified repository directory. When verbose is true, it mirrors the original
+// CLI logging behaviour from the legacy main.go implementation.
+func ApplyPatchInDir(dir, patchPath string, verbose bool) error {
 	cmd := exec.Command("git", "apply", patchPath)
+	if strings.TrimSpace(dir) != "" {
+		cmd.Dir = dir
+	}
 	var out bytes.Buffer
 	var errb bytes.Buffer
 	cmd.Stdout = &out
@@ -28,6 +38,9 @@ func ApplyPatch(patchPath string, verbose bool) error {
 			fmt.Fprintln(os.Stderr, "[git] stdout:", trim(out.String(), 800))
 		}
 		st := exec.Command("git", "status", "--porcelain")
+		if strings.TrimSpace(dir) != "" {
+			st.Dir = dir
+		}
 		var sb bytes.Buffer
 		st.Stdout = &sb
 		_ = st.Run()

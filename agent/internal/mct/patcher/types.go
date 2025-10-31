@@ -12,22 +12,27 @@ type Service interface {
 
 // PatchParams holds the inputs for producing a patch from a repository.
 type PatchParams struct {
-	RepoRoot     string
-	SessionID    string
-	Instructions Instructions
-	OutputDir    string
-	Verbose      bool
+	RepoRoot      string
+	SessionID     string
+	Instructions  Instructions
+	OutputDir     string
+	Verbose       bool
+	WorkspaceRoot string
+	MirrorDir     string
+	Sequence      int
 }
 
 // PatchResult contains metadata about a generated patch file.
 type PatchResult struct {
-	PatchPath     string
-	FilesModified []string
-	Insertions    int
-	Deletions     int
-	Description   string
-	AfterStateDir string
-	ManifestPath  string
+	PatchPath          string
+	FilesModified      []string
+	Insertions         int
+	Deletions          int
+	Description        string
+	AfterStateDir      string
+	ManifestPath       string
+	Sequence           int
+	AppliedInWorkspace bool
 }
 
 // Instructions encodes the set of file edits that should be applied.

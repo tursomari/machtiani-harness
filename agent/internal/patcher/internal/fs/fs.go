@@ -4,6 +4,8 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,10 +24,26 @@ func IsRepoRoot(path string) (bool, error) {
 	return st.IsDir(), nil
 }
 
-// MakeTempMirror writes the after-state content into a temp directory structure
-// mirroring the repo paths for changed files only. A nil content denotes deletion
-// and thus is not written.
-func MakeTempMirror(after map[string][]byte) (string, func(), error) {
+// MakeTempMirror materializes the provided after-state content either into a
+// fresh temporary directory or into the provided existing directory. Supplying
+// an empty reuseDir preserves the original behaviour of allocating a new temp
+// directory and returning a cleanup function that removes it. When reuseDir is
+// non-empty, the caller is responsible for lifecycle management and cleanup is
+// a no-op.
+func MakeTempMirror(after map[string][]byte, reuseDir string) (string, func(), error) {
+	if strings.TrimSpace(reuseDir) != "" {
+		if err := os.RemoveAll(reuseDir); err != nil {
+			return "", func() {}, err
+		}
+		if err := os.MkdirAll(reuseDir, 0o755); err != nil {
+			return "", func() {}, err
+		}
+		if err := WriteMirror(reuseDir, after); err != nil {
+			return "", func() {}, err
+		}
+		return reuseDir, func() {}, nil
+	}
+
 	dir, err := os.MkdirTemp("", "patcher-mirror-*")
 	if err != nil {
 		return "", func() {}, err
@@ -72,4 +90,77 @@ func PatchFilename(t time.Time) string {
 		return fmt.Sprintf("%s.patch", ts)
 	}
 	return fmt.Sprintf("%s-%s.patch", ts, hex.EncodeToString(b[:]))
+}
+
+// MakeSessionWorkspace creates a temporary directory containing a full copy of
+// the source repository, including the working tree and the .git directory. The
+// returned cleanup function removes the workspace when invoked.
+func MakeSessionWorkspace(src string) (string, func(), error) {
+	ws, err := os.MkdirTemp("", "patcher-workspace-*")
+	if err != nil {
+		return "", func() {}, err
+	}
+	cleanup := func() { _ = os.RemoveAll(ws) }
+	if err := copyTree(src, ws); err != nil {
+		cleanup()
+		return "", func() {}, err
+	}
+	return ws, cleanup, nil
+}
+
+func copyTree(src, dst string) error {
+	return filepath.WalkDir(src, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return nil
+		}
+		target := filepath.Join(dst, rel)
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		switch {
+		case d.Type()&os.ModeSymlink != 0:
+			link, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			return os.Symlink(link, target)
+		case d.IsDir():
+			return os.MkdirAll(target, info.Mode())
+		default:
+			return copyFile(path, target, info.Mode())
+		}
+	})
+}
+
+func copyFile(src, dst string, mode fs.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	srcFile, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer srcFile.Close()
+	// Ensure files are created with write permissions for subsequent edits.
+	perm := mode
+	if perm&0o200 == 0 {
+		perm |= 0o200
+	}
+	dstFile, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, perm)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(dstFile, srcFile); err != nil {
+		dstFile.Close()
+		return err
+	}
+	return dstFile.Close()
 }

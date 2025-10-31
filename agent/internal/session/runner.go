@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/tursomari/machtiani/agent/internal/gitops"
 	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
 	mctpatcher "github.com/tursomari/machtiani/agent/internal/mct/patcher"
 	promptsvc "github.com/tursomari/machtiani/agent/internal/mct/prompt"
@@ -176,6 +175,7 @@ func Run(ctx context.Context, opts Options) Result {
 			SessionID: sessionID,
 			Runtime:   models.patcher.toPromptRuntime(),
 			Service:   patchersvc.NewService(patchersvc.WithLogger(patchLogger)),
+			RepoRoot:  repoRoot,
 		}
 		if err := pr.Resolve(); err != nil {
 			if cfg.verbose {
@@ -183,6 +183,9 @@ func Run(ctx context.Context, opts Options) Result {
 			}
 		}
 		pRunner = pr
+	}
+	if pRunner != nil {
+		defer pRunner.Close()
 	}
 
 	pl := planner.NewClient(planner.ClientConfig{
@@ -682,46 +685,43 @@ func Run(ctx context.Context, opts Options) Result {
 				patchTurnLabel = "Patcher: " + desc
 			}
 			resMap := map[string]any{
-				"patch_path":     result.PatchPath,
-				"applies":        true,
-				"files_modified": result.FilesModified,
-				"insertions":     result.Insertions,
-				"deletions":      result.Deletions,
+				"patch_path":        result.PatchPath,
+				"sequence":          result.Sequence,
+				"applies":           true,
+				"files_modified":    result.FilesModified,
+				"insertions":        result.Insertions,
+				"deletions":         result.Deletions,
+				"workspace_applied": result.AppliedInWorkspace,
 			}
 			if strings.TrimSpace(result.Description) != "" {
 				resMap["description"] = strings.TrimSpace(result.Description)
 			}
 			resJSON, _ := json.Marshal(resMap)
-			ans := fmt.Sprintf("Patch created: %s\nfiles_modified: %v\ninsertions: %d\ndeletions: %d\n\ninput:\n%s\n\noutput:\n%s\n",
+			workspaceStatus := "workspace_applied: no"
+			if result.AppliedInWorkspace {
+				workspaceStatus = "workspace_applied: yes"
+			} else if cfg.dryRun {
+				workspaceStatus = "workspace_applied: (dry-run)"
+			}
+			finalizeStatus := "finalize: pending"
+			switch {
+			case cfg.dryRun:
+				finalizeStatus = "finalize: (dry-run)"
+			case cfg.patchNoApply:
+				finalizeStatus = "finalize: skipped (--patch-no-apply)"
+			}
+			ans := fmt.Sprintf(
+				"Patch created: %s\nsequence: %d\nfiles_modified: %v\ninsertions: %d\ndeletions: %d\n%s\n%s\n\ninput:\n%s\n\noutput:\n%s\n",
 				result.PatchPath,
+				result.Sequence,
 				strings.Join(result.FilesModified, ", "),
 				result.Insertions,
 				result.Deletions,
+				workspaceStatus,
+				finalizeStatus,
 				trimTo(string(jsonBytes), 1000),
 				trimTo(string(resJSON), 1000),
 			)
-			if !cfg.patchNoApply && !cfg.dryRun {
-				if aerr := gitApply(result.PatchPath, cfg.verbose); aerr != nil {
-					if cfg.verbose {
-						fmt.Fprintln(os.Stderr, "[git] apply error (pre-finalize):", aerr)
-					}
-					stream.Abort("git apply failed")
-					_ = tr.WriteTurn(step, patchTurnLabel, "", nil, trimTo(aerr.Error(), 800), "patch-error")
-					recordPatchError("git_apply_error", aerr, nil)
-					if shouldFinalizeAfterPatch {
-						goto Finalize
-					}
-					continue
-				}
-				ans = ans + "applied: yes\n"
-			} else if cfg.dryRun {
-				if cfg.verbose {
-					fmt.Fprintln(os.Stderr, "[git] apply (pre-finalize dry-run) skipping")
-				}
-				ans = ans + "applied: (dry-run)\n"
-			} else {
-				ans = ans + "applied: skipped (use without --patch-no-apply)\n"
-			}
 			if err := tr.WriteTurn(step, patchTurnLabel, "", nil, ans, "patch"); err != nil {
 				fmt.Fprintln(os.Stderr, "Transcript write error:", err)
 				sessionErr = err
@@ -734,13 +734,16 @@ func Run(ctx context.Context, opts Options) Result {
 				extra = trajectory.MergeExcerptWithPrefix(extra, trajectory.MakeTextExcerpt(ans, trajectoryWriter.ExcerptLen()), "answer")
 			}
 			extra["patch_path"] = strings.TrimSpace(result.PatchPath)
+			extra["patch_sequence"] = result.Sequence
 			extra["patch_insertions"] = result.Insertions
 			extra["patch_deletions"] = result.Deletions
 			extra["patch_files_modified"] = len(result.FilesModified)
 			if len(result.FilesModified) > 0 && len(result.FilesModified) <= 10 {
 				extra["patch_files"] = append([]string(nil), result.FilesModified...)
 			}
-			extra["patch_applied"] = !cfg.patchNoApply && !cfg.dryRun
+			extra["patch_workspace_applied"] = result.AppliedInWorkspace
+			extra["patch_applied"] = result.AppliedInWorkspace
+			extra["patch_finalize_pending"] = !cfg.patchNoApply && !cfg.dryRun
 			patchOutcome("success", nil, extra)
 			if shouldFinalizeAfterPatch {
 				goto Finalize
@@ -844,46 +847,43 @@ Finalize:
 								qline = "Patcher: pre-finalize - " + strings.TrimSpace(result.Description)
 							}
 							resMap := map[string]any{
-								"patch_path":     result.PatchPath,
-								"applies":        true,
-								"files_modified": result.FilesModified,
-								"insertions":     result.Insertions,
-								"deletions":      result.Deletions,
+								"patch_path":        result.PatchPath,
+								"sequence":          result.Sequence,
+								"applies":           true,
+								"files_modified":    result.FilesModified,
+								"insertions":        result.Insertions,
+								"deletions":         result.Deletions,
+								"workspace_applied": result.AppliedInWorkspace,
 							}
 							if strings.TrimSpace(result.Description) != "" {
 								resMap["description"] = strings.TrimSpace(result.Description)
 							}
 							resJSON, _ := json.Marshal(resMap)
-							ans := fmt.Sprintf("Patch created: %s\nfiles_modified: %v\ninsertions: %d\ndeletions: %d\n\ninput:\n%s\n\noutput:\n%s\n",
+							workspaceStatus := "workspace_applied: no"
+							if result.AppliedInWorkspace {
+								workspaceStatus = "workspace_applied: yes"
+							} else if cfg.dryRun {
+								workspaceStatus = "workspace_applied: (dry-run)"
+							}
+							finalizeStatus := "finalize: pending"
+							switch {
+							case cfg.dryRun:
+								finalizeStatus = "finalize: (dry-run)"
+							case cfg.patchNoApply:
+								finalizeStatus = "finalize: skipped (--patch-no-apply)"
+							}
+							ans := fmt.Sprintf(
+								"Patch created: %s\nsequence: %d\nfiles_modified: %v\ninsertions: %d\ndeletions: %d\n%s\n%s\n\ninput:\n%s\n\noutput:\n%s\n",
 								result.PatchPath,
+								result.Sequence,
 								strings.Join(result.FilesModified, ", "),
 								result.Insertions,
 								result.Deletions,
+								workspaceStatus,
+								finalizeStatus,
 								trimTo(string(jsonBytes), 1000),
 								trimTo(string(resJSON), 1000),
 							)
-							if !cfg.patchNoApply && !cfg.dryRun {
-								if aerr := gitApply(result.PatchPath, cfg.verbose); aerr != nil {
-									if cfg.verbose {
-										fmt.Fprintln(os.Stderr, "[git] apply error (pre-finalize):", aerr)
-									}
-									if stream != nil {
-										stream.Abort("git apply failed")
-										stream = nil
-									}
-									_ = tr.WriteTurn(step, "Patcher: pre-finalize apply failed", "", nil, trimTo(aerr.Error(), 800), "patch-error")
-									handled = true
-								} else {
-									ans = ans + "applied: yes\n"
-								}
-							} else if cfg.dryRun {
-								if cfg.verbose {
-									fmt.Fprintln(os.Stderr, "[git] apply (pre-finalize dry-run) skipping")
-								}
-								ans = ans + "applied: (dry-run)\n"
-							} else {
-								ans = ans + "applied: skipped (use without --patch-no-apply)\n"
-							}
 							_ = tr.WriteTurn(step, qline, "", nil, ans, "patch")
 							if stream != nil {
 								stream.Complete(ans)
@@ -915,6 +915,14 @@ Finalize:
 		sessionErr = err
 		turnsCompleted = turns
 		return Result{ExitCode: 1, Err: err}
+	}
+	if pRunner != nil && !cfg.dryRun && !cfg.patchNoApply {
+		if err := pRunner.Finalize(cfg.verbose); err != nil {
+			fmt.Fprintln(os.Stderr, "Final patch apply error:", err)
+			sessionErr = err
+			turnsCompleted = turns
+			return Result{ExitCode: 1, Err: err}
+		}
 	}
 	if err := writeFinalAnswer(sessionID, answer, cfg.finalFile, cfg.verbose, cfg.dryRun); err != nil {
 		fmt.Fprintln(os.Stderr, "Final file write error:", err)
@@ -963,8 +971,4 @@ func finishTurn(sessTelemetry *sessionTelemetry, tt *turnTelemetry, decision str
 		return
 	}
 	sessTelemetry.EndTurn(tt, decision, status, info, err)
-}
-
-func gitApply(path string, verbose bool) error {
-	return gitops.ApplyPatch(path, verbose)
 }
