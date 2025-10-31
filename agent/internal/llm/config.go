@@ -128,13 +128,14 @@ type ModelConfig struct {
 // EnvironmentConfig describes shell execution settings loaded from the
 // [environment] section of the unified configuration.
 type EnvironmentConfig struct {
-	Type          string            `toml:"type"`
-	Timeout       int               `toml:"timeout"`
-	CWD           string            `toml:"cwd"`
-	EnvVars       map[string]string `toml:"env_vars"`
-	Image         string            `toml:"image"`
-	Runtime       string            `toml:"runtime"`
-	TrajectoryDir string            `toml:"trajectory_dir"`
+	Type             string            `toml:"type"`
+	Timeout          int               `toml:"timeout"`
+	CWD              string            `toml:"cwd"`
+	EnvVars          map[string]string `toml:"env_vars"`
+	DockerfilePath   string            `toml:"dockerfile_path"`
+	Runtime          string            `toml:"runtime"`
+	TrajectoryDir    string            `toml:"trajectory_dir"`
+	ComputedImageTag string            `toml:"-"`
 }
 
 type ProviderConfig struct {
@@ -978,8 +979,11 @@ func parseEnvironmentSection(path string, data map[string]any) (*EnvironmentConf
 		}
 		env.EnvVars = stringMap
 	}
-	if v, ok := data["image"].(string); ok {
-		env.Image = v
+	if v, ok := data["dockerfile_path"].(string); ok {
+		env.DockerfilePath = v
+	}
+	if _, ok := data["image"]; ok {
+		return nil, fmt.Errorf("%s [environment.image] is no longer supported; use dockerfile_path", path)
 	}
 	if v, ok := data["runtime"].(string); ok {
 		env.Runtime = v
