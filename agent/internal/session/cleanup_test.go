@@ -109,20 +109,16 @@ func TestCleanupIgnoresNonMatchingPrefix(t *testing.T) {
 	}
 }
 
-func TestCleanupSessionDirsRemovesOld(t *testing.T) {
+func TestCleanupSessionDirsRemovesDirWithoutLock(t *testing.T) {
 	tempDir := t.TempDir()
 	root := filepath.Join(tempDir, "mct")
-	sessionPath := filepath.Join(root, "session-old")
+	sessionPath := filepath.Join(root, "session-missing-lock")
 	if err := os.MkdirAll(sessionPath, 0o755); err != nil {
 		t.Fatalf("mkdir session: %v", err)
 	}
-	now := time.Now()
-	old := now.Add(-48 * time.Hour)
-	if err := os.Chtimes(sessionPath, old, old); err != nil {
-		t.Fatalf("chtimes session: %v", err)
-	}
 
-	if err := cleanupOrphanedSessionDirs(root, now, 24*time.Hour, false); err != nil {
+	now := time.Now()
+	if err := cleanupOrphanedSessionDirs(root, now, sessionLockStaleDuration, false); err != nil {
 		t.Fatalf("cleanup session dirs: %v", err)
 	}
 
@@ -131,20 +127,44 @@ func TestCleanupSessionDirsRemovesOld(t *testing.T) {
 	}
 }
 
-func TestCleanupSessionDirsSkipsRecent(t *testing.T) {
+func TestCleanupSessionDirsRemovesStaleLock(t *testing.T) {
 	tempDir := t.TempDir()
 	root := filepath.Join(tempDir, "mct")
-	sessionPath := filepath.Join(root, "session-recent")
+	sessionPath := filepath.Join(root, "session-stale")
 	if err := os.MkdirAll(sessionPath, 0o755); err != nil {
 		t.Fatalf("mkdir session: %v", err)
 	}
-	now := time.Now()
-	recent := now.Add(-2 * time.Hour)
-	if err := os.Chtimes(sessionPath, recent, recent); err != nil {
-		t.Fatalf("chtimes session: %v", err)
+	lockPath := filepath.Join(sessionPath, sessionLockFileName)
+	if err := os.WriteFile(lockPath, []byte("lock"), 0o644); err != nil {
+		t.Fatalf("write lock: %v", err)
+	}
+	stale := time.Now().Add(-5 * time.Second)
+	if err := os.Chtimes(lockPath, stale, stale); err != nil {
+		t.Fatalf("chtimes lock: %v", err)
 	}
 
-	if err := cleanupOrphanedSessionDirs(root, now, 24*time.Hour, false); err != nil {
+	if err := cleanupOrphanedSessionDirs(root, time.Now(), sessionLockStaleDuration, false); err != nil {
+		t.Fatalf("cleanup session dirs: %v", err)
+	}
+
+	if _, err := os.Stat(sessionPath); !os.IsNotExist(err) {
+		t.Fatalf("expected session directory removed, got err=%v", err)
+	}
+}
+
+func TestCleanupSessionDirsSkipsFreshLock(t *testing.T) {
+	tempDir := t.TempDir()
+	root := filepath.Join(tempDir, "mct")
+	sessionPath := filepath.Join(root, "session-fresh")
+	if err := os.MkdirAll(sessionPath, 0o755); err != nil {
+		t.Fatalf("mkdir session: %v", err)
+	}
+	lockPath := filepath.Join(sessionPath, sessionLockFileName)
+	if err := os.WriteFile(lockPath, []byte("lock"), 0o644); err != nil {
+		t.Fatalf("write lock: %v", err)
+	}
+
+	if err := cleanupOrphanedSessionDirs(root, time.Now(), sessionLockStaleDuration, false); err != nil {
 		t.Fatalf("cleanup session dirs: %v", err)
 	}
 

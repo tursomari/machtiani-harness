@@ -238,6 +238,16 @@ jq 'select(.level == "error") | {kind, message: .err.message, span: .span_id}' \
 
 These events complement the transcript and final artifact, providing structured telemetry that is easy to diff or feed into downstream tooling.
 
+### Session Temporary Directories & Locks
+
+Each `mct-agent run` also provisions a dedicated temporary workspace at `/tmp/mct/<session-id>/`. The directory contains ephemeral scratch data used by the agent and is guarded by a `session.lock` file that is:
+
+- created as soon as the session temp root is set up
+- held with an exclusive flock for the duration of the run and refreshed every second
+- removed automatically when the session finishes (unless `--persist-tmp-data` is set)
+
+On startup, the agent prunes any prior session directory whose `session.lock` is missing or older than three seconds. This ensures crashed or abandoned sessions do not accumulate under `/tmp/mct`. If you need to inspect the scratch space after a run, re-run with `--persist-tmp-data=true` and copy the directory before starting another session (the next startup will remove stale locks).
+
 ## Optional: Standalone CLIs
 If you installed the peripherals (`./scripts/install.sh --install-peripherals`), you can continue using the individual tools. Example `mct` flows:
 

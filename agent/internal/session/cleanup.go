@@ -10,7 +10,9 @@ import (
 )
 
 const (
-	defaultCleanupAge = 24 * time.Hour
+	defaultCleanupAge        = 24 * time.Hour
+	sessionLockFileName      = "session.lock"
+	sessionLockStaleDuration = 3 * time.Second
 )
 
 var cleanupPrefixes = []string{
@@ -27,7 +29,7 @@ func cleanupOrphanedTempDirs(verbose bool) error {
 
 	var errs []error
 	sessionRoot := filepath.Join(tempDir, "mct")
-	if err := cleanupOrphanedSessionDirs(sessionRoot, now, defaultCleanupAge, verbose); err != nil {
+	if err := cleanupOrphanedSessionDirs(sessionRoot, now, sessionLockStaleDuration, verbose); err != nil {
 		errs = append(errs, err)
 	}
 	if err := cleanupOrphanedTempDirsInternal(tempDir, now, defaultCleanupAge, verbose); err != nil {
@@ -91,7 +93,7 @@ func cleanupOrphanedTempDirsInternal(tempDir string, now time.Time, maxAge time.
 	return nil
 }
 
-func cleanupOrphanedSessionDirs(root string, now time.Time, maxAge time.Duration, verbose bool) error {
+func cleanupOrphanedSessionDirs(root string, now time.Time, staleThreshold time.Duration, verbose bool) error {
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -100,7 +102,6 @@ func cleanupOrphanedSessionDirs(root string, now time.Time, maxAge time.Duration
 		return fmt.Errorf("read session temp dir %s: %w", root, err)
 	}
 
-	cutoff := now.Add(-maxAge)
 	var errs []error
 
 	for _, entry := range entries {
@@ -108,31 +109,33 @@ func cleanupOrphanedSessionDirs(root string, now time.Time, maxAge time.Duration
 			continue
 		}
 		sessionPath := filepath.Join(root, entry.Name())
-		info, infoErr := entry.Info()
-		if infoErr != nil {
-			warnCleanupError(sessionPath, infoErr)
-			errs = append(errs, fmt.Errorf("stat %s: %w", sessionPath, infoErr))
+		lockPath := filepath.Join(sessionPath, sessionLockFileName)
+		lockInfo, statErr := os.Stat(lockPath)
+
+		removalReason := ""
+		if statErr != nil {
+			if os.IsNotExist(statErr) {
+				removalReason = "missing lock file"
+			} else {
+				warnCleanupError(lockPath, statErr)
+				errs = append(errs, fmt.Errorf("stat %s: %w", lockPath, statErr))
+				continue
+			}
+		} else if now.Sub(lockInfo.ModTime()) > staleThreshold {
+			removalReason = "stale lock"
+		}
+
+		if removalReason == "" {
 			continue
 		}
-		if !info.ModTime().Before(cutoff) {
-			continue
-		}
-		orphaned, orphanErr := shouldRemoveCandidate(sessionPath)
-		if orphanErr != nil {
-			warnCleanupError(sessionPath, orphanErr)
-			errs = append(errs, fmt.Errorf("inspect %s: %w", sessionPath, orphanErr))
-			continue
-		}
-		if !orphaned {
-			continue
-		}
-		if removeErr := os.RemoveAll(sessionPath); removeErr != nil {
-			warnCleanupError(sessionPath, removeErr)
-			errs = append(errs, fmt.Errorf("remove %s: %w", sessionPath, removeErr))
+
+		if err := os.RemoveAll(sessionPath); err != nil {
+			warnCleanupError(sessionPath, err)
+			errs = append(errs, fmt.Errorf("remove %s: %w", sessionPath, err))
 			continue
 		}
 		if verbose {
-			fmt.Fprintf(os.Stderr, "[cleanup] removed orphaned session dir: %s\n", sessionPath)
+			fmt.Fprintf(os.Stderr, "[cleanup] removed orphaned session dir: %s (%s)\n", sessionPath, removalReason)
 		}
 	}
 

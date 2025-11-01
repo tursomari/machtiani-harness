@@ -63,7 +63,13 @@ func Run(ctx context.Context, opts Options) Result {
 	if err := os.Setenv("MACHTIANI_SESSION_TEMP_ROOT", sessionTempRoot); err != nil {
 		fmt.Fprintln(os.Stderr, "Warning: unable to export session temp root:", err)
 	}
+	var sessLock *sessionLock
 	defer func() {
+		if sessLock != nil {
+			if err := sessLock.Close(); err != nil {
+				fmt.Fprintf(os.Stderr, "[session-lock] warning: failed to release lock: %v\n", err)
+			}
+		}
 		if !cfg.persistTmpData {
 			if err := os.RemoveAll(sessionTempRoot); err != nil && cfg.verbose {
 				fmt.Fprintf(os.Stderr, "Warning: failed to cleanup session temp root %s: %v\n", sessionTempRoot, err)
@@ -76,6 +82,12 @@ func Run(ctx context.Context, opts Options) Result {
 			_ = os.Setenv("MACHTIANI_SESSION_TEMP_ROOT", origSessionTempRoot)
 		}
 	}()
+	lock, lockErr := acquireSessionLock(sessionID, sessionTempRoot)
+	if lockErr != nil {
+		fmt.Fprintln(os.Stderr, "Error acquiring session lock:", lockErr)
+		return Result{ExitCode: 1, Err: lockErr}
+	}
+	sessLock = lock
 
 	trajectoryWriter, repoRoot, trajErr := newTrajectoryWriter(cfg, sessionID)
 	if trajErr != nil {
