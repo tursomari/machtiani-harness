@@ -18,6 +18,7 @@ import (
 	gitpkg "github.com/tursomari/machtiani/agent/internal/git"
 	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
+	"github.com/tursomari/machtiani/agent/internal/tempdir"
 )
 
 // Result holds parsed file paths from file-discovery output
@@ -359,7 +360,7 @@ func createFilteredDir(verbose bool) (string, func(), error) {
 		return "", nil, nil
 	}
 
-	dir, err := os.MkdirTemp("", "mct-discovery-")
+	dir, err := tempdir.MkdirTemp("mct-discovery-")
 	if err != nil {
 		return "", nil, err
 	}

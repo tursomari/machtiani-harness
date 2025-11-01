@@ -108,3 +108,47 @@ func TestCleanupIgnoresNonMatchingPrefix(t *testing.T) {
 		t.Fatalf("expected directory to remain, got err=%v", err)
 	}
 }
+
+func TestCleanupSessionDirsRemovesOld(t *testing.T) {
+	tempDir := t.TempDir()
+	root := filepath.Join(tempDir, "mct")
+	sessionPath := filepath.Join(root, "session-old")
+	if err := os.MkdirAll(sessionPath, 0o755); err != nil {
+		t.Fatalf("mkdir session: %v", err)
+	}
+	now := time.Now()
+	old := now.Add(-48 * time.Hour)
+	if err := os.Chtimes(sessionPath, old, old); err != nil {
+		t.Fatalf("chtimes session: %v", err)
+	}
+
+	if err := cleanupOrphanedSessionDirs(root, now, 24*time.Hour, false); err != nil {
+		t.Fatalf("cleanup session dirs: %v", err)
+	}
+
+	if _, err := os.Stat(sessionPath); !os.IsNotExist(err) {
+		t.Fatalf("expected session directory removed, got err=%v", err)
+	}
+}
+
+func TestCleanupSessionDirsSkipsRecent(t *testing.T) {
+	tempDir := t.TempDir()
+	root := filepath.Join(tempDir, "mct")
+	sessionPath := filepath.Join(root, "session-recent")
+	if err := os.MkdirAll(sessionPath, 0o755); err != nil {
+		t.Fatalf("mkdir session: %v", err)
+	}
+	now := time.Now()
+	recent := now.Add(-2 * time.Hour)
+	if err := os.Chtimes(sessionPath, recent, recent); err != nil {
+		t.Fatalf("chtimes session: %v", err)
+	}
+
+	if err := cleanupOrphanedSessionDirs(root, now, 24*time.Hour, false); err != nil {
+		t.Fatalf("cleanup session dirs: %v", err)
+	}
+
+	if _, err := os.Stat(sessionPath); err != nil {
+		t.Fatalf("expected session directory to remain, got err=%v", err)
+	}
+}

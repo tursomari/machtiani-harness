@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/tursomari/machtiani/agent/internal/tempdir"
 )
 
 // IsRepoRoot checks presence of a .git directory in the given path.
@@ -44,7 +46,7 @@ func MakeTempMirror(after map[string][]byte, reuseDir string) (string, func(), e
 		return reuseDir, func() {}, nil
 	}
 
-	dir, err := os.MkdirTemp("", "patcher-mirror-*")
+	dir, err := tempdir.MkdirTemp("patcher-mirror-*")
 	if err != nil {
 		return "", func() {}, err
 	}
@@ -96,7 +98,7 @@ func PatchFilename(t time.Time) string {
 // the source repository, including the working tree and the .git directory. The
 // returned cleanup function removes the workspace when invoked.
 func MakeSessionWorkspace(src string) (string, func(), error) {
-	ws, err := os.MkdirTemp("", "patcher-workspace-*")
+	ws, err := tempdir.MkdirTemp("patcher-workspace-*")
 	if err != nil {
 		return "", func() {}, err
 	}

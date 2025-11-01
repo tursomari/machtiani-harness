@@ -13,19 +13,21 @@ import (
 	mctpatcher "github.com/tursomari/machtiani/agent/internal/mct/patcher"
 	promptsvc "github.com/tursomari/machtiani/agent/internal/mct/prompt"
 	patchersvc "github.com/tursomari/machtiani/agent/internal/patcher"
+	"github.com/tursomari/machtiani/agent/internal/tempdir"
 )
 
 // PatcherRunner orchestrates applying planner-provided instructions using the
 // shared patcher service implementation.
 type PatcherRunner struct {
-	Enabled        bool
-	Verbose        bool
-	DryRun         bool
-	SessionID      string
-	Service        mctpatcher.Service
-	Runtime        promptsvc.ModelRuntime
-	RepoRoot       string
-	PersistTmpData bool
+	Enabled         bool
+	Verbose         bool
+	DryRun          bool
+	SessionID       string
+	Service         mctpatcher.Service
+	Runtime         promptsvc.ModelRuntime
+	RepoRoot        string
+	PersistTmpData  bool
+	SessionTempRoot string
 
 	workspaceDir     string
 	workspaceCleanup func()
@@ -217,7 +219,7 @@ func (p *PatcherRunner) cleanupMirror() {
 }
 
 func defaultMirrorFactory() (string, func(), error) {
-	dir, err := os.MkdirTemp("", "patcher-mirror-*")
+	dir, err := tempdir.MkdirTemp("patcher-mirror-*")
 	if err != nil {
 		return "", func() {}, err
 	}

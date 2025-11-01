@@ -23,7 +23,20 @@ var cleanupPrefixes = []string{
 
 func cleanupOrphanedTempDirs(verbose bool) error {
 	tempDir := os.TempDir()
-	return cleanupOrphanedTempDirsInternal(tempDir, time.Now(), defaultCleanupAge, verbose)
+	now := time.Now()
+
+	var errs []error
+	sessionRoot := filepath.Join(tempDir, "mct")
+	if err := cleanupOrphanedSessionDirs(sessionRoot, now, defaultCleanupAge, verbose); err != nil {
+		errs = append(errs, err)
+	}
+	if err := cleanupOrphanedTempDirsInternal(tempDir, now, defaultCleanupAge, verbose); err != nil {
+		errs = append(errs, err)
+	}
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
+	return nil
 }
 
 func cleanupOrphanedTempDirsInternal(tempDir string, now time.Time, maxAge time.Duration, verbose bool) error {
@@ -69,6 +82,57 @@ func cleanupOrphanedTempDirsInternal(tempDir string, now time.Time, maxAge time.
 		}
 		if verbose {
 			fmt.Fprintf(os.Stderr, "[cleanup] removed orphaned temp dir: %s\n", path)
+		}
+	}
+
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
+	return nil
+}
+
+func cleanupOrphanedSessionDirs(root string, now time.Time, maxAge time.Duration, verbose bool) error {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read session temp dir %s: %w", root, err)
+	}
+
+	cutoff := now.Add(-maxAge)
+	var errs []error
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		sessionPath := filepath.Join(root, entry.Name())
+		info, infoErr := entry.Info()
+		if infoErr != nil {
+			warnCleanupError(sessionPath, infoErr)
+			errs = append(errs, fmt.Errorf("stat %s: %w", sessionPath, infoErr))
+			continue
+		}
+		if !info.ModTime().Before(cutoff) {
+			continue
+		}
+		orphaned, orphanErr := shouldRemoveCandidate(sessionPath)
+		if orphanErr != nil {
+			warnCleanupError(sessionPath, orphanErr)
+			errs = append(errs, fmt.Errorf("inspect %s: %w", sessionPath, orphanErr))
+			continue
+		}
+		if !orphaned {
+			continue
+		}
+		if removeErr := os.RemoveAll(sessionPath); removeErr != nil {
+			warnCleanupError(sessionPath, removeErr)
+			errs = append(errs, fmt.Errorf("remove %s: %w", sessionPath, removeErr))
+			continue
+		}
+		if verbose {
+			fmt.Fprintf(os.Stderr, "[cleanup] removed orphaned session dir: %s\n", sessionPath)
 		}
 	}
 

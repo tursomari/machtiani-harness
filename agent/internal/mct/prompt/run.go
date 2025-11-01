@@ -226,6 +226,9 @@ func invokeShellAgent(ctx context.Context, prompt string, opts RunOptions) (stri
 	if opts.PersistTmpData {
 		env = append(env, "MACHTIANI_PERSIST_TMP_DATA=1")
 	}
+	if tempRoot := strings.TrimSpace(opts.SessionTempRoot); tempRoot != "" {
+		env = append(env, "MACHTIANI_SESSION_TEMP_ROOT="+tempRoot)
+	}
 	if configPath := strings.TrimSpace(opts.GlobalConfigPath); configPath != "" {
 		env = append(env, "MACHTIANI_CONFIG="+configPath)
 	}

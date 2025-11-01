@@ -19,6 +19,7 @@ import (
 	patchersvc "github.com/tursomari/machtiani/agent/internal/patcher"
 	"github.com/tursomari/machtiani/agent/internal/planner"
 	"github.com/tursomari/machtiani/agent/internal/runner"
+	"github.com/tursomari/machtiani/agent/internal/tempdir"
 	"github.com/tursomari/machtiani/agent/internal/trajectory"
 	"github.com/tursomari/machtiani/agent/internal/transcript"
 	"github.com/tursomari/machtiani/agent/internal/ui"
@@ -53,6 +54,29 @@ func Run(ctx context.Context, opts Options) Result {
 	turnsCompleted := 0
 
 	sessionID := runner.GenerateSessionID()
+	sessionTempRoot := filepath.Join(os.TempDir(), "mct", sessionID)
+	if err := tempdir.SetSessionRoot(sessionTempRoot); err != nil {
+		fmt.Fprintln(os.Stderr, "Error preparing session temp root:", err)
+		return Result{ExitCode: 1, Err: err}
+	}
+	origSessionTempRoot := os.Getenv("MACHTIANI_SESSION_TEMP_ROOT")
+	if err := os.Setenv("MACHTIANI_SESSION_TEMP_ROOT", sessionTempRoot); err != nil {
+		fmt.Fprintln(os.Stderr, "Warning: unable to export session temp root:", err)
+	}
+	defer func() {
+		if !cfg.persistTmpData {
+			if err := os.RemoveAll(sessionTempRoot); err != nil && cfg.verbose {
+				fmt.Fprintf(os.Stderr, "Warning: failed to cleanup session temp root %s: %v\n", sessionTempRoot, err)
+			}
+		}
+		tempdir.ClearSessionRoot()
+		if origSessionTempRoot == "" {
+			_ = os.Unsetenv("MACHTIANI_SESSION_TEMP_ROOT")
+		} else {
+			_ = os.Setenv("MACHTIANI_SESSION_TEMP_ROOT", origSessionTempRoot)
+		}
+	}()
+
 	trajectoryWriter, repoRoot, trajErr := newTrajectoryWriter(cfg, sessionID)
 	if trajErr != nil {
 		fmt.Fprintln(os.Stderr, "Trajectory setup error:", trajErr)
@@ -162,6 +186,7 @@ func Run(ctx context.Context, opts Options) Result {
 		ShellAgentModel:         shellAgentModel,
 		GlobalConfigPath:        opts.GlobalConfigPath,
 		PersistTmpData:          cfg.persistTmpData,
+		SessionTempRoot:         sessionTempRoot,
 	}
 	if err := mctRunner.Resolve(); err != nil {
 		fmt.Fprintln(os.Stderr, "mct resolution error:", err)
@@ -173,14 +198,15 @@ func Run(ctx context.Context, opts Options) Result {
 	if cfg.patch {
 		patchLogger := log.New(os.Stderr, "[patcher] ", log.LstdFlags)
 		pr := &runner.PatcherRunner{
-			Enabled:        true,
-			Verbose:        cfg.verbose,
-			DryRun:         cfg.dryRun,
-			SessionID:      sessionID,
-			Runtime:        models.patcher.toPromptRuntime(),
-			Service:        patchersvc.NewService(patchersvc.WithLogger(patchLogger)),
-			RepoRoot:       repoRoot,
-			PersistTmpData: cfg.persistTmpData,
+			Enabled:         true,
+			Verbose:         cfg.verbose,
+			DryRun:          cfg.dryRun,
+			SessionID:       sessionID,
+			Runtime:         models.patcher.toPromptRuntime(),
+			Service:         patchersvc.NewService(patchersvc.WithLogger(patchLogger)),
+			RepoRoot:        repoRoot,
+			PersistTmpData:  cfg.persistTmpData,
+			SessionTempRoot: sessionTempRoot,
 		}
 		if err := pr.Resolve(); err != nil {
 			if cfg.verbose {
