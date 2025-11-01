@@ -12,6 +12,7 @@ type Config struct {
 	TimeoutPerTurn          int
 	DryRun                  bool
 	Verbose                 bool
+	PersistTmpData          bool
 	FinalFile               string
 	TranscriptFile          string
 	FileDiscoveryTrajectory string
@@ -70,6 +71,7 @@ type legacyConfig struct {
 	timeoutPerTurn          int
 	dryRun                  bool
 	verbose                 bool
+	persistTmpData          bool
 	finalFile               string
 	transcriptFile          string
 	fileDiscoveryTrajectory string
@@ -121,5 +123,6 @@ func newLegacyConfig(cfg Config) legacyConfig {
 		shellAgent:              cfg.ShellAgent,
 		shellAgentModel:         cfg.ShellAgentModel,
 		apiKeyOverrides:         llm.CopyAPIKeyOverridesForRuntime(cfg.APIKeyOverrides),
+		persistTmpData:          cfg.PersistTmpData,
 	}
 }

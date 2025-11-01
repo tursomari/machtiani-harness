@@ -160,6 +160,71 @@ func TestShellAgentModeForwardsModelOverride(t *testing.T) {
 	}
 }
 
+func TestShellAgentModeFallsBackToRuntimeAlias(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	workDir := t.TempDir()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	if err := os.Chdir(workDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+
+	sessionID := "shell-agent-runtime-alias"
+	t.Setenv("MACHTIANI_SESSION_ID", sessionID)
+
+	origChat := chatStreamWithRuntime
+	chatStreamWithRuntime = func(ctx context.Context, resolved llm.ResolvedModel, aliases []string, fallbacks []llm.ResolvedModel, extras map[string]any, msgs []llm.Message, onToken func(string)) (string, error) {
+		return "assistant", nil
+	}
+	t.Cleanup(func() { chatStreamWithRuntime = origChat })
+
+	binDir := t.TempDir()
+	logPath := filepath.Join(binDir, "shell-agent-runtime-alias.log")
+	scriptPath := filepath.Join(binDir, "shell-agent")
+	script := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$@\" > \"$SHELL_AGENT_TEST_LOG\"\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write shell-agent stub: %v", err)
+	}
+	t.Setenv("PATH", binDir+":"+os.Getenv("PATH"))
+	t.Setenv("SHELL_AGENT_TEST_LOG", logPath)
+
+	opts := RunOptions{
+		Prompt:    "Enumerate runtime alias",
+		Mode:      "default",
+		SessionID: sessionID,
+		Runtime: ModelRuntime{
+			Alias:      "alias-from-runtime",
+			UsingAlias: true,
+			Resolved: llm.ResolvedModel{
+				Alias: "alias-from-runtime",
+				Model: "foo",
+				APIKey: "key",
+			},
+		},
+		ShellAgent: true,
+	}
+
+	if _, err := Run(context.Background(), opts); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read shell-agent log: %v", err)
+	}
+	line := strings.TrimSpace(string(data))
+	if !strings.Contains(line, "--shell-agent-model") {
+		t.Fatalf("expected shell-agent-model flag when runtime alias is present: %q", line)
+	}
+	if !strings.Contains(line, "alias-from-runtime") {
+		t.Fatalf("expected runtime alias in shell-agent invocation: %q", line)
+	}
+}
+
 func TestShellAgentModeForwardsAPIKeyOverrides(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	workDir := t.TempDir()

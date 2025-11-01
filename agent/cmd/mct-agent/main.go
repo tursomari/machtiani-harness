@@ -330,6 +330,7 @@ func configureSessionFlags(fs *flag.FlagSet, cfg *session.Config, paramFlags, pa
 	fs.IntVar(&cfg.TimeoutPerTurn, "timeout-per-turn", 120, "per-turn timeout in seconds (set 0 for no timeout)")
 	fs.BoolVar(&cfg.DryRun, "dry-run", false, "print intended mct calls; don’t execute")
 	fs.BoolVar(&cfg.Verbose, "verbose", false, "verbose agent logging")
+	fs.BoolVar(&cfg.PersistTmpData, "persist-tmp-data", false, "keep temporary data (worktrees, trajectories) after execution; startup orphan cleanup always runs")
 	fs.BoolVar(&cfg.ShellAgent, "shell-agent", false, "Enable shell-agent mode: invoke shell-agent subprocess binary for task execution")
 	fs.StringVar(&cfg.ShellAgentModel, "shell-agent-model", "", "Model alias override for shell-agent subprocesses (default: config)")
 	fs.StringVar(&cfg.FinalFile, "final-file", "", "path to write final answer-only artifact (default: .machtiani/sessions/<sessionID>/chat/agent-final-answer.md)")

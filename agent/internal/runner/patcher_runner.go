@@ -18,13 +18,14 @@ import (
 // PatcherRunner orchestrates applying planner-provided instructions using the
 // shared patcher service implementation.
 type PatcherRunner struct {
-	Enabled   bool
-	Verbose   bool
-	DryRun    bool
-	SessionID string
-	Service   mctpatcher.Service
-	Runtime   promptsvc.ModelRuntime
-	RepoRoot  string
+	Enabled        bool
+	Verbose        bool
+	DryRun         bool
+	SessionID      string
+	Service        mctpatcher.Service
+	Runtime        promptsvc.ModelRuntime
+	RepoRoot       string
+	PersistTmpData bool
 
 	workspaceDir     string
 	workspaceCleanup func()
@@ -169,6 +170,9 @@ func (p *PatcherRunner) Finalize(verbose bool) error {
 
 // Close releases any temporary resources allocated for the patch session.
 func (p *PatcherRunner) Close() {
+	if p.PersistTmpData {
+		return
+	}
 	p.cleanupMirror()
 	p.cleanupWorkspace()
 }

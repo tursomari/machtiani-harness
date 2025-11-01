@@ -38,6 +38,7 @@ type RunOptions struct {
 	ShellAgent              bool
 	ShellAgentModel         string
 	GlobalConfigPath        string
+	PersistTmpData          bool
 }
 
 // ReadmeOptions configure optional internal README management hooks.

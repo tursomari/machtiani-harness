@@ -24,6 +24,7 @@ type Runner struct {
 	ShellAgent              bool
 	ShellAgentModel         string
 	GlobalConfigPath        string
+	PersistTmpData          bool
 }
 
 type PromptInput struct {
@@ -145,6 +146,7 @@ func (r *Runner) RunPrompt(ctx context.Context, sessionID string, in PromptInput
 		ShellAgent:              r.ShellAgent,
 		ShellAgentModel:         strings.TrimSpace(r.ShellAgentModel),
 		GlobalConfigPath:        r.GlobalConfigPath,
+		PersistTmpData:          r.PersistTmpData,
 	})
 	if useMarkdown && ms != nil {
 		_ = ms.Flush()

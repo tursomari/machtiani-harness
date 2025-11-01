@@ -109,6 +109,15 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 	shellTrajectory := ""
 	shellAgentUsed := false
 	if opts.ShellAgent {
+		if strings.TrimSpace(opts.ShellAgentModel) == "" {
+			candidate := strings.TrimSpace(opts.Runtime.Alias)
+			if candidate == "" {
+				candidate = strings.TrimSpace(opts.Runtime.Resolved.Alias)
+			}
+			if candidate != "" {
+				opts.ShellAgentModel = candidate
+			}
+		}
 		contextBlock, trajectoryPath, err := invokeShellAgent(ctx, combined, opts)
 		if err != nil {
 			return res, err
@@ -212,10 +221,15 @@ func invokeShellAgent(ctx context.Context, prompt string, opts RunOptions) (stri
 	args = append(args, prompt)
 
 	cmd := shellAgentCommandContext(ctx, "shell-agent", args...)
-	cmd.Env = append(os.Environ(), runtimeEnvFrom(opts.Runtime)...)
-	if configPath := strings.TrimSpace(opts.GlobalConfigPath); configPath != "" {
-		cmd.Env = append(cmd.Env, "MACHTIANI_CONFIG="+configPath)
+	env := append([]string(nil), os.Environ()...)
+	env = append(env, runtimeEnvFrom(opts.Runtime)...)
+	if opts.PersistTmpData {
+		env = append(env, "MACHTIANI_PERSIST_TMP_DATA=1")
 	}
+	if configPath := strings.TrimSpace(opts.GlobalConfigPath); configPath != "" {
+		env = append(env, "MACHTIANI_CONFIG="+configPath)
+	}
+	cmd.Env = env
 
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {

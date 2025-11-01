@@ -44,6 +44,9 @@ func Run(ctx context.Context, opts Options) Result {
 
 	cfg := newLegacyConfig(opts.Config)
 	applyTrajectoryEnvOverrides(&cfg)
+	if err := cleanupOrphanedTempDirs(cfg.verbose); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to cleanup orphaned temp dirs: %v\n", err)
+	}
 
 	sessionStatus := "error"
 	var sessionErr error
@@ -158,6 +161,7 @@ func Run(ctx context.Context, opts Options) Result {
 		ShellAgent:              cfg.shellAgent,
 		ShellAgentModel:         shellAgentModel,
 		GlobalConfigPath:        opts.GlobalConfigPath,
+		PersistTmpData:          cfg.persistTmpData,
 	}
 	if err := mctRunner.Resolve(); err != nil {
 		fmt.Fprintln(os.Stderr, "mct resolution error:", err)
@@ -169,13 +173,14 @@ func Run(ctx context.Context, opts Options) Result {
 	if cfg.patch {
 		patchLogger := log.New(os.Stderr, "[patcher] ", log.LstdFlags)
 		pr := &runner.PatcherRunner{
-			Enabled:   true,
-			Verbose:   cfg.verbose,
-			DryRun:    cfg.dryRun,
-			SessionID: sessionID,
-			Runtime:   models.patcher.toPromptRuntime(),
-			Service:   patchersvc.NewService(patchersvc.WithLogger(patchLogger)),
-			RepoRoot:  repoRoot,
+			Enabled:        true,
+			Verbose:        cfg.verbose,
+			DryRun:         cfg.dryRun,
+			SessionID:      sessionID,
+			Runtime:        models.patcher.toPromptRuntime(),
+			Service:        patchersvc.NewService(patchersvc.WithLogger(patchLogger)),
+			RepoRoot:       repoRoot,
+			PersistTmpData: cfg.persistTmpData,
 		}
 		if err := pr.Resolve(); err != nil {
 			if cfg.verbose {
