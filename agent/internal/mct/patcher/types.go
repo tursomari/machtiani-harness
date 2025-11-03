@@ -33,6 +33,7 @@ type PatchResult struct {
 	ManifestPath       string
 	Sequence           int
 	AppliedInWorkspace bool
+	ReversePatchPath   string
 }
 
 // Instructions encodes the set of file edits that should be applied.

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/tursomari/machtiani/agent/internal/gitops"
@@ -38,8 +37,8 @@ type PatcherRunner struct {
 
 	WorkspaceFactory func(string) (string, func(), error)
 	MirrorFactory    func() (string, func(), error)
-	ApplyFunc        func(string, string, bool) error
-	repoAbs          string
+
+	repoAbs string
 }
 
 // Resolve ensures a usable patcher service is available before execution.
@@ -89,14 +88,11 @@ func (p *PatcherRunner) Resolve() error {
 		p.mirrorDir = mirrorDir
 		p.mirrorCleanup = cleanup
 	}
-	if p.ApplyFunc == nil {
-		p.ApplyFunc = gitops.ApplyPatchInDir
-	}
 	return nil
 }
 
 // Apply invokes the patcher service and returns the resulting patch metadata.
-func (p *PatcherRunner) Apply(ctx context.Context, instr mctpatcher.Instructions, verbose bool) (*mctpatcher.PatchResult, error) {
+func (p *PatcherRunner) Apply(ctx context.Context, instr mctpatcher.Instructions, verbose bool) (result *mctpatcher.PatchResult, err error) {
 	if !p.Enabled {
 		return nil, errors.New("patch runner disabled")
 	}
@@ -119,6 +115,15 @@ func (p *PatcherRunner) Apply(ctx context.Context, instr mctpatcher.Instructions
 	}
 	seq := p.nextSequence + 1
 
+	baselineStatus, err := gitops.WorkspaceStatus(p.workspaceDir)
+	if err != nil {
+		return nil, fmt.Errorf("inspect workspace status: %w", err)
+	}
+	baselineSet := make(map[string]struct{}, len(baselineStatus))
+	for _, line := range baselineStatus {
+		baselineSet[line] = struct{}{}
+	}
+
 	params := mctpatcher.PatchParams{
 		RepoRoot:      p.repoAbs,
 		SessionID:     p.SessionID,
@@ -128,46 +133,88 @@ func (p *PatcherRunner) Apply(ctx context.Context, instr mctpatcher.Instructions
 		MirrorDir:     p.mirrorDir,
 		Sequence:      seq,
 	}
-	res, err := p.Service.ApplyAndGeneratePatch(ctx, params)
+	result, err = p.Service.ApplyAndGeneratePatch(ctx, params)
 	if err != nil {
 		return nil, err
 	}
-	if res.Sequence == 0 {
-		res.Sequence = seq
+	if result.Sequence == 0 {
+		result.Sequence = seq
 	}
-	p.applied = append(p.applied, patchLogEntry{Path: res.PatchPath, Order: res.Sequence, WorkspaceApplied: res.AppliedInWorkspace})
-	p.nextSequence = res.Sequence
-	return res, nil
-}
 
-// Finalize reapplies all generated patches to the original repository in
-// sequence order. It stops at the first failure and returns the associated error.
-func (p *PatcherRunner) Finalize(verbose bool) error {
-	if !p.Enabled || p.DryRun {
-		return nil
+	reverseContent, err := gitops.ReversePatchFromFile(result.PatchPath)
+	if err != nil {
+		return nil, fmt.Errorf("compute reverse patch: %w", err)
 	}
-	if p.repoAbs == "" {
-		return errors.New("patcher repo root not resolved")
+	reversePath := result.PatchPath + ".reverse"
+	if err = gitops.WriteReversePatchToFile(reverseContent, reversePath); err != nil {
+		return nil, fmt.Errorf("write reverse patch: %w", err)
 	}
-	if len(p.applied) == 0 {
-		return nil
-	}
-	copyLog := make([]patchLogEntry, len(p.applied))
-	copy(copyLog, p.applied)
-	sort.Slice(copyLog, func(i, j int) bool { return copyLog[i].Order < copyLog[j].Order })
-	for _, entry := range copyLog {
-		if entry.Finalized {
-			continue
+
+	workspacePatched := result.AppliedInWorkspace
+	repoPatched := false
+	defer func() {
+		if err != nil && workspacePatched && reversePath != "" {
+			_ = gitops.ReversePatchInDir(p.workspaceDir, reversePath, false)
+			_, _ = gitops.CheckWorkspaceClean(p.workspaceDir)
 		}
-		if strings.TrimSpace(entry.Path) == "" {
-			continue
+		if err != nil && repoPatched && reversePath != "" {
+			_ = gitops.ReversePatchInDir(p.repoAbs, reversePath, false)
 		}
-		if err := p.ApplyFunc(p.repoAbs, entry.Path, verbose || p.Verbose); err != nil {
-			return fmt.Errorf("finalize patch %d (%s): %w", entry.Order, entry.Path, err)
-		}
-		p.markFinalized(entry.Order)
+	}()
+
+	if err = gitops.ApplyPatchInDirWithCheck(p.repoAbs, result.PatchPath); err != nil {
+		return nil, fmt.Errorf("validate forward patch: %w", err)
 	}
-	return nil
+
+	if !workspacePatched {
+		if err = gitops.ApplyPatchInDir(p.workspaceDir, result.PatchPath, verbose || p.Verbose); err != nil {
+			return nil, fmt.Errorf("apply patch in workspace for verification: %w", err)
+		}
+		workspacePatched = true
+		result.AppliedInWorkspace = true
+	}
+
+	if err = gitops.ReversePatchInDir(p.workspaceDir, reversePath, verbose || p.Verbose); err != nil {
+		return nil, fmt.Errorf("apply reverse patch for atomicity check: %w", err)
+	}
+	workspacePatched = false
+
+	currentStatus, cleanErr := gitops.WorkspaceStatus(p.workspaceDir)
+	if cleanErr != nil {
+		return nil, fmt.Errorf("check workspace status after atomic undo: %w", cleanErr)
+	}
+	currentSet := make(map[string]struct{}, len(currentStatus))
+	for _, line := range currentStatus {
+		currentSet[line] = struct{}{}
+	}
+	if !statusSetsEqual(baselineSet, currentSet) {
+		if verbose || p.Verbose {
+			fmt.Fprintf(os.Stderr, "[patcher] workspace baseline: %v\n", baselineStatus)
+			fmt.Fprintf(os.Stderr, "[patcher] workspace after reverse: %v\n", currentStatus)
+		}
+		return nil, errors.New("atomic patch application failed: workspace not clean after reverse")
+	}
+
+	if err = gitops.ApplyPatchInDir(p.workspaceDir, result.PatchPath, verbose || p.Verbose); err != nil {
+		return nil, fmt.Errorf("reapply forward patch after atomic verification: %w", err)
+	}
+	workspacePatched = true
+
+	if err = gitops.ApplyPatchInDir(p.repoAbs, result.PatchPath, verbose || p.Verbose); err != nil {
+		return nil, fmt.Errorf("apply patch in repo root: %w", err)
+	}
+	repoPatched = true
+
+	result.ReversePatchPath = reversePath
+	p.applied = append(p.applied, patchLogEntry{
+		Path:             result.PatchPath,
+		Order:            result.Sequence,
+		WorkspaceApplied: result.AppliedInWorkspace,
+		Finalized:        repoPatched,
+		ReversePath:      reversePath,
+	})
+	p.nextSequence = result.Sequence
+	return result, nil
 }
 
 // Close releases any temporary resources allocated for the patch session.
@@ -188,18 +235,10 @@ func (p *PatcherRunner) PatchLog() []PatchLogEntry {
 			Order:            entry.Order,
 			WorkspaceApplied: entry.WorkspaceApplied,
 			Finalized:        entry.Finalized,
+			ReversePath:      entry.ReversePath,
 		}
 	}
 	return out
-}
-
-func (p *PatcherRunner) markFinalized(order int) {
-	for i := range p.applied {
-		if p.applied[i].Order == order {
-			p.applied[i].Finalized = true
-			return
-		}
-	}
 }
 
 func (p *PatcherRunner) cleanupWorkspace() {
@@ -226,12 +265,25 @@ func defaultMirrorFactory() (string, func(), error) {
 	return dir, func() { _ = os.RemoveAll(dir) }, nil
 }
 
+func statusSetsEqual(a, b map[string]struct{}) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k := range a {
+		if _, ok := b[k]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
 // PatchLogEntry describes a generated patch and its finalization status.
 type PatchLogEntry struct {
 	Path             string
 	Order            int
 	WorkspaceApplied bool
 	Finalized        bool
+	ReversePath      string
 }
 
 type patchLogEntry struct {
@@ -239,4 +291,5 @@ type patchLogEntry struct {
 	Order            int
 	WorkspaceApplied bool
 	Finalized        bool
+	ReversePath      string
 }

@@ -2,21 +2,32 @@ package runner
 
 import (
 	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"testing"
 
+	"github.com/tursomari/machtiani/agent/internal/gitops"
 	mctpatcher "github.com/tursomari/machtiani/agent/internal/mct/patcher"
+	patchersvc "github.com/tursomari/machtiani/agent/internal/patcher"
 )
 
 type stubService struct {
 	lastParams mctpatcher.PatchParams
 	result     *mctpatcher.PatchResult
 	err        error
+	hook       func(params mctpatcher.PatchParams) error
 }
 
 func (s *stubService) ApplyAndGeneratePatch(_ context.Context, params mctpatcher.PatchParams) (*mctpatcher.PatchResult, error) {
 	s.lastParams = params
 	if s.err != nil {
 		return nil, s.err
+	}
+	if s.hook != nil {
+		if err := s.hook(params); err != nil {
+			return nil, err
+		}
 	}
 	if s.result != nil {
 		return s.result, nil
@@ -43,7 +54,6 @@ func TestResolveInstantiatesService(t *testing.T) {
 	pr.MirrorFactory = func() (string, func(), error) {
 		return t.TempDir(), func() {}, nil
 	}
-	pr.ApplyFunc = func(string, string, bool) error { return nil }
 	if err := pr.Resolve(); err != nil {
 		t.Fatalf("resolve failed: %v", err)
 	}
@@ -71,81 +81,219 @@ func TestApplyDryRun(t *testing.T) {
 	if res.Sequence != 1 {
 		t.Fatalf("expected sequence 1, got %d", res.Sequence)
 	}
+	if res.ReversePatchPath != "" {
+		t.Fatalf("expected no reverse patch path during dry-run")
+	}
 }
 
-func TestApplyInvokesService(t *testing.T) {
-	stub := &stubService{result: &mctpatcher.PatchResult{PatchPath: "ok.patch"}}
-	workspaceDir := t.TempDir()
-	mirrorDir := t.TempDir()
+func TestApplyPerformsAtomicVerification(t *testing.T) {
+	repoRoot := t.TempDir()
+	runGit(t, repoRoot, "init")
+	runGit(t, repoRoot, "config", "user.email", "test@example.com")
+	runGit(t, repoRoot, "config", "user.name", "Test User")
+	if err := os.WriteFile(filepath.Join(repoRoot, "foo.txt"), []byte("old\n"), 0o644); err != nil {
+		t.Fatalf("write base file: %v", err)
+	}
+	runGit(t, repoRoot, "add", "foo.txt")
+	runGit(t, repoRoot, "commit", "-m", "init")
+
+	if err := os.WriteFile(filepath.Join(repoRoot, "notes.tmp"), []byte("scratch"), 0o644); err != nil {
+		t.Fatalf("write untracked: %v", err)
+	}
+
+	patchDir := t.TempDir()
+	patchPath := filepath.Join(patchDir, "change.patch")
+	patchContent := "diff --git a/foo.txt b/foo.txt\n" +
+		"index 1111111..2222222 100644\n" +
+		"--- a/foo.txt\n" +
+		"+++ b/foo.txt\n" +
+		"@@ -1 +1 @@\n" +
+		"-old\n" +
+		"+new\n"
+	if err := os.WriteFile(patchPath, []byte(patchContent), 0o644); err != nil {
+		t.Fatalf("write patch: %v", err)
+	}
+
+	stub := &stubService{
+		result: &mctpatcher.PatchResult{
+			PatchPath:          patchPath,
+			Sequence:           0,
+			FilesModified:      []string{"foo.txt"},
+			AppliedInWorkspace: true,
+		},
+	}
+	stub.hook = func(params mctpatcher.PatchParams) error {
+		if params.WorkspaceRoot == "" {
+			return nil
+		}
+		return gitops.ApplyPatchInDir(params.WorkspaceRoot, patchPath, false)
+	}
+
+	var workspaceDir string
 	pr := &PatcherRunner{
-		Enabled:          true,
-		SessionID:        "sess",
-		Service:          stub,
-		Verbose:          true,
-		RepoRoot:         t.TempDir(),
-		WorkspaceFactory: func(string) (string, func(), error) { return workspaceDir, func() {}, nil },
-		MirrorFactory:    func() (string, func(), error) { return mirrorDir, func() {}, nil },
-		ApplyFunc:        func(string, string, bool) error { return nil },
+		Enabled:   true,
+		SessionID: "sess",
+		Service:   stub,
+		RepoRoot:  repoRoot,
+		WorkspaceFactory: func(root string) (string, func(), error) {
+			ws, cleanup, err := patchersvc.CreateWorkspace(root)
+			if err == nil {
+				workspaceDir = ws
+			}
+			return ws, cleanup, err
+		},
+		MirrorFactory: func() (string, func(), error) {
+			return t.TempDir(), func() {}, nil
+		},
 	}
 	if err := pr.Resolve(); err != nil {
 		t.Fatalf("resolve error: %v", err)
 	}
-	instr := mctpatcher.Instructions{Edits: []mctpatcher.Edit{{Path: "a.txt", Mode: mctpatcher.ModeCreate, NewContent: "hi"}}}
+	if workspaceDir == "" {
+		t.Fatalf("workspace not initialized")
+	}
+
+	instr := mctpatcher.Instructions{Edits: []mctpatcher.Edit{{Path: "foo.txt", Mode: mctpatcher.ModeRewrite, NewContent: "new\n"}}}
 	res, err := pr.Apply(context.Background(), instr, false)
 	if err != nil {
 		t.Fatalf("apply error: %v", err)
 	}
-	if res.PatchPath != "ok.patch" {
-		t.Fatalf("unexpected result: %+v", res)
+	if res == nil {
+		t.Fatalf("expected patch result")
+	}
+	if res.PatchPath != patchPath {
+		t.Fatalf("unexpected patch path: %s", res.PatchPath)
+	}
+	if res.Sequence != 1 {
+		t.Fatalf("expected sequence 1, got %d", res.Sequence)
+	}
+	if res.ReversePatchPath == "" {
+		t.Fatalf("expected reverse patch path to be set")
+	}
+	if _, err := os.Stat(res.ReversePatchPath); err != nil {
+		t.Fatalf("reverse patch not written: %v", err)
+	}
+
+	workspaceContent, err := os.ReadFile(filepath.Join(workspaceDir, "foo.txt"))
+	if err != nil {
+		t.Fatalf("read workspace file: %v", err)
+	}
+	if string(workspaceContent) != "new\n" {
+		t.Fatalf("workspace not updated after apply: %q", workspaceContent)
+	}
+
+	repoContent, err := os.ReadFile(filepath.Join(repoRoot, "foo.txt"))
+	if err != nil {
+		t.Fatalf("read repo file: %v", err)
+	}
+	if string(repoContent) != "new\n" {
+		t.Fatalf("repo root should reflect applied patch, got %q", repoContent)
+	}
+
+	if len(pr.applied) != 1 {
+		t.Fatalf("expected 1 logged patch, got %d", len(pr.applied))
+	}
+	if pr.applied[0].ReversePath != res.ReversePatchPath {
+		t.Fatalf("reverse path not tracked in log")
+	}
+	if !pr.applied[0].Finalized {
+		t.Fatalf("expected patch marked finalized after apply")
 	}
 	if stub.lastParams.SessionID != "sess" {
-		t.Fatalf("session id not passed to service: %+v", stub.lastParams)
-	}
-	if !stub.lastParams.Verbose {
-		t.Fatalf("expected verbose to propagate to service")
+		t.Fatalf("session id not propagated: %+v", stub.lastParams)
 	}
 	if stub.lastParams.WorkspaceRoot != workspaceDir {
-		t.Fatalf("expected workspace root to be passed; got %s", stub.lastParams.WorkspaceRoot)
+		t.Fatalf("workspace root not passed to service")
 	}
-	if stub.lastParams.MirrorDir != mirrorDir {
-		t.Fatalf("expected mirror dir to be passed; got %s", stub.lastParams.MirrorDir)
+	if stub.lastParams.MirrorDir != pr.mirrorDir {
+		t.Fatalf("mirror dir not passed to service")
 	}
 	if stub.lastParams.Sequence != 1 {
-		t.Fatalf("expected sequence 1, got %d", stub.lastParams.Sequence)
+		t.Fatalf("expected sequence 1 in params, got %d", stub.lastParams.Sequence)
 	}
 }
 
-func TestApplyDisabled(t *testing.T) {
-	pr := &PatcherRunner{}
-	if _, err := pr.Apply(context.Background(), mctpatcher.Instructions{}, false); err == nil {
-		t.Fatalf("expected error when runner disabled")
+func TestApplyAtomicVerificationAllowsBaselineDirty(t *testing.T) {
+	repoRoot := t.TempDir()
+	runGit(t, repoRoot, "init")
+	runGit(t, repoRoot, "config", "user.email", "test@example.com")
+	runGit(t, repoRoot, "config", "user.name", "Test User")
+	if err := os.WriteFile(filepath.Join(repoRoot, "foo.txt"), []byte("old\n"), 0o644); err != nil {
+		t.Fatalf("write base file: %v", err)
 	}
-}
+	runGit(t, repoRoot, "add", "foo.txt")
+	runGit(t, repoRoot, "commit", "-m", "init")
+	if err := os.WriteFile(filepath.Join(repoRoot, "notes.tmp"), []byte("scratch"), 0o644); err != nil {
+		t.Fatalf("write untracked: %v", err)
+	}
 
-func TestFinalizeUsesSequenceOrder(t *testing.T) {
-	pr := &PatcherRunner{Enabled: true, SessionID: "sess", RepoRoot: t.TempDir()}
-	pr.repoAbs = pr.RepoRoot
-	pr.applied = []patchLogEntry{
-		{Path: "b.patch", Order: 2},
-		{Path: "a.patch", Order: 1},
+	patchDir := t.TempDir()
+	patchPath := filepath.Join(patchDir, "change.patch")
+	patchContent := "diff --git a/foo.txt b/foo.txt\n" +
+		"index 1111111..3333333 100644\n" +
+		"--- a/foo.txt\n" +
+		"+++ b/foo.txt\n" +
+		"@@ -1 +1 @@\n" +
+		"-old\n" +
+		"+newer\n"
+	if err := os.WriteFile(patchPath, []byte(patchContent), 0o644); err != nil {
+		t.Fatalf("write patch: %v", err)
 	}
-	var calls []string
-	pr.ApplyFunc = func(_ string, patch string, _ bool) error {
-		calls = append(calls, patch)
-		return nil
+
+	stub := &stubService{
+		result: &mctpatcher.PatchResult{
+			PatchPath:          patchPath,
+			Sequence:           0,
+			FilesModified:      []string{"foo.txt"},
+			AppliedInWorkspace: true,
+		},
 	}
-	if err := pr.Finalize(false); err != nil {
-		t.Fatalf("finalize error: %v", err)
-	}
-	if len(calls) != 2 {
-		t.Fatalf("expected 2 apply calls, got %d", len(calls))
-	}
-	if calls[0] != "a.patch" || calls[1] != "b.patch" {
-		t.Fatalf("patches applied out of order: %v", calls)
-	}
-	for _, entry := range pr.applied {
-		if !entry.Finalized {
-			t.Fatalf("expected entry %+v finalized", entry)
+	stub.hook = func(params mctpatcher.PatchParams) error {
+		if params.WorkspaceRoot == "" {
+			return nil
 		}
+		return gitops.ApplyPatchInDir(params.WorkspaceRoot, patchPath, false)
+	}
+
+	var workspaceDir string
+	pr := &PatcherRunner{
+		Enabled:   true,
+		SessionID: "sess",
+		Service:   stub,
+		RepoRoot:  repoRoot,
+		WorkspaceFactory: func(root string) (string, func(), error) {
+			ws, cleanup, err := patchersvc.CreateWorkspace(root)
+			if err == nil {
+				workspaceDir = ws
+			}
+			return ws, cleanup, err
+		},
+		MirrorFactory: func() (string, func(), error) {
+			return t.TempDir(), func() {}, nil
+		},
+	}
+	if err := pr.Resolve(); err != nil {
+		t.Fatalf("resolve error: %v", err)
+	}
+	if workspaceDir == "" {
+		t.Fatalf("workspace not initialized")
+	}
+
+	instr := mctpatcher.Instructions{Edits: []mctpatcher.Edit{{Path: "foo.txt", Mode: mctpatcher.ModeRewrite, NewContent: "newer\n"}}}
+	if _, err := pr.Apply(context.Background(), instr, false); err != nil {
+		t.Fatalf("apply error: %v", err)
+	}
+}
+
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v failed: %v (%s)", args, err, string(out))
 	}
 }

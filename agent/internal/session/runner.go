@@ -739,6 +739,9 @@ func Run(ctx context.Context, opts Options) Result {
 			if strings.TrimSpace(result.Description) != "" {
 				resMap["description"] = strings.TrimSpace(result.Description)
 			}
+			if strings.TrimSpace(result.ReversePatchPath) != "" {
+				resMap["reverse_patch_path"] = strings.TrimSpace(result.ReversePatchPath)
+			}
 			resJSON, _ := json.Marshal(resMap)
 			workspaceStatus := "workspace_applied: no"
 			if result.AppliedInWorkspace {
@@ -746,15 +749,14 @@ func Run(ctx context.Context, opts Options) Result {
 			} else if cfg.dryRun {
 				workspaceStatus = "workspace_applied: (dry-run)"
 			}
-			finalizeStatus := "finalize: pending"
-			switch {
-			case cfg.dryRun:
+			finalizeStatus := "finalize: atomic (done)"
+			if cfg.dryRun {
 				finalizeStatus = "finalize: (dry-run)"
-			case cfg.patchNoApply:
+			} else if cfg.patchNoApply {
 				finalizeStatus = "finalize: skipped (--patch-no-apply)"
 			}
 			ans := fmt.Sprintf(
-				"Patch created: %s\nsequence: %d\nfiles_modified: %v\ninsertions: %d\ndeletions: %d\n%s\n%s\n\ninput:\n%s\n\noutput:\n%s\n",
+				"Patch created: %s\nsequence: %d\nfiles_modified: %v\ninsertions: %d\ndeletions: %d\n%s\n%s\nreverse_patch_path: %s\n\ninput:\n%s\n\noutput:\n%s\n",
 				result.PatchPath,
 				result.Sequence,
 				strings.Join(result.FilesModified, ", "),
@@ -762,6 +764,7 @@ func Run(ctx context.Context, opts Options) Result {
 				result.Deletions,
 				workspaceStatus,
 				finalizeStatus,
+				strings.TrimSpace(result.ReversePatchPath),
 				trimTo(string(jsonBytes), 1000),
 				trimTo(string(resJSON), 1000),
 			)
@@ -786,7 +789,10 @@ func Run(ctx context.Context, opts Options) Result {
 			}
 			extra["patch_workspace_applied"] = result.AppliedInWorkspace
 			extra["patch_applied"] = result.AppliedInWorkspace
-			extra["patch_finalize_pending"] = !cfg.patchNoApply && !cfg.dryRun
+			extra["patch_finalize_pending"] = false
+			if strings.TrimSpace(result.ReversePatchPath) != "" {
+				extra["patch_reverse_path"] = strings.TrimSpace(result.ReversePatchPath)
+			}
 			patchOutcome("success", nil, extra)
 			if shouldFinalizeAfterPatch {
 				goto Finalize
@@ -958,14 +964,6 @@ Finalize:
 		sessionErr = err
 		turnsCompleted = turns
 		return Result{ExitCode: 1, Err: err}
-	}
-	if pRunner != nil && !cfg.dryRun && !cfg.patchNoApply {
-		if err := pRunner.Finalize(cfg.verbose); err != nil {
-			fmt.Fprintln(os.Stderr, "Final patch apply error:", err)
-			sessionErr = err
-			turnsCompleted = turns
-			return Result{ExitCode: 1, Err: err}
-		}
 	}
 	if err := writeFinalAnswer(sessionID, answer, cfg.finalFile, cfg.verbose, cfg.dryRun); err != nil {
 		fmt.Fprintln(os.Stderr, "Final file write error:", err)
