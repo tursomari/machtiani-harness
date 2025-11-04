@@ -12,13 +12,14 @@ import (
 )
 
 const (
-	defaultWidth          = 80
-	ansiReset             = "\033[0m"
-	ansiGray              = "\033[37m"
-	promptWindowLines     = 9
-	promptContentLines    = promptWindowLines - 1
-	promptFirstLinePrefix = "`-- "
-	promptSpacerPrefix    = "    "
+	defaultWidth              = 80
+	ansiReset                 = "\033[0m"
+	ansiGray                  = "\033[37m"
+	promptWindowLines         = 9
+	promptContentLines        = promptWindowLines - 1
+	promptFirstLinePrefix     = "`-- "
+	promptSpacerPrefix        = "    "
+	shellAgentActionPrefix    = "[shell] "
 )
 
 // TerminalDisplay manages the structured streaming output for mct-agent.
@@ -34,12 +35,14 @@ type TerminalDisplay struct {
 
 // PromptStream coordinates streaming tokens for a single prompt turn.
 type PromptStream struct {
-	display       *TerminalDisplay
-	buffer        strings.Builder
-	started       bool
-	done          bool
-	linesPrinted  int
-	renderedLines []string
+	display          *TerminalDisplay
+	buffer           strings.Builder
+	actionBuffer     strings.Builder
+	started          bool
+	done             bool
+	linesPrinted     int
+	renderedLines    []string
+	includeActions   bool // if true, action lines are interleaved with LLM tokens
 }
 
 // PromptOptions controls how prompts are rendered in the terminal chain.
@@ -211,6 +214,82 @@ func (s *PromptStream) Abort(message string) {
 		s.done = true
 		s.display.current = nil
 	})
+}
+
+// OnActionChunk ingests a shell-agent action description chunk while streaming.
+// This is called when a shell-agent emits an action event (e.g., running a command).
+// Action descriptions are prefixed with a marker to distinguish from LLM tokens.
+func (s *PromptStream) OnActionChunk(description string) {
+	s.display.withLock(func() {
+		if s.done {
+			return
+		}
+		desc := strings.TrimSpace(description)
+		if desc == "" {
+			return
+		}
+		// Prefix the action with a clear marker
+		actionLine := shellAgentActionPrefix + desc
+		s.actionBuffer.WriteString(actionLine)
+		s.actionBuffer.WriteString("\n")
+		// Re-render with the new action included
+		s.renderCurrentWithActionsLocked()
+	})
+}
+
+// StreamAction is a convenience method on TerminalDisplay to surface shell-agent
+// actions into the current PromptStream if one is active. If no stream is active,
+// it falls back to using Notify.
+func (t *TerminalDisplay) StreamAction(description string) {
+	clean := strings.TrimSpace(description)
+	if clean == "" {
+		return
+	}
+	t.mu.Lock()
+	if !t.started {
+		t.started = true
+	}
+	current := t.current
+	if current != nil && !current.done {
+		t.mu.Unlock()
+		current.OnActionChunk(clean)
+		return
+	}
+	// Fall back to notification if no active stream
+	t.printNotificationLineLocked(shellAgentActionPrefix + clean)
+	t.mu.Unlock()
+}
+
+// renderCurrentWithActionsLocked combines LLM output and shell-agent actions,
+// maintaining the last promptContentLines worth of content across both sources.
+func (s *PromptStream) renderCurrentWithActionsLocked() {
+	llmText := s.buffer.String()
+	actionText := s.actionBuffer.String()
+	
+	// Combine both buffers, with actions interleaved
+	combined := llmText + actionText
+	
+	lines := lastNLines(combined, promptContentLines)
+	if len(lines) == 0 {
+		placeholder := sanitizeLine(combined)
+		if placeholder == "" {
+			lines = []string{"..."}
+		} else {
+			lines = []string{placeholder}
+		}
+	} else {
+		hasContent := false
+		for _, line := range lines {
+			if sanitizeLine(line) != "" {
+				hasContent = true
+				break
+			}
+		}
+		if !hasContent {
+			lines = []string{"..."}
+		}
+	}
+	s.printLinesLocked(lines)
 }
 
 func (s *PromptStream) renderCurrentLocked() {

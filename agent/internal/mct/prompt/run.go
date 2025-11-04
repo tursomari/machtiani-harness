@@ -3,6 +3,7 @@ package prompt
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -21,6 +22,8 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/readme"
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/session"
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/utils"
+	"github.com/tursomari/machtiani/agent/internal/shellbridge"
+	"github.com/tursomari/machtiani/agent/internal/trajectory"
 )
 
 var (
@@ -248,10 +251,6 @@ func invokeShellAgent(ctx context.Context, prompt string, opts RunOptions) (stri
 	}
 
 	var stdoutBuf bytes.Buffer
-	var writer io.Writer = &stdoutBuf
-	if opts.OnToken != nil {
-		writer = io.MultiWriter(&stdoutBuf, &tokenWriter{onToken: opts.OnToken})
-	}
 
 	var stderrBuf bytes.Buffer
 	stderrDone := make(chan struct{})
@@ -261,7 +260,12 @@ func invokeShellAgent(ctx context.Context, prompt string, opts RunOptions) (stri
 		close(stderrDone)
 	}()
 
-	if _, err := io.Copy(writer, stdoutPipe); err != nil {
+	trajWriter, _ := trajectory.FromContext(ctx)
+	parentSpan, _ := trajectory.ParentSpanID(ctx)
+	emitAction := func(desc, cmd string) {
+		emitShellActionEvent(ctx, trajWriter, parentSpan, desc, cmd)
+	}
+	if err := interceptShellAgentStdout(stdoutPipe, &stdoutBuf, opts.OnToken, emitAction); err != nil {
 		_ = cmd.Process.Kill()
 		<-stderrDone
 		_ = cmd.Wait()
@@ -342,6 +346,100 @@ func extractTrajectoryPath(outputs ...string) string {
 		}
 	}
 	return ""
+}
+
+func interceptShellAgentStdout(r io.Reader, buf *bytes.Buffer, onToken func(string), emitAction func(string, string)) error {
+	if r == nil {
+		return nil
+	}
+	tmp := make([]byte, 4096)
+	pending := make([]byte, 0, 4096)
+	flush := func(data []byte) {
+		if len(data) == 0 {
+			return
+		}
+		buf.Write(data)
+		if onToken != nil {
+			onToken(string(data))
+		}
+	}
+	for {
+		n, err := r.Read(tmp)
+		if n > 0 {
+			pending = append(pending, tmp[:n]...)
+			for {
+				idx := bytes.IndexByte(pending, '\n')
+				if idx == -1 {
+					break
+				}
+				line := pending[:idx+1]
+				pending = pending[idx+1:]
+				if handleShellActionLine(line, emitAction) {
+					continue
+				}
+				flush(line)
+			}
+		}
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return err
+		}
+	}
+	if len(pending) > 0 {
+		if handleShellActionLine(pending, emitAction) {
+			return nil
+		}
+		flush(pending)
+	}
+	return nil
+}
+
+func handleShellActionLine(line []byte, emitAction func(string, string)) bool {
+	trimmed := bytes.TrimRight(line, "\r\n")
+	if !bytes.HasPrefix(trimmed, []byte(shellbridge.ActionPrefix)) {
+		return false
+	}
+	payload := bytes.TrimSpace(trimmed[len(shellbridge.ActionPrefix):])
+	if len(payload) == 0 {
+		return true
+	}
+	var msg shellbridge.ActionMessage
+	if err := json.Unmarshal(payload, &msg); err != nil {
+		return false
+	}
+	desc := strings.TrimSpace(msg.Description)
+	cmd := strings.TrimSpace(msg.Command)
+	if desc == "" && cmd == "" {
+		return true
+	}
+	if emitAction != nil {
+		emitAction(desc, cmd)
+	}
+	return true
+}
+
+func emitShellActionEvent(ctx context.Context, writer *trajectory.Writer, parentSpan string, desc, cmd string) {
+	if writer == nil {
+		return
+	}
+	if desc == "" && cmd == "" {
+		return
+	}
+	payload := map[string]any{
+		"event_version": 1,
+	}
+	if desc != "" {
+		payload["description"] = desc
+	}
+	if cmd != "" {
+		payload["command"] = cmd
+	}
+	evt := trajectory.Event{Kind: "shell-agent.action", ParentSpanID: strings.TrimSpace(parentSpan), Payload: payload}
+	if err := writer.Emit(ctx, evt); err != nil {
+		fmt.Fprintf(os.Stderr, "[trajectory] shell action emit error: %v\n", err)
+	}
 }
 
 func firstNonEmptyOverrides(runtimes ...ModelRuntime) map[string]string {

@@ -101,6 +101,8 @@ func Run(ctx context.Context, opts Options) Result {
 	display := ui.NewTerminalDisplay(os.Stdout)
 	var failoverCancel context.CancelFunc
 	var failoverDone <-chan struct{}
+	var shellActionCancel context.CancelFunc
+	var shellActionDone <-chan struct{}
 	if trajectoryWriter != nil {
 		cancel, done, err := startLLMFailoverLogger(display, trajectoryWriter.Config().Path)
 		if err != nil {
@@ -109,6 +111,14 @@ func Run(ctx context.Context, opts Options) Result {
 			failoverCancel = cancel
 			failoverDone = done
 		}
+		// Start shell-agent action streamer to surface shell actions in real-time
+		cancel, done, err = startShellActionStreamer(display, trajectoryWriter.Config().Path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[trajectory] shell action listener setup error: %v\n", err)
+		} else {
+			shellActionCancel = cancel
+			shellActionDone = done
+		}
 	}
 	defer func() {
 		if failoverCancel != nil {
@@ -116,6 +126,12 @@ func Run(ctx context.Context, opts Options) Result {
 		}
 		if failoverDone != nil {
 			<-failoverDone
+		}
+		if shellActionCancel != nil {
+			shellActionCancel()
+		}
+		if shellActionDone != nil {
+			<-shellActionDone
 		}
 	}()
 

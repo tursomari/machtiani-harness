@@ -1,12 +1,14 @@
 package fs
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -103,11 +105,108 @@ func MakeSessionWorkspace(src string) (string, func(), error) {
 		return "", func() {}, err
 	}
 	cleanup := func() { _ = os.RemoveAll(ws) }
-	if err := copyTree(src, ws); err != nil {
+	if err := copyRepoWorkspace(src, ws); err != nil {
 		cleanup()
 		return "", func() {}, err
 	}
 	return ws, cleanup, nil
+}
+
+func copyRepoWorkspace(src, dst string) error {
+	if err := os.MkdirAll(dst, 0o755); err != nil {
+		return err
+	}
+	files, err := listTrackedFiles(src)
+	if err != nil {
+		return err
+	}
+	for _, rel := range files {
+		rel = filepath.Clean(rel)
+		if rel == "." || rel == "" {
+			continue
+		}
+		srcPath := filepath.Join(src, rel)
+		info, err := os.Lstat(srcPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return err
+		}
+		dstPath := filepath.Join(dst, rel)
+		switch {
+		case info.Mode()&os.ModeSymlink != 0:
+			target, err := os.Readlink(srcPath)
+			if err != nil {
+				return err
+			}
+			if err := os.MkdirAll(filepath.Dir(dstPath), 0o755); err != nil {
+				return err
+			}
+			if err := os.Symlink(target, dstPath); err != nil {
+				return err
+			}
+		case info.IsDir():
+			if err := copyTree(srcPath, dstPath); err != nil {
+				return err
+			}
+		default:
+			if err := copyFile(srcPath, dstPath, info.Mode()); err != nil {
+				return err
+			}
+		}
+	}
+	return copyGitMetadata(src, dst)
+}
+
+func copyGitMetadata(src, dst string) error {
+	srcGit := filepath.Join(src, ".git")
+	info, err := os.Lstat(srcGit)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	dstGit := filepath.Join(dst, ".git")
+	switch {
+	case info.Mode()&os.ModeSymlink != 0:
+		target, err := os.Readlink(srcGit)
+		if err != nil {
+			return err
+		}
+		if err := os.MkdirAll(filepath.Dir(dstGit), 0o755); err != nil {
+			return err
+		}
+		if err := os.Symlink(target, dstGit); err != nil {
+			return err
+		}
+		return nil
+	case info.IsDir():
+		return copyTree(srcGit, dstGit)
+	default:
+		return copyFile(srcGit, dstGit, info.Mode())
+	}
+}
+
+func listTrackedFiles(repo string) ([]string, error) {
+	cmd := exec.Command("git", "-C", repo, "ls-files", "-z")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("git ls-files: %w", err)
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	parts := bytes.Split(out, []byte{0})
+	files := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if len(p) == 0 {
+			continue
+		}
+		files = append(files, string(p))
+	}
+	return files, nil
 }
 
 func copyTree(src, dst string) error {
