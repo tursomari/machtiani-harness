@@ -37,3 +37,41 @@ func TestWriteTurn_Patcher(t *testing.T) {
 		t.Fatalf("should not include mct chat path for patch turn: %s", content)
 	}
 }
+
+func TestTranscriptRestoreSeedsContent(t *testing.T) {
+	cwd, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	tmp := t.TempDir()
+	_ = os.Chdir(tmp)
+	t.Setenv("HOME", tmp)
+
+	tr, err := New("resume-sess")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tr.Close()
+
+	existing := "# mct-agent Transcript\n\nSession: resume-sess\n\nGoal:\nResume testing\n\n"
+	if err := tr.Restore(existing); err != nil {
+		t.Fatalf("Restore returned error: %v", err)
+	}
+	if got := tr.Content(); got != existing {
+		t.Fatalf("Restore did not seed content:\nwant: %q\n got: %q", existing, got)
+	}
+
+	if err := tr.WriteTurn(1, "What next?", "", nil, "Continue", "ask"); err != nil {
+		t.Fatalf("WriteTurn after Restore failed: %v", err)
+	}
+
+	data, err := os.ReadFile(tr.Path())
+	if err != nil {
+		t.Fatalf("failed to read transcript file: %v", err)
+	}
+	content := string(data)
+	if !strings.HasPrefix(content, existing) {
+		t.Fatalf("file does not start with restored content:\n%s", content)
+	}
+	if !strings.Contains(content, "Planner decision: ask") {
+		t.Fatalf("expected appended turn in content:\n%s", content)
+	}
+}

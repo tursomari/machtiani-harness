@@ -258,6 +258,28 @@ func (t *Transcript) Content() string {
 	return t.mem.String()
 }
 
+// Restore seeds the transcript with existing content, typically used when resuming
+// an interrupted session.
+func (t *Transcript) Restore(content string) error {
+	if t == nil {
+		return nil
+	}
+	if t.f == nil {
+		return fmt.Errorf("transcript file not initialised")
+	}
+	if content == "" {
+		return nil
+	}
+	if _, err := t.f.WriteString(content); err != nil {
+		return err
+	}
+	t.mem.Reset()
+	if _, err := t.mem.WriteString(content); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (t *Transcript) emit(op string, payload map[string]any) {
 	if t == nil || t.traj == nil {
 		return

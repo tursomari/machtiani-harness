@@ -6,7 +6,9 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/mct/readmesync"
@@ -127,7 +129,24 @@ func handleRunCommand(args []string) int {
 	}
 	opts.Config.APIKeyOverrides = llm.CopyAPIKeyOverridesForRuntime(apiOverrides)
 
-	res := sessionRunFn(context.Background(), opts)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+
+	go func() {
+		select {
+		case <-sigCh:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+
+	opts.Context = ctx
+
+	res := sessionRunFn(ctx, opts)
 	if res.Err != nil && res.ExitCode == 0 {
 		return 1
 	}
@@ -349,6 +368,7 @@ func configureSessionFlags(fs *flag.FlagSet, cfg *session.Config, paramFlags, pa
 	fs.StringVar(&cfg.OpenAIAPIKey, "openai-api-key", "", "OpenAI-compatible API key (overrides env, deprecated)")
 	fs.StringVar(&cfg.OpenAIBaseURL, "openai-base-url", "", "OpenAI-compatible base URL (overrides env, deprecated)")
 	fs.StringVar(&cfg.OpenAIModel, "openai-model", "", "Direct upstream model name (deprecated; prefer --model)")
+	fs.StringVar(&cfg.SessionID, "session-id", "", "Existing session identifier to resume")
 	if apiKeyFlags != nil {
 		fs.Var(apiKeyFlags, "api-key", "Provider-specific API key override in provider:key format (repeatable)")
 	}

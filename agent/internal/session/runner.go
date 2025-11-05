@@ -37,13 +37,71 @@ var (
 )
 
 func Run(ctx context.Context, opts Options) Result {
-	goal := strings.TrimSpace(opts.Goal)
-	if goal == "" {
+	if opts.Context != nil {
+		ctx = opts.Context
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	rootCtx := ctx
+
+	inputPrompt := strings.TrimSpace(opts.Goal)
+	if inputPrompt == "" {
 		fmt.Fprintln(os.Stderr, "Error: empty issue/question provided")
 		return Result{ExitCode: 2, Err: errors.New("empty goal")}
 	}
+	goal := inputPrompt
 
-	cfg := newLegacyConfig(opts.Config)
+	cfgInput := opts.Config
+	sessionID := strings.TrimSpace(cfgInput.SessionID)
+	resumeMode := false
+	var loadedState *SessionState
+	resumePrompt := ""
+
+	if sessionID != "" {
+		state, err := LoadSessionState(sessionID)
+		if err != nil {
+			if errors.Is(err, ErrSessionStateNotFound) {
+				fmt.Fprintf(os.Stderr, "Error: no saved session found for %s.\n", sessionID)
+				return Result{ExitCode: 2, Err: err}
+			}
+			fmt.Fprintln(os.Stderr, "Error loading session state:", err)
+			return Result{ExitCode: 1, Err: err}
+		}
+		resumeMode = true
+		loadedState = state
+		resumePrompt = strings.TrimSpace(inputPrompt)
+
+		storedGoal := strings.TrimSpace(state.Goal)
+		if storedGoal != "" {
+			goal = storedGoal
+		}
+		if resumePrompt != "" {
+			if goal != "" {
+				goal = strings.TrimSpace(goal + "\n\n" + resumePrompt)
+			} else {
+				goal = resumePrompt
+			}
+		}
+		if strings.TrimSpace(cfgInput.TranscriptFile) == "" && strings.TrimSpace(state.TranscriptPath) != "" {
+			cfgInput.TranscriptFile = state.TranscriptPath
+		}
+	}
+	if goal == "" {
+		goal = resumePrompt
+	}
+	if goal == "" {
+		fmt.Fprintln(os.Stderr, "Error: unable to determine session goal")
+		return Result{ExitCode: 1, Err: errors.New("missing session goal")}
+	}
+
+	if sessionID == "" {
+		sessionID = runner.GenerateSessionID()
+	}
+
+	cfgInput.SessionID = sessionID
+
+	cfg := newLegacyConfig(cfgInput)
 	applyTrajectoryEnvOverrides(&cfg)
 	if err := cleanupOrphanedTempDirs(cfg.verbose); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to cleanup orphaned temp dirs: %v\n", err)
@@ -52,8 +110,37 @@ func Run(ctx context.Context, opts Options) Result {
 	sessionStatus := "error"
 	var sessionErr error
 	turnsCompleted := 0
-
-	sessionID := runner.GenerateSessionID()
+	if resumeMode && loadedState != nil && loadedState.TurnsCompleted > 0 {
+		turnsCompleted = loadedState.TurnsCompleted
+	}
+	interrupted := false
+	keepSessionState := false
+	var pendingState *SessionState
+	lastAnswer := ""
+	retrieved := []string{}
+	userTurnCounter := turnsCompleted
+	interruptedResult := func(err error) Result {
+		interrupted = true
+		if err == nil {
+			err = context.Canceled
+		}
+		sessionErr = err
+		sessionStatus = "interrupted"
+		turnsCompleted = userTurnCounter
+		return Result{ExitCode: 130, Status: sessionStatus, Turns: turnsCompleted, SessionID: sessionID, Err: err}
+	}
+	isContextCancelled := func(err error) bool {
+		if err == nil {
+			return false
+		}
+		if errors.Is(err, context.Canceled) {
+			return true
+		}
+		if rootCtxErr := rootCtx.Err(); rootCtxErr != nil && errors.Is(rootCtxErr, context.Canceled) {
+			return true
+		}
+		return false
+	}
 	sessionTempRoot := filepath.Join(os.TempDir(), "mct", sessionID)
 	if err := tempdir.SetSessionRoot(sessionTempRoot); err != nil {
 		fmt.Fprintln(os.Stderr, "Error preparing session temp root:", err)
@@ -144,6 +231,22 @@ func Run(ctx context.Context, opts Options) Result {
 		}
 	}()
 
+	var tr *transcript.Transcript
+	resumeTranscript := ""
+	if resumeMode && loadedState != nil {
+		resumeTranscript = loadedState.Transcript
+		if strings.TrimSpace(resumeTranscript) == "" && strings.TrimSpace(loadedState.TranscriptPath) != "" {
+			if data, readErr := os.ReadFile(loadedState.TranscriptPath); readErr == nil {
+				resumeTranscript = string(data)
+			} else if cfg.verbose {
+				fmt.Fprintf(os.Stderr, "Warning: failed to read transcript for resume (%s): %v\n", loadedState.TranscriptPath, readErr)
+			}
+		}
+	}
+	printResumeHint := func(header string, turns int) {
+		fmt.Fprintf(os.Stdout, "%s\nSession ID: %s\nTurns completed: %d\nGoal so far: %q\n\nTo continue, provide your next instruction, for example:\n  mct-agent run \"<next instruction>\" --session-id %s\n\n", header, sessionID, turns, goal, sessionID)
+	}
+
 	tr, err := transcript.NewWithPath(cfg.transcriptFile, sessionID)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Error preparing transcript:", err)
@@ -151,6 +254,62 @@ func Run(ctx context.Context, opts Options) Result {
 	}
 	defer tr.Close()
 	tr.SetTrajectory(trajectoryWriter)
+	defer func() {
+		if interrupted {
+			state := SessionState{
+				SessionID:      sessionID,
+				Goal:           goal,
+				TurnsCompleted: turnsCompleted,
+			}
+			if tr != nil {
+				state.TranscriptPath = tr.Path()
+				state.Transcript = tr.Content()
+			}
+			if err := SaveSessionState(state); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to save session state for %s: %v\n", sessionID, err)
+			} else {
+				printResumeHint("=== SESSION INTERRUPTED ===", turnsCompleted)
+			}
+			return
+		}
+		sid := strings.TrimSpace(sessionID)
+		if sid == "" {
+			return
+		}
+		if keepSessionState {
+			state := SessionState{
+				SessionID:      sid,
+				Goal:           goal,
+				TurnsCompleted: turnsCompleted,
+			}
+			if pendingState != nil {
+				state = *pendingState
+			} else if tr != nil {
+				state.TranscriptPath = tr.Path()
+				state.Transcript = tr.Content()
+			}
+			if state.TranscriptPath == "" && tr != nil {
+				state.TranscriptPath = tr.Path()
+			}
+			if state.Transcript == "" && tr != nil {
+				state.Transcript = tr.Content()
+			}
+			if err := SaveSessionState(state); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to save session state for %s: %v\n", sid, err)
+			}
+			return
+		}
+		if err := RemoveSessionState(sid); err != nil && cfg.verbose {
+			fmt.Fprintf(os.Stderr, "Warning: failed to remove session state for %s: %v\n", sid, err)
+		}
+	}()
+
+	if strings.TrimSpace(resumeTranscript) != "" {
+		if err := tr.Restore(resumeTranscript); err != nil {
+			fmt.Fprintln(os.Stderr, "Error restoring transcript:", err)
+			return Result{ExitCode: 1, Err: err}
+		}
+	}
 
 	if cfg.verbose {
 		fmt.Fprintln(os.Stderr, "mct-agent starting; transcript:", tr.Path())
@@ -257,31 +416,32 @@ func Run(ctx context.Context, opts Options) Result {
 		PatchEnabled:      cfg.patch,
 	})
 
-	lastAnswer := ""
-	retrieved := []string{}
-	userTurnCounter := 0
-
-	if err := tr.WriteHeader(goal, sessionID, cfg); err != nil {
-		fmt.Fprintln(os.Stderr, "Error writing transcript header:", err)
-		return Result{ExitCode: 1, Err: err}
-	}
-
-	prefillAnswer := backgroundFallbackAnswer
-	if backgroundText, err := loadProjectBackground(repoRoot); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: unable to load project background; falling back to sync prompt: %v\n", err)
-	} else {
-		if cfg.verbose {
-			fmt.Fprintf(os.Stderr, "Loaded internal README background (%d bytes).\n", len(backgroundText))
+	if !resumeMode || tr.Content() == "" {
+		if err := tr.WriteHeader(goal, sessionID, cfg); err != nil {
+			fmt.Fprintln(os.Stderr, "Error writing transcript header:", err)
+			return Result{ExitCode: 1, Err: err}
 		}
-		prefillAnswer = backgroundText
-	}
-	if err := tr.WriteTurn(0, backgroundQuestionPrompt, "", nil, prefillAnswer, "background"); err != nil {
-		fmt.Fprintln(os.Stderr, "Transcript write error:", err)
-		sessionErr = err
-		return Result{ExitCode: 1, Err: err}
+
+		prefillAnswer := backgroundFallbackAnswer
+		if backgroundText, err := loadProjectBackground(repoRoot); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: unable to load project background; falling back to sync prompt: %v\n", err)
+		} else {
+			if cfg.verbose {
+				fmt.Fprintf(os.Stderr, "Loaded internal README background (%d bytes).\n", len(backgroundText))
+			}
+			prefillAnswer = backgroundText
+		}
+		if err := tr.WriteTurn(0, backgroundQuestionPrompt, "", nil, prefillAnswer, "background"); err != nil {
+			fmt.Fprintln(os.Stderr, "Transcript write error:", err)
+			sessionErr = err
+			return Result{ExitCode: 1, Err: err}
+		}
 	}
 
 	display.StartSession(goal)
+	if resumeMode {
+		fmt.Fprintf(os.Stdout, "Resuming session %s (completed %d of %d turns)\n", sessionID, turnsCompleted, cfg.maxSteps)
+	}
 	sessionClosed := false
 	defer func() {
 		if !sessionClosed {
@@ -291,6 +451,9 @@ func Run(ctx context.Context, opts Options) Result {
 
 	parentSpanID := ""
 	for {
+		if err := rootCtx.Err(); err != nil {
+			return interruptedResult(err)
+		}
 		step := userTurnCounter + 1
 		var turn *turnTelemetry
 		if sessTelemetry != nil {
@@ -304,13 +467,35 @@ func Run(ctx context.Context, opts Options) Result {
 			"max_steps": cfg.maxSteps,
 		}
 
-		ctx, cancel := makeTurnContext(cfg.timeoutPerTurn)
-		trFull := tr.Content()
-		ctx = attachTrajectory(ctx, trajectoryWriter, parentSpanID)
-		decision, question, perr := pl.Plan(ctx, goal, trFull, step, cfg.maxSteps)
-		cancel()
+		var (
+			decision   planner.Decision
+			question   string
+			perr       error
+			planCtx    context.Context
+			planCancel context.CancelFunc
+		)
+		forcedResumePrompt := strings.TrimSpace(resumePrompt)
+		if forcedResumePrompt != "" {
+			decision = planner.DecisionAsk
+			question = forcedResumePrompt
+			resumePrompt = ""
+			turnInfo["resume_prompt"] = true
+		} else {
+			planCtx, planCancel = makeTurnContext(rootCtx, cfg.timeoutPerTurn)
+			trFull := tr.Content()
+			planCtx = attachTrajectory(planCtx, trajectoryWriter, parentSpanID)
+			decision, question, perr = pl.Plan(planCtx, goal, trFull, step, cfg.maxSteps)
+			planCancel()
+		}
+		var planCtxErr error
+		if planCtx != nil {
+			planCtxErr = planCtx.Err()
+		}
 		if perr != nil {
-			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			if isContextCancelled(perr) || isContextCancelled(planCtxErr) {
+				return interruptedResult(perr)
+			}
+			if errors.Is(planCtxErr, context.DeadlineExceeded) {
 				fmt.Fprintf(os.Stderr, "Planner error: timed out after %ds. Increase --timeout-per-turn or set 0 for unlimited.\n", cfg.timeoutPerTurn)
 				sessionErr = perr
 				finishTurn(sessTelemetry, turn, "planner", "error", turnInfo, perr)
@@ -329,12 +514,15 @@ func Run(ctx context.Context, opts Options) Result {
 			if strings.Contains(perrStr, "deadline exceeded") || strings.Contains(perrStr, "timeout") || strings.Contains(perrStr, "temporary") {
 				fmt.Fprintln(os.Stderr, "Planner warning:", perr)
 				fmt.Fprintln(os.Stderr, "Falling back to finalizing with current transcript.")
-				ctxF, cancelF := makeTurnContext(cfg.timeoutPerTurn)
+				ctxF, cancelF := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
 				trFull := tr.Content()
 				ctxF = attachTrajectory(ctxF, trajectoryWriter, parentSpanID)
 				answer, ferr := pl.Finalize(ctxF, goal, trFull)
 				cancelF()
 				if ferr != nil {
+					if isContextCancelled(ferr) || isContextCancelled(ctxF.Err()) {
+						return interruptedResult(ferr)
+					}
 					if errors.Is(ctxF.Err(), context.DeadlineExceeded) {
 						fmt.Fprintf(os.Stderr, "Finalizer error: timed out after %ds. Increase --timeout-per-turn or set 0 for unlimited.\n", cfg.timeoutPerTurn)
 					} else {
@@ -367,6 +555,17 @@ func Run(ctx context.Context, opts Options) Result {
 				finishTurn(sessTelemetry, turn, turnDecision, "success", turnInfo, nil)
 				turnsCompleted = userTurnCounter
 				sessionStatus = "success"
+				keepSessionState = true
+				pendingState = &SessionState{
+					SessionID:      sessionID,
+					Goal:           goal,
+					TurnsCompleted: turnsCompleted,
+				}
+				if tr != nil {
+					pendingState.TranscriptPath = tr.Path()
+					pendingState.Transcript = tr.Content()
+				}
+				printResumeHint("=== SESSION COMPLETE ===", turnsCompleted)
 				return Result{ExitCode: 0, Status: sessionStatus, Turns: userTurnCounter, SessionID: sessionID}
 			}
 			fmt.Fprintln(os.Stderr, "Planner error:", perr)
@@ -387,12 +586,15 @@ func Run(ctx context.Context, opts Options) Result {
 		}
 
 		if decision == planner.DecisionFinalize {
-			ctx, cancelF := makeTurnContext(cfg.timeoutPerTurn)
+			ctx, cancelF := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
 			trFull := tr.Content()
 			ctx = attachTrajectory(ctx, trajectoryWriter, parentSpanID)
 			answer, ferr := pl.Finalize(ctx, goal, trFull)
 			cancelF()
 			if ferr != nil {
+				if isContextCancelled(ferr) || isContextCancelled(ctx.Err()) {
+					return interruptedResult(ferr)
+				}
 				if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 					fmt.Fprintf(os.Stderr, "Finalizer error: timed out after %ds. Increase --timeout-per-turn or set 0 for unlimited.\n", cfg.timeoutPerTurn)
 				} else {
@@ -425,6 +627,17 @@ func Run(ctx context.Context, opts Options) Result {
 			finishTurn(sessTelemetry, turn, turnDecision, "success", turnInfo, nil)
 			turnsCompleted = userTurnCounter
 			sessionStatus = "success"
+			keepSessionState = true
+			pendingState = &SessionState{
+				SessionID:      sessionID,
+				Goal:           goal,
+				TurnsCompleted: turnsCompleted,
+			}
+			if tr != nil {
+				pendingState.TranscriptPath = tr.Path()
+				pendingState.Transcript = tr.Content()
+			}
+			printResumeHint("=== SESSION COMPLETE ===", turnsCompleted)
 			return Result{ExitCode: 0, Status: sessionStatus, Turns: userTurnCounter, SessionID: sessionID}
 		}
 
@@ -448,7 +661,7 @@ func Run(ctx context.Context, opts Options) Result {
 			if cfg.shellAgent {
 				preflightNote = "routing: shell (config override — something else, such as running a command in the shell)"
 			} else {
-				ctxPre, cancelPre := makeTurnContext(cfg.timeoutPerTurn)
+				ctxPre, cancelPre := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
 				ctxPre = attachTrajectory(ctxPre, trajectoryWriter, parentSpanID)
 				useShellAgent, preflightReply, preflightErr = promptsvc.PreflightShellRouting(ctxPre, mctRunner.Runtime, question)
 				cancelPre()
@@ -498,11 +711,15 @@ func Run(ctx context.Context, opts Options) Result {
 				OnStreamToken:  stream.OnChunk,
 				MaxInputTokens: cfg.maxInputTokens,
 			}
-			ctx2, cancel2 := makeTurnContext(cfg.timeoutPerTurn)
+			ctx2, cancel2 := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
 			ctx2 = attachTrajectory(ctx2, trajectoryWriter, parentSpanID)
 			result, merr := mctRunner.RunPrompt(ctx2, sessionID, input)
 			cancel2()
 			if merr != nil {
+				if isContextCancelled(merr) || isContextCancelled(ctx2.Err()) {
+					stream.Abort("interrupted")
+					return interruptedResult(merr)
+				}
 				msg := merr.Error()
 				if errors.Is(ctx2.Err(), context.DeadlineExceeded) || strings.Contains(strings.ToLower(merr.Error()), "signal: killed") {
 					msg = fmt.Sprintf("timed out after %ds", cfg.timeoutPerTurn)
@@ -667,11 +884,15 @@ func Run(ctx context.Context, opts Options) Result {
 				}
 				continue
 			}
-			ctxP, cancelP := makeTurnContext(cfg.timeoutPerTurn)
+			ctxP, cancelP := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
 			ctxP = attachTrajectory(ctxP, trajectoryWriter, parentSpanID)
 			result, applyErr := pRunner.Apply(ctxP, instr, cfg.verbose)
 			cancelP()
 			if applyErr != nil {
+				if isContextCancelled(applyErr) || isContextCancelled(ctxP.Err()) {
+					stream.Abort("interrupted")
+					return interruptedResult(applyErr)
+				}
 				var cleanErr *mctpatcher.PatchNotCleanError
 				var valErr *mctpatcher.ValidationError
 				var genErr *mctpatcher.PatchGenerationError
@@ -823,6 +1044,11 @@ func Run(ctx context.Context, opts Options) Result {
 	}
 
 Finalize:
+	if err := rootCtx.Err(); err != nil {
+		turnsCompleted = countTurns(tr.Content())
+		userTurnCounter = turnsCompleted
+		return interruptedResult(err)
+	}
 	// One last planning opportunity before finalizing: if planner returns patch, run exactly one patch turn.
 	{
 		step := countTurns(tr.Content()) + 1
@@ -830,7 +1056,7 @@ Finalize:
 		if sessTelemetry != nil {
 			parentSpanID = sessTelemetry.span.ID
 		}
-		ctx, cancel := makeTurnContext(cfg.timeoutPerTurn)
+		ctx, cancel := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
 		trFull := tr.Content()
 		ctx = attachTrajectory(ctx, trajectoryWriter, parentSpanID)
 		lastDec, lastBody, err := pl.Plan(ctx, goal, trFull, step, cfg.maxSteps)
@@ -871,11 +1097,18 @@ Finalize:
 						_ = tr.WriteTurn(step, "Patcher: pre-finalize (resolve failed)", "", nil, err.Error(), "patch-error")
 						handled = true
 					} else {
-						ctxP, cancelP := makeTurnContext(cfg.timeoutPerTurn)
+						ctxP, cancelP := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
 						ctxP = attachTrajectory(ctxP, trajectoryWriter, parentSpanID)
 						result, applyErr := pRunner.Apply(ctxP, instr, cfg.verbose)
 						cancelP()
 						if applyErr != nil {
+							if isContextCancelled(applyErr) || isContextCancelled(ctxP.Err()) {
+								if stream != nil {
+									stream.Abort("interrupted")
+									stream = nil
+								}
+								return interruptedResult(applyErr)
+							}
 							var cleanErr *mctpatcher.PatchNotCleanError
 							if errors.As(applyErr, &cleanErr) {
 								if stream != nil {
@@ -964,12 +1197,17 @@ Finalize:
 		}
 	}
 	turns := countTurns(tr.Content())
-	ctx, cancelF := makeTurnContext(cfg.timeoutPerTurn)
+	ctx, cancelF := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
 	trFull := tr.Content()
 	ctx = attachTrajectory(ctx, trajectoryWriter, parentSpanID)
 	answer, ferr := pl.Finalize(ctx, goal, trFull)
 	cancelF()
 	if ferr != nil {
+		if isContextCancelled(ferr) || isContextCancelled(ctx.Err()) {
+			turnsCompleted = turns
+			userTurnCounter = turns
+			return interruptedResult(ferr)
+		}
 		fmt.Fprintln(os.Stderr, "Finalizer error:", ferr)
 		sessionErr = ferr
 		turnsCompleted = turns
@@ -992,6 +1230,17 @@ Finalize:
 	sessionClosed = true
 	sessionStatus = "success"
 	turnsCompleted = turns
+	keepSessionState = true
+	pendingState = &SessionState{
+		SessionID:      sessionID,
+		Goal:           goal,
+		TurnsCompleted: turnsCompleted,
+	}
+	if tr != nil {
+		pendingState.TranscriptPath = tr.Path()
+		pendingState.Transcript = tr.Content()
+	}
+	printResumeHint("=== SESSION COMPLETE ===", turnsCompleted)
 	return Result{ExitCode: 0, Status: sessionStatus, Turns: turns, SessionID: sessionID}
 }
 

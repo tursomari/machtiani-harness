@@ -1,6 +1,10 @@
 package session
 
-import "github.com/tursomari/machtiani/agent/internal/llm"
+import (
+	"context"
+
+	"github.com/tursomari/machtiani/agent/internal/llm"
+)
 
 type Config struct {
 	MaxSteps                int
@@ -32,6 +36,7 @@ type Config struct {
 	ShellAgent              bool
 	ShellAgentModel         string
 	APIKeyOverrides         map[string]string
+	SessionID               string
 }
 
 type BuildInfo struct {
@@ -51,6 +56,7 @@ type Options struct {
 	GlobalConfig     llm.Config
 	GlobalConfigPath string
 	APIKeyOverrides  map[string]string
+	Context          context.Context
 }
 
 type Result struct {

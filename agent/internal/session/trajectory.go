@@ -111,9 +111,12 @@ func attachTrajectory(ctx context.Context, w *trajectory.Writer, parent string) 
 	return ctx
 }
 
-func makeTurnContext(timeoutSec int) (context.Context, context.CancelFunc) {
-	if timeoutSec <= 0 {
-		return context.WithCancel(context.Background())
+func makeTurnContext(parent context.Context, timeoutSec int) (context.Context, context.CancelFunc) {
+	if parent == nil {
+		parent = context.Background()
 	}
-	return context.WithTimeout(context.Background(), time.Duration(timeoutSec)*time.Second)
+	if timeoutSec <= 0 {
+		return context.WithCancel(parent)
+	}
+	return context.WithTimeout(parent, time.Duration(timeoutSec)*time.Second)
 }
