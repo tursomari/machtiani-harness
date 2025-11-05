@@ -182,10 +182,11 @@ func TestValidateAPIKeyOverrideProviderValidatesMatch(t *testing.T) {
 			shouldFail:         false,
 		},
 		{
-			name:               "multiple mismatched providers ignored",
+			name:               "multiple mismatched providers should fail",
 			overrides:          map[string]string{"anthropic": "key1", "openrouter": "key2"},
 			configuredProvider: "openai",
-			shouldFail:         false,
+			shouldFail:         true,
+			errorContains:      "does not match",
 		},
 	}
 

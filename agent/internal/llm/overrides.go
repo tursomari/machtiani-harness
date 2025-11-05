@@ -101,6 +101,14 @@ func lookupAPIKeyOverride(overrides map[string]string, names ...string) (string,
 // detected, it returns a clear error message indicating what the user should do.
 // This ensures users get immediate feedback if they specify an API key override
 // for the wrong provider.
+//
+// The validation passes if:
+// 1. The configured provider has an override key provided, OR
+// 2. The model alias has an override key provided, OR
+// 3. No overrides were provided
+//
+// If overrides ARE provided but none match the configured provider or alias,
+// the validation fails to prevent accidental use of the wrong provider.
 func ValidateAPIKeyOverrideProvider(overrides map[string]string, modelAlias, configuredProvider string) error {
 	if len(overrides) == 0 {
 		return nil
@@ -113,29 +121,36 @@ func ValidateAPIKeyOverrideProvider(overrides map[string]string, modelAlias, con
 
 	aliasKey := normalizeProviderKey(modelAlias)
 
+	// Check if the configured provider exists in overrides
 	if _, ok := overrides[normalizedConfigured]; ok {
 		return nil
 	}
+
+	// Check if the model alias exists in overrides (fallback lookup)
 	if aliasKey != "" {
 		if _, ok := overrides[aliasKey]; ok {
 			return nil
 		}
 	}
 
-	if len(overrides) == 1 {
-		for overrideProvider := range overrides {
-			if overrideProvider == aliasKey {
-				return nil
-			}
-			return fmt.Errorf(
-				"API key override provider %q does not match model %q configured provider %q. "+
-					"Specify --api-key=%s:<api-key> instead",
-				overrideProvider, modelAlias, normalizedConfigured, normalizedConfigured,
-			)
-		}
+	// If we reach here, no matching override was found.
+	// To prevent accidental provider mismatches when multiple overrides are
+	// provided, we must report an error.
+	//
+	// Find any override provider to include in the error message.
+	// We iterate through the map to get one provider (order doesn't matter
+	// since they're all mismatches).
+	var firstMismatchProvider string
+	for provider := range overrides {
+		firstMismatchProvider = provider
+		break
 	}
 
-	return nil
+	return fmt.Errorf(
+		"API key override provider %q does not match model %q configured provider %q. "+
+			"Specify --api-key=%s:<api-key> instead",
+		firstMismatchProvider, modelAlias, normalizedConfigured, normalizedConfigured,
+	)
 }
 
 func providerEnvVarName(provider string) string {
