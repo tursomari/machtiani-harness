@@ -2,6 +2,7 @@ package gitops
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -10,6 +11,31 @@ import (
 )
 
 var hunkHeaderRegexp = regexp.MustCompile(`^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$`)
+
+func gitRepoValidator(dir string) error {
+	target := strings.TrimSpace(dir)
+	if target == "" {
+		target = "."
+	}
+
+	cmd := exec.Command("git", "rev-parse", "--is-inside-work-tree")
+	cmd.Dir = target
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		var execErr *exec.Error
+		if errors.As(err, &execErr) {
+			return fmt.Errorf("git command not found; ensure git is installed and in PATH")
+		}
+		stderrStr := stderr.String()
+		if strings.Contains(stderrStr, "not a git repository") {
+			return fmt.Errorf("directory %q is not a git repository", target)
+		}
+		return fmt.Errorf("failed to validate git repository at %q: %w", target, err)
+	}
+	return nil
+}
 
 // ApplyPatch invokes `git apply` against the provided patch file using the current
 // working directory.
@@ -21,6 +47,15 @@ func ApplyPatch(patchPath string, verbose bool) error {
 // specified repository directory. When verbose is true, it mirrors the original
 // CLI logging behaviour from the legacy main.go implementation.
 func ApplyPatchInDir(dir, patchPath string, verbose bool) error {
+	if err := gitRepoValidator(dir); err != nil {
+		return fmt.Errorf("cannot apply patch: %w", err)
+	}
+	if _, err := os.Stat(patchPath); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("patch file %q not found", patchPath)
+		}
+		return fmt.Errorf("cannot read patch file %q: %w", patchPath, err)
+	}
 	return applyPatch(dir, patchPath, verbose, true, "apply")
 }
 
@@ -28,6 +63,15 @@ func ApplyPatchInDir(dir, patchPath string, verbose bool) error {
 // provided directory to ensure it can be applied cleanly without modifying the
 // workspace.
 func ApplyPatchInDirWithCheck(dir, patchPath string) error {
+	if err := gitRepoValidator(dir); err != nil {
+		return fmt.Errorf("cannot check patch applicability: %w", err)
+	}
+	if _, err := os.Stat(patchPath); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("patch file %q not found", patchPath)
+		}
+		return fmt.Errorf("cannot read patch file %q: %w", patchPath, err)
+	}
 	return applyPatch(dir, patchPath, false, false, "apply --check", "--check")
 }
 
@@ -35,12 +79,24 @@ func ApplyPatchInDirWithCheck(dir, patchPath string) error {
 // provided directory, performing the same git apply invocation used for forward
 // patches.
 func ReversePatchInDir(dir, patchPath string, verbose bool) error {
+	if err := gitRepoValidator(dir); err != nil {
+		return fmt.Errorf("cannot apply reverse patch: %w", err)
+	}
+	if _, err := os.Stat(patchPath); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("patch file %q not found", patchPath)
+		}
+		return fmt.Errorf("cannot read patch file %q: %w", patchPath, err)
+	}
 	return applyPatch(dir, patchPath, verbose, true, "apply (reverse patch)")
 }
 
 // WorkspaceStatus returns the current `git status --porcelain` entries for the
 // provided directory. The results include both tracked and untracked changes.
 func WorkspaceStatus(dir string) ([]string, error) {
+	if err := gitRepoValidator(dir); err != nil {
+		return nil, fmt.Errorf("cannot check workspace status: %w", err)
+	}
 	dir = strings.TrimSpace(dir)
 	cmd := exec.Command("git", "status", "--porcelain")
 	if dir != "" {
@@ -69,7 +125,7 @@ func WorkspaceStatus(dir string) ([]string, error) {
 func CheckWorkspaceClean(dir string) (bool, error) {
 	entries, err := WorkspaceStatus(dir)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("cannot check if workspace is clean: %w", err)
 	}
 	return len(entries) == 0, nil
 }
@@ -249,7 +305,19 @@ func applyPatch(dir, patchPath string, verbose bool, includeStatus bool, label s
 		if verbose {
 			fmt.Fprintf(os.Stderr, "[git] %s error for %s: %v\n", label, patchPath, err)
 		}
-		return fmt.Errorf("git apply failed: %v\n%s", err, trim(errb.String(), 600))
+		summary := trim(errb.String(), 600)
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			switch exitErr.ExitCode() {
+			case 1:
+				return fmt.Errorf("git apply: patch does not apply cleanly\n%s", summary)
+			case 128:
+				return fmt.Errorf("git apply: internal git error\n%s", summary)
+			default:
+				return fmt.Errorf("git apply failed (exit code %d): %s", exitErr.ExitCode(), summary)
+			}
+		}
+		return fmt.Errorf("git apply failed: %v\n%s", err, summary)
 	}
 	if verbose {
 		fmt.Fprintf(os.Stderr, "[git] %s: success\n", label)

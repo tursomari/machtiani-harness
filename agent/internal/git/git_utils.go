@@ -401,7 +401,22 @@ func GetBranch() (string, error) {
 			}
 		}
 
-		// If no suitable remote branch is found on origin, return an error indicating detached HEAD
+		// If no suitable remote branch is found on origin, attempt to surface detached HEAD gracefully
+		isDetached, detachedErr := IsDetachedHead()
+		if detachedErr != nil {
+			return "", fmt.Errorf("failed to check detached HEAD state: %w", detachedErr)
+		}
+		if isDetached {
+			commitHash, hashErr := GetHeadCommitHash()
+			if hashErr != nil {
+				return "", fmt.Errorf("detached HEAD state but failed to get commit hash: %w", hashErr)
+			}
+			if len(commitHash) >= 8 {
+				return fmt.Sprintf("HEAD~%s", commitHash[:8]), nil
+			}
+			return fmt.Sprintf("HEAD~%s", commitHash), nil
+		}
+
 		return "", errors.New("detached HEAD state and no associated branch found locally or on remotes")
 	}
 
