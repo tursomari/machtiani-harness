@@ -163,7 +163,7 @@ Keys inside `[planner]`, `[shell-agent]`, `[model]`, and `[environment]` are sha
 
 Other helpful overrides:
 - `MACHTIANI_CONFIG`: explicit path to the config file.
-- `MACHTIANI_SESSION_ID`: correlation tag propagated to sub-tools.
+- `MACHTIANI_SESSION_ID`: pre-set session ID to use for the current run; overridden by `--session-id` flag.
 - `FILE_DISCOVERY_BIN`: override the discovery binary that `mct` invokes.
 
 ## Verify Installation
@@ -187,6 +187,7 @@ mct-agent run "Explain the architecture and identify main components" --verbose
 
 Useful flags (agent):
 - `--max-steps int`: max `mct` Q&A turns before finalizing (default ~4).
+- `--session-id string`: Continue or resume a previous session by ID. When specified, the agent loads prior transcript and goal, then appends your new instruction to the goal. If omitted, a new session ID is auto-generated.
 - `--api-key provider:key`: provider-specific API key override for this run (repeatable; beats config/env).
 - `--openai-api-key string`: API key for OpenAI‑compatible endpoint.
 - `--openai-base-url string`: Base URL for OpenAI‑compatible endpoint.
@@ -209,9 +210,51 @@ mct-agent run "triage regression" \
   --api-key openrouter:sk-openrouter-yyy
 ```
 
+### Continuing Conversations With Session Resumption
+
+Sessions are resumable by session ID. If your process is interrupted (Ctrl+C) or you'd like to append additional instructions to an ongoing task, specify the `--session-id` flag:
+
+```bash
+# Start a new session (auto-assigned ID)
+mct-agent run "Fix all lint issues" --verbose
+# Output includes: Session ID: <session-id>
+
+# Later, continue the same session with new instructions
+mct-agent run "Also ensure comments are updated" --session-id <session-id>
+```
+
+When resuming, the agent:
+- Loads the prior goal and transcript from disk
+- Appends your new instruction to the goal (resulting in a combined objective)
+- Continues the conversation from where it left off
+- Writes new turns to the same transcript and trajectory files
+
+Session state is stored in `.machtiani/sessions/<session-id>/session-state.json` and includes the goal, turn count, and paths to transcript artifacts. This allows you to pause, inspect results, and resume later without losing context.
+
+### Graceful Interruption and Auto-Save Mechanism
+
+When `mct-agent` receives `SIGINT` (Ctrl+C) or `SIGTERM`, it:
+- Gracefully terminates the current operation
+- Saves session state to `session-state.json` immediately
+- Prints an interruption summary including session ID and turns completed:
+  ```
+  === SESSION INTERRUPTED ===
+  Session ID: <session-id>
+  Turns completed: 2
+  To resume: mct-agent run "<continue question>" --session-id <session-id>
+  ```
+
+No manual backup is needed. All context (transcript, goals, artifacts) is preserved and ready for resumption. This is especially useful when working on large codebases where discovery or planning may take time—you can interrupt safely and continue later without re-running earlier steps.
+
 ### Session Artifacts & Trajectory Logs
 
-Every run stores artifacts under `.machtiani/sessions/<session-id>/`, including the transcript (`chat/agent-transcript.md`), final answer (`chat/agent-final-answer.md`), and a unified trajectory JSONL stream at `trajectory/agent.jsonl`. The trajectory is enabled by default and can be controlled with the following flags (or their matching `MACHTIANI_TRAJECTORY_*` env vars):
+Every run stores artifacts under `.machtiani/sessions/<session-id>/`, including:
+- **`session-state.json`** — persisted session metadata (goal, turn count, transcript path) used for resuming sessions
+- **`chat/agent-transcript.md`** — per-turn planning decisions and evidence
+- **`chat/agent-final-answer.md`** — final answer from the orchestrator
+- **`trajectory/agent.jsonl`** — unified trajectory stream with structured telemetry (see below)
+
+The trajectory is enabled by default and can be controlled with the following flags (or their matching `MACHTIANI_TRAJECTORY_*` env vars):
 
 - `--trajectory-file` — override the output path.
 - `--no-trajectory` — disable emission entirely.
@@ -247,6 +290,8 @@ Each `mct-agent run` also provisions a dedicated temporary workspace at `<repo>/
 - removed automatically when the session finishes (unless `--persist-tmp-data` is set)
 
 On startup, the agent prunes any prior session directory whose `session.lock` is missing or older than three seconds. This ensures crashed or abandoned sessions do not accumulate under `.machtiani/tmp`. If you need to inspect the scratch space after a run, re-run with `--persist-tmp-data=true` and copy the directory before starting another session (the next startup will remove stale locks).
+
+**Important:** Session state (`session-state.json`) is stored under `.machtiani/sessions/` and is **not** affected by temporary directory pruning. This allows you to safely resume interrupted sessions even if their temporary scratch space has been cleaned up.
 
 ## Optional: Standalone CLIs
 If you installed the peripherals (`./scripts/install.sh --install-peripherals`), you can continue using the individual tools. Example `mct` flows:
