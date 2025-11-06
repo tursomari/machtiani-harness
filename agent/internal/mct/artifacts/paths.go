@@ -18,6 +18,7 @@ const (
 	artifactDirName   = "artifacts"
 	patchesDirName    = "patches"
 	trajectoryDirName = "trajectory"
+	scratchDirName    = "tmp"
 )
 
 // SessionDirectory resolves the root directory for a session-scoped run.
@@ -71,6 +72,65 @@ func SessionTrajectoryDirectory(sessionID string) (string, error) {
 		return "", err
 	}
 	return filepath.Join(root, trajectoryDirName), nil
+}
+
+// SessionScratchDirectory resolves the scratch workspace root for a session.
+// The caller must provide a non-empty session identifier.
+func SessionScratchDirectory(sessionID string) (string, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return "", errors.New("session id required")
+	}
+	root, err := ScratchRoot()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(root, sessionID), nil
+}
+
+// ScratchRoot returns the base directory that should contain session scratch
+// data for the current working directory. When invoked inside a git
+// repository it returns the repo-scoped `.machtiani/tmp` path. Otherwise it
+// returns the global `$HOME/.machtiani/tmp` location.
+func ScratchRoot() (string, error) {
+	root, local, err := projectRoot()
+	if err != nil {
+		return "", err
+	}
+	if local {
+		return filepath.Join(root, machtianiRootDir, scratchDirName), nil
+	}
+	return globalMachtianiPath(scratchDirName)
+}
+
+// ScratchRoots returns the set of scratch roots that may contain session
+// directories relevant to the current context. It always includes the global
+// `$HOME/.machtiani/tmp` directory and, when running inside a git repository,
+// the repo-scoped `.machtiani/tmp` directory.
+func ScratchRoots() ([]string, error) {
+	var roots []string
+	root, local, err := projectRoot()
+	if err != nil {
+		return nil, err
+	}
+	if local {
+		roots = append(roots, filepath.Join(root, machtianiRootDir, scratchDirName))
+	}
+	globalRoot, err := globalMachtianiPath(scratchDirName)
+	if err != nil {
+		return nil, err
+	}
+	dup := false
+	for _, existing := range roots {
+		if filepath.Clean(existing) == filepath.Clean(globalRoot) {
+			dup = true
+			break
+		}
+	}
+	if !dup {
+		roots = append(roots, globalRoot)
+	}
+	return roots, nil
 }
 
 // SessionTrajectoryFile constructs the canonical JSONL path for a named

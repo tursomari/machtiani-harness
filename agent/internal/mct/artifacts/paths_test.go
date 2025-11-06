@@ -50,6 +50,97 @@ func TestSessionChatDirectoryGlobalFallback(t *testing.T) {
 	})
 }
 
+func TestSessionScratchDirectoryLocalRepo(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+
+	withWorkingDir(t, repoDir, func() {
+		const sessionID = "session-scratch"
+		dir, err := SessionScratchDirectory(sessionID)
+		if err != nil {
+			t.Fatalf("SessionScratchDirectory: %v", err)
+		}
+		expected := filepath.Join(repoDir, ".machtiani", "tmp", sessionID)
+		if dir != expected {
+			t.Fatalf("expected %s, got %s", expected, dir)
+		}
+	})
+}
+
+func TestSessionScratchDirectoryGlobalFallback(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	work := t.TempDir()
+	withWorkingDir(t, work, func() {
+		const sessionID = "session-global"
+		dir, err := SessionScratchDirectory(sessionID)
+		if err != nil {
+			t.Fatalf("SessionScratchDirectory: %v", err)
+		}
+		expected := filepath.Join(home, ".machtiani", "tmp", sessionID)
+		if dir != expected {
+			t.Fatalf("expected %s, got %s", expected, dir)
+		}
+	})
+}
+
+func TestScratchRootsLocalRepo(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+
+	withWorkingDir(t, repoDir, func() {
+		roots, err := ScratchRoots()
+		if err != nil {
+			t.Fatalf("ScratchRoots: %v", err)
+		}
+		expected := map[string]struct{}{
+			filepath.Join(repoDir, ".machtiani", "tmp"): {},
+			filepath.Join(home, ".machtiani", "tmp"):    {},
+		}
+		if len(roots) != len(expected) {
+			t.Fatalf("expected %d roots, got %d", len(expected), len(roots))
+		}
+		for _, root := range roots {
+			if _, ok := expected[root]; !ok {
+				t.Fatalf("unexpected root: %s", root)
+			}
+			delete(expected, root)
+		}
+		if len(expected) != 0 {
+			t.Fatalf("missing expected roots: %v", expected)
+		}
+	})
+}
+
+func TestScratchRootsGlobalFallback(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	work := t.TempDir()
+	withWorkingDir(t, work, func() {
+		roots, err := ScratchRoots()
+		if err != nil {
+			t.Fatalf("ScratchRoots: %v", err)
+		}
+		expected := []string{filepath.Join(home, ".machtiani", "tmp")}
+		if len(roots) != len(expected) {
+			t.Fatalf("expected %d roots, got %d", len(expected), len(roots))
+		}
+		for i, root := range roots {
+			if root != expected[i] {
+				t.Fatalf("expected %s, got %s", expected[i], root)
+			}
+		}
+	})
+}
+
 func TestSessionArtifactsDirectoryLocalRepo(t *testing.T) {
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)

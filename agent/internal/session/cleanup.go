@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
 )
 
 const (
@@ -24,15 +26,34 @@ var cleanupPrefixes = []string{
 }
 
 func cleanupOrphanedTempDirs(verbose bool) error {
-	tempDir := os.TempDir()
 	now := time.Now()
 
 	var errs []error
-	sessionRoot := filepath.Join(tempDir, "mct")
-	if err := cleanupOrphanedSessionDirs(sessionRoot, now, sessionLockStaleDuration, verbose); err != nil {
+
+	scratchRoots, err := artifacts.ScratchRoots()
+	if err != nil {
+		errs = append(errs, fmt.Errorf("resolve scratch roots: %w", err))
+	} else {
+		for _, root := range scratchRoots {
+			trimmed := strings.TrimSpace(root)
+			if trimmed == "" {
+				continue
+			}
+			if err := cleanupOrphanedSessionDirs(trimmed, now, sessionLockStaleDuration, verbose); err != nil {
+				errs = append(errs, err)
+			}
+			if err := cleanupOrphanedTempDirsInternal(trimmed, now, defaultCleanupAge, verbose); err != nil {
+				errs = append(errs, err)
+			}
+		}
+	}
+
+	// Remove legacy session directories under /tmp/mct for backwards compatibility.
+	legacySessionRoot := filepath.Join(os.TempDir(), "mct")
+	if err := cleanupOrphanedSessionDirs(legacySessionRoot, now, sessionLockStaleDuration, verbose); err != nil {
 		errs = append(errs, err)
 	}
-	if err := cleanupOrphanedTempDirsInternal(tempDir, now, defaultCleanupAge, verbose); err != nil {
+	if err := cleanupOrphanedTempDirsInternal(os.TempDir(), now, defaultCleanupAge, verbose); err != nil {
 		errs = append(errs, err)
 	}
 	if len(errs) > 0 {
@@ -44,6 +65,9 @@ func cleanupOrphanedTempDirs(verbose bool) error {
 func cleanupOrphanedTempDirsInternal(tempDir string, now time.Time, maxAge time.Duration, verbose bool) error {
 	entries, err := os.ReadDir(tempDir)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
 		return fmt.Errorf("read temp dir %s: %w", tempDir, err)
 	}
 

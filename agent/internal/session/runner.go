@@ -141,32 +141,42 @@ func Run(ctx context.Context, opts Options) Result {
 		}
 		return false
 	}
-	sessionTempRoot := filepath.Join(os.TempDir(), "mct", sessionID)
+	origSessionTempRootRaw := os.Getenv("MACHTIANI_SESSION_TEMP_ROOT")
+	origSessionTempRoot := strings.TrimSpace(origSessionTempRootRaw)
+	sessionTempRoot := origSessionTempRoot
+	if sessionTempRoot == "" {
+		var err error
+		sessionTempRoot, err = artifacts.SessionScratchDirectory(sessionID)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Error resolving session scratch directory:", err)
+			return Result{ExitCode: 1, Err: err}
+		}
+	}
 	if err := tempdir.SetSessionRoot(sessionTempRoot); err != nil {
 		fmt.Fprintln(os.Stderr, "Error preparing session temp root:", err)
 		return Result{ExitCode: 1, Err: err}
 	}
-	origSessionTempRoot := os.Getenv("MACHTIANI_SESSION_TEMP_ROOT")
 	if err := os.Setenv("MACHTIANI_SESSION_TEMP_ROOT", sessionTempRoot); err != nil {
 		fmt.Fprintln(os.Stderr, "Warning: unable to export session temp root:", err)
 	}
 	var sessLock *sessionLock
+	cleanupSessionRoot := origSessionTempRoot == ""
 	defer func() {
 		if sessLock != nil {
 			if err := sessLock.Close(); err != nil {
 				fmt.Fprintf(os.Stderr, "[session-lock] warning: failed to release lock: %v\n", err)
 			}
 		}
-		if !cfg.persistTmpData {
+		if cleanupSessionRoot && !cfg.persistTmpData {
 			if err := os.RemoveAll(sessionTempRoot); err != nil && cfg.verbose {
 				fmt.Fprintf(os.Stderr, "Warning: failed to cleanup session temp root %s: %v\n", sessionTempRoot, err)
 			}
 		}
 		tempdir.ClearSessionRoot()
-		if origSessionTempRoot == "" {
+		if strings.TrimSpace(origSessionTempRootRaw) == "" {
 			_ = os.Unsetenv("MACHTIANI_SESSION_TEMP_ROOT")
 		} else {
-			_ = os.Setenv("MACHTIANI_SESSION_TEMP_ROOT", origSessionTempRoot)
+			_ = os.Setenv("MACHTIANI_SESSION_TEMP_ROOT", origSessionTempRootRaw)
 		}
 	}()
 	lock, lockErr := acquireSessionLock(sessionID, sessionTempRoot)

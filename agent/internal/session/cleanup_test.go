@@ -7,6 +7,23 @@ import (
 	"time"
 )
 
+func withWorkingDir(t *testing.T, dir string, fn func()) {
+	t.Helper()
+	prev, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir %s: %v", dir, err)
+	}
+	defer func() {
+		if err := os.Chdir(prev); err != nil {
+			t.Fatalf("restore dir: %v", err)
+		}
+	}()
+	fn()
+}
+
 func TestCleanupRemovesOldMatchingDir(t *testing.T) {
 	tempDir := t.TempDir()
 	now := time.Now()
@@ -111,7 +128,7 @@ func TestCleanupIgnoresNonMatchingPrefix(t *testing.T) {
 
 func TestCleanupSessionDirsRemovesDirWithoutLock(t *testing.T) {
 	tempDir := t.TempDir()
-	root := filepath.Join(tempDir, "mct")
+	root := filepath.Join(tempDir, ".machtiani", "tmp")
 	sessionPath := filepath.Join(root, "session-missing-lock")
 	if err := os.MkdirAll(sessionPath, 0o755); err != nil {
 		t.Fatalf("mkdir session: %v", err)
@@ -129,7 +146,7 @@ func TestCleanupSessionDirsRemovesDirWithoutLock(t *testing.T) {
 
 func TestCleanupSessionDirsRemovesStaleLock(t *testing.T) {
 	tempDir := t.TempDir()
-	root := filepath.Join(tempDir, "mct")
+	root := filepath.Join(tempDir, ".machtiani", "tmp")
 	sessionPath := filepath.Join(root, "session-stale")
 	if err := os.MkdirAll(sessionPath, 0o755); err != nil {
 		t.Fatalf("mkdir session: %v", err)
@@ -154,7 +171,7 @@ func TestCleanupSessionDirsRemovesStaleLock(t *testing.T) {
 
 func TestCleanupSessionDirsSkipsFreshLock(t *testing.T) {
 	tempDir := t.TempDir()
-	root := filepath.Join(tempDir, "mct")
+	root := filepath.Join(tempDir, ".machtiani", "tmp")
 	sessionPath := filepath.Join(root, "session-fresh")
 	if err := os.MkdirAll(sessionPath, 0o755); err != nil {
 		t.Fatalf("mkdir session: %v", err)
@@ -170,5 +187,27 @@ func TestCleanupSessionDirsSkipsFreshLock(t *testing.T) {
 
 	if _, err := os.Stat(sessionPath); err != nil {
 		t.Fatalf("expected session directory to remain, got err=%v", err)
+	}
+}
+
+func TestCleanupOrphanedTempDirsTargetsScratchRoot(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	work := t.TempDir()
+	root := filepath.Join(home, ".machtiani", "tmp")
+	sessionPath := filepath.Join(root, "session-missing-lock")
+	if err := os.MkdirAll(sessionPath, 0o755); err != nil {
+		t.Fatalf("mkdir session: %v", err)
+	}
+
+	withWorkingDir(t, work, func() {
+		if err := cleanupOrphanedTempDirs(false); err != nil {
+			t.Fatalf("cleanupOrphanedTempDirs: %v", err)
+		}
+	})
+
+	if _, err := os.Stat(sessionPath); !os.IsNotExist(err) {
+		t.Fatalf("expected session directory removed, got err=%v", err)
 	}
 }
