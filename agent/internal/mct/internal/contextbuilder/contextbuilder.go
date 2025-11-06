@@ -19,6 +19,46 @@ const (
 
 const fileSectionPrelude = "\n\nHere are possible relevant files:\n"
 
+var fenceLanguageByExt = map[string]string{
+	".bash":       "bash",
+	".c":          "c",
+	".cc":         "cpp",
+	".cpp":        "cpp",
+	".cs":         "csharp",
+	".css":        "css",
+	".dockerfile": "dockerfile",
+	".go":         "go",
+	".h":          "c",
+	".hpp":        "cpp",
+	".html":       "html",
+	".java":       "java",
+	".js":         "javascript",
+	".json":       "json",
+	".jsx":        "javascript",
+	".kt":         "kotlin",
+	".m":          "objectivec",
+	".md":         "markdown",
+	".php":        "php",
+	".py":         "python",
+	".rb":         "ruby",
+	".rs":         "rust",
+	".scss":       "scss",
+	".sh":         "bash",
+	".sql":        "sql",
+	".swift":      "swift",
+	".ts":         "typescript",
+	".tsx":        "tsx",
+	".yaml":       "yaml",
+	".yml":        "yaml",
+}
+
+var fenceLanguageByName = map[string]string{
+	"dockerfile": "dockerfile",
+	"gemfile":    "ruby",
+	"makefile":   "makefile",
+	"rakefile":   "ruby",
+}
+
 type Options struct {
 	PerFileCap     int
 	TotalCap       int
@@ -129,7 +169,8 @@ func Build(userPrompt string, relPaths []string, conversationHistory []Message, 
 			section.AppendTail(fmt.Sprintf("[READ ERROR: %s]\n", readErr.Error()))
 		}
 		if truncated {
-			section.AppendTail("[TRUNCATED]\n")
+			nextLine := section.visibleLines() + 1
+			section.AppendTail(fmt.Sprintf("[TRUNCATED: omitted content starting at line %d]\n", nextLine))
 		}
 
 		totalTokens += section.RemainingContentTokens + section.TailTokens
@@ -240,6 +281,7 @@ func roleDisplayName(role string) string {
 
 type fileSection struct {
 	RelPath                string
+	Language               string
 	Header                 string
 	HeaderTokens           int
 	Footer                 string
@@ -257,15 +299,14 @@ type fileSection struct {
 }
 
 func newFileSection(relPath string) *fileSection {
-	header := fmt.Sprintf("\n\n### %s\n\n```\n", relPath)
-	footer := "```\n"
-	return &fileSection{
-		RelPath:      relPath,
-		Header:       header,
-		HeaderTokens: llm.EstimateTokens(header),
-		Footer:       footer,
-		FooterTokens: llm.EstimateTokens(footer),
+	section := &fileSection{
+		RelPath:  relPath,
+		Language: detectFenceLanguage(relPath),
+		Footer:   "```\n",
 	}
+	section.FooterTokens = llm.EstimateTokens(section.Footer)
+	section.refreshHeader()
+	return section
 }
 
 func (f *fileSection) SetError(content string) {
@@ -274,6 +315,7 @@ func (f *fileSection) SetError(content string) {
 	}
 	f.ErrorContent = content
 	f.ErrorTokens = llm.EstimateTokens(content)
+	f.refreshHeader()
 }
 
 func (f *fileSection) SetContent(content string) {
@@ -282,6 +324,7 @@ func (f *fileSection) SetContent(content string) {
 		f.Segments = nil
 		f.SegmentTokens = nil
 		f.RemainingContentTokens = 0
+		f.refreshHeader()
 		return
 	}
 
@@ -296,6 +339,7 @@ func (f *fileSection) SetContent(content string) {
 	f.Segments = segments
 	f.SegmentTokens = tokens
 	f.RemainingContentTokens = total
+	f.refreshHeader()
 }
 
 func (f *fileSection) AppendTail(note string) {
@@ -322,9 +366,7 @@ func (f *fileSection) RenderContent() string {
 	for i := 0; i < kept; i++ {
 		segment := f.Segments[i]
 		b.WriteString(segment)
-	}
-	if kept > 0 {
-		lastEndsWithNewline = strings.HasSuffix(f.Segments[kept-1], "\n")
+		lastEndsWithNewline = strings.HasSuffix(segment, "\n")
 	}
 
 	if f.RemovedSegments > 0 {
@@ -347,7 +389,7 @@ func (f *fileSection) RenderContent() string {
 	return b.String()
 }
 
-func (f *fileSection) trimFromBottom(target int) (int, int) {
+func (f *fileSection) trimFromBottom(target int) (int, int, int) {
 	if target <= 0 {
 		target = 1
 	}
@@ -368,6 +410,7 @@ func (f *fileSection) trimFromBottom(target int) (int, int) {
 	}
 
 	oldStampTokens := f.StampTokens
+	oldHeaderTokens := f.HeaderTokens
 	if f.RemovedSegments > 0 {
 		f.Stamp = f.makeStamp()
 		f.StampTokens = llm.EstimateTokens(f.Stamp)
@@ -376,7 +419,9 @@ func (f *fileSection) trimFromBottom(target int) (int, int) {
 		f.StampTokens = 0
 	}
 
-	return removed, f.StampTokens - oldStampTokens
+	f.refreshHeader()
+
+	return removed, f.StampTokens - oldStampTokens, f.HeaderTokens - oldHeaderTokens
 }
 
 func (f *fileSection) makeStamp() string {
@@ -391,6 +436,33 @@ func (f *fileSection) makeStamp() string {
 	}
 	end := totalLines
 	return fmt.Sprintf("------------------------------\nTRUNCATED\nomitted lines %d...%d\n------------------------------\n", start, end)
+}
+
+func (f *fileSection) refreshHeader() {
+	visible := f.visibleLines()
+	start := 1
+	if visible <= 0 {
+		start = 0
+		visible = 0
+	}
+
+	var b strings.Builder
+	b.WriteString("\n\n### ")
+	b.WriteString(f.RelPath)
+	b.WriteString("\n\n```")
+	lang := strings.TrimSpace(f.Language)
+	if lang != "" {
+		b.WriteString(lang)
+	}
+	b.WriteString(" ")
+	b.WriteString(fmt.Sprintf("%d:%d\n", start, visible))
+
+	f.Header = b.String()
+	f.HeaderTokens = llm.EstimateTokens(f.Header)
+}
+
+func (f *fileSection) visibleLines() int {
+	return len(f.Segments) - f.RemovedSegments
 }
 
 func splitSegments(content string) []string {
@@ -433,14 +505,44 @@ func applyTokenLimit(sections []*fileSection, totalTokens, maxTokens int) int {
 			break
 		}
 
-		removed, stampDelta := candidate.trimFromBottom(excess)
+		removed, stampDelta, headerDelta := candidate.trimFromBottom(excess)
 		if removed == 0 && stampDelta == 0 {
 			candidate.RemainingContentTokens = 0
 			continue
 		}
 
-		totalTokens = totalTokens - removed + stampDelta
+		totalTokens = totalTokens - removed + stampDelta + headerDelta
 	}
 
 	return totalTokens
+}
+
+func detectFenceLanguage(relPath string) string {
+	trimmed := strings.TrimSpace(relPath)
+	if trimmed == "" {
+		return ""
+	}
+	base := filepath.Base(trimmed)
+	if base == "" {
+		base = trimmed
+	}
+	lowerBase := strings.ToLower(base)
+	if lang, ok := fenceLanguageByName[lowerBase]; ok {
+		return lang
+	}
+	ext := strings.ToLower(filepath.Ext(base))
+	if lang, ok := fenceLanguageByExt[ext]; ok {
+		return lang
+	}
+	if ext != "" {
+		return strings.TrimPrefix(ext, ".")
+	}
+	return ""
+}
+
+// DetectFenceLanguage resolves the most appropriate code fence language for a
+// relative file path. It mirrors the heuristic used when constructing prompt
+// context so other layers (e.g. snippet injection) can render matching fences.
+func DetectFenceLanguage(relPath string) string {
+	return detectFenceLanguage(relPath)
 }

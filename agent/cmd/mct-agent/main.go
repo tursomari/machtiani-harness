@@ -372,6 +372,7 @@ func configureSessionFlags(fs *flag.FlagSet, cfg *session.Config, paramFlags, pa
 	fs.StringVar(&cfg.OpenAIBaseURL, "openai-base-url", "", "OpenAI-compatible base URL (overrides env, deprecated)")
 	fs.StringVar(&cfg.OpenAIModel, "openai-model", "", "Direct upstream model name (deprecated; prefer --model)")
 	fs.StringVar(&cfg.SessionID, "session-id", "", "Existing session identifier to resume")
+	fs.BoolVar(&cfg.EnableTagFormat, "enable-tag-format", false, "Enable tag-format response directives and validation (experimental)")
 	if apiKeyFlags != nil {
 		fs.Var(apiKeyFlags, "api-key", "Provider-specific API key override in provider:key format (repeatable)")
 	}

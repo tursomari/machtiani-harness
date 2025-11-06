@@ -40,6 +40,7 @@ type RunOptions struct {
 	GlobalConfigPath        string
 	PersistTmpData          bool
 	SessionTempRoot         string
+	ResponseDirectives      []string
 }
 
 // ReadmeOptions configure optional internal README management hooks.
@@ -53,6 +54,7 @@ type Result struct {
 	Header           string
 	Assistant        string
 	FullText         string
+	DirectiveBlock   string
 	RetrievedFiles   []string
 	SavedPath        string
 	Filename         string

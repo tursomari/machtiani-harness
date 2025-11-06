@@ -100,8 +100,14 @@ func TestBuildResolvesPathsFromRepoRoot(t *testing.T) {
 	if !strings.Contains(combined, "### src/main.go") {
 		t.Fatalf("expected prompt to include file header, got %q", combined)
 	}
-	if !strings.Contains(combined, fileContent) {
-		t.Fatalf("expected prompt to include file content, got %q", combined)
+	if !strings.Contains(combined, "```go 1:3") {
+		t.Fatalf("expected prompt to include go code fence with line range, got %q", combined)
+	}
+	if !strings.Contains(combined, "\npackage main\n") {
+		t.Fatalf("expected prompt to contain package declaration, got %q", combined)
+	}
+	if !strings.Contains(combined, "\n\nfunc main() {}") {
+		t.Fatalf("expected prompt to contain function body, got %q", combined)
 	}
 	if strings.Contains(combined, "[ERROR: could not read file]") {
 		t.Fatalf("did not expect file read error in prompt: %q", combined)
@@ -133,8 +139,8 @@ func TestBuildAppliesTokenLimit(t *testing.T) {
 	basePrompt, _ := Build("Hello", []string{"sample.txt"}, nil, Options{})
 	baseTokens := llm.EstimateTokens(basePrompt)
 
-	lineFive := lines[4]
-	lineFiveTokens := llm.EstimateTokens(lineFive + "\n")
+	lineFive := lines[4] + "\n"
+	lineFiveTokens := llm.EstimateTokens(lineFive)
 	limit := baseTokens - (lineFiveTokens / 2)
 	if limit <= 0 {
 		t.Fatalf("unexpected token limit: %d", limit)

@@ -37,6 +37,7 @@ type Config struct {
 	ShellAgentModel         string
 	APIKeyOverrides         map[string]string
 	SessionID               string
+	EnableTagFormat         bool
 }
 
 type BuildInfo struct {
@@ -97,6 +98,7 @@ type legacyConfig struct {
 	shellAgent              bool
 	shellAgentModel         string
 	apiKeyOverrides         map[string]string
+	enableTagFormat         bool
 }
 
 func newLegacyConfig(cfg Config) legacyConfig {
@@ -130,5 +132,6 @@ func newLegacyConfig(cfg Config) legacyConfig {
 		shellAgentModel:         cfg.ShellAgentModel,
 		apiKeyOverrides:         llm.CopyAPIKeyOverridesForRuntime(cfg.APIKeyOverrides),
 		persistTmpData:          cfg.PersistTmpData,
+		enableTagFormat:         cfg.EnableTagFormat,
 	}
 }

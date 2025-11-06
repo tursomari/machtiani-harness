@@ -9,6 +9,9 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
@@ -34,6 +37,7 @@ var (
 	readmeHeadCommitFn       = readmesync.HeadCommit
 	readmeCommitForProjectFn = readmesync.READMECommitForProject
 	readmeCheckoutReadonlyFn = readmesync.CheckoutReadonlyREADME
+	tagFormatPattern         = regexp.MustCompile(`\[(?P<path>[^\[\]|]+?)\s*\|\s*(?P<start>[^:\]]+)\s*:\s*(?P<end>[^\]]+)\]`)
 )
 
 func Run(ctx context.Context, opts Options) Result {
@@ -391,6 +395,11 @@ func Run(ctx context.Context, opts Options) Result {
 		return Result{ExitCode: 1, Err: err}
 	}
 
+	mctResponseDirectives := []string(nil)
+	if cfg.enableTagFormat {
+		mctResponseDirectives = []string{"use_tag_format"}
+	}
+
 	var pRunner *runner.PatcherRunner
 	if cfg.patch {
 		patchLogger := log.New(os.Stderr, "[patcher] ", log.LstdFlags)
@@ -714,12 +723,13 @@ func Run(ctx context.Context, opts Options) Result {
 			}
 			stream := display.BeginPrompt(question, orchPromptOpts)
 			input := runner.PromptInput{
-				Prompt:         question,
-				Mode:           "default",
-				IncludeHistory: true,
-				OnStreamHeader: stream.OnChunk,
-				OnStreamToken:  stream.OnChunk,
-				MaxInputTokens: cfg.maxInputTokens,
+				Prompt:             question,
+				Mode:               "default",
+				IncludeHistory:     true,
+				OnStreamHeader:     stream.OnChunk,
+				OnStreamToken:      stream.OnChunk,
+				MaxInputTokens:     cfg.maxInputTokens,
+				ResponseDirectives: append([]string(nil), mctResponseDirectives...),
 			}
 			ctx2, cancel2 := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
 			ctx2 = attachTrajectory(ctx2, trajectoryWriter, parentSpanID)
@@ -767,8 +777,21 @@ func Run(ctx context.Context, opts Options) Result {
 			if cfg.dryRun || strings.TrimSpace(fullAns) == "" {
 				fullAns = lastAnswer
 			}
+			if cfg.enableTagFormat {
+				stats, warnings := analyzeTagFormat(fullAns, retrieved)
+				for k, v := range stats {
+					turnInfo[k] = v
+				}
+				for _, warn := range warnings {
+					fmt.Fprintf(os.Stderr, "[tag-format] %s\n", warn)
+				}
+			}
 			stream.Complete(fullAns)
-			if err := tr.WriteTurn(step, question, savedPath, retrieved, fullAns, "ask"); err != nil {
+			transcriptQuestion := question
+			if block := strings.TrimSpace(result.DirectiveBlock); block != "" {
+				transcriptQuestion = transcriptQuestion + "\n\n" + block
+			}
+			if err := tr.WriteTurn(step, transcriptQuestion, savedPath, retrieved, fullAns, "ask"); err != nil {
 				fmt.Fprintln(os.Stderr, "Transcript write error:", err)
 				sessionErr = err
 				finishTurn(sessTelemetry, turn, turnDecision, "error", turnInfo, err)
@@ -1287,4 +1310,134 @@ func finishTurn(sessTelemetry *sessionTelemetry, tt *turnTelemetry, decision str
 		return
 	}
 	sessTelemetry.EndTurn(tt, decision, status, info, err)
+}
+
+func analyzeTagFormat(answer string, retrieved []string) (map[string]any, []string) {
+	stats := map[string]any{
+		"tag_format_enabled": true,
+	}
+	trimmed := strings.TrimSpace(answer)
+	if trimmed == "" {
+		stats["tag_format_detected"] = false
+		stats["tag_format_total"] = 0
+		stats["tag_format_valid_ratio"] = 0.0
+		return stats, nil
+	}
+
+	matches := tagFormatPattern.FindAllStringSubmatch(answer, -1)
+	total := len(matches)
+	stats["tag_format_total"] = total
+	if total == 0 {
+		stats["tag_format_detected"] = false
+		stats["tag_format_valid_ratio"] = 0.0
+		return stats, nil
+	}
+	stats["tag_format_detected"] = true
+
+	retrievedSet := make(map[string]struct{}, len(retrieved))
+	for _, p := range retrieved {
+		if n := normalizeTagPath(p); n != "" {
+			retrievedSet[n] = struct{}{}
+		}
+	}
+
+	valid := 0
+	invalid := 0
+	missingPaths := map[string]struct{}{}
+	rangeIssues := map[string]struct{}{}
+	parseIssues := map[string]struct{}{}
+
+	for _, match := range matches {
+		pathRaw := match[1]
+		startRaw := strings.TrimSpace(match[2])
+		endRaw := strings.TrimSpace(match[3])
+		path := normalizeTagPath(pathRaw)
+		start, serr := strconv.Atoi(startRaw)
+		end, eerr := strconv.Atoi(endRaw)
+		isValid := true
+		if path == "" {
+			isValid = false
+			parseIssues[strings.TrimSpace(match[0])] = struct{}{}
+		}
+		if serr != nil || eerr != nil {
+			isValid = false
+			parseIssues[strings.TrimSpace(match[0])] = struct{}{}
+		}
+		if isValid && (start <= 0 || end <= 0 || end < start) {
+			isValid = false
+			rangeIssues[fmt.Sprintf("%s:%d:%d", path, start, end)] = struct{}{}
+		}
+		if isValid {
+			if _, ok := retrievedSet[path]; !ok {
+				isValid = false
+				missingPaths[path] = struct{}{}
+			}
+		}
+		if isValid {
+			valid++
+		} else {
+			invalid++
+		}
+	}
+
+	stats["tag_format_valid"] = valid
+	if invalid > 0 {
+		stats["tag_format_invalid"] = invalid
+	}
+	if total > 0 {
+		stats["tag_format_valid_ratio"] = float64(valid) / float64(total)
+	}
+
+	if len(missingPaths) > 0 {
+		paths := make([]string, 0, len(missingPaths))
+		for p := range missingPaths {
+			paths = append(paths, p)
+		}
+		sort.Strings(paths)
+		stats["tag_format_missing_paths"] = paths
+	}
+	if len(rangeIssues) > 0 {
+		ranges := make([]string, 0, len(rangeIssues))
+		for r := range rangeIssues {
+			ranges = append(ranges, r)
+		}
+		sort.Strings(ranges)
+		stats["tag_format_range_errors"] = ranges
+	}
+	if len(parseIssues) > 0 {
+		fragments := make([]string, 0, len(parseIssues))
+		for frag := range parseIssues {
+			fragments = append(fragments, frag)
+		}
+		sort.Strings(fragments)
+		stats["tag_format_parse_errors"] = fragments
+	}
+
+	warnings := make([]string, 0, 3)
+	if invalid > 0 {
+		warnings = append(warnings, fmt.Sprintf("%d of %d tag-format references failed validation", invalid, total))
+	}
+	if len(missingPaths) > 0 {
+		paths := stats["tag_format_missing_paths"].([]string)
+		warnings = append(warnings, fmt.Sprintf("tag references include paths not in prompt context: %s", strings.Join(paths, ", ")))
+	}
+	if len(rangeIssues) > 0 {
+		ranges := stats["tag_format_range_errors"].([]string)
+		warnings = append(warnings, fmt.Sprintf("tag references include invalid ranges: %s", strings.Join(ranges, ", ")))
+	}
+	if len(parseIssues) > 0 {
+		fragments := stats["tag_format_parse_errors"].([]string)
+		warnings = append(warnings, fmt.Sprintf("unable to parse tag references: %s", strings.Join(fragments, ", ")))
+	}
+
+	return stats, warnings
+}
+
+func normalizeTagPath(path string) string {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return ""
+	}
+	trimmed = strings.TrimPrefix(trimmed, "./")
+	return filepath.ToSlash(trimmed)
 }

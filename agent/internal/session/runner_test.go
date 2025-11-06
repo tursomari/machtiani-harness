@@ -126,3 +126,53 @@ func TestCountTurnsSkipsBackgroundTurn(t *testing.T) {
 		t.Fatalf("countTurns should ignore lone Turn 0, got %d", got)
 	}
 }
+
+func TestAnalyzeTagFormatValid(t *testing.T) {
+	answer := "Check [src/foo.go | 10:12] and [pkg/bar.go | 1:2]."
+	retrieved := []string{"src/foo.go", "pkg/bar.go"}
+
+	stats, warnings := analyzeTagFormat(answer, retrieved)
+
+	if got := stats["tag_format_total"].(int); got != 2 {
+		t.Fatalf("expected total 2, got %d", got)
+	}
+	if got := stats["tag_format_valid"].(int); got != 2 {
+		t.Fatalf("expected valid 2, got %d", got)
+	}
+	if stats["tag_format_detected"].(bool) != true {
+		t.Fatalf("expected detected=true")
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("expected no warnings, got %v", warnings)
+	}
+}
+
+func TestAnalyzeTagFormatInvalid(t *testing.T) {
+	answer := "Review [src/foo.go | 20:10] and [missing.go | 1:2] plus [bad | a:b]."
+	retrieved := []string{"src/foo.go"}
+
+	stats, warnings := analyzeTagFormat(answer, retrieved)
+
+	if got := stats["tag_format_total"].(int); got != 3 {
+		t.Fatalf("expected total 3, got %d", got)
+	}
+	if got := stats["tag_format_invalid"].(int); got != 3 {
+		t.Fatalf("expected invalid 3, got %d", got)
+	}
+	missing := stats["tag_format_missing_paths"].([]string)
+	if len(missing) != 1 || missing[0] != "missing.go" {
+		t.Fatalf("unexpected missing paths: %v", missing)
+	}
+	if len(warnings) == 0 {
+		t.Fatalf("expected warnings for invalid tags")
+	}
+	foundMissing := false
+	for _, w := range warnings {
+		if strings.Contains(w, "missing.go") {
+			foundMissing = true
+		}
+	}
+	if !foundMissing {
+		t.Fatalf("expected warning mentioning missing.go, got %v", warnings)
+	}
+}

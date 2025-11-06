@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/tursomari/machtiani/agent/internal/git"
@@ -109,6 +110,16 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 		fileDiscoveryRan = true
 	}
 
+	directiveBlock := formatResponseDirectives(opts.ResponseDirectives)
+	if directiveBlock != "" {
+		if strings.TrimSpace(combined) != "" {
+			combined = combined + "\n\n" + directiveBlock
+		} else {
+			combined = directiveBlock
+		}
+	}
+	res.DirectiveBlock = directiveBlock
+
 	shellTrajectory := ""
 	shellAgentUsed := false
 	if opts.ShellAgent {
@@ -151,6 +162,9 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 	assistant, err := chatStreamWithRuntime(chatCtx, answerRuntime.Resolved, answerRuntime.FallbackAliases, answerRuntime.FallbackResolved, copyExtrasMap(answerRuntime.Extras), messages, opts.OnToken)
 	if err != nil {
 		return res, err
+	}
+	if enriched, injected := maybeInjectTagSnippets(assistant, opts.ResponseDirectives, included, opts.Verbose); injected {
+		assistant = enriched
 	}
 	res.Assistant = assistant
 	res.FullText = header + assistant
@@ -655,6 +669,230 @@ func cloneResolvedModels(src []llm.ResolvedModel) []llm.ResolvedModel {
 		out = append(out, llm.CloneResolvedModel(m))
 	}
 	return out
+}
+
+var tagFormatSnippetPattern = regexp.MustCompile(`\[(?P<path>[^\[\]|]+?)\s*\|\s*(?P<start>[^:\]]+)\s*:\s*(?P<end>[^\]]+)\]`)
+
+type tagReference struct {
+	Path      string
+	StartLine int
+	EndLine   int
+}
+
+func maybeInjectTagSnippets(answer string, directives []string, retrieved []string, verbose bool) (string, bool) {
+	if !containsUseTagFormatDirective(directives) {
+		return answer, false
+	}
+	if strings.TrimSpace(answer) == "" {
+		return answer, false
+	}
+	indexes := tagFormatSnippetPattern.FindAllStringSubmatchIndex(answer, -1)
+	if len(indexes) == 0 {
+		return answer, false
+	}
+
+	retrievedSet := make(map[string]struct{}, len(retrieved))
+	for _, path := range retrieved {
+		norm := normalizeTagPath(path)
+		if norm == "" {
+			continue
+		}
+		retrievedSet[norm] = struct{}{}
+	}
+	if len(retrievedSet) == 0 {
+		return answer, false
+	}
+
+	repoRoot := ""
+	if cwd, err := os.Getwd(); err == nil {
+		if root, err := git.RepoRoot(cwd); err == nil {
+			repoRoot = root
+		}
+	}
+
+	fileCache := make(map[string][]string)
+	var b strings.Builder
+	last := 0
+	injected := 0
+
+	for _, idxs := range indexes {
+		if len(idxs) < 8 {
+			continue
+		}
+		b.WriteString(answer[last:idxs[1]])
+		ref, ok := buildTagReference(answer, idxs)
+		if ok {
+			if snippet, ok := renderTagSnippet(ref, repoRoot, fileCache, retrievedSet, verbose); ok {
+				b.WriteString("\n\n")
+				b.WriteString(snippet)
+				if !strings.HasSuffix(snippet, "\n") {
+					b.WriteString("\n")
+				}
+				injected++
+			}
+		}
+		last = idxs[1]
+	}
+	b.WriteString(answer[last:])
+	if injected == 0 {
+		return answer, false
+	}
+	return b.String(), true
+}
+
+func containsUseTagFormatDirective(directives []string) bool {
+	for _, d := range directives {
+		if strings.TrimSpace(d) == "use_tag_format" {
+			return true
+		}
+	}
+	return false
+}
+
+func buildTagReference(answer string, idxs []int) (tagReference, bool) {
+	pathRaw := strings.TrimSpace(answer[idxs[2]:idxs[3]])
+	startRaw := strings.TrimSpace(answer[idxs[4]:idxs[5]])
+	endRaw := strings.TrimSpace(answer[idxs[6]:idxs[7]])
+	startLine, serr := strconv.Atoi(startRaw)
+	endLine, eerr := strconv.Atoi(endRaw)
+	if serr != nil || eerr != nil {
+		return tagReference{}, false
+	}
+	if startLine <= 0 || endLine <= 0 || endLine < startLine {
+		return tagReference{}, false
+	}
+	resolved := normalizeTagPath(pathRaw)
+	if resolved == "" {
+		return tagReference{}, false
+	}
+	return tagReference{
+		Path:      resolved,
+		StartLine: startLine,
+		EndLine:   endLine,
+	}, true
+}
+
+func renderTagSnippet(ref tagReference, repoRoot string, cache map[string][]string, retrieved map[string]struct{}, verbose bool) (string, bool) {
+	if _, ok := retrieved[ref.Path]; !ok {
+		return "", false
+	}
+	lines, ok := cache[ref.Path]
+	if !ok {
+		resolvedPath, err := resolveReferencePath(ref.Path, repoRoot)
+		if err != nil {
+			logTagVerbose(verbose, "snippet resolve %s: %v", ref.Path, err)
+			return "", false
+		}
+		loaded, err := loadFileLinesForTag(resolvedPath)
+		if err != nil {
+			logTagVerbose(verbose, "snippet read %s: %v", resolvedPath, err)
+			return "", false
+		}
+		cache[ref.Path] = loaded
+		lines = loaded
+	}
+	if ref.StartLine > len(lines) {
+		logTagVerbose(verbose, "snippet range %s %d:%d exceeds file (%d lines)", ref.Path, ref.StartLine, ref.EndLine, len(lines))
+		return "", false
+	}
+	end := ref.EndLine
+	if end > len(lines) {
+		end = len(lines)
+	}
+	if end < ref.StartLine {
+		return "", false
+	}
+	lang := contextbuilder.DetectFenceLanguage(ref.Path)
+	var snippet strings.Builder
+	snippet.WriteString("```")
+	if lang != "" {
+		snippet.WriteString(lang)
+	}
+	snippet.WriteString("\n")
+	for line := ref.StartLine; line <= end; line++ {
+		snippet.WriteString(lines[line-1])
+		snippet.WriteString("\n")
+	}
+	snippet.WriteString("```\n")
+	return snippet.String(), true
+}
+
+func resolveReferencePath(relPath, repoRoot string) (string, error) {
+	resolved := filepath.FromSlash(relPath)
+	if repoRoot == "" {
+		return resolved, nil
+	}
+	candidate := filepath.Clean(filepath.Join(repoRoot, resolved))
+	relCandidate, err := filepath.Rel(repoRoot, candidate)
+	if err != nil {
+		return "", err
+	}
+	if strings.HasPrefix(relCandidate, "..") {
+		return "", fmt.Errorf("path escapes repo root")
+	}
+	return candidate, nil
+}
+
+func loadFileLinesForTag(resolvedPath string) ([]string, error) {
+	data, err := os.ReadFile(resolvedPath)
+	if err != nil {
+		return nil, err
+	}
+	raw := strings.Split(string(data), "\n")
+	if len(raw) > 0 && raw[len(raw)-1] == "" {
+		raw = raw[:len(raw)-1]
+	}
+	for i, line := range raw {
+		raw[i] = strings.TrimSuffix(line, "\r")
+	}
+	return raw, nil
+}
+
+func normalizeTagPath(path string) string {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return ""
+	}
+	trimmed = strings.TrimPrefix(trimmed, "./")
+	return filepath.ToSlash(trimmed)
+}
+
+func logTagVerbose(verbose bool, format string, args ...any) {
+	if !verbose {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "[tag-format] "+format+"\n", args...)
+}
+
+func formatResponseDirectives(directives []string) string {
+	if len(directives) == 0 {
+		return ""
+	}
+
+	rules := make([]string, 0, len(directives))
+	for _, raw := range directives {
+		directive := strings.TrimSpace(raw)
+		if directive == "" {
+			continue
+		}
+		switch directive {
+		case "use_tag_format":
+			rules = append(rules, "Reference code or documents using `[path/to/file | start:end]` tags. Provide explicit start and end line numbers and avoid bare paths or markdown links.")
+		default:
+			rules = append(rules, directive)
+		}
+	}
+	if len(rules) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString("Response Rules:\n")
+	for idx, rule := range rules {
+		fmt.Fprintf(&b, "%d. %s\n", idx+1, rule)
+	}
+
+	return strings.TrimSpace(b.String())
 }
 
 func runtimeIsZero(rt ModelRuntime) bool {

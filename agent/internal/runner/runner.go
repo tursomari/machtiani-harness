@@ -36,6 +36,7 @@ type PromptInput struct {
 	OnStreamHeader func(string)
 	OnStreamToken  func(string)
 	MaxInputTokens int
+	ResponseDirectives []string
 }
 
 func (r *Runner) Resolve() error {
@@ -104,6 +105,7 @@ func (r *Runner) RunPrompt(ctx context.Context, sessionID string, in PromptInput
 	parentSpan, _ := trajectory.ParentSpanID(ctx)
 	var span trajectory.Span
 	if hasWriter {
+		directives := append([]string(nil), in.ResponseDirectives...)
 		span = w.StartSpan(parentSpan)
 		payload := map[string]any{
 			"event_version":    1,
@@ -117,6 +119,9 @@ func (r *Runner) RunPrompt(ctx context.Context, sessionID string, in PromptInput
 		}
 		payload["shell_agent_enabled"] = r.ShellAgent
 		payload["file_discovery_enabled"] = !r.ShellAgent && safeMode != "answer-only"
+		if len(directives) > 0 {
+			payload["response_directives"] = directives
+		}
 		payload = trajectory.MergeExcerptWithPrefix(payload, trajectory.MakeTextExcerpt(in.Prompt, w.ExcerptLen()), "prompt")
 		evt := trajectory.Event{Kind: "mct.prompt.start", SpanID: span.ID, ParentSpanID: parentSpan, Payload: payload}
 		if err := w.Emit(ctx, evt); err != nil {
@@ -149,6 +154,7 @@ func (r *Runner) RunPrompt(ctx context.Context, sessionID string, in PromptInput
 		GlobalConfigPath:        r.GlobalConfigPath,
 		PersistTmpData:          r.PersistTmpData,
 		SessionTempRoot:         r.SessionTempRoot,
+		ResponseDirectives:      append([]string(nil), in.ResponseDirectives...),
 	})
 	if useMarkdown && ms != nil {
 		_ = ms.Flush()
@@ -156,6 +162,7 @@ func (r *Runner) RunPrompt(ctx context.Context, sessionID string, in PromptInput
 	duration := time.Since(start)
 	if err != nil {
 		if hasWriter {
+			directives := append([]string(nil), in.ResponseDirectives...)
 			payload := map[string]any{
 				"event_version":          1,
 				"mode":                   safeMode,
@@ -168,6 +175,9 @@ func (r *Runner) RunPrompt(ctx context.Context, sessionID string, in PromptInput
 			}
 			if in.MaxInputTokens == 0 {
 				delete(payload, "max_input_tokens")
+			}
+			if len(directives) > 0 {
+				payload["response_directives"] = directives
 			}
 			category, code := llm.ClassifyError(err)
 			evt := trajectory.Event{
@@ -189,6 +199,7 @@ func (r *Runner) RunPrompt(ctx context.Context, sessionID string, in PromptInput
 		return promptsvc.Result{}, err
 	}
 	if hasWriter {
+		directives := append([]string(nil), in.ResponseDirectives...)
 		retrieved := len(res.RetrievedFiles)
 		payload := map[string]any{
 			"event_version":          1,
@@ -205,6 +216,9 @@ func (r *Runner) RunPrompt(ctx context.Context, sessionID string, in PromptInput
 		if in.MaxInputTokens == 0 {
 			delete(payload, "max_input_tokens")
 		}
+		if len(directives) > 0 {
+			payload["response_directives"] = directives
+		}
 		if res.SaveError != nil {
 			payload["save_error"] = res.SaveError.Error()
 		}
@@ -217,6 +231,22 @@ func (r *Runner) RunPrompt(ctx context.Context, sessionID string, in PromptInput
 			payload["retrieved_paths"] = append([]string(nil), res.RetrievedFiles...)
 		}
 		payload = trajectory.MergeExcerptWithPrefix(payload, trajectory.MakeTextExcerpt(in.Prompt, w.ExcerptLen()), "prompt")
+		// Also include an excerpt of the composed prompt (with history, files, and response rules)
+		// so it’s clear when directives were injected.
+		composed := strings.TrimSpace(res.Header)
+		if composed != "" {
+			// res.Header is built as: "# User\n\n<combined>\n\n# Assistant\n\n"
+			// Extract the <combined> portion between the markers if present.
+			userMarker := "# User\n\n"
+			assistantMarker := "\n\n# Assistant"
+			if strings.HasPrefix(composed, userMarker) {
+				composed = composed[len(userMarker):]
+			}
+			if idx := strings.Index(composed, assistantMarker); idx >= 0 {
+				composed = composed[:idx]
+			}
+			payload = trajectory.MergeExcerptWithPrefix(payload, trajectory.MakeTextExcerpt(composed, w.ExcerptLen()), "composed_prompt")
+		}
 		payload = trajectory.MergeExcerptWithPrefix(payload, trajectory.MakeTextExcerpt(res.Assistant, w.ExcerptLen()), "answer")
 		evt := trajectory.Event{Kind: "mct.prompt.result", SpanID: span.ID, ParentSpanID: parentSpan, Payload: payload}
 		if emitErr := w.Emit(ctx, evt); emitErr != nil {
