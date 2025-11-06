@@ -147,8 +147,11 @@ func handleRunCommand(args []string) int {
 	opts.Context = ctx
 
 	res := sessionRunFn(ctx, opts)
-	if res.Err != nil && res.ExitCode == 0 {
-		return 1
+	if res.Err != nil {
+		fmt.Fprintf(os.Stderr, "Error during run: %v\n", res.Err)
+		if res.ExitCode == 0 {
+			return 1
+		}
 	}
 	return res.ExitCode
 }
