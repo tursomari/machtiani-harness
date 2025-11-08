@@ -47,7 +47,16 @@ func Generate(repoRoot, mirrorDir string, files []string) ([]byte, error) {
 			rel = filepath.ToSlash(rel)
 			left := filepath.Join(repoRoot, rel)
 			right := filepath.Join(mirrorDir, rel)
-			// If right doesn't exist, use /dev/null to indicate deletion
+
+			// Treat missing repo-side files as creations by diffing against /dev/null.
+			if _, err := os.Stat(left); err != nil {
+				if os.IsNotExist(err) {
+					left = os.DevNull
+				} else {
+					return nil, fmt.Errorf("stat %s: %w", left, err)
+				}
+			}
+			// If the mirror copy is missing, it represents a deletion.
 			if _, err := os.Stat(right); err != nil {
 				right = os.DevNull
 			}

@@ -877,7 +877,7 @@ func formatResponseDirectives(directives []string) string {
 		}
 		switch directive {
 		case "use_tag_format":
-			rules = append(rules, "Reference code or documents using `[path/to/file | start:end]` tags. Provide explicit start and end line numbers and avoid bare paths or markdown links.")
+			rules = append(rules, "Reference code or documents using `[path/to/file | start:end]` tags in lieu of reproducing file contents. Provide explicit start and end line numbers, avoid bare paths or Markdown links.")
 		default:
 			rules = append(rules, directive)
 		}

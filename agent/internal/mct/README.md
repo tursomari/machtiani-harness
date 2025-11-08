@@ -96,6 +96,7 @@ mct prompt "Summarize the architecture" \
    - Default caps: ~100 KB per file; ~2 MB total
    - Appends `[TRUNCATED]` when clipping
    - Optional `--max-input-tokens` enforces an estimated token budget and replaces truncated sections with a stamped marker showing line numbers of the omission.
+   - **Code Reference Tags** (when enabled via `--response-directives use_tag_format` or equivalent): The LLM can reference retrieved code using `[path/to/file | start:end]` tags in responses (e.g., `[src/main.go | 10:20]`). The system automatically parses these tags post-response and injects matching code snippets as fenced blocks with language detection. Tags are validated against retrieved files, must use positive integer line ranges, and must resolve within the repository root for security. Use tags instead of writing out content—snippets are injected automatically.
 4. Streams tokens from your LLM endpoint and renders Markdown in the terminal.
 5. Saves output to `.machtiani/sessions/<session-id>/chat/<generated-name>.md` and updates `.machtiani/sessions/<session-id>/chat/machtiani-response.md`.
 

@@ -508,11 +508,13 @@ func Run(ctx context.Context, opts Options) Result {
 			trFull := tr.Content()
 			planCtx = attachTrajectory(planCtx, trajectoryWriter, parentSpanID)
 			decision, question, perr = pl.Plan(planCtx, goal, trFull, step, cfg.maxSteps)
-			planCancel()
 		}
 		var planCtxErr error
 		if planCtx != nil {
 			planCtxErr = planCtx.Err()
+		}
+		if planCancel != nil {
+			planCancel()
 		}
 		if perr != nil {
 			if isContextCancelled(perr) || isContextCancelled(planCtxErr) {
@@ -541,12 +543,18 @@ func Run(ctx context.Context, opts Options) Result {
 				trFull := tr.Content()
 				ctxF = attachTrajectory(ctxF, trajectoryWriter, parentSpanID)
 				answer, ferr := pl.Finalize(ctxF, goal, trFull)
-				cancelF()
+				var ctxFErr error
+				if ctxF != nil {
+					ctxFErr = ctxF.Err()
+				}
+				if cancelF != nil {
+					cancelF()
+				}
 				if ferr != nil {
-					if isContextCancelled(ferr) || isContextCancelled(ctxF.Err()) {
+					if isContextCancelled(ferr) || isContextCancelled(ctxFErr) {
 						return interruptedResult(ferr)
 					}
-					if errors.Is(ctxF.Err(), context.DeadlineExceeded) {
+					if errors.Is(ctxFErr, context.DeadlineExceeded) {
 						fmt.Fprintf(os.Stderr, "Finalizer error: timed out after %ds. Increase --timeout-per-turn or set 0 for unlimited.\n", cfg.timeoutPerTurn)
 					} else {
 						fmt.Fprintln(os.Stderr, "Finalizer error:", ferr)
@@ -613,12 +621,18 @@ func Run(ctx context.Context, opts Options) Result {
 			trFull := tr.Content()
 			ctx = attachTrajectory(ctx, trajectoryWriter, parentSpanID)
 			answer, ferr := pl.Finalize(ctx, goal, trFull)
-			cancelF()
+			var finalizeCtxErr error
+			if ctx != nil {
+				finalizeCtxErr = ctx.Err()
+			}
+			if cancelF != nil {
+				cancelF()
+			}
 			if ferr != nil {
-				if isContextCancelled(ferr) || isContextCancelled(ctx.Err()) {
+				if isContextCancelled(ferr) || isContextCancelled(finalizeCtxErr) {
 					return interruptedResult(ferr)
 				}
-				if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				if errors.Is(finalizeCtxErr, context.DeadlineExceeded) {
 					fmt.Fprintf(os.Stderr, "Finalizer error: timed out after %ds. Increase --timeout-per-turn or set 0 for unlimited.\n", cfg.timeoutPerTurn)
 				} else {
 					fmt.Fprintln(os.Stderr, "Finalizer error:", ferr)
@@ -738,14 +752,20 @@ func Run(ctx context.Context, opts Options) Result {
 			ctx2, cancel2 := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
 			ctx2 = attachTrajectory(ctx2, trajectoryWriter, parentSpanID)
 			result, merr := mctRunner.RunPrompt(ctx2, sessionID, input)
-			cancel2()
+			var ctx2Err error
+			if ctx2 != nil {
+				ctx2Err = ctx2.Err()
+			}
+			if cancel2 != nil {
+				cancel2()
+			}
 			if merr != nil {
-				if isContextCancelled(merr) || isContextCancelled(ctx2.Err()) {
+				if isContextCancelled(merr) || isContextCancelled(ctx2Err) {
 					stream.Abort("interrupted")
 					return interruptedResult(merr)
 				}
 				msg := merr.Error()
-				if errors.Is(ctx2.Err(), context.DeadlineExceeded) || strings.Contains(strings.ToLower(merr.Error()), "signal: killed") {
+				if errors.Is(ctx2Err, context.DeadlineExceeded) || strings.Contains(strings.ToLower(merr.Error()), "signal: killed") {
 					msg = fmt.Sprintf("timed out after %ds", cfg.timeoutPerTurn)
 					fmt.Fprintf(os.Stderr, "mct prompt error: %s. Try increasing --timeout-per-turn or set 0 for unlimited.\n", msg)
 				} else {
@@ -924,9 +944,15 @@ func Run(ctx context.Context, opts Options) Result {
 			ctxP, cancelP := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
 			ctxP = attachTrajectory(ctxP, trajectoryWriter, parentSpanID)
 			result, applyErr := pRunner.Apply(ctxP, instr, cfg.verbose)
-			cancelP()
+			var ctxPErr error
+			if ctxP != nil {
+				ctxPErr = ctxP.Err()
+			}
+			if cancelP != nil {
+				cancelP()
+			}
 			if applyErr != nil {
-				if isContextCancelled(applyErr) || isContextCancelled(ctxP.Err()) {
+				if isContextCancelled(applyErr) || isContextCancelled(ctxPErr) {
 					stream.Abort("interrupted")
 					return interruptedResult(applyErr)
 				}
@@ -963,6 +989,15 @@ func Run(ctx context.Context, opts Options) Result {
 					if shouldFinalizeAfterPatch {
 						goto Finalize
 					}
+					// Allow session to progress past validation errors instead of retrying
+					// Mark turn as counted so planner can decide next action in subsequent turn
+					if !turnCounted {
+						markTurnCounted()
+						if shouldFinalizeAfterPatch {
+							goto Finalize
+						}
+					}
+					turnsCompleted = userTurnCounter
 					continue
 				case errors.As(applyErr, &valErr):
 					stream.Abort("patch validation error")
@@ -971,6 +1006,15 @@ func Run(ctx context.Context, opts Options) Result {
 					if shouldFinalizeAfterPatch {
 						goto Finalize
 					}
+					// Allow session to progress past validation errors instead of retrying
+					// Mark turn as counted so planner can decide next action in subsequent turn
+					if !turnCounted {
+						markTurnCounted()
+						if shouldFinalizeAfterPatch {
+							goto Finalize
+						}
+					}
+					turnsCompleted = userTurnCounter
 					continue
 				case errors.As(applyErr, &genErr):
 					stream.Abort("patch generation error")
@@ -979,6 +1023,15 @@ func Run(ctx context.Context, opts Options) Result {
 					if shouldFinalizeAfterPatch {
 						goto Finalize
 					}
+					// Allow session to progress past generation errors instead of retrying
+					// Mark turn as counted so planner can decide next action in subsequent turn
+					if !turnCounted {
+						markTurnCounted()
+						if shouldFinalizeAfterPatch {
+							goto Finalize
+						}
+					}
+					turnsCompleted = userTurnCounter
 					continue
 				default:
 					stream.Abort("patcher execution error")
@@ -987,6 +1040,15 @@ func Run(ctx context.Context, opts Options) Result {
 					if shouldFinalizeAfterPatch {
 						goto Finalize
 					}
+					// Allow session to progress past patcher errors instead of retrying
+					// Mark turn as counted so planner can decide next action in subsequent turn
+					if !turnCounted {
+						markTurnCounted()
+						if shouldFinalizeAfterPatch {
+							goto Finalize
+						}
+					}
+					turnsCompleted = userTurnCounter
 					continue
 				}
 			}
@@ -1139,9 +1201,15 @@ Finalize:
 						ctxP, cancelP := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
 						ctxP = attachTrajectory(ctxP, trajectoryWriter, parentSpanID)
 						result, applyErr := pRunner.Apply(ctxP, instr, cfg.verbose)
-						cancelP()
+						var ctxPErr error
+						if ctxP != nil {
+							ctxPErr = ctxP.Err()
+						}
+						if cancelP != nil {
+							cancelP()
+						}
 						if applyErr != nil {
-							if isContextCancelled(applyErr) || isContextCancelled(ctxP.Err()) {
+							if isContextCancelled(applyErr) || isContextCancelled(ctxPErr) {
 								if stream != nil {
 									stream.Abort("interrupted")
 									stream = nil
@@ -1241,9 +1309,15 @@ Finalize:
 	trFull := tr.Content()
 	ctx = attachTrajectory(ctx, trajectoryWriter, parentSpanID)
 	answer, ferr := pl.Finalize(ctx, goal, trFull)
-	cancelF()
+	var finalCtxErr error
+	if ctx != nil {
+		finalCtxErr = ctx.Err()
+	}
+	if cancelF != nil {
+		cancelF()
+	}
 	if ferr != nil {
-		if isContextCancelled(ferr) || isContextCancelled(ctx.Err()) {
+		if isContextCancelled(ferr) || isContextCancelled(finalCtxErr) {
 			turnsCompleted = turns
 			userTurnCounter = turns
 			return interruptedResult(ferr)
