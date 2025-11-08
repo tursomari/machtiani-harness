@@ -28,6 +28,7 @@ type ClientConfig struct {
 	DryRun            bool
 	RequestTimeoutSec int
 	PatchEnabled      bool
+	StrictPatchMode   bool
 }
 
 type Client struct {
@@ -260,13 +261,31 @@ func (c *Client) planPrompt(goal string, transcript string, step, maxSteps int) 
 	b.WriteString("If ask, a second line using exactly one of:\n- Question: <single best prompt>\n- Instruction: <single best prompt>\n- Message: <single best prompt>\n")
 	if c.cfg.PatchEnabled {
 		b.WriteString("If patch, immediately follow with a single standalone JSON object ONLY (no commentary, no markdown fences).\n\n")
-		b.WriteString("Patch JSON schema (when Decision: patch):\n")
-		b.WriteString("{\n  \"metadata\": { \"description\": string, \"author\": string, \"email\": string },\n  \"edits\": [\n    { \"path\": string (repo-relative), \"mode\": one of replace|rewrite|create|delete,\n      \"before\": string (replace only), \"after\": string (replace only), \"occurrence\": number (1-based, optional),\n      \"new_content\": string (rewrite/create only) }\n  ]\n}\n")
-		b.WriteString("Rules: use forward slashes; paths must be under repo root;\n")
-		b.WriteString("replace requires before+after and file exists; rewrite requires new_content and file exists;\n")
-		b.WriteString("create requires new_content and file must not exist; delete requires file exists.\n\n")
-		b.WriteString("Minimal example (do not include this text in output):\n")
-		b.WriteString("Decision: patch\n{\n  \"metadata\": { \"description\": \"Fix README typo\" },\n  \"edits\": [\n    { \"path\": \"README.md\", \"mode\": \"replace\", \"before\": \"teh\", \"after\": \"the\", \"occurrence\": 1 }\n  ]\n}\n\n")
+		if c.cfg.StrictPatchMode {
+			b.WriteString("Patch JSON schema (when Decision: patch):\n")
+			b.WriteString("{\n  \"metadata\": { \"description\": string, \"author\": string, \"email\": string },\n  \"edits\": [\n    { \"path\": string, \"mode\": \"create\"|\"delete\"|\"rewrite\", \"new_content\": string (rewrite/create only) },\n    { \"path\": string, \"mode\": \"replace\", \"before\": string, \"after\": string, \"occurrence\": number (optional) },\n    { \"path\": string, \"mode\": \"patch\", \"patch\": { \"hunks\": [ { \"old_start\": int, \"old_count\": int, \"new_start\": int, \"new_count\": int, \"context_before\": [string], \"deletions\": [string], \"additions\": [string], \"context_after\": [string] } ] } }\n  ]\n}\n")
+			b.WriteString("Mode guidelines:\n")
+			b.WriteString("- create: provide new_content; file must be absent.\n")
+			b.WriteString("- delete: target file must exist.\n")
+			b.WriteString("- rewrite: provide new_content for full-file replacement.\n")
+			b.WriteString("- replace: legacy nth-occurrence substitution; use only when unavoidable.\n")
+			b.WriteString("- patch: strict context-anchored hunks; use for precise edits to existing files.\n")
+			b.WriteString("Patch mode rules:\n")
+			b.WriteString("  * Hunks must include exact context_before/context_after lines from the file.\n")
+			b.WriteString("  * old_start/new_start use 1-based line numbers from the current file.\n")
+			b.WriteString("  * If any context does not match byte-for-byte, the patch fails with diagnostics—regenerate using the real file content shown in the transcript.\n")
+			b.WriteString("  * Do not rely on fuzzy matching or omit context; each hunk applies deterministically.\n\n")
+			b.WriteString("Minimal example (do not include this text in output):\n")
+			b.WriteString("Decision: patch\n{\n  \"metadata\": { \"description\": \"Fix typo\" },\n  \"edits\": [\n    { \"path\": \"docs/guide.md\", \"mode\": \"patch\", \"patch\": {\n      \"hunks\": [{\n        \"old_start\": 12, \"old_count\": 3, \"new_start\": 12, \"new_count\": 3,\n        \"context_before\": [\"## Overview\"],\n        \"deletions\": [\"This feautre is experimental.\"],\n        \"additions\": [\"This feature is experimental.\"],\n        \"context_after\": [\"Use with caution.\"]\n      }]\n    } }\n  ]\n}\n\n")
+		} else {
+			b.WriteString("Patch JSON schema (when Decision: patch):\n")
+			b.WriteString("{\n  \"metadata\": { \"description\": string, \"author\": string, \"email\": string },\n  \"edits\": [\n    { \"path\": string (repo-relative), \"mode\": one of replace|rewrite|create|delete,\n      \"before\": string (replace only), \"after\": string (replace only), \"occurrence\": number (1-based, optional),\n      \"new_content\": string (rewrite/create only) }\n  ]\n}\n")
+			b.WriteString("Rules: use forward slashes; paths must be under repo root;\n")
+			b.WriteString("replace requires before+after and file exists; rewrite requires new_content and file exists;\n")
+			b.WriteString("create requires new_content and file must not exist; delete requires file exists.\n\n")
+			b.WriteString("Minimal example (do not include this text in output):\n")
+			b.WriteString("Decision: patch\n{\n  \"metadata\": { \"description\": \"Fix README typo\" },\n  \"edits\": [\n    { \"path\": \"README.md\", \"mode\": \"replace\", \"before\": \"teh\", \"after\": \"the\", \"occurrence\": 1 }\n  ]\n}\n\n")
+		}
 	}
 
 	if strings.TrimSpace(goal) != "" {

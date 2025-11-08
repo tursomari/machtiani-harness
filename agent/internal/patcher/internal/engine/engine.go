@@ -34,7 +34,7 @@ func ApplyAll(repoRoot string, instr patcher.Instructions) (map[string][]byte, [
 		var exists bool
 		if b, ok := after[rel]; ok {
 			base = b
-			exists = true
+			exists = b != nil
 		} else {
 			// Load from disk if exists.
 			b, err := os.ReadFile(onDiskPath)
@@ -82,6 +82,40 @@ func ApplyAll(repoRoot string, instr patcher.Instructions) (map[string][]byte, [
 			out, ok := replaceNth(string(base), ed.Before, ed.After, ed.Occurrence)
 			if !ok {
 				return nil, nil, fmt.Errorf("%w: edit[%d] replace could not find nth occurrence", ErrEditFailed, idx)
+			}
+			after[rel] = []byte(out)
+		case patcher.ModePatch:
+			if !exists {
+				return nil, nil, fmt.Errorf("%w: edit[%d] patch requires existing file: %s", ErrEditConflict, idx, rel)
+			}
+			if !utf8.ValidString(string(base)) {
+				return nil, nil, fmt.Errorf("%w: edit[%d] base file not utf8: %s", ErrEditFailed, idx, rel)
+			}
+			if ed.PatchInfo == nil {
+				return nil, nil, fmt.Errorf("%w: edit[%d] patch missing payload", ErrEditFailed, idx)
+			}
+			out, hunkDiags, err := applyStrictPatch(string(base), ed.PatchInfo)
+			if err != nil {
+				reason := "patch_not_clean"
+				if len(hunkDiags) > 0 {
+					reason = hunkDiags[0].Reason
+				}
+				diag := patcher.PatchValidationDiagnostics{
+					Operation: "strict patch apply",
+					ContentConflicts: []patcher.ContentConflictDiagnostic{
+						{
+							EditIndex:     idx,
+							Path:          rel,
+							Reason:        reason,
+							HunkConflicts: hunkDiags,
+						},
+					},
+				}
+				return nil, nil, &patcher.PatchApplyError{
+					Err:             fmt.Errorf("%w: edit[%d] patch apply failed: %v", ErrEditFailed, idx, err),
+					Diagnostics:     diag,
+					ConflictedEdits: []int{idx},
+				}
 			}
 			after[rel] = []byte(out)
 		default:

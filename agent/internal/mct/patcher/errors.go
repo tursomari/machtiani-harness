@@ -44,6 +44,28 @@ func (e *PatchNotCleanError) Unwrap() error {
 	return e.Err
 }
 
+// PatchApplyError represents a failure while applying strict patch
+// instructions before generating a git diff.
+type PatchApplyError struct {
+	Err             error
+	Diagnostics     PatchValidationDiagnostics
+	ConflictedEdits []int
+}
+
+func (e *PatchApplyError) Error() string {
+	if e == nil {
+		return ""
+	}
+	return fmt.Sprintf("patch apply failed: %v", e.Err)
+}
+
+func (e *PatchApplyError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
 // PatchGenerationError wraps unexpected errors that occur while creating the
 // patch diff or writing the resulting file.
 type PatchGenerationError struct {

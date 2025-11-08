@@ -14,14 +14,34 @@ type PatchValidationMessage struct {
 	Raw      string
 }
 
+// HunkConflictDiagnostic describes why an individual hunk failed to match.
+type HunkConflictDiagnostic struct {
+	HunkIndex     int    `json:"hunk_index"`
+	Reason        string `json:"reason"`
+	ExpectedHash  string `json:"expected_hash"`
+	ActualHash    string `json:"actual_hash"`
+	ExpectedLines int    `json:"expected_lines"`
+	ActualLines   int    `json:"actual_lines"`
+	DiffPreview   string `json:"diff_preview"`
+}
+
+// ContentConflictDiagnostic captures diagnostics for a single edit failure.
+type ContentConflictDiagnostic struct {
+	EditIndex     int                      `json:"edit_index"`
+	Path          string                   `json:"path"`
+	Reason        string                   `json:"reason"`
+	HunkConflicts []HunkConflictDiagnostic `json:"hunk_conflicts"`
+}
+
 // PatchValidationDiagnostics encapsulates structured diagnostics for a
 // validation failure when checking patch applicability.
 type PatchValidationDiagnostics struct {
-	Operation string
-	Stdout    string
-	Stderr    string
-	Messages  []PatchValidationMessage
-	Raw       string
+	Operation        string
+	Stdout           string
+	Stderr           string
+	Messages         []PatchValidationMessage
+	ContentConflicts []ContentConflictDiagnostic
+	Raw              string
 }
 
 // ParseGitApplyMessages converts stderr emitted by git apply into structured

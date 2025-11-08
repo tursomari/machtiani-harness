@@ -26,8 +26,9 @@ import (
 // Service provides a concrete implementation of the patcher API using the
 // internal diff/engine helpers from the patcher module.
 type Service struct {
-	logger *log.Logger
-	clock  func() time.Time
+	logger          *log.Logger
+	clock           func() time.Time
+	strictPatchMode bool
 }
 
 // Option configures a Service instance.
@@ -40,6 +41,13 @@ func WithLogger(l *log.Logger) Option {
 		if l != nil {
 			s.logger = l
 		}
+	}
+}
+
+// WithStrictPatchMode toggles support for context-anchored patch application.
+func WithStrictPatchMode(enabled bool) Option {
+	return func(s *Service) {
+		s.strictPatchMode = enabled
 	}
 }
 
@@ -127,9 +135,21 @@ func (s *Service) ApplyAndGeneratePatch(ctx context.Context, params mctpatcher.P
 		return nil, err
 	}
 
+	if !s.strictPatchMode && instructionsUseStrictPatch(params.Instructions) {
+		return nil, &mctpatcher.ValidationError{Err: errors.New("strict patch mode disabled; use rewrite or replace modes")}
+	}
+
 	s.logf(params.Verbose, "applying edits in memory")
 	afterMap, filesTouched, err := engine.ApplyAll(workspaceRoot, params.Instructions)
 	if err != nil {
+		var applyErr *mctpatcher.PatchApplyError
+		if errors.As(err, &applyErr) {
+			diag := applyErr.Diagnostics
+			if diag.Operation == "" {
+				diag.Operation = "strict patch apply"
+			}
+			return nil, &mctpatcher.PatchNotCleanError{Err: applyErr.Err, Diagnostics: diag}
+		}
 		return nil, &mctpatcher.ValidationError{Err: err}
 	}
 	if err := ctx.Err(); err != nil {
@@ -240,6 +260,9 @@ func (s *Service) ValidateInstructions(ctx context.Context, repoRoot string, ins
 	if err := mctpatcher.Validate(repoAbs, instructions); err != nil {
 		return &mctpatcher.ValidationError{Err: err}
 	}
+	if !s.strictPatchMode && instructionsUseStrictPatch(instructions) {
+		return &mctpatcher.ValidationError{Err: errors.New("strict patch mode disabled; use rewrite or replace modes")}
+	}
 	return ctx.Err()
 }
 
@@ -248,6 +271,15 @@ func (s *Service) logf(verbose bool, format string, args ...any) {
 		return
 	}
 	s.logger.Printf(format, args...)
+}
+
+func instructionsUseStrictPatch(instr mctpatcher.Instructions) bool {
+	for _, ed := range instr.Edits {
+		if ed.Mode == mctpatcher.ModePatch {
+			return true
+		}
+	}
+	return false
 }
 
 type afterManifest struct {

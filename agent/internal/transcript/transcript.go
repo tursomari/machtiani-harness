@@ -36,6 +36,7 @@ type PatchValidationRecord struct {
 	Stderr       string
 	Error        string
 	Messages     []PatchValidationMessage
+	Conflicts    []string
 }
 
 func New(sessionID string) (*Transcript, error) {
@@ -210,6 +211,15 @@ func (t *Transcript) WritePatchValidation(step int, record PatchValidationRecord
 				b.WriteString(msg.Raw)
 			}
 			b.WriteString("\n")
+		}
+	}
+	if len(record.Conflicts) > 0 {
+		b.WriteString("Conflicts:\n")
+		for _, conflict := range record.Conflicts {
+			b.WriteString(conflict)
+			if !strings.HasSuffix(conflict, "\n") {
+				b.WriteString("\n")
+			}
 		}
 	}
 	if record.Stdout != "" {

@@ -57,14 +57,36 @@ const (
 	ModeRewrite Mode = "rewrite"
 	ModeCreate  Mode = "create"
 	ModeDelete  Mode = "delete"
+	ModePatch   Mode = "patch"
 )
+
+// Hunk represents a contiguous change region with explicit context anchors.
+// Line numbers follow unified diff semantics (1-based indices).
+type Hunk struct {
+	OldStart int `json:"old_start"`
+	OldCount int `json:"old_count"`
+	NewStart int `json:"new_start"`
+	NewCount int `json:"new_count"`
+
+	ContextBefore []string `json:"context_before"`
+	Deletions     []string `json:"deletions"`
+	Additions     []string `json:"additions"`
+	ContextAfter  []string `json:"context_after"`
+}
+
+// UnifiedPatchInfo describes the strict patch hunks to apply to a file.
+type UnifiedPatchInfo struct {
+	Hunks        []Hunk `json:"hunks"`
+	ContextLines int    `json:"context_lines,omitempty"`
+}
 
 // Edit represents a single file edit to apply when synthesizing a patch.
 type Edit struct {
-	Path       string `json:"path"`
-	Mode       Mode   `json:"mode"`
-	Before     string `json:"before,omitempty"`
-	After      string `json:"after,omitempty"`
-	Occurrence int    `json:"occurrence,omitempty"`
-	NewContent string `json:"new_content,omitempty"`
+	Path       string            `json:"path"`
+	Mode       Mode              `json:"mode"`
+	Before     string            `json:"before,omitempty"`
+	After      string            `json:"after,omitempty"`
+	Occurrence int               `json:"occurrence,omitempty"`
+	NewContent string            `json:"new_content,omitempty"`
+	PatchInfo  *UnifiedPatchInfo `json:"patch,omitempty"`
 }

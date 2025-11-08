@@ -368,6 +368,7 @@ func configureSessionFlags(fs *flag.FlagSet, cfg *session.Config, paramFlags, pa
 	fs.BoolVar(&cfg.TrajectoryOmitRepoRoot, "trajectory-omit-repo-root", false, "omit repo_root from trajectory events")
 	fs.BoolVar(&cfg.PatchNoApply, "patch-no-apply", false, "skip applying generated patches to the worktree (default: apply)")
 	fs.BoolVar(&cfg.Patch, "patch", false, "enable patch planning (disabled by default)")
+	fs.BoolVar(&cfg.PatchStrict, "patch-strict", false, "enable strict context-anchored patch mode (requires --patch)")
 	fs.StringVar(&cfg.OpenAIAPIKey, "openai-api-key", "", "OpenAI-compatible API key (overrides env, deprecated)")
 	fs.StringVar(&cfg.OpenAIBaseURL, "openai-base-url", "", "OpenAI-compatible base URL (overrides env, deprecated)")
 	fs.StringVar(&cfg.OpenAIModel, "openai-model", "", "Direct upstream model name (deprecated; prefer --model)")

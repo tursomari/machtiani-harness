@@ -30,6 +30,7 @@ type Config struct {
 	TrajectoryOmitRepoRoot  bool
 	PatchNoApply            bool
 	Patch                   bool
+	PatchStrict             bool
 	OpenAIAPIKey            string
 	OpenAIBaseURL           string
 	OpenAIModel             string
@@ -92,6 +93,7 @@ type legacyConfig struct {
 	trajectoryOmitRepoRoot  bool
 	patchNoApply            bool
 	patch                   bool
+	patchStrict             bool
 	openAIAPIKey            string
 	openAIBaseURL           string
 	openAIModel             string
@@ -125,6 +127,7 @@ func newLegacyConfig(cfg Config) legacyConfig {
 		trajectoryOmitRepoRoot:  cfg.TrajectoryOmitRepoRoot,
 		patchNoApply:            cfg.PatchNoApply,
 		patch:                   cfg.Patch,
+		patchStrict:             cfg.PatchStrict,
 		openAIAPIKey:            cfg.OpenAIAPIKey,
 		openAIBaseURL:           cfg.OpenAIBaseURL,
 		openAIModel:             cfg.OpenAIModel,

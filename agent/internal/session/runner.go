@@ -404,12 +404,15 @@ func Run(ctx context.Context, opts Options) Result {
 	if cfg.patch {
 		patchLogger := log.New(os.Stderr, "[patcher] ", log.LstdFlags)
 		pr := &runner.PatcherRunner{
-			Enabled:         true,
-			Verbose:         cfg.verbose,
-			DryRun:          cfg.dryRun,
-			SessionID:       sessionID,
-			Runtime:         models.patcher.toPromptRuntime(),
-			Service:         patchersvc.NewService(patchersvc.WithLogger(patchLogger)),
+			Enabled:   true,
+			Verbose:   cfg.verbose,
+			DryRun:    cfg.dryRun,
+			SessionID: sessionID,
+			Runtime:   models.patcher.toPromptRuntime(),
+			Service: patchersvc.NewService(
+				patchersvc.WithLogger(patchLogger),
+				patchersvc.WithStrictPatchMode(cfg.patchStrict),
+			),
 			RepoRoot:        repoRoot,
 			PersistTmpData:  cfg.persistTmpData,
 			SessionTempRoot: sessionTempRoot,
@@ -433,6 +436,7 @@ func Run(ctx context.Context, opts Options) Result {
 		DryRun:            cfg.dryRun,
 		RequestTimeoutSec: cfg.timeoutPerTurn,
 		PatchEnabled:      cfg.patch,
+		StrictPatchMode:   cfg.patchStrict,
 	})
 
 	if !resumeMode || tr.Content() == "" {
@@ -946,12 +950,14 @@ func Run(ctx context.Context, opts Options) Result {
 						Stderr:     trimTo(cleanErr.Diagnostics.Stderr, 800),
 						Error:      strings.TrimSpace(cleanErr.Error()),
 						Messages:   convertPatchMessages(cleanErr.Diagnostics.Messages),
+						Conflicts:  formatContentConflicts(cleanErr.Diagnostics.ContentConflicts),
 					}
 					_ = tr.WritePatchValidation(step, rec)
 					extra := map[string]any{
 						"patch_validation_operation": cleanErr.Diagnostics.Operation,
 						"patch_validation_status":    "failed",
 						"patch_validation_messages":  len(cleanErr.Diagnostics.Messages),
+						"conflicted_edits":           len(cleanErr.Diagnostics.ContentConflicts),
 					}
 					recordPatchError("patch_validation_failed", applyErr, extra)
 					if shouldFinalizeAfterPatch {
@@ -1155,6 +1161,7 @@ Finalize:
 									Stderr:     trimTo(cleanErr.Diagnostics.Stderr, 800),
 									Error:      strings.TrimSpace(cleanErr.Error()),
 									Messages:   convertPatchMessages(cleanErr.Diagnostics.Messages),
+									Conflicts:  formatContentConflicts(cleanErr.Diagnostics.ContentConflicts),
 								}
 								_ = tr.WritePatchValidation(step, rec)
 							} else {
