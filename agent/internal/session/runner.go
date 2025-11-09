@@ -922,6 +922,42 @@ func Run(ctx context.Context, opts Options) Result {
 					patchTurnLabel = "Patcher: " + desc
 				}
 			}
+			preparedInstr, modeAdjustments, precheckErr := preprocessPatchInstructions(repoRoot, instr)
+			if len(modeAdjustments) > 0 {
+				turnInfo["patch_precheck_adjustments"] = len(modeAdjustments)
+				if cfg.verbose {
+					for _, adj := range modeAdjustments {
+						fmt.Fprintln(os.Stderr, "[patcher] pre-check:", adj.String())
+					}
+				}
+			}
+			if precheckErr != nil {
+				summary := precheckErr.Summary()
+				if summary == "" {
+					summary = precheckErr.Error()
+				}
+				stream.Abort("patch instructions invalid")
+				if err := tr.WriteTurn(step, patchTurnLabel, "", nil, summary, "patch-error"); err != nil {
+					fmt.Fprintln(os.Stderr, "Transcript write error:", err)
+					sessionErr = err
+					recordPatchError("transcript_write_error", err, map[string]any{"patch_error_context": "precheck_summary"})
+					return Result{ExitCode: 1, Err: err}
+				}
+				extra := map[string]any{"patch_precheck_conflicts": precheckErr.Count()}
+				recordPatchError("patch_instruction_precheck", precheckErr, extra)
+				if shouldFinalizeAfterPatch {
+					goto Finalize
+				}
+				if !turnCounted {
+					markTurnCounted()
+					if shouldFinalizeAfterPatch {
+						goto Finalize
+					}
+				}
+				turnsCompleted = userTurnCounter
+				continue
+			}
+			instr = preparedInstr
 			if pRunner == nil {
 				errDisabled := errors.New("patch runner disabled")
 				stream.Abort("patch runner unavailable")

@@ -82,13 +82,14 @@ func handleRunCommand(args []string) int {
 		return 2
 	}
 	parsedArgs := fs.Args()
-	if len(parsedArgs) == 0 {
-		fmt.Fprintln(os.Stderr, "Error: missing issue/question. Example: mct-agent run \"Explain X...\"")
-		return 2
+	var goal string
+	if cfg.PromptText != "" {
+		goal = strings.TrimSpace(cfg.PromptText)
+	} else if len(parsedArgs) > 0 {
+		goal = strings.TrimSpace(parsedArgs[0])
 	}
-	goal := strings.TrimSpace(parsedArgs[0])
 	if goal == "" {
-		fmt.Fprintln(os.Stderr, "Error: empty issue/question provided")
+		fmt.Fprintln(os.Stderr, "Error: missing issue/question. Example: mct-agent run \"Explain X...\" or mct-agent run -t \"Explain X...\"")
 		return 2
 	}
 
@@ -374,6 +375,7 @@ func configureSessionFlags(fs *flag.FlagSet, cfg *session.Config, paramFlags, pa
 	fs.StringVar(&cfg.OpenAIModel, "openai-model", "", "Direct upstream model name (deprecated; prefer --model)")
 	fs.StringVar(&cfg.SessionID, "session-id", "", "Existing session identifier to resume")
 	fs.BoolVar(&cfg.EnableTagFormat, "enable-tag-format", false, "Enable tag-format response directives and validation (experimental)")
+	fs.StringVar(&cfg.PromptText, "t", "", "prompt text (alternative to positional argument)")
 	if apiKeyFlags != nil {
 		fs.Var(apiKeyFlags, "api-key", "Provider-specific API key override in provider:key format (repeatable)")
 	}
