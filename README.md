@@ -182,11 +182,12 @@ patcher --version
 ## Usage
 Basic `mct-agent` run (drives the embedded discovery/planning loop and finalizes):
 ```
-mct-agent run "Explain the architecture and identify main components" --verbose
+mct-agent run --t "Explain the architecture and identify main components" --verbose
 ```
 
 Useful flags (agent):
 - `--max-steps int`: max `mct` Q&A turns before finalizing (default ~4).
+- `--t string`: Required flag to specify the prompt/question. Positional arguments for prompts are no longer supported.
 - `--session-id string`: Continue or resume a previous session by ID. When specified, the agent loads prior transcript and goal, then appends your new instruction to the goal. If omitted, a new session ID is auto-generated.
 - `--api-key provider:key`: provider-specific API key override for this run (repeatable; beats config/env).
 - `--openai-api-key string`: API key for OpenAI‑compatible endpoint.
@@ -203,7 +204,7 @@ Useful flags (agent):
 To mix providers in a single invocation, repeat `--api-key` once per provider referenced by your model aliases:
 
 ```
-mct-agent run "triage regression" \
+mct-agent run --t "triage regression" \
   --orch-model gpt-5-nano \
   --file-discovery-model haiku \
   --api-key openai:sk-openai-xxx \
@@ -216,11 +217,11 @@ Sessions are resumable by session ID. If your process is interrupted (Ctrl+C) or
 
 ```bash
 # Start a new session (auto-assigned ID)
-mct-agent run "Fix all lint issues" --verbose
+mct-agent run --t "Fix all lint issues" --verbose
 # Output includes: Session ID: <session-id>
 
 # Later, continue the same session with new instructions
-mct-agent run "Also ensure comments are updated" --session-id <session-id>
+mct-agent run --t "Also ensure comments are updated" --session-id <session-id>
 ```
 
 When resuming, the agent:

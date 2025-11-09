@@ -404,7 +404,7 @@ run_happy_case() {
   if ((${#runtime_args[@]})); then
     cmd+=("${runtime_args[@]}")
   fi
-  cmd+=("$prompt")
+  cmd+=(-t "$prompt")
 
   pushd "$REPO_ROOT" >/dev/null
   set +e
@@ -570,9 +570,7 @@ run_error_case() {
     --patch-no-apply
   )
   if [[ -n "$prompt_override" ]]; then
-    cmd+=("$prompt_override")
-  else
-    cmd+=("")
+    cmd+=(-t "$prompt_override")
   fi
 
   pushd "$REPO_ROOT" >/dev/null

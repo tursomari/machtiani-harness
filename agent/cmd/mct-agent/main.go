@@ -70,7 +70,7 @@ func handleRunCommand(args []string) int {
 	var apiKeyFlags multiString
 	configureSessionFlags(fs, &cfg, &paramFlags, &paramJSON, &apiKeyFlags)
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "Usage: mct-agent run \"<issue or question>\" [flags]")
+		fmt.Fprintln(os.Stderr, "Usage: mct-agent run -t \"<issue or question>\" [flags]")
 	}
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -82,14 +82,14 @@ func handleRunCommand(args []string) int {
 		return 2
 	}
 	parsedArgs := fs.Args()
-	var goal string
-	if cfg.PromptText != "" {
-		goal = strings.TrimSpace(cfg.PromptText)
-	} else if len(parsedArgs) > 0 {
-		goal = strings.TrimSpace(parsedArgs[0])
+	if len(parsedArgs) > 0 {
+		fmt.Fprintln(os.Stderr, "Error: unexpected positional arguments for 'run' command. Use -t flag for the prompt. Example: mct-agent run -t \"Explain X...\"")
+		return 2
 	}
+	var goal string
+	goal = strings.TrimSpace(cfg.PromptText)
 	if goal == "" {
-		fmt.Fprintln(os.Stderr, "Error: missing issue/question. Example: mct-agent run \"Explain X...\" or mct-agent run -t \"Explain X...\"")
+		fmt.Fprintln(os.Stderr, "Error: missing issue/question. Use -t flag to specify the prompt. Example: mct-agent run -t \"Explain X...\"")
 		return 2
 	}
 
