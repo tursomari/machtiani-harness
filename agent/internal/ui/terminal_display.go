@@ -7,19 +7,23 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"golang.org/x/term"
 )
 
 const (
-	defaultWidth              = 80
-	ansiReset                 = "\033[0m"
-	ansiGray                  = "\033[37m"
-	promptWindowLines         = 9
-	promptContentLines        = promptWindowLines - 1
-	promptFirstLinePrefix     = "`-- "
-	promptSpacerPrefix        = "    "
-	shellAgentActionPrefix    = "[shell] "
+	defaultWidth           = 80
+	ansiReset              = "\033[0m"
+	ansiGray               = "\033[37m"
+	ansiSaveCursor         = "\033[s"
+	ansiRestoreCursor      = "\033[u"
+	ansiClearLine          = "\033[2K"
+	promptWindowLines      = 9
+	promptContentLines     = promptWindowLines - 1
+	promptFirstLinePrefix  = "`-- "
+	promptSpacerPrefix     = "    "
+	shellAgentActionPrefix = "[shell] "
 )
 
 // TerminalDisplay manages the structured streaming output for mct-agent.
@@ -31,18 +35,25 @@ type TerminalDisplay struct {
 	hasPrompt bool
 	width     int
 	current   *PromptStream
+
+	timerEnabled bool
+	timerStart   time.Time
+	timerTicker  *time.Ticker
+	timerStop    chan struct{}
+	timerVisible bool
+	lastTimer    string
 }
 
 // PromptStream coordinates streaming tokens for a single prompt turn.
 type PromptStream struct {
-	display          *TerminalDisplay
-	buffer           strings.Builder
-	actionBuffer     strings.Builder
-	started          bool
-	done             bool
-	linesPrinted     int
-	renderedLines    []string
-	includeActions   bool // if true, action lines are interleaved with LLM tokens
+	display        *TerminalDisplay
+	buffer         strings.Builder
+	actionBuffer   strings.Builder
+	started        bool
+	done           bool
+	linesPrinted   int
+	renderedLines  []string
+	includeActions bool // if true, action lines are interleaved with LLM tokens
 }
 
 // PromptOptions controls how prompts are rendered in the terminal chain.
@@ -56,16 +67,21 @@ func NewTerminalDisplay(out io.Writer) *TerminalDisplay {
 	if out == nil {
 		out = os.Stdout
 	}
-	return &TerminalDisplay{out: out, width: detectWidth(out)}
+	return &TerminalDisplay{
+		out:          out,
+		width:        detectWidth(out),
+		timerEnabled: isTerminalWriter(out),
+	}
 }
 
 // StartSession marks the start of a session. Prompt lines are printed by BeginPrompt.
 func (t *TerminalDisplay) StartSession(goal string) {
 	t.withLock(func() {
-		if t.started {
-			return
+		if !t.started {
+			t.started = true
 		}
-		t.started = true
+		t.ensureTimerLocked()
+		t.renderTimerLocked()
 	})
 	_ = goal // goal only used for symmetry with BeginPrompt
 }
@@ -77,6 +93,7 @@ func (t *TerminalDisplay) BeginPrompt(prompt string, opts *PromptOptions) *Promp
 		if !t.started {
 			t.started = true
 		}
+		t.ensureTimerLocked()
 		if t.current != nil {
 			t.current.flushLineLocked()
 		}
@@ -104,6 +121,7 @@ func (t *TerminalDisplay) BeginPrompt(prompt string, opts *PromptOptions) *Promp
 		fmt.Fprintf(t.out, "%s|%s\n", ansiGray, ansiReset)
 		t.hasPrompt = true
 		t.current = stream
+		t.renderTimerLocked()
 	})
 	return stream
 }
@@ -114,6 +132,7 @@ func (t *TerminalDisplay) ShowFinal(rendered string) {
 		if !t.started {
 			t.started = true
 		}
+		t.ensureTimerLocked()
 		final := strings.Trim(rendered, "\n")
 		if strings.TrimSpace(final) == "" {
 			return
@@ -124,6 +143,7 @@ func (t *TerminalDisplay) ShowFinal(rendered string) {
 		fmt.Fprintln(t.out)
 		fmt.Fprintln(t.out, "===> FINAL RESPONSE <===")
 		fmt.Fprintln(t.out, final)
+		t.renderTimerLocked()
 	})
 }
 
@@ -134,6 +154,7 @@ func (t *TerminalDisplay) EndSession() {
 			return
 		}
 		t.closed = true
+		t.stopTimerLocked()
 	})
 }
 
@@ -147,6 +168,7 @@ func (t *TerminalDisplay) Notify(message string) {
 		if !t.started {
 			t.started = true
 		}
+		t.ensureTimerLocked()
 		if t.current != nil && t.current.interruptWithNotificationLocked(clean) {
 			return
 		}
@@ -194,6 +216,7 @@ func (s *PromptStream) Complete(finalText string) {
 		}
 		s.printLinesLocked(lines)
 		fmt.Fprintln(s.display.out)
+		s.display.renderTimerLocked()
 		s.done = true
 		s.display.current = nil
 	})
@@ -211,6 +234,7 @@ func (s *PromptStream) Abort(message string) {
 		}
 		s.printLinesLocked([]string{text})
 		fmt.Fprintln(s.display.out)
+		s.display.renderTimerLocked()
 		s.done = true
 		s.display.current = nil
 	})
@@ -249,6 +273,7 @@ func (t *TerminalDisplay) StreamAction(description string) {
 	if !t.started {
 		t.started = true
 	}
+	t.ensureTimerLocked()
 	current := t.current
 	if current != nil && !current.done {
 		t.mu.Unlock()
@@ -265,10 +290,10 @@ func (t *TerminalDisplay) StreamAction(description string) {
 func (s *PromptStream) renderCurrentWithActionsLocked() {
 	llmText := s.buffer.String()
 	actionText := s.actionBuffer.String()
-	
+
 	// Combine both buffers, with actions interleaved
 	combined := llmText + actionText
-	
+
 	lines := lastNLines(combined, promptContentLines)
 	if len(lines) == 0 {
 		placeholder := sanitizeLine(combined)
@@ -333,8 +358,10 @@ func (s *PromptStream) printLinesLocked(lines []string) {
 		cleaned := sanitizeLine(line)
 		sanitized[i] = truncate(cleaned, maxWidth)
 	}
+	s.display.ensureTimerLocked()
 	s.clearPreviousLinesLocked()
 	s.writeSanitizedLinesLocked(sanitized)
+	s.display.renderTimerLocked()
 }
 
 // clearPreviousLinesLocked rewinds the terminal cursor and removes the prior
@@ -363,7 +390,9 @@ func (s *PromptStream) flushLineLocked() {
 	if !s.started || s.done {
 		return
 	}
+	s.display.ensureTimerLocked()
 	fmt.Fprintln(s.display.out)
+	s.display.renderTimerLocked()
 	s.started = false
 	s.linesPrinted = 0
 	s.renderedLines = s.renderedLines[:0]
@@ -381,9 +410,11 @@ func (t *TerminalDisplay) printNotificationLineLocked(message string) {
 		}
 		text = truncate(text, maxWidth)
 		fmt.Fprintf(t.out, "%s|   %s%s\n", ansiGray, text, ansiReset)
-		return
 	}
-	fmt.Fprintln(t.out, text)
+	if !t.hasPrompt {
+		fmt.Fprintln(t.out, text)
+	}
+	t.renderTimerLocked()
 }
 
 func (s *PromptStream) writeSanitizedLinesLocked(lines []string) {
@@ -466,6 +497,14 @@ func widthFromWriter(out io.Writer) int {
 	return w
 }
 
+func isTerminalWriter(out io.Writer) bool {
+	file, ok := out.(*os.File)
+	if !ok {
+		return false
+	}
+	return term.IsTerminal(int(file.Fd()))
+}
+
 func firstLine(text string) string {
 	text = strings.ReplaceAll(text, "\r\n", "\n")
 	text = strings.ReplaceAll(text, "\r", "\n")
@@ -511,4 +550,105 @@ func lastNLines(text string, n int) []string {
 	result := make([]string, len(lines)-start)
 	copy(result, lines[start:])
 	return result
+}
+
+func (t *TerminalDisplay) ensureTimerLocked() {
+	if !t.timerEnabled || t.closed {
+		return
+	}
+	if !t.timerStart.IsZero() {
+		return
+	}
+	t.refreshTerminalSizeLocked()
+	t.timerStart = time.Now()
+	t.timerVisible = false
+	t.lastTimer = ""
+	stop := make(chan struct{})
+	t.timerStop = stop
+	t.timerTicker = time.NewTicker(time.Second)
+	go t.timerLoop(t.timerTicker, stop)
+}
+
+func (t *TerminalDisplay) refreshTerminalSizeLocked() {
+	if !t.timerEnabled {
+		return
+	}
+	file, ok := t.out.(*os.File)
+	if !ok {
+		return
+	}
+	fd := int(file.Fd())
+	if !term.IsTerminal(fd) {
+		t.timerEnabled = false
+		return
+	}
+	w, _, err := term.GetSize(fd)
+	if err != nil {
+		return
+	}
+	if w > 0 {
+		t.width = w
+	}
+}
+func (t *TerminalDisplay) renderTimerLocked() {
+	if !t.timerEnabled || t.timerStart.IsZero() || t.closed {
+		return
+	}
+	t.refreshTerminalSizeLocked()
+	elapsed := time.Since(t.timerStart)
+	formatted := formatElapsed(elapsed)
+	if t.timerVisible && formatted == t.lastTimer {
+		return
+	}
+	fmt.Fprint(t.out, ansiSaveCursor)
+	fmt.Fprint(t.out, "\033[999;1H")
+	fmt.Fprint(t.out, ansiClearLine)
+	fmt.Fprintf(t.out, "%s%s%s", ansiGray, formatted, ansiReset)
+	fmt.Fprint(t.out, ansiRestoreCursor)
+	t.lastTimer = formatted
+	t.timerVisible = true
+}
+
+func (t *TerminalDisplay) stopTimerLocked() {
+	if t.timerTicker == nil {
+		return
+	}
+	t.timerTicker.Stop()
+	if t.timerStop != nil {
+		close(t.timerStop)
+	}
+	t.timerTicker = nil
+	t.timerStop = nil
+	t.timerStart = time.Time{}
+	t.timerVisible = false
+	t.lastTimer = ""
+}
+
+func (t *TerminalDisplay) timerLoop(ticker *time.Ticker, stop <-chan struct{}) {
+	for {
+		select {
+		case <-ticker.C:
+			t.withLock(func() {
+				if t.closed {
+					return
+				}
+				t.renderTimerLocked()
+			})
+		case <-stop:
+			return
+		}
+	}
+}
+
+func formatElapsed(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	seconds := int(d / time.Second)
+	if seconds < 60 {
+		return fmt.Sprintf("%ds", seconds)
+	}
+	minutes := seconds / 60
+	remaining := seconds % 60
+	return fmt.Sprintf("%d:%02d", minutes, remaining)
 }
