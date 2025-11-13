@@ -4,7 +4,7 @@ A Go CLI that helps an LLM discover relevant files in a repository using a stric
 
 ## Highlights
 - Model-driven, minimal tool surface: only three allowed commands
-  - `RG> rg --files | rg "pattern"`
+  - `RG> rg --files --hidden | rg "pattern"`
   - `SED> sed -n "PROGRAM" PATH` (bounded content peek; 200 lines max)
   - `LS> ls -la PATH` (bounded directory/file listing; 200 lines max)
 - Executes ripgrep/sed locally (no shell), applies extra excludes, caps outputs (20 KB for RG, 200 lines for SED)
@@ -54,7 +54,7 @@ Flags:
 - `-session-id`, `-s` (optional): if provided, the first 5 characters tag the BEGIN/END markers for correlation across concurrent runs
 - Dry-run (no network):
   - `-dry-run-rg`: run ripgrep locally and print an `RG_OUT` block to stderr
-  - `-pattern <regex>`: local regex to filter paths (mirrors `RG> rg --files | rg "pattern"`)
+- `-pattern <regex>`: local regex to filter paths (mirrors `RG> rg --files --hidden | rg "pattern"`)
 
 Trajectory recording:
 - `-trajectory <path>`: write a JSONL trajectory to the given path.
@@ -109,14 +109,14 @@ pattern: "<regex>"
 ```
 
 Both modes expose the same three logical tools:
-- `file_search`: runs `rg --files` in the repo root and filters with the provided regex pattern (`kind` must be `files_pattern`).
+- `file_search`: runs `rg --files --hidden` in the repo root and filters with the provided regex pattern (`kind` must be `files_pattern`).
 - `read_file`: runs `sed -n PROGRAM -- PATH` to stream up to 200 lines from a relative path that already appeared in some `RG_OUT`.
 - `list_dir`: runs `ls -la -- PATH` for a validated relative directory path (no prior `RG_OUT` requirement).
 
 Paths must be relative (no leading `/`), cannot contain `..` or trailing `/`, and may not include backslashes. For `read_file`, the path must have been listed in a previous `RG_OUT` block during the same run.
 
 Agent execution semantics:
-- Always runs `rg --files` in the repo root (cwd) and applies a regex when the tool call specifies a pattern.
+- Always runs `rg --files --hidden` in the repo root (cwd) and applies a regex when the tool call specifies a pattern.
 - Post-filters common junk directories and binary/asset extensions (case-insensitive):
   - Dirs: `.git`, `node_modules`, `dist`, `build`, `vendor`, `.venv`, `__pycache__`, `.next`, `target`
   - Exts: `.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.ico`, `.pdf`, `.zip`, `.jar`, `.exe`, `.dll`, `.so`, `.dylib`, `.bin`, `.wasm`, `.ttf`, `.otf`, `.woff`, `.woff2`, `.mp4`, `.mov`, `.mp3`, `.wav`, `.gz`, `.tar`, `.tgz`, `.7z`
@@ -205,14 +205,14 @@ When the round cap is reached without a valid final block, the agent performs on
 - `API key not provided (use -api-key or OPENAI_API_KEY)`
 - `ripgrep (rg) is required; install from https://github.com/BurntSushi/ripgrep`
 - `Command timed out after 30s` (configurable via `-cmd-timeout`)
-- `Command rejected: Allowed forms are 'RG> rg --files | rg "pattern"', 'SED> sed -n "PROGRAM" PATH', or 'LS> ls -la PATH'`
+- `Command rejected: Allowed forms are 'RG> rg --files --hidden | rg "pattern"', 'SED> sed -n "PROGRAM" PATH', or 'LS> ls -la PATH'`
 - `SED path not allowed: <path> not found in any prior RG_OUT`
 - `Transcript limit reached without final block`
 - `No relevant file block produced`
 
 ## Security & Scope
 - Runs inside an external sandbox; no shell execution
-- Only executes `rg --files`, `sed -n PROGRAM -- PATH`, and `ls -la -- PATH` with strict validation and no shell
+- Only executes `rg --files --hidden`, `sed -n PROGRAM -- PATH`, and `ls -la -- PATH` with strict validation and no shell
 - Applies strict path validation and requires SED PATH to have been listed in a prior `RG_OUT`
 - Hard caps outputs: 20 KB for RG_OUT; 200 lines for SED_OUT
 

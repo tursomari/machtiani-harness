@@ -58,6 +58,7 @@ func makeFixtureRepo(t *testing.T) string {
 	mustWrite("README.md", []byte("hello\n"))
 	mustWrite("cmd/main.go", []byte("package main\nfunc main(){}\n"))
 	mustWrite("internal/x.go", []byte("package internal\n"))
+	mustWrite(".env", []byte("FOO=bar\n"))
 	mustWrite(".git/keep", []byte(""))
 	mustWrite("node_modules/pkg/index.js", []byte("console.log('x')\n"))
 	mustWrite("assets/logo.png", make([]byte, 128))
@@ -115,6 +116,9 @@ func TestDryRun_RGOnly(t *testing.T) {
 	}
 	if !strings.Contains(res.stderr, "RG_OUT:\n") || !strings.Contains(res.stderr, "END_RG_OUT") {
 		t.Fatalf("missing RG_OUT block in stderr: %s", res.stderr)
+	}
+	if !strings.Contains(res.stderr, ".env") {
+		t.Fatalf("expected hidden files to be present; got:\n%s", res.stderr)
 	}
 	if strings.Contains(res.stderr, ".git/keep") || strings.Contains(res.stderr, "node_modules/") || strings.Contains(res.stderr, "logo.png") || strings.Contains(res.stderr, "spec.pdf") {
 		t.Fatalf("expected excludes applied; got:\n%s", res.stderr)

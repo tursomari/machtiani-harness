@@ -73,9 +73,9 @@ if [[ -z "${OPENAI_API_KEY:-}" ]]; then
 fi
 
 function rg_files_cache() {
-  # Cache list of files produced by `rg --files` (post-filtering is internal to file-discovery,
+  # Cache list of files produced by `rg --files --hidden` (post-filtering is internal to file-discovery,
   # but this is good enough for existence checks).
-  rg --files | sed '/^$/d' | LC_ALL=C sort -u
+  rg --files --hidden | sed '/^$/d' | LC_ALL=C sort -u
 }
 
 function assert_stdout_block() {
@@ -125,7 +125,7 @@ function assert_paths_in_repo() {
   local missing=0
   while IFS= read -r p; do
     if ! grep -Fxq -- "$p" "$rg_list_file"; then
-      echo "Path not in rg --files listing: $p" >&2
+      echo "Path not in rg --files --hidden listing: $p" >&2
       missing=$((missing+1))
     fi
   done < "$extracted"

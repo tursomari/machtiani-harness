@@ -89,7 +89,7 @@ Artifacts
 
 Assertions (high level)
 - Stdout contains a valid single final block with relative, deduplicated paths.
-- At least one selected path exists in `rg --files` (allows a small number of misses).
+- At least one selected path exists in `rg --files --hidden` (allows a small number of misses).
 - Trajectory JSONL includes `rg_exec`, `RG_OUT`, `sed_exec`, `sed_out_emitted`, `ls_exec`, `ls_out_emitted`, and `run_end` events.
 - Each scenario also checks a few loose, issue-specific invariants.
 

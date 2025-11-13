@@ -17,6 +17,7 @@ func TestApplyExcludes(t *testing.T) {
 		"node_modules/pkg/index.js",
 		"assets/logo.png",
 		"docs/spec.pdf",
+		".env",
 		"README.md",
 		filepath.FromSlash("cmd/main.go"),
 		filepath.FromSlash("internal/x.go"),
@@ -32,7 +33,7 @@ func TestApplyExcludes(t *testing.T) {
 	if strings.Contains(joined, "logo.png") || strings.Contains(joined, "spec.pdf") {
 		t.Fatalf("expected binary assets excluded; got %v", out)
 	}
-	for _, must := range []string{"README.md", "cmd/main.go", "internal/x.go"} {
+	for _, must := range []string{".env", "README.md", "cmd/main.go", "internal/x.go"} {
 		if !strings.Contains(joined, must) {
 			t.Fatalf("expected %s present; got %v", must, out)
 		}

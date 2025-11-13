@@ -78,7 +78,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  -no-json               Use bracket tool-call syntax instead of JSON function calls")
 	fmt.Fprintln(os.Stderr, "\nDry-run (no network):")
 	fmt.Fprintln(os.Stderr, "  -dry-run-rg             Run ripgrep locally and print RG_OUT to stderr; skip API")
-	fmt.Fprintln(os.Stderr, "  -pattern <regex>        Regex to filter paths (mirrors 'RG> rg --files | rg \"pattern\"' protocol)")
+	fmt.Fprintln(os.Stderr, "  -pattern <regex>        Regex to filter paths (mirrors 'RG> rg --files --hidden | rg \"pattern\"' protocol)")
 	fmt.Fprintln(os.Stderr, "\nTrajectory:")
 	fmt.Fprintln(os.Stderr, "  -trajectory <path>      Path to trajectory JSONL file (default auto-named)")
 	fmt.Fprintln(os.Stderr, "  -no-trajectory          Disable trajectory recording")
@@ -106,7 +106,7 @@ func main() {
 	flag.BoolVar(&cfg.Verbose, "v", false, "Verbose logging")
 	flag.BoolVar(&noJSON, "no-json", false, "Use bracket tool-call syntax instead of JSON function calls")
 	flag.BoolVar(&cfg.DryRunRG, "dry-run-rg", false, "Run ripgrep locally and print RG_OUT to stderr; skip API")
-	flag.StringVar(&cfg.DryPattern, "pattern", "", "Regex for dry-run-rg to filter paths (mirrors 'RG> rg --files | rg \"pattern\"')")
+	flag.StringVar(&cfg.DryPattern, "pattern", "", "Regex for dry-run-rg to filter paths (mirrors 'RG> rg --files --hidden | rg \"pattern\"')")
 	flag.StringVar(&cfg.TrajectoryPath, "trajectory", "", "Path to trajectory JSONL file; defaults to auto-named in cwd")
 	flag.BoolVar(&cfg.NoTrajectory, "no-trajectory", false, "Disable trajectory recording")
 	var apiKeyOverrideFlags multiString

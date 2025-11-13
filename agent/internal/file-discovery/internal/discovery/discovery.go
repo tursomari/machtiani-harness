@@ -540,7 +540,7 @@ func parseToolCall(text string, mode cfgpkg.ToolCallMode) (tool string, rg *rgCo
 	return parseJSONToolCall(s)
 }
 
-// run rg --files with timeout, collect lines
+// run rg --files --hidden with timeout, collect lines
 type rgStats struct {
 	duration   time.Duration
 	totalLines int
@@ -551,7 +551,7 @@ var runRGFilesFn = runRGFiles
 
 func runRGFiles(ctx context.Context) ([]string, rgStats, error) {
 	start := time.Now()
-	cmd := exec.CommandContext(ctx, "rg", "--files")
+	cmd := exec.CommandContext(ctx, "rg", "--files", "--hidden")
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, rgStats{}, err
