@@ -94,7 +94,7 @@ func (t *Transcript) SetTrajectory(w *trajectory.Writer) {
 }
 
 func (t *Transcript) WriteHeader(goal string, sessionID string, _ any) error {
-	s := fmt.Sprintf("# mct-agent Transcript\n\nSession: %s\n\nGoal:\n%s\n\n", sessionID, goal)
+	s := fmt.Sprintf("# mct-agent Transcript\n\nSession: %s\n\n## Goal:\n\n%s\n\n", sessionID, goal)
 	t.mem.WriteString(s)
 	_, err := t.f.WriteString(s)
 	t.emit("header", map[string]any{

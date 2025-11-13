@@ -17,12 +17,15 @@ const sessionStateFile = "session-state.json"
 var ErrSessionStateNotFound = errors.New("session state not found")
 
 type SessionState struct {
-	SessionID      string    `json:"session_id"`
-	Goal           string    `json:"goal"`
-	TurnsCompleted int       `json:"turns_completed"`
-	TranscriptPath string    `json:"transcript_path,omitempty"`
-	Transcript     string    `json:"transcript"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	SessionID          string    `json:"session_id"`
+	Goal               string    `json:"goal"`
+	TurnsCompleted     int       `json:"turns_completed"`
+	TranscriptPath     string    `json:"transcript_path,omitempty"`
+	Transcript         string    `json:"transcript"`
+	UpdatedAt          time.Time `json:"updated_at"`
+	ParentSessionID    string    `json:"parent_session_id,omitempty"`
+	MetaModes          []string  `json:"meta_modes,omitempty"`
+	MetaInstructionDir string    `json:"meta_instruction_dir,omitempty"`
 }
 
 func SaveSessionState(state SessionState) error {

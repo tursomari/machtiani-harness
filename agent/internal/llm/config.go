@@ -14,15 +14,16 @@ import (
 )
 
 type Config struct {
-	Listen       string                     `toml:"listen"`
-	DefaultModel string                     `toml:"default_model"`
-	Model        *ModelConfig               `toml:"model"`
-	Planner      *PlannerConfig             `toml:"planner"`
-	ShellAgent   *ShellAgentConfig          `toml:"shell-agent"`
-	Prompts      *PromptsConfig             `toml:"prompts"`
-	Environment  *EnvironmentConfig         `toml:"environment"`
-	Providers    map[string]ProviderConfig  `toml:"providers"`
-	Models       map[string]ModelDefinition `toml:"models"`
+	Listen           string                     `toml:"listen"`
+	DefaultModel     string                     `toml:"default_model"`
+	Model            *ModelConfig               `toml:"model"`
+	Planner          *PlannerConfig             `toml:"planner"`
+	ShellAgent       *ShellAgentConfig          `toml:"shell-agent"`
+	Prompts          *PromptsConfig             `toml:"prompts"`
+	Environment      *EnvironmentConfig         `toml:"environment"`
+	Providers        map[string]ProviderConfig  `toml:"providers"`
+	Models           map[string]ModelDefinition `toml:"models"`
+	MetaOrchestrator *MetaOrchestratorConfig    `toml:"meta-orchestrator"`
 }
 
 // ShellAgentConfig mirrors the shell-agent configuration section and is loaded
@@ -138,6 +139,15 @@ type EnvironmentConfig struct {
 	ComputedImageTag string            `toml:"-"`
 }
 
+type MetaOrchestratorConfig struct {
+	InstructionDir string                    `toml:"instruction_dir"`
+	Modes          map[string]MetaModeConfig `toml:"modes"`
+}
+
+type MetaModeConfig struct {
+	InstructionFile string `toml:"instruction_file"`
+}
+
 type ProviderConfig struct {
 	BaseURL  string            `toml:"base_url"`
 	APIKey   string            `toml:"api_key"`
@@ -174,6 +184,8 @@ var (
 	cfgData    *configData
 	cfgErr     error
 )
+
+const defaultMetaInstructionDir = ".machtiani/meta-orchestrator/custom-instructions"
 
 func ResolveModel(alias string) (ResolvedModel, error) {
 	return ResolveModelWithOverrides(alias, nil)
@@ -448,6 +460,13 @@ func parseConfig(path string) (Config, error) {
 			return Config{}, err
 		}
 		cfg.Environment = envCfg
+	}
+	if metaRaw, ok := toMap(raw["meta-orchestrator"]); ok {
+		metaCfg, err := parseMetaOrchestratorSection(path, metaRaw)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.MetaOrchestrator = metaCfg
 	}
 	if provRaw, ok := toMap(raw["providers"]); ok {
 		for name, entry := range provRaw {
@@ -994,6 +1013,44 @@ func parseEnvironmentSection(path string, data map[string]any) (*EnvironmentConf
 	return env, nil
 }
 
+func parseMetaOrchestratorSection(path string, data map[string]any) (*MetaOrchestratorConfig, error) {
+	meta := &MetaOrchestratorConfig{}
+	if v, ok := data["instruction_dir"].(string); ok {
+		meta.InstructionDir = v
+	}
+	if rawModes, exists := data["modes"]; exists {
+		modesMap, ok := toMap(rawModes)
+		if !ok {
+			return nil, fmt.Errorf("parse %s [meta-orchestrator.modes]: expected table", path)
+		}
+		if len(modesMap) > 0 {
+			meta.Modes = make(map[string]MetaModeConfig, len(modesMap))
+			for mode, inner := range modesMap {
+				entry, ok := toMap(inner)
+				if !ok {
+					return nil, fmt.Errorf("parse %s [meta-orchestrator.modes.%s]: expected table", path, mode)
+				}
+				cfg := MetaModeConfig{}
+				if v, ok := entry["instruction_file"].(string); ok {
+					cfg.InstructionFile = v
+				}
+				trimmed := strings.TrimSpace(mode)
+				if trimmed == "" {
+					continue
+				}
+				meta.Modes[trimmed] = cfg
+				lower := strings.ToLower(trimmed)
+				if lower != trimmed {
+					if _, exists := meta.Modes[lower]; !exists {
+						meta.Modes[lower] = cfg
+					}
+				}
+			}
+		}
+	}
+	return meta, nil
+}
+
 func toMap(v any) (map[string]any, bool) {
 	m, ok := v.(map[string]any)
 	return m, ok
@@ -1019,6 +1076,17 @@ func copyStringMap(in map[string]string) map[string]string {
 		return nil
 	}
 	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
+func copyMetaModeMap(in map[string]MetaModeConfig) map[string]MetaModeConfig {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]MetaModeConfig, len(in))
 	for k, v := range in {
 		out[k] = v
 	}
@@ -1235,6 +1303,13 @@ func cloneConfig(in Config) Config {
 		}
 		clone.Environment = &env
 	}
+	if in.MetaOrchestrator != nil {
+		meta := *in.MetaOrchestrator
+		if len(meta.Modes) > 0 {
+			meta.Modes = copyMetaModeMap(meta.Modes)
+		}
+		clone.MetaOrchestrator = &meta
+	}
 	if in.Model != nil {
 		model := *in.Model
 		if len(model.ModelKwargs) > 0 {
@@ -1303,6 +1378,230 @@ func CloneResolvedModel(in ResolvedModel) ResolvedModel {
 		Params:       deepCopyMap(in.Params),
 	}
 	return clone
+}
+
+// LoadMetaInstructions resolves the instruction text for a meta-orchestrator
+// mode. The lookup order is:
+//  1. --meta-instruction-dir (overrideDir)
+//  2. Mode-specific config entry [meta-orchestrator.modes.<mode>]
+//  3. [meta-orchestrator] instruction_dir
+//  4. Default .machtiani/meta-orchestrator/custom-instructions relative to repo/config
+//
+// The function returns the instruction content and the resolved path used.
+func LoadMetaInstructions(mode, overrideDir string, cfg Config, configPath string) (string, string, error) {
+	trimmedMode := strings.TrimSpace(mode)
+	if trimmedMode == "" {
+		return "", "", fmt.Errorf("meta-orchestrator mode is required")
+	}
+	filename := fmt.Sprintf("%s.txt", trimmedMode)
+
+	var candidates []string
+	appendCandidate := func(path string) {
+		clean := filepath.Clean(path)
+		for _, existing := range candidates {
+			if existing == clean {
+				return
+			}
+		}
+		candidates = append(candidates, clean)
+	}
+
+	configDir := effectiveConfigDir(configPath)
+	metaCfg := cfg.MetaOrchestrator
+
+	if strings.TrimSpace(overrideDir) != "" {
+		dirs, err := resolveMetaInstructionDir(overrideDir, configDir)
+		if err != nil {
+			return "", "", err
+		}
+		for _, dir := range dirs {
+			appendCandidate(filepath.Join(dir, filename))
+		}
+	}
+
+	if metaCfg != nil {
+		modeKey := trimmedMode
+		modeCfg, ok := metaCfg.Modes[modeKey]
+		if !ok {
+			modeCfg, ok = metaCfg.Modes[strings.ToLower(modeKey)]
+		}
+		if ok && strings.TrimSpace(modeCfg.InstructionFile) != "" {
+			files, err := resolveMetaInstructionFile(modeCfg.InstructionFile, configDir)
+			if err != nil {
+				return "", "", err
+			}
+			for _, file := range files {
+				appendCandidate(file)
+			}
+		}
+		if strings.TrimSpace(metaCfg.InstructionDir) != "" {
+			dirs, err := resolveMetaInstructionDir(metaCfg.InstructionDir, configDir)
+			if err != nil {
+				return "", "", err
+			}
+			for _, dir := range dirs {
+				appendCandidate(filepath.Join(dir, filename))
+			}
+		}
+	}
+
+	defaultDirs, err := resolveMetaInstructionDir(defaultMetaInstructionDir, configDir)
+	if err == nil {
+		for _, dir := range defaultDirs {
+			appendCandidate(filepath.Join(dir, filename))
+		}
+	}
+
+	if len(candidates) == 0 {
+		return "", "", fmt.Errorf("no search paths available for meta instructions (%s mode)", trimmedMode)
+	}
+
+	var notFound []string
+	for _, candidate := range candidates {
+		data, err := os.ReadFile(candidate)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				notFound = append(notFound, candidate)
+				continue
+			}
+			return "", "", fmt.Errorf("read meta instructions %s: %w", candidate, err)
+		}
+		return string(data), candidate, nil
+	}
+
+	return "", "", fmt.Errorf("meta instructions for mode %q not found (searched %s)", trimmedMode, strings.Join(notFound, ", "))
+}
+
+func effectiveConfigDir(configPath string) string {
+	trimmed := strings.TrimSpace(configPath)
+	if trimmed == "" {
+		if wd, err := os.Getwd(); err == nil {
+			return wd
+		}
+		return ""
+	}
+	abs := trimmed
+	if !filepath.IsAbs(abs) {
+		if resolved, err := filepath.Abs(abs); err == nil {
+			abs = resolved
+		}
+	}
+	return filepath.Dir(abs)
+}
+
+func resolveMetaInstructionDir(base, configDir string) ([]string, error) {
+	expanded, err := expandUserPath(base)
+	if err != nil {
+		return nil, fmt.Errorf("resolve meta instruction dir %q: %w", base, err)
+	}
+	cleaned := filepath.Clean(expanded)
+	if filepath.IsAbs(cleaned) {
+		return []string{cleaned}, nil
+	}
+	var dirs []string
+	if configDir != "" {
+		if shouldJoinConfigDir(configDir, cleaned) {
+			dirs = append(dirs, filepath.Join(configDir, cleaned))
+		}
+		parent := filepath.Dir(configDir)
+		if parent != "" && parent != configDir {
+			dirs = append(dirs, filepath.Join(parent, cleaned))
+		}
+		if repoRoot, err := git.RepoRoot(configDir); err == nil {
+			repoCandidate := filepath.Join(repoRoot, cleaned)
+			if !containsString(dirs, repoCandidate) {
+				dirs = append(dirs, repoCandidate)
+			}
+			machtianiCandidate := filepath.Join(repoRoot, ".machtiani", cleaned)
+			if !containsString(dirs, machtianiCandidate) {
+				dirs = append(dirs, machtianiCandidate)
+			}
+		}
+	}
+	if len(dirs) == 0 {
+		if wd, err := os.Getwd(); err == nil {
+			dirs = append(dirs, filepath.Join(wd, cleaned))
+		}
+	}
+	return uniqueStrings(dirs), nil
+}
+
+func resolveMetaInstructionFile(path, configDir string) ([]string, error) {
+	expanded, err := expandUserPath(path)
+	if err != nil {
+		return nil, fmt.Errorf("resolve meta instruction file %q: %w", path, err)
+	}
+	cleaned := filepath.Clean(expanded)
+	if filepath.IsAbs(cleaned) {
+		return []string{cleaned}, nil
+	}
+	var files []string
+	if configDir != "" {
+		if shouldJoinConfigDir(configDir, cleaned) {
+			files = append(files, filepath.Join(configDir, cleaned))
+		}
+		parent := filepath.Dir(configDir)
+		if parent != "" && parent != configDir {
+			files = append(files, filepath.Join(parent, cleaned))
+		}
+		if repoRoot, err := git.RepoRoot(configDir); err == nil {
+			repoCandidate := filepath.Join(repoRoot, cleaned)
+			if !containsString(files, repoCandidate) {
+				files = append(files, repoCandidate)
+			}
+			machtianiCandidate := filepath.Join(repoRoot, ".machtiani", cleaned)
+			if !containsString(files, machtianiCandidate) {
+				files = append(files, machtianiCandidate)
+			}
+		}
+	}
+	if len(files) == 0 {
+		if wd, err := os.Getwd(); err == nil {
+			files = append(files, filepath.Join(wd, cleaned))
+		}
+	}
+	return uniqueStrings(files), nil
+}
+
+func containsString(haystack []string, needle string) bool {
+	for _, item := range haystack {
+		if item == needle {
+			return true
+		}
+	}
+	return false
+}
+
+func uniqueStrings(items []string) []string {
+	if len(items) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(items))
+	var out []string
+	for _, item := range items {
+		clean := filepath.Clean(item)
+		if _, ok := seen[clean]; ok {
+			continue
+		}
+		seen[clean] = struct{}{}
+		out = append(out, clean)
+	}
+	return out
+}
+
+func shouldJoinConfigDir(configDir, cleaned string) bool {
+	trimmed := strings.Trim(cleaned, string(filepath.Separator))
+	if trimmed == "" {
+		return true
+	}
+	first := trimmed
+	if idx := strings.IndexRune(trimmed, filepath.Separator); idx != -1 {
+		first = trimmed[:idx]
+	}
+	if first != ".machtiani" {
+		return true
+	}
+	return filepath.Base(configDir) != ".machtiani"
 }
 
 func toStringMap(v any) (map[string]any, bool) {

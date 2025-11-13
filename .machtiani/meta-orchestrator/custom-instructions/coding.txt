@@ -1,0 +1,4 @@
+- ***Create an issue for the engineering team. Do not make any code changes or patches.***
+- ***Implement the Issue.***
+- ***Run available validations (tests, linters, or targeted reasoning) to confirm behavior and note any risks or follow-up work.***
+- ***Summarize the results, highlighting modifications, verification status, and remaining next steps for the parent session.***

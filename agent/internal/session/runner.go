@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
 	mctpatcher "github.com/tursomari/machtiani/agent/internal/mct/patcher"
 	promptsvc "github.com/tursomari/machtiani/agent/internal/mct/prompt"
@@ -90,6 +91,15 @@ func Run(ctx context.Context, opts Options) Result {
 		if strings.TrimSpace(cfgInput.TranscriptFile) == "" && strings.TrimSpace(state.TranscriptPath) != "" {
 			cfgInput.TranscriptFile = state.TranscriptPath
 		}
+		if strings.TrimSpace(cfgInput.Mode) == "" && len(state.MetaModes) > 0 {
+			cfgInput.Mode = strings.TrimSpace(state.MetaModes[0])
+		}
+		if strings.TrimSpace(cfgInput.MetaInstructionDir) == "" && strings.TrimSpace(state.MetaInstructionDir) != "" {
+			cfgInput.MetaInstructionDir = strings.TrimSpace(state.MetaInstructionDir)
+		}
+		if strings.TrimSpace(cfgInput.ParentSessionID) == "" && strings.TrimSpace(state.ParentSessionID) != "" {
+			cfgInput.ParentSessionID = strings.TrimSpace(state.ParentSessionID)
+		}
 	}
 	if goal == "" {
 		goal = resumePrompt
@@ -106,9 +116,21 @@ func Run(ctx context.Context, opts Options) Result {
 	cfgInput.SessionID = sessionID
 
 	cfg := newLegacyConfig(cfgInput)
+	opts.Config = cfgInput
 	applyTrajectoryEnvOverrides(&cfg)
 	if err := cleanupOrphanedTempDirs(cfg.verbose); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to cleanup orphaned temp dirs: %v\n", err)
+	}
+	metaInstructionText := ""
+	metaInstructionPath := ""
+	if strings.TrimSpace(cfg.mode) != "" && strings.TrimSpace(cfg.parentSessionID) == "" {
+		text, path, err := llm.LoadMetaInstructions(cfg.mode, cfg.metaInstructionDir, opts.GlobalConfig, opts.GlobalConfigPath)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Error loading meta instructions:", err)
+			return Result{ExitCode: 1, Err: err}
+		}
+		metaInstructionText = text
+		metaInstructionPath = path
 	}
 
 	sessionStatus := "error"
@@ -279,6 +301,17 @@ func Run(ctx context.Context, opts Options) Result {
 				state.TranscriptPath = tr.Path()
 				state.Transcript = tr.Content()
 			}
+			state.ParentSessionID = strings.TrimSpace(cfg.parentSessionID)
+			if strings.TrimSpace(state.MetaInstructionDir) == "" {
+				dir := strings.TrimSpace(cfg.metaInstructionDir)
+				if dir == "" && strings.TrimSpace(metaInstructionPath) != "" {
+					dir = filepath.Dir(metaInstructionPath)
+				}
+				state.MetaInstructionDir = dir
+			}
+			if len(state.MetaModes) == 0 && strings.TrimSpace(cfg.mode) != "" {
+				state.MetaModes = []string{strings.ToLower(strings.TrimSpace(cfg.mode))}
+			}
 			if err := SaveSessionState(state); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to save session state for %s: %v\n", sessionID, err)
 			} else {
@@ -308,6 +341,17 @@ func Run(ctx context.Context, opts Options) Result {
 			if state.Transcript == "" && tr != nil {
 				state.Transcript = tr.Content()
 			}
+			if strings.TrimSpace(state.MetaInstructionDir) == "" {
+				dir := strings.TrimSpace(cfg.metaInstructionDir)
+				if dir == "" && strings.TrimSpace(metaInstructionPath) != "" {
+					dir = filepath.Dir(metaInstructionPath)
+				}
+				state.MetaInstructionDir = dir
+			}
+			if len(state.MetaModes) == 0 && strings.TrimSpace(cfg.mode) != "" {
+				state.MetaModes = []string{strings.ToLower(strings.TrimSpace(cfg.mode))}
+			}
+			state.ParentSessionID = strings.TrimSpace(cfg.parentSessionID)
 			if err := SaveSessionState(state); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to save session state for %s: %v\n", sid, err)
 			}
@@ -458,6 +502,71 @@ func Run(ctx context.Context, opts Options) Result {
 			fmt.Fprintln(os.Stderr, "Transcript write error:", err)
 			sessionErr = err
 			return Result{ExitCode: 1, Err: err}
+		}
+	}
+
+	metaActive := strings.TrimSpace(cfg.mode) != "" && strings.TrimSpace(cfg.parentSessionID) == ""
+	if metaActive {
+		display.StartSession(goal)
+		if resumeMode {
+			fmt.Fprintf(os.Stdout, "Resuming meta session %s\n", sessionID)
+		}
+		metaCtx := metaContext{
+			RootCtx:         rootCtx,
+			SessionID:       sessionID,
+			Goal:            goal,
+			Config:          cfg,
+			Options:         opts,
+			Display:         display,
+			InstructionPath: metaInstructionPath,
+			InstructionText: metaInstructionText,
+			Transcript:      tr,
+		}
+		outcome, handled := metaOrchestrate(metaCtx)
+		if handled {
+			turnsCompleted = len(outcome.Plan.Tasks)
+			if outcome.Err != nil {
+				sessionErr = outcome.Err
+				sessionStatus = "error"
+				keepSessionState = true
+				instructionDir := strings.TrimSpace(cfg.metaInstructionDir)
+				if instructionDir == "" {
+					if strings.TrimSpace(metaInstructionPath) != "" {
+						instructionDir = filepath.Dir(metaInstructionPath)
+					}
+				}
+				pendingState = &SessionState{
+					SessionID:          sessionID,
+					Goal:               goal,
+					TurnsCompleted:     turnsCompleted,
+					TranscriptPath:     tr.Path(),
+					Transcript:         tr.Content(),
+					ParentSessionID:    strings.TrimSpace(cfg.parentSessionID),
+					MetaModes:          metaModesFromPlan(outcome.Plan),
+					MetaInstructionDir: instructionDir,
+				}
+				display.EndSession()
+				return Result{ExitCode: outcome.ExitCode, Status: sessionStatus, Turns: turnsCompleted, SessionID: sessionID, Err: outcome.Err}
+			}
+			sessionStatus = "success"
+			sessionErr = nil
+			if strings.TrimSpace(outcome.FinalAnswer) != "" {
+				if err := tr.WriteTurn(1, "Meta-Orchestrator Summary", "", nil, outcome.FinalAnswer, "meta-summary"); err != nil {
+					fmt.Fprintln(os.Stderr, "Transcript write error:", err)
+					sessionErr = err
+					display.EndSession()
+					return Result{ExitCode: 1, Err: err}
+				}
+			}
+			if err := writeFinalAnswer(sessionID, outcome.FinalAnswer, cfg.finalFile, cfg.verbose, cfg.dryRun); err != nil {
+				fmt.Fprintln(os.Stderr, "Final file write error:", err)
+				sessionErr = err
+				display.EndSession()
+				return Result{ExitCode: 1, Err: err}
+			}
+			presentFinalAnswer(display, outcome.FinalAnswer)
+			display.EndSession()
+			return Result{ExitCode: 0, Status: sessionStatus, Turns: turnsCompleted, SessionID: sessionID}
 		}
 	}
 

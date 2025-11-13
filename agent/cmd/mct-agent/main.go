@@ -375,6 +375,8 @@ func configureSessionFlags(fs *flag.FlagSet, cfg *session.Config, paramFlags, pa
 	fs.StringVar(&cfg.OpenAIModel, "openai-model", "", "Direct upstream model name (deprecated; prefer --model)")
 	fs.StringVar(&cfg.SessionID, "session-id", "", "Existing session identifier to resume")
 	fs.BoolVar(&cfg.EnableTagFormat, "enable-tag-format", false, "Enable tag-format response directives and validation (experimental)")
+	fs.StringVar(&cfg.Mode, "mode", "", "Meta-orchestrator mode (coding, research, other)")
+	fs.StringVar(&cfg.MetaInstructionDir, "meta-instruction-dir", "", "Directory containing meta-orchestrator custom instructions (overrides config)")
 	fs.StringVar(&cfg.PromptText, "t", "", "prompt text (alternative to positional argument)")
 	if apiKeyFlags != nil {
 		fs.Var(apiKeyFlags, "api-key", "Provider-specific API key override in provider:key format (repeatable)")
