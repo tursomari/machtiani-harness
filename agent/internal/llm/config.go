@@ -148,6 +148,33 @@ type MetaModeConfig struct {
 	InstructionFile string `toml:"instruction_file"`
 }
 
+// MetaInstructionsFormat enumerates the supported custom instruction formats.
+type MetaInstructionsFormat string
+
+const (
+	MetaInstructionsFormatText MetaInstructionsFormat = "text"
+	MetaInstructionsFormatTOML MetaInstructionsFormat = "toml"
+)
+
+// MetaInstructionTask represents a single task entry parsed from a TOML-based
+// meta instruction file.
+type MetaInstructionTask struct {
+	Step        int    `toml:"step"`
+	Title       string `toml:"title"`
+	Description string `toml:"description"`
+	ShellAgent  bool   `toml:"shell_agent"`
+	PatchMode   bool   `toml:"patch_mode"`
+}
+
+// MetaInstructions captures the resolved instruction payload, preserving both
+// the raw source content and any structured tasks.
+type MetaInstructions struct {
+	Format MetaInstructionsFormat
+	Path   string
+	Raw    string
+	Tasks  []MetaInstructionTask
+}
+
 type ProviderConfig struct {
 	BaseURL  string            `toml:"base_url"`
 	APIKey   string            `toml:"api_key"`
@@ -1380,20 +1407,22 @@ func CloneResolvedModel(in ResolvedModel) ResolvedModel {
 	return clone
 }
 
-// LoadMetaInstructions resolves the instruction text for a meta-orchestrator
-// mode. The lookup order is:
+// LoadMetaInstructions resolves the meta-orchestrator instructions for the
+// given mode. The lookup order is:
 //  1. --meta-instruction-dir (overrideDir)
 //  2. Mode-specific config entry [meta-orchestrator.modes.<mode>]
 //  3. [meta-orchestrator] instruction_dir
 //  4. Default .machtiani/meta-orchestrator/custom-instructions relative to repo/config
 //
-// The function returns the instruction content and the resolved path used.
-func LoadMetaInstructions(mode, overrideDir string, cfg Config, configPath string) (string, string, error) {
+// The function returns the resolved instruction payload including structured
+// tasks when a TOML file is used.
+func LoadMetaInstructions(mode, overrideDir string, cfg Config, configPath string) (MetaInstructions, error) {
 	trimmedMode := strings.TrimSpace(mode)
 	if trimmedMode == "" {
-		return "", "", fmt.Errorf("meta-orchestrator mode is required")
+		return MetaInstructions{}, fmt.Errorf("meta-orchestrator mode is required")
 	}
-	filename := fmt.Sprintf("%s.txt", trimmedMode)
+	filenameTOML := fmt.Sprintf("%s.toml", trimmedMode)
+	filenameTXT := fmt.Sprintf("%s.txt", trimmedMode)
 
 	var candidates []string
 	appendCandidate := func(path string) {
@@ -1406,16 +1435,31 @@ func LoadMetaInstructions(mode, overrideDir string, cfg Config, configPath strin
 		candidates = append(candidates, clean)
 	}
 
+	addDirCandidates := func(dir string) {
+		appendCandidate(filepath.Join(dir, filenameTOML))
+		appendCandidate(filepath.Join(dir, filenameTXT))
+	}
+
+	addFileCandidates := func(path string) {
+		ext := strings.ToLower(strings.TrimSpace(filepath.Ext(path)))
+		if ext == "" {
+			appendCandidate(path + ".toml")
+			appendCandidate(path + ".txt")
+			return
+		}
+		appendCandidate(path)
+	}
+
 	configDir := effectiveConfigDir(configPath)
 	metaCfg := cfg.MetaOrchestrator
 
 	if strings.TrimSpace(overrideDir) != "" {
 		dirs, err := resolveMetaInstructionDir(overrideDir, configDir)
 		if err != nil {
-			return "", "", err
+			return MetaInstructions{}, err
 		}
 		for _, dir := range dirs {
-			appendCandidate(filepath.Join(dir, filename))
+			addDirCandidates(dir)
 		}
 	}
 
@@ -1428,19 +1472,19 @@ func LoadMetaInstructions(mode, overrideDir string, cfg Config, configPath strin
 		if ok && strings.TrimSpace(modeCfg.InstructionFile) != "" {
 			files, err := resolveMetaInstructionFile(modeCfg.InstructionFile, configDir)
 			if err != nil {
-				return "", "", err
+				return MetaInstructions{}, err
 			}
 			for _, file := range files {
-				appendCandidate(file)
+				addFileCandidates(file)
 			}
 		}
 		if strings.TrimSpace(metaCfg.InstructionDir) != "" {
 			dirs, err := resolveMetaInstructionDir(metaCfg.InstructionDir, configDir)
 			if err != nil {
-				return "", "", err
+				return MetaInstructions{}, err
 			}
 			for _, dir := range dirs {
-				appendCandidate(filepath.Join(dir, filename))
+				addDirCandidates(dir)
 			}
 		}
 	}
@@ -1448,12 +1492,12 @@ func LoadMetaInstructions(mode, overrideDir string, cfg Config, configPath strin
 	defaultDirs, err := resolveMetaInstructionDir(defaultMetaInstructionDir, configDir)
 	if err == nil {
 		for _, dir := range defaultDirs {
-			appendCandidate(filepath.Join(dir, filename))
+			addDirCandidates(dir)
 		}
 	}
 
 	if len(candidates) == 0 {
-		return "", "", fmt.Errorf("no search paths available for meta instructions (%s mode)", trimmedMode)
+		return MetaInstructions{}, fmt.Errorf("no search paths available for meta instructions (%s mode)", trimmedMode)
 	}
 
 	var notFound []string
@@ -1464,12 +1508,60 @@ func LoadMetaInstructions(mode, overrideDir string, cfg Config, configPath strin
 				notFound = append(notFound, candidate)
 				continue
 			}
-			return "", "", fmt.Errorf("read meta instructions %s: %w", candidate, err)
+			return MetaInstructions{}, fmt.Errorf("read meta instructions %s: %w", candidate, err)
 		}
-		return string(data), candidate, nil
+		format := detectMetaInstructionFormat(candidate)
+		raw := string(data)
+		switch format {
+		case MetaInstructionsFormatTOML:
+			tasks, perr := parseMetaInstructionTOML(data)
+			if perr != nil {
+				return MetaInstructions{}, fmt.Errorf("parse meta instructions %s: %w", candidate, perr)
+			}
+			return MetaInstructions{Format: format, Path: candidate, Raw: raw, Tasks: tasks}, nil
+		default:
+			return MetaInstructions{Format: format, Path: candidate, Raw: raw}, nil
+		}
 	}
 
-	return "", "", fmt.Errorf("meta instructions for mode %q not found (searched %s)", trimmedMode, strings.Join(notFound, ", "))
+	return MetaInstructions{}, fmt.Errorf("meta instructions for mode %q not found (searched %s)", trimmedMode, strings.Join(notFound, ", "))
+}
+
+func detectMetaInstructionFormat(path string) MetaInstructionsFormat {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".toml":
+		return MetaInstructionsFormatTOML
+	default:
+		return MetaInstructionsFormatText
+	}
+}
+
+type metaInstructionsTOML struct {
+	Tasks []MetaInstructionTask `toml:"tasks"`
+}
+
+func parseMetaInstructionTOML(data []byte) ([]MetaInstructionTask, error) {
+	var parsed metaInstructionsTOML
+	if err := toml.Unmarshal(data, &parsed); err != nil {
+		return nil, err
+	}
+	if len(parsed.Tasks) == 0 {
+		return nil, fmt.Errorf("no tasks defined")
+	}
+	tasks := make([]MetaInstructionTask, 0, len(parsed.Tasks))
+	for idx, task := range parsed.Tasks {
+		normalized := task
+		normalized.Title = strings.TrimSpace(normalized.Title)
+		normalized.Description = strings.TrimSpace(normalized.Description)
+		if normalized.Title == "" {
+			return nil, fmt.Errorf("tasks[%d].title is required", idx)
+		}
+		if normalized.Step <= 0 {
+			normalized.Step = idx + 1
+		}
+		tasks = append(tasks, normalized)
+	}
+	return tasks, nil
 }
 
 func effectiveConfigDir(configPath string) string {

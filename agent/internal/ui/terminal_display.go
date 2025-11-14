@@ -36,12 +36,15 @@ type TerminalDisplay struct {
 	width     int
 	current   *PromptStream
 
-	timerEnabled bool
-	timerStart   time.Time
-	timerTicker  *time.Ticker
-	timerStop    chan struct{}
-	timerVisible bool
-	lastTimer    string
+	timerEnabled    bool
+	timerStart      time.Time
+	timerTicker     *time.Ticker
+	timerStop       chan struct{}
+	timerVisible    bool
+	lastTimer       string
+	manager         *ProcessTimerManager
+	id              string
+	parentSessionID string
 }
 
 // PromptStream coordinates streaming tokens for a single prompt turn.
@@ -72,14 +75,17 @@ type MetaTaskDisplay struct {
 }
 
 // NewTerminalDisplay constructs a TerminalDisplay writing to out (defaults to STDOUT).
-func NewTerminalDisplay(out io.Writer) *TerminalDisplay {
+func NewTerminalDisplay(out io.Writer, manager *ProcessTimerManager, id string, parentSessionID string) *TerminalDisplay {
 	if out == nil {
 		out = os.Stdout
 	}
 	return &TerminalDisplay{
-		out:          out,
-		width:        detectWidth(out),
-		timerEnabled: isTerminalWriter(out),
+		out:             out,
+		width:           detectWidth(out),
+		timerEnabled:    isTerminalWriter(out),
+		manager:         manager,
+		id:              strings.TrimSpace(id),
+		parentSessionID: strings.TrimSpace(parentSessionID),
 	}
 }
 
@@ -91,6 +97,9 @@ func (t *TerminalDisplay) StartSession(goal string) {
 		}
 		t.ensureTimerLocked()
 		t.renderTimerLocked()
+		if t.manager != nil {
+			t.manager.RegisterDisplay(t.id, t)
+		}
 	})
 	_ = goal // goal only used for symmetry with BeginPrompt
 }
@@ -164,6 +173,9 @@ func (t *TerminalDisplay) EndSession() {
 		}
 		t.closed = true
 		t.stopTimerLocked()
+		if t.manager != nil {
+			t.manager.UnregisterDisplay(t.id)
+		}
 	})
 }
 
@@ -652,11 +664,9 @@ func (t *TerminalDisplay) renderTimerLocked() {
 	if t.timerVisible && formatted == t.lastTimer {
 		return
 	}
-	fmt.Fprint(t.out, ansiSaveCursor)
-	fmt.Fprint(t.out, "\033[999;1H")
-	fmt.Fprint(t.out, ansiClearLine)
-	fmt.Fprintf(t.out, "%s%s%s", ansiGray, formatted, ansiReset)
-	fmt.Fprint(t.out, ansiRestoreCursor)
+	if t.manager != nil {
+		t.manager.RenderFooter(t.id, formatted)
+	}
 	t.lastTimer = formatted
 	t.timerVisible = true
 }

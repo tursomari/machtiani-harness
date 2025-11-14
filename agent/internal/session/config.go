@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/tursomari/machtiani/agent/internal/llm"
+	"github.com/tursomari/machtiani/agent/internal/ui"
 )
 
 type Config struct {
@@ -62,7 +63,8 @@ type Options struct {
 	GlobalConfig     llm.Config
 	GlobalConfigPath string
 	APIKeyOverrides  map[string]string
-	Context          context.Context
+	Context             context.Context
+	ProcessTimerManager *ui.ProcessTimerManager
 }
 
 type Result struct {

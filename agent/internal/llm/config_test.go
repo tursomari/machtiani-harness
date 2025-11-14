@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -220,6 +221,108 @@ provider = "fake"
 	}
 }
 
+func TestLoadMetaInstructionsPrefersTomlInOverrideDir(t *testing.T) {
+	override := filepath.Join(t.TempDir(), "override")
+	mustWriteFile(t, filepath.Join(override, "coding.toml"), sampleCodingToml())
+
+	doc, err := LoadMetaInstructions("coding", override, Config{}, "")
+	if err != nil {
+		t.Fatalf("LoadMetaInstructions returned error: %v", err)
+	}
+	if doc.Format != MetaInstructionsFormatTOML {
+		t.Fatalf("expected TOML format, got %q", doc.Format)
+	}
+	if len(doc.Tasks) != 4 {
+		t.Fatalf("expected 4 tasks, got %d", len(doc.Tasks))
+	}
+	if doc.Tasks[0].Title != "Create an issue for the engineering team" {
+		t.Fatalf("unexpected first task title: %q", doc.Tasks[0].Title)
+	}
+	if doc.Path != filepath.Join(override, "coding.toml") {
+		t.Fatalf("expected path %s, got %s", filepath.Join(override, "coding.toml"), doc.Path)
+	}
+}
+
+func TestLoadMetaInstructionsFallsBackToTxtWhenTomlMissing(t *testing.T) {
+	override := filepath.Join(t.TempDir(), "override")
+	content := "- First task\n- Second task\n"
+	mustWriteFile(t, filepath.Join(override, "coding.txt"), content)
+
+	doc, err := LoadMetaInstructions("coding", override, Config{}, "")
+	if err != nil {
+		t.Fatalf("LoadMetaInstructions returned error: %v", err)
+	}
+	if doc.Format != MetaInstructionsFormatText {
+		t.Fatalf("expected text format, got %q", doc.Format)
+	}
+	if doc.Raw != content {
+		t.Fatalf("expected raw content %q, got %q", content, doc.Raw)
+	}
+	if len(doc.Tasks) != 0 {
+		t.Fatalf("expected no structured tasks, got %d", len(doc.Tasks))
+	}
+	if doc.Path != filepath.Join(override, "coding.txt") {
+		t.Fatalf("expected path %s, got %s", filepath.Join(override, "coding.txt"), doc.Path)
+	}
+}
+
+func TestLoadMetaInstructionsSearchOrder(t *testing.T) {
+	baseDir := t.TempDir()
+	configDir := filepath.Join(baseDir, "config")
+	mustWriteFile(t, filepath.Join(configDir, ".placeholder"), "")
+
+	configPath := filepath.Join(configDir, "config.toml")
+	mustWriteFile(t, configPath, "")
+
+	mustWriteFile(t, filepath.Join(configDir, "coding.txt"), "legacy\n")
+	mustWriteFile(t, filepath.Join(configDir, "coding.toml"), sampleCodingToml())
+
+	cfg := Config{
+		MetaOrchestrator: &MetaOrchestratorConfig{
+			InstructionDir: configDir,
+		},
+	}
+
+	doc, err := LoadMetaInstructions("coding", "", cfg, configPath)
+	if err != nil {
+		t.Fatalf("LoadMetaInstructions returned error: %v", err)
+	}
+	if !strings.HasSuffix(doc.Path, "coding.toml") {
+		t.Fatalf("expected coding.toml to be selected, got %s", doc.Path)
+	}
+	if doc.Format != MetaInstructionsFormatTOML {
+		t.Fatalf("expected TOML format, got %q", doc.Format)
+	}
+}
+
+func TestLoadMetaInstructionsInvalidTomlReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteFile(t, filepath.Join(dir, "coding.toml"), "[[tasks]\n title = \"broken\"")
+
+	_, err := LoadMetaInstructions("coding", dir, Config{}, "")
+	if err == nil {
+		t.Fatalf("expected error, got nil")
+	}
+}
+
+func TestLoadMetaInstructionsPermissionError(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permissions semantics differ on Windows")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "coding.toml")
+	mustWriteFile(t, path, sampleCodingToml())
+	if err := os.Chmod(path, 0o000); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	defer os.Chmod(path, 0o644)
+
+	_, err := LoadMetaInstructions("coding", dir, Config{}, "")
+	if err == nil {
+		t.Fatalf("expected error, got nil")
+	}
+}
+
 func TestLoadGlobalConfigPromotesLegacyShellAgentTemplates(t *testing.T) {
 	content := `listen = "127.0.0.1:0"
 
@@ -384,6 +487,37 @@ func mustWriteFile(t *testing.T, path string, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
+}
+
+func sampleCodingToml() string {
+	return `[[tasks]]
+step = 1
+title = "Create an issue for the engineering team"
+description = "Create an issue for the engineering team. Do not make any code changes or patches."
+shell_agent = false
+patch_mode = false
+
+[[tasks]]
+step = 2
+title = "Implement the Issue"
+description = "Implement the Issue."
+shell_agent = true
+patch_mode = true
+
+[[tasks]]
+step = 3
+title = "Run available validations"
+description = "Run available validations (tests, linters, or targeted reasoning) to confirm behavior and note any risks or follow-up work."
+shell_agent = true
+patch_mode = false
+
+[[tasks]]
+step = 4
+title = "Summarize the results"
+description = "Summarize the results, highlighting modifications, verification status, and remaining next steps for the parent session."
+shell_agent = false
+patch_mode = false
+`
 }
 
 func initGitRepo(t *testing.T, dir string) {

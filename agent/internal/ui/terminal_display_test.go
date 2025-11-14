@@ -9,7 +9,7 @@ import (
 
 func TestPromptStreamCompleteShowsLastLinesWithBlankHeader(t *testing.T) {
 	var buf bytes.Buffer
-	display := NewTerminalDisplay(&buf)
+	display := newTestDisplay(&buf)
 	display.width = 120
 	display.StartSession("Primary goal")
 	stream := display.BeginPrompt("What is concurrency?", nil)
@@ -32,7 +32,7 @@ func TestPromptStreamCompleteShowsLastLinesWithBlankHeader(t *testing.T) {
 
 func TestPromptStreamCompleteTruncatesLongLine(t *testing.T) {
 	var buf bytes.Buffer
-	display := NewTerminalDisplay(&buf)
+	display := newTestDisplay(&buf)
 	display.width = 20
 	display.StartSession("Primary goal")
 	stream := display.BeginPrompt("Explain goroutines", nil)
@@ -63,7 +63,7 @@ func TestPromptStreamCompleteTruncatesLongLine(t *testing.T) {
 
 func TestPromptStreamCompleteShowsAllLinesWhenFewerThanWindow(t *testing.T) {
 	var buf bytes.Buffer
-	display := NewTerminalDisplay(&buf)
+	display := newTestDisplay(&buf)
 	display.width = 120
 	display.StartSession("Primary goal")
 	stream := display.BeginPrompt("Explain channels", nil)
@@ -79,7 +79,7 @@ func TestPromptStreamCompleteShowsAllLinesWhenFewerThanWindow(t *testing.T) {
 
 func TestPromptStreamOnChunkSlidingWindow(t *testing.T) {
 	var buf bytes.Buffer
-	display := NewTerminalDisplay(&buf)
+	display := newTestDisplay(&buf)
 	display.width = 120
 	display.StartSession("Primary goal")
 	stream := display.BeginPrompt("Explain select", nil)
@@ -100,7 +100,7 @@ func TestPromptStreamOnChunkSlidingWindow(t *testing.T) {
 
 func TestShowFinalWithoutMarker(t *testing.T) {
 	var buf bytes.Buffer
-	display := NewTerminalDisplay(&buf)
+	display := newTestDisplay(&buf)
 	display.StartSession("Primary goal")
 	display.ShowFinal("Hello world")
 
@@ -122,7 +122,7 @@ func TestShowFinalWithoutMarker(t *testing.T) {
 
 func TestNotifyDuringStream(t *testing.T) {
 	var buf bytes.Buffer
-	display := NewTerminalDisplay(&buf)
+	display := newTestDisplay(&buf)
 	display.width = 120
 	stream := display.BeginPrompt("Prompt", nil)
 	stream.OnChunk("partial answer")
@@ -164,11 +164,15 @@ func slicesEqual(a, b []string) bool {
 
 func TestNotifyBeforePrompt(t *testing.T) {
 	var buf bytes.Buffer
-	display := NewTerminalDisplay(&buf)
+	display := newTestDisplay(&buf)
 	display.Notify("[llm failover] triggered early")
 
 	output := buf.String()
 	if strings.TrimSpace(output) != "[llm failover] triggered early" {
 		t.Fatalf("expected notify output before prompt, got %q", output)
 	}
+}
+
+func newTestDisplay(buf *bytes.Buffer) *TerminalDisplay {
+	return NewTerminalDisplay(buf, nil, "", "")
 }

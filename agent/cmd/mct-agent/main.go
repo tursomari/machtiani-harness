@@ -13,6 +13,7 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/mct/readmesync"
 	"github.com/tursomari/machtiani/agent/internal/session"
+	"github.com/tursomari/machtiani/agent/internal/ui"
 )
 
 var (
@@ -113,6 +114,8 @@ func handleRunCommand(args []string) int {
 		fmt.Fprintln(os.Stderr, warning)
 	}
 
+	globalTimerMgr := ui.NewProcessTimerManager()
+
 	opts := session.Options{
 		Config:     cfg,
 		Goal:       goal,
@@ -124,9 +127,10 @@ func handleRunCommand(args []string) int {
 			BuiltAt: BuiltAt,
 			Dirty:   Dirty,
 		},
-		GlobalConfig:     globalCfg,
-		GlobalConfigPath: configPath,
-		APIKeyOverrides:  apiOverrides,
+		GlobalConfig:        globalCfg,
+		GlobalConfigPath:    configPath,
+		APIKeyOverrides:     apiOverrides,
+		ProcessTimerManager: globalTimerMgr,
 	}
 	opts.Config.APIKeyOverrides = llm.CopyAPIKeyOverridesForRuntime(apiOverrides)
 

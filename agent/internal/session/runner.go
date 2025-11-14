@@ -39,6 +39,7 @@ var (
 	readmeCommitForProjectFn = readmesync.READMECommitForProject
 	readmeCheckoutReadonlyFn = readmesync.CheckoutReadonlyREADME
 	tagFormatPattern         = regexp.MustCompile(`\[(?P<path>[^\[\]|]+?)\s*\|\s*(?P<start>[^:\]]+)\s*:\s*(?P<end>[^\]]+)\]`)
+	rewriteMissingPattern    = regexp.MustCompile(`edit\[(\d+)\]\s+rewrite requires existing file`)
 )
 
 func Run(ctx context.Context, opts Options) Result {
@@ -58,6 +59,7 @@ func Run(ctx context.Context, opts Options) Result {
 	goal := inputPrompt
 
 	cfgInput := opts.Config
+	timerMgr := opts.ProcessTimerManager
 	sessionID := strings.TrimSpace(cfgInput.SessionID)
 	resumeMode := false
 	var loadedState *SessionState
@@ -121,16 +123,16 @@ func Run(ctx context.Context, opts Options) Result {
 	if err := cleanupOrphanedTempDirs(cfg.verbose); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to cleanup orphaned temp dirs: %v\n", err)
 	}
-	metaInstructionText := ""
+	metaInstructions := llm.MetaInstructions{}
 	metaInstructionPath := ""
 	if strings.TrimSpace(cfg.mode) != "" && strings.TrimSpace(cfg.parentSessionID) == "" {
-		text, path, err := llm.LoadMetaInstructions(cfg.mode, cfg.metaInstructionDir, opts.GlobalConfig, opts.GlobalConfigPath)
+		doc, err := llm.LoadMetaInstructions(cfg.mode, cfg.metaInstructionDir, opts.GlobalConfig, opts.GlobalConfigPath)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "Error loading meta instructions:", err)
 			return Result{ExitCode: 1, Err: err}
 		}
-		metaInstructionText = text
-		metaInstructionPath = path
+		metaInstructions = doc
+		metaInstructionPath = doc.Path
 	}
 
 	sessionStatus := "error"
@@ -221,7 +223,7 @@ func Run(ctx context.Context, opts Options) Result {
 		fmt.Fprintln(os.Stderr, "[trajectory] unified stream:", trajectoryWriter.Config().Path)
 	}
 
-	display := ui.NewTerminalDisplay(os.Stdout)
+	display := ui.NewTerminalDisplay(os.Stdout, timerMgr, sessionID, strings.TrimSpace(cfg.parentSessionID))
 	var failoverCancel context.CancelFunc
 	var failoverDone <-chan struct{}
 	var shellActionCancel context.CancelFunc
@@ -519,7 +521,7 @@ func Run(ctx context.Context, opts Options) Result {
 			Options:         opts,
 			Display:         display,
 			InstructionPath: metaInstructionPath,
-			InstructionText: metaInstructionText,
+			Instruction:     metaInstructions,
 			Transcript:      tr,
 		}
 		outcome, handled := metaOrchestrate(metaCtx)
@@ -1086,21 +1088,42 @@ func Run(ctx context.Context, opts Options) Result {
 				}
 				continue
 			}
-			ctxP, cancelP := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
-			ctxP = attachTrajectory(ctxP, trajectoryWriter, parentSpanID)
-			result, applyErr := pRunner.Apply(ctxP, instr, cfg.verbose)
+			autoFixApplied := false
+			autoFixEdits := []int(nil)
+			var result *mctpatcher.PatchResult
+			var applyErr error
 			var ctxPErr error
-			if ctxP != nil {
-				ctxPErr = ctxP.Err()
-			}
-			if cancelP != nil {
-				cancelP()
-			}
-			if applyErr != nil {
+			for attempt := 0; attempt < 2; attempt++ {
+				ctxP, cancelP := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
+				ctxP = attachTrajectory(ctxP, trajectoryWriter, parentSpanID)
+				result, applyErr = pRunner.Apply(ctxP, instr, cfg.verbose)
+				if ctxP != nil {
+					ctxPErr = ctxP.Err()
+				}
+				if cancelP != nil {
+					cancelP()
+				}
+				if applyErr == nil {
+					break
+				}
 				if isContextCancelled(applyErr) || isContextCancelled(ctxPErr) {
 					stream.Abort("interrupted")
 					return interruptedResult(applyErr)
 				}
+				var valErrFix *mctpatcher.ValidationError
+				if !autoFixApplied && errors.As(applyErr, &valErrFix) {
+					rewritten, edits := convertRewriteMissingToCreate(instr, valErrFix, cfg.verbose)
+					if len(edits) > 0 {
+						autoFixApplied = true
+						autoFixEdits = edits
+						instr = rewritten
+						applyErr = nil
+						continue
+					}
+				}
+				break
+			}
+			if applyErr != nil {
 				var cleanErr *mctpatcher.PatchNotCleanError
 				var valErr *mctpatcher.ValidationError
 				var genErr *mctpatcher.PatchGenerationError
@@ -1206,6 +1229,12 @@ func Run(ctx context.Context, opts Options) Result {
 					goto Finalize
 				}
 				continue
+			}
+			if autoFixApplied {
+				turnInfo["patch_auto_fix_rewrite_missing"] = map[string]any{
+					"count": len(autoFixEdits),
+					"edits": autoFixEdits,
+				}
 			}
 			if desc := strings.TrimSpace(result.Description); desc != "" {
 				patchTurnLabel = "Patcher: " + desc
@@ -1501,6 +1530,49 @@ Finalize:
 	}
 	printResumeHint("=== SESSION COMPLETE ===", turnsCompleted)
 	return Result{ExitCode: 0, Status: sessionStatus, Turns: turns, SessionID: sessionID}
+}
+
+func convertRewriteMissingToCreate(instr mctpatcher.Instructions, valErr *mctpatcher.ValidationError, verbose bool) (mctpatcher.Instructions, []int) {
+	if valErr == nil {
+		return instr, nil
+	}
+	matches := rewriteMissingPattern.FindAllStringSubmatch(valErr.Error(), -1)
+	if len(matches) == 0 {
+		return instr, nil
+	}
+	if len(instr.Edits) == 0 {
+		return instr, nil
+	}
+	edits := make([]mctpatcher.Edit, len(instr.Edits))
+	copy(edits, instr.Edits)
+	changed := make([]int, 0, len(matches))
+	for _, m := range matches {
+		if len(m) < 2 {
+			continue
+		}
+		idx, err := strconv.Atoi(m[1])
+		if err != nil {
+			continue
+		}
+		if idx < 0 || idx >= len(edits) {
+			continue
+		}
+		if edits[idx].Mode != mctpatcher.ModeRewrite {
+			continue
+		}
+		if strings.TrimSpace(edits[idx].NewContent) == "" {
+			continue
+		}
+		edits[idx].Mode = mctpatcher.ModeCreate
+		changed = append(changed, idx)
+	}
+	if len(changed) == 0 {
+		return instr, nil
+	}
+	if verbose {
+		fmt.Fprintf(os.Stderr, "[patcher] auto-fix: switching rewrite->create for edits %v due to missing files\n", changed)
+	}
+	return mctpatcher.Instructions{Metadata: instr.Metadata, Edits: edits}, changed
 }
 
 func loadProjectBackground(repoRoot string) (string, error) {

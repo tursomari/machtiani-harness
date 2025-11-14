@@ -8,9 +8,11 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
 	"github.com/tursomari/machtiani/agent/internal/parser"
 	"github.com/tursomari/machtiani/agent/internal/transcript"
@@ -21,19 +23,24 @@ const metaPlanFilename = "meta-plan.json"
 
 // metaPlanState captures the persisted plan for a meta-orchestrated session.
 type metaPlanState struct {
-	Goal            string          `json:"goal"`
-	Mode            string          `json:"mode"`
-	InstructionPath string          `json:"instruction_path,omitempty"`
-	Tasks           []metaTaskState `json:"tasks"`
-	LastUpdated     time.Time       `json:"last_updated"`
+	Goal              string          `json:"goal"`
+	Mode              string          `json:"mode"`
+	InstructionPath   string          `json:"instruction_path,omitempty"`
+	InstructionFormat string          `json:"instruction_format,omitempty"`
+	Tasks             []metaTaskState `json:"tasks"`
+	LastUpdated       time.Time       `json:"last_updated"`
 }
 
 // metaTaskState tracks execution state for an individual task.
 type metaTaskState struct {
+	Step        int    `json:"step,omitempty"`
 	Title       string `json:"title"`
+	Description string `json:"description,omitempty"`
 	Goal        string `json:"goal"`
 	Mode        string `json:"mode"`
 	Status      string `json:"status"`
+	ShellAgent  bool   `json:"shell_agent"`
+	PatchMode   bool   `json:"patch_mode"`
 	SessionID   string `json:"session_id,omitempty"`
 	Attempts    int    `json:"attempts"`
 	Summary     string `json:"summary,omitempty"`
@@ -49,7 +56,7 @@ type metaContext struct {
 	Options         Options
 	Display         *ui.TerminalDisplay
 	InstructionPath string
-	InstructionText string
+	Instruction     llm.MetaInstructions
 	Transcript      *transcript.Transcript
 }
 
@@ -69,7 +76,7 @@ func metaOrchestrate(ctx metaContext) (metaOutcome, bool) {
 		return metaOutcome{}, false
 	}
 
-	plan, err := loadOrCreateMetaPlan(ctx.SessionID, ctx.Goal, mode, ctx.InstructionPath, ctx.InstructionText)
+	plan, err := loadOrCreateMetaPlan(ctx.SessionID, ctx.Goal, mode, ctx.InstructionPath, ctx.Instruction)
 	if err != nil {
 		return metaOutcome{ExitCode: 1, Err: err}, true
 	}
@@ -87,7 +94,7 @@ func metaOrchestrate(ctx metaContext) (metaOutcome, bool) {
 	return outcome, true
 }
 
-func loadOrCreateMetaPlan(sessionID, goal, mode, instructionPath, instructionText string) (metaPlanState, error) {
+func loadOrCreateMetaPlan(sessionID, goal, mode, instructionPath string, instructions llm.MetaInstructions) (metaPlanState, error) {
 	planPath, err := metaPlanPath(sessionID)
 	if err != nil {
 		return metaPlanState{}, err
@@ -98,8 +105,12 @@ func loadOrCreateMetaPlan(sessionID, goal, mode, instructionPath, instructionTex
 		if uErr := json.Unmarshal(data, &plan); uErr != nil {
 			return metaPlanState{}, fmt.Errorf("decode meta plan: %w", uErr)
 		}
+		plan.InstructionPath = resolvedInstructionPath(plan.InstructionPath, instructionPath, instructions.Path)
+		if instructions.Format != "" {
+			plan.InstructionFormat = string(instructions.Format)
+		}
 		if len(plan.Tasks) == 0 {
-			plan.Tasks = instructionsToTasks(goal, mode, instructionText)
+			plan.Tasks = instructionsToTasks(goal, mode, instructions)
 		}
 		return plan, nil
 	}
@@ -108,11 +119,12 @@ func loadOrCreateMetaPlan(sessionID, goal, mode, instructionPath, instructionTex
 	}
 
 	plan := metaPlanState{
-		Goal:            goal,
-		Mode:            mode,
-		InstructionPath: instructionPath,
-		Tasks:           instructionsToTasks(goal, mode, instructionText),
-		LastUpdated:     time.Now().UTC(),
+		Goal:              goal,
+		Mode:              mode,
+		InstructionPath:   resolvedInstructionPath("", instructionPath, instructions.Path),
+		InstructionFormat: string(instructions.Format),
+		Tasks:             instructionsToTasks(goal, mode, instructions),
+		LastUpdated:       time.Now().UTC(),
 	}
 	if perr := persistMetaPlan(sessionID, plan); perr != nil {
 		return metaPlanState{}, perr
@@ -120,7 +132,28 @@ func loadOrCreateMetaPlan(sessionID, goal, mode, instructionPath, instructionTex
 	return plan, nil
 }
 
-func instructionsToTasks(goal, mode, instructions string) []metaTaskState {
+func resolvedInstructionPath(existing, provided, docPath string) string {
+	if path := strings.TrimSpace(docPath); path != "" {
+		return path
+	}
+	if path := strings.TrimSpace(provided); path != "" {
+		return path
+	}
+	return existing
+}
+
+func instructionsToTasks(goal, mode string, instructions llm.MetaInstructions) []metaTaskState {
+	switch instructions.Format {
+	case llm.MetaInstructionsFormatTOML:
+		return tasksFromTOML(goal, mode, instructions)
+	case llm.MetaInstructionsFormatText, "":
+		return tasksFromText(goal, mode, instructions.Raw)
+	default:
+		return tasksFromText(goal, mode, instructions.Raw)
+	}
+}
+
+func tasksFromText(goal, mode, instructions string) []metaTaskState {
 	var tasks []metaTaskState
 	lines := strings.Split(instructions, "\n")
 	for _, line := range lines {
@@ -134,9 +167,12 @@ func instructionsToTasks(goal, mode, instructions string) []metaTaskState {
 		if trimmed == "" {
 			continue
 		}
+		taskGoal := composeTaskGoal(strings.TrimSpace(goal), trimmed, "")
+		step := len(tasks) + 1
 		tasks = append(tasks, metaTaskState{
+			Step:   step,
 			Title:  trimmed,
-			Goal:   fmt.Sprintf("%s\n\nFocus: %s", goal, trimmed),
+			Goal:   taskGoal,
 			Mode:   mode,
 			Status: "pending",
 		})
@@ -148,6 +184,69 @@ func instructionsToTasks(goal, mode, instructions string) []metaTaskState {
 		return tasks
 	}
 	return defaultTasksForMode(goal, mode)
+}
+
+func tasksFromTOML(goal, mode string, instructions llm.MetaInstructions) []metaTaskState {
+	if len(instructions.Tasks) == 0 {
+		return defaultTasksForMode(goal, mode)
+	}
+	items := append([]llm.MetaInstructionTask(nil), instructions.Tasks...)
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].Step == items[j].Step {
+			return i < j
+		}
+		return items[i].Step < items[j].Step
+	})
+	tasks := make([]metaTaskState, 0, len(items))
+	baseGoal := strings.TrimSpace(goal)
+	for idx, item := range items {
+		title := strings.TrimSpace(item.Title)
+		if title == "" {
+			continue
+		}
+		description := strings.TrimSpace(item.Description)
+		step := item.Step
+		if step <= 0 {
+			step = idx + 1
+		}
+		goalText := composeTaskGoal(baseGoal, title, description)
+		tasks = append(tasks, metaTaskState{
+			Step:        step,
+			Title:       title,
+			Description: description,
+			Goal:        goalText,
+			Mode:        mode,
+			Status:      "pending",
+			ShellAgent:  item.ShellAgent,
+			PatchMode:   item.PatchMode,
+		})
+	}
+	if len(tasks) == 0 {
+		return defaultTasksForMode(goal, mode)
+	}
+	return tasks
+}
+
+func composeTaskGoal(sessionGoal, title, description string) string {
+	sessionGoal = strings.TrimSpace(sessionGoal)
+	title = strings.TrimSpace(title)
+	description = strings.TrimSpace(description)
+	var sections []string
+	if sessionGoal != "" {
+		sections = append(sections, sessionGoal)
+	}
+	focus := title
+	if focus == "" {
+		focus = description
+	}
+	focus = strings.TrimSpace(focus)
+	if focus != "" {
+		sections = append(sections, fmt.Sprintf("Focus: %s", focus))
+	}
+	if description != "" {
+		sections = append(sections, fmt.Sprintf("Task details: %s", description))
+	}
+	return strings.Join(sections, "\n\n")
 }
 
 func defaultTasksForMode(goal, mode string) []metaTaskState {
@@ -308,6 +407,16 @@ func buildMetaStartSummary(goal string, task metaTaskState, prior []metaTaskStat
 	b.WriteString("\n\nCurrent Task:\n")
 	b.WriteString(fmt.Sprintf("- Title: %s\n", task.Title))
 	b.WriteString(fmt.Sprintf("- Mode: %s\n", strings.TrimSpace(task.Mode)))
+	if task.Step > 0 {
+		b.WriteString(fmt.Sprintf("- Step: %d\n", task.Step))
+	}
+	b.WriteString(fmt.Sprintf("- Shell Agent: %t\n", task.ShellAgent))
+	b.WriteString(fmt.Sprintf("- Patch Mode: %t\n", task.PatchMode))
+	if desc := strings.TrimSpace(task.Description); desc != "" {
+		b.WriteString("- Description:\n")
+		b.WriteString(desc)
+		b.WriteString("\n")
+	}
 	goalText := strings.TrimSpace(task.Goal)
 	if goalText == "" {
 		goalText = "(no explicit goal)"
@@ -350,11 +459,19 @@ func buildMetaEndSummary(task metaTaskState) string {
 	var b strings.Builder
 	b.WriteString("Task Outcome:\n")
 	b.WriteString(fmt.Sprintf("- Title: %s\n", task.Title))
+	if task.Step > 0 {
+		b.WriteString(fmt.Sprintf("- Step: %d\n", task.Step))
+	}
+	b.WriteString(fmt.Sprintf("- Shell Agent: %t\n", task.ShellAgent))
+	b.WriteString(fmt.Sprintf("- Patch Mode: %t\n", task.PatchMode))
 	status := strings.TrimSpace(task.Status)
 	if status == "" {
 		status = "unknown"
 	}
 	b.WriteString(fmt.Sprintf("- Status: %s\n", status))
+	if desc := strings.TrimSpace(task.Description); desc != "" {
+		b.WriteString(fmt.Sprintf("- Description: %s\n", desc))
+	}
 	if sessionID := strings.TrimSpace(task.SessionID); sessionID != "" {
 		b.WriteString(fmt.Sprintf("- Session: %s\n", sessionID))
 	}
@@ -476,9 +593,11 @@ func runMetaTask(ctx metaContext, task metaTaskState, priorFinalAnswer string, i
 	childOptions.Config.FileDiscoveryOutputDir = ""
 	childOptions.Config.TrajectoryFile = ""
 	applyModeDefaults(&childOptions.Config, task.Mode)
+	applyTaskOverrides(&childOptions, task)
 	if ctx.RootCtx != nil {
 		childOptions.Context = ctx.RootCtx
 	}
+	childOptions.ProcessTimerManager = ctx.Options.ProcessTimerManager
 
 	origTempRoot, tempExists := os.LookupEnv("MACHTIANI_SESSION_TEMP_ROOT")
 	if tempExists {
@@ -537,6 +656,14 @@ func renderMetaSummary(goal string, plan metaPlanState) string {
 	b.WriteString("## Tasks\n")
 	for idx, task := range plan.Tasks {
 		fmt.Fprintf(&b, "%d. %s (mode: %s)\n", idx+1, task.Title, task.Mode)
+		if task.Step > 0 {
+			fmt.Fprintf(&b, "   - Step: %d\n", task.Step)
+		}
+		fmt.Fprintf(&b, "   - Shell Agent: %t\n", task.ShellAgent)
+		fmt.Fprintf(&b, "   - Patch Mode: %t\n", task.PatchMode)
+		if desc := strings.TrimSpace(task.Description); desc != "" {
+			fmt.Fprintf(&b, "   - Description: %s\n", desc)
+		}
 		if task.SessionID != "" {
 			fmt.Fprintf(&b, "   - Session: %s\n", task.SessionID)
 		}
@@ -578,6 +705,17 @@ func applyModeDefaults(cfg *Config, mode string) {
 		if cfg.MaxSteps < 3 {
 			cfg.MaxSteps = 3
 		}
+	}
+}
+
+func applyTaskOverrides(opts *Options, task metaTaskState) {
+	if opts == nil {
+		return
+	}
+	opts.Config.ShellAgent = task.ShellAgent
+	opts.Config.Patch = task.PatchMode
+	if !task.PatchMode {
+		opts.Config.PatchStrict = false
 	}
 }
 
