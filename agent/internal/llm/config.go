@@ -162,8 +162,8 @@ type MetaInstructionTask struct {
 	Step        int    `toml:"step"`
 	Title       string `toml:"title"`
 	Description string `toml:"description"`
-	ShellAgent  bool   `toml:"shell_agent"`
-	PatchMode   bool   `toml:"patch_mode"`
+	ShellAgent  *bool  `toml:"shell_agent"`
+	PatchMode   *bool  `toml:"patch_mode"`
 }
 
 // MetaInstructions captures the resolved instruction payload, preserving both

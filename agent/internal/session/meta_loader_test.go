@@ -12,8 +12,8 @@ func TestInstructionsToTasksFromTomlDocument(t *testing.T) {
 		Format: llm.MetaInstructionsFormatTOML,
 		Path:   "coding.toml",
 		Tasks: []llm.MetaInstructionTask{
-			{Step: 2, Title: "Second", Description: "Second desc", ShellAgent: true, PatchMode: true},
-			{Step: 1, Title: "First", Description: "First desc", ShellAgent: false, PatchMode: false},
+			{Step: 2, Title: "Second", Description: "Second desc", ShellAgent: boolPtr(true), PatchMode: boolPtr(true)},
+			{Step: 1, Title: "First", Description: "First desc", ShellAgent: boolPtr(false), PatchMode: boolPtr(false)},
 		},
 	}
 
@@ -24,10 +24,10 @@ func TestInstructionsToTasksFromTomlDocument(t *testing.T) {
 	if tasks[0].Title != "First" {
 		t.Fatalf("expected first task title to be First, got %q", tasks[0].Title)
 	}
-	if !tasks[1].ShellAgent {
+	if tasks[1].ShellAgent == nil || !*tasks[1].ShellAgent {
 		t.Fatalf("expected second task to enable shell agent")
 	}
-	if !tasks[1].PatchMode {
+	if tasks[1].PatchMode == nil || !*tasks[1].PatchMode {
 		t.Fatalf("expected second task to enable patch mode")
 	}
 	if !containsSubstr(t, tasks[0].Goal, "First desc") {
@@ -48,8 +48,8 @@ func TestInstructionsToTasksFromTextDocument(t *testing.T) {
 	if tasks[0].Title != "plan" {
 		t.Fatalf("unexpected first task title: %q", tasks[0].Title)
 	}
-	if tasks[1].ShellAgent {
-		t.Fatalf("text tasks should not enable shell agent by default")
+	if tasks[1].ShellAgent != nil {
+		t.Fatalf("text tasks should not set shell agent override by default")
 	}
 }
 
@@ -66,7 +66,7 @@ func TestInstructionsToTasksEmptyTomlFallsBackToDefault(t *testing.T) {
 
 func TestApplyTaskOverrides(t *testing.T) {
 	opts := Options{}
-	task := metaTaskState{ShellAgent: true, PatchMode: true}
+	task := metaTaskState{ShellAgent: boolPtr(true), PatchMode: boolPtr(true)}
 
 	applyTaskOverrides(&opts, task)
 
@@ -77,7 +77,7 @@ func TestApplyTaskOverrides(t *testing.T) {
 		t.Fatalf("expected patch mode to be enabled")
 	}
 
-	second := metaTaskState{ShellAgent: false, PatchMode: false}
+	second := metaTaskState{ShellAgent: boolPtr(false), PatchMode: boolPtr(false)}
 	applyTaskOverrides(&opts, second)
 	if opts.Config.ShellAgent {
 		t.Fatalf("expected shell agent to be disabled")
@@ -85,9 +85,24 @@ func TestApplyTaskOverrides(t *testing.T) {
 	if opts.Config.Patch {
 		t.Fatalf("expected patch mode to be disabled")
 	}
+
+	opts.Config.ShellAgent = true
+	opts.Config.Patch = true
+	inherit := metaTaskState{}
+	applyTaskOverrides(&opts, inherit)
+	if !opts.Config.ShellAgent {
+		t.Fatalf("expected shell agent to remain enabled when override missing")
+	}
+	if !opts.Config.Patch {
+		t.Fatalf("expected patch mode to remain enabled when override missing")
+	}
 }
 
 func containsSubstr(t *testing.T, s, sub string) bool {
 	t.Helper()
 	return strings.Contains(s, sub)
+}
+
+func boolPtr(v bool) *bool {
+	return &v
 }

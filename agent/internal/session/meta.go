@@ -39,8 +39,8 @@ type metaTaskState struct {
 	Goal        string `json:"goal"`
 	Mode        string `json:"mode"`
 	Status      string `json:"status"`
-	ShellAgent  bool   `json:"shell_agent"`
-	PatchMode   bool   `json:"patch_mode"`
+	ShellAgent  *bool  `json:"shell_agent,omitempty"`
+	PatchMode   *bool  `json:"patch_mode,omitempty"`
 	SessionID   string `json:"session_id,omitempty"`
 	Attempts    int    `json:"attempts"`
 	Summary     string `json:"summary,omitempty"`
@@ -410,8 +410,8 @@ func buildMetaStartSummary(goal string, task metaTaskState, prior []metaTaskStat
 	if task.Step > 0 {
 		b.WriteString(fmt.Sprintf("- Step: %d\n", task.Step))
 	}
-	b.WriteString(fmt.Sprintf("- Shell Agent: %t\n", task.ShellAgent))
-	b.WriteString(fmt.Sprintf("- Patch Mode: %t\n", task.PatchMode))
+	b.WriteString(fmt.Sprintf("- Shell Agent: %s\n", boolLabel(task.ShellAgent)))
+	b.WriteString(fmt.Sprintf("- Patch Mode: %s\n", boolLabel(task.PatchMode)))
 	if desc := strings.TrimSpace(task.Description); desc != "" {
 		b.WriteString("- Description:\n")
 		b.WriteString(desc)
@@ -462,8 +462,8 @@ func buildMetaEndSummary(task metaTaskState) string {
 	if task.Step > 0 {
 		b.WriteString(fmt.Sprintf("- Step: %d\n", task.Step))
 	}
-	b.WriteString(fmt.Sprintf("- Shell Agent: %t\n", task.ShellAgent))
-	b.WriteString(fmt.Sprintf("- Patch Mode: %t\n", task.PatchMode))
+	b.WriteString(fmt.Sprintf("- Shell Agent: %s\n", boolLabel(task.ShellAgent)))
+	b.WriteString(fmt.Sprintf("- Patch Mode: %s\n", boolLabel(task.PatchMode)))
 	status := strings.TrimSpace(task.Status)
 	if status == "" {
 		status = "unknown"
@@ -659,8 +659,8 @@ func renderMetaSummary(goal string, plan metaPlanState) string {
 		if task.Step > 0 {
 			fmt.Fprintf(&b, "   - Step: %d\n", task.Step)
 		}
-		fmt.Fprintf(&b, "   - Shell Agent: %t\n", task.ShellAgent)
-		fmt.Fprintf(&b, "   - Patch Mode: %t\n", task.PatchMode)
+		fmt.Fprintf(&b, "   - Shell Agent: %s\n", boolLabel(task.ShellAgent))
+		fmt.Fprintf(&b, "   - Patch Mode: %s\n", boolLabel(task.PatchMode))
 		if desc := strings.TrimSpace(task.Description); desc != "" {
 			fmt.Fprintf(&b, "   - Description: %s\n", desc)
 		}
@@ -712,11 +712,25 @@ func applyTaskOverrides(opts *Options, task metaTaskState) {
 	if opts == nil {
 		return
 	}
-	opts.Config.ShellAgent = task.ShellAgent
-	opts.Config.Patch = task.PatchMode
-	if !task.PatchMode {
-		opts.Config.PatchStrict = false
+	if task.ShellAgent != nil {
+		opts.Config.ShellAgent = *task.ShellAgent
 	}
+	if task.PatchMode != nil {
+		opts.Config.Patch = *task.PatchMode
+		if !*task.PatchMode {
+			opts.Config.PatchStrict = false
+		}
+	}
+}
+
+func boolLabel(flag *bool) string {
+	if flag == nil {
+		return "inherit"
+	}
+	if *flag {
+		return "true"
+	}
+	return "false"
 }
 
 func metaModesFromPlan(plan metaPlanState) []string {
