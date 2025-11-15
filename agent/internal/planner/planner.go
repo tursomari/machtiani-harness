@@ -106,7 +106,7 @@ func (c *Client) Plan(ctx context.Context, goal string, transcript string, step,
 	if c.cfg.Verbose {
 		fmt.Fprintln(os.Stderr, "[planner] model response:", truncateMiddle(strings.TrimSpace(resp), 1800))
 	}
-	dec, q := parseDecision(resp, c.cfg.PatchEnabled)
+	dec, q, preamble := parseDecision(resp, c.cfg.PatchEnabled)
 	if hasWriter {
 		payload := map[string]any{
 			"event_version": 1,
@@ -121,6 +121,9 @@ func (c *Client) Plan(ctx context.Context, goal string, transcript string, step,
 		payload = trajectory.MergeExcerptWithPrefix(payload, trajectory.MakeTextExcerpt(resp, w.ExcerptLen()), "response")
 		if dec != "" {
 			payload["parse"] = map[string]any{"decision": string(dec)}
+		}
+		if preamble != "" {
+			payload["ignored_preamble"] = trajectory.MakeTextExcerpt(preamble, w.ExcerptLen())
 		}
 		level := "info"
 		var errInfo *trajectory.ErrorInfo
@@ -252,6 +255,8 @@ func (c *Client) planPrompt(goal string, transcript string, step, maxSteps int) 
 		b.WriteString("Decide either to: (a) produce one single, high-signal repository-focused prompt, (b) request a patch, or (c) finalize if enough information is gathered.\n")
 	}
 	b.WriteString("Your prompt MUST be addressed to mct, not the user. Avoid clarifying user intent; focus on code, files, functions, modules, architecture, logs, or tests.\n")
+	b.WriteString("Begin your reply immediately with `Decision:`—no commentary, whitespace, or reasoning before it.\n")
+	b.WriteString("If you need to reason, do it silently; any text before `Decision:` causes the run to fail.\n")
 	b.WriteString("Output strictly:\nDecision: ")
 	if !c.cfg.PatchEnabled {
 		b.WriteString("ask|finalize\n")
@@ -323,18 +328,54 @@ func truncateMiddle(s string, max int) string {
 	return s[:half] + "…" + s[len(s)-half:]
 }
 
-func parseDecision(resp string, patchEnabled bool) (Decision, string) {
-	lines := strings.Split(strings.TrimSpace(resp), "\n")
+const (
+	maxDecisionPreambleChars = 600
+	maxDecisionPreambleLines = 3
+)
+
+func parseDecision(resp string, patchEnabled bool) (Decision, string, string) {
+	trimmed := strings.TrimSpace(resp)
+	if trimmed == "" {
+		return "", "", ""
+	}
+
+	lines := strings.Split(trimmed, "\n")
 	if len(lines) == 0 {
-		return "", ""
+		return "", "", ""
 	}
-	line := strings.TrimSpace(lines[0])
-	if !strings.HasPrefix(strings.ToLower(line), "decision:") {
-		return "", ""
+
+	var (
+		decisionIdx   = -1
+		preambleLines []string
+		preambleChars int
+	)
+
+	for i, raw := range lines {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		lower := strings.ToLower(line)
+		if strings.HasPrefix(lower, "decision:") {
+			decisionIdx = i
+			break
+		}
+
+		preambleLines = append(preambleLines, line)
+		preambleChars += len([]rune(line))
+		if preambleChars > maxDecisionPreambleChars || len(preambleLines) > maxDecisionPreambleLines {
+			return "", "", ""
+		}
 	}
+
+	if decisionIdx == -1 {
+		return "", "", ""
+	}
+
+	line := strings.TrimSpace(lines[decisionIdx])
 	parts := strings.SplitN(line, ":", 2)
 	if len(parts) != 2 {
-		return "", ""
+		return "", "", ""
 	}
 	decisionStr := strings.TrimSpace(strings.ToLower(parts[1]))
 	var decision Decision
@@ -346,14 +387,14 @@ func parseDecision(resp string, patchEnabled bool) (Decision, string) {
 	case string(DecisionFinalize):
 		decision = DecisionFinalize
 	default:
-		return "", ""
+		return "", "", ""
 	}
 	if !patchEnabled && decision == DecisionPatch {
 		// Fallback to a generic ask when patches are disabled to keep the agent progressing.
-		return DecisionAsk, "Question: Considering the current transcript, produce the single next high-signal repository-focused prompt for mct."
+		return DecisionAsk, "Question: Considering the current transcript, produce the single next high-signal repository-focused prompt for mct.", strings.Join(preambleLines, "\n")
 	}
-	remainder := strings.TrimSpace(strings.Join(lines[1:], "\n"))
-	return decision, remainder
+	remainder := strings.TrimSpace(strings.Join(lines[decisionIdx+1:], "\n"))
+	return decision, remainder, strings.Join(preambleLines, "\n")
 }
 
 func reportTrajectoryError(err error) {
