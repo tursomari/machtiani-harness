@@ -42,6 +42,99 @@ var (
 	rewriteMissingPattern    = regexp.MustCompile(`edit\[(\d+)\]\s+rewrite requires existing file`)
 )
 
+type plannerProgressTracker struct {
+	successSet   map[string]struct{}
+	successFiles []string
+	applied      int
+}
+
+func newPlannerProgressTracker(existing *PlannerProgressState) *plannerProgressTracker {
+	tracker := &plannerProgressTracker{successSet: make(map[string]struct{})}
+	if existing == nil {
+		return tracker
+	}
+	tracker.applied = existing.AppliedPatches
+	for _, raw := range existing.SuccessFiles {
+		norm := normalizePlannerPath(raw)
+		if norm == "" {
+			continue
+		}
+		if _, exists := tracker.successSet[norm]; exists {
+			continue
+		}
+		tracker.successSet[norm] = struct{}{}
+		tracker.successFiles = append(tracker.successFiles, norm)
+	}
+	return tracker
+}
+
+func normalizePlannerPath(path string) string {
+	return filepath.ToSlash(strings.TrimSpace(path))
+}
+
+func (p *plannerProgressTracker) recordSuccess(files []string) {
+	if p == nil {
+		return
+	}
+	for _, raw := range files {
+		norm := normalizePlannerPath(raw)
+		if norm == "" {
+			continue
+		}
+		if _, exists := p.successSet[norm]; exists {
+			continue
+		}
+		p.successSet[norm] = struct{}{}
+		p.successFiles = append(p.successFiles, norm)
+	}
+	p.applied++
+}
+
+func (p *plannerProgressTracker) appliedCount() int {
+	if p == nil {
+		return 0
+	}
+	return p.applied
+}
+
+func (p *plannerProgressTracker) hasSuccess(path string) bool {
+	if p == nil {
+		return false
+	}
+	_, ok := p.successSet[normalizePlannerPath(path)]
+	return ok
+}
+
+func (p *plannerProgressTracker) successList() []string {
+	if p == nil {
+		return nil
+	}
+	return append([]string(nil), p.successFiles...)
+}
+
+func (p *plannerProgressTracker) toState() *PlannerProgressState {
+	if p == nil {
+		return nil
+	}
+	if p.applied == 0 && len(p.successFiles) == 0 {
+		return nil
+	}
+	return &PlannerProgressState{
+		SuccessFiles:   append([]string(nil), p.successFiles...),
+		AppliedPatches: p.applied,
+	}
+}
+
+func (p *plannerProgressTracker) snapshot() planner.Progress {
+	if p == nil {
+		return planner.Progress{}
+	}
+	return planner.Progress{
+		SuccessFiles:   p.successList(),
+		AppliedPatches: p.appliedCount(),
+	}
+}
+
 func Run(ctx context.Context, opts Options) Result {
 	if opts.Context != nil {
 		ctx = opts.Context
@@ -147,6 +240,10 @@ func Run(ctx context.Context, opts Options) Result {
 	lastAnswer := ""
 	retrieved := []string{}
 	userTurnCounter := turnsCompleted
+	plannerProgress := newPlannerProgressTracker(nil)
+	if loadedState != nil {
+		plannerProgress = newPlannerProgressTracker(loadedState.PlannerProgress)
+	}
 	interruptedResult := func(err error) Result {
 		interrupted = true
 		if err == nil {
@@ -284,6 +381,17 @@ func Run(ctx context.Context, opts Options) Result {
 	printResumeHint := func(header string, turns int) {
 		fmt.Fprintf(os.Stdout, "%s\nSession ID: %s\nTurns completed: %d\nGoal so far: %q\n\nTo continue, provide your next instruction, for example:\n  mct-agent run \"<next instruction>\" --session-id %s\n\n", header, sessionID, turns, goal, sessionID)
 	}
+	applyPlannerProgress := func(state *SessionState) {
+		if state == nil {
+			return
+		}
+		state.PlannerProgress = plannerProgress.toState()
+		if state.PlannerProgress != nil {
+			if err := UpdateMetaPlanProgress(sessionID, state.PlannerProgress); err != nil && cfg.verbose {
+				fmt.Fprintf(os.Stderr, "Warning: failed to update meta plan progress for %s: %v\n", sessionID, err)
+			}
+		}
+	}
 
 	tr, err := transcript.NewWithPath(cfg.transcriptFile, sessionID)
 	if err != nil {
@@ -314,6 +422,7 @@ func Run(ctx context.Context, opts Options) Result {
 			if len(state.MetaModes) == 0 && strings.TrimSpace(cfg.mode) != "" {
 				state.MetaModes = []string{strings.ToLower(strings.TrimSpace(cfg.mode))}
 			}
+			applyPlannerProgress(&state)
 			if err := SaveSessionState(state); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to save session state for %s: %v\n", sessionID, err)
 			} else {
@@ -354,6 +463,7 @@ func Run(ctx context.Context, opts Options) Result {
 				state.MetaModes = []string{strings.ToLower(strings.TrimSpace(cfg.mode))}
 			}
 			state.ParentSessionID = strings.TrimSpace(cfg.parentSessionID)
+			applyPlannerProgress(&state)
 			if err := SaveSessionState(state); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to save session state for %s: %v\n", sid, err)
 			}
@@ -483,6 +593,7 @@ func Run(ctx context.Context, opts Options) Result {
 		RequestTimeoutSec: cfg.timeoutPerTurn,
 		PatchEnabled:      cfg.patch,
 		StrictPatchMode:   cfg.patchStrict,
+		RepoRoot:          repoRoot,
 	})
 
 	if !resumeMode || tr.Content() == "" {
@@ -547,6 +658,7 @@ func Run(ctx context.Context, opts Options) Result {
 					MetaModes:          metaModesFromPlan(outcome.Plan),
 					MetaInstructionDir: instructionDir,
 				}
+				applyPlannerProgress(pendingState)
 				display.EndSession()
 				return Result{ExitCode: outcome.ExitCode, Status: sessionStatus, Turns: turnsCompleted, SessionID: sessionID, Err: outcome.Err}
 			}
@@ -615,6 +727,7 @@ func Run(ctx context.Context, opts Options) Result {
 			resumePrompt = ""
 			turnInfo["resume_prompt"] = true
 		} else {
+			pl.UpdateProgress(plannerProgress.snapshot())
 			planCtx, planCancel = makeTurnContext(rootCtx, cfg.timeoutPerTurn)
 			trFull := tr.Content()
 			planCtx = attachTrajectory(planCtx, trajectoryWriter, parentSpanID)
@@ -707,6 +820,7 @@ func Run(ctx context.Context, opts Options) Result {
 					pendingState.TranscriptPath = tr.Path()
 					pendingState.Transcript = tr.Content()
 				}
+				applyPlannerProgress(pendingState)
 				printResumeHint("=== SESSION COMPLETE ===", turnsCompleted)
 				return Result{ExitCode: 0, Status: sessionStatus, Turns: userTurnCounter, SessionID: sessionID}
 			}
@@ -785,6 +899,7 @@ func Run(ctx context.Context, opts Options) Result {
 				pendingState.TranscriptPath = tr.Path()
 				pendingState.Transcript = tr.Content()
 			}
+			applyPlannerProgress(pendingState)
 			printResumeHint("=== SESSION COMPLETE ===", turnsCompleted)
 			return Result{ExitCode: 0, Status: sessionStatus, Turns: userTurnCounter, SessionID: sessionID}
 		}
@@ -1023,6 +1138,45 @@ func Run(ctx context.Context, opts Options) Result {
 				stream.Abort("invalid patch payload")
 				_ = tr.WriteTurn(step, "Patcher: invalid instructions", "", nil, "Error decoding JSON: "+derr.Error(), "patch-error")
 				recordPatchError("invalid_patch_instructions", derr, nil)
+				if shouldFinalizeAfterPatch {
+					goto Finalize
+				}
+				continue
+			}
+			skipAllSuccess := false
+			skipPaths := []string{}
+			if len(instr.Edits) > 0 {
+				skipAllSuccess = true
+				seenSkip := make(map[string]struct{})
+				for i := range instr.Edits {
+					edit := &instr.Edits[i]
+					nPath := ""
+					if norm, err := edit.NormalizedPath(repoRoot); err == nil {
+						nPath = normalizePlannerPath(norm)
+					} else {
+						nPath = normalizePlannerPath(edit.Path)
+					}
+					if nPath == "" {
+						skipAllSuccess = false
+						continue
+					}
+					if !plannerProgress.hasSuccess(nPath) {
+						skipAllSuccess = false
+						continue
+					}
+					if _, exists := seenSkip[nPath]; !exists {
+						seenSkip[nPath] = struct{}{}
+						skipPaths = append(skipPaths, nPath)
+					}
+				}
+			}
+			if skipAllSuccess && len(skipPaths) > 0 {
+				skipMsg := fmt.Sprintf("Skipping patch because all target files were already updated earlier this session: %s. Reload the latest file contents before generating another patch.", strings.Join(skipPaths, ", "))
+				stream.Abort("patch skipped (already updated)")
+				_ = tr.WriteTurn(step, "Patcher: skip (already updated)", "", nil, skipMsg, "patch-error")
+				turnInfo["patch_skip_already_updated"] = skipPaths
+				extra := map[string]any{"skip_files": skipPaths}
+				recordPatchError("patch_skipped_already_success", fmt.Errorf("patch targeted previously updated files"), extra)
 				if shouldFinalizeAfterPatch {
 					goto Finalize
 				}
@@ -1267,7 +1421,31 @@ func Run(ctx context.Context, opts Options) Result {
 			} else if cfg.patchNoApply {
 				finalizeStatus = "finalize: skipped (--patch-no-apply)"
 			}
-			ans := fmt.Sprintf(
+			successDesc := strings.TrimSpace(result.Description)
+			if successDesc == "" && instr.Metadata != nil {
+				successDesc = strings.TrimSpace(instr.Metadata.Description)
+			}
+			if successDesc == "" {
+				successDesc = strings.Join(result.FilesModified, ", ")
+			}
+			if successDesc == "" {
+				successDesc = "Patch applied"
+			}
+			filesSummary := "(none)"
+			if len(result.FilesModified) > 0 {
+				filesSummary = strings.Join(result.FilesModified, ", ")
+			}
+			workspaceSummary := "applied to workspace"
+			switch {
+			case cfg.dryRun:
+				workspaceSummary = "dry-run (not applied)"
+			case cfg.patchNoApply:
+				workspaceSummary = "skipped workspace apply (--patch-no-apply)"
+			case !result.AppliedInWorkspace:
+				workspaceSummary = "not applied to workspace"
+			}
+			patchTurnLabel = "Patcher: [SUCCESS] " + strings.TrimSpace(successDesc)
+			ansDetail := fmt.Sprintf(
 				"Patch created: %s\nsequence: %d\nfiles_modified: %v\ninsertions: %d\ndeletions: %d\n%s\n%s\nreverse_patch_path: %s\n\ninput:\n%s\n\noutput:\n%s\n",
 				result.PatchPath,
 				result.Sequence,
@@ -1280,6 +1458,15 @@ func Run(ctx context.Context, opts Options) Result {
 				trimTo(string(jsonBytes), 1000),
 				trimTo(string(resJSON), 1000),
 			)
+			ansSummary := fmt.Sprintf(
+				"✅ STRICT PATCH SUCCESS: %s\nUpdated files: %s\nChanges: +%d / -%d (%s)",
+				strings.TrimSpace(successDesc),
+				filesSummary,
+				result.Insertions,
+				result.Deletions,
+				workspaceSummary,
+			)
+			ans := ansSummary + "\n\n" + ansDetail
 			if err := tr.WriteTurn(step, patchTurnLabel, "", nil, ans, "patch"); err != nil {
 				fmt.Fprintln(os.Stderr, "Transcript write error:", err)
 				sessionErr = err
@@ -1287,6 +1474,10 @@ func Run(ctx context.Context, opts Options) Result {
 			}
 			stream.Complete(ans)
 			lastAnswer = ans
+			plannerProgress.recordSuccess(result.FilesModified)
+			plannerSuccessFiles := plannerProgress.successList()
+			turnInfo["planner_applied_patches"] = plannerProgress.appliedCount()
+			turnInfo["planner_success_file_count"] = len(plannerSuccessFiles)
 			extra := map[string]any{}
 			if trajectoryWriter != nil {
 				extra = trajectory.MergeExcerptWithPrefix(extra, trajectory.MakeTextExcerpt(ans, trajectoryWriter.ExcerptLen()), "answer")
@@ -1298,6 +1489,14 @@ func Run(ctx context.Context, opts Options) Result {
 			extra["patch_files_modified"] = len(result.FilesModified)
 			if len(result.FilesModified) > 0 && len(result.FilesModified) <= 10 {
 				extra["patch_files"] = append([]string(nil), result.FilesModified...)
+			}
+			if len(result.FilesModified) > 0 {
+				extra["success_files"] = append([]string(nil), result.FilesModified...)
+			}
+			extra["planner_applied_patches"] = plannerProgress.appliedCount()
+			extra["planner_success_files_total"] = len(plannerSuccessFiles)
+			if len(plannerSuccessFiles) > 0 {
+				extra["planner_success_files"] = plannerSuccessFiles
 			}
 			extra["patch_workspace_applied"] = result.AppliedInWorkspace
 			extra["patch_applied"] = result.AppliedInWorkspace
@@ -1334,6 +1533,7 @@ Finalize:
 		ctx, cancel := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
 		trFull := tr.Content()
 		ctx = attachTrajectory(ctx, trajectoryWriter, parentSpanID)
+		pl.UpdateProgress(plannerProgress.snapshot())
 		lastDec, lastBody, err := pl.Plan(ctx, goal, trFull, step, cfg.maxSteps)
 		cancel()
 		if err == nil && lastDec == planner.DecisionPatch {
@@ -1528,6 +1728,7 @@ Finalize:
 		pendingState.TranscriptPath = tr.Path()
 		pendingState.Transcript = tr.Content()
 	}
+	applyPlannerProgress(pendingState)
 	printResumeHint("=== SESSION COMPLETE ===", turnsCompleted)
 	return Result{ExitCode: 0, Status: sessionStatus, Turns: turns, SessionID: sessionID}
 }

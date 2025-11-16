@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -20,6 +21,11 @@ const (
 	DecisionFinalize Decision = "finalize"
 )
 
+const (
+	successFilesPromptLimit = 12
+	progressMaxTrackedFiles = 100
+)
+
 type ClientConfig struct {
 	Model             llm.ResolvedModel
 	Extras            map[string]any
@@ -29,10 +35,18 @@ type ClientConfig struct {
 	RequestTimeoutSec int
 	PatchEnabled      bool
 	StrictPatchMode   bool
+	RepoRoot          string
 }
 
 type Client struct {
-	cfg ClientConfig
+	cfg      ClientConfig
+	chatFn   func(context.Context, string) (string, error)
+	progress Progress
+}
+
+type Progress struct {
+	SuccessFiles   []string
+	AppliedPatches int
 }
 
 func NewClient(cfg ClientConfig) *Client {
@@ -40,6 +54,60 @@ func NewClient(cfg ClientConfig) *Client {
 		cfg.Extras = map[string]any{}
 	}
 	return &Client{cfg: cfg}
+}
+
+// UpdateProgress refreshes planner-aware session progress (e.g. prior strict
+// patch successes) so prompts can steer the model away from redundant work.
+func (c *Client) UpdateProgress(progress Progress) {
+	seen := make(map[string]struct{})
+	files := make([]string, 0, len(progress.SuccessFiles))
+	limit := progressMaxTrackedFiles
+	for _, raw := range progress.SuccessFiles {
+		norm := normalizeProgressPath(raw)
+		if norm == "" {
+			continue
+		}
+		if _, exists := seen[norm]; exists {
+			continue
+		}
+		seen[norm] = struct{}{}
+		files = append(files, norm)
+		if len(files) == limit {
+			break
+		}
+	}
+	applied := progress.AppliedPatches
+	if applied < 0 {
+		applied = 0
+	}
+	c.progress = Progress{SuccessFiles: files, AppliedPatches: applied}
+}
+
+func normalizeProgressPath(path string) string {
+	return filepath.ToSlash(strings.TrimSpace(path))
+}
+
+func appendSuccessFilesSection(b *strings.Builder, files []string, intro string, limit int) {
+	if len(files) == 0 {
+		return
+	}
+	b.WriteString(intro)
+	appendSuccessFilesList(b, files, limit)
+	b.WriteString("\n")
+}
+
+func appendSuccessFilesList(b *strings.Builder, files []string, limit int) {
+	if limit <= 0 || limit > len(files) {
+		limit = len(files)
+	}
+	for i := 0; i < limit; i++ {
+		b.WriteString("- ")
+		b.WriteString(files[i])
+		b.WriteString("\n")
+	}
+	if len(files) > limit {
+		fmt.Fprintf(b, "- … (%d more)\n", len(files)-limit)
+	}
 }
 
 // Plan decides the next action using only the transcript context.
@@ -146,7 +214,53 @@ func (c *Client) Plan(ctx context.Context, goal string, transcript string, step,
 	if dec == "" {
 		return "", "", errors.New("planner: unable to parse decision from model output")
 	}
+	if dec == DecisionPatch && c.cfg.StrictPatchMode {
+		strictPayload, err := c.runStrictPatchFlow(ctx, goal, transcript, step, maxSteps, q)
+		if err != nil {
+			if c.cfg.Verbose {
+				fmt.Fprintln(os.Stderr, "[planner] strict patch failed:", truncateMiddle(err.Error(), 160))
+			}
+			if hasWriter {
+				reason := sanitizeForPrompt(err.Error())
+				payload := map[string]any{
+					"event_version": 1,
+					"model_alias":   c.cfg.Alias,
+					"model_name":    c.cfg.Model.Model,
+					"step":          step,
+					"max_steps":     maxSteps,
+					"parse_ok":      false,
+					"error":         reason,
+				}
+				evt := trajectory.Event{
+					Level:        "warn",
+					Kind:         "planner.strict_patch.error",
+					SpanID:       span.ID,
+					ParentSpanID: parentSpan,
+					Payload:      payload,
+					Err: &trajectory.ErrorInfo{
+						Message:  reason,
+						Category: "strict_patch",
+					},
+				}
+				if emitErr := w.Emit(ctx, evt); emitErr != nil {
+					reportTrajectoryError(emitErr)
+				}
+			}
+			dec = DecisionAsk
+			q = strictPatchFallbackQuestion(err)
+		} else {
+			q = strictPayload
+		}
+	}
 	return dec, q, nil
+}
+
+func strictPatchFallbackQuestion(err error) string {
+	reason := sanitizeForPrompt(err.Error())
+	if reason == "" {
+		reason = "strict patch attempt failed"
+	}
+	return "Strict patch attempt failed (" + reason + "). Retrieve the exact numbered snippet for the referenced file so we can regenerate a valid patch."
 }
 
 // Finalize composes the final answer using only the transcript content.
@@ -235,6 +349,9 @@ func (c *Client) chat(ctx context.Context, prompt string) (string, error) {
 	if strings.TrimSpace(prompt) == "" {
 		return "", errors.New("planner: prompt must not be empty")
 	}
+	if c.chatFn != nil {
+		return c.chatFn(ctx, prompt)
+	}
 	messages := []llm.Message{{Role: "user", Content: prompt}}
 	callCtx := ctx
 	var cancel context.CancelFunc
@@ -268,7 +385,7 @@ func (c *Client) planPrompt(goal string, transcript string, step, maxSteps int) 
 		b.WriteString("If patch, immediately follow with a single standalone JSON object ONLY (no commentary, no markdown fences).\n\n")
 		if c.cfg.StrictPatchMode {
 			b.WriteString("Patch JSON schema (when Decision: patch):\n")
-			b.WriteString("{\n  \"metadata\": { \"description\": string, \"author\": string, \"email\": string },\n  \"edits\": [\n    { \"path\": string, \"mode\": \"create\"|\"delete\"|\"rewrite\", \"new_content\": string (rewrite/create only) },\n    { \"path\": string, \"mode\": \"replace\", \"before\": string, \"after\": string, \"occurrence\": number (optional) },\n    { \"path\": string, \"mode\": \"patch\", \"patch\": { \"hunks\": [ { \"old_start\": int, \"old_count\": int, \"new_start\": int, \"new_count\": int, \"context_before\": [string], \"deletions\": [string], \"additions\": [string], \"context_after\": [string] } ] } }\n  ]\n}\n")
+			b.WriteString("{\n  \"metadata\": { \"description\": string, \"author\": string, \"email\": string },\n  \"edits\": [\n    { \"path\": string, \"mode\": \"create\"|\"delete\"|\"rewrite\", \"new_content\": string (rewrite/create only) },\n    { \"path\": string, \"mode\": \"replace\", \"before\": string, \"after\": string, \"occurrence\": number (optional) },\n    { \"path\": string, \"mode\": \"patch\", \"patch\": { \"hunks\": [ { \"old_start\": int, \"old_count\": int, \"new_start\": int, \"new_count\": int, \"context_before\": [string], \"deletions\": [string], \"additions\": [string], \"context_after\": [string], \"snippet_source\": { \"start_line\": int, \"end_line\": int, \"filepath\": string (optional) } } ] } }\n  ]\n}\n")
 			b.WriteString("Mode guidelines:\n")
 			b.WriteString("- create: provide new_content; file must be absent.\n")
 			b.WriteString("- delete: target file must exist.\n")
@@ -277,11 +394,18 @@ func (c *Client) planPrompt(goal string, transcript string, step, maxSteps int) 
 			b.WriteString("- patch: strict context-anchored hunks; use for precise edits to existing files.\n")
 			b.WriteString("Patch mode rules:\n")
 			b.WriteString("  * Hunks must include exact context_before/context_after lines from the file.\n")
+			b.WriteString("  * Each hunk must include snippet_source with 1-based inclusive start_line and end_line for the before snippet; omit filepath to default to the edit path.\n")
 			b.WriteString("  * old_start/new_start use 1-based line numbers from the current file.\n")
 			b.WriteString("  * If any context does not match byte-for-byte, the patch fails with diagnostics—regenerate using the real file content shown in the transcript.\n")
 			b.WriteString("  * Do not rely on fuzzy matching or omit context; each hunk applies deterministically.\n\n")
+			b.WriteString("Strict patch planner flow:\n")
+			b.WriteString("  1. Prompt the planner LLM with the goal/context to select the exact repo-relative file path that needs editing; parse that path from the reply.\n")
+			b.WriteString("  2. Load that file directly from disk using the resolved path so you have the authoritative contents with line numbers.\n")
+			b.WriteString("  3. Modify the in-memory copy with the lines you want inserted, removed, or rewritten.\n")
+			b.WriteString("  4. Populate the JSON schema from those concrete lines, including snippet_source start/end that match the before snippet exactly.\n")
+			b.WriteString("  5. If the file changes later in the run, reload it from disk before producing the final patch.\n\n")
 			b.WriteString("Minimal example (do not include this text in output):\n")
-			b.WriteString("Decision: patch\n{\n  \"metadata\": { \"description\": \"Fix typo\" },\n  \"edits\": [\n    { \"path\": \"docs/guide.md\", \"mode\": \"patch\", \"patch\": {\n      \"hunks\": [{\n        \"old_start\": 12, \"old_count\": 3, \"new_start\": 12, \"new_count\": 3,\n        \"context_before\": [\"## Overview\"],\n        \"deletions\": [\"This feautre is experimental.\"],\n        \"additions\": [\"This feature is experimental.\"],\n        \"context_after\": [\"Use with caution.\"]\n      }]\n    } }\n  ]\n}\n\n")
+			b.WriteString("Decision: patch\n{\n  \"metadata\": { \"description\": \"Fix typo\" },\n  \"edits\": [\n    { \"path\": \"docs/guide.md\", \"mode\": \"patch\", \"patch\": {\n      \"hunks\": [{\n        \"old_start\": 12, \"old_count\": 3, \"new_start\": 12, \"new_count\": 3,\n        \"context_before\": [\"## Overview\"],\n        \"deletions\": [\"This feautre is experimental.\"],\n        \"additions\": [\"This feature is experimental.\"],\n        \"context_after\": [\"Use with caution.\"],\n        \"snippet_source\": { \"start_line\": 12, \"end_line\": 14 }\n      }]\n    } }\n  ]\n}\n\n")
 		} else {
 			b.WriteString("Patch JSON schema (when Decision: patch):\n")
 			b.WriteString("{\n  \"metadata\": { \"description\": string, \"author\": string, \"email\": string },\n  \"edits\": [\n    { \"path\": string (repo-relative), \"mode\": one of replace|rewrite|create|delete,\n      \"before\": string (replace only), \"after\": string (replace only), \"occurrence\": number (1-based, optional),\n      \"new_content\": string (rewrite/create only) }\n  ]\n}\n")
@@ -293,6 +417,10 @@ func (c *Client) planPrompt(goal string, transcript string, step, maxSteps int) 
 		}
 	}
 
+	appendSuccessFilesSection(&b, c.progress.SuccessFiles, "Files already updated successfully this session (reload these paths before considering further edits; prefer new targets):\n", successFilesPromptLimit)
+	if c.progress.AppliedPatches > 0 {
+		fmt.Fprintf(&b, "Strict patch successes so far: %d. Avoid redundant patches—finalize once all required files are complete.\n\n", c.progress.AppliedPatches)
+	}
 	if strings.TrimSpace(goal) != "" {
 		b.WriteString("Goal:\n")
 		b.WriteString(goal + "\n\n")

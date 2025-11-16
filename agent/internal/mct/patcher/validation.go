@@ -102,19 +102,43 @@ func validateStrictPatch(repoRoot, rel string, ed Edit, idx int) error {
 	}
 	lines := splitStrictLines(text)
 	for hIdx, h := range ed.PatchInfo.Hunks {
-		if err := validateHunkAgainstContent(lines, h, idx, hIdx); err != nil {
-			return err
+		approximateStart := -1
+		if h.SnippetSource != nil {
+			snippetPath := rel
+			if trimmed := strings.TrimSpace(h.SnippetSource.Filepath); trimmed != "" {
+				normalized, err := (Edit{Path: trimmed}).NormalizedPath(repoRoot)
+				if err != nil {
+					return fmt.Errorf("edit[%d] hunk[%d]: invalid snippet_source filepath: %v", idx, hIdx, err)
+				}
+				snippetPath = normalized
+			}
+			if snippetPath != rel {
+				return fmt.Errorf("edit[%d] hunk[%d]: snippet_source filepath %s does not match edit path %s", idx, hIdx, snippetPath, rel)
+			}
+			if h.SnippetSource.StartLine > 0 {
+				approximateStart = h.SnippetSource.StartLine - 1
+			}
+			snippetLen := SnippetRangeLength(h.SnippetSource)
+			if snippetLen == -1 {
+				return fmt.Errorf("edit[%d] hunk[%d]: snippet_source range is invalid", idx, hIdx)
+			}
+		}
+		if approximateStart < 0 && h.OldStart > 0 {
+			approximateStart = h.OldStart - 1
+		}
+		if _, _, _, reason, err := FindHunkMatch(lines, h, approximateStart); err != nil {
+			return fmt.Errorf("edit[%d] hunk[%d]: %s: %v", idx, hIdx, reason, err)
 		}
 	}
 	return nil
 }
 
 func validatePatchHunkMetadata(h Hunk, editIdx, hunkIdx int) error {
-	if h.OldStart < 1 {
-		return fmt.Errorf("edit[%d] hunk[%d]: old_start must be >= 1", editIdx, hunkIdx)
+	if h.OldStart < 0 {
+		return fmt.Errorf("edit[%d] hunk[%d]: old_start must be >= 0", editIdx, hunkIdx)
 	}
-	if h.NewStart < 1 {
-		return fmt.Errorf("edit[%d] hunk[%d]: new_start must be >= 1", editIdx, hunkIdx)
+	if h.NewStart < 0 {
+		return fmt.Errorf("edit[%d] hunk[%d]: new_start must be >= 0", editIdx, hunkIdx)
 	}
 	if h.OldCount < 0 {
 		return fmt.Errorf("edit[%d] hunk[%d]: old_count must be >= 0", editIdx, hunkIdx)
@@ -140,32 +164,53 @@ func validatePatchHunkMetadata(h Hunk, editIdx, hunkIdx int) error {
 	return nil
 }
 
-func validateHunkAgainstContent(lines []string, h Hunk, editIdx, hunkIdx int) error {
-	start := h.OldStart - 1
-	end := start + h.OldCount
-	if start < 0 || end > len(lines) {
-		return fmt.Errorf("edit[%d] hunk[%d]: hunk range [%d,%d) out of bounds for file with %d lines", editIdx, hunkIdx, start, end, len(lines))
+func assembleBeforeLines(h Hunk) []string {
+	total := len(h.ContextBefore) + len(h.Deletions) + len(h.ContextAfter)
+	if total == 0 {
+		return nil
 	}
-	segment := lines[start:end]
-	beforeLen := len(h.ContextBefore)
-	delLen := len(h.Deletions)
-	afterLen := len(h.ContextAfter)
-	if beforeLen > 0 {
-		if !slicesEqual(h.ContextBefore, segment[:beforeLen]) {
-			return fmt.Errorf("edit[%d] hunk[%d]: context_before does not match", editIdx, hunkIdx)
+	out := make([]string, 0, total)
+	out = append(out, h.ContextBefore...)
+	out = append(out, h.Deletions...)
+	out = append(out, h.ContextAfter...)
+	return out
+}
+
+// LoadSnippetLines returns the inclusive range [startLine, endLine] (1-based)
+// from the file located at relPath under repoRoot. It validates the range
+// and returns a defensive copy of the lines without trailing newlines.
+func LoadSnippetLines(repoRoot, relPath string, startLine, endLine int) ([]string, error) {
+	if strings.TrimSpace(relPath) == "" {
+		return nil, fmt.Errorf("snippet_source filepath must not be empty")
+	}
+	if startLine < 1 {
+		return nil, fmt.Errorf("snippet_source start_line must be >= 1")
+	}
+	absPath := filepath.Join(repoRoot, filepath.FromSlash(relPath))
+	data, err := os.ReadFile(absPath)
+	if err != nil {
+		return nil, fmt.Errorf("read snippet source %s: %w", relPath, err)
+	}
+	lines := splitStrictLines(string(data))
+	if endLine < startLine {
+		if endLine != startLine-1 {
+			return nil, fmt.Errorf("snippet_source end_line %d precedes start_line %d", endLine, startLine)
 		}
-	}
-	if delLen > 0 {
-		if !slicesEqual(h.Deletions, segment[beforeLen:beforeLen+delLen]) {
-			return fmt.Errorf("edit[%d] hunk[%d]: deletions do not match", editIdx, hunkIdx)
+		if startLine-1 > len(lines) {
+			return nil, fmt.Errorf("snippet_source start_line %d exceeds file line count %d", startLine, len(lines))
 		}
+		return []string{}, nil
 	}
-	if afterLen > 0 {
-		if !slicesEqual(h.ContextAfter, segment[beforeLen+delLen:]) {
-			return fmt.Errorf("edit[%d] hunk[%d]: context_after does not match", editIdx, hunkIdx)
-		}
+	if startLine > len(lines) {
+		return nil, fmt.Errorf("snippet_source start_line %d exceeds file line count %d", startLine, len(lines))
 	}
-	return nil
+	if endLine > len(lines) {
+		return nil, fmt.Errorf("snippet_source end_line %d exceeds file line count %d", endLine, len(lines))
+	}
+	idxStart := startLine - 1
+	idxEnd := endLine
+	snippet := append([]string(nil), lines[idxStart:idxEnd]...)
+	return snippet, nil
 }
 
 func splitStrictLines(content string) []string {

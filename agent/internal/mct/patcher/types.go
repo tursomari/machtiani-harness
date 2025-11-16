@@ -60,6 +60,14 @@ const (
 	ModePatch   Mode = "patch"
 )
 
+// SnippetSource identifies the exact location used to collect the before snippet for a hunk.
+// Line numbers are 1-based and inclusive. Filepath defaults to the surrounding edit path when omitted.
+type SnippetSource struct {
+	Filepath  string `json:"filepath"`
+	StartLine int    `json:"start_line"`
+	EndLine   int    `json:"end_line"`
+}
+
 // Hunk represents a contiguous change region with explicit context anchors.
 // Line numbers follow unified diff semantics (1-based indices).
 type Hunk struct {
@@ -68,10 +76,11 @@ type Hunk struct {
 	NewStart int `json:"new_start"`
 	NewCount int `json:"new_count"`
 
-	ContextBefore []string `json:"context_before"`
-	Deletions     []string `json:"deletions"`
-	Additions     []string `json:"additions"`
-	ContextAfter  []string `json:"context_after"`
+	ContextBefore []string       `json:"context_before"`
+	Deletions     []string       `json:"deletions"`
+	Additions     []string       `json:"additions"`
+	ContextAfter  []string       `json:"context_after"`
+	SnippetSource *SnippetSource `json:"snippet_source,omitempty"`
 }
 
 // UnifiedPatchInfo describes the strict patch hunks to apply to a file.

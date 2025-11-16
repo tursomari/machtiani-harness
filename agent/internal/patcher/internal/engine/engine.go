@@ -94,7 +94,7 @@ func ApplyAll(repoRoot string, instr patcher.Instructions) (map[string][]byte, [
 			if ed.PatchInfo == nil {
 				return nil, nil, fmt.Errorf("%w: edit[%d] patch missing payload", ErrEditFailed, idx)
 			}
-			out, hunkDiags, err := applyStrictPatch(string(base), ed.PatchInfo)
+			out, hunkDiags, err := applyStrictPatch(repoRoot, rel, string(base), ed.PatchInfo)
 			if err != nil {
 				reason := "patch_not_clean"
 				if len(hunkDiags) > 0 {

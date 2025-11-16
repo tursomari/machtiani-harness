@@ -18,6 +18,10 @@ func TestSaveLoadSessionStateRoundTrip(t *testing.T) {
 		TurnsCompleted: 3,
 		TranscriptPath: "/tmp/mct/transcript.md",
 		Transcript:     "# existing transcript\n\ncontent here\n",
+		PlannerProgress: &PlannerProgressState{
+			SuccessFiles:   []string{"README.md", "db/migrations/20240101.sql"},
+			AppliedPatches: 2,
+		},
 	}
 
 	if err := SaveSessionState(state); err != nil {
@@ -55,6 +59,21 @@ func TestSaveLoadSessionStateRoundTrip(t *testing.T) {
 	}
 	if loaded.UpdatedAt.IsZero() {
 		t.Fatalf("expected UpdatedAt to be set")
+	}
+	if loaded.PlannerProgress == nil {
+		t.Fatalf("expected planner progress to be set")
+	}
+	if got, want := loaded.PlannerProgress.SuccessFiles, state.PlannerProgress.SuccessFiles; len(got) != len(want) {
+		t.Fatalf("unexpected success files length: got %d want %d", len(got), len(want))
+	} else {
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("unexpected success file at %d: got %q want %q", i, got[i], want[i])
+			}
+		}
+	}
+	if loaded.PlannerProgress.AppliedPatches != state.PlannerProgress.AppliedPatches {
+		t.Fatalf("unexpected applied patches: got %d want %d", loaded.PlannerProgress.AppliedPatches, state.PlannerProgress.AppliedPatches)
 	}
 
 	path := filepath.Join(dir, sessionStateFile)

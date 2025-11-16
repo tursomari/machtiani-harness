@@ -1,0 +1,414 @@
+package planner
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/tursomari/machtiani/agent/internal/llm"
+	patcher "github.com/tursomari/machtiani/agent/internal/mct/patcher"
+)
+
+func TestRunStrictPatchFlowLoadsFileSnapshot(t *testing.T) {
+	repoRoot := t.TempDir()
+	relPath := "LICENSE"
+	content := "Alpha\nBeta\nGamma\n"
+	if err := os.WriteFile(filepath.Join(repoRoot, relPath), []byte(content), 0o644); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+
+	client := NewClient(ClientConfig{RepoRoot: repoRoot})
+	client.UpdateProgress(Progress{SuccessFiles: []string{"LICENSE"}, AppliedPatches: 1})
+	var mu sync.Mutex
+	call := 0
+	client.chatFn = func(_ context.Context, prompt string) (string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		call++
+		switch call {
+		case 1:
+			if !strings.Contains(prompt, "strict patch path selector") {
+				t.Fatalf("path selection prompt missing guidance: %q", prompt)
+			}
+			if !strings.Contains(prompt, "Files already patched successfully this session") {
+				t.Fatalf("expected path selection prompt to mention prior successes: %q", prompt)
+			}
+			return `{"path":"LICENSE","reason":"Update copyright"}`, nil
+		case 2:
+			if !strings.Contains(prompt, "File status: exists on disk.") {
+				t.Fatalf("patch prompt missing file status: %q", prompt)
+			}
+			if !strings.Contains(prompt, "Files already patched successfully this session") {
+				t.Fatalf("expected patch prompt to mention prior successes: %q", prompt)
+			}
+			if !strings.Contains(prompt, "1 | Alpha") || !strings.Contains(prompt, "2 | Beta") || !strings.Contains(prompt, "3 | Gamma") {
+				t.Fatalf("patch prompt missing numbered file snapshot: %q", prompt)
+			}
+			if !strings.Contains(prompt, "```text") {
+				t.Fatalf("patch prompt should fence contents: %q", prompt)
+			}
+			response := `{
+  "metadata": {"description": "Add year"},
+  "edits": [
+    {
+      "path": "LICENSE",
+      "mode": "patch",
+      "patch": {
+        "hunks": [
+          {
+            "old_start": 1,
+            "old_count": 3,
+            "new_start": 1,
+            "new_count": 3,
+            "context_before": ["Alpha"],
+            "deletions": ["Beta"],
+            "additions": ["Beta 2025"],
+            "context_after": ["Gamma"],
+            "snippet_source": {"start_line": 1, "end_line": 3}
+          }
+        ]
+      }
+    }
+  ]
+}`
+			return response, nil
+		default:
+			t.Fatalf("unexpected chat invocation %d", call)
+			return "", nil
+		}
+	}
+
+	payload, err := client.runStrictPatchFlow(context.Background(), "goal", "transcript", 1, 10, "")
+	if err != nil {
+		t.Fatalf("runStrictPatchFlow error: %v", err)
+	}
+	if call != 2 {
+		t.Fatalf("expected 2 LLM calls, got %d", call)
+	}
+	if !strings.Contains(payload, "\n  \"metadata\"") {
+		t.Fatalf("expected pretty-printed JSON, got %q", payload)
+	}
+
+	var instr patcher.Instructions
+	if err := json.Unmarshal([]byte(payload), &instr); err != nil {
+		t.Fatalf("decode returned payload: %v", err)
+	}
+	if len(instr.Edits) != 1 {
+		t.Fatalf("expected one edit, got %d", len(instr.Edits))
+	}
+	edit := instr.Edits[0]
+	if edit.Path != "LICENSE" {
+		t.Fatalf("expected normalized path LICENSE, got %q", edit.Path)
+	}
+	if edit.Mode != patcher.ModePatch {
+		t.Fatalf("expected mode patch, got %q", edit.Mode)
+	}
+	if edit.PatchInfo == nil || len(edit.PatchInfo.Hunks) != 1 {
+		t.Fatalf("expected one hunk in patch info, got %#v", edit.PatchInfo)
+	}
+	h := edit.PatchInfo.Hunks[0]
+	if h.SnippetSource == nil {
+		t.Fatalf("expected snippet source populated")
+	}
+	if h.SnippetSource.StartLine != 1 || h.SnippetSource.EndLine != 3 {
+		t.Fatalf("snippet source lines mismatch: %#v", h.SnippetSource)
+	}
+}
+
+func TestStrictPatchNormalizationHandlesReplacementAlias(t *testing.T) {
+	repoRoot := t.TempDir()
+	relPath := "LICENSE"
+	content := "MIT License\n\nCopyright (c) Matteo Collina and Undici contributors\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\n"
+	if err := os.WriteFile(filepath.Join(repoRoot, relPath), []byte(content), 0o644); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+
+	client := NewClient(ClientConfig{RepoRoot: repoRoot})
+	var mu sync.Mutex
+	call := 0
+	client.chatFn = func(_ context.Context, prompt string) (string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		call++
+		switch call {
+		case 1:
+			return `{"path":"LICENSE","reason":"root license"}`, nil
+		case 2:
+			if !strings.Contains(prompt, "context_before") {
+				t.Fatalf("expected simplified guidance, got %q", prompt)
+			}
+			return `{
+	  "metadata": {"description": "Update LICENSE year"},
+	  "edits": [
+	    {
+	      "path": "LICENSE",
+	      "mode": "patch",
+	      "hunks": [
+	        {
+	          "context_before": "MIT License\n",
+	          "context_after": "\nPermission is hereby granted, free of charge, to any person obtaining a copy",
+	          "snippet_source": {"start_line": 1, "end_line": 5},
+	          "replacement": "MIT License\n\nCopyright (c) 2020-2025 Matteo Collina and Undici contributors\n"
+	        }
+	      ]
+	    }
+	  ]
+	}`, nil
+		default:
+			t.Fatalf("unexpected invocation %d", call)
+			return "", nil
+		}
+	}
+
+	payload, err := client.runStrictPatchFlow(context.Background(), "goal", "transcript", 1, 5, "")
+	if err != nil {
+		t.Fatalf("runStrictPatchFlow error: %v", err)
+	}
+	var instr patcher.Instructions
+	if err := json.Unmarshal([]byte(payload), &instr); err != nil {
+		t.Fatalf("decode returned payload: %v", err)
+	}
+	if len(instr.Edits) != 1 {
+		t.Fatalf("expected one edit, got %d", len(instr.Edits))
+	}
+	ed := instr.Edits[0]
+	if ed.PatchInfo == nil || len(ed.PatchInfo.Hunks) != 1 {
+		t.Fatalf("expected single hunk, got %#v", ed.PatchInfo)
+	}
+	h := ed.PatchInfo.Hunks[0]
+	if got, want := h.Deletions, []string{"Copyright (c) Matteo Collina and Undici contributors"}; !slicesEqual(got, want) {
+		t.Fatalf("deletions = %#v, want %#v", got, want)
+	}
+	if got, want := h.Additions, []string{"Copyright (c) 2020-2025 Matteo Collina and Undici contributors"}; !slicesEqual(got, want) {
+		t.Fatalf("additions = %#v, want %#v", got, want)
+	}
+}
+
+func TestStrictPatchNormalizationHandlesOldNewText(t *testing.T) {
+	repoRoot := t.TempDir()
+	relPath := "README.md"
+	content := "Alpha\nBravo\nCharlie\n"
+	if err := os.WriteFile(filepath.Join(repoRoot, relPath), []byte(content), 0o644); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+
+	client := NewClient(ClientConfig{RepoRoot: repoRoot})
+	var mu sync.Mutex
+	call := 0
+	client.chatFn = func(_ context.Context, _ string) (string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		call++
+		switch call {
+		case 1:
+			return `{"path":"README.md","reason":"update"}`, nil
+		case 2:
+			return `{
+	  "metadata": {"description": "Fix line"},
+	  "edits": [
+	    {
+	      "path": "README.md",
+	      "mode": "patch",
+	      "patch": {
+	        "hunks": [
+	          {
+	            "snippet_source": {"start_line": 2, "end_line": 2},
+	            "old_text": "Bravo",
+	            "new_text": "Bravo!!!"
+	          }
+	        ]
+	      }
+	    }
+	  ]
+	}`, nil
+		default:
+			t.Fatalf("unexpected call %d", call)
+			return "", nil
+		}
+	}
+
+	payload, err := client.runStrictPatchFlow(context.Background(), "goal", "transcript", 1, 5, "")
+	if err != nil {
+		t.Fatalf("runStrictPatchFlow error: %v", err)
+	}
+	var instr patcher.Instructions
+	if err := json.Unmarshal([]byte(payload), &instr); err != nil {
+		t.Fatalf("decode returned payload: %v", err)
+	}
+	h := instr.Edits[0].PatchInfo.Hunks[0]
+	if got, want := h.Deletions, []string{"Bravo"}; !slicesEqual(got, want) {
+		t.Fatalf("deletions = %#v, want %#v", got, want)
+	}
+	if got, want := h.Additions, []string{"Bravo!!!"}; !slicesEqual(got, want) {
+		t.Fatalf("additions = %#v, want %#v", got, want)
+	}
+}
+
+func TestStrictPatchAdjustsSnippetSourceForContext(t *testing.T) {
+	repoRoot := t.TempDir()
+	relPath := "LICENSE"
+	content := "Line1\nLine2\nLine3\nLine4\n"
+	if err := os.WriteFile(filepath.Join(repoRoot, relPath), []byte(content), 0o644); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+
+	client := NewClient(ClientConfig{RepoRoot: repoRoot})
+	var mu sync.Mutex
+	call := 0
+	client.chatFn = func(_ context.Context, _ string) (string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		call++
+		switch call {
+		case 1:
+			return `{"path":"LICENSE","reason":"update"}`, nil
+		case 2:
+			return `{
+	  "metadata": {"description": "Adjust snippet"},
+	  "edits": [
+	    {
+	      "path": "LICENSE",
+	      "mode": "patch",
+	      "patch": {
+	        "hunks": [
+	          {
+	            "old_start": 3,
+	            "old_count": 2,
+	            "new_start": 3,
+	            "new_count": 2,
+	            "context_before": ["Line1", "Line2"],
+	            "deletions": ["Line3"],
+	            "additions": ["Line3 updated"],
+	            "context_after": ["Line4"],
+	            "snippet_source": {"start_line": 3, "end_line": 4}
+	          }
+	        ]
+	      }
+	    }
+	  ]
+	}`, nil
+		default:
+			t.Fatalf("unexpected call %d", call)
+			return "", nil
+		}
+	}
+
+	payload, err := client.runStrictPatchFlow(context.Background(), "goal", "transcript", 1, 5, "")
+	if err != nil {
+		t.Fatalf("runStrictPatchFlow error: %v", err)
+	}
+	if call != 2 {
+		t.Fatalf("expected 2 LLM calls, got %d", call)
+	}
+	var instr patcher.Instructions
+	if err := json.Unmarshal([]byte(payload), &instr); err != nil {
+		t.Fatalf("decode returned payload: %v", err)
+	}
+	if len(instr.Edits) != 1 {
+		t.Fatalf("expected one edit, got %d", len(instr.Edits))
+	}
+	ed := instr.Edits[0]
+	if ed.PatchInfo == nil || len(ed.PatchInfo.Hunks) != 1 {
+		t.Fatalf("expected single hunk, got %#v", ed.PatchInfo)
+	}
+	h := ed.PatchInfo.Hunks[0]
+	if h.SnippetSource == nil {
+		t.Fatalf("expected snippet source populated")
+	}
+	if h.SnippetSource.StartLine != 1 {
+		t.Fatalf("snippet start line = %d, want 1", h.SnippetSource.StartLine)
+	}
+	if h.SnippetSource.EndLine != 4 {
+		t.Fatalf("snippet end line = %d, want 4", h.SnippetSource.EndLine)
+	}
+	if h.OldStart != 1 {
+		t.Fatalf("old_start = %d, want 1", h.OldStart)
+	}
+	if h.OldCount != 4 {
+		t.Fatalf("old_count = %d, want 4", h.OldCount)
+	}
+	if h.NewCount != 4 {
+		t.Fatalf("new_count = %d, want 4", h.NewCount)
+	}
+}
+
+func TestStrictPatchRetriesOnEmptyChoices(t *testing.T) {
+	repoRoot := t.TempDir()
+	relPath := "LICENSE"
+	content := "Alpha\nBeta\n"
+	if err := os.WriteFile(filepath.Join(repoRoot, relPath), []byte(content), 0o644); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+
+	client := NewClient(ClientConfig{RepoRoot: repoRoot})
+	var mu sync.Mutex
+	call := 0
+	client.chatFn = func(_ context.Context, _ string) (string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		call++
+		switch call {
+		case 1:
+			return "", llm.ErrNoChoices
+		case 2:
+			return `{"path":"LICENSE","reason":"retry"}`, nil
+		case 3:
+			return "", llm.ErrNoChoices
+		case 4:
+			return `{
+	  "metadata": {"description": "Retry patch"},
+	  "edits": [
+	    {
+	      "path": "LICENSE",
+	      "mode": "patch",
+	      "patch": {
+	        "hunks": [
+	          {
+	            "old_start": 1,
+	            "old_count": 2,
+	            "new_start": 1,
+	            "new_count": 2,
+	            "context_before": [],
+	            "deletions": ["Alpha"],
+	            "additions": ["Alpha updated"],
+	            "context_after": ["Beta"],
+	            "snippet_source": {"start_line": 1, "end_line": 2}
+	          }
+	        ]
+	      }
+	    }
+	  ]
+	}`, nil
+		default:
+			t.Fatalf("unexpected call %d", call)
+			return "", nil
+		}
+	}
+
+	payload, err := client.runStrictPatchFlow(context.Background(), "goal", "transcript", 1, 5, "")
+	if err != nil {
+		t.Fatalf("runStrictPatchFlow error: %v", err)
+	}
+	if call != 4 {
+		t.Fatalf("expected 4 LLM calls (retries included), got %d", call)
+	}
+	if payload == "" {
+		t.Fatalf("expected non-empty payload after retries")
+	}
+}
+
+func slicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}

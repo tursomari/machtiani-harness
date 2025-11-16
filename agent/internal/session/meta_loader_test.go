@@ -98,6 +98,42 @@ func TestApplyTaskOverrides(t *testing.T) {
 	}
 }
 
+func TestUpdateMetaPlanProgress(t *testing.T) {
+	tempHome := t.TempDir()
+	t.Setenv("HOME", tempHome)
+	sessionID := "test-progress"
+	plan := metaPlanState{
+		Goal:  "goal",
+		Mode:  "coding",
+		Tasks: []metaTaskState{{Title: "Task", Goal: "Task goal", Mode: "coding", Status: "pending"}},
+	}
+	if err := persistMetaPlan(sessionID, plan); err != nil {
+		t.Fatalf("persistMetaPlan error: %v", err)
+	}
+	progress := &PlannerProgressState{SuccessFiles: []string{"LICENSE", "docs/README.md"}, AppliedPatches: 2}
+	if err := UpdateMetaPlanProgress(sessionID, progress); err != nil {
+		t.Fatalf("UpdateMetaPlanProgress error: %v", err)
+	}
+	loaded, err := loadOrCreateMetaPlan(sessionID, plan.Goal, plan.Mode, "", llm.MetaInstructions{})
+	if err != nil {
+		t.Fatalf("loadOrCreateMetaPlan error: %v", err)
+	}
+	if loaded.PlannerProgress == nil {
+		t.Fatalf("expected planner progress to be persisted")
+	}
+	if loaded.PlannerProgress.AppliedPatches != progress.AppliedPatches {
+		t.Fatalf("expected applied patches %d, got %d", progress.AppliedPatches, loaded.PlannerProgress.AppliedPatches)
+	}
+	if len(loaded.PlannerProgress.SuccessFiles) != len(progress.SuccessFiles) {
+		t.Fatalf("expected %d success files, got %d", len(progress.SuccessFiles), len(loaded.PlannerProgress.SuccessFiles))
+	}
+	for i, want := range progress.SuccessFiles {
+		if loaded.PlannerProgress.SuccessFiles[i] != want {
+			t.Fatalf("success file[%d] = %q, want %q", i, loaded.PlannerProgress.SuccessFiles[i], want)
+		}
+	}
+}
+
 func containsSubstr(t *testing.T, s, sub string) bool {
 	t.Helper()
 	return strings.Contains(s, sub)

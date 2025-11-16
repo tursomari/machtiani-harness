@@ -17,15 +17,34 @@ const sessionStateFile = "session-state.json"
 var ErrSessionStateNotFound = errors.New("session state not found")
 
 type SessionState struct {
-	SessionID          string    `json:"session_id"`
-	Goal               string    `json:"goal"`
-	TurnsCompleted     int       `json:"turns_completed"`
-	TranscriptPath     string    `json:"transcript_path,omitempty"`
-	Transcript         string    `json:"transcript"`
-	UpdatedAt          time.Time `json:"updated_at"`
-	ParentSessionID    string    `json:"parent_session_id,omitempty"`
-	MetaModes          []string  `json:"meta_modes,omitempty"`
-	MetaInstructionDir string    `json:"meta_instruction_dir,omitempty"`
+	SessionID          string                `json:"session_id"`
+	Goal               string                `json:"goal"`
+	TurnsCompleted     int                   `json:"turns_completed"`
+	TranscriptPath     string                `json:"transcript_path,omitempty"`
+	Transcript         string                `json:"transcript"`
+	UpdatedAt          time.Time             `json:"updated_at"`
+	ParentSessionID    string                `json:"parent_session_id,omitempty"`
+	MetaModes          []string              `json:"meta_modes,omitempty"`
+	MetaInstructionDir string                `json:"meta_instruction_dir,omitempty"`
+	PlannerProgress    *PlannerProgressState `json:"planner_progress,omitempty"`
+}
+
+// PlannerProgressState captures planner-visible progress across turns so
+// retries avoid re-targeting files that already patched successfully.
+type PlannerProgressState struct {
+	SuccessFiles   []string `json:"success_files,omitempty"`
+	AppliedPatches int      `json:"applied_patches,omitempty"`
+}
+
+func (p *PlannerProgressState) Clone() *PlannerProgressState {
+	if p == nil {
+		return nil
+	}
+	clone := &PlannerProgressState{AppliedPatches: p.AppliedPatches}
+	if len(p.SuccessFiles) > 0 {
+		clone.SuccessFiles = append([]string(nil), p.SuccessFiles...)
+	}
+	return clone
 }
 
 func SaveSessionState(state SessionState) error {

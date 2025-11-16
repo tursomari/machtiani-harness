@@ -9,15 +9,15 @@ import (
 	patcher "github.com/tursomari/machtiani/agent/internal/mct/patcher"
 )
 
-func applyStrictPatch(content string, info *patcher.UnifiedPatchInfo) (string, []patcher.HunkConflictDiagnostic, error) {
+func applyStrictPatch(repoRoot, rel string, content string, info *patcher.UnifiedPatchInfo) (string, []patcher.HunkConflictDiagnostic, error) {
 	lines, hadTrailing := splitLinesStrict(content)
 	var diagnostics []patcher.HunkConflictDiagnostic
 	lineOffset := 0
 
 	for idx, h := range info.Hunks {
-		newLines, delta, reason, err := applyStrictHunk(lines, h, lineOffset)
+		newLines, delta, appliedStart, reason, err := applyStrictHunk(repoRoot, rel, lines, h, lineOffset)
 		if err != nil {
-			diag := computeHunkConflictDiagnostics(lines, h, idx, lineOffset, reason)
+			diag := computeHunkConflictDiagnostics(lines, h, idx, appliedStart, lineOffset, reason)
 			diagnostics = append(diagnostics, diag)
 			return "", diagnostics, fmt.Errorf("hunk[%d]: %w", idx, err)
 		}
@@ -28,37 +28,76 @@ func applyStrictPatch(content string, info *patcher.UnifiedPatchInfo) (string, [
 	return joinLinesStrict(lines, hadTrailing), diagnostics, nil
 }
 
-func applyStrictHunk(lines []string, h patcher.Hunk, lineOffset int) ([]string, int, string, error) {
-	expectedBefore := len(h.ContextBefore)
-	expectedDelete := len(h.Deletions)
-	expectedAfter := len(h.ContextAfter)
-	total := expectedBefore + expectedDelete + expectedAfter
+func applyStrictHunk(repoRoot, rel string, lines []string, h patcher.Hunk, lineOffset int) ([]string, int, int, string, error) {
+	beforeLen := len(h.ContextBefore)
+	deleteLen := len(h.Deletions)
+	afterLen := len(h.ContextAfter)
+	total := beforeLen + deleteLen + afterLen
+	approximateStart := -1
+	if h.SnippetSource != nil {
+		approximateStart = h.SnippetSource.StartLine - 1 + lineOffset
+	}
+	if approximateStart < 0 && h.OldStart > 0 {
+		approximateStart = h.OldStart - 1 + lineOffset
+	}
+	if h.SnippetSource != nil {
+		if trimmed := strings.TrimSpace(h.SnippetSource.Filepath); trimmed != "" {
+			normalized, err := (patcher.Edit{Path: trimmed}).NormalizedPath(repoRoot)
+			if err != nil {
+				return nil, 0, approximateStart, "snippet_path_invalid", fmt.Errorf("invalid snippet_source filepath: %v", err)
+			}
+			if normalized != rel {
+				return nil, 0, approximateStart, "snippet_path_mismatch", fmt.Errorf("snippet_source filepath %s does not match edit path %s", normalized, rel)
+			}
+		}
+		snippetLen := patcher.SnippetRangeLength(h.SnippetSource)
+		if snippetLen == -1 {
+			return nil, 0, approximateStart, "snippet_range_invalid", fmt.Errorf("invalid snippet_source range")
+		}
+	}
+	start, exactMatch, attempt, reason, err := patcher.FindHunkMatch(lines, h, approximateStart)
+	if err != nil {
+		return nil, 0, attempt, reason, err
+	}
 
-	start := h.OldStart - 1 + lineOffset
 	end := start + total
-	if start < 0 || end > len(lines) {
-		return nil, 0, "out_of_range", fmt.Errorf("hunk range [%d,%d) out of bounds for file with %d lines", start, end, len(lines))
+	if total == 0 {
+		if start < 0 || start > len(lines) {
+			return nil, 0, start, "out_of_range", fmt.Errorf("insertion point %d out of bounds for file with %d lines", start+1, len(lines))
+		}
+	} else {
+		if start < 0 || end > len(lines) {
+			return nil, 0, start, "out_of_range", fmt.Errorf("hunk range [%d,%d) out of bounds for file with %d lines", start, end, len(lines))
+		}
 	}
 
 	segment := lines[start:end]
 
-	if expectedBefore > 0 {
-		if !slicesEqual(h.ContextBefore, segment[:expectedBefore]) {
-			return nil, 0, "context_before_mismatch", fmt.Errorf("context before mismatch at line %d", h.OldStart)
-		}
-	}
-	if expectedDelete > 0 {
-		if !slicesEqual(h.Deletions, segment[expectedBefore:expectedBefore+expectedDelete]) {
-			return nil, 0, "deletion_mismatch", fmt.Errorf("deletions mismatch at line %d", h.OldStart+expectedBefore)
-		}
-	}
-	if expectedAfter > 0 {
-		if !slicesEqual(h.ContextAfter, segment[expectedBefore+expectedDelete:]) {
-			return nil, 0, "context_after_mismatch", fmt.Errorf("context after mismatch at line %d", h.OldStart+expectedBefore+expectedDelete)
+	if total > 0 {
+		if exactMatch {
+			if beforeLen > 0 && !slicesEqual(h.ContextBefore, segment[:beforeLen]) {
+				return nil, 0, start, "context_before_mismatch", fmt.Errorf("context before mismatch at line %d", start+1)
+			}
+			if deleteLen > 0 && !slicesEqual(h.Deletions, segment[beforeLen:beforeLen+deleteLen]) {
+				return nil, 0, start, "deletion_mismatch", fmt.Errorf("deletions mismatch at line %d", start+beforeLen+1)
+			}
+			if afterLen > 0 && !slicesEqual(h.ContextAfter, segment[beforeLen+deleteLen:]) {
+				return nil, 0, start, "context_after_mismatch", fmt.Errorf("context after mismatch at line %d", start+beforeLen+deleteLen+1)
+			}
+		} else {
+			if beforeLen > 0 && !patcher.LinesWhitespaceEquivalent(h.ContextBefore, segment[:beforeLen]) {
+				return nil, 0, start, "context_before_mismatch", fmt.Errorf("context before mismatch at line %d", start+1)
+			}
+			if deleteLen > 0 && !patcher.LinesWhitespaceEquivalent(h.Deletions, segment[beforeLen:beforeLen+deleteLen]) {
+				return nil, 0, start, "deletion_mismatch", fmt.Errorf("deletions mismatch at line %d", start+beforeLen+1)
+			}
+			if afterLen > 0 && !patcher.LinesWhitespaceEquivalent(h.ContextAfter, segment[beforeLen+deleteLen:]) {
+				return nil, 0, start, "context_after_mismatch", fmt.Errorf("context after mismatch at line %d", start+beforeLen+deleteLen+1)
+			}
 		}
 	}
 
-	result := make([]string, 0, len(lines)-expectedDelete+len(h.Additions))
+	result := make([]string, 0, len(lines)-deleteLen+len(h.Additions))
 	result = append(result, lines[:start]...)
 	result = append(result, h.ContextBefore...)
 	result = append(result, h.Additions...)
@@ -66,11 +105,21 @@ func applyStrictHunk(lines []string, h patcher.Hunk, lineOffset int) ([]string, 
 	result = append(result, lines[end:]...)
 
 	delta := len(h.Additions) - len(h.Deletions)
-	return result, delta, "", nil
+	return result, delta, start, "", nil
 }
 
-func computeHunkConflictDiagnostics(lines []string, h patcher.Hunk, index, lineOffset int, reason string) patcher.HunkConflictDiagnostic {
-	start := h.OldStart - 1 + lineOffset
+func computeHunkConflictDiagnostics(lines []string, h patcher.Hunk, index, attemptStart, lineOffset int, reason string) patcher.HunkConflictDiagnostic {
+	start := attemptStart
+	if start < 0 {
+		if h.SnippetSource != nil {
+			start = h.SnippetSource.StartLine - 1 + lineOffset
+		} else if h.OldStart > 0 {
+			start = h.OldStart - 1 + lineOffset
+		}
+	}
+	if start < 0 {
+		start = 0
+	}
 	total := len(h.ContextBefore) + len(h.Deletions) + len(h.ContextAfter)
 	end := start + total
 	if start < 0 {
@@ -87,7 +136,8 @@ func computeHunkConflictDiagnostics(lines []string, h patcher.Hunk, index, lineO
 	expectedHash := computeHash(h.ContextBefore, h.Deletions, h.ContextAfter)
 	actualHash := computeHash(actual)
 
-	preview := buildDiffPreview(h, actual)
+	expectedStartLine := start + 1
+	preview := buildDiffPreview(h, actual, expectedStartLine)
 
 	return patcher.HunkConflictDiagnostic{
 		HunkIndex:     index,
@@ -100,9 +150,9 @@ func computeHunkConflictDiagnostics(lines []string, h patcher.Hunk, index, lineO
 	}
 }
 
-func buildDiffPreview(h patcher.Hunk, actual []string) string {
+func buildDiffPreview(h patcher.Hunk, actual []string, expectedStartLine int) string {
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("Expected %d line(s) starting at %d\n", len(h.ContextBefore)+len(h.Deletions)+len(h.ContextAfter), h.OldStart))
+	b.WriteString(fmt.Sprintf("Expected %d line(s) starting at %d\n", len(h.ContextBefore)+len(h.Deletions)+len(h.ContextAfter), expectedStartLine))
 	if len(h.ContextBefore) > 0 {
 		b.WriteString("Context before:\n")
 		for _, line := range h.ContextBefore {

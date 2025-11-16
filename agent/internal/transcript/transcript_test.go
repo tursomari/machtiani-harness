@@ -24,8 +24,12 @@ func TestWriteTurn_Patcher(t *testing.T) {
 		t.Fatal(err)
 	}
 	// No savedPath line for patcher
-	question := "Patcher: create minimal fix"
-	ans := "Patch created: .machtiani/sessions/sess/artifacts/patches/123.patch\nfiles_modified: [README.md]\ninsertions: 1\ndeletions: 1\n"
+	question := "Patcher: [SUCCESS] create minimal fix"
+	ans := "✅ STRICT PATCH SUCCESS: create minimal fix\nUpdated files: README.md\nChanges: +1 / -1 (applied to workspace)\n\n" +
+		"Patch created: .machtiani/sessions/sess/artifacts/patches/123.patch\n" +
+		"files_modified: README.md\n" +
+		"insertions: 1\n" +
+		"deletions: 1\n"
 	if err := tr.WriteTurn(2, question, "", nil, ans, "patch"); err != nil {
 		t.Fatal(err)
 	}

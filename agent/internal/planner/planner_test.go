@@ -174,6 +174,24 @@ func TestParseDecisionAllowsShortPreamble(t *testing.T) {
 	}
 }
 
+func TestPlanPromptIncludesProgressSection(t *testing.T) {
+	client := NewClient(ClientConfig{})
+	client.UpdateProgress(Progress{
+		SuccessFiles:   []string{"LICENSE", "lib/web/fetch/LICENSE", "LICENSE"},
+		AppliedPatches: 3,
+	})
+	prompt := client.planPrompt("Update licensing headers", "", 2, 5)
+	if !strings.Contains(prompt, "Files already updated successfully this session") {
+		t.Fatalf("expected prompt to include success section, got %q", prompt)
+	}
+	if !strings.Contains(prompt, "LICENSE") || !strings.Contains(prompt, "lib/web/fetch/LICENSE") {
+		t.Fatalf("expected prompt to list success files, got %q", prompt)
+	}
+	if !strings.Contains(prompt, "Strict patch successes so far: 3") {
+		t.Fatalf("expected prompt to mention applied patch count, got %q", prompt)
+	}
+}
+
 func TestParseDecisionRejectsTooLongPreamble(t *testing.T) {
 	longLine := strings.Repeat("x", maxDecisionPreambleChars+1)
 	resp := longLine + "\nDecision: ask\nQuestion: Should fail"
@@ -244,6 +262,23 @@ func TestPlanPromptIncludesMetadata(t *testing.T) {
 	for _, w := range want {
 		if !contains(prompt, w) {
 			t.Fatalf("plan prompt missing %q:\n%s", w, prompt)
+		}
+	}
+}
+
+func TestPlanPromptStrictModeIncludesPatchFlow(t *testing.T) {
+	c := NewClient(ClientConfig{DryRun: true, PatchEnabled: true, StrictPatchMode: true})
+	prompt := c.planPrompt("goal", "transcript", 3, 6)
+	checks := []string{
+		"Strict patch planner flow:",
+		"1. Prompt the planner LLM with the goal/context to select the exact repo-relative file path",
+		"2. Load that file directly from disk",
+		"3. Modify the in-memory copy",
+		"4. Populate the JSON schema",
+	}
+	for _, want := range checks {
+		if !contains(prompt, want) {
+			t.Fatalf("strict patch prompt missing %q:\n%s", want, prompt)
 		}
 	}
 }

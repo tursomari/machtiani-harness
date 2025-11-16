@@ -26,6 +26,8 @@ type Message struct {
 	Content string `json:"content"`
 }
 
+var ErrNoChoices = errors.New("no choices returned")
+
 var (
 	streamingHTTPClient    = &http.Client{Timeout: 60 * time.Minute}
 	nonStreamRetryBackoffs = []time.Duration{1 * time.Second, 3 * time.Second, 5 * time.Second}
@@ -905,7 +907,7 @@ func performNonStream(req *http.Request) (string, error) {
 		return "", err
 	}
 	if len(parsed.Choices) == 0 {
-		return "", errors.New("no choices returned")
+		return "", ErrNoChoices
 	}
 	return parsed.Choices[0].Message.Content, nil
 }

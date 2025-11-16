@@ -3,6 +3,7 @@ package patcher
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -48,5 +49,135 @@ func TestValidatePathTraversal(t *testing.T) {
 	}}}
 	if err := Validate(dir, in); err == nil {
 		t.Fatalf("expected traversal rejection")
+	}
+}
+
+func TestValidateStrictPatchWithSnippet(t *testing.T) {
+	dir := t.TempDir()
+	os.Mkdir(filepath.Join(dir, ".git"), 0o755)
+	writeFile(t, dir, "foo.txt", "line 1\nline 2\nline 3\n")
+
+	hunk := Hunk{
+		OldStart:      1,
+		OldCount:      3,
+		NewStart:      1,
+		NewCount:      3,
+		ContextBefore: []string{"line 1"},
+		Deletions:     []string{"line 2"},
+		Additions:     []string{"line two"},
+		ContextAfter:  []string{"line 3"},
+		SnippetSource: &SnippetSource{StartLine: 1, EndLine: 3},
+	}
+	instr := Instructions{Edits: []Edit{{
+		Path:      "foo.txt",
+		Mode:      ModePatch,
+		PatchInfo: &UnifiedPatchInfo{Hunks: []Hunk{hunk}},
+	}}}
+	if err := Validate(dir, instr); err != nil {
+		t.Fatalf("Validate returned error: %v", err)
+	}
+}
+
+func TestValidateStrictPatchSnippetMismatch(t *testing.T) {
+	dir := t.TempDir()
+	os.Mkdir(filepath.Join(dir, ".git"), 0o755)
+	writeFile(t, dir, "foo.txt", "line 1\nline x\nline 3\n")
+
+	hunk := Hunk{
+		OldStart:      1,
+		OldCount:      3,
+		NewStart:      1,
+		NewCount:      3,
+		ContextBefore: []string{"line 1"},
+		Deletions:     []string{"line 2"},
+		Additions:     []string{"line two"},
+		ContextAfter:  []string{"line 3"},
+		SnippetSource: &SnippetSource{StartLine: 1, EndLine: 3},
+	}
+	instr := Instructions{Edits: []Edit{{
+		Path:      "foo.txt",
+		Mode:      ModePatch,
+		PatchInfo: &UnifiedPatchInfo{Hunks: []Hunk{hunk}},
+	}}}
+	err := Validate(dir, instr)
+	if err == nil {
+		t.Fatalf("expected validation error")
+	}
+	if !strings.Contains(err.Error(), "match_not_found") {
+		t.Fatalf("expected match_not_found error, got %v", err)
+	}
+}
+
+func TestValidateStrictPatchSnippetFallback(t *testing.T) {
+	dir := t.TempDir()
+	os.Mkdir(filepath.Join(dir, ".git"), 0o755)
+	writeFile(t, dir, "foo.txt", "line 1\nline 2\nline 3\nline 4\n")
+
+	hunk := Hunk{
+		OldStart:      1,
+		OldCount:      3,
+		NewStart:      1,
+		NewCount:      3,
+		ContextBefore: []string{"line 1"},
+		Deletions:     []string{"line 2"},
+		Additions:     []string{"line two"},
+		ContextAfter:  []string{"line 3"},
+		SnippetSource: &SnippetSource{StartLine: 1, EndLine: 4},
+	}
+	instr := Instructions{Edits: []Edit{{
+		Path:      "foo.txt",
+		Mode:      ModePatch,
+		PatchInfo: &UnifiedPatchInfo{Hunks: []Hunk{hunk}},
+	}}}
+	if err := Validate(dir, instr); err != nil {
+		t.Fatalf("Validate returned error: %v", err)
+	}
+}
+
+func TestValidateStrictPatchIgnoresOldStart(t *testing.T) {
+	dir := t.TempDir()
+	os.Mkdir(filepath.Join(dir, ".git"), 0o755)
+	writeFile(t, dir, "foo.txt", "alpha\nbeta\ngamma\ndelta\n")
+
+	hunk := Hunk{
+		OldStart:      10, // intentionally incorrect
+		OldCount:      3,
+		NewStart:      1,
+		NewCount:      3,
+		ContextBefore: []string{"beta"},
+		Deletions:     []string{"gamma"},
+		Additions:     []string{"GAMMA"},
+		ContextAfter:  []string{"delta"},
+	}
+	instr := Instructions{Edits: []Edit{{
+		Path:      "foo.txt",
+		Mode:      ModePatch,
+		PatchInfo: &UnifiedPatchInfo{Hunks: []Hunk{hunk}},
+	}}}
+	if err := Validate(dir, instr); err != nil {
+		t.Fatalf("Validate returned error: %v", err)
+	}
+}
+
+func TestLoadSnippetLines(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "foo.txt", "a\nb\nc\n")
+	lines, err := LoadSnippetLines(dir, "foo.txt", 1, 2)
+	if err != nil {
+		t.Fatalf("LoadSnippetLines returned error: %v", err)
+	}
+	if got, want := len(lines), 2; got != want {
+		t.Fatalf("len(lines) = %d, want %d", got, want)
+	}
+	if lines[0] != "a" || lines[1] != "b" {
+		t.Fatalf("unexpected lines: %v", lines)
+	}
+
+	empty, err := LoadSnippetLines(dir, "foo.txt", 4, 3)
+	if err != nil {
+		t.Fatalf("LoadSnippetLines empty range error: %v", err)
+	}
+	if len(empty) != 0 {
+		t.Fatalf("expected empty slice, got %v", empty)
 	}
 }
