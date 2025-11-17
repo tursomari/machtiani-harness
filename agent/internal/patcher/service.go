@@ -140,10 +140,40 @@ func (s *Service) ApplyAndGeneratePatch(ctx context.Context, params mctpatcher.P
 	}
 
 	s.logf(params.Verbose, "applying edits in memory")
-	afterMap, filesTouched, err := engine.ApplyAll(workspaceRoot, params.Instructions)
+	instr := cloneInstructions(params.Instructions)
+	var (
+		afterMap     map[string][]byte
+		filesTouched []string
+		applyErr     *mctpatcher.PatchApplyError
+	)
+	for attempt := 1; attempt <= 2; attempt++ {
+		afterMap, filesTouched, err = engine.ApplyAll(workspaceRoot, instr)
+		if err == nil {
+			break
+		}
+		applyErr = nil
+		if !errors.As(err, &applyErr) {
+			return nil, &mctpatcher.ValidationError{Err: err}
+		}
+		diag := applyErr.Diagnostics
+		if diag.Operation == "" {
+			diag.Operation = "strict patch apply"
+		}
+		if attempt == 2 || !s.isRecoverablePatchFailure(applyErr) {
+			return nil, &mctpatcher.PatchNotCleanError{Err: applyErr.Err, Diagnostics: diag}
+		}
+		s.logf(params.Verbose, "strict patch apply failed; attempting rewrite fallback and retry")
+		updated, ok, fallbackErr := s.attemptFallback(workspaceRoot, instr, applyErr)
+		if fallbackErr != nil {
+			return nil, &mctpatcher.PatchNotCleanError{Err: fallbackErr, Diagnostics: diag}
+		}
+		if !ok {
+			return nil, &mctpatcher.PatchNotCleanError{Err: applyErr.Err, Diagnostics: diag}
+		}
+		instr = updated
+	}
 	if err != nil {
-		var applyErr *mctpatcher.PatchApplyError
-		if errors.As(err, &applyErr) {
+		if applyErr != nil {
 			diag := applyErr.Diagnostics
 			if diag.Operation == "" {
 				diag.Operation = "strict patch apply"

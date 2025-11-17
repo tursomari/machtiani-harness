@@ -122,6 +122,9 @@ func validateStrictPatch(repoRoot, rel string, ed Edit, idx int) error {
 			if snippetLen == -1 {
 				return fmt.Errorf("edit[%d] hunk[%d]: snippet_source range is invalid", idx, hIdx)
 			}
+			if err := ensureSnippetSourceConsistency(lines, h); err != nil {
+				return fmt.Errorf("edit[%d] hunk[%d]: %v", idx, hIdx, err)
+			}
 		}
 		if approximateStart < 0 && h.OldStart > 0 {
 			approximateStart = h.OldStart - 1
@@ -131,6 +134,50 @@ func validateStrictPatch(repoRoot, rel string, ed Edit, idx int) error {
 		}
 	}
 	return nil
+}
+
+func ensureSnippetSourceConsistency(lines []string, h Hunk) error {
+	if h.SnippetSource == nil {
+		return nil
+	}
+	startLine := h.SnippetSource.StartLine
+	endLine := h.SnippetSource.EndLine
+	if startLine < 1 {
+		return fmt.Errorf("snippet_source out_of_range: start_line %d must be >= 1", startLine)
+	}
+	snippetLen := SnippetRangeLength(h.SnippetSource)
+	if snippetLen == -1 {
+		return fmt.Errorf("snippet_source range is invalid")
+	}
+	if snippetLen == 0 {
+		if startLine-1 > len(lines) {
+			return fmt.Errorf("snippet_source out_of_range: start_line %d exceeds file line count %d", startLine, len(lines))
+		}
+		return nil
+	}
+	startIdx := startLine - 1
+	endIdx := startIdx + snippetLen
+	if startIdx < 0 || startIdx >= len(lines) {
+		return fmt.Errorf("snippet_source out_of_range: start_line %d exceeds file line count %d", startLine, len(lines))
+	}
+	if endIdx > len(lines) {
+		return fmt.Errorf("snippet_source out_of_range: end_line %d exceeds file line count %d", endLine, len(lines))
+	}
+	snippet := lines[startIdx:endIdx]
+	expected := assembleBeforeLines(h)
+	if len(expected) == 0 {
+		return nil
+	}
+	if len(expected) > len(snippet) {
+		return fmt.Errorf("snippet_source content mismatch: expected %d line(s) but snippet range has %d", len(expected), len(snippet))
+	}
+	for offset := 0; offset+len(expected) <= len(snippet); offset++ {
+		segment := snippet[offset : offset+len(expected)]
+		if match, _ := segmentMatchesWithTolerance(segment, expected); match {
+			return nil
+		}
+	}
+	return fmt.Errorf("snippet_source content mismatch for %d-%d", startLine, endLine)
 }
 
 func validatePatchHunkMetadata(h Hunk, editIdx, hunkIdx int) error {

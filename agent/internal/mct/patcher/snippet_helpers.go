@@ -8,6 +8,20 @@ func normalizeLineForComparison(s string) string {
 	return strings.TrimSpace(s)
 }
 
+// normalizeLineForTolerance collapses internal whitespace so that minor spacing
+// differences (e.g. double spaces vs single spaces) are treated as equivalent.
+func normalizeLineForTolerance(s string) string {
+	trimmed := strings.TrimSpace(s)
+	if trimmed == "" {
+		return ""
+	}
+	fields := strings.Fields(trimmed)
+	if len(fields) == 0 {
+		return ""
+	}
+	return strings.Join(fields, " ")
+}
+
 // LinesWhitespaceEquivalent returns true when two line slices are the same
 // length and equal after trimming leading and trailing whitespace from each
 // line. Exact matches also return true.

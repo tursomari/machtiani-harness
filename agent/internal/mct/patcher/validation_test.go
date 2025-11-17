@@ -103,8 +103,8 @@ func TestValidateStrictPatchSnippetMismatch(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected validation error")
 	}
-	if !strings.Contains(err.Error(), "match_not_found") {
-		t.Fatalf("expected match_not_found error, got %v", err)
+	if !strings.Contains(err.Error(), "snippet_source content mismatch") {
+		t.Fatalf("expected snippet_source content mismatch error, got %v", err)
 	}
 }
 
@@ -179,5 +179,67 @@ func TestLoadSnippetLines(t *testing.T) {
 	}
 	if len(empty) != 0 {
 		t.Fatalf("expected empty slice, got %v", empty)
+	}
+}
+
+func TestValidateStrictPatchSnippetSourceOutOfRange(t *testing.T) {
+	dir := t.TempDir()
+	os.Mkdir(filepath.Join(dir, ".git"), 0o755)
+	writeFile(t, dir, "foo.txt", "line 1\nline 2\n")
+
+	hunk := Hunk{
+		OldStart:      1,
+		OldCount:      2,
+		NewStart:      1,
+		NewCount:      2,
+		ContextBefore: []string{"line 1"},
+		Deletions:     []string{"line 2"},
+		Additions:     []string{"line two"},
+		ContextAfter:  nil,
+		SnippetSource: &SnippetSource{StartLine: 1, EndLine: 5},
+	}
+	instr := Instructions{Edits: []Edit{{
+		Path:      "foo.txt",
+		Mode:      ModePatch,
+		PatchInfo: &UnifiedPatchInfo{Hunks: []Hunk{hunk}},
+	}}}
+
+	err := Validate(dir, instr)
+	if err == nil {
+		t.Fatalf("expected validation error")
+	}
+	if !strings.Contains(err.Error(), "snippet_source out_of_range") {
+		t.Fatalf("expected snippet_source out_of_range error, got %v", err)
+	}
+}
+
+func TestValidateStrictPatchSnippetSourceContentMismatch(t *testing.T) {
+	dir := t.TempDir()
+	os.Mkdir(filepath.Join(dir, ".git"), 0o755)
+	writeFile(t, dir, "foo.txt", "alpha\nbeta\ngamma\n")
+
+	hunk := Hunk{
+		OldStart:      1,
+		OldCount:      3,
+		NewStart:      1,
+		NewCount:      3,
+		ContextBefore: []string{"alpha"},
+		Deletions:     []string{"beta"},
+		Additions:     []string{"BETA"},
+		ContextAfter:  []string{"gamma"},
+		SnippetSource: &SnippetSource{StartLine: 2, EndLine: 3},
+	}
+	instr := Instructions{Edits: []Edit{{
+		Path:      "foo.txt",
+		Mode:      ModePatch,
+		PatchInfo: &UnifiedPatchInfo{Hunks: []Hunk{hunk}},
+	}}}
+
+	err := Validate(dir, instr)
+	if err == nil {
+		t.Fatalf("expected validation error")
+	}
+	if !strings.Contains(err.Error(), "snippet_source content mismatch") {
+		t.Fatalf("expected snippet_source content mismatch error, got %v", err)
 	}
 }

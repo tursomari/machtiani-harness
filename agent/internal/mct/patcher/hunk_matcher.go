@@ -19,7 +19,7 @@ func FindHunkMatch(lines []string, h Hunk, approximateStart int) (int, bool, int
 	}
 
 	expected := assembleBeforeLines(h)
-	exactMatches := collectMatches(lines, expected, slicesEqual)
+	exactMatches, tolerantMatches := collectHybridMatches(lines, expected)
 	if len(exactMatches) == 1 {
 		idx := exactMatches[0]
 		return idx, true, idx, "", nil
@@ -31,33 +31,60 @@ func FindHunkMatch(lines []string, h Hunk, approximateStart int) (int, bool, int
 		return -1, false, attempt, "match_ambiguous", fmt.Errorf("found %d exact matches for hunk", len(exactMatches))
 	}
 
-	whitespaceMatches := collectMatches(lines, expected, LinesWhitespaceEquivalent)
-	if len(whitespaceMatches) == 0 {
+	if len(tolerantMatches) == 0 {
 		return -1, false, attempt, "match_not_found", fmt.Errorf("unable to locate matching context in file")
 	}
-	if len(whitespaceMatches) == 1 {
-		idx := whitespaceMatches[0]
+	if len(tolerantMatches) == 1 {
+		idx := tolerantMatches[0]
 		return idx, false, idx, "", nil
 	}
-	if candidate, ok := disambiguateMatches(whitespaceMatches, h, approximateStart); ok {
+	if candidate, ok := disambiguateMatches(tolerantMatches, h, approximateStart); ok {
 		return candidate, false, candidate, "", nil
 	}
-	return -1, false, attempt, "match_ambiguous", fmt.Errorf("found %d lenient matches for hunk", len(whitespaceMatches))
+	return -1, false, attempt, "match_ambiguous", fmt.Errorf("found %d lenient matches for hunk", len(tolerantMatches))
 }
 
-func collectMatches(lines []string, expected []string, cmp func([]string, []string) bool) []int {
+func collectHybridMatches(lines []string, expected []string) ([]int, []int) {
 	total := len(expected)
 	if total == 0 {
-		return nil
+		return nil, nil
 	}
-	matches := make([]int, 0)
+	exact := make([]int, 0)
+	lenient := make([]int, 0)
 	for idx := 0; idx+total <= len(lines); idx++ {
 		segment := lines[idx : idx+total]
-		if cmp(segment, expected) {
-			matches = append(matches, idx)
+		match, isExact := segmentMatchesWithTolerance(segment, expected)
+		if !match {
+			continue
+		}
+		if isExact {
+			exact = append(exact, idx)
+		} else {
+			lenient = append(lenient, idx)
 		}
 	}
-	return matches
+	return exact, lenient
+}
+
+func segmentMatchesWithTolerance(actual, expected []string) (bool, bool) {
+	if len(actual) != len(expected) {
+		return false, false
+	}
+	exact := true
+	for i := range actual {
+		if actual[i] == expected[i] {
+			continue
+		}
+		exact = false
+		if normalizeLineForComparison(actual[i]) == normalizeLineForComparison(expected[i]) {
+			continue
+		}
+		if normalizeLineForTolerance(actual[i]) == normalizeLineForTolerance(expected[i]) {
+			continue
+		}
+		return false, false
+	}
+	return true, exact
 }
 
 func disambiguateMatches(matches []int, h Hunk, approximateStart int) (int, bool) {
