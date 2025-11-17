@@ -131,28 +131,46 @@ func TestApplyStrictPatchIgnoresOldStart(t *testing.T) {
 func TestApplyStrictPatchAmbiguousMatch(t *testing.T) {
 	repoRoot := t.TempDir()
 	content := "keep\nanchor\nvalue\nanchor\nvalue\n"
-	info := &patcher.UnifiedPatchInfo{
-		Hunks: []patcher.Hunk{
-			{
-				OldStart:      2,
-				OldCount:      2,
-				NewStart:      2,
-				NewCount:      2,
-				ContextBefore: []string{"anchor"},
-				Deletions:     []string{"value"},
-				Additions:     []string{"VALUE"},
-				ContextAfter:  []string{},
-			},
-		},
+	baseHunk := patcher.Hunk{
+		OldStart:      2,
+		OldCount:      2,
+		NewStart:      2,
+		NewCount:      2,
+		ContextBefore: []string{"anchor"},
+		Deletions:     []string{"value"},
+		Additions:     []string{"VALUE"},
+		ContextAfter:  []string{},
 	}
-	_, diags, err := applyStrictPatch(repoRoot, "foo.txt", content, info)
-	if err == nil {
-		t.Fatalf("expected error")
-	}
-	if len(diags) == 0 {
-		t.Fatalf("expected diagnostics")
-	}
-	if diags[0].Reason != "match_ambiguous" {
-		t.Fatalf("expected match_ambiguous, got %q", diags[0].Reason)
-	}
+
+	t.Run("with positional hint", func(t *testing.T) {
+		info := &patcher.UnifiedPatchInfo{Hunks: []patcher.Hunk{baseHunk}}
+		out, diags, err := applyStrictPatch(repoRoot, "foo.txt", content, info)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(diags) != 0 {
+			t.Fatalf("expected no diagnostics, got %#v", diags)
+		}
+		want := "keep\nanchor\nVALUE\nanchor\nvalue\n"
+		if out != want {
+			t.Fatalf("out = %q, want %q", out, want)
+		}
+	})
+
+	t.Run("without hint remains ambiguous", func(t *testing.T) {
+		h := baseHunk
+		// Clear positional hint so the matcher cannot disambiguate duplicates.
+		h.OldStart = 0
+		info := &patcher.UnifiedPatchInfo{Hunks: []patcher.Hunk{h}}
+		_, diags, err := applyStrictPatch(repoRoot, "foo.txt", content, info)
+		if err == nil {
+			t.Fatalf("expected error")
+		}
+		if len(diags) == 0 {
+			t.Fatalf("expected diagnostics")
+		}
+		if diags[0].Reason != "match_ambiguous" {
+			t.Fatalf("expected match_ambiguous, got %q", diags[0].Reason)
+		}
+	})
 }

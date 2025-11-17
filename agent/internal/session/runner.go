@@ -1145,6 +1145,7 @@ func Run(ctx context.Context, opts Options) Result {
 			}
 			skipAllSuccess := false
 			skipPaths := []string{}
+			forceRepatch := instr.Metadata != nil && instr.Metadata.ForceRepatch
 			if len(instr.Edits) > 0 {
 				skipAllSuccess = true
 				seenSkip := make(map[string]struct{})
@@ -1170,7 +1171,7 @@ func Run(ctx context.Context, opts Options) Result {
 					}
 				}
 			}
-			if skipAllSuccess && len(skipPaths) > 0 {
+			if skipAllSuccess && len(skipPaths) > 0 && !forceRepatch {
 				skipMsg := fmt.Sprintf("Skipping patch because all target files were already updated earlier this session: %s. Reload the latest file contents before generating another patch.", strings.Join(skipPaths, ", "))
 				stream.Abort("patch skipped (already updated)")
 				_ = tr.WriteTurn(step, "Patcher: skip (already updated)", "", nil, skipMsg, "patch-error")
@@ -1181,6 +1182,9 @@ func Run(ctx context.Context, opts Options) Result {
 					goto Finalize
 				}
 				continue
+			}
+			if forceRepatch {
+				turnInfo["patch_force_repatch"] = true
 			}
 			if instr.Metadata != nil {
 				if desc := strings.TrimSpace(instr.Metadata.Description); desc != "" {

@@ -44,9 +44,10 @@ type Instructions struct {
 
 // Metadata is optional descriptive metadata supplied alongside Instructions.
 type Metadata struct {
-	Description string `json:"description,omitempty"`
-	Author      string `json:"author,omitempty"`
-	Email       string `json:"email,omitempty"`
+	Description  string `json:"description,omitempty"`
+	Author       string `json:"author,omitempty"`
+	Email        string `json:"email,omitempty"`
+	ForceRepatch bool   `json:"force_repatch,omitempty"`
 }
 
 // Mode describes how a particular edit should be applied to a file.

@@ -385,7 +385,7 @@ func (c *Client) planPrompt(goal string, transcript string, step, maxSteps int) 
 		b.WriteString("If patch, immediately follow with a single standalone JSON object ONLY (no commentary, no markdown fences).\n\n")
 		if c.cfg.StrictPatchMode {
 			b.WriteString("Patch JSON schema (when Decision: patch):\n")
-			b.WriteString("{\n  \"metadata\": { \"description\": string, \"author\": string, \"email\": string },\n  \"edits\": [\n    { \"path\": string, \"mode\": \"create\"|\"delete\"|\"rewrite\", \"new_content\": string (rewrite/create only) },\n    { \"path\": string, \"mode\": \"replace\", \"before\": string, \"after\": string, \"occurrence\": number (optional) },\n    { \"path\": string, \"mode\": \"patch\", \"patch\": { \"hunks\": [ { \"old_start\": int, \"old_count\": int, \"new_start\": int, \"new_count\": int, \"context_before\": [string], \"deletions\": [string], \"additions\": [string], \"context_after\": [string], \"snippet_source\": { \"start_line\": int, \"end_line\": int, \"filepath\": string (optional) } } ] } }\n  ]\n}\n")
+			b.WriteString("{\n  \"metadata\": { \"description\": string, \"author\": string, \"email\": string, \"force_repatch\": boolean (optional; set true to override the already-updated gate) },\n  \"edits\": [\n    { \"path\": string, \"mode\": \"create\"|\"delete\"|\"rewrite\", \"new_content\": string (rewrite/create only) },\n    { \"path\": string, \"mode\": \"replace\", \"before\": string, \"after\": string, \"occurrence\": number (optional) },\n    { \"path\": string, \"mode\": \"patch\", \"patch\": { \"hunks\": [ { \"old_start\": int, \"old_count\": int, \"new_start\": int, \"new_count\": int, \"context_before\": [string], \"deletions\": [string], \"additions\": [string], \"context_after\": [string], \"snippet_source\": { \"start_line\": int, \"end_line\": int, \"filepath\": string (optional) } } ] } }\n  ]\n}\n")
 			b.WriteString("Mode guidelines:\n")
 			b.WriteString("- create: provide new_content; file must be absent.\n")
 			b.WriteString("- delete: target file must exist.\n")
@@ -406,18 +406,20 @@ func (c *Client) planPrompt(goal string, transcript string, step, maxSteps int) 
 			b.WriteString("  5. If the file changes later in the run, reload it from disk before producing the final patch.\n\n")
 			b.WriteString("Minimal example (do not include this text in output):\n")
 			b.WriteString("Decision: patch\n{\n  \"metadata\": { \"description\": \"Fix typo\" },\n  \"edits\": [\n    { \"path\": \"docs/guide.md\", \"mode\": \"patch\", \"patch\": {\n      \"hunks\": [{\n        \"old_start\": 12, \"old_count\": 3, \"new_start\": 12, \"new_count\": 3,\n        \"context_before\": [\"## Overview\"],\n        \"deletions\": [\"This feautre is experimental.\"],\n        \"additions\": [\"This feature is experimental.\"],\n        \"context_after\": [\"Use with caution.\"],\n        \"snippet_source\": { \"start_line\": 12, \"end_line\": 14 }\n      }]\n    } }\n  ]\n}\n\n")
+			b.WriteString("When intentionally re-editing a file already updated this session, reload it from disk first and set metadata.force_repatch to true.\n\n")
 		} else {
 			b.WriteString("Patch JSON schema (when Decision: patch):\n")
-			b.WriteString("{\n  \"metadata\": { \"description\": string, \"author\": string, \"email\": string },\n  \"edits\": [\n    { \"path\": string (repo-relative), \"mode\": one of replace|rewrite|create|delete,\n      \"before\": string (replace only), \"after\": string (replace only), \"occurrence\": number (1-based, optional),\n      \"new_content\": string (rewrite/create only) }\n  ]\n}\n")
+			b.WriteString("{\n  \"metadata\": { \"description\": string, \"author\": string, \"email\": string, \"force_repatch\": boolean (optional; set true to override the already-updated gate) },\n  \"edits\": [\n    { \"path\": string (repo-relative), \"mode\": one of replace|rewrite|create|delete,\n      \"before\": string (replace only), \"after\": string (replace only), \"occurrence\": number (1-based, optional),\n      \"new_content\": string (rewrite/create only) }\n  ]\n}\n")
 			b.WriteString("Rules: use forward slashes; paths must be under repo root;\n")
 			b.WriteString("replace requires before+after and file exists; rewrite requires new_content and file exists;\n")
 			b.WriteString("create requires new_content and file must not exist; delete requires file exists.\n\n")
 			b.WriteString("Minimal example (do not include this text in output):\n")
 			b.WriteString("Decision: patch\n{\n  \"metadata\": { \"description\": \"Fix README typo\" },\n  \"edits\": [\n    { \"path\": \"README.md\", \"mode\": \"replace\", \"before\": \"teh\", \"after\": \"the\", \"occurrence\": 1 }\n  ]\n}\n\n")
+			b.WriteString("When intentionally re-editing a file already updated this session, reload it from disk first and set metadata.force_repatch to true.\n\n")
 		}
 	}
 
-	appendSuccessFilesSection(&b, c.progress.SuccessFiles, "Files already updated successfully this session (reload these paths before considering further edits; prefer new targets):\n", successFilesPromptLimit)
+	appendSuccessFilesSection(&b, c.progress.SuccessFiles, "Files already updated successfully this session (reload these paths before considering further edits; prefer new targets. If you must revisit one, set metadata.force_repatch: true):\n", successFilesPromptLimit)
 	if c.progress.AppliedPatches > 0 {
 		fmt.Fprintf(&b, "Strict patch successes so far: %d. Avoid redundant patches—finalize once all required files are complete.\n\n", c.progress.AppliedPatches)
 	}
