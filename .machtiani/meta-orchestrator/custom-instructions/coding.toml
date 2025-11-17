@@ -16,21 +16,21 @@ shell_agent = false
 patch_mode = true
 
 [[tasks]]
-step = 2
+step = 3
 title = "Review any patches you made or anything missed. Your primary objective is to make sure all the patches are made to satsify the issue's requirements. You don't need to run any tests as we'll do that later."
 description = "Implement the Issue."
 shell_agent = false
 patch_mode = true
 
 [[tasks]]
-step = 3
+step = 4
 title = "Run available validations"
 description = "Run available validations (tests, linters, or targeted reasoning) to confirm behavior and note any risks or follow-up work. Investigate modified files. Correct any patches as needed to satisfy the Issue."
 shell_agent = false
 patch_mode = true
 
 [[tasks]]
-step = 4
+step = 5
 title = "Summarize the results"
 description = "Summarize the results, highlighting modifications, verification status, and remaining next steps for the parent session."
 shell_agent = true
