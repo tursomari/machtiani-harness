@@ -77,6 +77,10 @@ func handleRunCommand(args []string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
+	if cfg.MaxInputTokens < 0 {
+		fmt.Fprintln(os.Stderr, "Error: --max-input-tokens must be zero or positive")
+		return 2
+	}
 	apiOverrides, err := llm.ParseAPIKeyOverrides(apiKeyFlags)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -279,6 +283,10 @@ func handleSyncCommand(args []string) int {
 	}
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintln(os.Stderr, err)
+		return 2
+	}
+	if cfg.MaxInputTokens < 0 {
+		fmt.Fprintln(os.Stderr, "Error: --max-input-tokens must be zero or positive")
 		return 2
 	}
 	apiOverrides, parseErr := llm.ParseAPIKeyOverrides(apiKeyFlags)

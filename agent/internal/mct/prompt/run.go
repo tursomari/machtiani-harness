@@ -215,6 +215,9 @@ func invokeShellAgent(ctx context.Context, prompt string, opts RunOptions) (stri
 	if model := strings.TrimSpace(opts.ShellAgentModel); model != "" {
 		args = append(args, "--shell-agent-model", model)
 	}
+	if opts.MaxInputTokens > 0 {
+		args = append(args, "--max-input-tokens", fmt.Sprintf("%d", opts.MaxInputTokens))
+	}
 	if overrides := firstNonEmptyOverrides(opts.Runtime, opts.FileDiscoveryRuntime, opts.AnswerRuntime); len(overrides) > 0 {
 		providers := make([]string, 0, len(overrides))
 		trimmed := make(map[string]string, len(overrides))
