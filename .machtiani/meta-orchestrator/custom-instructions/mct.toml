@@ -1,0 +1,38 @@
+# Meta-orchestrator task configuration for coding workflows
+# Each task defines a discrete phase with optional agent mode configuration
+
+[[tasks]]
+step = 1
+title = "Create an issue for the engineering team"
+description = "Create an issue for the engineering team. Do not make any code changes or patches."
+shell_agent = false
+patch_mode = false
+
+[[tasks]]
+step = 2
+title = "Implement the Issue. Your primary objective is to make the patches to satsify the issue's requirements."
+description = "Implement the Issue."
+shell_agent = false
+patch_mode = true
+
+[[tasks]]
+step = 3
+title = "Review any patches you made or anything missed. Your primary objective is to make sure all the patches are made to satsify the issue's requirements. You don't need to run any tests as we'll do that later."
+description = "Implement the Issue."
+shell_agent = false
+patch_mode = true
+
+[[tasks]]
+step = 4
+title = "Run available validations"
+# Corrected: All instances of \` have been changed to just `
+description = "Run available validations (go build, go tests, gofmt, and targeted reasoning) to confirm behavior and note any risks or follow-up work. Investigate modified files. Correct any patches as needed to satisfy the Issue.\n\nTesting: `cd agent`\n`GOCACHE=$(pwd)/.gocache go build ./...`\n`GOCACHE=$(pwd)/.gocache go test ./...`.\n\nDo not run any `run-live` or `undici` related tests that require network access."
+shell_agent = false
+patch_mode = true
+
+[[tasks]]
+step = 5
+title = "Summarize the results"
+description = "Summarize the results, highlighting modifications, verification status, and remaining next steps for the parent session."
+shell_agent = true
+patch_mode = false
