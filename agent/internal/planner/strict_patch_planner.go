@@ -1,6 +1,7 @@
 package planner
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -124,7 +125,14 @@ func (c *Client) strictPatchGeneratePatch(ctx context.Context, goal, transcript,
 			continue
 		}
 
-		normalizedJSON, err := c.normalizeStrictPatchJSON(jsonBytes, selection.Path, fileContent)
+		sanitizedJSON, err := preValidateStrictPatchJSON(jsonBytes)
+		if err != nil {
+			lastErr = fmt.Errorf("strict patch payload pre-validate: %w", err)
+			prompt = c.strictPatchRetryPrompt(basePrompt, lastErr)
+			continue
+		}
+
+		normalizedJSON, err := c.normalizeStrictPatchJSON(sanitizedJSON, selection.Path, fileContent)
 		if err != nil {
 			lastErr = fmt.Errorf("strict patch payload normalize: %w", err)
 			prompt = c.strictPatchRetryPrompt(basePrompt, lastErr)
@@ -259,6 +267,90 @@ func (c *Client) strictPatchGeneratePatch(ctx context.Context, goal, transcript,
 func (c *Client) strictPatchRetryPrompt(base string, err error) string {
 	reason := sanitizeForPrompt(err.Error())
 	return base + "\nPrevious attempt failed because: " + reason + "\nReturn only the corrected JSON patch object now."
+}
+
+func preValidateStrictPatchJSON(raw []byte) ([]byte, error) {
+	sanitized, changed := sanitizeStrictPatchJSONStringLiterals(raw)
+	if changed {
+		raw = sanitized
+	}
+
+	var scratch map[string]any
+	if err := json.Unmarshal(raw, &scratch); err != nil {
+		return nil, err
+	}
+
+	return raw, nil
+}
+
+func sanitizeStrictPatchJSONStringLiterals(input []byte) ([]byte, bool) {
+	if len(input) == 0 {
+		return input, false
+	}
+
+	var buf bytes.Buffer
+	buf.Grow(len(input))
+
+	inString := false
+	escaped := false
+	changed := false
+
+	for _, b := range input {
+		if inString {
+			if escaped {
+				buf.WriteByte(b)
+				escaped = false
+				continue
+			}
+
+			switch b {
+			case '\\':
+				buf.WriteByte(b)
+				escaped = true
+				continue
+			case '"':
+				buf.WriteByte(b)
+				inString = false
+				continue
+			case '\t':
+				buf.WriteByte('\\')
+				buf.WriteByte('t')
+				changed = true
+				continue
+			case '\n':
+				buf.WriteByte('\\')
+				buf.WriteByte('n')
+				changed = true
+				continue
+			case '\r':
+				buf.WriteByte('\\')
+				buf.WriteByte('r')
+				changed = true
+				continue
+			}
+
+			if b < 0x20 {
+				buf.WriteString(fmt.Sprintf("\\u%04x", b))
+				changed = true
+				continue
+			}
+
+			buf.WriteByte(b)
+			continue
+		}
+
+		buf.WriteByte(b)
+		if b == '"' {
+			inString = true
+			escaped = false
+		}
+	}
+
+	if !changed {
+		return input, false
+	}
+
+	return buf.Bytes(), true
 }
 
 func (c *Client) normalizeStrictPatchJSON(raw []byte, expectedPath string, fileContent string) ([]byte, error) {
@@ -615,9 +707,23 @@ func normalizeStrictHunk(h map[string]any, expectedPath string, fileLines []stri
 	}
 	h["snippet_source"] = snippetMap
 
+	originalStart := startLine
+	originalEnd := *endLine
 	rawSnippet := extractSnippetLines(fileLines, startLine, *endLine)
 	if rawSnippet == nil {
-		return fmt.Errorf("snippet_source lines %d-%d exceed file bounds", startLine, *endLine)
+		realignedStart, realignedEnd, realignErr := realignSnippetSource(fileLines, startLine, *endLine, contextBefore, deletions, contextAfter)
+		if realignErr != nil {
+			return fmt.Errorf("snippet_source lines %d-%d exceed file bounds: %w", originalStart, originalEnd, realignErr)
+		}
+		startLine = realignedStart
+		*endLine = realignedEnd
+		snippetMap["start_line"] = startLine
+		snippetMap["end_line"] = *endLine
+		h["snippet_source"] = snippetMap
+		rawSnippet = extractSnippetLines(fileLines, startLine, *endLine)
+		if rawSnippet == nil {
+			return fmt.Errorf("snippet_source lines %d-%d exceed file bounds after realignment", startLine, *endLine)
+		}
 	}
 
 	if len(deletions) == 0 || len(additions) == 0 {
@@ -651,7 +757,27 @@ func normalizeStrictHunk(h map[string]any, expectedPath string, fileLines []stri
 	}
 	finalSnippet := extractSnippetLines(fileLines, adjustedStart, adjustedEnd)
 	if finalSnippet == nil {
-		return fmt.Errorf("snippet_source lines %d-%d exceed file bounds", adjustedStart, adjustedEnd)
+		realignedStart, realignedEnd, realignErr := realignSnippetSource(fileLines, startLine, *endLine, contextBefore, deletions, contextAfter)
+		if realignErr != nil {
+			return fmt.Errorf("snippet_source lines %d-%d exceed file bounds", adjustedStart, adjustedEnd)
+		}
+		snippetMap["start_line"] = realignedStart
+		snippetMap["end_line"] = realignedEnd
+		h["snippet_source"] = snippetMap
+		startLine = realignedStart
+		*endLine = realignedEnd
+		adjustedStart = startLine - contextBeforeLen
+		if adjustedStart < 1 {
+			adjustedStart = 1
+		}
+		adjustedEnd = adjustedStart + expectedOld - 1
+		if expectedOld == 0 {
+			adjustedEnd = adjustedStart - 1
+		}
+		finalSnippet = extractSnippetLines(fileLines, adjustedStart, adjustedEnd)
+		if finalSnippet == nil {
+			return fmt.Errorf("snippet_source lines %d-%d exceed file bounds", adjustedStart, adjustedEnd)
+		}
 	}
 	snippetMap["start_line"] = adjustedStart
 	snippetMap["end_line"] = adjustedEnd
@@ -680,6 +806,29 @@ func normalizeStrictHunk(h map[string]any, expectedPath string, fileLines []stri
 	h["deletions"] = deletions
 	h["additions"] = additions
 	return nil
+}
+
+func realignSnippetSource(fileLines []string, startLine, endLine int, contextBefore, deletions, contextAfter []string) (int, int, error) {
+	totalContext := len(contextBefore) + len(deletions) + len(contextAfter)
+	if totalContext == 0 {
+		return 0, 0, fmt.Errorf("anchor_missing: no context available to realign snippet")
+	}
+	approximateStart := startLine - 1
+	if approximateStart < 0 {
+		approximateStart = -1
+	}
+	hunk := patcher.Hunk{
+		ContextBefore: contextBefore,
+		Deletions:     deletions,
+		ContextAfter:  contextAfter,
+	}
+	idx, _, _, reason, err := patcher.FindHunkMatch(fileLines, hunk, approximateStart)
+	if err != nil {
+		return 0, 0, fmt.Errorf("%s: %w", reason, err)
+	}
+	newStart := idx + 1
+	newEnd := newStart + totalContext - 1
+	return newStart, newEnd, nil
 }
 
 func parseLineField(obj map[string]any, key string) ([]string, bool, error) {

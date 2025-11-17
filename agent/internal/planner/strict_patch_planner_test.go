@@ -1,6 +1,7 @@
 package planner
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -245,6 +246,100 @@ func TestStrictPatchNormalizationHandlesOldNewText(t *testing.T) {
 	}
 	if got, want := h.Additions, []string{"Bravo!!!"}; !slicesEqual(got, want) {
 		t.Fatalf("additions = %#v, want %#v", got, want)
+	}
+}
+
+func TestPreValidateStrictPatchJSONEscapesControlCharacters(t *testing.T) {
+	raw := []byte(`{
+  "metadata": {},
+  "edits": [
+    {
+      "path": "transcript.go",
+      "mode": "patch",
+      "patch": {
+        "hunks": [
+          {
+            "old_start": 1,
+            "old_count": 1,
+            "new_start": 1,
+            "new_count": 1,
+            "context_before": ["func demo() {"],
+            "additions": ["\treturn\thasTab"],
+            "deletions": [],
+            "context_after": ["}"]
+          }
+        ]
+      }
+    }
+  ]
+}`)
+
+	// Inject literal tabs into the JSON to mimic LLM output
+	raw = bytes.ReplaceAll(raw, []byte("\\t"), []byte("\t"))
+
+	sanitized, err := preValidateStrictPatchJSON(raw)
+	if err != nil {
+		t.Fatalf("preValidateStrictPatchJSON returned error: %v", err)
+	}
+
+	if bytes.Contains(sanitized, []byte{'	'}) {
+		t.Fatalf("expected tabs to be escaped, got %q", sanitized)
+	}
+	if !bytes.Contains(sanitized, []byte("\\t")) {
+		t.Fatalf("expected escaped tab sequence in sanitized output: %q", sanitized)
+	}
+
+	var instr patcher.Instructions
+	if err := json.Unmarshal(sanitized, &instr); err != nil {
+		t.Fatalf("sanitized payload should unmarshal: %v", err)
+	}
+	if len(instr.Edits) != 1 {
+		t.Fatalf("expected one edit, got %d", len(instr.Edits))
+	}
+}
+
+func TestNormalizeStrictHunkRealignsOutOfBoundsSnippetSource(t *testing.T) {
+	fileLines := []string{"Alpha", "Beta", "Gamma", "Delta"}
+	hunk := map[string]any{
+		"context_before": []string{"Alpha"},
+		"deletions":      []string{"Beta"},
+		"additions":      []string{"Beta 2025"},
+		"context_after":  []string{"Gamma"},
+		"snippet_source": map[string]any{
+			"start_line": 120,
+			"end_line":   120,
+		},
+	}
+
+	if err := normalizeStrictHunk(hunk, "docs/file.txt", fileLines); err != nil {
+		t.Fatalf("normalizeStrictHunk returned error: %v", err)
+	}
+
+	snippetMap, ok := toStringMap(hunk["snippet_source"])
+	if !ok {
+		t.Fatalf("snippet_source not normalized to map: %#v", hunk["snippet_source"])
+	}
+	startLine, err := toPositiveInt(snippetMap["start_line"])
+	if err != nil {
+		t.Fatalf("start_line parse error: %v", err)
+	}
+	if startLine != 1 {
+		t.Fatalf("expected start_line 1, got %d", startLine)
+	}
+	endLinePtr, err := toIntValue(snippetMap["end_line"])
+	if err != nil || endLinePtr == nil {
+		t.Fatalf("end_line parse error: %v", err)
+	}
+	if *endLinePtr != 3 {
+		t.Fatalf("expected end_line 3, got %d", *endLinePtr)
+	}
+
+	deletions, ok := hunk["deletions"].([]string)
+	if !ok {
+		t.Fatalf("deletions not []string: %#v", hunk["deletions"])
+	}
+	if len(deletions) != 1 || deletions[0] != "Beta" {
+		t.Fatalf("unexpected deletions: %#v", deletions)
 	}
 }
 
