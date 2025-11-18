@@ -139,6 +139,14 @@ func preprocessPatchInstructions(repoRoot string, instr mctpatcher.Instructions)
 				conflicts = append(conflicts, modeConflict{Index: idx, Path: normalized, Mode: ed.Mode, Reason: "file missing; cannot delete"})
 			}
 		case mctpatcher.ModePatch:
+			if state == fileStateMissing {
+				if converted, ok := convertPatchToCreate(prepared.Edits[idx]); ok {
+					prepared.Edits[idx] = converted
+					prepared.Edits[idx].Mode = mctpatcher.ModeCreate
+					adjustments = append(adjustments, modeAdjustment{Index: idx, Path: normalized, From: ed.Mode, To: mctpatcher.ModeCreate, Reason: "file missing; converting patch to create"})
+					continue
+				}
+			}
 			if state != fileStateExists {
 				reason := "file missing"
 				if state == fileStateUnknown {
@@ -156,6 +164,49 @@ func preprocessPatchInstructions(repoRoot string, instr mctpatcher.Instructions)
 		err = &instructionPrecheckError{Conflicts: conflicts}
 	}
 	return prepared, adjustments, err
+}
+
+func convertPatchToCreate(ed mctpatcher.Edit) (mctpatcher.Edit, bool) {
+	if ed.PatchInfo == nil {
+		return mctpatcher.Edit{}, false
+	}
+	if len(ed.PatchInfo.Hunks) == 0 {
+		return mctpatcher.Edit{}, false
+	}
+	lines := make([]string, 0)
+	for _, h := range ed.PatchInfo.Hunks {
+		if hasNonWhitespace(h.ContextBefore) || hasNonWhitespace(h.Deletions) || hasNonWhitespace(h.ContextAfter) {
+			return mctpatcher.Edit{}, false
+		}
+		if len(h.Additions) == 0 {
+			continue
+		}
+		lines = append(lines, h.Additions...)
+	}
+	if len(lines) == 0 {
+		return mctpatcher.Edit{}, false
+	}
+	content := strings.Join(lines, "\n")
+	if !strings.HasSuffix(content, "\n") {
+		content += "\n"
+	}
+	converted := ed
+	converted.Mode = mctpatcher.ModeCreate
+	converted.NewContent = content
+	converted.PatchInfo = nil
+	converted.Before = ""
+	converted.After = ""
+	converted.Occurrence = 0
+	return converted, true
+}
+
+func hasNonWhitespace(lines []string) bool {
+	for _, line := range lines {
+		if strings.TrimSpace(line) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func detectFileState(repoRoot, rel string) (fileState, error) {
