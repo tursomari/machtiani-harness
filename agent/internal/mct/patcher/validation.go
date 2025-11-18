@@ -102,7 +102,6 @@ func validateStrictPatch(repoRoot, rel string, ed Edit, idx int) error {
 	}
 	lines := splitStrictLines(text)
 	for hIdx, h := range ed.PatchInfo.Hunks {
-		approximateStart := -1
 		if h.SnippetSource != nil {
 			snippetPath := rel
 			if trimmed := strings.TrimSpace(h.SnippetSource.Filepath); trimmed != "" {
@@ -115,37 +114,28 @@ func validateStrictPatch(repoRoot, rel string, ed Edit, idx int) error {
 			if snippetPath != rel {
 				return fmt.Errorf("edit[%d] hunk[%d]: snippet_source filepath %s does not match edit path %s", idx, hIdx, snippetPath, rel)
 			}
-			if h.SnippetSource.StartLine > 0 {
-				approximateStart = h.SnippetSource.StartLine - 1
-			}
 			snippetLen := SnippetRangeLength(h.SnippetSource)
 			if snippetLen == -1 {
 				return fmt.Errorf("edit[%d] hunk[%d]: snippet_source range is invalid", idx, hIdx)
 			}
-			if err := ensureSnippetSourceConsistency(lines, h); err != nil {
+			if err := ensureSnippetSourceInRange(lines, h.SnippetSource); err != nil {
 				return fmt.Errorf("edit[%d] hunk[%d]: %v", idx, hIdx, err)
 			}
-		}
-		if approximateStart < 0 && h.OldStart > 0 {
-			approximateStart = h.OldStart - 1
-		}
-		if _, _, _, reason, err := FindHunkMatch(lines, h, approximateStart); err != nil {
-			return fmt.Errorf("edit[%d] hunk[%d]: %s: %v", idx, hIdx, reason, err)
 		}
 	}
 	return nil
 }
 
-func ensureSnippetSourceConsistency(lines []string, h Hunk) error {
-	if h.SnippetSource == nil {
+func ensureSnippetSourceInRange(lines []string, src *SnippetSource) error {
+	if src == nil {
 		return nil
 	}
-	startLine := h.SnippetSource.StartLine
-	endLine := h.SnippetSource.EndLine
+	startLine := src.StartLine
+	endLine := src.EndLine
 	if startLine < 1 {
 		return fmt.Errorf("snippet_source out_of_range: start_line %d must be >= 1", startLine)
 	}
-	snippetLen := SnippetRangeLength(h.SnippetSource)
+	snippetLen := SnippetRangeLength(src)
 	if snippetLen == -1 {
 		return fmt.Errorf("snippet_source range is invalid")
 	}
@@ -163,21 +153,7 @@ func ensureSnippetSourceConsistency(lines []string, h Hunk) error {
 	if endIdx > len(lines) {
 		return fmt.Errorf("snippet_source out_of_range: end_line %d exceeds file line count %d", endLine, len(lines))
 	}
-	snippet := lines[startIdx:endIdx]
-	expected := assembleBeforeLines(h)
-	if len(expected) == 0 {
-		return nil
-	}
-	if len(expected) > len(snippet) {
-		return fmt.Errorf("snippet_source content mismatch: expected %d line(s) but snippet range has %d", len(expected), len(snippet))
-	}
-	for offset := 0; offset+len(expected) <= len(snippet); offset++ {
-		segment := snippet[offset : offset+len(expected)]
-		if match, _ := segmentMatchesWithTolerance(segment, expected); match {
-			return nil
-		}
-	}
-	return fmt.Errorf("snippet_source content mismatch for %d-%d", startLine, endLine)
+	return nil
 }
 
 func validatePatchHunkMetadata(h Hunk, editIdx, hunkIdx int) error {

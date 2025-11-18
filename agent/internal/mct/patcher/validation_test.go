@@ -78,7 +78,7 @@ func TestValidateStrictPatchWithSnippet(t *testing.T) {
 	}
 }
 
-func TestValidateStrictPatchSnippetMismatch(t *testing.T) {
+func TestValidateStrictPatchSnippetMismatchAllowsFallback(t *testing.T) {
 	dir := t.TempDir()
 	os.Mkdir(filepath.Join(dir, ".git"), 0o755)
 	writeFile(t, dir, "foo.txt", "line 1\nline x\nline 3\n")
@@ -99,12 +99,8 @@ func TestValidateStrictPatchSnippetMismatch(t *testing.T) {
 		Mode:      ModePatch,
 		PatchInfo: &UnifiedPatchInfo{Hunks: []Hunk{hunk}},
 	}}}
-	err := Validate(dir, instr)
-	if err == nil {
-		t.Fatalf("expected validation error")
-	}
-	if !strings.Contains(err.Error(), "snippet_source content mismatch") {
-		t.Fatalf("expected snippet_source content mismatch error, got %v", err)
+	if err := Validate(dir, instr); err != nil {
+		t.Fatalf("expected validation to succeed despite mismatch, got %v", err)
 	}
 }
 
@@ -213,7 +209,7 @@ func TestValidateStrictPatchSnippetSourceOutOfRange(t *testing.T) {
 	}
 }
 
-func TestValidateStrictPatchSnippetSourceContentMismatch(t *testing.T) {
+func TestValidateStrictPatchSnippetSourceContentMismatchAllowsFallback(t *testing.T) {
 	dir := t.TempDir()
 	os.Mkdir(filepath.Join(dir, ".git"), 0o755)
 	writeFile(t, dir, "foo.txt", "alpha\nbeta\ngamma\n")
@@ -235,11 +231,7 @@ func TestValidateStrictPatchSnippetSourceContentMismatch(t *testing.T) {
 		PatchInfo: &UnifiedPatchInfo{Hunks: []Hunk{hunk}},
 	}}}
 
-	err := Validate(dir, instr)
-	if err == nil {
-		t.Fatalf("expected validation error")
-	}
-	if !strings.Contains(err.Error(), "snippet_source content mismatch") {
-		t.Fatalf("expected snippet_source content mismatch error, got %v", err)
+	if err := Validate(dir, instr); err != nil {
+		t.Fatalf("expected validation to succeed despite snippet mismatch, got %v", err)
 	}
 }

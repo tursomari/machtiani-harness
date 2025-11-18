@@ -157,14 +157,16 @@ func TestStrictPatchNormalizationHandlesReplacementAlias(t *testing.T) {
 	    {
 	      "path": "LICENSE",
 	      "mode": "patch",
-	      "hunks": [
-	        {
-	          "context_before": "MIT License\n",
-	          "context_after": "\nPermission is hereby granted, free of charge, to any person obtaining a copy",
-	          "snippet_source": {"start_line": 1, "end_line": 5},
-	          "replacement": "MIT License\n\nCopyright (c) 2020-2025 Matteo Collina and Undici contributors\n"
-	        }
-	      ]
+	      "patch": {
+	        "hunks": [
+	          {
+	            "context_before": "MIT License\n",
+	            "context_after": "\nPermission is hereby granted, free of charge, to any person obtaining a copy",
+	            "snippet_source": {"start_line": 1, "end_line": 5},
+	            "replacement": "MIT License\n\nCopyright (c) 2020-2025 Matteo Collina and Undici contributors\n"
+	          }
+	        ]
+	      }
 	    }
 	  ]
 	}`, nil
@@ -255,6 +257,30 @@ func TestStrictPatchNormalizationHandlesOldNewText(t *testing.T) {
 	}
 	if got, want := h.Additions, []string{"Bravo!!!"}; !slicesEqual(got, want) {
 		t.Fatalf("additions = %#v, want %#v", got, want)
+	}
+}
+
+func TestNormalizeStrictHunkAllowsContentMismatch(t *testing.T) {
+	fileLines := []string{"alpha", "beta", "gamma"}
+	hunk := map[string]any{
+		"context_before": []any{"alpha"},
+		"deletions":      []any{"BETA"},
+		"additions":      []any{"BETA"},
+		"context_after":  []any{"gamma"},
+		"snippet_source": map[string]any{"start_line": 1, "end_line": 3},
+	}
+	if err := normalizeStrictHunk(hunk, "foo.txt", fileLines); err != nil {
+		t.Fatalf("normalizeStrictHunk returned error: %v", err)
+	}
+	snippet, ok := hunk["snippet_source"].(map[string]any)
+	if !ok {
+		t.Fatalf("snippet_source not normalized: %#v", hunk["snippet_source"])
+	}
+	if snippet["start_line"] != 1 || snippet["end_line"] != 3 {
+		t.Fatalf("unexpected snippet range: %#v", snippet)
+	}
+	if got := hunk["deletions"].([]string); !slicesEqual(got, []string{"BETA"}) {
+		t.Fatalf("deletions = %#v, want %#v", got, []string{"BETA"})
 	}
 }
 

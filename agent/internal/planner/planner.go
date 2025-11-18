@@ -45,8 +45,9 @@ type Client struct {
 }
 
 type Progress struct {
-	SuccessFiles   []string
-	AppliedPatches int
+	SuccessFiles        []string
+	AppliedPatches      int
+	ForceRepatchExample bool
 }
 
 func NewClient(cfg ClientConfig) *Client {
@@ -80,7 +81,7 @@ func (c *Client) UpdateProgress(progress Progress) {
 	if applied < 0 {
 		applied = 0
 	}
-	c.progress = Progress{SuccessFiles: files, AppliedPatches: applied}
+	c.progress = Progress{SuccessFiles: files, AppliedPatches: applied, ForceRepatchExample: progress.ForceRepatchExample}
 }
 
 func normalizeProgressPath(path string) string {
@@ -417,6 +418,7 @@ func (c *Client) planPrompt(goal string, transcript string, step, maxSteps int) 
 			b.WriteString("Decision: patch\n{\n  \"metadata\": { \"description\": \"Fix README typo\" },\n  \"edits\": [\n    { \"path\": \"README.md\", \"mode\": \"replace\", \"before\": \"teh\", \"after\": \"the\", \"occurrence\": 1 }\n  ]\n}\n\n")
 			b.WriteString("When intentionally re-editing a file already updated this session, reload it from disk first and set metadata.force_repatch to true.\n\n")
 		}
+		c.appendForceRepatchExample(&b)
 	}
 
 	appendSuccessFilesSection(&b, c.progress.SuccessFiles, "Files already updated successfully this session (reload these paths before considering further edits; prefer new targets. If you must revisit one, set metadata.force_repatch: true):\n", successFilesPromptLimit)
@@ -433,6 +435,29 @@ func (c *Client) planPrompt(goal string, transcript string, step, maxSteps int) 
 	}
 	b.WriteString(fmt.Sprintf("Step %d of %d. Decide.\n", step, maxSteps))
 	return b.String()
+}
+
+func (c *Client) appendForceRepatchExample(b *strings.Builder) {
+	if !c.progress.ForceRepatchExample {
+		return
+	}
+	b.WriteString("If the guard reports `Skipping patch because all target files were already updated earlier this session`, include `metadata.force_repatch: true` on the next patch. Example:\n")
+	b.WriteString("Decision: patch\n")
+	b.WriteString("{\n")
+	b.WriteString("  \"metadata\": { \"description\": \"Reapply earlier edit\", \"force_repatch\": true },\n")
+	b.WriteString("  \"edits\": [\n")
+	b.WriteString("    { \"path\": \"docs/guide.md\", \"mode\": \"patch\", \"patch\": {\n")
+	b.WriteString("      \"hunks\": [{\n")
+	b.WriteString("        \"old_start\": 12, \"old_count\": 1, \"new_start\": 12, \"new_count\": 1,\n")
+	b.WriteString("        \"context_before\": [\"## Overview\"],\n")
+	b.WriteString("        \"deletions\": [\"The current text.\"],\n")
+	b.WriteString("        \"additions\": [\"The corrected text.\"],\n")
+	b.WriteString("        \"context_after\": [\"Use with caution.\"],\n")
+	b.WriteString("        \"snippet_source\": { \"start_line\": 12, \"end_line\": 12 }\n")
+	b.WriteString("      }]\n")
+	b.WriteString("    } }\n")
+	b.WriteString("  ]\n")
+	b.WriteString("}\n\n")
 }
 
 func (c *Client) finalizePrompt(goal string, transcript string) string {

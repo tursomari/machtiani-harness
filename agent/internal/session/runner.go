@@ -43,9 +43,10 @@ var (
 )
 
 type plannerProgressTracker struct {
-	successSet   map[string]struct{}
-	successFiles []string
-	applied      int
+	successSet       map[string]struct{}
+	successFiles     []string
+	applied          int
+	forceRepatchHint bool
 }
 
 func newPlannerProgressTracker(existing *PlannerProgressState) *plannerProgressTracker {
@@ -97,6 +98,13 @@ func (p *plannerProgressTracker) appliedCount() int {
 	return p.applied
 }
 
+func (p *plannerProgressTracker) noteForceRepatchHint() {
+	if p == nil {
+		return
+	}
+	p.forceRepatchHint = true
+}
+
 func (p *plannerProgressTracker) hasSuccess(path string) bool {
 	if p == nil {
 		return false
@@ -129,9 +137,12 @@ func (p *plannerProgressTracker) snapshot() planner.Progress {
 	if p == nil {
 		return planner.Progress{}
 	}
+	hint := p.forceRepatchHint
+	p.forceRepatchHint = false
 	return planner.Progress{
-		SuccessFiles:   p.successList(),
-		AppliedPatches: p.appliedCount(),
+		SuccessFiles:        p.successList(),
+		AppliedPatches:      p.appliedCount(),
+		ForceRepatchExample: hint,
 	}
 }
 
@@ -1178,6 +1189,7 @@ func Run(ctx context.Context, opts Options) Result {
 				turnInfo["patch_skip_already_updated"] = skipPaths
 				extra := map[string]any{"skip_files": skipPaths}
 				recordPatchError("patch_skipped_already_success", fmt.Errorf("patch targeted previously updated files"), extra)
+				plannerProgress.noteForceRepatchHint()
 				if shouldFinalizeAfterPatch {
 					goto Finalize
 				}

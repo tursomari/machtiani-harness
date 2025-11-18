@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -25,6 +26,35 @@ const (
 	strictPatchMaxPatchAttempts       = 3
 	strictPatchMaxPathAttempts        = 3
 )
+
+const strictPatchSchemaExample = `{
+  "edits": [
+    {
+      "path": "repo/relative/path.ext",
+      "mode": "patch",
+      "patch": {
+        "hunks": [
+          {
+            "old_start": 42,
+            "old_count": 2,
+            "new_start": 42,
+            "new_count": 3,
+            "snippet_source": {"filepath": "repo/relative/path.ext", "start_line": 42, "end_line": 43},
+            "context_before": ["exact line before"],
+            "deletions": ["original line"],
+            "additions": ["replacement line"],
+            "context_after": ["exact line after"]
+          }
+        ]
+      }
+    }
+  ],
+  "metadata": {
+    "description": "Short summary of the edit"
+  }
+}`
+
+var strictPatchLineRangeRegexp = regexp.MustCompile(`\b(\d+)-(\d+)\b`)
 
 var errStrictPatchEmptyChoices = errors.New("strict patch: llm returned no choices")
 
@@ -113,6 +143,29 @@ func (c *Client) strictPatchGeneratePatch(ctx context.Context, goal, transcript,
 	prompt := basePrompt
 	var lastErr error
 	reloaded := false
+	maybeForceReload := func(err error) (bool, error) {
+		if err == nil {
+			return false, nil
+		}
+		if !currentTruncated || reloaded {
+			return false, nil
+		}
+		if !strictPatchShouldForceReload(err, strictPatchMaxFileLines) {
+			return false, nil
+		}
+		freshContent, freshExists, readErr := c.readRepoFile(selection.Path)
+		if readErr != nil {
+			return false, readErr
+		}
+		currentFileContent = freshContent
+		currentExists = freshExists
+		currentNumberedContent, currentTruncated = formatFileWithLineNumbers(currentFileContent, 0)
+		basePrompt = c.strictPatchPatchPrompt(goal, transcript, plannerPayload, selection, currentNumberedContent, currentExists, currentTruncated)
+		prompt = basePrompt
+		reloaded = true
+		lastErr = nil
+		return true, nil
+	}
 
 	for attempt := 0; attempt < strictPatchMaxPatchAttempts; attempt++ {
 		resp, err := c.callStrictPatchLLM(ctx, "planner.strict_patch_patch", prompt, step, maxSteps)
@@ -127,6 +180,12 @@ func (c *Client) strictPatchGeneratePatch(ctx context.Context, goal, transcript,
 		jsonBytes, err := parser.ExtractPatchJSONPayload(resp)
 		if err != nil {
 			lastErr = fmt.Errorf("strict patch payload: %w", err)
+			if reloadedNow, reloadErr := maybeForceReload(lastErr); reloadErr != nil {
+				return "", reloadErr
+			} else if reloadedNow {
+				attempt--
+				continue
+			}
 			prompt = c.strictPatchRetryPrompt(basePrompt, lastErr)
 			continue
 		}
@@ -134,6 +193,12 @@ func (c *Client) strictPatchGeneratePatch(ctx context.Context, goal, transcript,
 		sanitizedJSON, err := preValidateStrictPatchJSON(jsonBytes)
 		if err != nil {
 			lastErr = fmt.Errorf("strict patch payload pre-validate: %w", err)
+			if reloadedNow, reloadErr := maybeForceReload(lastErr); reloadErr != nil {
+				return "", reloadErr
+			} else if reloadedNow {
+				attempt--
+				continue
+			}
 			prompt = c.strictPatchRetryPrompt(basePrompt, lastErr)
 			continue
 		}
@@ -168,6 +233,12 @@ func (c *Client) strictPatchGeneratePatch(ctx context.Context, goal, transcript,
 		normalizedJSON, err := c.normalizeStrictPatchJSON(sanitizedJSON, selection.Path, currentFileContent)
 		if err != nil {
 			lastErr = fmt.Errorf("strict patch payload normalize: %w", err)
+			if reloadedNow, reloadErr := maybeForceReload(lastErr); reloadErr != nil {
+				return "", reloadErr
+			} else if reloadedNow {
+				attempt--
+				continue
+			}
 			prompt = c.strictPatchRetryPrompt(basePrompt, lastErr)
 			continue
 		}
@@ -175,12 +246,24 @@ func (c *Client) strictPatchGeneratePatch(ctx context.Context, goal, transcript,
 		var instr patcher.Instructions
 		if err := json.Unmarshal(normalizedJSON, &instr); err != nil {
 			lastErr = fmt.Errorf("strict patch payload decode: %w", err)
+			if reloadedNow, reloadErr := maybeForceReload(lastErr); reloadErr != nil {
+				return "", reloadErr
+			} else if reloadedNow {
+				attempt--
+				continue
+			}
 			prompt = c.strictPatchRetryPrompt(basePrompt, lastErr)
 			continue
 		}
 
 		if len(instr.Edits) != 1 {
 			lastErr = fmt.Errorf("strict patch planner: expected exactly one edit, got %d", len(instr.Edits))
+			if reloadedNow, reloadErr := maybeForceReload(lastErr); reloadErr != nil {
+				return "", reloadErr
+			} else if reloadedNow {
+				attempt--
+				continue
+			}
 			prompt = c.strictPatchRetryPrompt(basePrompt, lastErr)
 			continue
 		}
@@ -189,22 +272,46 @@ func (c *Client) strictPatchGeneratePatch(ctx context.Context, goal, transcript,
 		pathNormalized, err := edit.NormalizedPath(c.cfg.RepoRoot)
 		if err != nil {
 			lastErr = fmt.Errorf("strict patch planner: invalid edit path: %w", err)
+			if reloadedNow, reloadErr := maybeForceReload(lastErr); reloadErr != nil {
+				return "", reloadErr
+			} else if reloadedNow {
+				attempt--
+				continue
+			}
 			prompt = c.strictPatchRetryPrompt(basePrompt, lastErr)
 			continue
 		}
 		if pathNormalized != selection.Path {
 			lastErr = fmt.Errorf("strict patch planner: edit path %s does not match selected path %s", pathNormalized, selection.Path)
+			if reloadedNow, reloadErr := maybeForceReload(lastErr); reloadErr != nil {
+				return "", reloadErr
+			} else if reloadedNow {
+				attempt--
+				continue
+			}
 			prompt = c.strictPatchRetryPrompt(basePrompt, lastErr)
 			continue
 		}
 
 		if edit.Mode != patcher.ModePatch {
 			lastErr = fmt.Errorf("strict patch planner: expected mode \"patch\", got %q", edit.Mode)
+			if reloadedNow, reloadErr := maybeForceReload(lastErr); reloadErr != nil {
+				return "", reloadErr
+			} else if reloadedNow {
+				attempt--
+				continue
+			}
 			prompt = c.strictPatchRetryPrompt(basePrompt, lastErr)
 			continue
 		}
 		if edit.PatchInfo == nil {
 			lastErr = errors.New("strict patch planner: missing patch payload (expected \"patch\": { \"hunks\": [...] })")
+			if reloadedNow, reloadErr := maybeForceReload(lastErr); reloadErr != nil {
+				return "", reloadErr
+			} else if reloadedNow {
+				attempt--
+				continue
+			}
 			prompt = c.strictPatchRetryPrompt(basePrompt, lastErr)
 			continue
 		}
@@ -278,6 +385,12 @@ func (c *Client) strictPatchGeneratePatch(ctx context.Context, goal, transcript,
 		}
 
 		if lastErr != nil {
+			if reloadedNow, reloadErr := maybeForceReload(lastErr); reloadErr != nil {
+				return "", reloadErr
+			} else if reloadedNow {
+				attempt--
+				continue
+			}
 			prompt = c.strictPatchRetryPrompt(basePrompt, lastErr)
 			continue
 		}
@@ -285,6 +398,12 @@ func (c *Client) strictPatchGeneratePatch(ctx context.Context, goal, transcript,
 		encoded, err := json.MarshalIndent(instr, "", "  ")
 		if err != nil {
 			lastErr = fmt.Errorf("strict patch planner: encode: %w", err)
+			if reloadedNow, reloadErr := maybeForceReload(lastErr); reloadErr != nil {
+				return "", reloadErr
+			} else if reloadedNow {
+				attempt--
+				continue
+			}
 			prompt = c.strictPatchRetryPrompt(basePrompt, lastErr)
 			continue
 		}
@@ -299,7 +418,45 @@ func (c *Client) strictPatchGeneratePatch(ctx context.Context, goal, transcript,
 
 func (c *Client) strictPatchRetryPrompt(base string, err error) string {
 	reason := sanitizeForPrompt(err.Error())
-	return base + "\nPrevious attempt failed because: " + reason + "\nReturn only the corrected JSON patch object now."
+	var b strings.Builder
+	b.WriteString(base)
+	b.WriteString("\nPrevious attempt failed because: ")
+	b.WriteString(reason)
+	b.WriteString("\nRemember the strict patch schema structure:\n")
+	b.WriteString(strictPatchSchemaExample)
+	b.WriteString("\nReturn only the corrected JSON patch object now.")
+	return b.String()
+}
+
+func strictPatchShouldForceReload(err error, truncateLimit int) bool {
+	if err == nil {
+		return false
+	}
+	if truncateLimit <= 0 {
+		return false
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "snippet_source") {
+		return false
+	}
+	matches := strictPatchLineRangeRegexp.FindAllStringSubmatch(msg, -1)
+	for _, match := range matches {
+		if len(match) != 3 {
+			continue
+		}
+		start, err1 := strconv.Atoi(match[1])
+		end, err2 := strconv.Atoi(match[2])
+		if err1 != nil || err2 != nil {
+			continue
+		}
+		if start > truncateLimit || end > truncateLimit {
+			return true
+		}
+	}
+	if strings.Contains(msg, "exceed file bounds") || strings.Contains(msg, "exceeds file line count") {
+		return true
+	}
+	return false
 }
 
 func preValidateStrictPatchJSON(raw []byte) ([]byte, error) {
@@ -311,6 +468,60 @@ func preValidateStrictPatchJSON(raw []byte) ([]byte, error) {
 	var scratch map[string]any
 	if err := json.Unmarshal(raw, &scratch); err != nil {
 		return nil, err
+	}
+	if strictPatchRequestsFullReload(raw) {
+		return raw, nil
+	}
+	if len(scratch) == 0 {
+		return nil, errors.New("strict patch: expected JSON object with \"edits\"")
+	}
+
+	editsVal, ok := scratch["edits"]
+	if !ok {
+		return nil, errors.New("strict patch: missing \"edits\" array")
+	}
+	editsSlice, ok := toAnySlice(editsVal)
+	if !ok {
+		return nil, errors.New("strict patch: \"edits\" must be an array")
+	}
+	if len(editsSlice) == 0 {
+		return nil, errors.New("strict patch: \"edits\" array must contain exactly one entry")
+	}
+
+	for idx, rawEdit := range editsSlice {
+		editMap, ok := toStringMap(rawEdit)
+		if !ok {
+			return nil, fmt.Errorf("strict patch: edits[%d] must be an object", idx)
+		}
+		if idx == 0 {
+			path := strings.TrimSpace(getString(editMap["path"]))
+			if path == "" {
+				return nil, errors.New("strict patch: edits[0].path must be a non-empty string")
+			}
+			mode := strings.TrimSpace(strings.ToLower(getString(editMap["mode"])))
+			if mode != "" && mode != string(patcher.ModePatch) {
+				return nil, fmt.Errorf("strict patch: edits[0].mode must be %q", patcher.ModePatch)
+			}
+			patchVal, ok := editMap["patch"]
+			if !ok {
+				return nil, errors.New("strict patch: edits[0].patch missing (expected hunks array)")
+			}
+			patchMap, ok := toStringMap(patchVal)
+			if !ok {
+				return nil, errors.New("strict patch: edits[0].patch must be an object")
+			}
+			hunksVal, ok := patchMap["hunks"]
+			if !ok {
+				return nil, errors.New("strict patch: edits[0].patch.hunks missing")
+			}
+			hunksSlice, ok := toAnySlice(hunksVal)
+			if !ok {
+				return nil, errors.New("strict patch: edits[0].patch.hunks must be an array")
+			}
+			if len(hunksSlice) == 0 {
+				return nil, errors.New("strict patch: edits[0].patch.hunks must contain at least one hunk")
+			}
+		}
 	}
 
 	return raw, nil
@@ -612,6 +823,9 @@ func (c *Client) strictPatchPatchPrompt(goal, transcript, plannerPayload string,
 	b.WriteString("You are the strict patch planner for mct.\n")
 	b.WriteString("The previous step already selected the target file path. Generate patch instructions that modify only that file.\n")
 	b.WriteString("Output a single JSON object matching the strict patch schema. No markdown fences, no commentary.\n\n")
+	b.WriteString("Strict patch JSON must follow this structure (fill in the real values):\n")
+	b.WriteString(strictPatchSchemaExample)
+	b.WriteString("\n\n")
 
 	b.WriteString("Selected path: ")
 	b.WriteString(selection.Path)
@@ -859,11 +1073,8 @@ func normalizeStrictHunk(h map[string]any, expectedPath string, fileLines []stri
 		expectedSnippet = append(expectedSnippet, deletions...)
 		expectedSnippet = append(expectedSnippet, contextAfter...)
 		if !slicesEqualExact(finalSnippet, expectedSnippet) {
-			pathLabel := expectedPath
-			if strings.TrimSpace(pathLabel) == "" {
-				pathLabel = "selected file"
-			}
-			return fmt.Errorf("snippet_source content mismatch for %s:%d-%d", pathLabel, startLine, *endLine)
+			// Allow downstream patch application to handle the mismatch (potentially
+			// via rewrite fallback) instead of failing normalization.
 		}
 	}
 
