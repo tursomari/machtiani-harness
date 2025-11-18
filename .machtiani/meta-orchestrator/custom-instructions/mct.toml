@@ -4,7 +4,7 @@
 [[tasks]]
 step = 1
 title = "Create an issue for the engineering team"
-description = "Create an issue for the engineering team. Do not make any code changes or patches."
+description = "Create an issue for the engineering team. It should be detailed plan with citing specific file paths and lines numbers. Do not make any code changes or patches."
 shell_agent = false
 patch_mode = false
 
