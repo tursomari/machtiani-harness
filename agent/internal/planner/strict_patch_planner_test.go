@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -78,7 +79,15 @@ func TestRunStrictPatchFlowLoadsFileSnapshot(t *testing.T) {
 }`
 			return response, nil
 		default:
-			t.Fatalf("unexpected chat invocation %d", call)
+			marker := "Previous attempt failed because: "
+			reason := "<unknown>"
+			if idx := strings.LastIndex(prompt, marker); idx >= 0 {
+				reason = prompt[idx+len(marker):]
+				if nl := strings.IndexByte(reason, '\n'); nl >= 0 {
+					reason = reason[:nl]
+				}
+			}
+			t.Fatalf("unexpected chat invocation %d, reason: %q", call, reason)
 			return "", nil
 		}
 	}
@@ -245,6 +254,102 @@ func TestStrictPatchNormalizationHandlesOldNewText(t *testing.T) {
 		t.Fatalf("deletions = %#v, want %#v", got, want)
 	}
 	if got, want := h.Additions, []string{"Bravo!!!"}; !slicesEqual(got, want) {
+		t.Fatalf("additions = %#v, want %#v", got, want)
+	}
+}
+
+func TestStrictPatchRequestsFullReloadTriggersRetry(t *testing.T) {
+	repoRoot := t.TempDir()
+	relPath := "big.txt"
+	var builder strings.Builder
+	for i := 1; i <= strictPatchMaxFileLines+20; i++ {
+		fmt.Fprintf(&builder, "Line %d\n", i)
+	}
+	if err := os.WriteFile(filepath.Join(repoRoot, relPath), []byte(builder.String()), 0o644); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+
+	client := NewClient(ClientConfig{RepoRoot: repoRoot})
+	var mu sync.Mutex
+	call := 0
+	client.chatFn = func(_ context.Context, prompt string) (string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		call++
+		switch call {
+		case 1:
+			return `{"path":"big.txt","reason":"Large file edit"}`, nil
+		case 2:
+			if !strings.Contains(prompt, "... (20 additional line(s) truncated)") {
+				t.Fatalf("expected truncated prompt, got %q", prompt)
+			}
+			if strings.Contains(prompt, "801 | Line 801") {
+				t.Fatalf("truncated prompt should not include line 801: %q", prompt)
+			}
+			return `{"request_full_reload": true}`, nil
+		case 3:
+			if strings.Contains(prompt, "... (20 additional line(s) truncated)") {
+				t.Fatalf("full reload prompt should not be truncated: %q", prompt)
+			}
+			if !strings.Contains(prompt, "801 | Line 801") {
+				t.Fatalf("full reload prompt missing extended context: %q", prompt)
+			}
+			return `{
+	  "metadata": {"description": "Adjust tail line"},
+	  "edits": [
+	    {
+	      "path": "big.txt",
+	      "mode": "patch",
+	      "patch": {
+	        "hunks": [
+	          {
+	            "context_before": ["Line 804"],
+	            "deletions": ["Line 805"],
+	            "additions": ["Line 805 updated"],
+	            "context_after": ["Line 806"],
+	            "snippet_source": {"start_line": 805, "end_line": 806}
+	          }
+	        ]
+	      }
+	    }
+	  ]
+}`, nil
+		default:
+			t.Fatalf("unexpected chat invocation %d", call)
+			return "", nil
+		}
+	}
+
+	payload, err := client.runStrictPatchFlow(context.Background(), "goal", "transcript", 1, 5, "")
+	if err != nil {
+		t.Fatalf("runStrictPatchFlow error: %v", err)
+	}
+	if call != 3 {
+		t.Fatalf("expected 3 chat invocations, got %d", call)
+	}
+
+	var instr patcher.Instructions
+	if err := json.Unmarshal([]byte(payload), &instr); err != nil {
+		t.Fatalf("decode returned payload: %v", err)
+	}
+	if len(instr.Edits) != 1 {
+		t.Fatalf("expected one edit, got %d", len(instr.Edits))
+	}
+	ed := instr.Edits[0]
+	if ed.PatchInfo == nil || len(ed.PatchInfo.Hunks) != 1 {
+		t.Fatalf("expected single hunk, got %#v", ed.PatchInfo)
+	}
+	h := ed.PatchInfo.Hunks[0]
+	if h.SnippetSource == nil {
+		t.Fatalf("snippet source must be populated")
+	}
+	if h.SnippetSource.StartLine != 803 || h.SnippetSource.EndLine != 805 {
+		t.Fatalf("snippet source lines mismatch: %#v", h.SnippetSource)
+	}
+	if got, want := h.Deletions, []string{"Line 805"}; !slicesEqual(got, want) {
+		t.Fatalf("deletions = %#v, want %#v", got, want)
+	}
+	if got, want := h.Additions, []string{"Line 805 updated"}; !slicesEqual(got, want) {
 		t.Fatalf("additions = %#v, want %#v", got, want)
 	}
 }

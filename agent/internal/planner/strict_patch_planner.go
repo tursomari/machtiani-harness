@@ -48,7 +48,7 @@ func (c *Client) runStrictPatchFlow(ctx context.Context, goal, transcript string
 		return "", err
 	}
 
-	numbered, truncated := formatFileWithLineNumbers(fileContent)
+	numbered, truncated := formatFileWithLineNumbers(fileContent, strictPatchMaxFileLines)
 	patchJSON, err := c.strictPatchGeneratePatch(ctx, goal, transcript, plannerPayload, selection, fileContent, numbered, exists, truncated, step, maxSteps)
 	if err != nil {
 		return "", err
@@ -104,9 +104,15 @@ func (c *Client) strictPatchSelectPath(ctx context.Context, goal, transcript, pl
 }
 
 func (c *Client) strictPatchGeneratePatch(ctx context.Context, goal, transcript, plannerPayload string, selection strictPatchPathSelection, fileContent, numberedContent string, exists, truncated bool, step, maxSteps int) (string, error) {
-	basePrompt := c.strictPatchPatchPrompt(goal, transcript, plannerPayload, selection, numberedContent, exists, truncated)
+	currentFileContent := fileContent
+	currentNumberedContent := numberedContent
+	currentExists := exists
+	currentTruncated := truncated
+
+	basePrompt := c.strictPatchPatchPrompt(goal, transcript, plannerPayload, selection, currentNumberedContent, currentExists, currentTruncated)
 	prompt := basePrompt
 	var lastErr error
+	reloaded := false
 
 	for attempt := 0; attempt < strictPatchMaxPatchAttempts; attempt++ {
 		resp, err := c.callStrictPatchLLM(ctx, "planner.strict_patch_patch", prompt, step, maxSteps)
@@ -132,7 +138,34 @@ func (c *Client) strictPatchGeneratePatch(ctx context.Context, goal, transcript,
 			continue
 		}
 
-		normalizedJSON, err := c.normalizeStrictPatchJSON(sanitizedJSON, selection.Path, fileContent)
+		if strictPatchRequestsFullReload(sanitizedJSON) {
+			if !currentTruncated {
+				lastErr = errors.New("strict patch payload requested full reload despite full context")
+				prompt = c.strictPatchRetryPrompt(basePrompt, lastErr)
+				continue
+			}
+			if reloaded {
+				lastErr = errors.New("strict patch payload requested full reload multiple times")
+				prompt = c.strictPatchRetryPrompt(basePrompt, lastErr)
+				continue
+			}
+
+			freshContent, freshExists, readErr := c.readRepoFile(selection.Path)
+			if readErr != nil {
+				return "", readErr
+			}
+			currentFileContent = freshContent
+			currentExists = freshExists
+			currentNumberedContent, currentTruncated = formatFileWithLineNumbers(currentFileContent, 0)
+			basePrompt = c.strictPatchPatchPrompt(goal, transcript, plannerPayload, selection, currentNumberedContent, currentExists, currentTruncated)
+			prompt = basePrompt
+			reloaded = true
+			lastErr = nil
+			attempt--
+			continue
+		}
+
+		normalizedJSON, err := c.normalizeStrictPatchJSON(sanitizedJSON, selection.Path, currentFileContent)
 		if err != nil {
 			lastErr = fmt.Errorf("strict patch payload normalize: %w", err)
 			prompt = c.strictPatchRetryPrompt(basePrompt, lastErr)
@@ -281,6 +314,40 @@ func preValidateStrictPatchJSON(raw []byte) ([]byte, error) {
 	}
 
 	return raw, nil
+}
+
+func strictPatchRequestsFullReload(raw []byte) bool {
+	if len(raw) == 0 {
+		return false
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return false
+	}
+
+	val, ok := payload["request_full_reload"]
+	if !ok {
+		return false
+	}
+
+	switch v := val.(type) {
+	case bool:
+		return v
+	case string:
+		s := strings.TrimSpace(strings.ToLower(v))
+		return s == "true" || s == "1" || s == "yes"
+	case float64:
+		return v != 0
+	case json.Number:
+		i64, err := v.Int64()
+		if err != nil {
+			return false
+		}
+		return i64 != 0
+	default:
+		return false
+	}
 }
 
 func sanitizeStrictPatchJSONStringLiterals(input []byte) ([]byte, bool) {
@@ -563,15 +630,16 @@ func (c *Client) strictPatchPatchPrompt(goal, transcript, plannerPayload string,
 		b.WriteString("Note: file display truncated after ")
 		b.WriteString(strconv.Itoa(strictPatchMaxFileLines))
 		b.WriteString(" lines—reload the file before patching if more context is required.\n")
+		b.WriteString("If hunk lines (e.g., start_line/end_line near or beyond 800) are truncated, MUST respond with JSON field {\"request_full_reload\": true} instead of guessing—do NOT proceed with incomplete data, as it will cause content mismatches.\n")
 	}
 	b.WriteString("\n")
 
 	b.WriteString("Patch requirements:\n")
 	b.WriteString("- Produce exactly one edit with mode \"patch\" targeting the selected path.\n")
 	b.WriteString("- Each hunk must include snippet_source {start_line, end_line} for the original content.\n")
-	b.WriteString("- Provide context_before/context_after plus additions/deletions; newline-separated strings are fine—we will split them.\n")
+	b.WriteString("- Provide context_before/context_after plus additions/deletions; newline-separated strings are fine—we will split them. For multi-hunk patches, assume prior hunks' effects are unapplied—base snippet_source start_line/end_line solely on the initial file content shown. Do NOT shift later hunks' line numbers to account for earlier insertions (cumulative offsets are applied during hunk execution).\n")
 	b.WriteString("- Convenience fields like old_text/new_text or replacement are accepted; we normalize them into strict patch hunks.\n")
-	b.WriteString("- snippet_source start/end must reference the original lines shown below (use the numeric prefixes).\n")
+	b.WriteString("- snippet_source start/end must reference the original lines shown below (use the numeric prefixes). Extract context_before/context_after exactly as-is from contiguous visible lines around each hunk—do not hallucinate, summarize, or infer. If lines are missing due to truncation, respond with {\"request_full_reload\": true}.\n")
 	b.WriteString("- Keep hunks tightly scoped. If inserting, set old_count=0 and snippet_source end_line = start_line - 1.\n")
 	b.WriteString("- Do not introduce additional edits or mutate other files.\n")
 	b.WriteString("- Populate metadata.description with a short summary.\n\n")
@@ -1119,7 +1187,7 @@ func (c *Client) readRepoFile(rel string) (string, bool, error) {
 	return string(data), true, nil
 }
 
-func formatFileWithLineNumbers(content string) (string, bool) {
+func formatFileWithLineNumbers(content string, maxLines int) (string, bool) {
 	normalized := strings.ReplaceAll(content, "\r\n", "\n")
 	normalized = strings.ReplaceAll(normalized, "\r", "\n")
 	lines := strings.Split(normalized, "\n")
@@ -1136,8 +1204,8 @@ func formatFileWithLineNumbers(content string) (string, bool) {
 
 	limit := lineCount
 	truncated := false
-	if limit > strictPatchMaxFileLines {
-		limit = strictPatchMaxFileLines
+	if maxLines > 0 && limit > maxLines {
+		limit = maxLines
 		truncated = true
 	}
 
