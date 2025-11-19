@@ -48,6 +48,7 @@ type plannerProgressTracker struct {
 	successFiles     []string
 	applied          int
 	forceRepatchHint bool
+	pendingReview    *planner.PendingReview
 }
 
 func newPlannerProgressTracker(existing *PlannerProgressState) *plannerProgressTracker {
@@ -56,6 +57,9 @@ func newPlannerProgressTracker(existing *PlannerProgressState) *plannerProgressT
 		return tracker
 	}
 	tracker.applied = existing.AppliedPatches
+	if existing.PendingReview != nil {
+		tracker.pendingReview = existing.PendingReview.Clone()
+	}
 	for _, raw := range existing.SuccessFiles {
 		norm := normalizePlannerPath(raw)
 		if norm == "" {
@@ -121,17 +125,65 @@ func (p *plannerProgressTracker) successList() []string {
 	return append([]string(nil), p.successFiles...)
 }
 
+func (p *plannerProgressTracker) hasPendingReview() bool {
+	if p == nil {
+		return false
+	}
+	return p.pendingReview != nil
+}
+
+func (p *plannerProgressTracker) pendingReviewInfo() *planner.PendingReview {
+	if p == nil || p.pendingReview == nil {
+		return nil
+	}
+	return p.pendingReview
+}
+
+func (p *plannerProgressTracker) beginPendingReview(review *planner.PendingReview) {
+	if p == nil {
+		return
+	}
+	if review == nil {
+		p.pendingReview = nil
+		return
+	}
+	p.pendingReview = review.Clone()
+}
+
+func (p *plannerProgressTracker) commitPendingReview() *planner.PendingReview {
+	if p == nil || p.pendingReview == nil {
+		return nil
+	}
+	reviewCopy := p.pendingReview.Clone()
+	p.recordSuccess(p.pendingReview.Files)
+	p.pendingReview = nil
+	return reviewCopy
+}
+
+func (p *plannerProgressTracker) discardPendingReview() *planner.PendingReview {
+	if p == nil || p.pendingReview == nil {
+		return nil
+	}
+	reviewCopy := p.pendingReview.Clone()
+	p.pendingReview = nil
+	return reviewCopy
+}
+
 func (p *plannerProgressTracker) toState() *PlannerProgressState {
 	if p == nil {
 		return nil
 	}
-	if p.applied == 0 && len(p.successFiles) == 0 {
+	if p.applied == 0 && len(p.successFiles) == 0 && p.pendingReview == nil {
 		return nil
 	}
-	return &PlannerProgressState{
+	state := &PlannerProgressState{
 		SuccessFiles:   append([]string(nil), p.successFiles...),
 		AppliedPatches: p.applied,
 	}
+	if p.pendingReview != nil {
+		state.PendingReview = p.pendingReview.Clone()
+	}
+	return state
 }
 
 func (p *plannerProgressTracker) snapshot() planner.Progress {
@@ -144,6 +196,7 @@ func (p *plannerProgressTracker) snapshot() planner.Progress {
 		SuccessFiles:        p.successList(),
 		AppliedPatches:      p.appliedCount(),
 		ForceRepatchExample: hint,
+		PendingReview:       p.pendingReview.Clone(),
 	}
 }
 
@@ -852,6 +905,23 @@ func Run(ctx context.Context, opts Options) Result {
 			excerpt := trajectory.MakeTextExcerpt(question, trajectoryWriter.ExcerptLen())
 			turnInfo = trajectory.MergeExcerptWithPrefix(turnInfo, excerpt, "planner_question")
 		}
+		pendingReview := plannerProgress.pendingReviewInfo()
+		if plannerProgress.hasPendingReview() && decision != planner.DecisionAccept && decision != planner.DecisionReject {
+			errUnexpected := fmt.Errorf("pending patch review requires accept or reject, got %s", decision)
+			fmt.Fprintln(os.Stderr, "Planner error:", errUnexpected)
+			sessionErr = errUnexpected
+			finishTurn(sessTelemetry, turn, turnDecision, "error", turnInfo, errUnexpected)
+			turnsCompleted = userTurnCounter
+			return Result{ExitCode: 1, Err: errUnexpected}
+		}
+		if !plannerProgress.hasPendingReview() && (decision == planner.DecisionAccept || decision == planner.DecisionReject) {
+			errUnexpected := errors.New("planner returned accept/reject without a pending patch review")
+			fmt.Fprintln(os.Stderr, "Planner error:", errUnexpected)
+			sessionErr = errUnexpected
+			finishTurn(sessTelemetry, turn, turnDecision, "error", turnInfo, errUnexpected)
+			turnsCompleted = userTurnCounter
+			return Result{ExitCode: 1, Err: errUnexpected}
+		}
 
 		if decision == planner.DecisionFinalize {
 			ctx, cancelF := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
@@ -917,6 +987,107 @@ func Run(ctx context.Context, opts Options) Result {
 		}
 
 		switch decision {
+		case planner.DecisionAccept:
+			review := pendingReview
+			if review == nil {
+				errUnexpected := errors.New("no pending patch review to accept")
+				fmt.Fprintln(os.Stderr, "Planner error:", errUnexpected)
+				sessionErr = errUnexpected
+				finishTurn(sessTelemetry, turn, turnDecision, "error", turnInfo, errUnexpected)
+				turnsCompleted = userTurnCounter
+				return Result{ExitCode: 1, Err: errUnexpected}
+			}
+			note := strings.TrimSpace(question)
+			accepted := plannerProgress.commitPendingReview()
+			userTurnCounter++
+			turnsCompleted = userTurnCounter
+			turnInfo["planner_pending_review"] = false
+			turnInfo["patch_review_pending"] = false
+			turnInfo["planner_applied_patches"] = plannerProgress.appliedCount()
+			turnInfo["planner_success_file_count"] = len(plannerProgress.successList())
+			turnInfo["planner_review_action"] = "accept"
+			turnInfo["patch_finalize_pending"] = false
+			if accepted != nil {
+				turnInfo["patch_review_sequence"] = accepted.Sequence
+				if accepted.Description != "" {
+					turnInfo["patch_review_description"] = accepted.Description
+				}
+				if len(accepted.Files) > 0 {
+					turnInfo["patch_review_files"] = append([]string(nil), accepted.Files...)
+				}
+			}
+			if note != "" {
+				turnInfo["planner_review_note"] = note
+			}
+			if accepted != nil {
+				display.Notify(fmt.Sprintf("Patch %d accepted%s", accepted.Sequence, formatOptionalSuffix(accepted.Description)))
+			}
+			finishTurn(sessTelemetry, turn, turnDecision, "success", turnInfo, nil)
+			if userTurnCounter >= cfg.maxSteps {
+				goto Finalize
+			}
+			continue
+
+		case planner.DecisionReject:
+			review := pendingReview
+			if review == nil {
+				errUnexpected := errors.New("no pending patch review to reject")
+				fmt.Fprintln(os.Stderr, "Planner error:", errUnexpected)
+				sessionErr = errUnexpected
+				finishTurn(sessTelemetry, turn, turnDecision, "error", turnInfo, errUnexpected)
+				turnsCompleted = userTurnCounter
+				return Result{ExitCode: 1, Err: errUnexpected}
+			}
+			note := strings.TrimSpace(question)
+			undoRequired := !cfg.dryRun && strings.TrimSpace(review.ReversePatchPath) != ""
+			if undoRequired && pRunner == nil {
+				err := errors.New("patch runner unavailable for undo")
+				fmt.Fprintln(os.Stderr, "Patch undo error:", err)
+				sessionErr = err
+				finishTurn(sessTelemetry, turn, turnDecision, "error", turnInfo, err)
+				turnsCompleted = userTurnCounter
+				return Result{ExitCode: 1, Err: err}
+			}
+			if undoRequired {
+				if err := pRunner.Undo(review.ReversePatchPath); err != nil {
+					fmt.Fprintln(os.Stderr, "Patch undo error:", err)
+					sessionErr = err
+					finishTurn(sessTelemetry, turn, turnDecision, "error", turnInfo, err)
+					turnsCompleted = userTurnCounter
+					return Result{ExitCode: 1, Err: err}
+				}
+			}
+			discarded := plannerProgress.discardPendingReview()
+			userTurnCounter++
+			turnsCompleted = userTurnCounter
+			turnInfo["planner_pending_review"] = false
+			turnInfo["planner_review_action"] = "reject"
+			turnInfo["planner_applied_patches"] = plannerProgress.appliedCount()
+			turnInfo["planner_success_file_count"] = len(plannerProgress.successList())
+			turnInfo["patch_finalize_pending"] = false
+			turnInfo["patch_review_pending"] = false
+			if undoRequired {
+				turnInfo["patch_undo_applied"] = true
+				turnInfo["patch_reverse_path"] = review.ReversePatchPath
+			}
+			if discarded != nil {
+				turnInfo["patch_review_sequence"] = discarded.Sequence
+				if discarded.Description != "" {
+					turnInfo["patch_review_description"] = discarded.Description
+				}
+				if len(discarded.Files) > 0 {
+					turnInfo["patch_review_files"] = append([]string(nil), discarded.Files...)
+				}
+			}
+			if note != "" {
+				turnInfo["planner_review_note"] = note
+			}
+			if discarded != nil {
+				display.Notify(fmt.Sprintf("Patch %d rejected%s", discarded.Sequence, formatOptionalSuffix(discarded.Description)))
+			}
+			finishTurn(sessTelemetry, turn, turnDecision, "success", turnInfo, nil)
+			continue
+
 		case planner.DecisionAsk:
 			if question == "" {
 				errEmpty := errors.New("planner returned empty question")
@@ -1460,15 +1631,29 @@ func Run(ctx context.Context, opts Options) Result {
 			}
 			stream.Complete(ans)
 			lastAnswer = ans
-			plannerProgress.recordSuccess(result.FilesModified)
+			review := &planner.PendingReview{
+				PatchPath:        strings.TrimSpace(result.PatchPath),
+				ReversePatchPath: strings.TrimSpace(result.ReversePatchPath),
+				Description:      successDesc,
+				Files:            append([]string(nil), result.FilesModified...),
+				Sequence:         result.Sequence,
+				Insertions:       result.Insertions,
+				Deletions:        result.Deletions,
+			}
+			plannerProgress.beginPendingReview(review)
 			plannerSuccessFiles := plannerProgress.successList()
 			turnInfo["planner_applied_patches"] = plannerProgress.appliedCount()
 			turnInfo["planner_success_file_count"] = len(plannerSuccessFiles)
+			turnInfo["planner_pending_review"] = true
+			turnInfo["patch_review_pending"] = true
+			if review != nil && len(review.Files) > 0 {
+				turnInfo["planner_pending_review_files"] = append([]string(nil), review.Files...)
+			}
 			extra := map[string]any{}
 			if trajectoryWriter != nil {
 				extra = trajectory.MergeExcerptWithPrefix(extra, trajectory.MakeTextExcerpt(ans, trajectoryWriter.ExcerptLen()), "answer")
 			}
-			extra["patch_path"] = strings.TrimSpace(result.PatchPath)
+			extra["patch_path"] = review.PatchPath
 			extra["patch_sequence"] = result.Sequence
 			extra["patch_insertions"] = result.Insertions
 			extra["patch_deletions"] = result.Deletions
@@ -1486,12 +1671,14 @@ func Run(ctx context.Context, opts Options) Result {
 			}
 			extra["patch_workspace_applied"] = result.AppliedInWorkspace
 			extra["patch_applied"] = result.AppliedInWorkspace
-			extra["patch_finalize_pending"] = false
-			if strings.TrimSpace(result.ReversePatchPath) != "" {
-				extra["patch_reverse_path"] = strings.TrimSpace(result.ReversePatchPath)
+			extra["patch_finalize_pending"] = true
+			if review.ReversePatchPath != "" {
+				extra["patch_reverse_path"] = review.ReversePatchPath
 			}
+			extra["patch_review_pending"] = true
+			extra["patch_review_sequence"] = result.Sequence
 			patchOutcome("success", nil, extra)
-			if shouldFinalizeAfterPatch {
+			if shouldFinalizeAfterPatch && !plannerProgress.hasPendingReview() {
 				goto Finalize
 			}
 			continue
@@ -1788,6 +1975,14 @@ func finishTurn(sessTelemetry *sessionTelemetry, tt *turnTelemetry, decision str
 		return
 	}
 	sessTelemetry.EndTurn(tt, decision, status, info, err)
+}
+
+func formatOptionalSuffix(desc string) string {
+	desc = strings.TrimSpace(desc)
+	if desc == "" {
+		return ""
+	}
+	return fmt.Sprintf(" (%s)", desc)
 }
 
 func analyzeTagFormat(answer string, retrieved []string) (map[string]any, []string) {

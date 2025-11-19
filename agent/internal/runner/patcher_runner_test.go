@@ -213,6 +213,109 @@ func TestApplyPerformsAtomicVerification(t *testing.T) {
 	}
 }
 
+func TestUndoRevertsPatch(t *testing.T) {
+	repoRoot := t.TempDir()
+	runGit(t, repoRoot, "init")
+	runGit(t, repoRoot, "config", "user.email", "test@example.com")
+	runGit(t, repoRoot, "config", "user.name", "Test User")
+	if err := os.WriteFile(filepath.Join(repoRoot, "foo.txt"), []byte("old\n"), 0o644); err != nil {
+		t.Fatalf("write base file: %v", err)
+	}
+	runGit(t, repoRoot, "add", "foo.txt")
+	runGit(t, repoRoot, "commit", "-m", "init")
+
+	patchDir := t.TempDir()
+	patchPath := filepath.Join(patchDir, "change.patch")
+	patchContent := "diff --git a/foo.txt b/foo.txt\n" +
+		"index 1111111..2222222 100644\n" +
+		"--- a/foo.txt\n" +
+		"+++ b/foo.txt\n" +
+		"@@ -1 +1 @@\n" +
+		"-old\n" +
+		"+new\n"
+	if err := os.WriteFile(patchPath, []byte(patchContent), 0o644); err != nil {
+		t.Fatalf("write patch: %v", err)
+	}
+
+	stub := &stubService{
+		result: &mctpatcher.PatchResult{
+			PatchPath:          patchPath,
+			Sequence:           1,
+			FilesModified:      []string{"foo.txt"},
+			AppliedInWorkspace: true,
+		},
+	}
+	stub.hook = func(params mctpatcher.PatchParams) error {
+		if params.WorkspaceRoot == "" {
+			return nil
+		}
+		return gitops.ApplyPatchInDir(params.WorkspaceRoot, patchPath, false)
+	}
+
+	var workspaceDir string
+	pr := &PatcherRunner{
+		Enabled:   true,
+		SessionID: "sess",
+		Service:   stub,
+		RepoRoot:  repoRoot,
+		WorkspaceFactory: func(root string) (string, func(), error) {
+			ws, cleanup, err := patchersvc.CreateWorkspace(root)
+			if err == nil {
+				workspaceDir = ws
+			}
+			return ws, cleanup, err
+		},
+		MirrorFactory: func() (string, func(), error) {
+			return t.TempDir(), func() {}, nil
+		},
+	}
+	if err := pr.Resolve(); err != nil {
+		t.Fatalf("resolve error: %v", err)
+	}
+	if workspaceDir == "" {
+		t.Fatalf("workspace not initialized")
+	}
+
+	instr := mctpatcher.Instructions{Edits: []mctpatcher.Edit{{Path: "foo.txt", Mode: mctpatcher.ModeRewrite, NewContent: "new\n"}}}
+	res, err := pr.Apply(context.Background(), instr, false)
+	if err != nil {
+		t.Fatalf("apply error: %v", err)
+	}
+	if res.ReversePatchPath == "" {
+		t.Fatalf("expected reverse patch path")
+	}
+
+	content, err := os.ReadFile(filepath.Join(repoRoot, "foo.txt"))
+	if err != nil {
+		t.Fatalf("read repo file: %v", err)
+	}
+	if string(content) != "new\n" {
+		t.Fatalf("expected repo to contain new content before undo, got %q", content)
+	}
+
+	if err := pr.Undo(res.ReversePatchPath); err != nil {
+		t.Fatalf("undo error: %v", err)
+	}
+
+	content, err = os.ReadFile(filepath.Join(repoRoot, "foo.txt"))
+	if err != nil {
+		t.Fatalf("read repo file: %v", err)
+	}
+	if string(content) != "old\n" {
+		t.Fatalf("expected repo to revert to original content, got %q", content)
+	}
+	workspaceContent, err := os.ReadFile(filepath.Join(workspaceDir, "foo.txt"))
+	if err != nil {
+		t.Fatalf("read workspace file: %v", err)
+	}
+	if string(workspaceContent) != "old\n" {
+		t.Fatalf("expected workspace to revert to original content, got %q", workspaceContent)
+	}
+	if len(pr.applied) == 0 || pr.applied[0].Finalized {
+		t.Fatalf("expected patch log to reflect undo")
+	}
+}
+
 func TestApplyAtomicVerificationAllowsBaselineDirty(t *testing.T) {
 	repoRoot := t.TempDir()
 	runGit(t, repoRoot, "init")

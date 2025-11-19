@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
+	"github.com/tursomari/machtiani/agent/internal/planner"
 )
 
 func TestSaveLoadSessionStateRoundTrip(t *testing.T) {
@@ -21,6 +22,13 @@ func TestSaveLoadSessionStateRoundTrip(t *testing.T) {
 		PlannerProgress: &PlannerProgressState{
 			SuccessFiles:   []string{"README.md", "db/migrations/20240101.sql"},
 			AppliedPatches: 2,
+			PendingReview: &planner.PendingReview{
+				PatchPath:        "patch.diff",
+				ReversePatchPath: "patch.diff.reverse",
+				Description:      "Update migration",
+				Files:            []string{"db/migrations/20240101.sql"},
+				Sequence:         3,
+			},
 		},
 	}
 
@@ -74,6 +82,15 @@ func TestSaveLoadSessionStateRoundTrip(t *testing.T) {
 	}
 	if loaded.PlannerProgress.AppliedPatches != state.PlannerProgress.AppliedPatches {
 		t.Fatalf("unexpected applied patches: got %d want %d", loaded.PlannerProgress.AppliedPatches, state.PlannerProgress.AppliedPatches)
+	}
+	if loaded.PlannerProgress.PendingReview == nil {
+		t.Fatalf("expected pending review to round-trip")
+	}
+	if loaded.PlannerProgress.PendingReview.Description != state.PlannerProgress.PendingReview.Description {
+		t.Fatalf("unexpected pending review description: got %q want %q", loaded.PlannerProgress.PendingReview.Description, state.PlannerProgress.PendingReview.Description)
+	}
+	if len(loaded.PlannerProgress.PendingReview.Files) != len(state.PlannerProgress.PendingReview.Files) {
+		t.Fatalf("unexpected pending review files length")
 	}
 
 	path := filepath.Join(dir, sessionStateFile)

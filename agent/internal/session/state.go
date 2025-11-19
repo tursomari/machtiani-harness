@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
+	"github.com/tursomari/machtiani/agent/internal/planner"
 )
 
 const sessionStateFile = "session-state.json"
@@ -32,8 +33,9 @@ type SessionState struct {
 // PlannerProgressState captures planner-visible progress across turns so
 // retries avoid re-targeting files that already patched successfully.
 type PlannerProgressState struct {
-	SuccessFiles   []string `json:"success_files,omitempty"`
-	AppliedPatches int      `json:"applied_patches,omitempty"`
+	SuccessFiles   []string               `json:"success_files,omitempty"`
+	AppliedPatches int                    `json:"applied_patches,omitempty"`
+	PendingReview  *planner.PendingReview `json:"pending_review,omitempty"`
 }
 
 func (p *PlannerProgressState) Clone() *PlannerProgressState {
@@ -43,6 +45,9 @@ func (p *PlannerProgressState) Clone() *PlannerProgressState {
 	clone := &PlannerProgressState{AppliedPatches: p.AppliedPatches}
 	if len(p.SuccessFiles) > 0 {
 		clone.SuccessFiles = append([]string(nil), p.SuccessFiles...)
+	}
+	if p.PendingReview != nil {
+		clone.PendingReview = p.PendingReview.Clone()
 	}
 	return clone
 }

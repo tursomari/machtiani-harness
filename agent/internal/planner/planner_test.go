@@ -1,6 +1,7 @@
 package planner
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -74,6 +75,31 @@ func TestParseDecisionVariants(t *testing.T) {
 			}
 			if preamble != "" {
 				t.Fatalf("expected empty preamble, got %q", preamble)
+			}
+		})
+	}
+}
+
+func TestParseDecisionAcceptReject(t *testing.T) {
+	tests := []struct {
+		name            string
+		resp            string
+		want            Decision
+		expectRemainder bool
+	}{
+		{name: "AcceptSimple", resp: "Decision: accept\nReason: looks good", want: DecisionAccept, expectRemainder: true},
+		{name: "RejectMixedCase", resp: "Decision: ReJeCt\nReason: undo", want: DecisionReject, expectRemainder: true},
+		{name: "AcceptWithExtra", resp: "Decision: I accept this patch", want: DecisionAccept, expectRemainder: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dec, remainder, _ := parseDecision(tt.resp, true)
+			if dec != tt.want {
+				t.Fatalf("parseDecision(%q) = %q, want %q", tt.resp, dec, tt.want)
+			}
+			if (remainder != "") != tt.expectRemainder {
+				t.Fatalf("expected remainder presence %v, got %q", tt.expectRemainder, remainder)
 			}
 		})
 	}
@@ -171,6 +197,47 @@ func TestParseDecisionAllowsShortPreamble(t *testing.T) {
 	}
 	if !strings.Contains(remainder, "safeguards changes") {
 		t.Fatalf("expected remainder to include question, got %q", remainder)
+	}
+}
+
+func TestReviewPromptIncludesReviewDetails(t *testing.T) {
+	client := NewClient(ClientConfig{})
+	client.UpdateProgress(Progress{
+		PendingReview: &PendingReview{
+			Description:      "Fix login handler",
+			PatchPath:        "/tmp/patch.diff",
+			ReversePatchPath: "/tmp/patch.diff.reverse",
+			Files:            []string{"pkg/auth/login.go"},
+			Sequence:         4,
+			Insertions:       12,
+			Deletions:        3,
+		},
+	})
+	prompt := client.reviewPrompt("Improve auth flow", "Transcript body", 3, 6)
+	for _, substr := range []string{"Accept", "Reject", "Undo patch file", "pkg/auth/login.go", "Patch sequence: 4"} {
+		if !strings.Contains(prompt, substr) {
+			t.Fatalf("expected review prompt to contain %q, got %q", substr, prompt)
+		}
+	}
+}
+
+func TestPlanReviewModeParsesAccept(t *testing.T) {
+	client := NewClient(ClientConfig{})
+	client.chatFn = func(context.Context, string) (string, error) {
+		return "Decision: accept\nReason: ship it", nil
+	}
+	client.UpdateProgress(Progress{
+		PendingReview: &PendingReview{PatchPath: "patch.diff"},
+	})
+	dec, reason, err := client.Plan(context.Background(), "goal", "transcript", 2, 5)
+	if err != nil {
+		t.Fatalf("Plan returned error: %v", err)
+	}
+	if dec != DecisionAccept {
+		t.Fatalf("expected DecisionAccept, got %q", dec)
+	}
+	if !strings.Contains(reason, "Reason:") {
+		t.Fatalf("expected reason to include explanation, got %q", reason)
 	}
 }
 

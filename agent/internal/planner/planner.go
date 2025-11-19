@@ -19,6 +19,8 @@ const (
 	DecisionAsk      Decision = "ask"
 	DecisionPatch    Decision = "patch"
 	DecisionFinalize Decision = "finalize"
+	DecisionAccept   Decision = "accept"
+	DecisionReject   Decision = "reject"
 )
 
 const (
@@ -48,6 +50,31 @@ type Progress struct {
 	SuccessFiles        []string
 	AppliedPatches      int
 	ForceRepatchExample bool
+	PendingReview       *PendingReview
+}
+
+// PendingReview captures metadata about the most recent patch awaiting
+// acceptance so the planner can decide whether to keep or undo it.
+type PendingReview struct {
+	PatchPath        string   `json:"patch_path"`
+	ReversePatchPath string   `json:"reverse_patch_path"`
+	Description      string   `json:"description,omitempty"`
+	Files            []string `json:"files,omitempty"`
+	Sequence         int      `json:"sequence,omitempty"`
+	Insertions       int      `json:"insertions,omitempty"`
+	Deletions        int      `json:"deletions,omitempty"`
+}
+
+// Clone returns a deep copy of the pending review metadata.
+func (p *PendingReview) Clone() *PendingReview {
+	if p == nil {
+		return nil
+	}
+	clone := *p
+	if len(p.Files) > 0 {
+		clone.Files = append([]string(nil), p.Files...)
+	}
+	return &clone
 }
 
 func NewClient(cfg ClientConfig) *Client {
@@ -81,7 +108,12 @@ func (c *Client) UpdateProgress(progress Progress) {
 	if applied < 0 {
 		applied = 0
 	}
-	c.progress = Progress{SuccessFiles: files, AppliedPatches: applied, ForceRepatchExample: progress.ForceRepatchExample}
+	c.progress = Progress{
+		SuccessFiles:        files,
+		AppliedPatches:      applied,
+		ForceRepatchExample: progress.ForceRepatchExample,
+		PendingReview:       progress.PendingReview.Clone(),
+	}
 }
 
 func normalizeProgressPath(path string) string {
@@ -119,7 +151,13 @@ func (c *Client) Plan(ctx context.Context, goal string, transcript string, step,
 		}
 		return DecisionFinalize, "", nil
 	}
-	prompt := c.planPrompt(goal, transcript, step, maxSteps)
+	reviewMode := c.progress.PendingReview != nil
+	var prompt string
+	if reviewMode {
+		prompt = c.reviewPrompt(goal, transcript, step, maxSteps)
+	} else {
+		prompt = c.planPrompt(goal, transcript, step, maxSteps)
+	}
 	w, hasWriter := trajectory.FromContext(ctx)
 	parentSpan, _ := trajectory.ParentSpanID(ctx)
 	chatCtx := ctx
@@ -214,6 +252,12 @@ func (c *Client) Plan(ctx context.Context, goal string, transcript string, step,
 	}
 	if dec == "" {
 		return "", "", errors.New("planner: unable to parse decision from model output")
+	}
+	if reviewMode {
+		if dec != DecisionAccept && dec != DecisionReject {
+			return "", "", errors.New("planner: expected accept or reject decision for pending patch review")
+		}
+		return dec, q, nil
 	}
 	if dec == DecisionPatch && c.cfg.StrictPatchMode {
 		strictPayload, err := c.runStrictPatchFlow(ctx, goal, transcript, step, maxSteps, q)
@@ -437,6 +481,53 @@ func (c *Client) planPrompt(goal string, transcript string, step, maxSteps int) 
 	return b.String()
 }
 
+func (c *Client) reviewPrompt(goal string, transcript string, step, maxSteps int) string {
+	review := c.progress.PendingReview
+	var b strings.Builder
+	b.WriteString("A patch was just applied. Decide whether to keep it or undo it.\n")
+	b.WriteString("Accept keeps the changes. Reject applies the undo patch to revert them.\n")
+	b.WriteString("Begin your reply immediately with `Decision:`—no leading commentary.\n")
+	b.WriteString("Allowed values: accept or reject (case-insensitive).\n")
+	b.WriteString("Optionally add a second line formatted `Reason: <brief justification>` if you need to explain your choice.\n\n")
+	if review != nil {
+		if desc := strings.TrimSpace(review.Description); desc != "" {
+			b.WriteString("Patch summary: " + sanitizeForPrompt(desc) + "\n")
+		}
+		if review.Sequence > 0 {
+			fmt.Fprintf(&b, "Patch sequence: %d\n", review.Sequence)
+		}
+		if review.Insertions != 0 || review.Deletions != 0 {
+			fmt.Fprintf(&b, "Diff stats: +%d / -%d\n", review.Insertions, review.Deletions)
+		}
+		if len(review.Files) > 0 {
+			b.WriteString("Files modified:\n")
+			appendSuccessFilesList(&b, review.Files, len(review.Files))
+		}
+		if path := strings.TrimSpace(review.PatchPath); path != "" {
+			fmt.Fprintf(&b, "Patch file: %s\n", path)
+		}
+		if rpath := strings.TrimSpace(review.ReversePatchPath); rpath != "" {
+			fmt.Fprintf(&b, "Undo patch file: %s\n", rpath)
+		}
+		b.WriteString("Use the transcript diff above and any diagnostics to inform your choice.\n\n")
+	}
+
+	appendSuccessFilesSection(&b, c.progress.SuccessFiles, "Files already accepted earlier this session (prefer new work unless necessary):\n", successFilesPromptLimit)
+	if c.progress.AppliedPatches > 0 {
+		fmt.Fprintf(&b, "Strict patch successes so far: %d. Accepting keeps them; rejecting reverts the latest patch only.\n\n", c.progress.AppliedPatches)
+	}
+	if strings.TrimSpace(goal) != "" {
+		b.WriteString("Goal:\n")
+		b.WriteString(goal + "\n\n")
+	}
+	if strings.TrimSpace(transcript) != "" {
+		b.WriteString("Transcript:\n")
+		b.WriteString(transcript + "\n\n")
+	}
+	b.WriteString(fmt.Sprintf("Step %d of %d. Decide.\n", step, maxSteps))
+	return b.String()
+}
+
 func (c *Client) appendForceRepatchExample(b *strings.Builder) {
 	if !c.progress.ForceRepatchExample {
 		return
@@ -534,12 +625,16 @@ func parseDecision(resp string, patchEnabled bool) (Decision, string, string) {
 	}
 	decisionStr := strings.TrimSpace(strings.ToLower(parts[1]))
 	var decision Decision
-	switch decisionStr {
-	case string(DecisionAsk), "question", "instruction", "message":
+	switch {
+	case strings.Contains(decisionStr, string(DecisionAccept)):
+		decision = DecisionAccept
+	case strings.Contains(decisionStr, string(DecisionReject)):
+		decision = DecisionReject
+	case decisionStr == string(DecisionAsk) || decisionStr == "question" || decisionStr == "instruction" || decisionStr == "message":
 		decision = DecisionAsk
-	case string(DecisionPatch):
+	case decisionStr == string(DecisionPatch):
 		decision = DecisionPatch
-	case string(DecisionFinalize):
+	case decisionStr == string(DecisionFinalize):
 		decision = DecisionFinalize
 	default:
 		return "", "", ""

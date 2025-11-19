@@ -217,6 +217,49 @@ func (p *PatcherRunner) Apply(ctx context.Context, instr mctpatcher.Instructions
 	return result, nil
 }
 
+// Undo reverts a previously generated patch using its reverse patch file, keeping
+// both the workspace mirror and repo worktree in sync.
+func (p *PatcherRunner) Undo(reversePatchPath string) error {
+	if !p.Enabled {
+		return errors.New("patch runner disabled")
+	}
+	reversePath := strings.TrimSpace(reversePatchPath)
+	if p.DryRun || reversePath == "" {
+		if !p.DryRun && reversePath == "" {
+			return errors.New("undo requires a reverse patch path")
+		}
+		return nil
+	}
+	if p.repoAbs == "" || p.workspaceDir == "" {
+		return errors.New("patch runner not resolved; cannot undo patch")
+	}
+	var entry *patchLogEntry
+	for i := range p.applied {
+		if strings.TrimSpace(p.applied[i].ReversePath) == reversePath {
+			entry = &p.applied[i]
+			break
+		}
+	}
+	forwardPath := ""
+	if entry != nil {
+		forwardPath = strings.TrimSpace(entry.Path)
+	}
+	if err := gitops.ReversePatchInDir(p.repoAbs, reversePath, p.Verbose); err != nil {
+		return fmt.Errorf("undo patch in repo: %w", err)
+	}
+	if err := gitops.ReversePatchInDir(p.workspaceDir, reversePath, p.Verbose); err != nil {
+		if forwardPath != "" {
+			_ = gitops.ApplyPatchInDir(p.repoAbs, forwardPath, p.Verbose)
+			_ = gitops.ApplyPatchInDir(p.workspaceDir, forwardPath, p.Verbose)
+		}
+		return fmt.Errorf("undo patch in workspace: %w", err)
+	}
+	if entry != nil {
+		entry.Finalized = false
+	}
+	return nil
+}
+
 // Close releases any temporary resources allocated for the patch session.
 func (p *PatcherRunner) Close() {
 	if p.PersistTmpData {

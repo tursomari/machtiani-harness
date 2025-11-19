@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/tursomari/machtiani/agent/internal/llm"
+	"github.com/tursomari/machtiani/agent/internal/planner"
 )
 
 func TestInstructionsToTasksFromTomlDocument(t *testing.T) {
@@ -110,7 +111,11 @@ func TestUpdateMetaPlanProgress(t *testing.T) {
 	if err := persistMetaPlan(sessionID, plan); err != nil {
 		t.Fatalf("persistMetaPlan error: %v", err)
 	}
-	progress := &PlannerProgressState{SuccessFiles: []string{"LICENSE", "docs/README.md"}, AppliedPatches: 2}
+	progress := &PlannerProgressState{
+		SuccessFiles:   []string{"LICENSE", "docs/README.md"},
+		AppliedPatches: 2,
+		PendingReview:  &planner.PendingReview{PatchPath: "patch.diff"},
+	}
 	if err := UpdateMetaPlanProgress(sessionID, progress); err != nil {
 		t.Fatalf("UpdateMetaPlanProgress error: %v", err)
 	}
@@ -131,6 +136,9 @@ func TestUpdateMetaPlanProgress(t *testing.T) {
 		if loaded.PlannerProgress.SuccessFiles[i] != want {
 			t.Fatalf("success file[%d] = %q, want %q", i, loaded.PlannerProgress.SuccessFiles[i], want)
 		}
+	}
+	if loaded.PlannerProgress.PendingReview == nil || loaded.PlannerProgress.PendingReview.PatchPath != "patch.diff" {
+		t.Fatalf("expected pending review to persist")
 	}
 }
 
