@@ -32,6 +32,7 @@ import (
 const (
 	backgroundQuestionPrompt = "Give me the background of the project."
 	backgroundFallbackAnswer = "No project documentation has been created yet. Please run `mct-agent sync` to generate initial project documentation."
+	patchTranscriptDiffLimit = 12000
 )
 
 var (
@@ -1409,22 +1410,6 @@ func Run(ctx context.Context, opts Options) Result {
 			if desc := strings.TrimSpace(result.Description); desc != "" {
 				patchTurnLabel = "Patcher: " + desc
 			}
-			resMap := map[string]any{
-				"patch_path":        result.PatchPath,
-				"sequence":          result.Sequence,
-				"applies":           true,
-				"files_modified":    result.FilesModified,
-				"insertions":        result.Insertions,
-				"deletions":         result.Deletions,
-				"workspace_applied": result.AppliedInWorkspace,
-			}
-			if strings.TrimSpace(result.Description) != "" {
-				resMap["description"] = strings.TrimSpace(result.Description)
-			}
-			if strings.TrimSpace(result.ReversePatchPath) != "" {
-				resMap["reverse_patch_path"] = strings.TrimSpace(result.ReversePatchPath)
-			}
-			resJSON, _ := json.Marshal(resMap)
 			workspaceStatus := "workspace_applied: no"
 			if result.AppliedInWorkspace {
 				workspaceStatus = "workspace_applied: yes"
@@ -1451,38 +1436,23 @@ func Run(ctx context.Context, opts Options) Result {
 			if len(result.FilesModified) > 0 {
 				filesSummary = strings.Join(result.FilesModified, ", ")
 			}
-			workspaceSummary := "applied to workspace"
-			switch {
-			case cfg.dryRun:
-				workspaceSummary = "dry-run (not applied)"
-			case cfg.patchNoApply:
-				workspaceSummary = "skipped workspace apply (--patch-no-apply)"
-			case !result.AppliedInWorkspace:
-				workspaceSummary = "not applied to workspace"
-			}
 			patchTurnLabel = "Patcher: [SUCCESS] " + strings.TrimSpace(successDesc)
-			ansDetail := fmt.Sprintf(
-				"Patch created: %s\nsequence: %d\nfiles_modified: %v\ninsertions: %d\ndeletions: %d\n%s\n%s\nreverse_patch_path: %s\n\ninput:\n%s\n\noutput:\n%s\n",
-				result.PatchPath,
-				result.Sequence,
-				strings.Join(result.FilesModified, ", "),
-				result.Insertions,
-				result.Deletions,
-				workspaceStatus,
-				finalizeStatus,
-				strings.TrimSpace(result.ReversePatchPath),
-				trimTo(string(jsonBytes), 1000),
-				trimTo(string(resJSON), 1000),
-			)
-			ansSummary := fmt.Sprintf(
-				"✅ STRICT PATCH SUCCESS: %s\nUpdated files: %s\nChanges: +%d / -%d (%s)",
-				strings.TrimSpace(successDesc),
-				filesSummary,
-				result.Insertions,
-				result.Deletions,
-				workspaceSummary,
-			)
-			ans := ansSummary + "\n\n" + ansDetail
+			diffText, diffErr := patchDiffForTranscript(result.PatchPath, patchTranscriptDiffLimit)
+			if diffErr != nil {
+				diffText = fmt.Sprintf(
+					"Patch diff unavailable (%v)\nPatch path: %s\nSequence: %d\nFiles modified: %s\ninsertions: %d\ndeletions: %d\n%s\n%s\nreverse_patch_path: %s",
+					diffErr,
+					strings.TrimSpace(result.PatchPath),
+					result.Sequence,
+					filesSummary,
+					result.Insertions,
+					result.Deletions,
+					workspaceStatus,
+					finalizeStatus,
+					strings.TrimSpace(result.ReversePatchPath),
+				)
+			}
+			ans := diffText
 			if err := tr.WriteTurn(step, patchTurnLabel, "", nil, ans, "patch"); err != nil {
 				fmt.Fprintln(os.Stderr, "Transcript write error:", err)
 				sessionErr = err
@@ -1642,19 +1612,6 @@ Finalize:
 							if result.Description != "" {
 								qline = "Patcher: pre-finalize - " + strings.TrimSpace(result.Description)
 							}
-							resMap := map[string]any{
-								"patch_path":        result.PatchPath,
-								"sequence":          result.Sequence,
-								"applies":           true,
-								"files_modified":    result.FilesModified,
-								"insertions":        result.Insertions,
-								"deletions":         result.Deletions,
-								"workspace_applied": result.AppliedInWorkspace,
-							}
-							if strings.TrimSpace(result.Description) != "" {
-								resMap["description"] = strings.TrimSpace(result.Description)
-							}
-							resJSON, _ := json.Marshal(resMap)
 							workspaceStatus := "workspace_applied: no"
 							if result.AppliedInWorkspace {
 								workspaceStatus = "workspace_applied: yes"
@@ -1668,21 +1625,27 @@ Finalize:
 							case cfg.patchNoApply:
 								finalizeStatus = "finalize: skipped (--patch-no-apply)"
 							}
-							ans := fmt.Sprintf(
-								"Patch created: %s\nsequence: %d\nfiles_modified: %v\ninsertions: %d\ndeletions: %d\n%s\n%s\n\ninput:\n%s\n\noutput:\n%s\n",
-								result.PatchPath,
-								result.Sequence,
-								strings.Join(result.FilesModified, ", "),
-								result.Insertions,
-								result.Deletions,
-								workspaceStatus,
-								finalizeStatus,
-								trimTo(string(jsonBytes), 1000),
-								trimTo(string(resJSON), 1000),
-							)
-							_ = tr.WriteTurn(step, qline, "", nil, ans, "patch")
+							diffText, diffErr := patchDiffForTranscript(result.PatchPath, patchTranscriptDiffLimit)
+							if diffErr != nil {
+								filesSummary := "(none)"
+								if len(result.FilesModified) > 0 {
+									filesSummary = strings.Join(result.FilesModified, ", ")
+								}
+								diffText = fmt.Sprintf(
+									"Patch diff unavailable (%v)\nPatch path: %s\nSequence: %d\nFiles modified: %s\ninsertions: %d\ndeletions: %d\n%s\n%s",
+									diffErr,
+									strings.TrimSpace(result.PatchPath),
+									result.Sequence,
+									filesSummary,
+									result.Insertions,
+									result.Deletions,
+									workspaceStatus,
+									finalizeStatus,
+								)
+							}
+							_ = tr.WriteTurn(step, qline, "", nil, diffText, "patch")
 							if stream != nil {
-								stream.Complete(ans)
+								stream.Complete(diffText)
 							}
 							handled = true
 						}

@@ -2,6 +2,7 @@ package session
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	mctpatcher "github.com/tursomari/machtiani/agent/internal/mct/patcher"
@@ -116,4 +117,32 @@ func indentMultiline(prefix, text string) string {
 		lines[i] = prefix + line
 	}
 	return strings.Join(lines, "\n")
+}
+
+func patchDiffForTranscript(path string, limit int) (string, error) {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return "", fmt.Errorf("patch path empty")
+	}
+	data, err := os.ReadFile(trimmed)
+	if err != nil {
+		return "", err
+	}
+	diff := strings.TrimSpace(string(data))
+	if diff == "" {
+		return "(empty patch diff)", nil
+	}
+	truncated := false
+	if limit > 0 && len(diff) > limit {
+		truncated = true
+		if limit <= 3 {
+			diff = diff[:limit]
+		} else {
+			diff = diff[:limit-3] + "..."
+		}
+	}
+	if truncated {
+		diff += "\n\n[diff truncated]"
+	}
+	return diff, nil
 }
