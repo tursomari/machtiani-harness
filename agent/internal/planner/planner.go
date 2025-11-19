@@ -484,11 +484,11 @@ func (c *Client) planPrompt(goal string, transcript string, step, maxSteps int) 
 func (c *Client) reviewPrompt(goal string, transcript string, step, maxSteps int) string {
 	review := c.progress.PendingReview
 	var b strings.Builder
-	b.WriteString("A patch was just applied. Decide whether to keep it or undo it.\n")
+	b.WriteString("A patch was just applied. Meticulously examine the diff to ensure every change is correct and remains within the stated goals—reject if you spot unnecessary additions, removals, or other scope creep.\n")
 	b.WriteString("Accept keeps the changes. Reject applies the undo patch to revert them.\n")
 	b.WriteString("Begin your reply immediately with `Decision:`—no leading commentary.\n")
 	b.WriteString("Allowed values: accept or reject (case-insensitive).\n")
-	b.WriteString("Optionally add a second line formatted `Reason: <brief justification>` if you need to explain your choice.\n\n")
+	b.WriteString("Always include a second line formatted `Reason: <brief justification>` that cites why the changes are correct and in-scope (even if you accept).\n\n")
 	if review != nil {
 		if desc := strings.TrimSpace(review.Description); desc != "" {
 			b.WriteString("Patch summary: " + sanitizeForPrompt(desc) + "\n")
