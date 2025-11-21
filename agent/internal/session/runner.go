@@ -51,6 +51,12 @@ type plannerProgressTracker struct {
 	pendingReview    *planner.PendingReview
 }
 
+type patchTranscriptDraft struct {
+	Step        int
+	Description string
+	Answer      string
+}
+
 func newPlannerProgressTracker(existing *PlannerProgressState) *plannerProgressTracker {
 	tracker := &plannerProgressTracker{successSet: make(map[string]struct{})}
 	if existing == nil {
@@ -305,9 +311,17 @@ func Run(ctx context.Context, opts Options) Result {
 	lastAnswer := ""
 	retrieved := []string{}
 	userTurnCounter := turnsCompleted
+	var pendingPatchDraft *patchTranscriptDraft
 	plannerProgress := newPlannerProgressTracker(nil)
 	if loadedState != nil {
 		plannerProgress = newPlannerProgressTracker(loadedState.PlannerProgress)
+		if loadedState.PendingPatchTurn != nil {
+			pendingPatchDraft = &patchTranscriptDraft{
+				Step:        loadedState.PendingPatchTurn.Step,
+				Description: strings.TrimSpace(loadedState.PendingPatchTurn.Description),
+				Answer:      loadedState.PendingPatchTurn.Answer,
+			}
+		}
 	}
 	interruptedResult := func(err error) Result {
 		interrupted = true
@@ -451,11 +465,53 @@ func Run(ctx context.Context, opts Options) Result {
 			return
 		}
 		state.PlannerProgress = plannerProgress.toState()
+		if pendingPatchDraft != nil {
+			state.PendingPatchTurn = &PendingPatchTurnState{
+				Step:        pendingPatchDraft.Step,
+				Description: pendingPatchDraft.Description,
+				Answer:      pendingPatchDraft.Answer,
+			}
+		} else {
+			state.PendingPatchTurn = nil
+		}
 		if state.PlannerProgress != nil {
 			if err := UpdateMetaPlanProgress(sessionID, state.PlannerProgress); err != nil && cfg.verbose {
 				fmt.Fprintf(os.Stderr, "Warning: failed to update meta plan progress for %s: %v\n", sessionID, err)
 			}
 		}
+	}
+	writePendingPatchTranscript := func(status string, decision string, note string, undo bool) error {
+		if pendingPatchDraft == nil {
+			return nil
+		}
+		desc := strings.TrimSpace(pendingPatchDraft.Description)
+		if desc == "" {
+			desc = "Patch applied"
+		}
+		question := fmt.Sprintf("Patcher: [%s] %s", status, desc)
+		summary := pendingPatchDraft.Answer
+		additional := []string{}
+		if trimmedNote := strings.TrimSpace(note); trimmedNote != "" {
+			additional = append(additional, "Planner review note: "+trimmedNote)
+		}
+		if undo {
+			additional = append(additional, "Planner applied reverse patch to undo the changes.")
+		}
+		if len(additional) > 0 {
+			summary = strings.TrimRight(summary, "\n")
+			if summary != "" {
+				summary += "\n\n"
+			}
+			summary += strings.Join(additional, "\n")
+		}
+		if err := tr.WriteTurn(pendingPatchDraft.Step, question, "", nil, summary, decision); err != nil {
+			return err
+		}
+		pendingPatchDraft = nil
+		if pendingState != nil {
+			pendingState.PendingPatchTurn = nil
+		}
+		return nil
 	}
 
 	tr, err := transcript.NewWithPath(cfg.transcriptFile, sessionID)
@@ -998,6 +1054,13 @@ func Run(ctx context.Context, opts Options) Result {
 				return Result{ExitCode: 1, Err: errUnexpected}
 			}
 			note := strings.TrimSpace(question)
+			if err := writePendingPatchTranscript("SUCCESS", "patch", note, false); err != nil {
+				fmt.Fprintln(os.Stderr, "Transcript write error:", err)
+				sessionErr = err
+				finishTurn(sessTelemetry, turn, turnDecision, "error", turnInfo, err)
+				turnsCompleted = userTurnCounter
+				return Result{ExitCode: 1, Err: err}
+			}
 			accepted := plannerProgress.commitPendingReview()
 			userTurnCounter++
 			turnsCompleted = userTurnCounter
@@ -1056,6 +1119,13 @@ func Run(ctx context.Context, opts Options) Result {
 					turnsCompleted = userTurnCounter
 					return Result{ExitCode: 1, Err: err}
 				}
+			}
+			if err := writePendingPatchTranscript("REJECTED", "patch", note, undoRequired); err != nil {
+				fmt.Fprintln(os.Stderr, "Transcript write error:", err)
+				sessionErr = err
+				finishTurn(sessTelemetry, turn, turnDecision, "error", turnInfo, err)
+				turnsCompleted = userTurnCounter
+				return Result{ExitCode: 1, Err: err}
 			}
 			discarded := plannerProgress.discardPendingReview()
 			userTurnCounter++
@@ -1604,11 +1674,12 @@ func Run(ctx context.Context, opts Options) Result {
 			if successDesc == "" {
 				successDesc = "Patch applied"
 			}
+			descTrimmed := strings.TrimSpace(successDesc)
 			filesSummary := "(none)"
 			if len(result.FilesModified) > 0 {
 				filesSummary = strings.Join(result.FilesModified, ", ")
 			}
-			patchTurnLabel = "Patcher: [SUCCESS] " + strings.TrimSpace(successDesc)
+			patchTurnLabel = "Patcher: [PATCH APPLIED] " + descTrimmed
 			diffText, diffErr := patchDiffForTranscript(result.PatchPath, patchTranscriptDiffLimit)
 			if diffErr != nil {
 				diffText = fmt.Sprintf(
@@ -1625,10 +1696,10 @@ func Run(ctx context.Context, opts Options) Result {
 				)
 			}
 			ans := diffText
-			if err := tr.WriteTurn(step, patchTurnLabel, "", nil, ans, "patch"); err != nil {
-				fmt.Fprintln(os.Stderr, "Transcript write error:", err)
-				sessionErr = err
-				return Result{ExitCode: 1, Err: err}
+			pendingPatchDraft = &patchTranscriptDraft{
+				Step:        step,
+				Description: descTrimmed,
+				Answer:      ans,
 			}
 			stream.Complete(ans)
 			lastAnswer = ans

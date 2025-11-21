@@ -30,6 +30,11 @@ func TestSaveLoadSessionStateRoundTrip(t *testing.T) {
 				Sequence:         3,
 			},
 		},
+		PendingPatchTurn: &PendingPatchTurnState{
+			Step:        4,
+			Description: "Update migration",
+			Answer:      "diff --git a/file b/file",
+		},
 	}
 
 	if err := SaveSessionState(state); err != nil {
@@ -91,6 +96,21 @@ func TestSaveLoadSessionStateRoundTrip(t *testing.T) {
 	}
 	if len(loaded.PlannerProgress.PendingReview.Files) != len(state.PlannerProgress.PendingReview.Files) {
 		t.Fatalf("unexpected pending review files length")
+	}
+	if state.PendingPatchTurn == nil {
+		t.Fatalf("test setup missing pending patch turn")
+	}
+	if loaded.PendingPatchTurn == nil {
+		t.Fatalf("expected pending patch turn to round-trip")
+	}
+	if loaded.PendingPatchTurn.Step != state.PendingPatchTurn.Step {
+		t.Fatalf("unexpected pending patch step: got %d want %d", loaded.PendingPatchTurn.Step, state.PendingPatchTurn.Step)
+	}
+	if loaded.PendingPatchTurn.Description != state.PendingPatchTurn.Description {
+		t.Fatalf("unexpected pending patch description: got %q want %q", loaded.PendingPatchTurn.Description, state.PendingPatchTurn.Description)
+	}
+	if loaded.PendingPatchTurn.Answer != state.PendingPatchTurn.Answer {
+		t.Fatalf("unexpected pending patch answer: got %q want %q", loaded.PendingPatchTurn.Answer, state.PendingPatchTurn.Answer)
 	}
 
 	path := filepath.Join(dir, sessionStateFile)
