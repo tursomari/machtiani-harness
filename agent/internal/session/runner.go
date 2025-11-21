@@ -32,7 +32,7 @@ import (
 const (
 	backgroundQuestionPrompt = "Give me the background of the project."
 	backgroundFallbackAnswer = "No project documentation has been created yet. Please run `mct-agent sync` to generate initial project documentation."
-	patchTranscriptDiffLimit = 12000
+	patchTranscriptDiffLimit = 0 // zero disables transcript diff truncation
 )
 
 var (
