@@ -501,6 +501,9 @@ func Run(ctx context.Context, opts Options) Result {
         }
         question := fmt.Sprintf("Patcher: %s%s", normalized, suffix)
         summary := pendingPatchDraft.Answer
+        if strings.ToLower(status) == "rejected" || strings.ToLower(status) == "reject" {
+            summary = ""
+        }
         additional := []string{}
         if trimmedNote := strings.TrimSpace(note); trimmedNote != "" {
             additional = append(additional, "Planner review note: "+trimmedNote)
