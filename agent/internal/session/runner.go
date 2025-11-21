@@ -1354,7 +1354,8 @@ func Run(ctx context.Context, opts Options) Result {
 					}
 				}
 			}
-			if skipAllSuccess && len(skipPaths) > 0 && !forceRepatch {
+			// Guard disabled to allow repatching files multiple times in a session.
+			if skipAllSuccess && len(skipPaths) > 0 && !forceRepatch && false {
 				skipMsg := fmt.Sprintf("Skipping patch because all target files were already updated earlier this session: %s. Reload the latest file contents before generating another patch.", strings.Join(skipPaths, ", "))
 				stream.Abort("patch skipped (already updated)")
 				_ = tr.WriteTurn(step, "Patcher: skip (already updated)", "", nil, skipMsg, "patch-error")
