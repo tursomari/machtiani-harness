@@ -1,0 +1,38 @@
+# Meta-orchestrator task configuration for coding workflows
+# Each task defines a discrete phase with optional agent mode configuration
+
+[[tasks]]
+step = 1
+title = "Investigate the problem."
+description = "Investigate the problem and diagnose the root cause(s)."
+shell_agent = false
+patch_mode = false
+
+[[tasks]]
+step = 2
+title = "Devise a solution."
+description = "Find a high-impact solution for the problem."
+shell_agent = false
+patch_mode = false
+
+[[tasks]]
+step = 3
+title = "Create a detailed Issue for the engineering team"
+description = "Create an Issue in markdown to remedy the problem for the engineering team. It should be detailed plan with citing specific file paths and lines numbers. Do not make any code changes or patches."
+shell_agent = false
+patch_mode = false
+
+[[tasks]]
+step = 4
+title = "Review the Issue"
+description = "Review the Issue for anything missing or wrong."
+shell_agent = false
+patch_mode = false
+
+[[tasks]]
+step = 5
+title = "Write Issue to file."
+description = "Write the completed Issue to the current directory in the format `<descriptive-title.md>`."
+shell_agent = false
+patch_mode = true
+
