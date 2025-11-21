@@ -14,8 +14,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/tursomari/machtiani/agent/internal/llm"
-	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
+    "github.com/tursomari/machtiani/agent/internal/llm"
+    "github.com/tursomari/machtiani/agent/internal/mct/artifacts"
+    mctsync "github.com/tursomari/machtiani/agent/internal/mct"
 	mctpatcher "github.com/tursomari/machtiani/agent/internal/mct/patcher"
 	promptsvc "github.com/tursomari/machtiani/agent/internal/mct/prompt"
 	"github.com/tursomari/machtiani/agent/internal/mct/readmesync"
@@ -480,39 +481,49 @@ func Run(ctx context.Context, opts Options) Result {
 			}
 		}
 	}
-	writePendingPatchTranscript := func(status string, decision string, note string, undo bool) error {
-		if pendingPatchDraft == nil {
-			return nil
-		}
-		desc := strings.TrimSpace(pendingPatchDraft.Description)
-		if desc == "" {
-			desc = "Patch applied"
-		}
-		question := fmt.Sprintf("Patcher: [%s] %s", status, desc)
-		summary := pendingPatchDraft.Answer
-		additional := []string{}
-		if trimmedNote := strings.TrimSpace(note); trimmedNote != "" {
-			additional = append(additional, "Planner review note: "+trimmedNote)
-		}
-		if undo {
-			additional = append(additional, "Planner applied reverse patch to undo the changes.")
-		}
-		if len(additional) > 0 {
-			summary = strings.TrimRight(summary, "\n")
-			if summary != "" {
-				summary += "\n\n"
-			}
-			summary += strings.Join(additional, "\n")
-		}
-		if err := tr.WriteTurn(pendingPatchDraft.Step, question, "", nil, summary, decision); err != nil {
-			return err
-		}
-		pendingPatchDraft = nil
-		if pendingState != nil {
-			pendingState.PendingPatchTurn = nil
-		}
-		return nil
-	}
+    writePendingPatchTranscript := func(status string, decision string, note string, undo bool) error {
+        if pendingPatchDraft == nil {
+            return nil
+        }
+        desc := strings.TrimSpace(pendingPatchDraft.Description)
+        if desc == "" {
+            desc = "Patch applied"
+        }
+        // Use a simple, final status label per request: "success" or "reject".
+        // Avoid emitting separate "apply" turns.
+        normalized := strings.ToLower(strings.TrimSpace(status))
+        if normalized != "success" && normalized != "reject" {
+            normalized = status
+        }
+        suffix := desc
+        if strings.TrimSpace(suffix) != "" {
+            suffix = " - " + strings.TrimSpace(suffix)
+        }
+        question := fmt.Sprintf("Patcher: %s%s", normalized, suffix)
+        summary := pendingPatchDraft.Answer
+        additional := []string{}
+        if trimmedNote := strings.TrimSpace(note); trimmedNote != "" {
+            additional = append(additional, "Planner review note: "+trimmedNote)
+        }
+        if undo {
+            additional = append(additional, "Planner applied reverse patch to undo the changes.")
+        }
+        if len(additional) > 0 {
+            summary = strings.TrimRight(summary, "\n")
+            if summary != "" {
+                summary += "\n\n"
+            }
+            summary += strings.Join(additional, "\n")
+        }
+        if err := tr.WriteTurn(pendingPatchDraft.Step, question, "", nil, summary, decision); err != nil {
+            return err
+        }
+        pendingPatchDraft = nil
+        if pendingState != nil {
+            pendingState.PendingPatchTurn = nil
+        }
+        return nil
+    }
 
 	tr, err := transcript.NewWithPath(cfg.transcriptFile, sessionID)
 	if err != nil {
@@ -848,11 +859,29 @@ func Run(ctx context.Context, opts Options) Result {
 			resumePrompt = ""
 			turnInfo["resume_prompt"] = true
 		} else {
-			pl.UpdateProgress(plannerProgress.snapshot())
-			planCtx, planCancel = makeTurnContext(rootCtx, cfg.timeoutPerTurn)
-			trFull := tr.Content()
-			planCtx = attachTrajectory(planCtx, trajectoryWriter, parentSpanID)
-			decision, question, perr = pl.Plan(planCtx, goal, trFull, step, cfg.maxSteps)
+            pl.UpdateProgress(plannerProgress.snapshot())
+            planCtx, planCancel = makeTurnContext(rootCtx, cfg.timeoutPerTurn)
+            trFull := tr.Content()
+            // If there is a pending patch diff awaiting review, append it to
+            // the planning context so the planner can decide accept/reject
+            // without adding an extra transcript turn.
+            if pendingPatchDraft != nil {
+                var b strings.Builder
+                b.WriteString(trFull)
+                b.WriteString("\n## Pending Patch Review\n\n")
+                // Mirror transcript structure tersely so the planner has
+                // consistent context shape.
+                line := "Patcher: apply - " + strings.TrimSpace(pendingPatchDraft.Description)
+                b.WriteString("Question:\n")
+                b.WriteString(line)
+                b.WriteString("\n\nAnswer:\n")
+                b.WriteString(strings.TrimSpace(pendingPatchDraft.Answer))
+                b.WriteString("\n\n")
+                b.WriteString("Planner decision: patch\n")
+                trFull = b.String()
+            }
+            planCtx = attachTrajectory(planCtx, trajectoryWriter, parentSpanID)
+            decision, question, perr = pl.Plan(planCtx, goal, trFull, step, cfg.maxSteps)
 		}
 		var planCtxErr error
 		if planCtx != nil {
@@ -1695,14 +1724,17 @@ func Run(ctx context.Context, opts Options) Result {
 					strings.TrimSpace(result.ReversePatchPath),
 				)
 			}
-			ans := diffText
-			pendingPatchDraft = &patchTranscriptDraft{
-				Step:        step,
-				Description: descTrimmed,
-				Answer:      ans,
-			}
-			stream.Complete(ans)
-			lastAnswer = ans
+            ans := diffText
+            // Defer transcript write until accept/reject so only one final
+            // patch turn is recorded (success or reject). Keep the diff in
+            // memory and surface it for the planner via augmented context.
+            pendingPatchDraft = &patchTranscriptDraft{
+                Step:        step,
+                Description: descTrimmed,
+                Answer:      ans,
+            }
+            stream.Complete(ans)
+            lastAnswer = ans
 			review := &planner.PendingReview{
 				PatchPath:        strings.TrimSpace(result.PatchPath),
 				ReversePatchPath: strings.TrimSpace(result.ReversePatchPath),
@@ -1712,6 +1744,13 @@ func Run(ctx context.Context, opts Options) Result {
 				Insertions:       result.Insertions,
 				Deletions:        result.Deletions,
 			}
+            if len(result.FilesModified) > 0 {
+                recordDiscoveryPending(sessionID, result.FilesModified, cfg.verbose)
+                // Also refresh the persistent discovery workspace immediately so
+                // consecutive patch decisions see updated files without waiting for
+                // the next file-discovery invocation.
+                _ = mctsync.RefreshSyncedWorkspace(sessionID, result.FilesModified, cfg.verbose)
+            }
 			plannerProgress.beginPendingReview(review)
 			plannerSuccessFiles := plannerProgress.successList()
 			turnInfo["planner_applied_patches"] = plannerProgress.appliedCount()
@@ -2185,4 +2224,50 @@ func normalizeTagPath(path string) string {
 	}
 	trimmed = strings.TrimPrefix(trimmed, "./")
 	return filepath.ToSlash(trimmed)
+}
+
+func recordDiscoveryPending(sessionID string, files []string, verbose bool) {
+	if len(files) == 0 || strings.TrimSpace(sessionID) == "" {
+		return
+	}
+	scratch, err := artifacts.SessionScratchDirectory(sessionID)
+	if err != nil {
+		if verbose {
+			fmt.Fprintf(os.Stderr, "[patcher] unable to resolve discovery scratch directory: %v\n", err)
+		}
+		return
+	}
+	dir := filepath.Join(scratch, "file-discovery")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		if verbose {
+			fmt.Fprintf(os.Stderr, "[patcher] unable to create discovery scratch directory: %v\n", err)
+		}
+		return
+	}
+	pendingPath := filepath.Join(dir, "pending.txt")
+	f, err := os.OpenFile(pendingPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		if verbose {
+			fmt.Fprintf(os.Stderr, "[patcher] unable to append discovery pending file: %v\n", err)
+		}
+		return
+	}
+	defer f.Close()
+	for _, rel := range files {
+		norm := strings.TrimSpace(rel)
+		if norm == "" {
+			continue
+		}
+		cleaned := filepath.Clean(norm)
+		if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") || strings.HasPrefix(cleaned, `..`+string(os.PathSeparator)) {
+			continue
+		}
+		canonical := filepath.ToSlash(cleaned)
+		if _, err := fmt.Fprintln(f, canonical); err != nil {
+			if verbose {
+				fmt.Fprintf(os.Stderr, "[patcher] unable to record pending file %s: %v\n", canonical, err)
+			}
+			return
+		}
+	}
 }

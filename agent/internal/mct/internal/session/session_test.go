@@ -64,3 +64,66 @@ func TestAddMessagePersistsFiles(t *testing.T) {
 		t.Fatalf("expected session JSON to contain Files exactly once, got %d occurrences", count)
 	}
 }
+
+func TestDiscoveryStatePendingNormalization(t *testing.T) {
+	tempHome := t.TempDir()
+	t.Setenv("HOME", tempHome)
+	t.Setenv("MACHTIANI_SESSION_ID", "discovery-session")
+	workspaceDir := filepath.Join(t.TempDir(), "workspace")
+
+	pending := []string{" ./foo/bar.go ", "foo/../foo/qux.txt", "dir\\sub\\file.txt", "../escape", "foo/bar.go"}
+	if err := AddPendingDiscoveryPaths(pending); err != nil {
+		t.Fatalf("AddPendingDiscoveryPaths: %v", err)
+	}
+
+	state, err := LoadDiscoveryState()
+	if err != nil {
+		t.Fatalf("LoadDiscoveryState: %v", err)
+	}
+	if state == nil {
+		t.Fatalf("expected discovery state to be initialized")
+	}
+
+	wantPending := []string{"dir/sub/file.txt", "foo/bar.go", "foo/qux.txt"}
+	if got := state.PendingPaths; len(got) != len(wantPending) {
+		t.Fatalf("unexpected pending paths length: got %d, want %d", len(got), len(wantPending))
+	}
+	for i, want := range wantPending {
+		if state.PendingPaths[i] != want {
+			t.Fatalf("pending[%d] = %q, want %q", i, state.PendingPaths[i], want)
+		}
+	}
+
+	_, err = UpdateDiscoveryState(func(st *FileDiscoveryState) error {
+		st.PendingPaths = nil
+		st.WorkspacePath = workspaceDir
+		st.Files = map[string]FileMeta{
+			"foo/bar.go": {Hash: "abc123", Size: 10, ModTime: 42, Tracked: true},
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("UpdateDiscoveryState: %v", err)
+	}
+
+	state, err = LoadDiscoveryState()
+	if err != nil {
+		t.Fatalf("LoadDiscoveryState after update: %v", err)
+	}
+	if state == nil {
+		t.Fatalf("expected discovery state after update")
+	}
+	if len(state.PendingPaths) != 0 {
+		t.Fatalf("expected pending paths cleared, got %v", state.PendingPaths)
+	}
+	if state.WorkspacePath != workspaceDir {
+		t.Fatalf("workspace path = %q, want %q", state.WorkspacePath, workspaceDir)
+	}
+	meta, ok := state.Files["foo/bar.go"]
+	if !ok {
+		t.Fatalf("expected metadata for foo/bar.go")
+	}
+	if !meta.Tracked || meta.Hash != "abc123" || meta.Size != 10 || meta.ModTime != 42 {
+		t.Fatalf("unexpected metadata: %+v", meta)
+	}
+}
