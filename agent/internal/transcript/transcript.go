@@ -47,7 +47,7 @@ func New(sessionID string) (*Transcript, error) {
 	if err := os.MkdirAll(chatDir, 0o755); err != nil {
 		return nil, err
 	}
-	path := filepath.Join(chatDir, "agent-transcript.md")
+	path := filepath.Join(chatDir, "agent-transcript.adoc")
 	f, err := os.Create(path)
 	if err != nil {
 		return nil, err
@@ -94,7 +94,7 @@ func (t *Transcript) SetTrajectory(w *trajectory.Writer) {
 }
 
 func (t *Transcript) WriteHeader(goal string, sessionID string, _ any) error {
-	s := fmt.Sprintf("# mct-agent Transcript\n\nSession: %s\n\n## Goal:\n\n%s\n\n", sessionID, goal)
+	s := fmt.Sprintf("= mct-agent Transcript\n\nSession: %s\n\n== Goal:\n\n%s\n\n", sessionID, goal)
 	t.mem.WriteString(s)
 	_, err := t.f.WriteString(s)
 	t.emit("header", map[string]any{
@@ -106,7 +106,7 @@ func (t *Transcript) WriteHeader(goal string, sessionID string, _ any) error {
 
 func (t *Transcript) WriteTurn(step int, question, savedPath string, retrieved []string, summary string, decision string) error {
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("\n## Turn %d\n\n", step))
+	b.WriteString(fmt.Sprintf("\n== Turn %d\n\n", step))
 	b.WriteString("Question:\n")
 	b.WriteString(question + "\n\n")
 	if savedPath != "" {
@@ -115,7 +115,7 @@ func (t *Transcript) WriteTurn(step int, question, savedPath string, retrieved [
 	if len(retrieved) > 0 {
 		b.WriteString("Retrieved File Paths:\n")
 		for _, p := range retrieved {
-			b.WriteString("- " + p + "\n")
+			b.WriteString("* " + p + "\n")
 		}
 		b.WriteString("\n")
 	}
@@ -143,7 +143,7 @@ func (t *Transcript) WriteFinal(answer string, step int, capped bool) error {
 	if capped {
 		note = " (reached max-steps cap)"
 	}
-	s := fmt.Sprintf("\n## Conclusion%s (after %d turn(s))\n\n%s\n", note, step, answer)
+	s := fmt.Sprintf("\n== Conclusion%s (after %d turn(s))\n\n%s\n", note, step, answer)
 	t.mem.WriteString(s)
 	_, err := t.f.WriteString(s)
 	t.emit("final", map[string]any{
@@ -159,7 +159,7 @@ func (t *Transcript) WritePatchValidation(step int, record PatchValidationRecord
 		return nil
 	}
 	var b strings.Builder
-	b.WriteString("\n### Patch Validation")
+	b.WriteString("\n=== Patch Validation")
 	if step > 0 {
 		b.WriteString(fmt.Sprintf(" (Turn %d)", step))
 	}
@@ -192,7 +192,7 @@ func (t *Transcript) WritePatchValidation(step int, record PatchValidationRecord
 	if len(record.Messages) > 0 {
 		b.WriteString("Messages:\n")
 		for _, msg := range record.Messages {
-			b.WriteString("- ")
+			b.WriteString("* ")
 			if msg.Severity != "" {
 				b.WriteString("[")
 				b.WriteString(msg.Severity)

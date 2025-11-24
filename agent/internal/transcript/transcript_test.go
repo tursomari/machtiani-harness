@@ -55,7 +55,7 @@ func TestTranscriptRestoreSeedsContent(t *testing.T) {
 	}
 	defer tr.Close()
 
-	existing := "# mct-agent Transcript\n\nSession: resume-sess\n\n## Goal:\n\nResume testing\n\n"
+	existing := "= mct-agent Transcript\n\nSession: resume-sess\n\n== Goal:\n\nResume testing\n\n"
 	if err := tr.Restore(existing); err != nil {
 		t.Fatalf("Restore returned error: %v", err)
 	}

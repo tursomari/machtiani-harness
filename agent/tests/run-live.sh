@@ -437,16 +437,16 @@ run_happy_case() {
     return 1
   fi
 
-  local transcript_path="$chat_dir/agent-transcript.md"
+  local transcript_path="$chat_dir/agent-transcript.adoc"
   if [[ ! -s "$transcript_path" ]]; then
     echo "Transcript missing or empty: $transcript_path" >&2
     return 1
   fi
 
-  cp -f "$transcript_path" "$out_dir/transcript-${session_id}.md"
+  cp -f "$transcript_path" "$out_dir/transcript-${session_id}.adoc"
 
   local turns
-  turns=$(awk 'BEGIN { c = 0 } /^## Turn / {
+  turns=$(awk 'BEGIN { c = 0 } /^== Turn / {
       if ($3 ~ /^[0-9]+$/ && ($3 + 0) > 0) {
         c++
       }
@@ -495,7 +495,7 @@ run_happy_case() {
     echo "Missing keywords: $case_id" >&2
     return 1
   fi
-  if [[ ! -s "$out_dir/transcript-${session_id}.md" ]]; then
+  if [[ ! -s "$out_dir/transcript-${session_id}.adoc" ]]; then
     echo "Missing transcript: $case_id" >&2
     return 1
   fi

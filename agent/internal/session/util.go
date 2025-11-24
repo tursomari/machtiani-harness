@@ -29,15 +29,15 @@ func trimTo(s string, n int) string {
 	return s[:n-3] + "..."
 }
 
-func countTurns(md string) int {
-	lines := strings.Split(md, "\n")
+func countTurns(doc string) int {
+	lines := strings.Split(doc, "\n")
 	count := 0
 	hasTurnZero := false
 	for _, l := range lines {
 		trimmed := strings.TrimSpace(l)
-		if strings.HasPrefix(trimmed, "## Turn ") {
+		if strings.HasPrefix(trimmed, "== Turn ") {
 			count++
-			if strings.HasPrefix(trimmed, "## Turn 0") {
+			if strings.HasPrefix(trimmed, "== Turn 0") {
 				hasTurnZero = true
 			}
 		}
@@ -72,7 +72,7 @@ func formatContentConflicts(conflicts []mctpatcher.ContentConflictDiagnostic) []
 	formatted := make([]string, 0, len(conflicts))
 	for _, conflict := range conflicts {
 		var b strings.Builder
-		header := fmt.Sprintf("- Edit[%d] %s: %s\n", conflict.EditIndex, strings.TrimSpace(conflict.Path), strings.TrimSpace(conflict.Reason))
+		header := fmt.Sprintf("* Edit[%d] %s: %s\n", conflict.EditIndex, strings.TrimSpace(conflict.Path), strings.TrimSpace(conflict.Reason))
 		b.WriteString(header)
 		for _, h := range conflict.HunkConflicts {
 			b.WriteString(fmt.Sprintf("  Hunk[%d] %s\n", h.HunkIndex, strings.TrimSpace(h.Reason)))

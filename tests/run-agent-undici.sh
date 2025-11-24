@@ -213,7 +213,7 @@ run_case() {
   local stderr_file="$case_dir/stderr.txt"
   local sync_stdout_file="$case_dir/sync-stdout.txt"
   local sync_stderr_file="$case_dir/sync-stderr.txt"
-  local transcript_file="$case_dir/agent-transcript.md"
+  local transcript_file="$case_dir/agent-transcript.adoc"
   local final_file="$case_dir/agent-final-answer.md"
   local fd_dir="$case_dir/file-discovery"
   mkdir -p "$fd_dir"

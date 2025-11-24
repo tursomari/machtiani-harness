@@ -77,7 +77,7 @@ Flags:
 - `--verbose`: verbose agent logging (includes discovery and planner context)
 - `--shell-agent`: run the standalone `shell-agent` binary first, then send its transcript (prefixed context) to the LLM for the final answer (requires `shell-agent` on PATH)
 - `--final-file string`: path to write final answer-only artifact
-- `--transcript-file string`: path to write transcript (default: `.machtiani/sessions/<session-id>/chat/agent-transcript.md`)
+- `--transcript-file string`: path to write transcript (default: `.machtiani/sessions/<session-id>/chat/agent-transcript.adoc`)
 - `--file-discovery-trajectory string`: absolute/relative file path for the file-discovery trajectory JSONL
 - `--file-discovery-output-dir string`: directory to place file-discovery artifacts (default: `.machtiani/sessions/<session-id>/artifacts`)
 
@@ -97,7 +97,7 @@ mct-agent run "triage regression" \
 - When `--shell-agent` is enabled, the agent first invokes the external `shell-agent` binary, tags the combined prompt with the transcript (`Here is possibly relevant information from the shell agent.`), and then asks the configured LLM for the final response. The trajectory path emitted by `shell-agent` is surfaced in the agent telemetry for post-run inspection.
 - It maintains a concise evolving summary/evidence log across turns.
 - On finalize (or at `--max-steps`), the agent composes the final answer via its own LLM and prints it.
-- A transcript is saved to `.machtiani/sessions/<session-id>/chat/agent-transcript.md` with per-turn entries and the final conclusion.
+- A transcript is saved to `.machtiani/sessions/<session-id>/chat/agent-transcript.adoc` with per-turn entries and the final conclusion.
 
 ## Environment Details
 - Component model selection precedence:

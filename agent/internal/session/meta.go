@@ -647,7 +647,7 @@ func runMetaTask(ctx metaContext, task metaTaskState, priorFinalAnswer string, i
 	if err != nil {
 		return metaTaskRunResult{SessionID: res.SessionID}, err
 	}
-	transcriptPath := filepath.Join(chatDir, "agent-transcript.md")
+	transcriptPath := filepath.Join(chatDir, "agent-transcript.adoc")
 	finalAnswerPath := filepath.Join(chatDir, "agent-final-answer.md")
 
 	summary := loadMetaSummary(finalAnswerPath)

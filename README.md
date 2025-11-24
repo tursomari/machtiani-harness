@@ -260,7 +260,7 @@ No manual backup is needed. All context (transcript, goals, artifacts) is preser
 
 Every run stores artifacts under `.machtiani/sessions/<session-id>/`, including:
 - **`session-state.json`** — persisted session metadata (goal, turn count, transcript path) used for resuming sessions
-- **`chat/agent-transcript.md`** — per-turn planning decisions and evidence
+- **`chat/agent-transcript.adoc`** — per-turn planning decisions and evidence
 - **`chat/agent-final-answer.md`** — final answer from the orchestrator
 - **`trajectory/agent.jsonl`** — unified trajectory stream with structured telemetry (see below)
 
