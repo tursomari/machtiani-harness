@@ -108,13 +108,13 @@ func TestLoadProjectBackgroundEmptyFile(t *testing.T) {
 func TestCountTurnsSkipsBackgroundTurn(t *testing.T) {
 	transcript := strings.Join([]string{
 		"== Turn 0",
-		"Question: background?",
+		"background?",
 		"Answer: details",
 		"== Turn 1",
-		"Question: real",
+		"real",
 		"Answer: yes",
 		"== Turn 2",
-		"Question: next",
+		"next",
 		"Answer: ok",
 	}, "\n")
 
@@ -122,7 +122,7 @@ func TestCountTurnsSkipsBackgroundTurn(t *testing.T) {
 		t.Fatalf("countTurns returned %d, want %d", got, want)
 	}
 
-	if got := countTurns("== Turn 0\nQuestion: background\nAnswer: n/a"); got != 0 {
+	if got := countTurns("== Turn 0\nbackground\nAnswer: n/a"); got != 0 {
 		t.Fatalf("countTurns should ignore lone Turn 0, got %d", got)
 	}
 }

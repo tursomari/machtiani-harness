@@ -107,7 +107,6 @@ func (t *Transcript) WriteHeader(goal string, sessionID string, _ any) error {
 func (t *Transcript) WriteTurn(step int, question, savedPath string, retrieved []string, summary string, decision string) error {
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("\n== Turn %d\n\n", step))
-	b.WriteString("Question:\n")
 	b.WriteString(question + "\n\n")
 	if savedPath != "" {
 		b.WriteString("mct chat: " + savedPath + "\n\n")

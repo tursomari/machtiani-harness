@@ -78,4 +78,38 @@ func TestTranscriptRestoreSeedsContent(t *testing.T) {
 	if !strings.Contains(content, "Planner decision: ask") {
 		t.Fatalf("expected appended turn in content:\n%s", content)
 	}
+	if strings.Contains(content, "Question:\nWhat next?") {
+		t.Fatalf("question label should not be prefixed in transcript:\n%s", content)
+	}
+}
+
+func TestWriteTurnInstructionSkipsQuestionLabel(t *testing.T) {
+	cwd, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	tmp := t.TempDir()
+	_ = os.Chdir(tmp)
+	t.Setenv("HOME", tmp)
+
+	tr, err := New("instr-sess")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tr.Close()
+
+	if err := tr.WriteHeader("goal", "instr-sess", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	question := "Instruction: Inspect the build logs for errors"
+	if err := tr.WriteTurn(1, question, "", nil, "", "ask"); err != nil {
+		t.Fatal(err)
+	}
+
+	content := tr.Content()
+	if strings.Contains(content, "Question:\nInstruction:") {
+		t.Fatalf("question label should be omitted for instruction prompts:\n%s", content)
+	}
+	if !strings.Contains(content, question) {
+		t.Fatalf("instruction text missing from transcript:\n%s", content)
+	}
 }
