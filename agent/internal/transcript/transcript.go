@@ -94,7 +94,7 @@ func (t *Transcript) SetTrajectory(w *trajectory.Writer) {
 }
 
 func (t *Transcript) WriteHeader(goal string, sessionID string, _ any) error {
-	s := fmt.Sprintf("= mct-agent Transcript\n\nSession: %s\n\n== Goal:\n\n%s\n\n", sessionID, goal)
+	s := fmt.Sprintf("= MCT-AGENT TRANSCRIPT\n\nSession: %s\n\n== GOAL:\n\n%s\n\n", sessionID, goal)
 	t.mem.WriteString(s)
 	_, err := t.f.WriteString(s)
 	t.emit("header", map[string]any{
@@ -106,7 +106,7 @@ func (t *Transcript) WriteHeader(goal string, sessionID string, _ any) error {
 
 func (t *Transcript) WriteTurn(step int, question, savedPath string, retrieved []string, summary string, decision string) error {
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("\n== Turn %d\n\n", step))
+	b.WriteString(fmt.Sprintf("\n== TURN %d\n\n", step))
 	b.WriteString(question + "\n\n")
 	if savedPath != "" {
 		b.WriteString("mct chat: " + savedPath + "\n\n")
@@ -119,7 +119,7 @@ func (t *Transcript) WriteTurn(step int, question, savedPath string, retrieved [
 		b.WriteString("\n")
 	}
 	if summary != "" {
-		b.WriteString("=== Answer\n\n")
+		b.WriteString("=== ANSWER\n\n")
 		b.WriteString(summary + "\n\n")
 	}
 	b.WriteString("Planner decision: ")
@@ -142,7 +142,7 @@ func (t *Transcript) WriteFinal(answer string, step int, capped bool) error {
 	if capped {
 		note = " (reached max-steps cap)"
 	}
-	s := fmt.Sprintf("\n== Conclusion%s (after %d turn(s))\n\n%s\n", note, step, answer)
+	s := fmt.Sprintf("\n== CONCLUSION%s (after %d turn(s))\n\n%s\n", note, step, answer)
 	t.mem.WriteString(s)
 	_, err := t.f.WriteString(s)
 	t.emit("final", map[string]any{
@@ -158,7 +158,7 @@ func (t *Transcript) WritePatchValidation(step int, record PatchValidationRecord
 		return nil
 	}
 	var b strings.Builder
-	b.WriteString("\n=== Patch Validation")
+	b.WriteString("\n=== PATCH VALIDATION")
 	if step > 0 {
 		b.WriteString(fmt.Sprintf(" (Turn %d)", step))
 	}
