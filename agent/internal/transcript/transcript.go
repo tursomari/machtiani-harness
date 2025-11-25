@@ -119,7 +119,7 @@ func (t *Transcript) WriteTurn(step int, question, savedPath string, retrieved [
 		b.WriteString("\n")
 	}
 	if summary != "" {
-		b.WriteString("Answer:\n")
+		b.WriteString("=== Answer\n\n")
 		b.WriteString(summary + "\n\n")
 	}
 	b.WriteString("Planner decision: ")

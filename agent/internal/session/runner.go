@@ -876,7 +876,7 @@ func Run(ctx context.Context, opts Options) Result {
 				// consistent context shape.
 				line := "Patcher: apply - " + strings.TrimSpace(pendingPatchDraft.Description)
 				b.WriteString(line)
-				b.WriteString("\n\nAnswer:\n")
+				b.WriteString("\n\n=== Answer\n\n")
 				b.WriteString(strings.TrimSpace(pendingPatchDraft.Answer))
 				b.WriteString("\n\n")
 				b.WriteString("Planner decision: patch\n")
