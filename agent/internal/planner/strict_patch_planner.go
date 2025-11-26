@@ -55,7 +55,10 @@ const strictPatchSchemaExample = `{
   }
 }`
 
-var strictPatchLineRangeRegexp = regexp.MustCompile(`\b(\d+)-(\d+)\b`)
+var (
+	strictPatchLineRangeRegexp  = regexp.MustCompile(`\b(\d+)-(\d+)\b`)
+	strictPatchTurnHeaderRegexp = regexp.MustCompile(`(?m)^== TURN \d+`)
+)
 
 var errStrictPatchEmptyChoices = errors.New("strict patch: llm returned no choices")
 
@@ -68,8 +71,8 @@ func (c *Client) runStrictPatchFlow(ctx context.Context, goal, transcript string
 	if strings.TrimSpace(c.cfg.RepoRoot) == "" {
 		return "", errors.New("planner: repo root required for strict patch mode")
 	}
-
-	selection, err := c.strictPatchSelectPath(ctx, goal, transcript, plannerPayload, step, maxSteps)
+	trimmedTranscript := trimStrictPatchTranscript(transcript)
+	selection, err := c.strictPatchSelectPath(ctx, goal, trimmedTranscript, plannerPayload, step, maxSteps)
 	if err != nil {
 		return "", err
 	}
@@ -80,7 +83,7 @@ func (c *Client) runStrictPatchFlow(ctx context.Context, goal, transcript string
 	}
 
 	numbered, truncated := formatFileWithLineNumbers(fileContent, strictPatchMaxFileLines)
-	patchJSON, err := c.strictPatchGeneratePatch(ctx, goal, transcript, plannerPayload, selection, fileContent, numbered, exists, truncated, step, maxSteps)
+	patchJSON, err := c.strictPatchGeneratePatch(ctx, goal, trimmedTranscript, plannerPayload, selection, fileContent, numbered, exists, truncated, step, maxSteps)
 	if err != nil {
 		return "", err
 	}
@@ -520,7 +523,10 @@ func preValidateStrictPatchJSON(raw []byte) ([]byte, error) {
 				return nil, errors.New("strict patch: edits[0].patch.hunks must be an array")
 			}
 			if len(hunksSlice) == 0 {
-				return nil, errors.New("strict patch: edits[0].patch.hunks must contain at least one hunk")
+				return nil, errors.New("strict patch: edits[0].patch.hunks must contain exactly one hunk")
+			}
+			if len(hunksSlice) != 1 {
+				return nil, fmt.Errorf("strict patch: edits[0].patch.hunks must contain exactly one hunk (found %d)", len(hunksSlice))
 			}
 		}
 	}
@@ -685,6 +691,12 @@ func (c *Client) normalizeStrictPatchJSON(raw []byte, expectedPath string, fileC
 		if !ok {
 			return nil, fmt.Errorf("strict patch: edit[%d] hunks must be an array", i)
 		}
+		if len(hunkSlice) == 0 {
+			return nil, fmt.Errorf("strict patch: edit[%d] hunks must contain exactly one hunk", i)
+		}
+		if len(hunkSlice) != 1 {
+			return nil, fmt.Errorf("strict patch: edit[%d] hunks must contain exactly one hunk (found %d)", i, len(hunkSlice))
+		}
 
 		for j := range hunkSlice {
 			hunkMap, ok := toStringMap(hunkSlice[j])
@@ -816,6 +828,7 @@ func (c *Client) strictPatchPathPrompt(goal, transcript, plannerPayload string) 
 		b.WriteString(truncateForPrompt(trimmed, strictPatchMaxPlannerPayloadRunes))
 		b.WriteString("\n\n")
 	}
+
 	appendSuccessFilesSection(&b, c.progress.SuccessFiles, "Files already patched successfully this session—skip re-selecting these paths unless you just reloaded them and found fresh issues:\n", successFilesPromptLimit)
 
 	if trimmed := strings.TrimSpace(goal); trimmed != "" {
@@ -867,19 +880,21 @@ func (c *Client) strictPatchPatchPrompt(goal, transcript, plannerPayload string,
 	b.WriteString("Patch requirements:\n")
 	b.WriteString("- Produce exactly one edit with mode \"patch\" targeting the selected path.\n")
 	b.WriteString("- Each hunk must include snippet_source {start_line, end_line} for the original content.\n")
-	b.WriteString("- Provide context_before/context_after plus additions/deletions; newline-separated strings are fine—we will split them. For multi-hunk patches, assume prior hunks' effects are unapplied—base snippet_source start_line/end_line solely on the initial file content shown. Do NOT shift later hunks' line numbers to account for earlier insertions (cumulative offsets are applied during hunk execution).\n")
+	b.WriteString("- Provide context_before/context_after plus additions/deletions; newline-separated strings are fine—we will split them.\n")
+	b.WriteString("- Output exactly one hunk. If additional regions need updates, stop after the first hunk so a new planner call can regenerate against the updated file.\n")
 	b.WriteString("- Convenience fields like old_text/new_text or replacement are accepted; we normalize them into strict patch hunks.\n")
 	b.WriteString("- snippet_source start/end must reference the original lines shown below (use the numeric prefixes). Extract context_before/context_after exactly as-is from contiguous visible lines around each hunk—do not hallucinate, summarize, or infer. If lines are missing due to truncation, respond with {\"request_full_reload\": true}.\n")
 	b.WriteString("- Keep hunks tightly scoped. If inserting, set old_count=0 and snippet_source end_line = start_line - 1.\n")
 	b.WriteString("- Do not introduce additional edits or mutate other files.\n")
 	b.WriteString("- Populate metadata.description with a short summary.\n\n")
 
+	appendSuccessFilesSection(&b, c.progress.SuccessFiles, "Files already patched successfully this session (reload them before attempting more edits; prefer untouched files):\n", successFilesPromptLimit)
+
 	if trimmed := strings.TrimSpace(plannerPayload); trimmed != "" {
 		b.WriteString("Earlier planner output (for context):\n")
 		b.WriteString(truncateForPrompt(trimmed, strictPatchMaxPlannerPayloadRunes))
 		b.WriteString("\n\n")
 	}
-	appendSuccessFilesSection(&b, c.progress.SuccessFiles, "Files already patched successfully this session (reload them before attempting more edits; prefer untouched files):\n", successFilesPromptLimit)
 
 	if trimmed := strings.TrimSpace(goal); trimmed != "" {
 		b.WriteString("Goal:\n")
@@ -900,6 +915,80 @@ func (c *Client) strictPatchPatchPrompt(goal, transcript, plannerPayload string,
 
 	b.WriteString("Return only the JSON patch object now.")
 	return b.String()
+}
+
+func trimStrictPatchTranscript(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	matches := strictPatchTurnHeaderRegexp.FindAllStringIndex(trimmed, -1)
+	if len(matches) == 0 {
+		return trimmed
+	}
+	type turnSegment struct {
+		content  string
+		decision string
+	}
+	turns := make([]turnSegment, 0, len(matches))
+	for i, loc := range matches {
+		start := loc[0]
+		end := len(trimmed)
+		if i+1 < len(matches) {
+			end = matches[i+1][0]
+		}
+		segment := strings.TrimSpace(trimmed[start:end])
+		if segment == "" {
+			continue
+		}
+		turns = append(turns, turnSegment{content: segment, decision: extractStrictPatchDecision(segment)})
+	}
+	if len(turns) == 0 {
+		return trimmed
+	}
+	filtered := make([]turnSegment, 0, len(turns))
+	for _, turn := range turns {
+		if strings.EqualFold(strings.TrimSpace(turn.decision), "background") {
+			continue
+		}
+		filtered = append(filtered, turn)
+	}
+	var keep []turnSegment
+	if len(filtered) == 0 {
+		keep = turns[len(turns)-1:]
+	} else {
+		keep = filtered[len(filtered)-1:]
+	}
+	var b strings.Builder
+	for _, turn := range keep {
+		segment := strings.TrimSpace(turn.content)
+		if segment == "" {
+			continue
+		}
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString(segment)
+	}
+	result := strings.TrimSpace(b.String())
+	if result == "" {
+		return trimmed
+	}
+	return result
+}
+
+func extractStrictPatchDecision(segment string) string {
+	const marker = "Planner decision:"
+	idx := strings.Index(segment, marker)
+	if idx < 0 {
+		return ""
+	}
+	rest := segment[idx+len(marker):]
+	rest = strings.TrimSpace(rest)
+	if newline := strings.IndexByte(rest, '\n'); newline >= 0 {
+		rest = rest[:newline]
+	}
+	return strings.TrimSpace(rest)
 }
 
 func truncateForPrompt(s string, maxRunes int) string {

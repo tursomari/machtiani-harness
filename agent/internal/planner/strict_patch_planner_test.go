@@ -627,6 +627,86 @@ func TestStrictPatchRetriesOnEmptyChoices(t *testing.T) {
 	}
 }
 
+func TestTrimStrictPatchTranscriptDropsLowValueTurns(t *testing.T) {
+	transcript := strings.Join([]string{
+		"= MCT-AGENT TRANSCRIPT",
+		"",
+		"Session: agent-123",
+		"",
+		"== GOAL:",
+		"",
+		"Demo goal.",
+		"",
+		"== TURN 0",
+		"",
+		"Question: Provide project background.",
+		"",
+		"=== ANSWER",
+		"",
+		"Background details that are not relevant.",
+		"",
+		"Planner decision: background",
+		"",
+		"== TURN 1",
+		"",
+		"Question: Show the LICENSE file contents.",
+		"",
+		"Retrieved File Paths:",
+		"* LICENSE",
+		"",
+		"=== ANSWER",
+		"",
+		"**Content:**",
+		"```",
+		"line a",
+		"line b",
+		"```",
+		"",
+		"Planner decision: ask",
+	}, "\n")
+
+	got := trimStrictPatchTranscript(transcript)
+	if strings.Contains(got, "TURN 0") {
+		t.Fatalf("expected background turn to be removed, got %q", got)
+	}
+	if !strings.Contains(got, "=== ANSWER") {
+		t.Fatalf("expected answer section to be present, got %q", got)
+	}
+	if !strings.Contains(got, "line a") {
+		t.Fatalf("expected answer content to be preserved, got %q", got)
+	}
+	if !strings.Contains(got, "== TURN 1") {
+		t.Fatalf("expected recent turn to remain, got %q", got)
+	}
+	if !strings.Contains(got, "Planner decision: ask") {
+		t.Fatalf("expected planner decision to be preserved, got %q", got)
+	}
+}
+
+func TestTrimStrictPatchTranscriptKeepsOnlyMostRecentTurn(t *testing.T) {
+	transcript := strings.Join([]string{
+		"== TURN 3",
+		"",
+		"Question: Follow-up.",
+		"",
+		"Planner decision: ask",
+		"",
+		"== TURN 4",
+		"",
+		"Question: Latest action.",
+		"",
+		"Planner decision: patch",
+	}, "\n")
+
+	got := trimStrictPatchTranscript(transcript)
+	if strings.Contains(got, "TURN 3") {
+		t.Fatalf("expected only most recent turn, got %q", got)
+	}
+	if !strings.Contains(got, "TURN 4") {
+		t.Fatalf("expected last turn to remain, got %q", got)
+	}
+}
+
 func slicesEqual(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
