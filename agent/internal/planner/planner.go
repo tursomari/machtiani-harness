@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/tursomari/machtiani/agent/internal/llm"
+	"github.com/tursomari/machtiani/agent/internal/patchlog"
 	"github.com/tursomari/machtiani/agent/internal/trajectory"
 )
 
@@ -295,6 +296,21 @@ func (c *Client) Plan(ctx context.Context, goal string, transcript string, step,
 			q = strictPatchFallbackQuestion(err)
 		} else {
 			q = strictPayload
+		}
+	}
+	if dec == DecisionPatch {
+		meta := patchlog.Metadata{
+			Source: "planner.plan",
+			Model:  strings.TrimSpace(c.cfg.Model.Model),
+			Alias:  strings.TrimSpace(c.cfg.Alias),
+			Step:   step,
+		}
+		if path, err := patchlog.WritePrompt(prompt, meta); err != nil {
+			if c.cfg.Verbose {
+				fmt.Fprintf(os.Stderr, "[planner] failed to write patch prompt log: %v\n", err)
+			}
+		} else if c.cfg.Verbose {
+			fmt.Fprintf(os.Stderr, "[planner] patch prompt logged to %s\n", path)
 		}
 	}
 	return dec, q, nil

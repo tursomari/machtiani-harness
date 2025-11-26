@@ -23,6 +23,7 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/readme"
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/session"
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/utils"
+	"github.com/tursomari/machtiani/agent/internal/patchlog"
 	"github.com/tursomari/machtiani/agent/internal/shellbridge"
 	"github.com/tursomari/machtiani/agent/internal/trajectory"
 )
@@ -31,6 +32,7 @@ var (
 	chatStreamWithRuntime    = llm.ChatStreamWithResolvedFallback
 	discoveryRunnerRun       = discoveryrunner.Run
 	shellAgentCommandContext = exec.CommandContext
+	patchPromptLogger        = patchlog.WritePrompt
 )
 
 const shellAgentContextPrefix = "Here is possibly relevant information from the shell agent."
@@ -157,6 +159,19 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 	answerRuntime := opts.AnswerRuntime
 	if runtimeIsZero(answerRuntime) {
 		answerRuntime = opts.Runtime
+	}
+	if shouldLogPatchPrompt(opts) {
+		meta := patchlog.Metadata{
+			Source: "prompt.run",
+			Model:  strings.TrimSpace(answerRuntime.Resolved.Model),
+			Alias:  strings.TrimSpace(answerRuntime.Alias),
+			Note:   fmt.Sprintf("mode=%s", strings.TrimSpace(opts.Mode)),
+		}
+		if path, err := patchPromptLogger(combined, meta); err != nil {
+			fmt.Fprintf(os.Stderr, "[patch-log] failed to write prompt log: %v\n", err)
+		} else if opts.Verbose {
+			fmt.Fprintf(os.Stderr, "[patch-log] wrote prompt log to %s\n", path)
+		}
 	}
 	chatCtx := llm.WithAPIKeyOverrides(ctx, answerRuntime.APIKeyOverrides)
 	assistant, err := chatStreamWithRuntime(chatCtx, answerRuntime.Resolved, answerRuntime.FallbackAliases, answerRuntime.FallbackResolved, copyExtrasMap(answerRuntime.Extras), messages, opts.OnToken)
@@ -896,6 +911,25 @@ func formatResponseDirectives(directives []string) string {
 	}
 
 	return strings.TrimSpace(b.String())
+}
+
+func shouldLogPatchPrompt(opts RunOptions) bool {
+	mode := strings.ToLower(strings.TrimSpace(opts.Mode))
+	switch mode {
+	case "patch", "patcher", "patch-json", "strict-patch":
+		return true
+	}
+	for _, directive := range opts.ResponseDirectives {
+		clean := strings.ToLower(strings.TrimSpace(directive))
+		switch {
+		case strings.Contains(clean, "patch"),
+			strings.Contains(clean, "instruction"),
+			strings.Contains(clean, "edits"),
+			strings.Contains(clean, "hunk"):
+			return true
+		}
+	}
+	return false
 }
 
 func runtimeIsZero(rt ModelRuntime) bool {

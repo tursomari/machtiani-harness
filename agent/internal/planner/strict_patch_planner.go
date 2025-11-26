@@ -16,6 +16,7 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/llm"
 	patcher "github.com/tursomari/machtiani/agent/internal/mct/patcher"
 	"github.com/tursomari/machtiani/agent/internal/parser"
+	"github.com/tursomari/machtiani/agent/internal/patchlog"
 	"github.com/tursomari/machtiani/agent/internal/trajectory"
 )
 
@@ -723,6 +724,21 @@ func (c *Client) callStrictPatchLLM(ctx context.Context, baseEvent string, promp
 			reportTrajectoryError(err)
 		}
 		callCtx = trajectory.ContextWithParentSpan(ctx, span.ID)
+	}
+	if strings.Contains(baseEvent, "strict_patch") {
+		meta := patchlog.Metadata{
+			Source: baseEvent,
+			Model:  strings.TrimSpace(c.cfg.Model.Model),
+			Alias:  strings.TrimSpace(c.cfg.Alias),
+			Step:   step,
+		}
+		if path, err := patchlog.WritePrompt(prompt, meta); err != nil {
+			if c.cfg.Verbose {
+				fmt.Fprintf(os.Stderr, "[planner] failed to write %s prompt log: %v\n", baseEvent, err)
+			}
+		} else if c.cfg.Verbose {
+			fmt.Fprintf(os.Stderr, "[planner] %s prompt logged to %s\n", baseEvent, path)
+		}
 	}
 
 	start := time.Now()
