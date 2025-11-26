@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/tursomari/machtiani/agent/internal/git"
 	"github.com/tursomari/machtiani/agent/internal/llm"
@@ -23,6 +24,7 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/readme"
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/session"
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/utils"
+	"github.com/tursomari/machtiani/agent/internal/patcher"
 	"github.com/tursomari/machtiani/agent/internal/patchlog"
 	"github.com/tursomari/machtiani/agent/internal/shellbridge"
 	"github.com/tursomari/machtiani/agent/internal/trajectory"
@@ -73,14 +75,14 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 	}
 
 	includeHistory := opts.IncludeHistory
+	useBaselineContext := isPatcherPromptMode(mode)
 
 	combined := opts.Prompt
 	included := []string(nil)
 	fileDiscoveryRan := false
+	var filtered []string
 
-	if isAnswerOnly || opts.ShellAgent {
-		combined, included = contextbuilder.Build(opts.Prompt, nil, hist, contextbuilder.Options{IncludeHistory: includeHistory, MaxInputTokens: opts.MaxInputTokens})
-	} else {
+	if !isAnswerOnly && !opts.ShellAgent {
 		ignoreFiles, err := utils.ReadIgnoreFile(".machtiani.ignore")
 		if err != nil {
 			return res, fmt.Errorf("load ignore rules: %w", err)
@@ -107,9 +109,21 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 		if err != nil {
 			return res, fmt.Errorf("file discovery: %w", err)
 		}
-		filtered := filterPaths(dr.Paths, ignoreFiles)
-		combined, included = contextbuilder.Build(opts.Prompt, filtered, hist, contextbuilder.Options{IncludeHistory: includeHistory, MaxInputTokens: opts.MaxInputTokens})
+		filtered = filterPaths(dr.Paths, ignoreFiles)
 		fileDiscoveryRan = true
+	}
+
+	switch {
+	case isAnswerOnly || opts.ShellAgent:
+		combined, included = contextbuilder.Build(opts.Prompt, nil, hist, contextbuilder.Options{IncludeHistory: includeHistory, MaxInputTokens: opts.MaxInputTokens})
+	case useBaselineContext:
+		var err error
+		combined, included, err = buildBaselinePromptContext(opts.Prompt, hist, filtered, includeHistory, opts.MaxInputTokens, opts.SessionID, opts.Verbose)
+		if err != nil {
+			return res, err
+		}
+	default:
+		combined, included = contextbuilder.Build(opts.Prompt, filtered, hist, contextbuilder.Options{IncludeHistory: includeHistory, MaxInputTokens: opts.MaxInputTokens})
 	}
 
 	directiveBlock := formatResponseDirectives(opts.ResponseDirectives)
@@ -220,6 +234,91 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 	}
 	res.SavedPath = savedPath
 	return res, nil
+}
+
+func buildBaselinePromptContext(prompt string, history []contextbuilder.Message, filePaths []string, includeHistory bool, maxInputTokens int, sessionID string, verbose bool) (string, []string, error) {
+	options := contextbuilder.Options{IncludeHistory: includeHistory, MaxInputTokens: maxInputTokens}
+	base, _ := contextbuilder.Build(prompt, nil, history, options)
+
+	if len(filePaths) == 0 {
+		return base, nil, nil
+	}
+
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		if verbose {
+			fmt.Fprintf(os.Stderr, "[baseline-context] session id missing; falling back to raw file contents\n")
+		}
+		combined, included := contextbuilder.Build(prompt, filePaths, history, options)
+		return combined, included, nil
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", nil, fmt.Errorf("resolve working directory: %w", err)
+	}
+	repoRoot, err := git.RepoRoot(cwd)
+	if err != nil {
+		if verbose {
+			fmt.Fprintf(os.Stderr, "[baseline-context] not inside a git repository; falling back to raw file contents: %v\n", err)
+		}
+		combined, included := contextbuilder.Build(prompt, filePaths, history, options)
+		return combined, included, nil
+	}
+
+	baseline, err := patcher.EnsureBaseline(sessionID, repoRoot, time.Now())
+	if err != nil {
+		if verbose {
+			fmt.Fprintf(os.Stderr, "[baseline-context] ensure baseline failed; falling back to raw file contents: %v\n", err)
+		}
+		combined, included := contextbuilder.Build(prompt, filePaths, history, options)
+		return combined, included, nil
+	}
+
+	sections := make([]string, 0, len(filePaths))
+	included := make([]string, 0, len(filePaths))
+	for _, rel := range filePaths {
+		section, ok, err := patcher.BuildBaselineDiffSection(baseline, repoRoot, rel)
+		if err != nil {
+			if verbose {
+				fmt.Fprintf(os.Stderr, "[baseline-context] failed to render %s: %v\n", rel, err)
+			}
+			continue
+		}
+		if ok {
+			sections = append(sections, section)
+			included = append(included, rel)
+		}
+	}
+
+	if len(sections) == 0 {
+		if verbose {
+			fmt.Fprintf(os.Stderr, "[baseline-context] no diff sections generated; falling back to raw file contents\n")
+		}
+		combined, fallbackIncluded := contextbuilder.Build(prompt, filePaths, history, options)
+		return combined, fallbackIncluded, nil
+	}
+
+	diffBlock := strings.Join(sections, "\n\n")
+	var builder strings.Builder
+	base = strings.TrimRight(base, "\n")
+	if strings.TrimSpace(base) != "" {
+		builder.WriteString(base)
+		builder.WriteString("\n\n")
+	}
+	builder.WriteString("Here are baseline-relative diffs with line numbers for the referenced files:\n\n")
+	builder.WriteString(diffBlock)
+
+	return builder.String(), included, nil
+}
+
+func isPatcherPromptMode(mode string) bool {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "patch", "patcher", "patch-json", "strict-patch":
+		return true
+	default:
+		return false
+	}
 }
 
 func invokeShellAgent(ctx context.Context, prompt string, opts RunOptions) (string, string, error) {

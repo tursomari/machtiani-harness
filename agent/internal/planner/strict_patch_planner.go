@@ -16,6 +16,7 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/llm"
 	patcher "github.com/tursomari/machtiani/agent/internal/mct/patcher"
 	"github.com/tursomari/machtiani/agent/internal/parser"
+	patchersvc "github.com/tursomari/machtiani/agent/internal/patcher"
 	"github.com/tursomari/machtiani/agent/internal/patchlog"
 	"github.com/tursomari/machtiani/agent/internal/trajectory"
 )
@@ -67,6 +68,19 @@ type strictPatchPathSelection struct {
 	Reason string `json:"reason,omitempty"`
 }
 
+type strictPatchContextKind string
+
+const (
+	strictPatchContextBaselineDiff strictPatchContextKind = "baseline_diff"
+	strictPatchContextNumbered     strictPatchContextKind = "numbered"
+)
+
+type strictPatchFileContext struct {
+	Body      string
+	Kind      strictPatchContextKind
+	Truncated bool
+}
+
 func (c *Client) runStrictPatchFlow(ctx context.Context, goal, transcript string, step, maxSteps int, plannerPayload string) (string, error) {
 	if strings.TrimSpace(c.cfg.RepoRoot) == "" {
 		return "", errors.New("planner: repo root required for strict patch mode")
@@ -82,8 +96,12 @@ func (c *Client) runStrictPatchFlow(ctx context.Context, goal, transcript string
 		return "", err
 	}
 
-	numbered, truncated := formatFileWithLineNumbers(fileContent, strictPatchMaxFileLines)
-	patchJSON, err := c.strictPatchGeneratePatch(ctx, goal, trimmedTranscript, plannerPayload, selection, fileContent, numbered, exists, truncated, step, maxSteps)
+	fileCtx, err := c.buildStrictPatchFileContext(selection.Path, fileContent, strictPatchMaxFileLines)
+	if err != nil {
+		return "", err
+	}
+
+	patchJSON, err := c.strictPatchGeneratePatch(ctx, goal, trimmedTranscript, plannerPayload, selection, fileContent, fileCtx, exists, step, maxSteps)
 	if err != nil {
 		return "", err
 	}
@@ -137,13 +155,13 @@ func (c *Client) strictPatchSelectPath(ctx context.Context, goal, transcript, pl
 	return strictPatchPathSelection{}, errors.New("strict patch path: unable to obtain selection after retries")
 }
 
-func (c *Client) strictPatchGeneratePatch(ctx context.Context, goal, transcript, plannerPayload string, selection strictPatchPathSelection, fileContent, numberedContent string, exists, truncated bool, step, maxSteps int) (string, error) {
+func (c *Client) strictPatchGeneratePatch(ctx context.Context, goal, transcript, plannerPayload string, selection strictPatchPathSelection, fileContent string, fileCtx strictPatchFileContext, exists bool, step, maxSteps int) (string, error) {
 	currentFileContent := fileContent
-	currentNumberedContent := numberedContent
+	currentContext := fileCtx
 	currentExists := exists
-	currentTruncated := truncated
+	currentTruncated := fileCtx.Truncated
 
-	basePrompt := c.strictPatchPatchPrompt(goal, transcript, plannerPayload, selection, currentNumberedContent, currentExists, currentTruncated)
+	basePrompt := c.strictPatchPatchPrompt(goal, transcript, plannerPayload, selection, currentContext, currentExists)
 	prompt := basePrompt
 	var lastErr error
 	reloaded := false
@@ -151,7 +169,7 @@ func (c *Client) strictPatchGeneratePatch(ctx context.Context, goal, transcript,
 		if err == nil {
 			return false, nil
 		}
-		if !currentTruncated || reloaded {
+		if !currentContext.Truncated || reloaded {
 			return false, nil
 		}
 		if !strictPatchShouldForceReload(err, strictPatchMaxFileLines) {
@@ -163,8 +181,13 @@ func (c *Client) strictPatchGeneratePatch(ctx context.Context, goal, transcript,
 		}
 		currentFileContent = freshContent
 		currentExists = freshExists
-		currentNumberedContent, currentTruncated = formatFileWithLineNumbers(currentFileContent, 0)
-		basePrompt = c.strictPatchPatchPrompt(goal, transcript, plannerPayload, selection, currentNumberedContent, currentExists, currentTruncated)
+		freshCtx, ctxErr := c.buildStrictPatchFileContext(selection.Path, currentFileContent, 0)
+		if ctxErr != nil {
+			return false, ctxErr
+		}
+		currentContext = freshCtx
+		currentTruncated = currentContext.Truncated
+		basePrompt = c.strictPatchPatchPrompt(goal, transcript, plannerPayload, selection, currentContext, currentExists)
 		prompt = basePrompt
 		reloaded = true
 		lastErr = nil
@@ -225,8 +248,13 @@ func (c *Client) strictPatchGeneratePatch(ctx context.Context, goal, transcript,
 			}
 			currentFileContent = freshContent
 			currentExists = freshExists
-			currentNumberedContent, currentTruncated = formatFileWithLineNumbers(currentFileContent, 0)
-			basePrompt = c.strictPatchPatchPrompt(goal, transcript, plannerPayload, selection, currentNumberedContent, currentExists, currentTruncated)
+			freshCtx, ctxErr := c.buildStrictPatchFileContext(selection.Path, currentFileContent, 0)
+			if ctxErr != nil {
+				return "", ctxErr
+			}
+			currentContext = freshCtx
+			currentTruncated = currentContext.Truncated
+			basePrompt = c.strictPatchPatchPrompt(goal, transcript, plannerPayload, selection, currentContext, currentExists)
 			prompt = basePrompt
 			reloaded = true
 			lastErr = nil
@@ -847,7 +875,7 @@ func (c *Client) strictPatchPathPrompt(goal, transcript, plannerPayload string) 
 	return b.String()
 }
 
-func (c *Client) strictPatchPatchPrompt(goal, transcript, plannerPayload string, selection strictPatchPathSelection, numberedContent string, exists, truncated bool) string {
+func (c *Client) strictPatchPatchPrompt(goal, transcript, plannerPayload string, selection strictPatchPathSelection, fileCtx strictPatchFileContext, exists bool) string {
 	var b strings.Builder
 	b.WriteString("You are the strict patch planner for mct.\n")
 	b.WriteString("The previous step already selected the target file path. Generate patch instructions that modify only that file.\n")
@@ -869,7 +897,7 @@ func (c *Client) strictPatchPatchPrompt(goal, transcript, plannerPayload string,
 	} else {
 		b.WriteString("File status: not found on disk (treat insertions carefully; old_count should be 0 for pure insertions).\n")
 	}
-	if truncated {
+	if fileCtx.Kind == strictPatchContextNumbered && fileCtx.Truncated {
 		b.WriteString("Note: file display truncated after ")
 		b.WriteString(strconv.Itoa(strictPatchMaxFileLines))
 		b.WriteString(" lines—reload the file before patching if more context is required.\n")
@@ -908,10 +936,20 @@ func (c *Client) strictPatchPatchPrompt(goal, transcript, plannerPayload string,
 		b.WriteString("\n\n")
 	}
 
-	b.WriteString("File contents with 1-based line numbers (prefix \"N |\" is not part of the file):\n")
-	b.WriteString("```text\n")
-	b.WriteString(numberedContent)
-	b.WriteString("```\n\n")
+	switch fileCtx.Kind {
+	case strictPatchContextBaselineDiff:
+		b.WriteString("Baseline-relative diff (session baseline vs current workspace). Line numbers on the left reflect the current file state; use them for snippet_source start/end.\n")
+		b.WriteString(fileCtx.Body)
+		if !strings.HasSuffix(fileCtx.Body, "\n") {
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
+	default:
+		b.WriteString("File contents with 1-based line numbers (prefix \"N |\" is not part of the file):\n")
+		b.WriteString("```text\n")
+		b.WriteString(fileCtx.Body)
+		b.WriteString("```\n\n")
+	}
 
 	b.WriteString("Return only the JSON patch object now.")
 	return b.String()
@@ -1501,6 +1539,42 @@ func (c *Client) readRepoFile(rel string) (string, bool, error) {
 		return "", false, fmt.Errorf("planner: unable to read %s: %w", rel, err)
 	}
 	return string(data), true, nil
+}
+
+func (c *Client) buildStrictPatchFileContext(relPath string, fileContent string, maxLines int) (strictPatchFileContext, error) {
+	sessionID := strings.TrimSpace(os.Getenv("MACHTIANI_SESSION_ID"))
+	if sessionID == "" {
+		sessionID = strings.TrimSpace(c.cfg.SessionID)
+	}
+	if sessionID == "" {
+		numbered, truncated := formatFileWithLineNumbers(fileContent, maxLines)
+		return strictPatchFileContext{Body: numbered, Kind: strictPatchContextNumbered, Truncated: truncated}, nil
+	}
+
+	repoRoot := strings.TrimSpace(c.cfg.RepoRoot)
+	if repoRoot == "" {
+		return strictPatchFileContext{}, errors.New("strict patch: repo root required for baseline-relative diff")
+	}
+
+	baseline, err := patchersvc.EnsureBaseline(sessionID, repoRoot, time.Now())
+	if err != nil {
+		return strictPatchFileContext{}, fmt.Errorf("strict patch: ensure baseline for %s failed: %w", relPath, err)
+	}
+	if baseline == nil {
+		return strictPatchFileContext{}, fmt.Errorf("strict patch: baseline unavailable for session %s", sessionID)
+	}
+
+	section, ok, err := patchersvc.BuildBaselineDiffSection(baseline, repoRoot, relPath)
+	if err != nil {
+		return strictPatchFileContext{}, fmt.Errorf("strict patch: build baseline diff for %s: %w", relPath, err)
+	}
+	if !ok {
+		return strictPatchFileContext{}, fmt.Errorf("strict patch: no baseline diff generated for %s", relPath)
+	}
+	if !strings.HasSuffix(section, "\n") {
+		section += "\n"
+	}
+	return strictPatchFileContext{Body: section, Kind: strictPatchContextBaselineDiff}, nil
 }
 
 func formatFileWithLineNumbers(content string, maxLines int) (string, bool) {

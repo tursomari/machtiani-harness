@@ -39,6 +39,7 @@ type ClientConfig struct {
 	PatchEnabled      bool
 	StrictPatchMode   bool
 	RepoRoot          string
+	SessionID         string
 }
 
 type Client struct {

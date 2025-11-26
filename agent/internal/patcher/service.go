@@ -139,6 +139,14 @@ func (s *Service) ApplyAndGeneratePatch(ctx context.Context, params mctpatcher.P
 		return nil, &mctpatcher.ValidationError{Err: errors.New("strict patch mode disabled; use rewrite or replace modes")}
 	}
 
+	var baselineState *BaselineState
+	if strings.TrimSpace(params.SessionID) != "" {
+		baselineState, err = EnsureBaseline(params.SessionID, workspaceRoot, s.clock())
+		if err != nil {
+			return nil, &mctpatcher.PatchGenerationError{Err: fmt.Errorf("ensure baseline state: %w", err)}
+		}
+	}
+
 	s.logf(params.Verbose, "applying edits in memory")
 	instr := cloneInstructions(params.Instructions)
 	var (
@@ -184,6 +192,11 @@ func (s *Service) ApplyAndGeneratePatch(ctx context.Context, params mctpatcher.P
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	if baselineState != nil {
+		if err := baselineState.VerifyFiles(filesTouched); err != nil {
+			return nil, &mctpatcher.PatchGenerationError{Err: fmt.Errorf("verify baseline state: %w", err)}
+		}
 	}
 
 	s.logf(params.Verbose, "generating patch via git diff --no-index")
@@ -292,6 +305,11 @@ func (s *Service) ValidateInstructions(ctx context.Context, repoRoot string, ins
 	}
 	if !s.strictPatchMode && instructionsUseStrictPatch(instructions) {
 		return &mctpatcher.ValidationError{Err: errors.New("strict patch mode disabled; use rewrite or replace modes")}
+	}
+	if sessionID := strings.TrimSpace(os.Getenv("MACHTIANI_SESSION_ID")); sessionID != "" {
+		if _, err := EnsureBaseline(sessionID, repoAbs, s.clock()); err != nil {
+			return &mctpatcher.ValidationError{Err: fmt.Errorf("ensure baseline state: %w", err)}
+		}
 	}
 	return ctx.Err()
 }

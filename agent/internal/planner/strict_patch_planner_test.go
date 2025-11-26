@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -197,6 +198,179 @@ func TestStrictPatchNormalizationHandlesReplacementAlias(t *testing.T) {
 	}
 	if got, want := h.Additions, []string{"Copyright (c) 2020-2025 Matteo Collina and Undici contributors"}; !slicesEqual(got, want) {
 		t.Fatalf("additions = %#v, want %#v", got, want)
+	}
+}
+
+func TestStrictPatchPromptUsesBaselineDiffWhenSessionAvailable(t *testing.T) {
+	t.Setenv("MACHTIANI_SESSION_ID", "baseline-session")
+	repoRoot := t.TempDir()
+	relPath := "README.md"
+	content := "Line one\nLine two\n"
+	cmd := exec.Command("git", "init")
+	cmd.Dir = repoRoot
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init failed: %v\n%s", err, out)
+	}
+	if err := os.WriteFile(filepath.Join(repoRoot, relPath), []byte(content), 0o644); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+
+	client := NewClient(ClientConfig{RepoRoot: repoRoot})
+	var mu sync.Mutex
+	call := 0
+	client.chatFn = func(_ context.Context, prompt string) (string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		call++
+		switch call {
+		case 1:
+			return `{"path":"README.md","reason":"baseline diff"}`, nil
+		case 2:
+			if !strings.Contains(prompt, "Baseline-relative diff") {
+				t.Fatalf("expected baseline diff preamble, got %q", prompt)
+			}
+			if !strings.Contains(prompt, "```diff") {
+				t.Fatalf("expected diff fence in prompt, got %q", prompt)
+			}
+			return `{
+  "metadata": {"description": "example"},
+  "edits": [
+    {
+      "path": "README.md",
+      "mode": "patch",
+      "patch": {
+        "hunks": [
+          {
+            "old_start": 1,
+            "old_count": 1,
+            "new_start": 1,
+            "new_count": 1,
+            "context_before": ["Line one"],
+            "deletions": ["Line two"],
+            "additions": ["Line two updated"],
+            "context_after": [],
+            "snippet_source": {"start_line": 1, "end_line": 1}
+          }
+        ]
+      }
+    }
+  ]
+}`, nil
+		default:
+			t.Fatalf("unexpected chat invocation %d", call)
+			return "", nil
+		}
+	}
+
+	if _, err := client.runStrictPatchFlow(context.Background(), "goal", "transcript", 1, 5, ""); err != nil {
+		t.Fatalf("runStrictPatchFlow error: %v", err)
+	}
+	if call != 2 {
+		t.Fatalf("expected 2 chat invocations, got %d", call)
+	}
+}
+
+func TestStrictPatchPromptUsesBaselineDiffFromConfigWhenEnvMissing(t *testing.T) {
+	t.Setenv("MACHTIANI_SESSION_ID", "")
+	repoRoot := t.TempDir()
+	relPath := "README.md"
+	content := "Line one\nLine two\n"
+	cmd := exec.Command("git", "init")
+	cmd.Dir = repoRoot
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init failed: %v\n%s", err, out)
+	}
+	if err := os.WriteFile(filepath.Join(repoRoot, relPath), []byte(content), 0o644); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+
+	client := NewClient(ClientConfig{RepoRoot: repoRoot, SessionID: "config-session"})
+	var mu sync.Mutex
+	call := 0
+	client.chatFn = func(_ context.Context, prompt string) (string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		call++
+		switch call {
+		case 1:
+			return `{"path":"README.md","reason":"baseline diff"}`, nil
+		case 2:
+			if !strings.Contains(prompt, "Baseline-relative diff") {
+				t.Fatalf("expected baseline diff preamble, got %q", prompt)
+			}
+			if !strings.Contains(prompt, "```diff") {
+				t.Fatalf("expected diff fence in prompt, got %q", prompt)
+			}
+			return `{
+  "metadata": {"description": "example"},
+  "edits": [
+    {
+      "path": "README.md",
+      "mode": "patch",
+      "patch": {
+        "hunks": [
+          {
+            "old_start": 1,
+            "old_count": 1,
+            "new_start": 1,
+            "new_count": 1,
+            "context_before": ["Line one"],
+            "deletions": ["Line two"],
+            "additions": ["Line two updated"],
+            "context_after": [],
+            "snippet_source": {"start_line": 1, "end_line": 1}
+          }
+        ]
+      }
+    }
+  ]
+}`, nil
+		default:
+			t.Fatalf("unexpected chat invocation %d", call)
+		}
+		return "", nil
+	}
+
+	if _, err := client.runStrictPatchFlow(context.Background(), "goal", "transcript", 1, 5, ""); err != nil {
+		t.Fatalf("runStrictPatchFlow error: %v", err)
+	}
+	if call != 2 {
+		t.Fatalf("expected 2 chat invocations, got %d", call)
+	}
+}
+
+func TestStrictPatchFailsWhenBaselineCaptureFails(t *testing.T) {
+	t.Setenv("MACHTIANI_SESSION_ID", "baseline-missing-session")
+	repoRoot := t.TempDir()
+	relPath := "README.md"
+	content := "Line one\nLine two\n"
+	if err := os.WriteFile(filepath.Join(repoRoot, relPath), []byte(content), 0o644); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+
+	client := NewClient(ClientConfig{RepoRoot: repoRoot})
+	var mu sync.Mutex
+	call := 0
+	client.chatFn = func(_ context.Context, prompt string) (string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		call++
+		if call == 1 {
+			return fmt.Sprintf(`{"path":"%s","reason":"missing baseline"}`, relPath), nil
+		}
+		t.Fatalf("unexpected chat invocation %d with prompt %q", call, prompt)
+		return "", nil
+	}
+
+	if _, err := client.runStrictPatchFlow(context.Background(), "goal", "transcript", 1, 5, ""); err == nil {
+		t.Fatalf("expected error when baseline capture fails")
+	} else if !strings.Contains(err.Error(), "ensure baseline") {
+		t.Fatalf("expected baseline ensure error, got %v", err)
+	}
+	if call != 1 {
+		t.Fatalf("expected only path selection invocation, got %d", call)
 	}
 }
 

@@ -729,6 +729,7 @@ func Run(ctx context.Context, opts Options) Result {
 		PatchEnabled:      cfg.patch,
 		StrictPatchMode:   cfg.patchStrict,
 		RepoRoot:          repoRoot,
+		SessionID:         sessionID,
 	})
 
 	if !resumeMode || tr.Content() == "" {
