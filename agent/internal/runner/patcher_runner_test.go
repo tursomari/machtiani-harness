@@ -13,10 +13,10 @@ import (
 )
 
 type stubService struct {
-	lastParams mctpatcher.PatchParams
-	result     *mctpatcher.PatchResult
-	err        error
-	hook       func(params mctpatcher.PatchParams) error
+    lastParams mctpatcher.PatchParams
+    result     *mctpatcher.PatchResult
+    err        error
+    hook       func(params mctpatcher.PatchParams) error
 }
 
 func (s *stubService) ApplyAndGeneratePatch(_ context.Context, params mctpatcher.PatchParams) (*mctpatcher.PatchResult, error) {
@@ -114,14 +114,20 @@ func TestApplyPerformsAtomicVerification(t *testing.T) {
 		t.Fatalf("write patch: %v", err)
 	}
 
-	stub := &stubService{
-		result: &mctpatcher.PatchResult{
-			PatchPath:          patchPath,
-			Sequence:           0,
-			FilesModified:      []string{"foo.txt"},
-			AppliedInWorkspace: true,
-		},
-	}
+    stub := &stubService{
+        result: &mctpatcher.PatchResult{
+            PatchPath:          patchPath,
+            Sequence:           0,
+            FilesModified:      []string{"foo.txt"},
+            AppliedInWorkspace: true,
+        },
+    }
+    stub.hook = func(params mctpatcher.PatchParams) error {
+        if params.WorkspaceRoot == "" {
+            return nil
+        }
+        return gitops.ApplyPatchInDir(params.WorkspaceRoot, patchPath, false)
+    }
 	stub.hook = func(params mctpatcher.PatchParams) error {
 		if params.WorkspaceRoot == "" {
 			return nil
@@ -130,22 +136,23 @@ func TestApplyPerformsAtomicVerification(t *testing.T) {
 	}
 
 	var workspaceDir string
-	pr := &PatcherRunner{
-		Enabled:   true,
-		SessionID: "sess",
-		Service:   stub,
-		RepoRoot:  repoRoot,
-		WorkspaceFactory: func(root string) (string, func(), error) {
-			ws, cleanup, err := patchersvc.CreateWorkspace(root)
-			if err == nil {
-				workspaceDir = ws
-			}
-			return ws, cleanup, err
-		},
-		MirrorFactory: func() (string, func(), error) {
-			return t.TempDir(), func() {}, nil
-		},
-	}
+    pr := &PatcherRunner{
+        Enabled:   true,
+        SessionID: "sess",
+        Service:   stub,
+        RepoRoot:  repoRoot,
+        FullMode:  true,
+        WorkspaceFactory: func(root string) (string, func(), error) {
+            ws, cleanup, err := patchersvc.CreateWorkspace(root)
+            if err == nil {
+                workspaceDir = ws
+            }
+            return ws, cleanup, err
+        },
+        MirrorFactory: func() (string, func(), error) {
+            return t.TempDir(), func() {}, nil
+        },
+    }
 	if err := pr.Resolve(); err != nil {
 		t.Fatalf("resolve error: %v", err)
 	}
@@ -154,10 +161,10 @@ func TestApplyPerformsAtomicVerification(t *testing.T) {
 	}
 
 	instr := mctpatcher.Instructions{Edits: []mctpatcher.Edit{{Path: "foo.txt", Mode: mctpatcher.ModeRewrite, NewContent: "new\n"}}}
-	res, err := pr.Apply(context.Background(), instr, false)
-	if err != nil {
-		t.Fatalf("apply error: %v", err)
-	}
+    res, err := pr.Apply(context.Background(), instr, false)
+    if err != nil {
+        t.Fatalf("apply error: %v", err)
+    }
 	if res == nil {
 		t.Fatalf("expected patch result")
 	}
@@ -208,9 +215,47 @@ func TestApplyPerformsAtomicVerification(t *testing.T) {
 	if stub.lastParams.MirrorDir != pr.mirrorDir {
 		t.Fatalf("mirror dir not passed to service")
 	}
-	if stub.lastParams.Sequence != 1 {
-		t.Fatalf("expected sequence 1 in params, got %d", stub.lastParams.Sequence)
-	}
+    if stub.lastParams.Sequence != 1 {
+        t.Fatalf("expected sequence 1 in params, got %d", stub.lastParams.Sequence)
+    }
+    if !stub.lastParams.FullMode {
+        t.Fatalf("expected FullMode=true in params, got false")
+    }
+}
+
+func TestRunnerPassesFullModeParam(t *testing.T) {
+    repo := t.TempDir()
+    runGit(t, repo, "init")
+    runGit(t, repo, "config", "user.email", "test@example.com")
+    runGit(t, repo, "config", "user.name", "Test User")
+    if err := os.WriteFile(filepath.Join(repo, "foo.txt"), []byte("old\n"), 0o644); err != nil { t.Fatalf("write base file: %v", err) }
+    runGit(t, repo, "add", "foo.txt")
+    runGit(t, repo, "commit", "-m", "init")
+
+    patchDir := t.TempDir()
+    patchPath := filepath.Join(patchDir, "change.patch")
+    patchContent := "diff --git a/foo.txt b/foo.txt\n" +
+        "index 1111111..2222222 100644\n" +
+        "--- a/foo.txt\n" +
+        "+++ b/foo.txt\n" +
+        "@@ -1 +1 @@\n" +
+        "-old\n" +
+        "+new\n"
+    if err := os.WriteFile(patchPath, []byte(patchContent), 0o644); err != nil { t.Fatalf("write patch: %v", err) }
+
+    pr := &PatcherRunner{Enabled: true, SessionID: "sess", RepoRoot: repo, FullMode: true}
+    pr.WorkspaceFactory = func(root string) (string, func(), error) { return patchersvc.CreateWorkspace(root) }
+    pr.MirrorFactory = func() (string, func(), error) { return t.TempDir(), func() {}, nil }
+    stub := &stubService{result: &mctpatcher.PatchResult{PatchPath: patchPath, FilesModified: []string{"foo.txt"}, AppliedInWorkspace: true}}
+    stub.hook = func(params mctpatcher.PatchParams) error {
+        if params.WorkspaceRoot == "" { return nil }
+        return gitops.ApplyPatchInDir(params.WorkspaceRoot, patchPath, false)
+    }
+    pr.Service = stub
+    if err := pr.Resolve(); err != nil { t.Fatalf("resolve: %v", err) }
+    instr := mctpatcher.Instructions{Edits: []mctpatcher.Edit{{Path: "foo.txt", Mode: mctpatcher.ModeRewrite, NewContent: "new\n"}}}
+    if _, err := pr.Apply(context.Background(), instr, false); err != nil { t.Fatalf("apply: %v", err) }
+    if !stub.lastParams.FullMode { t.Fatalf("expected FullMode propagated, got false") }
 }
 
 func TestUndoRevertsPatch(t *testing.T) {
@@ -253,16 +298,17 @@ func TestUndoRevertsPatch(t *testing.T) {
 	}
 
 	var workspaceDir string
-	pr := &PatcherRunner{
-		Enabled:   true,
-		SessionID: "sess",
-		Service:   stub,
-		RepoRoot:  repoRoot,
-		WorkspaceFactory: func(root string) (string, func(), error) {
-			ws, cleanup, err := patchersvc.CreateWorkspace(root)
-			if err == nil {
-				workspaceDir = ws
-			}
+    pr := &PatcherRunner{
+        Enabled:   true,
+        SessionID: "sess",
+        Service:   stub,
+        RepoRoot:  repoRoot,
+        FullMode:  true,
+        WorkspaceFactory: func(root string) (string, func(), error) {
+            ws, cleanup, err := patchersvc.CreateWorkspace(root)
+            if err == nil {
+                workspaceDir = ws
+            }
 			return ws, cleanup, err
 		},
 		MirrorFactory: func() (string, func(), error) {

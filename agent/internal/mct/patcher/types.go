@@ -12,14 +12,16 @@ type Service interface {
 
 // PatchParams holds the inputs for producing a patch from a repository.
 type PatchParams struct {
-	RepoRoot      string
-	SessionID     string
-	Instructions  Instructions
-	OutputDir     string
-	Verbose       bool
-	WorkspaceRoot string
-	MirrorDir     string
-	Sequence      int
+    RepoRoot      string
+    SessionID     string
+    Instructions  Instructions
+    OutputDir     string
+    Verbose       bool
+    WorkspaceRoot string
+    MirrorDir     string
+    Sequence      int
+    // FullMode requests conversion of hunks to full-file replacements before generating the patch
+    FullMode      bool
 }
 
 // PatchResult contains metadata about a generated patch file.

@@ -91,6 +91,22 @@ func ReversePatchInDir(dir, patchPath string, verbose bool) error {
 	return applyPatch(dir, patchPath, verbose, true, "apply (reverse patch)")
 }
 
+// ReverseApplyInDir reverses a patch by invoking `git apply -R` against the
+// provided patch file within the specified directory. This is more robust for
+// atomicity checks than generating a textual reverse patch.
+func ReverseApplyInDir(dir, patchPath string, verbose bool) error {
+    if err := gitRepoValidator(dir); err != nil {
+        return fmt.Errorf("cannot reverse-apply patch: %w", err)
+    }
+    if _, err := os.Stat(patchPath); err != nil {
+        if os.IsNotExist(err) {
+            return fmt.Errorf("patch file %q not found", patchPath)
+        }
+        return fmt.Errorf("cannot read patch file %q: %w", patchPath, err)
+    }
+    return applyPatch(dir, patchPath, verbose, true, "apply (reverse -R)", "-R")
+}
+
 // WorkspaceStatus returns the current `git status --porcelain` entries for the
 // provided directory. The results include both tracked and untracked changes.
 func WorkspaceStatus(dir string) ([]string, error) {

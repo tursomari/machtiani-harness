@@ -19,15 +19,17 @@ import (
 // PatcherRunner orchestrates applying planner-provided instructions using the
 // shared patcher service implementation.
 type PatcherRunner struct {
-	Enabled         bool
-	Verbose         bool
-	DryRun          bool
-	SessionID       string
-	Service         mctpatcher.Service
-	Runtime         promptsvc.ModelRuntime
-	RepoRoot        string
-	PersistTmpData  bool
-	SessionTempRoot string
+    Enabled         bool
+    Verbose         bool
+    DryRun          bool
+    SessionID       string
+    Service         mctpatcher.Service
+    Runtime         promptsvc.ModelRuntime
+    RepoRoot        string
+    PersistTmpData  bool
+    SessionTempRoot string
+    // FullMode converts strict hunk patches to full-file rewrites before generation
+    FullMode        bool
 
 	workspaceDir     string
 	workspaceCleanup func()
@@ -125,15 +127,16 @@ func (p *PatcherRunner) Apply(ctx context.Context, instr mctpatcher.Instructions
 		baselineSet[line] = struct{}{}
 	}
 
-	params := mctpatcher.PatchParams{
-		RepoRoot:      p.repoAbs,
-		SessionID:     p.SessionID,
-		Instructions:  instr,
-		Verbose:       p.Verbose || verbose,
-		WorkspaceRoot: p.workspaceDir,
-		MirrorDir:     p.mirrorDir,
-		Sequence:      seq,
-	}
+    params := mctpatcher.PatchParams{
+        RepoRoot:      p.repoAbs,
+        SessionID:     p.SessionID,
+        Instructions:  instr,
+        Verbose:       p.Verbose || verbose,
+        WorkspaceRoot: p.workspaceDir,
+        MirrorDir:     p.mirrorDir,
+        Sequence:      seq,
+        FullMode:      p.FullMode,
+    }
 	result, err = p.Service.ApplyAndGeneratePatch(ctx, params)
 	if err != nil {
 		return nil, err
@@ -142,14 +145,14 @@ func (p *PatcherRunner) Apply(ctx context.Context, instr mctpatcher.Instructions
 		result.Sequence = seq
 	}
 
-	reverseContent, err := gitops.ReversePatchFromFile(result.PatchPath)
-	if err != nil {
-		return nil, fmt.Errorf("compute reverse patch: %w", err)
-	}
-	reversePath := result.PatchPath + ".reverse"
-	if err = gitops.WriteReversePatchToFile(reverseContent, reversePath); err != nil {
-		return nil, fmt.Errorf("write reverse patch: %w", err)
-	}
+    reverseContent, err := gitops.ReversePatchFromFile(result.PatchPath)
+    if err != nil {
+        return nil, fmt.Errorf("compute reverse patch: %w", err)
+    }
+    reversePath := result.PatchPath + ".reverse"
+    if err = gitops.WriteReversePatchToFile(reverseContent, reversePath); err != nil {
+        return nil, fmt.Errorf("write reverse patch: %w", err)
+    }
 
 	workspacePatched := result.AppliedInWorkspace
 	repoPatched := false
@@ -175,9 +178,10 @@ func (p *PatcherRunner) Apply(ctx context.Context, instr mctpatcher.Instructions
 		result.AppliedInWorkspace = true
 	}
 
-	if err = gitops.ReversePatchInDir(p.workspaceDir, reversePath, verbose || p.Verbose); err != nil {
-		return nil, fmt.Errorf("apply reverse patch for atomicity check: %w", err)
-	}
+    // Use git apply -R on the forward patch for robust atomicity verification.
+    if err = gitops.ReverseApplyInDir(p.workspaceDir, result.PatchPath, verbose || p.Verbose); err != nil {
+        return nil, fmt.Errorf("reverse-apply forward patch for atomicity check: %w", err)
+    }
 	workspacePatched = false
 
 	currentStatus, cleanErr := gitops.WorkspaceStatus(p.workspaceDir)
@@ -287,16 +291,32 @@ func (p *PatcherRunner) Undo(reversePatchPath string) error {
 	if entry != nil {
 		forwardPath = strings.TrimSpace(entry.Path)
 	}
-	if err := gitops.ReversePatchInDir(p.repoAbs, reversePath, p.Verbose); err != nil {
-		return fmt.Errorf("undo patch in repo: %w", err)
-	}
-	if err := gitops.ReversePatchInDir(p.workspaceDir, reversePath, p.Verbose); err != nil {
-		if forwardPath != "" {
-			_ = gitops.ApplyPatchInDir(p.repoAbs, forwardPath, p.Verbose)
-			_ = gitops.ApplyPatchInDir(p.workspaceDir, forwardPath, p.Verbose)
-		}
-		return fmt.Errorf("undo patch in workspace: %w", err)
-	}
+    // Prefer robust reverse-apply using the original forward patch when available.
+    if strings.TrimSpace(forwardPath) != "" {
+        if err := gitops.ReverseApplyInDir(p.repoAbs, forwardPath, p.Verbose); err != nil {
+            // Fallback to textual reverse patch if needed
+            if err2 := gitops.ReversePatchInDir(p.repoAbs, reversePath, p.Verbose); err2 != nil {
+                return fmt.Errorf("undo patch in repo: %v (fallback failed: %w)", err, err2)
+            }
+        }
+        if err := gitops.ReverseApplyInDir(p.workspaceDir, forwardPath, p.Verbose); err != nil {
+            // Attempt to re-apply in repo to keep states consistent, then fallback
+            _ = gitops.ApplyPatchInDir(p.repoAbs, forwardPath, p.Verbose)
+            if err2 := gitops.ReversePatchInDir(p.workspaceDir, reversePath, p.Verbose); err2 != nil {
+                // Try to re-apply in workspace to restore
+                _ = gitops.ApplyPatchInDir(p.workspaceDir, forwardPath, p.Verbose)
+                return fmt.Errorf("undo patch in workspace: %v (fallback failed: %w)", err, err2)
+            }
+            return fmt.Errorf("undo patch in workspace via -R failed; used reverse patch fallback")
+        }
+    } else {
+        if err := gitops.ReversePatchInDir(p.repoAbs, reversePath, p.Verbose); err != nil {
+            return fmt.Errorf("undo patch in repo: %w", err)
+        }
+        if err := gitops.ReversePatchInDir(p.workspaceDir, reversePath, p.Verbose); err != nil {
+            return fmt.Errorf("undo patch in workspace: %w", err)
+        }
+    }
 	if entry != nil {
 		entry.Finalized = false
 	}

@@ -31,12 +31,14 @@ type Config struct {
 	TrajectoryOmitRepoRoot  bool
 	PatchNoApply            bool
 	Patch                   bool
-	PatchStrict             bool
-	OpenAIAPIKey            string
-	OpenAIBaseURL           string
-	OpenAIModel             string
-	ShellAgent              bool
-	ShellAgentModel         string
+    PatchStrict             bool
+    // Enable full file rewrite mode for patches, converting hunk patches to full file replacements
+    PatchFull               bool
+    OpenAIAPIKey            string
+    OpenAIBaseURL           string
+    OpenAIModel             string
+    ShellAgent              bool
+    ShellAgentModel         string
 	APIKeyOverrides         map[string]string
 	SessionID               string
 	EnableTagFormat         bool
@@ -99,12 +101,13 @@ type legacyConfig struct {
 	trajectoryOmitRepoRoot  bool
 	patchNoApply            bool
 	patch                   bool
-	patchStrict             bool
-	openAIAPIKey            string
-	openAIBaseURL           string
-	openAIModel             string
-	shellAgent              bool
-	shellAgentModel         string
+    patchStrict             bool
+    patchFull               bool
+    openAIAPIKey            string
+    openAIBaseURL           string
+    openAIModel             string
+    shellAgent              bool
+    shellAgentModel         string
 	apiKeyOverrides         map[string]string
 	enableTagFormat         bool
 	sessionID               string
@@ -115,7 +118,7 @@ type legacyConfig struct {
 }
 
 func newLegacyConfig(cfg Config) legacyConfig {
-	return legacyConfig{
+    return legacyConfig{
 		maxSteps:                cfg.MaxSteps,
 		orchModel:               cfg.OrchModel,
 		answerModel:             cfg.AnswerModel,
@@ -138,12 +141,13 @@ func newLegacyConfig(cfg Config) legacyConfig {
 		trajectoryOmitRepoRoot:  cfg.TrajectoryOmitRepoRoot,
 		patchNoApply:            cfg.PatchNoApply,
 		patch:                   cfg.Patch,
-		patchStrict:             cfg.PatchStrict,
-		openAIAPIKey:            cfg.OpenAIAPIKey,
-		openAIBaseURL:           cfg.OpenAIBaseURL,
-		openAIModel:             cfg.OpenAIModel,
-		shellAgent:              cfg.ShellAgent,
-		shellAgentModel:         cfg.ShellAgentModel,
+        patchStrict:             cfg.PatchStrict,
+        patchFull:               cfg.PatchFull,
+        openAIAPIKey:            cfg.OpenAIAPIKey,
+        openAIBaseURL:           cfg.OpenAIBaseURL,
+        openAIModel:             cfg.OpenAIModel,
+        shellAgent:              cfg.ShellAgent,
+        shellAgentModel:         cfg.ShellAgentModel,
 		apiKeyOverrides:         llm.CopyAPIKeyOverridesForRuntime(cfg.APIKeyOverrides),
 		persistTmpData:          cfg.PersistTmpData,
 		enableTagFormat:         cfg.EnableTagFormat,

@@ -691,6 +691,9 @@ func Run(ctx context.Context, opts Options) Result {
 		mctResponseDirectives = []string{"use_tag_format"}
 	}
 
+	// In full-mode, disable strict patch prompting/apply and rely on full rewrites only.
+	effectiveStrict := cfg.patchStrict && !cfg.patchFull
+
 	var pRunner *runner.PatcherRunner
 	if cfg.patch {
 		patchLogger := log.New(os.Stderr, "[patcher] ", log.LstdFlags)
@@ -702,11 +705,12 @@ func Run(ctx context.Context, opts Options) Result {
 			Runtime:   models.patcher.toPromptRuntime(),
 			Service: patchersvc.NewService(
 				patchersvc.WithLogger(patchLogger),
-				patchersvc.WithStrictPatchMode(cfg.patchStrict),
+				patchersvc.WithStrictPatchMode(effectiveStrict),
 			),
 			RepoRoot:        repoRoot,
 			PersistTmpData:  cfg.persistTmpData,
 			SessionTempRoot: sessionTempRoot,
+			FullMode:        cfg.patchFull,
 		}
 		if err := pr.Resolve(); err != nil {
 			if cfg.verbose {
@@ -727,7 +731,7 @@ func Run(ctx context.Context, opts Options) Result {
 		DryRun:            cfg.dryRun,
 		RequestTimeoutSec: cfg.timeoutPerTurn,
 		PatchEnabled:      cfg.patch,
-		StrictPatchMode:   cfg.patchStrict,
+		StrictPatchMode:   effectiveStrict,
 		RepoRoot:          repoRoot,
 		SessionID:         sessionID,
 	})
