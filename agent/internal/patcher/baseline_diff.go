@@ -58,28 +58,39 @@ func BuildBaselineDiffSection(state *BaselineState, workspaceRoot, relPath strin
 		return "", false, fmt.Errorf("diff %s: %w", rel, err)
 	}
 
-	var body string
+	var fullBody string
 	trimmed := strings.TrimSpace(diffText)
 	switch {
 	case trimmed == "" && workspaceExists:
-		body, err = renderNumberedFile(workspacePath)
+		fullBody, err = renderNumberedFile(workspacePath)
 	case trimmed == "" && baselineExists:
-		body, err = renderDeletedBaseline(baselinePath)
+		fullBody, err = renderDeletedBaseline(baselinePath)
 	case strings.Contains(diffText, "Binary files"):
-		body = "[binary file diff omitted]"
+		fullBody = "[binary file diff omitted]"
 	default:
-		body = formatDiffWithLineNumbers(diffText)
+		fullBody = formatDiffWithLineNumbers(diffText)
 	}
 	if err != nil {
 		return "", false, err
 	}
-	body = strings.TrimRight(body, "\n")
-	trimmedBody := strings.TrimSpace(body)
+	fullBody = strings.TrimRight(fullBody, "\n")
+	trimmedBody := strings.TrimSpace(fullBody)
 	if trimmedBody == "" {
 		if workspaceExists || baselineExists {
-			body = fmt.Sprintf("%6s    (empty file)", "")
+			fullBody = fmt.Sprintf("%6s    (empty file)", "")
 		} else {
 			return "", false, nil
+		}
+	}
+
+	unifiedBody := ""
+	if trimmed != "" && !strings.Contains(diffText, "Binary files") {
+		unifiedText, diffErr := limitedContextDiff(left, right)
+		if diffErr != nil {
+			return "", false, fmt.Errorf("diff %s: %w", rel, diffErr)
+		}
+		if strings.TrimSpace(unifiedText) != "" {
+			unifiedBody = strings.TrimRight(unifiedText, "\n")
 		}
 	}
 
@@ -93,9 +104,16 @@ func BuildBaselineDiffSection(state *BaselineState, workspaceRoot, relPath strin
 		b.WriteString(" (symlink)")
 	}
 	b.WriteString("\n")
+	b.WriteString("Full diff (baseline vs workspace):\n")
 	b.WriteString("```diff\n")
-	b.WriteString(body)
+	b.WriteString(fullBody)
 	b.WriteString("\n```")
+	if unifiedBody != "" {
+		b.WriteString("\n\nUnified diff (baseline vs workspace):\n")
+		b.WriteString("```diff\n")
+		b.WriteString(unifiedBody)
+		b.WriteString("\n```")
+	}
 	return b.String(), true, nil
 }
 
@@ -103,6 +121,25 @@ func fullContextDiff(left, right string) (string, error) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd := exec.Command("git", "diff", "--no-index", "--text", "--unified=99999999", left, right)
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			if exitErr.ExitCode() == 1 {
+				return stdout.String(), nil
+			}
+			return "", fmt.Errorf("git diff failed: %s", strings.TrimSpace(stderr.String()))
+		}
+		return "", fmt.Errorf("git diff error: %w", err)
+	}
+	return stdout.String(), nil
+}
+
+func limitedContextDiff(left, right string) (string, error) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd := exec.Command("git", "diff", "--no-index", "--text", "--unified=6", left, right)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {

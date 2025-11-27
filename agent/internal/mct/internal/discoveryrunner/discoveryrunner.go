@@ -773,13 +773,13 @@ func cloneResolvedModels(src []llm.ResolvedModel) []llm.ResolvedModel {
 // Thin wrappers to call internal/git without import cycles in helper decl.
 // We keep them here to avoid dragging large git_utils into tests of this package.
 func gitIsRepo(dir string) bool {
-    return gitpkg.IsGitRepo(dir)
+	return gitpkg.IsGitRepo(dir)
 }
 func gitRepoRoot(dir string) (string, error) {
-    return gitpkg.RepoRoot(dir)
+	return gitpkg.RepoRoot(dir)
 }
 func gitListTracked(dir string) ([]string, error) {
-    return gitpkg.ListTrackedFiles(dir)
+	return gitpkg.ListTrackedFiles(dir)
 }
 
 // RefreshSyncedWorkspace updates the persistent discovery workspace immediately
@@ -787,28 +787,24 @@ func gitListTracked(dir string) ([]string, error) {
 // sync so subsequent discovery runs (or consecutive patch decisions) observe
 // the latest files without waiting for the next discovery invocation.
 func RefreshSyncedWorkspace(sessionID string, changed []string, verbose bool) error {
-    sid := strings.TrimSpace(sessionID)
-    if sid == "" {
-        // No stable session; nothing to refresh.
-        return nil
-    }
-    if len(changed) > 0 {
-        if err := session.AddPendingDiscoveryPaths(changed); err != nil {
-            return err
-        }
-    }
-    // ensurePersistentWorkspace will read pending paths (including those we
-    // just added) and perform the incremental sync.
-    dir, cleanup, err := ensurePersistentWorkspace(sid, verbose)
-    if cleanup != nil {
-        cleanup()
-    }
-    if err != nil {
-        return err
-    }
-    if strings.TrimSpace(dir) == "" {
-        // Not a git repo or nothing to do; treat as no-op.
-        return nil
-    }
-    return nil
+	sid := strings.TrimSpace(sessionID)
+	if sid == "" {
+		// No stable session; nothing to refresh.
+		return nil
+	}
+	if len(changed) > 0 {
+		if err := session.AddPendingDiscoveryPaths(changed); err != nil {
+			return err
+		}
+	}
+	// ensurePersistentWorkspace will read pending paths (including those we
+	// just added) and perform the incremental sync.
+	_, cleanup, err := ensurePersistentWorkspace(sid, verbose)
+	if cleanup != nil {
+		cleanup()
+	}
+	if err != nil {
+		return err
+	}
+	return nil
 }

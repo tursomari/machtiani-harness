@@ -28,6 +28,7 @@ const (
 const (
 	successFilesPromptLimit = 12
 	progressMaxTrackedFiles = 100
+	reviewDiffPreviewLimit  = 6000
 )
 
 type ClientConfig struct {
@@ -559,11 +560,11 @@ func (c *Client) planPrompt(goal string, transcript string, step, maxSteps int) 
 func (c *Client) reviewPrompt(goal string, transcript string, step, maxSteps int) string {
 	review := c.progress.PendingReview
 	var b strings.Builder
-	b.WriteString("A patch was just applied. Meticulously examine the diff to ensure every change is correct and remains within the stated goals—reject if you spot unnecessary additions, removals, or other scope creep.\n")
+	b.WriteString("A patch was just applied. Examine the diff to ensure the change was as intended and that you did not reduplicate or unnecessarily delete anything outside of your intention -- reject if you spot mistakes or risky alterations.\n")
 	b.WriteString("Accept keeps the changes. Reject applies the undo patch to revert them.\n")
 	b.WriteString("Begin your reply immediately with `Decision:`—no leading commentary.\n")
 	b.WriteString("Allowed values: accept or reject (case-insensitive).\n")
-	b.WriteString("Always include a second line formatted `Reason: <brief justification>` that cites why the changes are correct and in-scope (even if you accept).\n\n")
+	b.WriteString("Always include a second line formatted `Reason: <brief justification>` that cites why the changes are correct and safe (even if you accept).\n\n")
 	if review != nil {
 		if desc := strings.TrimSpace(review.Description); desc != "" {
 			b.WriteString("Patch summary: " + sanitizeForPrompt(desc) + "\n")
@@ -580,6 +581,12 @@ func (c *Client) reviewPrompt(goal string, transcript string, step, maxSteps int
 		}
 		if path := strings.TrimSpace(review.PatchPath); path != "" {
 			fmt.Fprintf(&b, "Patch file: %s\n", path)
+			if diffPreview, err := loadPatchDiffPreview(path, reviewDiffPreviewLimit); err == nil && strings.TrimSpace(diffPreview) != "" {
+				b.WriteString("\nPatch diff preview:\n")
+				b.WriteString("```diff\n")
+				b.WriteString(diffPreview)
+				b.WriteString("\n```\n")
+			}
 		}
 		if rpath := strings.TrimSpace(review.ReversePatchPath); rpath != "" {
 			fmt.Fprintf(&b, "Undo patch file: %s\n", rpath)
@@ -590,14 +597,6 @@ func (c *Client) reviewPrompt(goal string, transcript string, step, maxSteps int
 	appendSuccessFilesSection(&b, c.progress.SuccessFiles, "Files already accepted earlier this session (prefer new work unless necessary):\n", successFilesPromptLimit)
 	if c.progress.AppliedPatches > 0 {
 		fmt.Fprintf(&b, "Strict patch successes so far: %d. Accepting keeps them; rejecting reverts the latest patch only.\n\n", c.progress.AppliedPatches)
-	}
-	if strings.TrimSpace(goal) != "" {
-		b.WriteString("Goal:\n")
-		b.WriteString(goal + "\n\n")
-	}
-	if strings.TrimSpace(transcript) != "" {
-		b.WriteString("Transcript:\n")
-		b.WriteString(transcript + "\n\n")
 	}
 	b.WriteString(fmt.Sprintf("Step %d of %d. Decide.\n", step, maxSteps))
 	return b.String()
@@ -624,6 +623,30 @@ func (c *Client) appendForceRepatchExample(b *strings.Builder) {
 	b.WriteString("    } }\n")
 	b.WriteString("  ]\n")
 	b.WriteString("}\n\n")
+}
+
+func loadPatchDiffPreview(path string, limit int) (string, error) {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return "", nil
+	}
+	data, err := os.ReadFile(trimmed)
+	if err != nil {
+		return "", err
+	}
+	diff := strings.TrimSpace(string(data))
+	if diff == "" {
+		return "", nil
+	}
+	if limit > 0 && len(diff) > limit {
+		if limit > 3 {
+			diff = diff[:limit-3] + "..."
+		} else {
+			diff = diff[:limit]
+		}
+		diff += "\n\n[diff truncated]"
+	}
+	return diff, nil
 }
 
 func (c *Client) finalizePrompt(goal string, transcript string) string {

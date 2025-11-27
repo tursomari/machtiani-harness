@@ -224,6 +224,32 @@ func TestReviewPromptIncludesReviewDetails(t *testing.T) {
 	}
 }
 
+func TestReviewPromptIncludesPatchDiffPreview(t *testing.T) {
+	client := NewClient(ClientConfig{})
+	patchDir := t.TempDir()
+	patchPath := filepath.Join(patchDir, "change.patch")
+	diff := "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-Old line\n+New line\n"
+	if err := os.WriteFile(patchPath, []byte(diff), 0o644); err != nil {
+		t.Fatalf("write patch: %v", err)
+	}
+	client.UpdateProgress(Progress{
+		PendingReview: &PendingReview{
+			Description: "Doc tweak",
+			PatchPath:   patchPath,
+		},
+	})
+	prompt := client.reviewPrompt("Doc goal", "Transcript body", 2, 4)
+	if !strings.Contains(prompt, "Patch diff preview:") {
+		t.Fatalf("expected diff preview header, got %q", prompt)
+	}
+	if !strings.Contains(prompt, "```diff") {
+		t.Fatalf("expected diff code fence, got %q", prompt)
+	}
+	if !strings.Contains(prompt, "+New line") {
+		t.Fatalf("expected diff content in prompt, got %q", prompt)
+	}
+}
+
 func TestPlanReviewModeParsesAccept(t *testing.T) {
 	client := NewClient(ClientConfig{})
 	client.chatFn = func(context.Context, string) (string, error) {

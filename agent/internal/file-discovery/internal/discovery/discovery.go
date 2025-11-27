@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"encoding/json"
+
 	cfgpkg "github.com/tursomari/machtiani/agent/internal/file-discovery/internal/config"
 	"github.com/tursomari/machtiani/agent/internal/llm"
 )
@@ -1054,6 +1055,7 @@ func Run(ctx context.Context, cfg cfgpkg.Config, llmCfg LLMSettings) int {
 	prompt := buildSystemPrompt(mode)
 	sys := withNudgeRule(prompt)
 	messages = append(messages, chatMessage{Role: "system", Content: sys})
+	seenPaths := map[string]struct{}{}
 	// Seed with stdin prompt (if any), but always prepend the system prompt
 	if s, truncated, err := readAllStdin(cfg.MaxTranscript); err == nil {
 		header := "Protocol reminder:"
@@ -1063,12 +1065,21 @@ func Run(ctx context.Context, cfg cfgpkg.Config, llmCfg LLMSettings) int {
 				s += "\n[TRUNCATED]"
 			}
 			userContent = userContent + "\n\n" + s
+
+			// Extract seenPaths from any RG_OUT blocks in initial stdin
+			// (e.g., post-patch seeding from orchestrator)
+			paths := collectPathsFromRGBlock(s)
+			for _, p := range paths {
+				seenPaths[p] = struct{}{}
+			}
+			if len(paths) > 0 && tr.Enabled {
+				tr.Event("seenPaths_prepopulated_from_stdin", 0, map[string]any{"count": len(paths)})
+			}
 		}
 		messages = append(messages, chatMessage{Role: "user", Content: userContent})
 	}
 
 	transcriptBytes := 0
-	seenPaths := map[string]struct{}{}
 	// Track last RG command and its RG_OUT count
 	lastRG := lastRGState{outCount: -1}
 	// Track all previously empty RG patterns (not just the last one)
