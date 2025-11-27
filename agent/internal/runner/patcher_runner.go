@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -205,6 +206,48 @@ func (p *PatcherRunner) Apply(ctx context.Context, instr mctpatcher.Instructions
 	}
 	repoPatched = true
 
+	// Sync workspace with repo to ensure exact state match
+	for _, rel := range result.FilesModified {
+		src := filepath.Join(p.repoAbs, rel)
+		dst := filepath.Join(p.workspaceDir, rel)
+
+		info, err := os.Lstat(src)
+		if err != nil {
+			if os.IsNotExist(err) {
+				_ = os.Remove(dst)
+			}
+			continue
+		}
+
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			continue
+		}
+
+		if info.Mode()&os.ModeSymlink != 0 {
+			target, err := os.Readlink(src)
+			if err != nil {
+				continue
+			}
+			_ = os.Remove(dst)
+			_ = os.Symlink(target, dst)
+			continue
+		}
+
+		in, err := os.Open(src)
+		if err != nil {
+			continue
+		}
+		// Use same permissions as source file
+		out, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, info.Mode())
+		if err != nil {
+			in.Close()
+			continue
+		}
+		_, _ = io.Copy(out, in)
+		in.Close()
+		out.Close()
+	}
+
 	result.ReversePatchPath = reversePath
 	p.applied = append(p.applied, patchLogEntry{
 		Path:             result.PatchPath,
@@ -273,13 +316,7 @@ func (p *PatcherRunner) Close() {
 func (p *PatcherRunner) PatchLog() []PatchLogEntry {
 	out := make([]PatchLogEntry, len(p.applied))
 	for i, entry := range p.applied {
-		out[i] = PatchLogEntry{
-			Path:             entry.Path,
-			Order:            entry.Order,
-			WorkspaceApplied: entry.WorkspaceApplied,
-			Finalized:        entry.Finalized,
-			ReversePath:      entry.ReversePath,
-		}
+		out[i] = PatchLogEntry(entry)
 	}
 	return out
 }
