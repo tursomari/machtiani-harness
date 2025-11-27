@@ -582,7 +582,7 @@ func TestPreValidateStrictPatchJSONEscapesControlCharacters(t *testing.T) {
 	// Inject literal tabs into the JSON to mimic LLM output
 	raw = bytes.ReplaceAll(raw, []byte("\\t"), []byte("\t"))
 
-	sanitized, err := preValidateStrictPatchJSON(raw)
+	sanitized, err := preValidateStrictPatchJSON(raw, false)
 	if err != nil {
 		t.Fatalf("preValidateStrictPatchJSON returned error: %v", err)
 	}

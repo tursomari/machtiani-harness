@@ -2,6 +2,7 @@ package planner
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -38,6 +39,7 @@ type ClientConfig struct {
 	RequestTimeoutSec int
 	PatchEnabled      bool
 	StrictPatchMode   bool
+	PatchFull         bool
 	RepoRoot          string
 	SessionID         string
 }
@@ -262,41 +264,62 @@ func (c *Client) Plan(ctx context.Context, goal string, transcript string, step,
 		return dec, q, nil
 	}
 	if dec == DecisionPatch && c.cfg.StrictPatchMode {
-		strictPayload, err := c.runStrictPatchFlow(ctx, goal, transcript, step, maxSteps, q)
-		if err != nil {
+		if !shouldUseStrictPatchMode(q) {
 			if c.cfg.Verbose {
-				fmt.Fprintln(os.Stderr, "[planner] strict patch failed:", truncateMiddle(err.Error(), 160))
+				fmt.Fprintln(os.Stderr, "[planner] detected rewrite in plan; bypassing strict mode")
 			}
-			if hasWriter {
-				reason := sanitizeForPrompt(err.Error())
-				payload := map[string]any{
-					"event_version": 1,
-					"model_alias":   c.cfg.Alias,
-					"model_name":    c.cfg.Model.Model,
-					"step":          step,
-					"max_steps":     maxSteps,
-					"parse_ok":      false,
-					"error":         reason,
-				}
-				evt := trajectory.Event{
-					Level:        "warn",
-					Kind:         "planner.strict_patch.error",
-					SpanID:       span.ID,
-					ParentSpanID: parentSpan,
-					Payload:      payload,
-					Err: &trajectory.ErrorInfo{
-						Message:  reason,
-						Category: "strict_patch",
-					},
-				}
-				if emitErr := w.Emit(ctx, evt); emitErr != nil {
-					reportTrajectoryError(emitErr)
-				}
-			}
-			dec = DecisionAsk
-			q = strictPatchFallbackQuestion(err)
+			c.cfg.StrictPatchMode = false
+			c.cfg.PatchFull = true
 		} else {
-			q = strictPayload
+			strictPayload, err := c.runStrictPatchFlow(ctx, goal, transcript, step, maxSteps, q)
+			if err != nil {
+				if isRewriteNotSupportedError(err) {
+					if c.cfg.Verbose {
+						fmt.Fprintln(os.Stderr, "[planner] strict patch rejected rewrite; rerouting to full-mode patch flow")
+					}
+					// Reroute: disable strict mode, enable full mode, and retry.
+					c.cfg.StrictPatchMode = false
+					c.cfg.PatchFull = true
+					// Re-invoke the strict patch flow (which now allows rewrites via PatchFull).
+					strictPayload, err = c.runStrictPatchFlow(ctx, goal, transcript, step, maxSteps, q)
+				}
+			}
+
+			if err != nil {
+				if c.cfg.Verbose {
+					fmt.Fprintln(os.Stderr, "[planner] strict patch failed:", truncateMiddle(err.Error(), 160))
+				}
+				if hasWriter {
+					reason := sanitizeForPrompt(err.Error())
+					payload := map[string]any{
+						"event_version": 1,
+						"model_alias":   c.cfg.Alias,
+						"model_name":    c.cfg.Model.Model,
+						"step":          step,
+						"max_steps":     maxSteps,
+						"parse_ok":      false,
+						"error":         reason,
+					}
+					evt := trajectory.Event{
+						Level:        "warn",
+						Kind:         "planner.strict_patch.error",
+						SpanID:       span.ID,
+						ParentSpanID: parentSpan,
+						Payload:      payload,
+						Err: &trajectory.ErrorInfo{
+							Message:  reason,
+							Category: "strict_patch",
+						},
+					}
+					if emitErr := w.Emit(ctx, evt); emitErr != nil {
+						reportTrajectoryError(emitErr)
+					}
+				}
+				dec = DecisionAsk
+				q = strictPatchFallbackQuestion(err)
+			} else {
+				q = strictPayload
+			}
 		}
 	}
 	if dec == DecisionPatch {
@@ -323,6 +346,41 @@ func strictPatchFallbackQuestion(err error) string {
 		reason = "strict patch attempt failed"
 	}
 	return "Strict patch attempt failed (" + reason + "). Retrieve the exact numbered snippet for the referenced file so we can regenerate a valid patch."
+}
+
+func isRewriteNotSupportedError(err error) bool {
+	// We check the error string because the error type is defined in strict_patch_planner.go
+	// but we want to avoid circular dependencies if strict_patch_planner.go was in a subpackage.
+	// However, they are in the same package 'planner'.
+	// So we can check the type directly if it's exported.
+	var rewriteErr *ErrRewriteNotSupported
+	return errors.As(err, &rewriteErr)
+}
+
+func shouldUseStrictPatchMode(payloadJSON string) bool {
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(payloadJSON), &payload); err != nil {
+		return true
+	}
+	editsVal, ok := payload["edits"]
+	if !ok {
+		return true
+	}
+	editsSlice, ok := editsVal.([]any)
+	if !ok {
+		return true
+	}
+	for _, edit := range editsSlice {
+		editMap, ok := edit.(map[string]any)
+		if !ok {
+			continue
+		}
+		mode, _ := editMap["mode"].(string)
+		if strings.ToLower(strings.TrimSpace(mode)) == "rewrite" {
+			return false
+		}
+	}
+	return true
 }
 
 // Finalize composes the final answer using only the transcript content.

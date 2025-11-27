@@ -29,6 +29,16 @@ const (
 	strictPatchMaxPathAttempts        = 3
 )
 
+type ErrRewriteNotSupported struct {
+	Message    string
+	Reason     string
+	Suggestion string
+}
+
+func (e *ErrRewriteNotSupported) Error() string {
+	return fmt.Sprintf("%s: %s (%s)", e.Message, e.Reason, e.Suggestion)
+}
+
 const strictPatchSchemaExample = `{
   "edits": [
     {
@@ -217,7 +227,7 @@ func (c *Client) strictPatchGeneratePatch(ctx context.Context, goal, transcript,
 			continue
 		}
 
-		sanitizedJSON, err := preValidateStrictPatchJSON(jsonBytes)
+		sanitizedJSON, err := preValidateStrictPatchJSON(jsonBytes, c.cfg.PatchFull)
 		if err != nil {
 			lastErr = fmt.Errorf("strict patch payload pre-validate: %w", err)
 			if reloadedNow, reloadErr := maybeForceReload(lastErr); reloadErr != nil {
@@ -228,6 +238,10 @@ func (c *Client) strictPatchGeneratePatch(ctx context.Context, goal, transcript,
 			}
 			prompt = c.strictPatchRetryPrompt(basePrompt, lastErr)
 			continue
+		}
+
+		if c.cfg.PatchFull && isRewritePayload(sanitizedJSON) {
+			return string(sanitizedJSON), nil
 		}
 
 		if strictPatchRequestsFullReload(sanitizedJSON) {
@@ -491,7 +505,7 @@ func strictPatchShouldForceReload(err error, truncateLimit int) bool {
 	return false
 }
 
-func preValidateStrictPatchJSON(raw []byte) ([]byte, error) {
+func preValidateStrictPatchJSON(raw []byte, allowRewrite bool) ([]byte, error) {
 	sanitized, changed := sanitizeStrictPatchJSONStringLiterals(raw)
 	if changed {
 		raw = sanitized
@@ -532,6 +546,17 @@ func preValidateStrictPatchJSON(raw []byte) ([]byte, error) {
 			}
 			mode := strings.TrimSpace(strings.ToLower(getString(editMap["mode"])))
 			if mode != "" && mode != string(patcher.ModePatch) {
+				if mode == string(patcher.ModeRewrite) {
+					if !allowRewrite {
+						return nil, &ErrRewriteNotSupported{
+							Message:    "Strict patch mode does not support full-file rewrites",
+							Reason:     "Rewrites require unconstrained file replacement; strict mode enforces context-anchored hunks",
+							Suggestion: "Use non-strict mode (--patch-strict=false) or full-mode (--patch-full) for rewrites",
+						}
+					}
+					// If allowed, we accept it as-is (skipping further strict patch validation).
+					return raw, nil
+				}
 				return nil, fmt.Errorf("strict patch: edits[0].mode must be %q", patcher.ModePatch)
 			}
 			patchVal, ok := editMap["patch"]
@@ -1610,4 +1635,25 @@ func formatFileWithLineNumbers(content string, maxLines int) (string, bool) {
 		fmt.Fprintf(&b, "%*d | \n", width, 1)
 	}
 	return b.String(), truncated
+}
+
+func isRewritePayload(raw []byte) bool {
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return false
+	}
+	editsVal, ok := payload["edits"]
+	if !ok {
+		return false
+	}
+	editsSlice, ok := toAnySlice(editsVal)
+	if !ok || len(editsSlice) == 0 {
+		return false
+	}
+	editMap, ok := toStringMap(editsSlice[0])
+	if !ok {
+		return false
+	}
+	mode := strings.TrimSpace(strings.ToLower(getString(editMap["mode"])))
+	return mode == string(patcher.ModeRewrite)
 }

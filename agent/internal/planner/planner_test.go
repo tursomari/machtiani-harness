@@ -2,7 +2,10 @@ package planner
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -389,4 +392,120 @@ func index(s, sub string) int {
 		}
 	}
 	return -1
+}
+
+func TestPlanReroutesRewriteToFullMode(t *testing.T) {
+	repoRoot := t.TempDir()
+	relPath := "LICENSE"
+	content := "Original content"
+	if err := os.WriteFile(filepath.Join(repoRoot, relPath), []byte(content), 0o644); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+
+	client := NewClient(ClientConfig{
+		RepoRoot:        repoRoot,
+		PatchEnabled:    true,
+		StrictPatchMode: true,
+	})
+
+	rewriteJSON := `{
+		"edits": [
+			{
+				"path": "LICENSE",
+				"mode": "rewrite",
+				"new_content": "New content"
+			}
+		]
+	}`
+
+	var mu sync.Mutex
+	call := 0
+	client.chatFn = func(_ context.Context, prompt string) (string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		call++
+		// 1. Plan prompt
+		if strings.Contains(prompt, "Decision: ask|patch|finalize") {
+			return "Decision: patch\n{}", nil
+		}
+		// 2. Strict patch path selection (first attempt)
+		if strings.Contains(prompt, "strict patch path selector") {
+			return `{"path":"LICENSE","reason":"rewrite"}`, nil
+		}
+		// 3, 4, 5. Strict patch generation (first attempt retries)
+		if strings.Contains(prompt, "strict patch planner") {
+			// We return the same rewrite JSON which triggers validation error
+			return rewriteJSON, nil
+		}
+		t.Fatalf("unexpected call %d with prompt: %s", call, prompt)
+		return "", nil
+	}
+
+	dec, payload, err := client.Plan(context.Background(), "goal", "transcript", 1, 5)
+	if err != nil {
+		t.Fatalf("Plan error: %v", err)
+	}
+	if dec != DecisionPatch {
+		t.Fatalf("expected DecisionPatch, got %q", dec)
+	}
+	if !strings.Contains(payload, "rewrite") {
+		t.Fatalf("expected rewrite payload, got %q", payload)
+	}
+	if client.cfg.StrictPatchMode {
+		t.Fatalf("expected StrictPatchMode to be disabled")
+	}
+	if !client.cfg.PatchFull {
+		t.Fatalf("expected PatchFull to be enabled")
+	}
+}
+
+func TestPlanProactivelyBypassesStrictPatchForRewrite(t *testing.T) {
+	client := NewClient(ClientConfig{
+		StrictPatchMode: true,
+		PatchEnabled:    true,
+	})
+
+	rewriteJSON := `{
+		"edits": [
+			{
+				"path": "LICENSE",
+				"mode": "rewrite",
+				"new_content": "New content"
+			}
+		]
+	}`
+
+	var mu sync.Mutex
+	call := 0
+	client.chatFn = func(_ context.Context, prompt string) (string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		call++
+		// 1. Plan prompt returns rewrite directly
+		if strings.Contains(prompt, "Decision: ask|patch|finalize") {
+			return "Decision: patch\n" + rewriteJSON, nil
+		}
+		t.Fatalf("unexpected call %d with prompt: %s", call, prompt)
+		return "", nil
+	}
+
+	dec, payload, err := client.Plan(context.Background(), "goal", "transcript", 1, 5)
+	if err != nil {
+		t.Fatalf("Plan error: %v", err)
+	}
+	if dec != DecisionPatch {
+		t.Fatalf("expected DecisionPatch, got %q", dec)
+	}
+	if !strings.Contains(payload, "rewrite") {
+		t.Fatalf("expected rewrite payload, got %q", payload)
+	}
+	if call != 1 {
+		t.Fatalf("expected only 1 call (plan prompt), got %d", call)
+	}
+	if client.cfg.StrictPatchMode {
+		t.Fatalf("expected StrictPatchMode to be disabled")
+	}
+	if !client.cfg.PatchFull {
+		t.Fatalf("expected PatchFull to be enabled")
+	}
 }
