@@ -42,7 +42,7 @@ func BuildBaselineDiffSection(state *BaselineState, workspaceRoot, relPath strin
 	}
 
 	if !workspaceExists && !baselineExists {
-		return "", false, nil
+		return "(new file)", true, nil
 	}
 
 	left := baselinePath
