@@ -26,9 +26,8 @@ import (
 // Service provides a concrete implementation of the patcher API using the
 // internal diff/engine helpers from the patcher module.
 type Service struct {
-	logger          *log.Logger
-	clock           func() time.Time
-	strictPatchMode bool
+	logger *log.Logger
+	clock  func() time.Time
 }
 
 // Option configures a Service instance.
@@ -45,11 +44,8 @@ func WithLogger(l *log.Logger) Option {
 }
 
 // WithStrictPatchMode toggles support for context-anchored patch application.
-func WithStrictPatchMode(enabled bool) Option {
-	return func(s *Service) {
-		s.strictPatchMode = enabled
-	}
-}
+// WithStrictPatchMode is deprecated and ignored. Strict hunk patches are no longer supported.
+func WithStrictPatchMode(enabled bool) Option { return func(s *Service) {} }
 
 // WithClock overrides the timestamp source for patch filenames. Intended for tests.
 func WithClock(clock func() time.Time) Option {
@@ -128,27 +124,27 @@ func (s *Service) ApplyAndGeneratePatch(ctx context.Context, params mctpatcher.P
 		}
 	}
 
-    if err := mctpatcher.Validate(workspaceRoot, params.Instructions); err != nil {
-        return nil, &mctpatcher.ValidationError{Err: err}
-    }
+	createdFiles, err := ensurePatchTargets(workspaceRoot, params.Instructions)
+	if err != nil {
+		return nil, &mctpatcher.ValidationError{Err: err}
+	}
+
+	if err := mctpatcher.Validate(workspaceRoot, params.Instructions); err != nil {
+		return nil, &mctpatcher.ValidationError{Err: err}
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
-    // Determine instruction set to apply
-    instr := cloneInstructions(params.Instructions)
-    if params.FullMode {
-        // In full mode, always convert the entire instruction set into
-        // create/delete/rewrite edits only, based on computed after-state.
-        converted, convErr := s.convertToFullRewrite(workspaceRoot, instr)
-        if convErr != nil {
-            return nil, &mctpatcher.PatchNotCleanError{Err: convErr, Diagnostics: mctpatcher.PatchValidationDiagnostics{Operation: "convert to full rewrite"}}
-        }
-        instr = converted
-    } else if !s.strictPatchMode && instructionsUseStrictPatch(instr) {
-        // Without full mode, strict-mode disabled cannot accept hunks
-        return nil, &mctpatcher.ValidationError{Err: errors.New("strict patch mode disabled; use rewrite or replace modes")}
-    }
+	// Determine instruction set to apply: either direct or converted to full rewrites.
+	instr := cloneInstructionsLite(params.Instructions)
+	if params.FullMode {
+		converted, convErr := s.convertToFullRewrite(workspaceRoot, instr, createdFiles)
+		if convErr != nil {
+			return nil, &mctpatcher.PatchNotCleanError{Err: convErr, Diagnostics: mctpatcher.PatchValidationDiagnostics{Operation: "convert to full rewrite"}}
+		}
+		instr = converted
+	}
 
 	var baselineState *BaselineState
 	if strings.TrimSpace(params.SessionID) != "" {
@@ -158,46 +154,9 @@ func (s *Service) ApplyAndGeneratePatch(ctx context.Context, params mctpatcher.P
 		}
 	}
 
-    s.logf(params.Verbose, "applying edits in memory")
-	var (
-		afterMap     map[string][]byte
-		filesTouched []string
-		applyErr     *mctpatcher.PatchApplyError
-	)
-    for attempt := 1; attempt <= 2; attempt++ {
-        afterMap, filesTouched, err = engine.ApplyAll(workspaceRoot, instr)
-        if err == nil {
-            break
-        }
-        applyErr = nil
-		if !errors.As(err, &applyErr) {
-			return nil, &mctpatcher.ValidationError{Err: err}
-		}
-		diag := applyErr.Diagnostics
-		if diag.Operation == "" {
-			diag.Operation = "strict patch apply"
-		}
-		if attempt == 2 || !s.isRecoverablePatchFailure(applyErr) {
-			return nil, &mctpatcher.PatchNotCleanError{Err: applyErr.Err, Diagnostics: diag}
-		}
-        s.logf(params.Verbose, "strict patch apply failed; attempting rewrite fallback and retry")
-        updated, ok, fallbackErr := s.attemptFallback(workspaceRoot, instr, applyErr)
-		if fallbackErr != nil {
-			return nil, &mctpatcher.PatchNotCleanError{Err: fallbackErr, Diagnostics: diag}
-		}
-		if !ok {
-			return nil, &mctpatcher.PatchNotCleanError{Err: applyErr.Err, Diagnostics: diag}
-		}
-		instr = updated
-	}
+	s.logf(params.Verbose, "applying edits in memory")
+	afterMap, filesTouched, err := engine.ApplyAll(workspaceRoot, instr)
 	if err != nil {
-		if applyErr != nil {
-			diag := applyErr.Diagnostics
-			if diag.Operation == "" {
-				diag.Operation = "strict patch apply"
-			}
-			return nil, &mctpatcher.PatchNotCleanError{Err: applyErr.Err, Diagnostics: diag}
-		}
 		return nil, &mctpatcher.ValidationError{Err: err}
 	}
 	if err := ctx.Err(); err != nil {
@@ -258,14 +217,14 @@ func (s *Service) ApplyAndGeneratePatch(ctx context.Context, params mctpatcher.P
 		return nil, &mctpatcher.PatchNotCleanError{Err: err, Diagnostics: diag}
 	}
 
-    workspaceApplied := false
-    // In full-rewrite mode, let the runner handle forward+reverse atomicity in the workspace.
-    if strings.TrimSpace(params.WorkspaceRoot) != "" && !params.FullMode {
-        if err := gitops.ApplyPatchInDir(workspaceRoot, patchPath, params.Verbose); err != nil {
-            return nil, &mctpatcher.PatchGenerationError{Err: fmt.Errorf("apply patch in workspace: %w", err)}
-        }
-        workspaceApplied = true
-    }
+	workspaceApplied := false
+	// In full-rewrite mode, let the runner handle forward+reverse atomicity in the workspace.
+	if strings.TrimSpace(params.WorkspaceRoot) != "" && !params.FullMode {
+		if err := gitops.ApplyPatchInDir(workspaceRoot, patchPath, params.Verbose); err != nil {
+			return nil, &mctpatcher.PatchGenerationError{Err: fmt.Errorf("apply patch in workspace: %w", err)}
+		}
+		workspaceApplied = true
+	}
 
 	stats := diff.ExtractStats(patchBytes)
 	// Prefer touched files list for stable relative paths
@@ -314,9 +273,7 @@ func (s *Service) ValidateInstructions(ctx context.Context, repoRoot string, ins
 	if err := mctpatcher.Validate(repoAbs, instructions); err != nil {
 		return &mctpatcher.ValidationError{Err: err}
 	}
-    if !s.strictPatchMode && instructionsUseStrictPatch(instructions) {
-        return &mctpatcher.ValidationError{Err: errors.New("strict patch mode disabled; use rewrite or replace modes")}
-    }
+	// Validate only repository and instruction consistency; hunks are not supported.
 	if sessionID := strings.TrimSpace(os.Getenv("MACHTIANI_SESSION_ID")); sessionID != "" {
 		if _, err := EnsureBaseline(sessionID, repoAbs, s.clock()); err != nil {
 			return &mctpatcher.ValidationError{Err: fmt.Errorf("ensure baseline state: %w", err)}
@@ -332,14 +289,8 @@ func (s *Service) logf(verbose bool, format string, args ...any) {
 	s.logger.Printf(format, args...)
 }
 
-func instructionsUseStrictPatch(instr mctpatcher.Instructions) bool {
-	for _, ed := range instr.Edits {
-		if ed.Mode == mctpatcher.ModePatch {
-			return true
-		}
-	}
-	return false
-}
+// instructionsUseStrictPatch is deprecated; hunks are no longer supported.
+func instructionsUseStrictPatch(_ mctpatcher.Instructions) bool { return false }
 
 type afterManifest struct {
 	GeneratedAt time.Time           `json:"generated_at"`
@@ -399,47 +350,74 @@ func persistAfterState(after map[string][]byte, outDir, patchPath string, ts tim
 // convertToFullRewrite converts any instruction set into only create/delete/rewrite
 // edits by computing the after-state content for each touched file. This enforces
 // full-file replacements for modifications when full-mode is enabled.
-func (s *Service) convertToFullRewrite(workspaceRoot string, instr mctpatcher.Instructions) (mctpatcher.Instructions, error) {
-    afterMap, filesTouched, err := engine.ApplyAll(workspaceRoot, instr)
-    if err != nil {
-        var applyErr *mctpatcher.PatchApplyError
-        if errors.As(err, &applyErr) {
-            updated, ok, fbErr := s.attemptFallback(workspaceRoot, instr, applyErr)
-            if fbErr != nil {
-                return instr, fbErr
-            }
-            if !ok {
-                return instr, applyErr
-            }
-            instr = updated
-            afterMap, filesTouched, err = engine.ApplyAll(workspaceRoot, instr)
-            if err != nil {
-                return instr, err
-            }
-        } else {
-            return instr, err
-        }
-    }
+func (s *Service) convertToFullRewrite(workspaceRoot string, instr mctpatcher.Instructions, patchedNewFiles map[string]struct{}) (mctpatcher.Instructions, error) {
+	afterMap, filesTouched, err := engine.ApplyAll(workspaceRoot, instr)
+	if err != nil {
+		return instr, err
+	}
 
-    out := mctpatcher.Instructions{}
-    if instr.Metadata != nil {
-        meta := *instr.Metadata
-        out.Metadata = &meta
-    }
-    // Build deterministic full-rewrite edits based on after-state and baseline existence
-    for _, rel := range filesTouched {
-        onDisk := filepath.Join(workspaceRoot, filepath.FromSlash(rel))
-        content := afterMap[rel]
-        if content == nil {
-            out.Edits = append(out.Edits, mctpatcher.Edit{Path: rel, Mode: mctpatcher.ModeDelete})
-            continue
-        }
-        // Decide between create vs rewrite by checking baseline filesystem
-        if st, err := os.Stat(onDisk); err == nil && !st.IsDir() {
-            out.Edits = append(out.Edits, mctpatcher.Edit{Path: rel, Mode: mctpatcher.ModeRewrite, NewContent: string(content)})
-        } else {
-            out.Edits = append(out.Edits, mctpatcher.Edit{Path: rel, Mode: mctpatcher.ModeCreate, NewContent: string(content)})
-        }
-    }
-    return out, nil
+	out := mctpatcher.Instructions{}
+	if instr.Metadata != nil {
+		meta := *instr.Metadata
+		out.Metadata = &meta
+	}
+	// Build deterministic full-rewrite edits based on after-state and baseline existence
+	for _, rel := range filesTouched {
+		onDisk := filepath.Join(workspaceRoot, filepath.FromSlash(rel))
+		content := afterMap[rel]
+		if content == nil {
+			out.Edits = append(out.Edits, mctpatcher.Edit{Path: rel, Mode: mctpatcher.ModeDelete})
+			continue
+		}
+		// Decide between create vs rewrite by checking baseline filesystem
+		if _, created := patchedNewFiles[rel]; created {
+			out.Edits = append(out.Edits, mctpatcher.Edit{Path: rel, Mode: mctpatcher.ModeCreate, NewContent: string(content)})
+			continue
+		}
+		if st, err := os.Stat(onDisk); err == nil && !st.IsDir() {
+			out.Edits = append(out.Edits, mctpatcher.Edit{Path: rel, Mode: mctpatcher.ModeRewrite, NewContent: string(content)})
+		} else {
+			out.Edits = append(out.Edits, mctpatcher.Edit{Path: rel, Mode: mctpatcher.ModeCreate, NewContent: string(content)})
+		}
+	}
+	return out, nil
+}
+
+// cloneInstructionsLite makes a shallow, JSON-stable copy of the instruction set.
+func cloneInstructionsLite(instr mctpatcher.Instructions) mctpatcher.Instructions {
+	cloned := mctpatcher.Instructions{}
+	if instr.Metadata != nil {
+		meta := *instr.Metadata
+		cloned.Metadata = &meta
+	}
+	cloned.Edits = make([]mctpatcher.Edit, len(instr.Edits))
+	copy(cloned.Edits, instr.Edits)
+	return cloned
+}
+
+func ensurePatchTargets(workspaceRoot string, instr mctpatcher.Instructions) (map[string]struct{}, error) {
+	created := make(map[string]struct{})
+	for idx, ed := range instr.Edits {
+		if ed.Mode != mctpatcher.ModePatch {
+			continue
+		}
+		rel, err := ed.NormalizedPath(workspaceRoot)
+		if err != nil {
+			return nil, fmt.Errorf("patch validate: edit[%d] path invalid: %w", idx, err)
+		}
+		abs := filepath.Join(workspaceRoot, filepath.FromSlash(rel))
+		if info, err := os.Stat(abs); err == nil && !info.IsDir() {
+			continue
+		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("patch validate: stat %s: %w", rel, err)
+		}
+		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+			return nil, fmt.Errorf("patch validate: ensure dir for %s: %w", rel, err)
+		}
+		if err := os.WriteFile(abs, nil, 0o644); err != nil {
+			return nil, fmt.Errorf("patch validate: create placeholder %s: %w", rel, err)
+		}
+		created[rel] = struct{}{}
+	}
+	return created, nil
 }

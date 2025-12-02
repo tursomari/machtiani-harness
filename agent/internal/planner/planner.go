@@ -219,6 +219,14 @@ func (c *Client) Plan(ctx context.Context, goal string, transcript string, step,
 		fmt.Fprintln(os.Stderr, "[planner] model response:", truncateMiddle(strings.TrimSpace(resp), 1800))
 	}
 	dec, q, preamble := parseDecision(resp, c.cfg.PatchEnabled)
+	autoAcceptReview := false
+	if reviewMode {
+		if dec == "" || (dec != DecisionAccept && dec != DecisionReject) {
+			autoAcceptReview = true
+			dec = DecisionAccept
+			q = "Reason: auto-accepted by default review policy"
+		}
+	}
 	if hasWriter {
 		payload := map[string]any{
 			"event_version": 1,
@@ -233,6 +241,9 @@ func (c *Client) Plan(ctx context.Context, goal string, transcript string, step,
 		payload = trajectory.MergeExcerptWithPrefix(payload, trajectory.MakeTextExcerpt(resp, w.ExcerptLen()), "response")
 		if dec != "" {
 			payload["parse"] = map[string]any{"decision": string(dec)}
+		}
+		if autoAcceptReview {
+			payload["auto_accept_review"] = true
 		}
 		if preamble != "" {
 			payload["ignored_preamble"] = trajectory.MakeTextExcerpt(preamble, w.ExcerptLen())
@@ -506,27 +517,21 @@ func (c *Client) planPrompt(goal string, transcript string, step, maxSteps int) 
 		b.WriteString("If patch, immediately follow with a single standalone JSON object ONLY (no commentary, no markdown fences).\n\n")
 		if c.cfg.StrictPatchMode {
 			b.WriteString("Patch JSON schema (when Decision: patch):\n")
-			b.WriteString("{\n  \"edits\": [\n    { \"path\": string, \"mode\": \"create\"|\"delete\"|\"rewrite\", \"new_content\": string (rewrite/create only) },\n    { \"path\": string, \"mode\": \"replace\", \"before\": string, \"after\": string, \"occurrence\": number (optional) },\n    { \"path\": string, \"mode\": \"patch\", \"patch\": { \"hunks\": [ { \"old_start\": int, \"old_count\": int, \"new_start\": int, \"new_count\": int, \"context_before\": [string], \"deletions\": [string], \"additions\": [string], \"context_after\": [string], \"snippet_source\": { \"start_line\": int, \"end_line\": int, \"filepath\": string (optional) } } ] } }\n  ],\n  \"metadata\": { \"description\": string (optional) }\n}\n")
-			b.WriteString("Mode guidelines:\n")
-			b.WriteString("- create: provide new_content; file must be absent.\n")
-			b.WriteString("- delete: target file must exist.\n")
-			b.WriteString("- rewrite: provide new_content for full-file replacement.\n")
-			b.WriteString("- replace: legacy nth-occurrence substitution; use only when unavoidable.\n")
-			b.WriteString("- patch: strict context-anchored hunks; use for precise edits to existing files.\n")
+			b.WriteString("{\n  \"edits\": [\n    { \"path\": string, \"mode\": \"patch\", \"start_line\": int, \"end_line\": int, \"new_content\": string }\n  ],\n  \"metadata\": { \"description\": string (optional) }\n}\n")
 			b.WriteString("Patch mode rules:\n")
-			b.WriteString("  * Hunks must include exact context_before/context_after lines from the file.\n")
-			b.WriteString("  * Each hunk must include snippet_source with 1-based inclusive start_line and end_line for the before snippet; omit filepath to default to the edit path.\n")
-			b.WriteString("  * old_start/new_start use 1-based line numbers from the current file.\n")
-			b.WriteString("  * If any context does not match byte-for-byte, the patch fails with diagnostics—regenerate using the real file content shown in the transcript.\n")
-			b.WriteString("  * Do not rely on fuzzy matching or omit context; each hunk applies deterministically.\n\n")
+			b.WriteString("  * Provide exactly one edit per request; queue further changes for later turns.\n")
+			b.WriteString("  * use 1-based start_line; end_line = start_line for replacements, end_line = 0 for pure insertions.\n")
+			b.WriteString("  * Delete lines by setting end_line >= start_line and leaving new_content empty.\n")
+			b.WriteString("  * Preserve indentation and include any trailing newline you expect in new_content.\n")
+			b.WriteString("  * Do not mutate other files in the same instruction.\n\n")
 			b.WriteString("Strict patch planner flow:\n")
 			b.WriteString("  1. Prompt the planner LLM with the goal/context to select the exact repo-relative file path that needs editing; parse that path from the reply.\n")
 			b.WriteString("  2. Load that file directly from disk using the resolved path so you have the authoritative contents with line numbers.\n")
 			b.WriteString("  3. Modify the in-memory copy with the lines you want inserted, removed, or rewritten.\n")
-			b.WriteString("  4. Populate the JSON schema from those concrete lines, including snippet_source start/end that match the before snippet exactly.\n")
+			b.WriteString("  4. Populate the JSON schema with start_line/end_line and new_content that reflect those concrete lines.\n")
 			b.WriteString("  5. If the file changes later in the run, reload it from disk before producing the final patch.\n\n")
 			b.WriteString("Minimal example (do not include this text in output):\n")
-			b.WriteString("Decision: patch\n{\n  \"edits\": [\n    { \"path\": \"docs/guide.md\", \"mode\": \"patch\", \"patch\": {\n      \"hunks\": [{\n        \"old_start\": 12, \"old_count\": 3, \"new_start\": 12, \"new_count\": 3,\n        \"context_before\": [\"## Overview\"],\n        \"deletions\": [\"This feautre is experimental.\"],\n        \"additions\": [\"This feature is experimental.\"],\n        \"context_after\": [\"Use with caution.\"],\n        \"snippet_source\": { \"start_line\": 12, \"end_line\": 14 }\n      }]\n    } }\n  ],\n  \"metadata\": { \"description\": \"Fix typo\" }\n}\n\n")
+			b.WriteString("Decision: patch\n{\n  \"edits\": [\n    { \"path\": \"docs/guide.md\", \"mode\": \"patch\", \"start_line\": 12, \"end_line\": 12, \"new_content\": \"This feature is experimental.\\n\" }\n  ],\n  \"metadata\": { \"description\": \"Fix typo\" }\n}\n\n")
 			b.WriteString("When intentionally re-editing a file already updated this session, reload it from disk first and set metadata.force_repatch to true.\n\n")
 		} else {
 			b.WriteString("Patch JSON schema (when Decision: patch):\n")
@@ -611,16 +616,7 @@ func (c *Client) appendForceRepatchExample(b *strings.Builder) {
 	b.WriteString("{\n")
 	b.WriteString("  \"metadata\": { \"description\": \"Reapply earlier edit\", \"force_repatch\": true },\n")
 	b.WriteString("  \"edits\": [\n")
-	b.WriteString("    { \"path\": \"docs/guide.md\", \"mode\": \"patch\", \"patch\": {\n")
-	b.WriteString("      \"hunks\": [{\n")
-	b.WriteString("        \"old_start\": 12, \"old_count\": 1, \"new_start\": 12, \"new_count\": 1,\n")
-	b.WriteString("        \"context_before\": [\"## Overview\"],\n")
-	b.WriteString("        \"deletions\": [\"The current text.\"],\n")
-	b.WriteString("        \"additions\": [\"The corrected text.\"],\n")
-	b.WriteString("        \"context_after\": [\"Use with caution.\"],\n")
-	b.WriteString("        \"snippet_source\": { \"start_line\": 12, \"end_line\": 12 }\n")
-	b.WriteString("      }]\n")
-	b.WriteString("    } }\n")
+	b.WriteString("    { \"path\": \"docs/guide.md\", \"mode\": \"patch\", \"start_line\": 12, \"end_line\": 12, \"new_content\": \"The corrected text.\\n\" }\n")
 	b.WriteString("  ]\n")
 	b.WriteString("}\n\n")
 }

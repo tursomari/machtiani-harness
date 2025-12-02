@@ -150,3 +150,53 @@ func assertAfterStateArtifacts(t *testing.T, res *mctpatcher.PatchResult) {
 		t.Fatalf("manifest incorrectly marked README.md as deleted")
 	}
 }
+
+func TestServiceCreatesPlaceholderForPatchOnMissingFile(t *testing.T) {
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+
+	sess := "sess-patch-new"
+
+	svc := patchersvc.NewService()
+
+	instr := mctpatcher.Instructions{
+		Edits: []mctpatcher.Edit{{
+			Path:      "lib/newfile.js",
+			Mode:      mctpatcher.ModePatch,
+			StartLine: 1,
+			EndLine:   0,
+			NewContent: strings.Join([]string{
+				"'use strict'",
+				"",
+				"module.exports = function () {",
+				"	return 'hello'",
+				"}",
+				"",
+			}, "\n") + "\n",
+		}},
+	}
+
+	res, err := svc.ApplyAndGeneratePatch(context.Background(), mctpatcher.PatchParams{
+		RepoRoot:      repo,
+		WorkspaceRoot: repo,
+		SessionID:     sess,
+		Instructions:  instr,
+	})
+	if err != nil {
+		t.Fatalf("ApplyAndGeneratePatch: %v", err)
+	}
+
+	if len(res.FilesModified) != 1 || res.FilesModified[0] != "lib/newfile.js" {
+		t.Fatalf("unexpected files modified: %+v", res.FilesModified)
+	}
+
+	contents, err := os.ReadFile(filepath.Join(repo, "lib", "newfile.js"))
+	if err != nil {
+		t.Fatalf("read created file: %v", err)
+	}
+	got := strings.TrimRight(string(contents), "\n")
+	want := strings.TrimRight(instr.Edits[0].NewContent, "\n")
+	if got != want {
+		t.Fatalf("unexpected file content\n-- got --\n%s\n-- want --\n%s", contents, instr.Edits[0].NewContent)
+	}
+}

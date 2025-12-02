@@ -34,6 +34,7 @@ const (
 	backgroundQuestionPrompt = "Give me the background of the project."
 	backgroundFallbackAnswer = "No project documentation has been created yet. Please run `mct-agent sync` to generate initial project documentation."
 	patchTranscriptDiffLimit = 0 // zero disables transcript diff truncation
+	patchReviewDisabled      = true
 )
 
 var (
@@ -1759,13 +1760,55 @@ func Run(ctx context.Context, opts Options) Result {
 				_ = mctsync.RefreshSyncedWorkspace(sessionID, result.FilesModified, cfg.verbose)
 			}
 			plannerProgress.beginPendingReview(review)
+			autoAcceptNote := ""
+			autoAccepted := false
+			var autoAcceptedReview *planner.PendingReview
+			if patchReviewDisabled {
+				autoAcceptNote = "Review disabled – patch auto-accepted."
+				if err := writePendingPatchTranscript("SUCCESS", "patch", autoAcceptNote, false); err != nil {
+					fmt.Fprintln(os.Stderr, "Transcript write error:", err)
+					sessionErr = err
+					patchOutcome("error", err, map[string]any{"planner_review_action": "auto-accept"})
+					turnsCompleted = userTurnCounter
+					return Result{ExitCode: 1, Err: err}
+				}
+				autoAcceptedReview = plannerProgress.commitPendingReview()
+				autoAccepted = true
+				if autoAcceptedReview != nil {
+					review = autoAcceptedReview
+				}
+			}
 			plannerSuccessFiles := plannerProgress.successList()
 			turnInfo["planner_applied_patches"] = plannerProgress.appliedCount()
 			turnInfo["planner_success_file_count"] = len(plannerSuccessFiles)
-			turnInfo["planner_pending_review"] = true
-			turnInfo["patch_review_pending"] = true
-			if review != nil && len(review.Files) > 0 {
-				turnInfo["planner_pending_review_files"] = append([]string(nil), review.Files...)
+			reviewPending := plannerProgress.hasPendingReview()
+			turnInfo["planner_pending_review"] = reviewPending
+			turnInfo["patch_review_pending"] = reviewPending
+			if autoAccepted {
+				turnInfo["planner_review_action"] = "auto-accept"
+				turnInfo["patch_finalize_pending"] = false
+				if autoAcceptNote != "" {
+					turnInfo["planner_review_note"] = autoAcceptNote
+				}
+				if autoAcceptedReview != nil {
+					turnInfo["patch_review_sequence"] = autoAcceptedReview.Sequence
+					if autoAcceptedReview.Description != "" {
+						turnInfo["patch_review_description"] = autoAcceptedReview.Description
+					}
+					if len(autoAcceptedReview.Files) > 0 {
+						turnInfo["patch_review_files"] = append([]string(nil), autoAcceptedReview.Files...)
+					}
+				}
+				if review != nil {
+					display.Notify(fmt.Sprintf("Patch %d auto-accepted (review disabled)%s", review.Sequence, formatOptionalSuffix(review.Description)))
+				} else {
+					display.Notify("Patch auto-accepted (review disabled)")
+				}
+			} else {
+				turnInfo["patch_finalize_pending"] = true
+				if review != nil && len(review.Files) > 0 {
+					turnInfo["planner_pending_review_files"] = append([]string(nil), review.Files...)
+				}
 			}
 			extra := map[string]any{}
 			if trajectoryWriter != nil {
@@ -1789,11 +1832,17 @@ func Run(ctx context.Context, opts Options) Result {
 			}
 			extra["patch_workspace_applied"] = result.AppliedInWorkspace
 			extra["patch_applied"] = result.AppliedInWorkspace
-			extra["patch_finalize_pending"] = true
+			extra["patch_review_pending"] = plannerProgress.hasPendingReview()
+			extra["patch_finalize_pending"] = plannerProgress.hasPendingReview()
+			if autoAccepted {
+				extra["patch_review_action"] = "auto-accept"
+				if autoAcceptNote != "" {
+					extra["patch_review_note"] = autoAcceptNote
+				}
+			}
 			if review.ReversePatchPath != "" {
 				extra["patch_reverse_path"] = review.ReversePatchPath
 			}
-			extra["patch_review_pending"] = true
 			extra["patch_review_sequence"] = result.Sequence
 			patchOutcome("success", nil, extra)
 			if shouldFinalizeAfterPatch && !plannerProgress.hasPendingReview() {

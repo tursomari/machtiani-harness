@@ -60,21 +60,9 @@ func TestRunStrictPatchFlowLoadsFileSnapshot(t *testing.T) {
     {
       "path": "LICENSE",
       "mode": "patch",
-      "patch": {
-        "hunks": [
-          {
-            "old_start": 1,
-            "old_count": 3,
-            "new_start": 1,
-            "new_count": 3,
-            "context_before": ["Alpha"],
-            "deletions": ["Beta"],
-            "additions": ["Beta 2025"],
-            "context_after": ["Gamma"],
-            "snippet_source": {"start_line": 1, "end_line": 3}
-          }
-        ]
-      }
+      "start_line": 2,
+      "end_line": 2,
+      "new_content": "Beta 2025\n"
     }
   ]
 }`
@@ -118,15 +106,14 @@ func TestRunStrictPatchFlowLoadsFileSnapshot(t *testing.T) {
 	if edit.Mode != patcher.ModePatch {
 		t.Fatalf("expected mode patch, got %q", edit.Mode)
 	}
-	if edit.PatchInfo == nil || len(edit.PatchInfo.Hunks) != 1 {
-		t.Fatalf("expected one hunk in patch info, got %#v", edit.PatchInfo)
+	if got, want := edit.StartLine, 2; got != want {
+		t.Fatalf("start_line = %d, want %d", got, want)
 	}
-	h := edit.PatchInfo.Hunks[0]
-	if h.SnippetSource == nil {
-		t.Fatalf("expected snippet source populated")
+	if got, want := edit.EndLine, 2; got != want {
+		t.Fatalf("end_line = %d, want %d", got, want)
 	}
-	if h.SnippetSource.StartLine != 1 || h.SnippetSource.EndLine != 3 {
-		t.Fatalf("snippet source lines mismatch: %#v", h.SnippetSource)
+	if got, want := edit.NewContent, "Beta 2025\n"; got != want {
+		t.Fatalf("new_content = %q, want %q", got, want)
 	}
 }
 
@@ -149,8 +136,8 @@ func TestStrictPatchNormalizationHandlesReplacementAlias(t *testing.T) {
 		case 1:
 			return `{"path":"LICENSE","reason":"root license"}`, nil
 		case 2:
-			if !strings.Contains(prompt, "context_before") {
-				t.Fatalf("expected simplified guidance, got %q", prompt)
+			if !strings.Contains(prompt, "start_line") {
+				t.Fatalf("expected start_line guidance, got %q", prompt)
 			}
 			return `{
 	  "metadata": {"description": "Update LICENSE year"},
@@ -158,16 +145,9 @@ func TestStrictPatchNormalizationHandlesReplacementAlias(t *testing.T) {
 	    {
 	      "path": "LICENSE",
 	      "mode": "patch",
-	      "patch": {
-	        "hunks": [
-	          {
-	            "context_before": "MIT License\n",
-	            "context_after": "\nPermission is hereby granted, free of charge, to any person obtaining a copy",
-	            "snippet_source": {"start_line": 1, "end_line": 5},
-	            "replacement": "MIT License\n\nCopyright (c) 2020-2025 Matteo Collina and Undici contributors\n"
-	          }
-	        ]
-	      }
+	      "start_line": 3,
+	      "end_line": 3,
+	      "replacement": "Copyright (c) 2020-2025 Matteo Collina and Undici contributors\n"
 	    }
 	  ]
 	}`, nil
@@ -189,15 +169,14 @@ func TestStrictPatchNormalizationHandlesReplacementAlias(t *testing.T) {
 		t.Fatalf("expected one edit, got %d", len(instr.Edits))
 	}
 	ed := instr.Edits[0]
-	if ed.PatchInfo == nil || len(ed.PatchInfo.Hunks) != 1 {
-		t.Fatalf("expected single hunk, got %#v", ed.PatchInfo)
+	if got, want := ed.StartLine, 3; got != want {
+		t.Fatalf("start_line = %d, want %d", got, want)
 	}
-	h := ed.PatchInfo.Hunks[0]
-	if got, want := h.Deletions, []string{"Copyright (c) Matteo Collina and Undici contributors"}; !slicesEqual(got, want) {
-		t.Fatalf("deletions = %#v, want %#v", got, want)
+	if got, want := ed.EndLine, 3; got != want {
+		t.Fatalf("end_line = %d, want %d", got, want)
 	}
-	if got, want := h.Additions, []string{"Copyright (c) 2020-2025 Matteo Collina and Undici contributors"}; !slicesEqual(got, want) {
-		t.Fatalf("additions = %#v, want %#v", got, want)
+	if got, want := ed.NewContent, "Copyright (c) 2020-2025 Matteo Collina and Undici contributors\n"; got != want {
+		t.Fatalf("new_content = %q, want %q", got, want)
 	}
 }
 
@@ -239,21 +218,9 @@ func TestStrictPatchPromptUsesBaselineDiffWhenSessionAvailable(t *testing.T) {
     {
       "path": "README.md",
       "mode": "patch",
-      "patch": {
-        "hunks": [
-          {
-            "old_start": 1,
-            "old_count": 1,
-            "new_start": 1,
-            "new_count": 1,
-            "context_before": ["Line one"],
-            "deletions": ["Line two"],
-            "additions": ["Line two updated"],
-            "context_after": [],
-            "snippet_source": {"start_line": 1, "end_line": 1}
-          }
-        ]
-      }
+      "start_line": 2,
+      "end_line": 2,
+      "new_content": "Line two updated\n"
     }
   ]
 }`, nil
@@ -309,21 +276,9 @@ func TestStrictPatchPromptUsesBaselineDiffFromConfigWhenEnvMissing(t *testing.T)
     {
       "path": "README.md",
       "mode": "patch",
-      "patch": {
-        "hunks": [
-          {
-            "old_start": 1,
-            "old_count": 1,
-            "new_start": 1,
-            "new_count": 1,
-            "context_before": ["Line one"],
-            "deletions": ["Line two"],
-            "additions": ["Line two updated"],
-            "context_after": [],
-            "snippet_source": {"start_line": 1, "end_line": 1}
-          }
-        ]
-      }
+      "start_line": 2,
+      "end_line": 2,
+      "new_content": "Line two updated\n"
     }
   ]
 }`, nil
@@ -399,15 +354,9 @@ func TestStrictPatchNormalizationHandlesOldNewText(t *testing.T) {
 	    {
 	      "path": "README.md",
 	      "mode": "patch",
-	      "patch": {
-	        "hunks": [
-	          {
-	            "snippet_source": {"start_line": 2, "end_line": 2},
-	            "old_text": "Bravo",
-	            "new_text": "Bravo!!!"
-	          }
-	        ]
-	      }
+	      "start_line": 2,
+	      "end_line": 2,
+	      "new_text": "Bravo!!!\n"
 	    }
 	  ]
 	}`, nil
@@ -425,36 +374,15 @@ func TestStrictPatchNormalizationHandlesOldNewText(t *testing.T) {
 	if err := json.Unmarshal([]byte(payload), &instr); err != nil {
 		t.Fatalf("decode returned payload: %v", err)
 	}
-	h := instr.Edits[0].PatchInfo.Hunks[0]
-	if got, want := h.Deletions, []string{"Bravo"}; !slicesEqual(got, want) {
-		t.Fatalf("deletions = %#v, want %#v", got, want)
+	ed := instr.Edits[0]
+	if got, want := ed.StartLine, 2; got != want {
+		t.Fatalf("start_line = %d, want %d", got, want)
 	}
-	if got, want := h.Additions, []string{"Bravo!!!"}; !slicesEqual(got, want) {
-		t.Fatalf("additions = %#v, want %#v", got, want)
+	if got, want := ed.EndLine, 2; got != want {
+		t.Fatalf("end_line = %d, want %d", got, want)
 	}
-}
-
-func TestNormalizeStrictHunkAllowsContentMismatch(t *testing.T) {
-	fileLines := []string{"alpha", "beta", "gamma"}
-	hunk := map[string]any{
-		"context_before": []any{"alpha"},
-		"deletions":      []any{"BETA"},
-		"additions":      []any{"BETA"},
-		"context_after":  []any{"gamma"},
-		"snippet_source": map[string]any{"start_line": 1, "end_line": 3},
-	}
-	if err := normalizeStrictHunk(hunk, "foo.txt", fileLines); err != nil {
-		t.Fatalf("normalizeStrictHunk returned error: %v", err)
-	}
-	snippet, ok := hunk["snippet_source"].(map[string]any)
-	if !ok {
-		t.Fatalf("snippet_source not normalized: %#v", hunk["snippet_source"])
-	}
-	if snippet["start_line"] != 1 || snippet["end_line"] != 3 {
-		t.Fatalf("unexpected snippet range: %#v", snippet)
-	}
-	if got := hunk["deletions"].([]string); !slicesEqual(got, []string{"BETA"}) {
-		t.Fatalf("deletions = %#v, want %#v", got, []string{"BETA"})
+	if got, want := ed.NewContent, "Bravo!!!\n"; got != want {
+		t.Fatalf("new_content = %q, want %q", got, want)
 	}
 }
 
@@ -500,20 +428,12 @@ func TestStrictPatchRequestsFullReloadTriggersRetry(t *testing.T) {
 	    {
 	      "path": "big.txt",
 	      "mode": "patch",
-	      "patch": {
-	        "hunks": [
-	          {
-	            "context_before": ["Line 804"],
-	            "deletions": ["Line 805"],
-	            "additions": ["Line 805 updated"],
-	            "context_after": ["Line 806"],
-	            "snippet_source": {"start_line": 805, "end_line": 806}
-	          }
-	        ]
-	      }
+	      "start_line": 805,
+	      "end_line": 805,
+	      "new_content": "Line 805 updated\n"
 	    }
 	  ]
-}`, nil
+	}`, nil
 		default:
 			t.Fatalf("unexpected chat invocation %d", call)
 			return "", nil
@@ -536,21 +456,14 @@ func TestStrictPatchRequestsFullReloadTriggersRetry(t *testing.T) {
 		t.Fatalf("expected one edit, got %d", len(instr.Edits))
 	}
 	ed := instr.Edits[0]
-	if ed.PatchInfo == nil || len(ed.PatchInfo.Hunks) != 1 {
-		t.Fatalf("expected single hunk, got %#v", ed.PatchInfo)
+	if got, want := ed.StartLine, 805; got != want {
+		t.Fatalf("start_line = %d, want %d", got, want)
 	}
-	h := ed.PatchInfo.Hunks[0]
-	if h.SnippetSource == nil {
-		t.Fatalf("snippet source must be populated")
+	if got, want := ed.EndLine, 805; got != want {
+		t.Fatalf("end_line = %d, want %d", got, want)
 	}
-	if h.SnippetSource.StartLine != 803 || h.SnippetSource.EndLine != 805 {
-		t.Fatalf("snippet source lines mismatch: %#v", h.SnippetSource)
-	}
-	if got, want := h.Deletions, []string{"Line 805"}; !slicesEqual(got, want) {
-		t.Fatalf("deletions = %#v, want %#v", got, want)
-	}
-	if got, want := h.Additions, []string{"Line 805 updated"}; !slicesEqual(got, want) {
-		t.Fatalf("additions = %#v, want %#v", got, want)
+	if got, want := ed.NewContent, "Line 805 updated\n"; got != want {
+		t.Fatalf("new_content = %q, want %q", got, want)
 	}
 }
 
@@ -561,20 +474,9 @@ func TestPreValidateStrictPatchJSONEscapesControlCharacters(t *testing.T) {
     {
       "path": "transcript.go",
       "mode": "patch",
-      "patch": {
-        "hunks": [
-          {
-            "old_start": 1,
-            "old_count": 1,
-            "new_start": 1,
-            "new_count": 1,
-            "context_before": ["func demo() {"],
-            "additions": ["\treturn\thasTab"],
-            "deletions": [],
-            "context_after": ["}"]
-          }
-        ]
-      }
+      "start_line": 10,
+      "end_line": 10,
+      "new_content": "\treturn\thasTab\n"
     }
   ]
 }`)
@@ -603,51 +505,6 @@ func TestPreValidateStrictPatchJSONEscapesControlCharacters(t *testing.T) {
 	}
 }
 
-func TestNormalizeStrictHunkRealignsOutOfBoundsSnippetSource(t *testing.T) {
-	fileLines := []string{"Alpha", "Beta", "Gamma", "Delta"}
-	hunk := map[string]any{
-		"context_before": []string{"Alpha"},
-		"deletions":      []string{"Beta"},
-		"additions":      []string{"Beta 2025"},
-		"context_after":  []string{"Gamma"},
-		"snippet_source": map[string]any{
-			"start_line": 120,
-			"end_line":   120,
-		},
-	}
-
-	if err := normalizeStrictHunk(hunk, "docs/file.txt", fileLines); err != nil {
-		t.Fatalf("normalizeStrictHunk returned error: %v", err)
-	}
-
-	snippetMap, ok := toStringMap(hunk["snippet_source"])
-	if !ok {
-		t.Fatalf("snippet_source not normalized to map: %#v", hunk["snippet_source"])
-	}
-	startLine, err := toPositiveInt(snippetMap["start_line"])
-	if err != nil {
-		t.Fatalf("start_line parse error: %v", err)
-	}
-	if startLine != 1 {
-		t.Fatalf("expected start_line 1, got %d", startLine)
-	}
-	endLinePtr, err := toIntValue(snippetMap["end_line"])
-	if err != nil || endLinePtr == nil {
-		t.Fatalf("end_line parse error: %v", err)
-	}
-	if *endLinePtr != 3 {
-		t.Fatalf("expected end_line 3, got %d", *endLinePtr)
-	}
-
-	deletions, ok := hunk["deletions"].([]string)
-	if !ok {
-		t.Fatalf("deletions not []string: %#v", hunk["deletions"])
-	}
-	if len(deletions) != 1 || deletions[0] != "Beta" {
-		t.Fatalf("unexpected deletions: %#v", deletions)
-	}
-}
-
 func TestStrictPatchAdjustsSnippetSourceForContext(t *testing.T) {
 	repoRoot := t.TempDir()
 	relPath := "LICENSE"
@@ -666,28 +523,16 @@ func TestStrictPatchAdjustsSnippetSourceForContext(t *testing.T) {
 		switch call {
 		case 1:
 			return `{"path":"LICENSE","reason":"update"}`, nil
-		case 2:
-			return `{
+	case 2:
+		return `{
 	  "metadata": {"description": "Adjust snippet"},
 	  "edits": [
 	    {
 	      "path": "LICENSE",
 	      "mode": "patch",
-	      "patch": {
-	        "hunks": [
-	          {
-	            "old_start": 3,
-	            "old_count": 2,
-	            "new_start": 3,
-	            "new_count": 2,
-	            "context_before": ["Line1", "Line2"],
-	            "deletions": ["Line3"],
-	            "additions": ["Line3 updated"],
-	            "context_after": ["Line4"],
-	            "snippet_source": {"start_line": 3, "end_line": 4}
-	          }
-	        ]
-	      }
+	      "start_line": 3,
+	      "end_line": 4,
+	      "new_content": "Line3 updated\nLine4 rewritten"
 	    }
 	  ]
 	}`, nil
@@ -712,27 +557,14 @@ func TestStrictPatchAdjustsSnippetSourceForContext(t *testing.T) {
 		t.Fatalf("expected one edit, got %d", len(instr.Edits))
 	}
 	ed := instr.Edits[0]
-	if ed.PatchInfo == nil || len(ed.PatchInfo.Hunks) != 1 {
-		t.Fatalf("expected single hunk, got %#v", ed.PatchInfo)
+	if got, want := ed.StartLine, 3; got != want {
+		t.Fatalf("start_line = %d, want %d", got, want)
 	}
-	h := ed.PatchInfo.Hunks[0]
-	if h.SnippetSource == nil {
-		t.Fatalf("expected snippet source populated")
+	if got, want := ed.EndLine, 4; got != want {
+		t.Fatalf("end_line = %d, want %d", got, want)
 	}
-	if h.SnippetSource.StartLine != 1 {
-		t.Fatalf("snippet start line = %d, want 1", h.SnippetSource.StartLine)
-	}
-	if h.SnippetSource.EndLine != 4 {
-		t.Fatalf("snippet end line = %d, want 4", h.SnippetSource.EndLine)
-	}
-	if h.OldStart != 1 {
-		t.Fatalf("old_start = %d, want 1", h.OldStart)
-	}
-	if h.OldCount != 4 {
-		t.Fatalf("old_count = %d, want 4", h.OldCount)
-	}
-	if h.NewCount != 4 {
-		t.Fatalf("new_count = %d, want 4", h.NewCount)
+	if got, want := ed.NewContent, "Line3 updated\nLine4 rewritten"; got != want {
+		t.Fatalf("new_content = %q, want %q", got, want)
 	}
 }
 
@@ -765,21 +597,9 @@ func TestStrictPatchRetriesOnEmptyChoices(t *testing.T) {
 	    {
 	      "path": "LICENSE",
 	      "mode": "patch",
-	      "patch": {
-	        "hunks": [
-	          {
-	            "old_start": 1,
-	            "old_count": 2,
-	            "new_start": 1,
-	            "new_count": 2,
-	            "context_before": [],
-	            "deletions": ["Alpha"],
-	            "additions": ["Alpha updated"],
-	            "context_after": ["Beta"],
-	            "snippet_source": {"start_line": 1, "end_line": 2}
-	          }
-	        ]
-	      }
+	      "start_line": 1,
+	      "end_line": 1,
+	      "new_content": "Alpha updated\n"
 	    }
 	  ]
 	}`, nil

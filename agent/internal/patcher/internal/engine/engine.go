@@ -84,40 +84,72 @@ func ApplyAll(repoRoot string, instr patcher.Instructions) (map[string][]byte, [
 				return nil, nil, fmt.Errorf("%w: edit[%d] replace could not find nth occurrence", ErrEditFailed, idx)
 			}
 			after[rel] = []byte(out)
-		case patcher.ModePatch:
-			if !exists {
-				return nil, nil, fmt.Errorf("%w: edit[%d] patch requires existing file: %s", ErrEditConflict, idx, rel)
-			}
-			if !utf8.ValidString(string(base)) {
-				return nil, nil, fmt.Errorf("%w: edit[%d] base file not utf8: %s", ErrEditFailed, idx, rel)
-			}
-			if ed.PatchInfo == nil {
-				return nil, nil, fmt.Errorf("%w: edit[%d] patch missing payload", ErrEditFailed, idx)
-			}
-			out, hunkDiags, err := applyStrictPatch(repoRoot, rel, string(base), ed.PatchInfo)
-			if err != nil {
-				reason := "patch_not_clean"
-				if len(hunkDiags) > 0 {
-					reason = hunkDiags[0].Reason
-				}
-				diag := patcher.PatchValidationDiagnostics{
-					Operation: "strict patch apply",
-					ContentConflicts: []patcher.ContentConflictDiagnostic{
-						{
-							EditIndex:     idx,
-							Path:          rel,
-							Reason:        reason,
-							HunkConflicts: hunkDiags,
-						},
-					},
-				}
-				return nil, nil, &patcher.PatchApplyError{
-					Err:             fmt.Errorf("%w: edit[%d] patch apply failed: %v", ErrEditFailed, idx, err),
-					Diagnostics:     diag,
-					ConflictedEdits: []int{idx},
-				}
-			}
-			after[rel] = []byte(out)
+    case patcher.ModePatch:
+        if !exists {
+            return nil, nil, fmt.Errorf("%w: edit[%d] patch requires existing file: %s", ErrEditConflict, idx, rel)
+        }
+        if !utf8.ValidString(string(base)) {
+            return nil, nil, fmt.Errorf("%w: edit[%d] base file not utf8: %s", ErrEditFailed, idx, rel)
+        }
+        // Direct line splice using explicit 1-based inclusive range.
+        start := ed.StartLine
+        end := ed.EndLine
+        newContent := ed.NewContent
+        if start == 0 {
+            start = 1
+        }
+        if start < 1 || end < 0 || (end > 0 && start > end) {
+            return nil, nil, fmt.Errorf("%w: edit[%d] invalid line range for %s: start=%d, end=%d", ErrEditFailed, idx, rel, start, end)
+        }
+
+        hadTrailing := strings.HasSuffix(string(base), "\n")
+        content := strings.TrimSuffix(string(base), "\n")
+        lines := []string{}
+        if content != "" {
+            lines = strings.Split(content, "\n")
+        }
+
+        insertAt := start - 1 // 0-based
+        var result []string
+        if end == 0 {
+            if insertAt < 0 || insertAt > len(lines) {
+                return nil, nil, fmt.Errorf("%w: edit[%d] insert out of bounds: %d in %d lines", ErrEditFailed, idx, insertAt+1, len(lines))
+            }
+            newLines := []string{}
+            if newContent != "" {
+                nl := strings.TrimSuffix(newContent, "\n")
+                if nl != "" {
+                    newLines = strings.Split(nl, "\n")
+                } else {
+                    newLines = []string{""}
+                }
+            }
+            result = append(result, lines[:insertAt]...)
+            result = append(result, newLines...)
+            result = append(result, lines[insertAt:]...)
+        } else {
+            if insertAt > len(lines) || end > len(lines) {
+                return nil, nil, fmt.Errorf("%w: edit[%d] range out of bounds: [%d,%d] in %d lines", ErrEditFailed, idx, start, end, len(lines))
+            }
+            newLines := []string{}
+            if newContent != "" {
+                nl := strings.TrimSuffix(newContent, "\n")
+                if nl != "" {
+                    newLines = strings.Split(nl, "\n")
+                } else {
+                    newLines = []string{""}
+                }
+            }
+            removeEnd := end
+            result = append(result, lines[:insertAt]...)
+            result = append(result, newLines...)
+            result = append(result, lines[removeEnd:]...)
+        }
+        out := strings.Join(result, "\n")
+        if hadTrailing {
+            out += "\n"
+        }
+        after[rel] = []byte(out)
 		default:
 			return nil, nil, fmt.Errorf("%w: edit[%d] unknown mode", ErrEditFailed, idx)
 		}

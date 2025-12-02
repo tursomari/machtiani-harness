@@ -270,6 +270,46 @@ func TestPlanReviewModeParsesAccept(t *testing.T) {
 	}
 }
 
+func TestPlanReviewModeDefaultsToAcceptWhenMissingDecision(t *testing.T) {
+	client := NewClient(ClientConfig{})
+	client.chatFn = func(context.Context, string) (string, error) {
+		return "Looks great!", nil
+	}
+	client.UpdateProgress(Progress{
+		PendingReview: &PendingReview{PatchPath: "patch.diff"},
+	})
+	dec, note, err := client.Plan(context.Background(), "goal", "transcript", 1, 4)
+	if err != nil {
+		t.Fatalf("Plan returned error: %v", err)
+	}
+	if dec != DecisionAccept {
+		t.Fatalf("expected DecisionAccept fallback, got %q", dec)
+	}
+	if !strings.Contains(strings.ToLower(note), "auto-accepted") {
+		t.Fatalf("expected note to mention auto-accept, got %q", note)
+	}
+}
+
+func TestPlanReviewModeCoercesNonReviewDecisionToAccept(t *testing.T) {
+	client := NewClient(ClientConfig{})
+	client.chatFn = func(context.Context, string) (string, error) {
+		return "Decision: ask\nQuestion: what's next?", nil
+	}
+	client.UpdateProgress(Progress{
+		PendingReview: &PendingReview{PatchPath: "patch.diff"},
+	})
+	dec, note, err := client.Plan(context.Background(), "goal", "transcript", 2, 5)
+	if err != nil {
+		t.Fatalf("Plan returned error: %v", err)
+	}
+	if dec != DecisionAccept {
+		t.Fatalf("expected DecisionAccept fallback, got %q", dec)
+	}
+	if !strings.Contains(strings.ToLower(note), "auto-accepted") {
+		t.Fatalf("expected note to mention auto-accept, got %q", note)
+	}
+}
+
 func TestPlanPromptIncludesProgressSection(t *testing.T) {
 	client := NewClient(ClientConfig{})
 	client.UpdateProgress(Progress{

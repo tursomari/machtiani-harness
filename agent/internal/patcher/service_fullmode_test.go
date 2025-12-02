@@ -10,7 +10,7 @@ import (
     patchersvc "github.com/tursomari/machtiani/agent/internal/patcher"
 )
 
-func TestServiceConvertsStrictToRewriteWhenFullMode(t *testing.T) {
+func TestServiceConvertsRangePatchToRewriteWhenFullMode(t *testing.T) {
     repo := t.TempDir()
     runGit(t, repo, "init")
     runGit(t, repo, "config", "user.email", "test@example.com")
@@ -23,31 +23,16 @@ func TestServiceConvertsStrictToRewriteWhenFullMode(t *testing.T) {
     runGit(t, repo, "add", "foo.txt")
     runGit(t, repo, "commit", "-m", "init")
 
-    // Strict patch replacing line 2 -> "line two"
+    // Range patch replacing line 2 -> "line two"
     instr := mctpatcher.Instructions{Edits: []mctpatcher.Edit{{
-        Path: "foo.txt",
-        Mode: mctpatcher.ModePatch,
-        PatchInfo: &mctpatcher.UnifiedPatchInfo{Hunks: []mctpatcher.Hunk{{
-            OldStart:      1,
-            OldCount:      3,
-            NewStart:      1,
-            NewCount:      3,
-            ContextBefore: []string{"line 1"},
-            Deletions:     []string{"line 2"},
-            Additions:     []string{"line two"},
-            ContextAfter:  []string{"line 3"},
-        }}},
+        Path:       "foo.txt",
+        Mode:       mctpatcher.ModePatch,
+        StartLine:  2,
+        EndLine:    2,
+        NewContent: "line two\n",
     }}}
 
-    // Strict disabled should reject without FullMode
-    svc := patchersvc.NewService(patchersvc.WithStrictPatchMode(false))
-    if _, err := svc.ApplyAndGeneratePatch(context.Background(), mctpatcher.PatchParams{
-        RepoRoot:     repo,
-        SessionID:    "sess",
-        Instructions: instr,
-    }); err == nil {
-        t.Fatalf("expected error when strict mode disabled without full-mode")
-    }
+    svc := patchersvc.NewService()
 
     // With FullMode, conversion should succeed
     res, err := svc.ApplyAndGeneratePatch(context.Background(), mctpatcher.PatchParams{
@@ -63,4 +48,3 @@ func TestServiceConvertsStrictToRewriteWhenFullMode(t *testing.T) {
         t.Fatalf("expected patch result")
     }
 }
-

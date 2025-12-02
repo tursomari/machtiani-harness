@@ -12,16 +12,16 @@ type Service interface {
 
 // PatchParams holds the inputs for producing a patch from a repository.
 type PatchParams struct {
-    RepoRoot      string
-    SessionID     string
-    Instructions  Instructions
-    OutputDir     string
-    Verbose       bool
-    WorkspaceRoot string
-    MirrorDir     string
-    Sequence      int
-    // FullMode requests conversion of hunks to full-file replacements before generating the patch
-    FullMode      bool
+	RepoRoot      string
+	SessionID     string
+	Instructions  Instructions
+	OutputDir     string
+	Verbose       bool
+	WorkspaceRoot string
+	MirrorDir     string
+	Sequence      int
+	// FullMode requests conversion of hunks to full-file replacements before generating the patch
+	FullMode bool
 }
 
 // PatchResult contains metadata about a generated patch file.
@@ -94,11 +94,15 @@ type UnifiedPatchInfo struct {
 
 // Edit represents a single file edit to apply when synthesizing a patch.
 type Edit struct {
-	Path       string            `json:"path"`
-	Mode       Mode              `json:"mode"`
-	Before     string            `json:"before,omitempty"`
-	After      string            `json:"after,omitempty"`
-	Occurrence int               `json:"occurrence,omitempty"`
-	NewContent string            `json:"new_content,omitempty"`
-	PatchInfo  *UnifiedPatchInfo `json:"patch,omitempty"`
+	Path       string `json:"path"`
+	Mode       Mode   `json:"mode"`
+	Before     string `json:"before,omitempty"`
+	After      string `json:"after,omitempty"`
+	Occurrence int    `json:"occurrence,omitempty"`
+	NewContent string `json:"new_content,omitempty"`
+	// Line-based patching: 1-based inclusive start, 1-based inclusive end.
+	// Set EndLine to 0 for pure insertions at StartLine.
+	StartLine int               `json:"start_line,omitempty"`
+	EndLine   int               `json:"end_line,omitempty"`
+	PatchInfo *UnifiedPatchInfo `json:"patch,omitempty"`
 }

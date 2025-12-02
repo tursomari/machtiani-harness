@@ -44,21 +44,9 @@ const strictPatchSchemaExample = `{
     {
       "path": "repo/relative/path.ext",
       "mode": "patch",
-      "patch": {
-        "hunks": [
-          {
-            "old_start": 42,
-            "old_count": 2,
-            "new_start": 42,
-            "new_count": 3,
-            "snippet_source": {"filepath": "repo/relative/path.ext", "start_line": 42, "end_line": 43},
-            "context_before": ["exact line before"],
-            "deletions": ["original line"],
-            "additions": ["replacement line"],
-            "context_after": ["exact line after"]
-          }
-        ]
-      }
+      "start_line": 42,
+      "end_line": 45,
+      "new_content": "replacement line 1\nreplacement line 2\n"
     }
   ],
   "metadata": {
@@ -67,7 +55,7 @@ const strictPatchSchemaExample = `{
 }`
 
 var (
-	strictPatchLineRangeRegexp  = regexp.MustCompile(`\b(\d+)-(\d+)\b`)
+	strictPatchLineRangeRegexp  = regexp.MustCompile(`\b(\d+)[-,](\d+)\b`)
 	strictPatchTurnHeaderRegexp = regexp.MustCompile(`(?m)^== TURN \d+`)
 )
 
@@ -340,7 +328,7 @@ func (c *Client) strictPatchGeneratePatch(ctx context.Context, goal, transcript,
 		}
 
 		if edit.Mode != patcher.ModePatch {
-			lastErr = fmt.Errorf("strict patch planner: expected mode \"patch\", got %q", edit.Mode)
+			lastErr = fmt.Errorf("strict patch planner: expected mode %q, got %q", patcher.ModePatch, edit.Mode)
 			if reloadedNow, reloadErr := maybeForceReload(lastErr); reloadErr != nil {
 				return "", reloadErr
 			} else if reloadedNow {
@@ -350,83 +338,18 @@ func (c *Client) strictPatchGeneratePatch(ctx context.Context, goal, transcript,
 			prompt = c.strictPatchRetryPrompt(basePrompt, lastErr)
 			continue
 		}
-		if edit.PatchInfo == nil {
-			lastErr = errors.New("strict patch planner: missing patch payload (expected \"patch\": { \"hunks\": [...] })")
-			if reloadedNow, reloadErr := maybeForceReload(lastErr); reloadErr != nil {
-				return "", reloadErr
-			} else if reloadedNow {
-				attempt--
-				continue
-			}
-			prompt = c.strictPatchRetryPrompt(basePrompt, lastErr)
-			continue
-		}
-		lastErr = nil
-		for i := range edit.PatchInfo.Hunks {
-			h := &edit.PatchInfo.Hunks[i]
-			if h.SnippetSource == nil {
-				lastErr = fmt.Errorf("strict patch planner: hunks[%d] missing snippet_source", i)
-				break
-			}
-			if h.SnippetSource.StartLine <= 0 {
-				lastErr = fmt.Errorf("strict patch planner: invalid snippet_source range in hunk[%d]", i)
-				break
-			}
-			if h.SnippetSource.EndLine < h.SnippetSource.StartLine {
-				isInsertionRange := h.SnippetSource.EndLine == h.SnippetSource.StartLine-1
-				if !isInsertionRange || (len(h.ContextBefore)+len(h.Deletions)+len(h.ContextAfter)) != 0 {
-					lastErr = fmt.Errorf("strict patch planner: invalid snippet_source range in hunk[%d]", i)
-					break
-				}
-			}
-			if strings.TrimSpace(h.SnippetSource.Filepath) != "" {
-				normalizedSnippet, err := (patcher.Edit{Path: h.SnippetSource.Filepath}).NormalizedPath(c.cfg.RepoRoot)
-				if err != nil {
-					lastErr = fmt.Errorf("strict patch planner: hunks[%d] snippet_source filepath invalid: %v", i, err)
-					break
-				}
-				if normalizedSnippet != selection.Path {
-					lastErr = fmt.Errorf("strict patch planner: hunks[%d] snippet_source filepath %s differs from %s", i, normalizedSnippet, selection.Path)
-					break
-				}
-			}
 
-			contextBeforeLen := len(h.ContextBefore)
-			expectedOld := contextBeforeLen + len(h.Deletions) + len(h.ContextAfter)
-			expectedNew := contextBeforeLen + len(h.Additions) + len(h.ContextAfter)
-			if h.OldCount != expectedOld {
-				h.OldCount = expectedOld
-			}
-			if h.NewCount != expectedNew {
-				h.NewCount = expectedNew
-			}
-
-			startLine := h.SnippetSource.StartLine
-			if contextBeforeLen > 0 {
-				adjustedStart := startLine - contextBeforeLen
-				if adjustedStart < 1 {
-					adjustedStart = 1
-				}
-				if h.SnippetSource.StartLine != adjustedStart {
-					h.SnippetSource.StartLine = adjustedStart
-				}
-				startLine = adjustedStart
-			}
-			if h.OldStart != startLine {
-				h.OldStart = startLine
-			}
-			if expectedOld == 0 {
-				expectedEnd := startLine - 1
-				if h.SnippetSource.EndLine != expectedEnd {
-					h.SnippetSource.EndLine = expectedEnd
-				}
-			} else {
-				expectedEnd := startLine + expectedOld - 1
-				if h.SnippetSource.EndLine != expectedEnd {
-					h.SnippetSource.EndLine = expectedEnd
-				}
-			}
-
+		start := edit.StartLine
+		end := edit.EndLine
+		if start < 1 {
+			lastErr = fmt.Errorf("strict patch planner: start_line must be >= 1 (got %d)", start)
+		} else if end < 0 {
+			lastErr = fmt.Errorf("strict patch planner: end_line must be >= 0 (got %d)", end)
+		} else if end != 0 && end < start {
+			lastErr = fmt.Errorf("strict patch planner: end_line %d precedes start_line %d", end, start)
+		} else if end == 0 && strings.TrimSpace(edit.NewContent) == "" {
+			lastErr = errors.New("strict patch planner: insertion requires non-empty new_content")
+		} else {
 			lastErr = nil
 		}
 
@@ -482,7 +405,7 @@ func strictPatchShouldForceReload(err error, truncateLimit int) bool {
 		return false
 	}
 	msg := err.Error()
-	if !strings.Contains(msg, "snippet_source") {
+	if !(strings.Contains(msg, "line range") || strings.Contains(msg, "range out of bounds") || strings.Contains(msg, "insert out of bounds") || strings.Contains(msg, "exceed file bounds") || strings.Contains(msg, "exceeds file line count")) {
 		return false
 	}
 	matches := strictPatchLineRangeRegexp.FindAllStringSubmatch(msg, -1)
@@ -550,36 +473,25 @@ func preValidateStrictPatchJSON(raw []byte, allowRewrite bool) ([]byte, error) {
 					if !allowRewrite {
 						return nil, &ErrRewriteNotSupported{
 							Message:    "Strict patch mode does not support full-file rewrites",
-							Reason:     "Rewrites require unconstrained file replacement; strict mode enforces context-anchored hunks",
+							Reason:     "Rewrites require unconstrained file replacement; strict mode enforces explicit line ranges",
 							Suggestion: "Use non-strict mode (--patch-strict=false) or full-mode (--patch-full) for rewrites",
 						}
 					}
-					// If allowed, we accept it as-is (skipping further strict patch validation).
+					// If allowed, we accept it as-is (skipping strict validation).
 					return raw, nil
 				}
 				return nil, fmt.Errorf("strict patch: edits[0].mode must be %q", patcher.ModePatch)
 			}
-			patchVal, ok := editMap["patch"]
-			if !ok {
-				return nil, errors.New("strict patch: edits[0].patch missing (expected hunks array)")
+			if _, ok := editMap["start_line"]; !ok {
+				return nil, errors.New("strict patch: edits[0].start_line is required")
 			}
-			patchMap, ok := toStringMap(patchVal)
-			if !ok {
-				return nil, errors.New("strict patch: edits[0].patch must be an object")
+			if _, hasEnd := editMap["end_line"]; !hasEnd {
+				if _, hasRange := editMap["line_range"]; !hasRange {
+					return nil, errors.New("strict patch: edits[0].end_line is required (use 0 for insertions)")
+				}
 			}
-			hunksVal, ok := patchMap["hunks"]
-			if !ok {
-				return nil, errors.New("strict patch: edits[0].patch.hunks missing")
-			}
-			hunksSlice, ok := toAnySlice(hunksVal)
-			if !ok {
-				return nil, errors.New("strict patch: edits[0].patch.hunks must be an array")
-			}
-			if len(hunksSlice) == 0 {
-				return nil, errors.New("strict patch: edits[0].patch.hunks must contain exactly one hunk")
-			}
-			if len(hunksSlice) != 1 {
-				return nil, fmt.Errorf("strict patch: edits[0].patch.hunks must contain exactly one hunk (found %d)", len(hunksSlice))
+			if !(hasKey(editMap, "new_content") || hasKey(editMap, "new_lines") || hasKey(editMap, "replacement") || hasKey(editMap, "new_text") || hasKey(editMap, "after") || hasKey(editMap, "text")) {
+				return nil, errors.New("strict patch: edits[0] must include new_content (string) or new_lines array")
 			}
 		}
 	}
@@ -691,10 +603,178 @@ func sanitizeStrictPatchJSONStringLiterals(input []byte) ([]byte, bool) {
 	return buf.Bytes(), true
 }
 
+func hasKey(m map[string]any, key string) bool {
+	if m == nil {
+		return false
+	}
+	_, ok := m[key]
+	return ok
+}
+
+func extractRequiredInt(m map[string]any, keys []string) (int, error) {
+	for _, key := range keys {
+		if val, ok := m[key]; ok {
+			if ptr, err := toIntValue(val); err != nil {
+				return 0, err
+			} else if ptr != nil {
+				return *ptr, nil
+			}
+		}
+	}
+	if val, ok := m["line_range"]; ok {
+		start, _, err := parseLineRange(val)
+		return start, err
+	}
+	return 0, fmt.Errorf("missing %s", keys[0])
+}
+
+func extractEndLine(m map[string]any, start int) (int, error) {
+	if val, ok := m["end_line"]; ok {
+		ptr, err := toIntValue(val)
+		if err != nil {
+			return 0, err
+		}
+		if ptr == nil {
+			return 0, fmt.Errorf("end_line missing value")
+		}
+		return *ptr, nil
+	}
+	if val, ok := m["line_range"]; ok {
+		startRange, endRange, err := parseLineRange(val)
+		if err != nil {
+			return 0, err
+		}
+		if start <= 0 {
+			start = startRange
+		}
+		return endRange, nil
+	}
+	if val, ok := m["end"]; ok {
+		ptr, err := toIntValue(val)
+		if err != nil {
+			return 0, err
+		}
+		if ptr != nil {
+			return *ptr, nil
+		}
+	}
+	if start == 0 {
+		return 0, nil
+	}
+	return start, nil
+}
+
+func parseLineRange(val any) (int, int, error) {
+	switch v := val.(type) {
+	case string:
+		s := strings.TrimSpace(v)
+		if s == "" {
+			return 0, 0, fmt.Errorf("empty line_range")
+		}
+		tokens := splitRangeTokens(s)
+		if len(tokens) == 1 {
+			n, err := strconv.Atoi(tokens[0])
+			if err != nil {
+				return 0, 0, err
+			}
+			return n, n, nil
+		}
+		if len(tokens) >= 2 {
+			start, err1 := strconv.Atoi(tokens[0])
+			end, err2 := strconv.Atoi(tokens[1])
+			if err1 != nil || err2 != nil {
+				if err1 != nil {
+					return 0, 0, err1
+				}
+				return 0, 0, err2
+			}
+			return start, end, nil
+		}
+	case []any:
+		if len(v) == 0 {
+			return 0, 0, fmt.Errorf("empty line_range")
+		}
+		startPtr, err := toIntValue(v[0])
+		if err != nil {
+			return 0, 0, err
+		}
+		if startPtr == nil {
+			return 0, 0, fmt.Errorf("line_range start missing")
+		}
+		endPtr := startPtr
+		if len(v) > 1 {
+			candidate, err := toIntValue(v[1])
+			if err != nil {
+				return 0, 0, err
+			}
+			if candidate == nil {
+				return 0, 0, fmt.Errorf("line_range end missing")
+			}
+			endPtr = candidate
+		}
+		return *startPtr, *endPtr, nil
+	}
+	return 0, 0, fmt.Errorf("unsupported line_range type %T", val)
+}
+
+func splitRangeTokens(raw string) []string {
+	replaced := strings.NewReplacer(",", " ", "-", " ", "[", "", "]", "").Replace(raw)
+	return strings.Fields(replaced)
+}
+
+func extractNewContent(edit map[string]any) (string, error) {
+	stringKeys := []string{"new_content", "content", "text", "replacement", "new_text", "after"}
+	for _, key := range stringKeys {
+		if val, ok := edit[key]; ok {
+			if val == nil {
+				return "", nil
+			}
+			if s, ok := toStringValue(val); ok {
+				return s, nil
+			}
+			return "", fmt.Errorf("strict patch: %s must be a string", key)
+		}
+	}
+
+	lineKeys := []string{"new_lines", "lines"}
+	for _, key := range lineKeys {
+		if val, ok := edit[key]; ok {
+			lines, err := toStringSlice(val)
+			if err != nil {
+				return "", fmt.Errorf("strict patch: %s: %w", key, err)
+			}
+			return joinLines(lines), nil
+		}
+	}
+
+	return "", errors.New("strict patch: new_content missing")
+}
+
+func joinLines(lines []string) string {
+	if len(lines) == 0 {
+		return ""
+	}
+	return strings.Join(lines, "\n")
+}
+
 func (c *Client) normalizeStrictPatchJSON(raw []byte, expectedPath string, fileContent string) ([]byte, error) {
+	_ = fileContent
 	var payload map[string]any
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return nil, err
+	}
+
+	var instr patcher.Instructions
+	if metaVal, ok := payload["metadata"]; ok && metaVal != nil {
+		metaBytes, err := json.Marshal(metaVal)
+		if err != nil {
+			return nil, fmt.Errorf("strict patch: encode metadata: %w", err)
+		}
+		var meta patcher.Metadata
+		if err := json.Unmarshal(metaBytes, &meta); err != nil {
+			return nil, fmt.Errorf("strict patch: decode metadata: %w", err)
+		}
+		instr.Metadata = &meta
 	}
 
 	editsVal, ok := payload["edits"]
@@ -702,72 +782,58 @@ func (c *Client) normalizeStrictPatchJSON(raw []byte, expectedPath string, fileC
 		return nil, errors.New("strict patch: missing edits array")
 	}
 	editsSlice, ok := toAnySlice(editsVal)
+	if !ok || len(editsSlice) == 0 {
+		return nil, errors.New("strict patch: edits must contain exactly one entry")
+	}
+	if len(editsSlice) != 1 {
+		return nil, fmt.Errorf("strict patch: expected exactly one edit, found %d", len(editsSlice))
+	}
+
+	editMap, ok := toStringMap(editsSlice[0])
 	if !ok {
-		return nil, errors.New("strict patch: edits must be an array")
+		return nil, errors.New("strict patch: edit must be an object")
 	}
 
-	fileLines := splitFileLines(fileContent)
-	for i := range editsSlice {
-		editMap, ok := toStringMap(editsSlice[i])
-		if !ok {
-			return nil, fmt.Errorf("strict patch: edit[%d] must be an object", i)
-		}
-
-		if mode, _ := toStringValue(editMap["mode"]); strings.TrimSpace(strings.ToLower(mode)) == "" {
-			editMap["mode"] = patcher.ModePatch
-		}
-
-		if path, _ := toStringValue(editMap["path"]); strings.TrimSpace(path) == "" {
-			editMap["path"] = expectedPath
-		}
-
-		patchVal, hasPatch := editMap["patch"]
-		if !hasPatch || patchVal == nil {
-			if hunksVal, hasHunks := editMap["hunks"]; hasHunks {
-				editMap["patch"] = map[string]any{"hunks": hunksVal}
-				delete(editMap, "hunks")
-			} else {
-				return nil, fmt.Errorf("strict patch: edit[%d] missing patch.hunks", i)
-			}
-		}
-
-		patchMap, ok := toStringMap(editMap["patch"])
-		if !ok {
-			return nil, fmt.Errorf("strict patch: edit[%d] patch must be an object", i)
-		}
-
-		hunksVal, ok := patchMap["hunks"]
-		if !ok {
-			return nil, fmt.Errorf("strict patch: edit[%d] patch missing hunks", i)
-		}
-		hunkSlice, ok := toAnySlice(hunksVal)
-		if !ok {
-			return nil, fmt.Errorf("strict patch: edit[%d] hunks must be an array", i)
-		}
-		if len(hunkSlice) == 0 {
-			return nil, fmt.Errorf("strict patch: edit[%d] hunks must contain exactly one hunk", i)
-		}
-		if len(hunkSlice) != 1 {
-			return nil, fmt.Errorf("strict patch: edit[%d] hunks must contain exactly one hunk (found %d)", i, len(hunkSlice))
-		}
-
-		for j := range hunkSlice {
-			hunkMap, ok := toStringMap(hunkSlice[j])
-			if !ok {
-				return nil, fmt.Errorf("strict patch: edit[%d] hunk[%d] must be an object", i, j)
-			}
-			if err := normalizeStrictHunk(hunkMap, expectedPath, fileLines); err != nil {
-				return nil, fmt.Errorf("strict patch: edit[%d] hunk[%d]: %w", i, j, err)
-			}
-			hunkSlice[j] = hunkMap
-		}
-		patchMap["hunks"] = hunkSlice
-		editMap["patch"] = patchMap
-		editsSlice[i] = editMap
+	pathVal := strings.TrimSpace(getString(editMap["path"]))
+	if pathVal == "" {
+		pathVal = expectedPath
 	}
-	payload["edits"] = editsSlice
+	if pathVal == "" {
+		return nil, errors.New("strict patch: path is required")
+	}
 
-	return json.Marshal(payload)
+	mode := strings.TrimSpace(strings.ToLower(getString(editMap["mode"])))
+	if mode != "" && mode != string(patcher.ModePatch) {
+		return nil, fmt.Errorf("strict patch: unsupported mode %q", mode)
+	}
+
+	startLine, err := extractRequiredInt(editMap, []string{"start_line", "line"})
+	if err != nil {
+		return nil, fmt.Errorf("strict patch: invalid start_line: %w", err)
+	}
+	if startLine < 0 {
+		return nil, errors.New("strict patch: start_line must be >= 0")
+	}
+
+	endLine, err := extractEndLine(editMap, startLine)
+	if err != nil {
+		return nil, fmt.Errorf("strict patch: invalid end_line: %w", err)
+	}
+
+	newContent, err := extractNewContent(editMap)
+	if err != nil {
+		return nil, err
+	}
+
+	instr.Edits = append(instr.Edits, patcher.Edit{
+		Path:       pathVal,
+		Mode:       patcher.ModePatch,
+		StartLine:  startLine,
+		EndLine:    endLine,
+		NewContent: newContent,
+	})
+
+	return json.MarshalIndent(instr, "", "  ")
 }
 
 func (c *Client) callStrictPatchLLM(ctx context.Context, baseEvent string, prompt string, step, maxSteps int) (string, error) {
@@ -920,25 +986,23 @@ func (c *Client) strictPatchPatchPrompt(goal, transcript, plannerPayload string,
 	if exists {
 		b.WriteString("File status: exists on disk.\n")
 	} else {
-		b.WriteString("File status: not found on disk (treat insertions carefully; old_count should be 0 for pure insertions).\n")
+		b.WriteString("File status: not found on disk. Only insertions (end_line = 0) are valid until the file exists.\n")
 	}
 	if fileCtx.Kind == strictPatchContextNumbered && fileCtx.Truncated {
 		b.WriteString("Note: file display truncated after ")
 		b.WriteString(strconv.Itoa(strictPatchMaxFileLines))
 		b.WriteString(" lines—reload the file before patching if more context is required.\n")
-		b.WriteString("If hunk lines (e.g., start_line/end_line near or beyond 800) are truncated, MUST respond with JSON field {\"request_full_reload\": true} instead of guessing—do NOT proceed with incomplete data, as it will cause content mismatches.\n")
+		b.WriteString("If the range you need (start_line/end_line) is truncated from view, respond with JSON field {\"request_full_reload\": true} instead of guessing—do NOT proceed with incomplete data.\n")
 	}
 	b.WriteString("\n")
 
 	b.WriteString("Patch requirements:\n")
 	b.WriteString("- Produce exactly one edit with mode \"patch\" targeting the selected path.\n")
-	b.WriteString("- Each hunk must include snippet_source {start_line, end_line} for the original content.\n")
-	b.WriteString("- Provide context_before/context_after plus additions/deletions; newline-separated strings are fine—we will split them.\n")
-	b.WriteString("- Output exactly one hunk. If additional regions need updates, stop after the first hunk so a new planner call can regenerate against the updated file.\n")
-	b.WriteString("- Convenience fields like old_text/new_text or replacement are accepted; we normalize them into strict patch hunks.\n")
-	b.WriteString("- snippet_source start/end must reference the original lines shown below (use the numeric prefixes). Extract context_before/context_after exactly as-is from contiguous visible lines around each hunk—do not hallucinate, summarize, or infer. If lines are missing due to truncation, respond with {\"request_full_reload\": true}.\n")
-	b.WriteString("- Keep hunks tightly scoped. If inserting, set old_count=0 and snippet_source end_line = start_line - 1.\n")
-	b.WriteString("- Do not introduce additional edits or mutate other files.\n")
+	b.WriteString("- Supply 1-based \"start_line\" and \"end_line\" for the line range to splice; use end_line = 0 for pure insertions.\n")
+	b.WriteString("- Place the replacement snippet in \"new_content\". Leave it empty for deletions.\n")
+	b.WriteString("- Preserve indentation and include any trailing newline you expect in the file.\n")
+	b.WriteString("- Keep edits tightly scoped so follow-up turns can adjust other regions if required.\n")
+	b.WriteString("- If the numbered view is truncated and you need more context, respond with {\"request_full_reload\": true}.\n")
 	b.WriteString("- Populate metadata.description with a short summary.\n\n")
 
 	appendSuccessFilesSection(&b, c.progress.SuccessFiles, "Files already patched successfully this session (reload them before attempting more edits; prefer untouched files):\n", successFilesPromptLimit)
@@ -963,7 +1027,7 @@ func (c *Client) strictPatchPatchPrompt(goal, transcript, plannerPayload string,
 
 	switch fileCtx.Kind {
 	case strictPatchContextBaselineDiff:
-		b.WriteString("Baseline-relative diff (session baseline vs current workspace). Line numbers on the left reflect the current file state; use them for snippet_source start/end.\n")
+		b.WriteString("Baseline-relative diff (session baseline vs current workspace). Line numbers on the left reflect the current file state; use them for start_line/end_line selection.\n")
 		b.WriteString(fileCtx.Body)
 		if !strings.HasSuffix(fileCtx.Body, "\n") {
 			b.WriteString("\n")
@@ -1074,342 +1138,6 @@ func sanitizeForPrompt(s string) string {
 	s = strings.ReplaceAll(s, "\r", " ")
 	s = strings.ReplaceAll(s, "\n", " ")
 	return s
-}
-
-func normalizeStrictHunk(h map[string]any, expectedPath string, fileLines []string) error {
-	contextBefore, _, err := parseLineField(h, "context_before")
-	if err != nil {
-		return fmt.Errorf("context_before: %w", err)
-	}
-	if contextBefore == nil {
-		contextBefore = []string{}
-	}
-	h["context_before"] = contextBefore
-
-	contextAfter, _, err := parseLineField(h, "context_after")
-	if err != nil {
-		return fmt.Errorf("context_after: %w", err)
-	}
-	if contextAfter == nil {
-		contextAfter = []string{}
-	}
-	h["context_after"] = contextAfter
-
-	deletions, deletionsPresent, err := parseLineField(h, "deletions")
-	if err != nil {
-		return fmt.Errorf("deletions: %w", err)
-	}
-
-	additions, additionsPresent, err := parseLineField(h, "additions")
-	if err != nil {
-		return fmt.Errorf("additions: %w", err)
-	}
-
-	if !deletionsPresent {
-		if alt, ok, err := consumeLineField(h, "old_text", "old_lines", "before", "original", "previous_text"); err != nil {
-			return fmt.Errorf("old_text: %w", err)
-		} else if ok {
-			deletions = trimContextFromLines(alt, contextBefore, contextAfter)
-		}
-	}
-
-	if !additionsPresent {
-		if alt, ok, err := consumeLineField(h, "new_text", "new_lines", "after", "replacement", "updated_text", "next_text"); err != nil {
-			return fmt.Errorf("new_text: %w", err)
-		} else if ok {
-			trimmed := trimContextFromLines(alt, contextBefore, contextAfter)
-			if len(trimmed) == 0 && len(alt) > 0 {
-				trimmed = alt
-			}
-			additions = trimmed
-		}
-	}
-
-	snippetMap, ok := toStringMap(h["snippet_source"])
-	if !ok {
-		snippetMap = map[string]any{}
-	}
-	if _, ok := snippetMap["filepath"]; !ok {
-		snippetMap["filepath"] = ""
-	}
-
-	startLine, err := toPositiveInt(snippetMap["start_line"])
-	if err != nil {
-		return fmt.Errorf("snippet_source.start_line: %w", err)
-	}
-	endLine, err := toIntValue(snippetMap["end_line"])
-	if err != nil {
-		return fmt.Errorf("snippet_source.end_line: %w", err)
-	}
-	if endLine == nil {
-		endLine = pointerOfInt(startLine)
-	}
-	if *endLine < startLine-1 {
-		return fmt.Errorf("snippet_source end_line must be >= start_line-1")
-	}
-
-	snippetMap["start_line"] = startLine
-	snippetMap["end_line"] = *endLine
-	if strings.TrimSpace(expectedPath) != "" {
-		snippetMap["filepath"] = expectedPath
-	} else {
-		snippetMap["filepath"] = getString(snippetMap["filepath"])
-	}
-	h["snippet_source"] = snippetMap
-
-	originalStart := startLine
-	originalEnd := *endLine
-	rawSnippet := extractSnippetLines(fileLines, startLine, *endLine)
-	if rawSnippet == nil {
-		realignedStart, realignedEnd, realignErr := realignSnippetSource(fileLines, startLine, *endLine, contextBefore, deletions, contextAfter)
-		if realignErr != nil {
-			return fmt.Errorf("snippet_source lines %d-%d exceed file bounds: %w", originalStart, originalEnd, realignErr)
-		}
-		startLine = realignedStart
-		*endLine = realignedEnd
-		snippetMap["start_line"] = startLine
-		snippetMap["end_line"] = *endLine
-		h["snippet_source"] = snippetMap
-		rawSnippet = extractSnippetLines(fileLines, startLine, *endLine)
-		if rawSnippet == nil {
-			return fmt.Errorf("snippet_source lines %d-%d exceed file bounds after realignment", startLine, *endLine)
-		}
-	}
-
-	if len(deletions) == 0 || len(additions) == 0 {
-		if len(deletions) == 0 {
-			derived := trimContextFromLines(rawSnippet, contextBefore, contextAfter)
-			if len(derived) > 0 {
-				deletions = derived
-			}
-		}
-		if len(additions) == 0 {
-			// For insertions where snippet range is empty we keep additions empty until other sources fill it.
-		}
-	}
-
-	deletions = trimBoundaryBlanks(deletions, contextBefore, contextAfter)
-	additions = trimBoundaryBlanks(additions, contextBefore, contextAfter)
-
-	if len(deletions) == 0 && len(additions) == 0 {
-		return errors.New("missing additions/deletions content")
-	}
-
-	contextBeforeLen := len(contextBefore)
-	expectedOld := contextBeforeLen + len(deletions) + len(contextAfter)
-	adjustedStart := startLine - contextBeforeLen
-	if adjustedStart < 1 {
-		adjustedStart = 1
-	}
-	adjustedEnd := adjustedStart + expectedOld - 1
-	if expectedOld == 0 {
-		adjustedEnd = adjustedStart - 1
-	}
-	finalSnippet := extractSnippetLines(fileLines, adjustedStart, adjustedEnd)
-	if finalSnippet == nil {
-		realignedStart, realignedEnd, realignErr := realignSnippetSource(fileLines, startLine, *endLine, contextBefore, deletions, contextAfter)
-		if realignErr != nil {
-			return fmt.Errorf("snippet_source lines %d-%d exceed file bounds", adjustedStart, adjustedEnd)
-		}
-		snippetMap["start_line"] = realignedStart
-		snippetMap["end_line"] = realignedEnd
-		h["snippet_source"] = snippetMap
-		startLine = realignedStart
-		*endLine = realignedEnd
-		adjustedStart = startLine - contextBeforeLen
-		if adjustedStart < 1 {
-			adjustedStart = 1
-		}
-		adjustedEnd = adjustedStart + expectedOld - 1
-		if expectedOld == 0 {
-			adjustedEnd = adjustedStart - 1
-		}
-		finalSnippet = extractSnippetLines(fileLines, adjustedStart, adjustedEnd)
-		if finalSnippet == nil {
-			return fmt.Errorf("snippet_source lines %d-%d exceed file bounds", adjustedStart, adjustedEnd)
-		}
-	}
-	snippetMap["start_line"] = adjustedStart
-	snippetMap["end_line"] = adjustedEnd
-	h["snippet_source"] = snippetMap
-	startLine = adjustedStart
-	*endLine = adjustedEnd
-
-	if len(deletions) > 0 {
-		expectedSnippet := make([]string, 0, len(contextBefore)+len(deletions)+len(contextAfter))
-		expectedSnippet = append(expectedSnippet, contextBefore...)
-		expectedSnippet = append(expectedSnippet, deletions...)
-		expectedSnippet = append(expectedSnippet, contextAfter...)
-		if !slicesEqualExact(finalSnippet, expectedSnippet) {
-			// Allow downstream patch application to handle the mismatch (potentially
-			// via rewrite fallback) instead of failing normalization.
-		}
-	}
-
-	for _, alias := range []string{"replacement", "old_text", "old_lines", "before", "original", "previous_text", "new_text", "new_lines", "after", "updated_text", "next_text"} {
-		delete(h, alias)
-	}
-
-	h["deletions"] = deletions
-	h["additions"] = additions
-	return nil
-}
-
-func realignSnippetSource(fileLines []string, startLine, endLine int, contextBefore, deletions, contextAfter []string) (int, int, error) {
-	totalContext := len(contextBefore) + len(deletions) + len(contextAfter)
-	if totalContext == 0 {
-		return 0, 0, fmt.Errorf("anchor_missing: no context available to realign snippet")
-	}
-	approximateStart := startLine - 1
-	if approximateStart < 0 {
-		approximateStart = -1
-	}
-	hunk := patcher.Hunk{
-		ContextBefore: contextBefore,
-		Deletions:     deletions,
-		ContextAfter:  contextAfter,
-	}
-	idx, _, _, reason, err := patcher.FindHunkMatch(fileLines, hunk, approximateStart)
-	if err != nil {
-		return 0, 0, fmt.Errorf("%s: %w", reason, err)
-	}
-	newStart := idx + 1
-	newEnd := newStart + totalContext - 1
-	return newStart, newEnd, nil
-}
-
-func parseLineField(obj map[string]any, key string) ([]string, bool, error) {
-	val, ok := obj[key]
-	if !ok {
-		return nil, false, nil
-	}
-	lines, err := toStringSlice(val)
-	if err != nil {
-		return nil, true, err
-	}
-	if lines == nil {
-		lines = []string{}
-	}
-	obj[key] = lines
-	return lines, true, nil
-}
-
-func consumeLineField(obj map[string]any, keys ...string) ([]string, bool, error) {
-	for _, key := range keys {
-		val, ok := obj[key]
-		if !ok {
-			continue
-		}
-		lines, err := toStringSlice(val)
-		if err != nil {
-			return nil, false, err
-		}
-		delete(obj, key)
-		return lines, true, nil
-	}
-	return nil, false, nil
-}
-
-func trimContextFromLines(lines, contextBefore, contextAfter []string) []string {
-	if len(lines) == 0 {
-		return lines
-	}
-	out := make([]string, len(lines))
-	copy(out, lines)
-	if len(contextBefore) > 0 && len(out) >= len(contextBefore) && slicesEqualPrefix(out, contextBefore) {
-		out = out[len(contextBefore):]
-	}
-	if len(contextAfter) > 0 && len(out) >= len(contextAfter) && slicesEqualSuffix(out, contextAfter) {
-		out = out[:len(out)-len(contextAfter)]
-	}
-	return out
-}
-
-func trimBoundaryBlanks(lines, contextBefore, contextAfter []string) []string {
-	if len(lines) == 0 {
-		return lines
-	}
-	out := lines
-	if len(out) > 0 && out[0] == "" && len(contextBefore) > 0 && contextBefore[len(contextBefore)-1] == "" {
-		out = out[1:]
-	}
-	if len(out) > 0 && out[len(out)-1] == "" && len(contextAfter) > 0 && contextAfter[0] == "" {
-		out = out[:len(out)-1]
-	}
-	return out
-}
-
-func slicesEqualPrefix(lines, prefix []string) bool {
-	if len(prefix) > len(lines) {
-		return false
-	}
-	for i := range prefix {
-		if lines[i] != prefix[i] {
-			return false
-		}
-	}
-	return true
-}
-
-func slicesEqualSuffix(lines, suffix []string) bool {
-	if len(suffix) > len(lines) {
-		return false
-	}
-	offset := len(lines) - len(suffix)
-	for i := range suffix {
-		if lines[offset+i] != suffix[i] {
-			return false
-		}
-	}
-	return true
-}
-
-func slicesEqualExact(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}
-
-func splitFileLines(content string) []string {
-	normalized := strings.ReplaceAll(content, "\r\n", "\n")
-	normalized = strings.ReplaceAll(normalized, "\r", "\n")
-	lines := strings.Split(normalized, "\n")
-	if len(lines) > 0 && lines[len(lines)-1] == "" {
-		lines = lines[:len(lines)-1]
-	}
-	return lines
-}
-
-func extractSnippetLines(lines []string, startLine, endLine int) []string {
-	if startLine <= 0 {
-		return nil
-	}
-	startIdx := startLine - 1
-	if startIdx > len(lines) {
-		return nil
-	}
-	if endLine < startLine-1 {
-		return nil
-	}
-	if endLine < startLine {
-		return []string{}
-	}
-	endIdx := endLine
-	if endIdx > len(lines) {
-		endIdx = len(lines)
-	}
-	if endIdx <= startIdx {
-		return []string{}
-	}
-	dup := make([]string, endIdx-startIdx)
-	copy(dup, lines[startIdx:endIdx])
-	return dup
 }
 
 func toAnySlice(val any) ([]any, bool) {

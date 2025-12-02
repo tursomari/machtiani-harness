@@ -93,15 +93,15 @@ func TestPreprocessDetectsDeleteOnMissingFile(t *testing.T) {
 	}
 }
 
-func TestPreprocessConvertsPatchOnMissingFile(t *testing.T) {
+func TestPreprocessConvertsPatchToCreateWhenFileMissing(t *testing.T) {
 	dir := t.TempDir()
 	instr := mctpatcher.Instructions{
 		Edits: []mctpatcher.Edit{{
-			Path: "LICENSE",
-			Mode: mctpatcher.ModePatch,
-			PatchInfo: &mctpatcher.UnifiedPatchInfo{Hunks: []mctpatcher.Hunk{{
-				Additions: []string{"MIT License", "Copyright (c) 2025"},
-			}}},
+			Path:       "LICENSE",
+			Mode:       mctpatcher.ModePatch,
+			StartLine:  1,
+			EndLine:    0,
+			NewContent: "line one\nline two\n",
 		}},
 	}
 	prepared, adjustments, err := preprocessPatchInstructions(dir, instr)
@@ -109,33 +109,30 @@ func TestPreprocessConvertsPatchOnMissingFile(t *testing.T) {
 		t.Fatalf("unexpected precheck error: %v", err)
 	}
 	if got := prepared.Edits[0].Mode; got != mctpatcher.ModeCreate {
-		t.Fatalf("expected create mode, got %s", got)
-	}
-	if got, want := prepared.Edits[0].NewContent, "MIT License\nCopyright (c) 2025\n"; got != want {
-		t.Fatalf("new content mismatch: got %q want %q", got, want)
+		t.Fatalf("expected mode create, got %s", got)
 	}
 	if len(adjustments) != 1 {
-		t.Fatalf("expected 1 adjustment, got %d", len(adjustments))
+		t.Fatalf("expected one adjustment, got %d", len(adjustments))
 	}
 }
 
-func TestPreprocessPatchConversionRejectsContext(t *testing.T) {
+func TestPreprocessRejectsPatchOnMissingFileWithoutContent(t *testing.T) {
 	dir := t.TempDir()
 	instr := mctpatcher.Instructions{
 		Edits: []mctpatcher.Edit{{
-			Path: "main.go",
-			Mode: mctpatcher.ModePatch,
-			PatchInfo: &mctpatcher.UnifiedPatchInfo{Hunks: []mctpatcher.Hunk{{
-				ContextBefore: []string{"package main"},
-				Additions:     []string{"package main", "func main() {}"},
-			}}},
+			Path:      "LICENSE",
+			Mode:      mctpatcher.ModePatch,
+			StartLine: 1,
+			EndLine:   0,
 		}},
 	}
 	_, _, err := preprocessPatchInstructions(dir, instr)
 	if err == nil {
-		t.Fatalf("expected conflict for patch with non-empty context on missing file")
+		t.Fatalf("expected precheck error for empty patch on missing file")
 	}
 	if err.Count() != 1 {
-		t.Fatalf("expected one conflict, got %d", err.Count())
+		t.Fatalf("expected single conflict, got %d", err.Count())
 	}
 }
+
+// Conversion of patch hunks is no longer supported; range splice requires existing file unless synthesized from new_content.

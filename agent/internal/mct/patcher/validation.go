@@ -14,16 +14,36 @@ var ErrInvalidInstructions = errors.New("invalid instructions")
 // Validate ensures the provided set of instructions is consistent with the
 // on-disk repository state without performing any modifications.
 func Validate(repoRoot string, in Instructions) error {
-	if len(in.Edits) == 0 {
-		return fmt.Errorf("%w: no edits provided", ErrInvalidInstructions)
-	}
-	for i, ed := range in.Edits {
-		rel, err := ed.NormalizedPath(repoRoot)
-		if err != nil {
-			return fmt.Errorf("%w: edit[%d] path invalid: %v", ErrInvalidInstructions, i, err)
-		}
-		_ = rel
-		switch ed.Mode {
+    if len(in.Edits) == 0 {
+        return fmt.Errorf("%w: no edits provided", ErrInvalidInstructions)
+    }
+    // Enforce single-change rule for splice edits (ModePatch): at most one splice per file,
+    // and do not combine a splice with any other edit to the same file in one instruction set.
+    perFile := make(map[string]struct{ patchCount int; otherCount int })
+    // Collect normalized paths first to avoid duplicating normalization work later.
+    normalized := make([]string, len(in.Edits))
+    for i, ed := range in.Edits {
+        rel, err := ed.NormalizedPath(repoRoot)
+        if err != nil {
+            return fmt.Errorf("%w: edit[%d] path invalid: %v", ErrInvalidInstructions, i, err)
+        }
+        normalized[i] = rel
+        entry := perFile[rel]
+        if ed.Mode == ModePatch {
+            entry.patchCount++
+        } else {
+            entry.otherCount++
+        }
+        perFile[rel] = entry
+    }
+    for path, c := range perFile {
+        if c.patchCount > 1 || (c.patchCount == 1 && c.otherCount > 0) {
+            return fmt.Errorf("%w: only one splice per file per patch; chain changes across turns (file: %s)", ErrInvalidInstructions, path)
+        }
+    }
+    for i, ed := range in.Edits {
+        rel := normalized[i]
+        switch ed.Mode {
 		case ModeReplace:
 			if ed.Before == "" {
 				return fmt.Errorf("%w: edit[%d] replace requires 'before'", ErrInvalidInstructions, i)
@@ -65,139 +85,44 @@ func Validate(repoRoot string, in Instructions) error {
 			if !fileExists(filepath.Join(repoRoot, filepath.FromSlash(rel))) {
 				return fmt.Errorf("%w: edit[%d] delete requires existing file", ErrInvalidInstructions, i)
 			}
-		case ModePatch:
-			if err := validateStrictPatch(repoRoot, rel, ed, i); err != nil {
-				return fmt.Errorf("%w: %v", ErrInvalidInstructions, err)
-			}
-		default:
-			return fmt.Errorf("%w: edit[%d] unknown mode: %s", ErrInvalidInstructions, i, ed.Mode)
-		}
-	}
-	return nil
+    case ModePatch:
+        if ed.PatchInfo != nil {
+            return fmt.Errorf("%w: edit[%d] strict hunk payloads no longer supported; provide start_line/end_line", ErrInvalidInstructions, i)
+        }
+        onDiskPath := filepath.Join(repoRoot, filepath.FromSlash(rel))
+        if !fileExists(onDiskPath) {
+            return fmt.Errorf("%w: edit[%d] patch requires existing file", ErrInvalidInstructions, i)
+        }
+        start := ed.StartLine
+        end := ed.EndLine
+        if start == 0 {
+            start = 1 // tolerate 0 by treating as 1
+        }
+        if start < 1 || end < 0 || (end > 0 && start > end) {
+            return fmt.Errorf("%w: edit[%d] invalid line range: start=%d end=%d", ErrInvalidInstructions, i, start, end)
+        }
+        data, err := os.ReadFile(onDiskPath)
+        if err != nil {
+            return fmt.Errorf("%w: edit[%d] failed to read file: %v", ErrInvalidInstructions, i, err)
+        }
+        lines := splitStrictLines(string(data))
+        if end == 0 {
+            if start < 1 || start > len(lines)+1 {
+                return fmt.Errorf("%w: edit[%d] insert out of bounds: %d in %d lines", ErrInvalidInstructions, i, start, len(lines))
+            }
+        } else {
+            if start < 1 || start > len(lines) || end > len(lines) {
+                return fmt.Errorf("%w: edit[%d] range out of bounds: [%d,%d] in %d lines", ErrInvalidInstructions, i, start, end, len(lines))
+            }
+        }
+        default:
+            return fmt.Errorf("%w: edit[%d] unknown mode: %s", ErrInvalidInstructions, i, ed.Mode)
+        }
+    }
+    return nil
 }
 
-func validateStrictPatch(repoRoot, rel string, ed Edit, idx int) error {
-	if ed.PatchInfo == nil {
-		return fmt.Errorf("edit[%d] patch mode requires 'patch' payload", idx)
-	}
-	if len(ed.PatchInfo.Hunks) == 0 {
-		return fmt.Errorf("edit[%d] patch requires at least one hunk", idx)
-	}
-	for hIdx, h := range ed.PatchInfo.Hunks {
-		if err := validatePatchHunkMetadata(h, idx, hIdx); err != nil {
-			return err
-		}
-	}
-	onDiskPath := filepath.Join(repoRoot, filepath.FromSlash(rel))
-	if !fileExists(onDiskPath) {
-		return fmt.Errorf("edit[%d] patch requires existing file: %s", idx, rel)
-	}
-	content, err := os.ReadFile(onDiskPath)
-	if err != nil {
-		return fmt.Errorf("edit[%d] failed to read file: %v", idx, err)
-	}
-	text := string(content)
-	if !utf8.ValidString(text) {
-		return fmt.Errorf("edit[%d] base file is not valid utf-8", idx)
-	}
-	lines := splitStrictLines(text)
-	for hIdx, h := range ed.PatchInfo.Hunks {
-		if h.SnippetSource != nil {
-			snippetPath := rel
-			if trimmed := strings.TrimSpace(h.SnippetSource.Filepath); trimmed != "" {
-				normalized, err := (Edit{Path: trimmed}).NormalizedPath(repoRoot)
-				if err != nil {
-					return fmt.Errorf("edit[%d] hunk[%d]: invalid snippet_source filepath: %v", idx, hIdx, err)
-				}
-				snippetPath = normalized
-			}
-			if snippetPath != rel {
-				return fmt.Errorf("edit[%d] hunk[%d]: snippet_source filepath %s does not match edit path %s", idx, hIdx, snippetPath, rel)
-			}
-			snippetLen := SnippetRangeLength(h.SnippetSource)
-			if snippetLen == -1 {
-				return fmt.Errorf("edit[%d] hunk[%d]: snippet_source range is invalid", idx, hIdx)
-			}
-			if err := ensureSnippetSourceInRange(lines, h.SnippetSource); err != nil {
-				return fmt.Errorf("edit[%d] hunk[%d]: %v", idx, hIdx, err)
-			}
-		}
-	}
-	return nil
-}
-
-func ensureSnippetSourceInRange(lines []string, src *SnippetSource) error {
-	if src == nil {
-		return nil
-	}
-	startLine := src.StartLine
-	endLine := src.EndLine
-	if startLine < 1 {
-		return fmt.Errorf("snippet_source out_of_range: start_line %d must be >= 1", startLine)
-	}
-	snippetLen := SnippetRangeLength(src)
-	if snippetLen == -1 {
-		return fmt.Errorf("snippet_source range is invalid")
-	}
-	if snippetLen == 0 {
-		if startLine-1 > len(lines) {
-			return fmt.Errorf("snippet_source out_of_range: start_line %d exceeds file line count %d", startLine, len(lines))
-		}
-		return nil
-	}
-	startIdx := startLine - 1
-	endIdx := startIdx + snippetLen
-	if startIdx < 0 || startIdx >= len(lines) {
-		return fmt.Errorf("snippet_source out_of_range: start_line %d exceeds file line count %d", startLine, len(lines))
-	}
-	if endIdx > len(lines) {
-		return fmt.Errorf("snippet_source out_of_range: end_line %d exceeds file line count %d", endLine, len(lines))
-	}
-	return nil
-}
-
-func validatePatchHunkMetadata(h Hunk, editIdx, hunkIdx int) error {
-	if h.OldStart < 0 {
-		return fmt.Errorf("edit[%d] hunk[%d]: old_start must be >= 0", editIdx, hunkIdx)
-	}
-	if h.NewStart < 0 {
-		return fmt.Errorf("edit[%d] hunk[%d]: new_start must be >= 0", editIdx, hunkIdx)
-	}
-	if h.OldCount < 0 {
-		return fmt.Errorf("edit[%d] hunk[%d]: old_count must be >= 0", editIdx, hunkIdx)
-	}
-	if h.NewCount < 0 {
-		return fmt.Errorf("edit[%d] hunk[%d]: new_count must be >= 0", editIdx, hunkIdx)
-	}
-	oldTotal := len(h.ContextBefore) + len(h.Deletions) + len(h.ContextAfter)
-	if h.OldCount != oldTotal {
-		return fmt.Errorf("edit[%d] hunk[%d]: old_count (%d) mismatch with context/deletions size (%d)", editIdx, hunkIdx, h.OldCount, oldTotal)
-	}
-	newTotal := len(h.ContextBefore) + len(h.Additions) + len(h.ContextAfter)
-	if h.NewCount != newTotal {
-		return fmt.Errorf("edit[%d] hunk[%d]: new_count (%d) mismatch with context/additions size (%d)", editIdx, hunkIdx, h.NewCount, newTotal)
-	}
-	for _, seq := range [][]string{h.ContextBefore, h.Deletions, h.Additions, h.ContextAfter} {
-		for _, line := range seq {
-			if !utf8.ValidString(line) {
-				return fmt.Errorf("edit[%d] hunk[%d]: non-utf8 text detected", editIdx, hunkIdx)
-			}
-		}
-	}
-	return nil
-}
-
-func assembleBeforeLines(h Hunk) []string {
-	total := len(h.ContextBefore) + len(h.Deletions) + len(h.ContextAfter)
-	if total == 0 {
-		return nil
-	}
-	out := make([]string, 0, total)
-	out = append(out, h.ContextBefore...)
-	out = append(out, h.Deletions...)
-	out = append(out, h.ContextAfter...)
-	return out
-}
+// Deprecated hunk-related validation helpers removed.
 
 // LoadSnippetLines returns the inclusive range [startLine, endLine] (1-based)
 // from the file located at relPath under repoRoot. It validates the range
