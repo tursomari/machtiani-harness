@@ -249,12 +249,8 @@ func Run(ctx context.Context, opts Options) Result {
 		if storedGoal != "" {
 			goal = storedGoal
 		}
-		if resumePrompt != "" {
-			if goal != "" {
-				goal = strings.TrimSpace(goal + "\n\n" + resumePrompt)
-			} else {
-				goal = resumePrompt
-			}
+		if goal == "" {
+			goal = resumePrompt
 		}
 		if strings.TrimSpace(cfgInput.TranscriptFile) == "" && strings.TrimSpace(state.TranscriptPath) != "" {
 			cfgInput.TranscriptFile = state.TranscriptPath
@@ -861,35 +857,35 @@ func Run(ctx context.Context, opts Options) Result {
 			planCtx    context.Context
 			planCancel context.CancelFunc
 		)
-		forcedResumePrompt := strings.TrimSpace(resumePrompt)
-		if forcedResumePrompt != "" {
-			decision = planner.DecisionAsk
-			question = forcedResumePrompt
-			resumePrompt = ""
+		pl.UpdateProgress(plannerProgress.snapshot())
+		planCtx, planCancel = makeTurnContext(rootCtx, cfg.timeoutPerTurn)
+		trFull := tr.Content()
+		// If there is a pending patch diff awaiting review, append it to
+		// the planning context so the planner can decide accept/reject
+		// without adding an extra transcript turn.
+		if pendingPatchDraft != nil {
+			var b strings.Builder
+			b.WriteString(trFull)
+			b.WriteString("\n## Pending Patch Review\n\n")
+			// Mirror transcript structure tersely so the planner has
+			// consistent context shape.
+			line := "Patcher: apply - " + strings.TrimSpace(pendingPatchDraft.Description)
+			b.WriteString(line)
+			b.WriteString("\n\n=== Answer\n\n")
+			b.WriteString(strings.TrimSpace(pendingPatchDraft.Answer))
+			b.WriteString("\n\n")
+			b.WriteString("Planner decision: patch\n")
+			trFull = b.String()
+		}
+		trimmedResumePrompt := strings.TrimSpace(resumePrompt)
+		if trimmedResumePrompt != "" {
+			trFull = appendResumePromptContext(trFull, trimmedResumePrompt)
 			turnInfo["resume_prompt"] = true
-		} else {
-			pl.UpdateProgress(plannerProgress.snapshot())
-			planCtx, planCancel = makeTurnContext(rootCtx, cfg.timeoutPerTurn)
-			trFull := tr.Content()
-			// If there is a pending patch diff awaiting review, append it to
-			// the planning context so the planner can decide accept/reject
-			// without adding an extra transcript turn.
-			if pendingPatchDraft != nil {
-				var b strings.Builder
-				b.WriteString(trFull)
-				b.WriteString("\n## Pending Patch Review\n\n")
-				// Mirror transcript structure tersely so the planner has
-				// consistent context shape.
-				line := "Patcher: apply - " + strings.TrimSpace(pendingPatchDraft.Description)
-				b.WriteString(line)
-				b.WriteString("\n\n=== Answer\n\n")
-				b.WriteString(strings.TrimSpace(pendingPatchDraft.Answer))
-				b.WriteString("\n\n")
-				b.WriteString("Planner decision: patch\n")
-				trFull = b.String()
-			}
-			planCtx = attachTrajectory(planCtx, trajectoryWriter, parentSpanID)
-			decision, question, perr = pl.Plan(planCtx, goal, trFull, step, cfg.maxSteps)
+		}
+		planCtx = attachTrajectory(planCtx, trajectoryWriter, parentSpanID)
+		decision, question, perr = pl.Plan(planCtx, goal, trFull, step, cfg.maxSteps)
+		if trimmedResumePrompt != "" {
+			resumePrompt = ""
 		}
 		var planCtxErr error
 		if planCtx != nil {
@@ -2064,6 +2060,23 @@ Finalize:
 	applyPlannerProgress(pendingState)
 	printResumeHint("=== SESSION COMPLETE ===", turnsCompleted)
 	return Result{ExitCode: 0, Status: sessionStatus, Turns: turns, SessionID: sessionID}
+}
+
+func appendResumePromptContext(transcript, prompt string) string {
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		return transcript
+	}
+	trimmedTranscript := strings.TrimRight(transcript, "\n")
+	var b strings.Builder
+	if trimmedTranscript != "" {
+		b.WriteString(trimmedTranscript)
+		b.WriteString("\n\n")
+	}
+	b.WriteString("## New instruction from the user\n\n")
+	b.WriteString(prompt)
+	b.WriteString("\n")
+	return b.String()
 }
 
 func convertRewriteMissingToCreate(instr mctpatcher.Instructions, valErr *mctpatcher.ValidationError, verbose bool) (mctpatcher.Instructions, []int) {

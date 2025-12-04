@@ -77,6 +77,16 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 	includeHistory := opts.IncludeHistory
 	useBaselineContext := isPatcherPromptMode(mode)
 
+	// Transform raw prompt into decision-based instruction for session resumption
+	if opts.SessionID != "" {
+		historyNote := ""
+		if len(hist) > 0 {
+			historyNote = "Review the session history above and "
+		}
+		opts.Prompt = fmt.Sprintf(
+			"Continue this session. %sAnalyze the conversation history and decide what action to take or how to respond: %s",
+			historyNote, opts.Prompt)
+	}
 	combined := opts.Prompt
 	included := []string(nil)
 	fileDiscoveryRan := false
