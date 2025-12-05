@@ -2,4 +2,5 @@ Intent: {{.Intent}}
 Working directory: {{.CWD}}
 
 Produce the Bash command that satisfies the intent and wrap it in ```bash-command ... ```.
+Unless explicitly requested, do not include output-limiting pipes (head, tail, sed -n, etc.) or timeout wrappers; emit the full command.
 If this intent finalizes the task, write the final response to {{.FinalMarkerPath}} rather than printing it to stdout.
