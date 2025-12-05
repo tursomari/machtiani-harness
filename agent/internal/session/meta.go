@@ -371,8 +371,16 @@ func executeMetaPlan(ctx metaContext, plan metaPlanState) (metaPlanState, error)
 		result, err := runMetaTask(ctx, *task, priorAnswer, idx)
 		task.Attempts++
 		if err != nil {
-			task.Status = "failed"
-			task.Summary = err.Error()
+			status := "failed"
+			summary := err.Error()
+			if result.Interrupted {
+				status = "interrupted"
+				if summary == "" {
+					summary = fmt.Sprintf("Task interrupted; resume session %s.", strings.TrimSpace(result.SessionID))
+				}
+			}
+			task.Status = status
+			task.Summary = summary
 			task.Transcript = result.TranscriptPath
 			task.FinalAnswer = result.FinalAnswerPath
 			if result.SessionID != "" {
@@ -386,7 +394,7 @@ func executeMetaPlan(ctx metaContext, plan metaPlanState) (metaPlanState, error)
 			if perr := persistMetaPlan(ctx.SessionID, updated); perr != nil {
 				return updated, perr
 			}
-			ctx.Display.UpdateMetaTaskStatus(idx, task.Title, "failed", task.SessionID)
+			ctx.Display.UpdateMetaTaskStatus(idx, task.Title, status, task.SessionID)
 			return updated, err
 		}
 		task.Status = "complete"
@@ -590,6 +598,7 @@ type metaTaskRunResult struct {
 	Summary         string
 	TranscriptPath  string
 	FinalAnswerPath string
+	Interrupted     bool
 }
 
 func runMetaTask(ctx metaContext, task metaTaskState, priorFinalAnswer string, index int) (metaTaskRunResult, error) {
@@ -606,7 +615,24 @@ func runMetaTask(ctx metaContext, task metaTaskState, priorFinalAnswer string, i
 
 	childOptions := ctx.Options
 	childOptions.Goal = prompt
-	childOptions.Config.SessionID = ""
+	statusNormalized := strings.ToLower(strings.TrimSpace(task.Status))
+	resumeSession := strings.TrimSpace(task.SessionID)
+	shouldResume := false
+	if resumeSession != "" && statusNormalized != "complete" {
+		if savedState, err := LoadSessionState(resumeSession); err == nil && savedState != nil {
+			shouldResume = true
+		} else if err != nil && !errors.Is(err, ErrSessionStateNotFound) {
+			fmt.Fprintf(os.Stderr, "Warning: unable to load session state for %s: %v\n", resumeSession, err)
+		}
+	}
+	if !shouldResume {
+		resumeSession = ""
+	}
+	if shouldResume {
+		childOptions.Config.SessionID = resumeSession
+	} else {
+		childOptions.Config.SessionID = ""
+	}
 	childOptions.Config.ParentSessionID = ctx.SessionID
 	childOptions.Config.Mode = ""
 	childOptions.Config.PromptText = prompt
@@ -636,31 +662,44 @@ func runMetaTask(ctx metaContext, task metaTaskState, priorFinalAnswer string, i
 	}()
 
 	res := Run(ctx.RootCtx, childOptions)
-	if res.Err != nil || res.ExitCode != 0 {
-		if res.Err != nil {
-			return metaTaskRunResult{SessionID: res.SessionID}, fmt.Errorf("meta task %q failed: %w", task.Title, res.Err)
+	result := metaTaskRunResult{SessionID: res.SessionID}
+	if res.SessionID != "" {
+		if chatDir, err := artifacts.SessionChatDirectory(res.SessionID); err == nil {
+			result.TranscriptPath = filepath.Join(chatDir, "agent-transcript.adoc")
+			result.FinalAnswerPath = filepath.Join(chatDir, "agent-final-answer.md")
 		}
-		return metaTaskRunResult{SessionID: res.SessionID}, fmt.Errorf("meta task %q failed with exit code %d", task.Title, res.ExitCode)
+	}
+	if res.Err != nil || res.ExitCode != 0 {
+		interrupted := res.ExitCode == 130 || errors.Is(res.Err, context.Canceled) || (shouldResume && res.ExitCode == 1 && errors.Is(res.Err, context.Canceled))
+		if interrupted {
+			result.Interrupted = true
+			if res.Err != nil {
+				return result, fmt.Errorf("meta task %q interrupted: %w", task.Title, res.Err)
+			}
+			return result, fmt.Errorf("meta task %q interrupted with exit code %d", task.Title, res.ExitCode)
+		}
+		if res.Err != nil {
+			return result, fmt.Errorf("meta task %q failed: %w", task.Title, res.Err)
+		}
+		return result, fmt.Errorf("meta task %q failed with exit code %d", task.Title, res.ExitCode)
 	}
 
-	chatDir, err := artifacts.SessionChatDirectory(res.SessionID)
-	if err != nil {
-		return metaTaskRunResult{SessionID: res.SessionID}, err
+	if result.TranscriptPath == "" || result.FinalAnswerPath == "" {
+		chatDir, err := artifacts.SessionChatDirectory(res.SessionID)
+		if err != nil {
+			return result, err
+		}
+		result.TranscriptPath = filepath.Join(chatDir, "agent-transcript.adoc")
+		result.FinalAnswerPath = filepath.Join(chatDir, "agent-final-answer.md")
 	}
-	transcriptPath := filepath.Join(chatDir, "agent-transcript.adoc")
-	finalAnswerPath := filepath.Join(chatDir, "agent-final-answer.md")
 
-	summary := loadMetaSummary(finalAnswerPath)
+	summary := loadMetaSummary(result.FinalAnswerPath)
 	if summary == "" {
 		summary = fmt.Sprintf("Completed task %q", task.Title)
 	}
 
-	return metaTaskRunResult{
-		SessionID:       res.SessionID,
-		Summary:         summary,
-		TranscriptPath:  transcriptPath,
-		FinalAnswerPath: finalAnswerPath,
-	}, nil
+	result.Summary = summary
+	return result, nil
 }
 
 func loadMetaSummary(path string) string {

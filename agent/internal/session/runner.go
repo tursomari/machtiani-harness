@@ -456,7 +456,12 @@ func Run(ctx context.Context, opts Options) Result {
 		}
 	}
 	printResumeHint := func(header string, turns int) {
-		fmt.Fprintf(os.Stdout, "%s\nSession ID: %s\nTurns completed: %d\nGoal so far: %q\n\nTo continue, provide your next instruction, for example:\n  mct-agent run \"<next instruction>\" --session-id %s\n\n", header, sessionID, turns, goal, sessionID)
+		fmt.Fprintf(os.Stdout, "%s\nSession ID: %s\nTurns completed: %d\nGoal so far: %q\n\n", header, sessionID, turns, goal)
+		fmt.Fprintf(os.Stdout, "To continue, provide your next instruction, for example:\n  mct-agent run \"<next instruction>\" --session-id %s\n", sessionID)
+		if parentID := strings.TrimSpace(cfg.parentSessionID); parentID != "" {
+			fmt.Fprintf(os.Stdout, "\nParent session detected (%s). To resume that session, rerun your original command with the parent session ID, for example:\n  mct-agent run \"<original prompt>\" --session-id %s\n", parentID, parentID)
+		}
+		fmt.Fprintln(os.Stdout)
 	}
 	applyPlannerProgress := func(state *SessionState) {
 		if state == nil {
