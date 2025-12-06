@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"os"
@@ -713,4 +714,40 @@ func formatElapsed(d time.Duration) string {
 	minutes := seconds / 60
 	remaining := seconds % 60
 	return fmt.Sprintf("%d:%02d", minutes, remaining)
+}
+
+func (t *TerminalDisplay) PromptUser(prompt string) bool {
+	var confirmed bool
+	t.withLock(func() {
+		t.refreshTerminalSizeLocked()
+		fmt.Fprintf(t.out, "%s (y/N): ", prompt)
+		reader := bufio.NewReader(os.Stdin)
+		input, err := reader.ReadString('\n')
+		if err != nil {
+			confirmed = false
+			return
+		}
+		input = strings.TrimSpace(strings.ToLower(input))
+		confirmed = input == "y" || input == "yes"
+	})
+	return confirmed
+}
+
+func (t *TerminalDisplay) PromptInput(prompt string) (string, error) {
+	var (
+		response string
+		readErr  error
+	)
+	t.withLock(func() {
+		t.refreshTerminalSizeLocked()
+		fmt.Fprintf(t.out, "%s: ", prompt)
+		reader := bufio.NewReader(os.Stdin)
+		input, err := reader.ReadString('\n')
+		if err != nil {
+			readErr = err
+			return
+		}
+		response = strings.TrimSpace(input)
+	})
+	return response, readErr
 }

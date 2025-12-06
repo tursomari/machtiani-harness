@@ -2,6 +2,7 @@ package ui
 
 import (
 	"bytes"
+	"os"
 	"regexp"
 	"strings"
 	"testing"
@@ -170,6 +171,66 @@ func TestNotifyBeforePrompt(t *testing.T) {
 	output := buf.String()
 	if strings.TrimSpace(output) != "[llm failover] triggered early" {
 		t.Fatalf("expected notify output before prompt, got %q", output)
+	}
+}
+
+func TestPromptUserReadsYesResponse(t *testing.T) {
+	var buf bytes.Buffer
+	display := newTestDisplay(&buf)
+	oldStdin := os.Stdin
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("create pipe: %v", err)
+	}
+	os.Stdin = r
+	defer func() {
+		os.Stdin = oldStdin
+		_ = r.Close()
+	}()
+
+	go func() {
+		_, _ = w.Write([]byte("y\n"))
+		_ = w.Close()
+	}()
+
+	if ok := display.PromptUser("Mark task complete"); !ok {
+		t.Fatalf("expected prompt to accept 'y' as confirmation")
+	}
+	output := buf.String()
+	if !strings.Contains(output, "Mark task complete (y/N):") {
+		t.Fatalf("expected prompt text in output, got %q", output)
+	}
+}
+
+func TestPromptInputReturnsTrimmedValue(t *testing.T) {
+	var buf bytes.Buffer
+	display := newTestDisplay(&buf)
+	oldStdin := os.Stdin
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("create pipe: %v", err)
+	}
+	os.Stdin = r
+	defer func() {
+		os.Stdin = oldStdin
+		_ = r.Close()
+	}()
+
+	go func() {
+		_, _ = w.Write([]byte("  extra guidance  \n"))
+		_ = w.Close()
+	}()
+
+	value, err := display.PromptInput("Provide guidance")
+	if err != nil {
+		t.Fatalf("prompt input error: %v", err)
+	}
+	if value != "extra guidance" {
+		t.Fatalf("expected trimmed guidance, got %q", value)
+	}
+	output := buf.String()
+	if !strings.Contains(output, "Provide guidance:") {
+		t.Fatalf("expected prompt output, got %q", output)
 	}
 }
 

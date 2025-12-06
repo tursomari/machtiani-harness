@@ -364,53 +364,121 @@ func executeMetaPlan(ctx metaContext, plan metaPlanState) (metaPlanState, error)
 		if task.Status == "complete" {
 			continue
 		}
-		startSummary := buildMetaStartSummary(ctx.Goal, *task, tasks[:idx])
-		writeMetaTurn(ctx, metaTurn, fmt.Sprintf("Meta task start: %s", task.Title), startSummary, "meta-start")
-		ctx.Display.UpdateMetaTaskStatus(idx, task.Title, "running", task.SessionID)
-		priorAnswer := loadPreviousFinalAnswer(tasks[:idx])
-		result, err := runMetaTask(ctx, *task, priorAnswer, idx)
-		task.Attempts++
-		if err != nil {
-			status := "failed"
-			summary := err.Error()
-			if result.Interrupted {
-				status = "interrupted"
-				if summary == "" {
-					summary = fmt.Sprintf("Task interrupted; resume session %s.", strings.TrimSpace(result.SessionID))
-				}
+		resumePrompt := ""
+		for {
+			priorAnswer := loadPreviousFinalAnswer(tasks[:idx])
+			basePrompt := composeTaskPrompt(ctx.Goal, task.Goal, task.Title, priorAnswer, idx == 0)
+			startSummary := buildMetaStartSummary(ctx.Goal, *task, tasks[:idx])
+			writeMetaTurn(ctx, metaTurn, fmt.Sprintf("Meta task start: %s", task.Title), startSummary, "meta-start")
+			if ctx.Display != nil {
+				ctx.Display.UpdateMetaTaskStatus(idx, task.Title, "running", task.SessionID)
 			}
-			task.Status = status
-			task.Summary = summary
+			result, err := runMetaTask(ctx, *task, basePrompt, resumePrompt)
+			task.Attempts++
+			resumePrompt = ""
+			if err != nil {
+				status := "failed"
+				summary := err.Error()
+				if result.Interrupted {
+					status = "interrupted"
+					if summary == "" {
+						summary = fmt.Sprintf("Task interrupted; resume session %s.", strings.TrimSpace(result.SessionID))
+					}
+				}
+				task.Status = status
+				task.Summary = summary
+				task.Transcript = result.TranscriptPath
+				task.FinalAnswer = result.FinalAnswerPath
+				if result.SessionID != "" {
+					task.SessionID = result.SessionID
+				}
+				endSummary := buildMetaEndSummary(*task)
+				writeMetaTurn(ctx, metaTurn+1, fmt.Sprintf("Meta task result: %s", task.Title), endSummary, "meta-end")
+				metaTurn += 2
+				updated := plan
+				updated.Tasks = tasks
+				if perr := persistMetaPlan(ctx.SessionID, updated); perr != nil {
+					return updated, perr
+				}
+				if ctx.Display != nil {
+					ctx.Display.UpdateMetaTaskStatus(idx, task.Title, status, task.SessionID)
+				}
+				return updated, err
+			}
+
+			task.SessionID = result.SessionID
+			task.Summary = result.Summary
 			task.Transcript = result.TranscriptPath
 			task.FinalAnswer = result.FinalAnswerPath
-			if result.SessionID != "" {
-				task.SessionID = result.SessionID
+
+			confirmed := true
+			if ctx.Display != nil {
+				confirmed = ctx.Display.PromptUser(fmt.Sprintf("Proceed with marking task %d (%s) as complete?", idx+1, task.Title))
 			}
+			if confirmed {
+				task.Status = "complete"
+				endSummary := buildMetaEndSummary(*task)
+				writeMetaTurn(ctx, metaTurn+1, fmt.Sprintf("Meta task result: %s", task.Title), endSummary, "meta-end")
+				metaTurn += 2
+				updated := plan
+				updated.Tasks = tasks
+				if perr := persistMetaPlan(ctx.SessionID, updated); perr != nil {
+					return updated, perr
+				}
+				if ctx.Display != nil {
+					ctx.Display.UpdateMetaTaskStatus(idx, task.Title, "complete", task.SessionID)
+				}
+				break
+			}
+
+			additionalInput := ""
+			var inputErr error
+			if ctx.Display != nil {
+				additionalInput, inputErr = ctx.Display.PromptInput(fmt.Sprintf("Provide additional instructions to continue session %s (leave blank to interrupt)", strings.TrimSpace(result.SessionID)))
+			}
+			if inputErr != nil {
+				fmt.Fprintf(os.Stderr, "Meta prompt input error: %v\n", inputErr)
+			}
+			additionalInput = strings.TrimSpace(additionalInput)
+			if additionalInput == "" || inputErr != nil {
+				sessionID := strings.TrimSpace(result.SessionID)
+				declineSummary := "User declined to proceed after completion."
+				if sessionID != "" {
+					declineSummary = fmt.Sprintf("User declined to proceed after completion; resume session %s.", sessionID)
+				}
+				task.Status = "interrupted"
+				task.Summary = declineSummary
+				endSummary := buildMetaEndSummary(*task)
+				writeMetaTurn(ctx, metaTurn+1, fmt.Sprintf("Meta task result: %s", task.Title), endSummary, "meta-end")
+				metaTurn += 2
+				updated := plan
+				updated.Tasks = tasks
+				if perr := persistMetaPlan(ctx.SessionID, updated); perr != nil {
+					return updated, perr
+				}
+				if ctx.Display != nil {
+					ctx.Display.UpdateMetaTaskStatus(idx, task.Title, "interrupted", task.SessionID)
+				}
+				return updated, fmt.Errorf("orchestrator interrupted by user after task %d completion", idx+1)
+			}
+
+			task.Status = "pending"
+			task.Summary = fmt.Sprintf("User guidance pending incorporation: %s", additionalInput)
+			task.Goal = integrateUserGuidance(task.Goal, additionalInput)
+			if sessionID := strings.TrimSpace(task.SessionID); sessionID != "" {
+				if err := updateChildSessionGoal(sessionID, task.Goal); err != nil {
+					fmt.Fprintf(os.Stderr, "Meta goal update warning for %s: %v\n", sessionID, err)
+				}
+			}
+			nextBasePrompt := composeTaskPrompt(ctx.Goal, task.Goal, task.Title, priorAnswer, idx == 0)
+			resumePrompt = composeRevisedGoalPrompt(nextBasePrompt, additionalInput)
 			endSummary := buildMetaEndSummary(*task)
 			writeMetaTurn(ctx, metaTurn+1, fmt.Sprintf("Meta task result: %s", task.Title), endSummary, "meta-end")
 			metaTurn += 2
-			updated := plan
-			updated.Tasks = tasks
-			if perr := persistMetaPlan(ctx.SessionID, updated); perr != nil {
-				return updated, perr
+			if ctx.Display != nil {
+				ctx.Display.UpdateMetaTaskStatus(idx, task.Title, "resuming", task.SessionID)
 			}
-			ctx.Display.UpdateMetaTaskStatus(idx, task.Title, status, task.SessionID)
-			return updated, err
 		}
-		task.Status = "complete"
-		task.SessionID = result.SessionID
-		task.Summary = result.Summary
-		task.Transcript = result.TranscriptPath
-		task.FinalAnswer = result.FinalAnswerPath
-		endSummary := buildMetaEndSummary(*task)
-		writeMetaTurn(ctx, metaTurn+1, fmt.Sprintf("Meta task result: %s", task.Title), endSummary, "meta-end")
-		metaTurn += 2
-		updated := plan
-		updated.Tasks = tasks
-		if perr := persistMetaPlan(ctx.SessionID, updated); perr != nil {
-			return updated, perr
-		}
-		ctx.Display.UpdateMetaTaskStatus(idx, task.Title, "complete", task.SessionID)
 	}
 	plan.Tasks = tasks
 	if perr := persistMetaPlan(ctx.SessionID, plan); perr != nil {
@@ -578,6 +646,49 @@ func composeTaskPrompt(sessionGoal, taskGoal, taskTitle, priorFinalAnswer string
 	return strings.Join(sections, "\n\n")
 }
 
+func composeRevisedGoalPrompt(basePrompt, userInput string) string {
+	basePrompt = strings.TrimSpace(basePrompt)
+	userInput = strings.TrimSpace(userInput)
+	var builder strings.Builder
+	if basePrompt != "" {
+		builder.WriteString(basePrompt)
+		builder.WriteString("\n\n")
+	}
+	builder.WriteString("The user provided additional guidance:\n\"\"\"\n")
+	builder.WriteString(userInput)
+	builder.WriteString("\n\"\"\"\n\n")
+	builder.WriteString("Reevaluate the task in light of this guidance. Begin by writing a single line starting with \"Revised Goal:\" that captures the updated objective, then continue execution anchored on that revised goal.")
+	return builder.String()
+}
+
+func integrateUserGuidance(goal, guidance string) string {
+	goal = strings.TrimSpace(goal)
+	guidance = strings.TrimSpace(guidance)
+	if guidance == "" {
+		return goal
+	}
+	if goal == "" {
+		return fmt.Sprintf("User guidance: %s", guidance)
+	}
+	if strings.Contains(strings.ToLower(goal), strings.ToLower(guidance)) {
+		return goal
+	}
+	return fmt.Sprintf("%s\n\nUser guidance: %s", goal, guidance)
+}
+
+func updateChildSessionGoal(sessionID, goal string) error {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return nil
+	}
+	state, err := LoadSessionState(sessionID)
+	if err != nil {
+		return err
+	}
+	state.Goal = goal
+	return SaveSessionState(*state)
+}
+
 func extractTaskFocus(taskGoal string) string {
 	if taskGoal == "" {
 		return ""
@@ -601,8 +712,7 @@ type metaTaskRunResult struct {
 	Interrupted     bool
 }
 
-func runMetaTask(ctx metaContext, task metaTaskState, priorFinalAnswer string, index int) (metaTaskRunResult, error) {
-	prompt := composeTaskPrompt(ctx.Goal, task.Goal, task.Title, priorFinalAnswer, index == 0)
+func runMetaTask(ctx metaContext, task metaTaskState, basePrompt string, resumePrompt string) (metaTaskRunResult, error) {
 	if ctx.Config.dryRun {
 		sessionID := fmt.Sprintf("dry-run-%d", time.Now().UnixNano())
 		return metaTaskRunResult{
@@ -614,7 +724,12 @@ func runMetaTask(ctx metaContext, task metaTaskState, priorFinalAnswer string, i
 	}
 
 	childOptions := ctx.Options
-	childOptions.Goal = prompt
+	trimmedResume := strings.TrimSpace(resumePrompt)
+	if trimmedResume != "" {
+		childOptions.Goal = trimmedResume
+	} else {
+		childOptions.Goal = basePrompt
+	}
 	statusNormalized := strings.ToLower(strings.TrimSpace(task.Status))
 	resumeSession := strings.TrimSpace(task.SessionID)
 	shouldResume := false
@@ -635,7 +750,7 @@ func runMetaTask(ctx metaContext, task metaTaskState, priorFinalAnswer string, i
 	}
 	childOptions.Config.ParentSessionID = ctx.SessionID
 	childOptions.Config.Mode = ""
-	childOptions.Config.PromptText = prompt
+	childOptions.Config.PromptText = basePrompt
 	childOptions.Config.MetaInstructionDir = ctx.Config.metaInstructionDir
 	childOptions.Config.FinalFile = ""
 	childOptions.Config.TranscriptFile = ""
