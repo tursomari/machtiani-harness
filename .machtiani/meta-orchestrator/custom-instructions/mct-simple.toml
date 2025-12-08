@@ -1,0 +1,53 @@
+# Meta-orchestrator task configuration for coding workflows
+# Each task defines a discrete phase with optional agent mode configuration
+
+[[tasks]]
+step = 1
+title = "Diagnose"
+description = "Diagnose the issue."
+shell_agent = false
+patch_mode = false
+
+[[tasks]]
+step = 2
+title = "Plan a solution."
+description = "Create a solution to address the issue."
+shell_agent = false
+patch_mode = false
+
+[[tasks]]
+step = 3
+title = "Plan the patches"
+description = "Create a detailed plan to patch, including specific file and line numberings."
+shell_agent = false
+patch_mode = false
+
+[[tasks]]
+step = 4
+Title = "Implement the patches."
+description = "Implement the patch plan. Your primary objective is to make the patches to solve the original issue."
+shell_agent = false
+patch_mode = true
+
+[[tasks]]
+step = 5
+Title = "Review the patches."
+description = "Review the patches and correct any syntax errors. Run gofmt on your changes if necessary."
+shell_agent = true
+patch_mode = true
+
+[[tasks]]
+step = 6
+title = "Run available validations"
+# Corrected: All instances of \` have been changed to just `
+description = "Run available validations (go build, go tests, gofmt, and targeted reasoning) to confirm behavior and note any risks or follow-up work. Investigate modified files. Correct any patches as needed to satisfy the Issue.\n\nTesting: `cd agent`\n`GOCACHE=$(pwd)/.gocache go build ./...`\n`GOCACHE=$(pwd)/.gocache go test ./...`.\n\nDo not run any `run-live` or `undici` related tests that require network access. Don't go off on a tangent. Run builds and tests as instructed and don't set any timeouts. To run a formatter, run `gofmt -w /path/to/file`."
+shell_agent = true
+patch_mode = true
+
+
+[[tasks]]
+step = 7
+title = "Review and follow ups"
+description = "If still necessary, correct any last minute issues that surfaced during your tests. Ensure it builds and tests pass. esting: `cd agent`\n`GOCACHE=$(pwd)/.gocache go build ./...`\n`GOCACHE=$(pwd)/.gocache go test ./...`.\n\nDo not run any `run-live` or `undici` related tests that require network access."
+shell_agent = true
+patch_mode = true
