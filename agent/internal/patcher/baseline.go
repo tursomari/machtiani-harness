@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/tursomari/machtiani/agent/internal/git"
@@ -47,6 +48,8 @@ type BaselineState struct {
 	Manifest     BaselineManifest
 
 	manifestIndex map[string]BaselineFileRecord
+	workspaceRoot string
+	mu            *sync.RWMutex
 }
 
 // EnsureBaseline loads the session baseline if it exists or captures a new snapshot from workspaceRoot.
@@ -59,15 +62,48 @@ func EnsureBaseline(sessionID, workspaceRoot string, now time.Time) (*BaselineSt
 	if strings.TrimSpace(workspaceRoot) == "" {
 		return nil, errors.New("workspace root required for baseline capture")
 	}
+	if !git.IsGitRepo(workspaceRoot) {
+		return nil, fmt.Errorf("baseline capture requires git repository: %s", workspaceRoot)
+	}
 
 	state, err := LoadBaseline(sessionID)
 	if err == nil {
+		if state.mu == nil {
+			state.mu = &sync.RWMutex{}
+		}
+		state.workspaceRoot = workspaceRoot
 		return state, nil
 	}
 	if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
-	return captureBaseline(sessionID, workspaceRoot, now)
+	root, filesDir, manifestPath, err := sessionBaselinePaths(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.RemoveAll(root); err != nil {
+		return nil, fmt.Errorf("reset baseline directory: %w", err)
+	}
+	if err := os.MkdirAll(filesDir, 0o755); err != nil {
+		return nil, fmt.Errorf("create baseline files dir: %w", err)
+	}
+	manifest := BaselineManifest{CapturedAt: now.UTC(), Files: []BaselineFileRecord{}}
+	state = &BaselineState{
+		Root:          root,
+		FilesDir:      filesDir,
+		ManifestPath:  manifestPath,
+		Manifest:      manifest,
+		manifestIndex: make(map[string]BaselineFileRecord),
+		workspaceRoot: workspaceRoot,
+		mu:            &sync.RWMutex{},
+	}
+	state.mu.Lock()
+	if err := state.persistManifestLocked(); err != nil {
+		state.mu.Unlock()
+		return nil, err
+	}
+	state.mu.Unlock()
+	return state, nil
 }
 
 // LoadBaseline loads the persisted baseline metadata for sessionID.
@@ -101,6 +137,7 @@ func LoadBaseline(sessionID string) (*BaselineState, error) {
 		ManifestPath:  manifestPath,
 		Manifest:      manifest,
 		manifestIndex: make(map[string]BaselineFileRecord, len(manifest.Files)),
+		mu:            &sync.RWMutex{},
 	}
 	for _, rec := range manifest.Files {
 		state.manifestIndex[filepath.ToSlash(rec.Path)] = rec
@@ -114,6 +151,13 @@ func (b *BaselineState) ManifestEntry(relPath string) (BaselineFileRecord, bool)
 		return BaselineFileRecord{}, false
 	}
 	rel := filepath.ToSlash(strings.TrimSpace(relPath))
+	if rel == "" {
+		return BaselineFileRecord{}, false
+	}
+	if b.mu != nil {
+		b.mu.RLock()
+		defer b.mu.RUnlock()
+	}
 	rec, ok := b.manifestIndex[rel]
 	return rec, ok
 }
@@ -145,8 +189,12 @@ func (b *BaselineState) VerifyFiles(relPaths []string) error {
 		if _, ok := checked[rel]; ok {
 			continue
 		}
-		rec, ok := b.manifestIndex[rel]
-		if !ok {
+		rec, err := b.ensureManifestRecord(rel)
+		if err != nil {
+			return fmt.Errorf("ensure baseline record %s: %w", rel, err)
+		}
+		if rec == nil {
+			checked[rel] = struct{}{}
 			continue
 		}
 		path := b.FilePath(rel)
@@ -186,6 +234,105 @@ func (b *BaselineState) VerifyFiles(relPaths []string) error {
 			return fmt.Errorf("baseline checksum mismatch for %s", rel)
 		}
 		checked[rel] = struct{}{}
+	}
+	return nil
+}
+
+func (b *BaselineState) ensureManifestRecord(rel string) (*BaselineFileRecord, error) {
+	if b == nil {
+		return nil, nil
+	}
+	rel = filepath.ToSlash(strings.TrimSpace(rel))
+	if rel == "" {
+		return nil, nil
+	}
+	if b.mu != nil {
+		b.mu.RLock()
+		rec, ok := b.manifestIndex[rel]
+		b.mu.RUnlock()
+		if ok {
+			recCopy := rec
+			return &recCopy, nil
+		}
+	} else if rec, ok := b.manifestIndex[rel]; ok {
+		recCopy := rec
+		return &recCopy, nil
+	}
+	if strings.TrimSpace(b.workspaceRoot) == "" {
+		return nil, nil
+	}
+	if err := b.lazyCaptureFile(rel); err != nil {
+		return nil, err
+	}
+	if b.mu != nil {
+		b.mu.RLock()
+		defer b.mu.RUnlock()
+	}
+	if rec, ok := b.manifestIndex[rel]; ok {
+		recCopy := rec
+		return &recCopy, nil
+	}
+	return nil, nil
+}
+
+func (b *BaselineState) lazyCaptureFile(rel string) error {
+	if b == nil {
+		return nil
+	}
+	rel = filepath.ToSlash(strings.TrimSpace(rel))
+	if rel == "" {
+		return nil
+	}
+	if strings.TrimSpace(b.workspaceRoot) == "" {
+		return fmt.Errorf("workspace root not configured for baseline capture")
+	}
+	if b.mu == nil {
+		b.mu = &sync.RWMutex{}
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if _, ok := b.manifestIndex[rel]; ok {
+		return nil
+	}
+	rec, err := copyBaselineEntry(b.workspaceRoot, b.FilesDir, rel)
+	if err != nil {
+		return err
+	}
+	if rec == nil {
+		return nil
+	}
+	b.upsertManifestRecordLocked(*rec)
+	return b.persistManifestLocked()
+}
+
+func (b *BaselineState) upsertManifestRecordLocked(rec BaselineFileRecord) {
+	if b.Manifest.Files == nil {
+		b.Manifest.Files = []BaselineFileRecord{}
+	}
+	idx := sort.Search(len(b.Manifest.Files), func(i int) bool {
+		return b.Manifest.Files[i].Path >= rec.Path
+	})
+	if idx < len(b.Manifest.Files) && b.Manifest.Files[idx].Path == rec.Path {
+		b.Manifest.Files[idx] = rec
+	} else {
+		b.Manifest.Files = append(b.Manifest.Files, BaselineFileRecord{})
+		copy(b.Manifest.Files[idx+1:], b.Manifest.Files[idx:])
+		b.Manifest.Files[idx] = rec
+	}
+	b.manifestIndex[filepath.ToSlash(rec.Path)] = rec
+}
+
+func (b *BaselineState) persistManifestLocked() error {
+	data, err := json.MarshalIndent(b.Manifest, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal baseline manifest: %w", err)
+	}
+	tempPath := b.ManifestPath + ".tmp"
+	if err := os.WriteFile(tempPath, data, 0o644); err != nil {
+		return fmt.Errorf("write baseline manifest: %w", err)
+	}
+	if err := os.Rename(tempPath, b.ManifestPath); err != nil {
+		return fmt.Errorf("swap baseline manifest: %w", err)
 	}
 	return nil
 }
@@ -235,6 +382,8 @@ func captureBaseline(sessionID, workspaceRoot string, now time.Time) (*BaselineS
 		ManifestPath:  manifestPath,
 		Manifest:      manifest,
 		manifestIndex: make(map[string]BaselineFileRecord, len(manifest.Files)),
+		workspaceRoot: workspaceRoot,
+		mu:            &sync.RWMutex{},
 	}
 	for _, rec := range manifest.Files {
 		state.manifestIndex[filepath.ToSlash(rec.Path)] = rec

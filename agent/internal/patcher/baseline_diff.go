@@ -30,6 +30,9 @@ func BuildBaselineDiffSection(state *BaselineState, workspaceRoot, relPath strin
 	baselinePath := ""
 	baselineExists := false
 	if state != nil {
+		if _, err := state.ensureManifestRecord(rel); err != nil {
+			return "", false, fmt.Errorf("ensure baseline record %s: %w", rel, err)
+		}
 		candidate := state.FilePath(rel)
 		if candidate != "" {
 			if info, err := os.Lstat(candidate); err == nil {
