@@ -10,6 +10,7 @@ import (
 
 	git "github.com/tursomari/machtiani/agent/internal/git"
 	"github.com/tursomari/machtiani/agent/internal/llm"
+	"github.com/tursomari/machtiani/agent/internal/prompts"
 )
 
 const (
@@ -60,10 +61,11 @@ var fenceLanguageByName = map[string]string{
 }
 
 type Options struct {
-	PerFileCap     int
-	TotalCap       int
-	IncludeHistory bool
-	MaxInputTokens int
+	PerFileCap      int
+	TotalCap        int
+	IncludeHistory  bool
+	MaxInputTokens  int
+	PreludeTemplate string
 }
 
 type Message struct {
@@ -89,7 +91,7 @@ func (o Options) withDefaults() Options {
 // Current Request section. When opts.MaxInputTokens is greater than zero, file
 // contents are truncated from the bottom of each file until the prompt's token
 // estimate fits within the provided limit.
-func Build(userPrompt string, relPaths []string, conversationHistory []Message, opts Options) (string, []string) {
+func Build(userPrompt string, relPaths []string, conversationHistory []Message, opts Options) (string, []string, error) {
 	opts = opts.withDefaults()
 
 	repoRoot := ""
@@ -99,7 +101,10 @@ func Build(userPrompt string, relPaths []string, conversationHistory []Message, 
 		}
 	}
 
-	prelude := buildPrelude(userPrompt, conversationHistory, opts.IncludeHistory)
+	prelude, err := buildPrelude(userPrompt, conversationHistory, opts.IncludeHistory, opts.PreludeTemplate)
+	if err != nil {
+		return "", nil, err
+	}
 	totalTokens := llm.EstimateTokens(prelude)
 	filePreludeTokens := llm.EstimateTokens(fileSectionPrelude)
 	addedFilePrelude := false
@@ -191,34 +196,55 @@ func Build(userPrompt string, relPaths []string, conversationHistory []Message, 
 		builder.WriteString(section.Footer)
 	}
 
-	return builder.String(), included
+	return builder.String(), included, nil
 }
 
-func buildPrelude(userPrompt string, history []Message, includeHistory bool) string {
-	var b strings.Builder
+type conversationTemplateEntry struct {
+	Index       int
+	Role        string
+	DisplayRole string
+	Files       []string
+	Content     string
+}
 
-	doHistory := includeHistory && len(history) > 0
-	if doHistory {
-		b.WriteString("Conversation History:\n")
-		for idx, msg := range history {
-			roleLabel := roleDisplayName(msg.Role)
-			fmt.Fprintf(&b, "%d. %s", idx+1, roleLabel)
-			if len(msg.Files) > 0 {
-				fmt.Fprintf(&b, " (Files: %s)", strings.Join(msg.Files, ", "))
-			}
-			b.WriteString(":\n")
-			b.WriteString(msg.Content)
-			if !strings.HasSuffix(msg.Content, "\n") {
-				b.WriteString("\n")
-			}
-			b.WriteString("\n")
-		}
-		b.WriteString("Current Request:\n")
-		b.WriteString(userPrompt)
-	} else {
-		b.WriteString(userPrompt)
+type conversationTemplateData struct {
+	IncludeHistory bool
+	History        []conversationTemplateEntry
+	UserPrompt     string
+}
+
+func buildPrelude(userPrompt string, history []Message, includeHistory bool, templateStr string) (string, error) {
+	trimmed := strings.TrimSpace(templateStr)
+	if trimmed == "" {
+		return "", fmt.Errorf("conversation history template is required")
 	}
-	return b.String()
+	renderHistory := includeHistory && len(history) > 0
+	entries := make([]conversationTemplateEntry, 0, len(history))
+	if renderHistory {
+		for idx, msg := range history {
+			content := msg.Content
+			if !strings.HasSuffix(content, "\n") {
+				content += "\n"
+			}
+			entries = append(entries, conversationTemplateEntry{
+				Index:       idx + 1,
+				Role:        strings.TrimSpace(msg.Role),
+				DisplayRole: roleDisplayName(msg.Role),
+				Files:       append([]string(nil), msg.Files...),
+				Content:     content,
+			})
+		}
+	}
+	data := conversationTemplateData{
+		IncludeHistory: renderHistory,
+		History:        entries,
+		UserPrompt:     userPrompt,
+	}
+	rendered, err := prompts.Render("mct_conversation_history", trimmed, data, nil)
+	if err != nil {
+		return "", fmt.Errorf("render conversation history template: %w", err)
+	}
+	return rendered, nil
 }
 
 func readFileWithBudget(f *os.File, budget int) ([]byte, int, error) {

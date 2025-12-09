@@ -222,7 +222,7 @@ func handlePrompt(args []string) {
 	}
 	if !isAnswerOnlyMode {
 		modeIndicator := "mct:shell"
-		reason := " (preflight: shell-agent – something else, such as running a command in the shell)"
+		reason := " (preflight: shell-agent – LLM replied 'shell', run commands)"
 		if !shellAgent {
 			modeIndicator = "mct:file"
 			reason = " (preflight: retrieving relevant files and context)"

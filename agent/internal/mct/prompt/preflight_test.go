@@ -9,8 +9,8 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/llm"
 )
 
-func TestPreflightShellRoutingYesSelectsDefault(t *testing.T) {
-	stubReply := "Yes, include files please."
+func TestPreflightShellRoutingContentSelectsDefault(t *testing.T) {
+	stubReply := "Content, include files please."
 	old := chatWithResolvedFallback
 	chatWithResolvedFallback = func(ctx context.Context, model llm.ResolvedModel, fallbackAliases []string, fallbackModels []llm.ResolvedModel, extraParams map[string]any, messages []llm.Message) (string, error) {
 		return stubReply, nil
@@ -32,8 +32,8 @@ func TestPreflightShellRoutingYesSelectsDefault(t *testing.T) {
 	}
 }
 
-func TestPreflightShellRoutingCaseInsensitiveYes(t *testing.T) {
-	stubReply := "yEs, thanks"
+func TestPreflightShellRoutingCaseInsensitiveContent(t *testing.T) {
+	stubReply := "cOnTeNt, thanks"
 	old := chatWithResolvedFallback
 	chatWithResolvedFallback = func(ctx context.Context, model llm.ResolvedModel, fallbackAliases []string, fallbackModels []llm.ResolvedModel, extraParams map[string]any, messages []llm.Message) (string, error) {
 		return stubReply, nil
@@ -52,8 +52,8 @@ func TestPreflightShellRoutingCaseInsensitiveYes(t *testing.T) {
 	}
 }
 
-func TestPreflightShellRoutingYesBeatsSomethingElse(t *testing.T) {
-	stubReply := "Yes, something else might work"
+func TestPreflightShellRoutingContentBeatsShell(t *testing.T) {
+	stubReply := "Content, shell might also work"
 	old := chatWithResolvedFallback
 	chatWithResolvedFallback = func(ctx context.Context, model llm.ResolvedModel, fallbackAliases []string, fallbackModels []llm.ResolvedModel, extraParams map[string]any, messages []llm.Message) (string, error) {
 		return stubReply, nil
@@ -73,7 +73,7 @@ func TestPreflightShellRoutingYesBeatsSomethingElse(t *testing.T) {
 }
 
 func TestPreflightShellRoutingFallbackToShellAgent(t *testing.T) {
-	stubReply := "something else"
+	stubReply := "shell"
 	old := chatWithResolvedFallback
 	chatWithResolvedFallback = func(ctx context.Context, model llm.ResolvedModel, fallbackAliases []string, fallbackModels []llm.ResolvedModel, extraParams map[string]any, messages []llm.Message) (string, error) {
 		return stubReply, nil
@@ -96,7 +96,7 @@ func TestPreflightShellRoutingFallbackToShellAgent(t *testing.T) {
 }
 
 func TestPreflightShellRoutingUsesFirstLineTokens(t *testing.T) {
-	stubReply := "Stub LLM (default) response\n\nSomething else would be better"
+	stubReply := "Stub LLM (default) response\n\nShell would be better"
 	old := chatWithResolvedFallback
 	chatWithResolvedFallback = func(ctx context.Context, model llm.ResolvedModel, fallbackAliases []string, fallbackModels []llm.ResolvedModel, extraParams map[string]any, messages []llm.Message) (string, error) {
 		return stubReply, nil
@@ -172,7 +172,7 @@ func TestPreflightShellRoutingIncludesPromptInMessages(t *testing.T) {
 	var captured []llm.Message
 	chatWithResolvedFallback = func(ctx context.Context, model llm.ResolvedModel, fallbackAliases []string, fallbackModels []llm.ResolvedModel, extraParams map[string]any, messages []llm.Message) (string, error) {
 		captured = append([]llm.Message(nil), messages...)
-		return "something else", nil
+		return "shell", nil
 	}
 	t.Cleanup(func() { chatWithResolvedFallback = old })
 

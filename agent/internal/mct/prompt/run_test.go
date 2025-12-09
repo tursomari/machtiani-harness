@@ -56,6 +56,7 @@ func TestRunUsesAnswerRuntime(t *testing.T) {
 			Resolved: llm.CloneResolvedModel(llm.ResolvedModel{Model: "answer-model"}),
 			Extras:   map[string]any{"temperature": 0.7},
 		},
+		Prompts: testPromptsConfig(),
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -102,6 +103,7 @@ func TestRunFallsBackToPrimaryRuntime(t *testing.T) {
 			FallbackAliases:  []string{"orch-fallback"},
 			FallbackResolved: []llm.ResolvedModel{{Model: "fallback-model"}},
 		},
+		Prompts: testPromptsConfig(),
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -137,6 +139,7 @@ func TestRunIncludesResponseDirectives(t *testing.T) {
 			Resolved: llm.CloneResolvedModel(llm.ResolvedModel{Model: "planner-model"}),
 		},
 		ResponseDirectives: []string{"use_tag_format"},
+		Prompts:            testPromptsConfig(),
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -200,6 +203,7 @@ func TestRunInjectsTagSnippets(t *testing.T) {
 		},
 		ResponseDirectives: []string{"use_tag_format"},
 		SessionID:          "test-tag-snippets",
+		Prompts:            testPromptsConfig(),
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)

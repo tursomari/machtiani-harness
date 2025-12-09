@@ -63,9 +63,11 @@ type PlannerPromptsConfig struct {
 	FormatErrorTemplate    string `toml:"format_error_template"`
 	PlanPrompt             string `toml:"plan_prompt"`
 	PlanPatchRules         string `toml:"plan_patch_rules"`
+	PlanPatchStrictRules   string `toml:"plan_patch_strict_rules"`
 	PlanPatchEnabledIntro  string `toml:"plan_patch_enabled_intro"`
 	PlanPatchDisabledIntro string `toml:"plan_patch_disabled_intro"`
 	FinalizePrompt         string `toml:"finalize_prompt"`
+	ReviewPrompt           string `toml:"review_prompt"`
 
 	systemTemplateSet         bool `toml:"-"`
 	instanceTemplateSet       bool `toml:"-"`
@@ -73,9 +75,11 @@ type PlannerPromptsConfig struct {
 	formatErrorTemplateSet    bool `toml:"-"`
 	planPromptSet             bool `toml:"-"`
 	planPatchRulesSet         bool `toml:"-"`
+	planPatchStrictRulesSet   bool `toml:"-"`
 	planPatchEnabledIntroSet  bool `toml:"-"`
 	planPatchDisabledIntroSet bool `toml:"-"`
 	finalizePromptSet         bool `toml:"-"`
+	reviewPromptSet           bool `toml:"-"`
 }
 
 // ShellAgentPromptsConfig contains shell-agent prompt templates.
@@ -108,13 +112,19 @@ type FileDiscoveryPromptsConfig struct {
 
 // MCTPromptsConfig contains prompt templates for the mct agent wrapper.
 type MCTPromptsConfig struct {
-	ShellAgentContextPrefix string `toml:"shell_agent_context_prefix"`
-	HeaderUserTemplate      string `toml:"header_user_template"`
-	HeaderExistingTemplate  string `toml:"header_existing_template"`
+	ShellAgentContextPrefix     string `toml:"shell_agent_context_prefix"`
+	HeaderUserTemplate          string `toml:"header_user_template"`
+	HeaderExistingTemplate      string `toml:"header_existing_template"`
+	ConversationHistoryTemplate string `toml:"conversation_history_template"`
+	ReadmeSystemTemplate        string `toml:"readme_system_template"`
+	ShellAgentContextTemplate   string `toml:"shell_agent_context_template"`
 
-	shellAgentContextPrefixSet bool `toml:"-"`
-	headerUserTemplateSet      bool `toml:"-"`
-	headerExistingTemplateSet  bool `toml:"-"`
+	shellAgentContextPrefixSet     bool `toml:"-"`
+	headerUserTemplateSet          bool `toml:"-"`
+	headerExistingTemplateSet      bool `toml:"-"`
+	conversationHistoryTemplateSet bool `toml:"-"`
+	readmeSystemTemplateSet        bool `toml:"-"`
+	shellAgentContextTemplateSet   bool `toml:"-"`
 }
 
 // ModelConfig captures direct model overrides under the top-level [model]
@@ -767,6 +777,15 @@ func parsePlannerSection(path, section string, data map[string]any) (*PlannerCon
 		p.PlanPatchRules = val
 		p.planPatchRulesSet = true
 	}
+	if raw, ok := data["plan_patch_strict_rules"]; ok {
+		val, err := templateStringFromRaw(path, section, "plan_patch_strict_rules", raw)
+		if err != nil {
+			return nil, nil, err
+		}
+		p := ensurePrompts()
+		p.PlanPatchStrictRules = val
+		p.planPatchStrictRulesSet = true
+	}
 	if raw, ok := data["plan_patch_enabled_intro"]; ok {
 		val, err := templateStringFromRaw(path, section, "plan_patch_enabled_intro", raw)
 		if err != nil {
@@ -793,6 +812,15 @@ func parsePlannerSection(path, section string, data map[string]any) (*PlannerCon
 		p := ensurePrompts()
 		p.FinalizePrompt = val
 		p.finalizePromptSet = true
+	}
+	if raw, ok := data["review_prompt"]; ok {
+		val, err := templateStringFromRaw(path, section, "review_prompt", raw)
+		if err != nil {
+			return nil, nil, err
+		}
+		p := ensurePrompts()
+		p.ReviewPrompt = val
+		p.reviewPromptSet = true
 	}
 	if val, ok := toInt(data["step_limit"]); ok {
 		planner.StepLimit = val
@@ -878,7 +906,31 @@ func parsePromptsSection(path string, data map[string]any) (*PromptsConfig, erro
 			cfg.HeaderExistingTemplate = val
 			cfg.headerExistingTemplateSet = true
 		}
-		if cfg.shellAgentContextPrefixSet || cfg.headerUserTemplateSet || cfg.headerExistingTemplateSet {
+		if tplRaw, ok := mctRaw["conversation_history_template"]; ok {
+			val, err := templateStringFromRaw(path, "prompts.mct", "conversation_history_template", tplRaw)
+			if err != nil {
+				return nil, err
+			}
+			cfg.ConversationHistoryTemplate = val
+			cfg.conversationHistoryTemplateSet = true
+		}
+		if tplRaw, ok := mctRaw["readme_system_template"]; ok {
+			val, err := templateStringFromRaw(path, "prompts.mct", "readme_system_template", tplRaw)
+			if err != nil {
+				return nil, err
+			}
+			cfg.ReadmeSystemTemplate = val
+			cfg.readmeSystemTemplateSet = true
+		}
+		if tplRaw, ok := mctRaw["shell_agent_context_template"]; ok {
+			val, err := templateStringFromRaw(path, "prompts.mct", "shell_agent_context_template", tplRaw)
+			if err != nil {
+				return nil, err
+			}
+			cfg.ShellAgentContextTemplate = val
+			cfg.shellAgentContextTemplateSet = true
+		}
+		if cfg.shellAgentContextPrefixSet || cfg.headerUserTemplateSet || cfg.headerExistingTemplateSet || cfg.conversationHistoryTemplateSet || cfg.readmeSystemTemplateSet || cfg.shellAgentContextTemplateSet {
 			prompts.MCT = cfg
 		}
 	}
@@ -949,6 +1001,10 @@ func mergePlannerPromptSources(base, override *PlannerPromptsConfig) *PlannerPro
 		base.PlanPatchRules = override.PlanPatchRules
 		base.planPatchRulesSet = true
 	}
+	if override.planPatchStrictRulesSet {
+		base.PlanPatchStrictRules = override.PlanPatchStrictRules
+		base.planPatchStrictRulesSet = true
+	}
 	if override.planPatchEnabledIntroSet {
 		base.PlanPatchEnabledIntro = override.PlanPatchEnabledIntro
 		base.planPatchEnabledIntroSet = true
@@ -960,6 +1016,10 @@ func mergePlannerPromptSources(base, override *PlannerPromptsConfig) *PlannerPro
 	if override.finalizePromptSet {
 		base.FinalizePrompt = override.FinalizePrompt
 		base.finalizePromptSet = true
+	}
+	if override.reviewPromptSet {
+		base.ReviewPrompt = override.ReviewPrompt
+		base.reviewPromptSet = true
 	}
 	return base
 }

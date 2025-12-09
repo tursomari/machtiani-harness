@@ -1,3 +1,3 @@
-{combined}
+{{.Combined}}
 # Assistant
 

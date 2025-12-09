@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/tursomari/machtiani/agent/internal/git"
+	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/readme"
 	promptsvc "github.com/tursomari/machtiani/agent/internal/mct/prompt"
 )
@@ -19,6 +20,7 @@ type Options struct {
 	Runtime              promptsvc.ModelRuntime
 	AnswerRuntime        promptsvc.ModelRuntime
 	FileDiscoveryRuntime promptsvc.ModelRuntime
+	Prompts              *llm.MCTPromptsConfig
 }
 
 // HeadCommit returns the current HEAD commit hash for the repository.
@@ -43,6 +45,7 @@ func Run(ctx context.Context, opts Options) error {
 		return err
 	}
 	mgr.SetMaxInputTokens(opts.MaxInputTokens)
+	mgr.SetPrompts(opts.Prompts)
 
 	mgr.SetPromptExecutor(func(execCtx context.Context, promptText string) (string, error) {
 		prev, hadPrev := os.LookupEnv(readme.SkipReadmeManagerEnv)
@@ -68,6 +71,7 @@ func Run(ctx context.Context, opts Options) error {
 			FileDiscoveryRuntime: opts.FileDiscoveryRuntime,
 			Verbose:              opts.Verbose,
 			MaxInputTokens:       opts.MaxInputTokens,
+			Prompts:              opts.Prompts,
 		}
 		res, err := promptsvc.Run(execCtx, innerOpts)
 		if err != nil {

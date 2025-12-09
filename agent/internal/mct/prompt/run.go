@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -26,6 +27,7 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/utils"
 	"github.com/tursomari/machtiani/agent/internal/patcher"
 	"github.com/tursomari/machtiani/agent/internal/patchlog"
+	"github.com/tursomari/machtiani/agent/internal/prompts"
 	"github.com/tursomari/machtiani/agent/internal/shellbridge"
 	"github.com/tursomari/machtiani/agent/internal/trajectory"
 )
@@ -77,6 +79,15 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 	includeHistory := opts.IncludeHistory
 	useBaselineContext := isPatcherPromptMode(mode)
 
+	if err := validateMCTPromptsConfig(opts.Prompts); err != nil {
+		return res, err
+	}
+
+	var historyTemplate string
+	if opts.Prompts != nil {
+		historyTemplate = opts.Prompts.ConversationHistoryTemplate
+	}
+
 	// Transform raw prompt into decision-based instruction for session resumption
 	if opts.SessionID != "" {
 		historyNote := ""
@@ -125,15 +136,23 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 
 	switch {
 	case isAnswerOnly || opts.ShellAgent:
-		combined, included = contextbuilder.Build(opts.Prompt, nil, hist, contextbuilder.Options{IncludeHistory: includeHistory, MaxInputTokens: opts.MaxInputTokens})
+		var buildErr error
+		combined, included, buildErr = contextbuilder.Build(opts.Prompt, nil, hist, contextbuilder.Options{IncludeHistory: includeHistory, MaxInputTokens: opts.MaxInputTokens, PreludeTemplate: historyTemplate})
+		if buildErr != nil {
+			return res, buildErr
+		}
 	case useBaselineContext:
 		var err error
-		combined, included, err = buildBaselinePromptContext(opts.Prompt, hist, filtered, includeHistory, opts.MaxInputTokens, opts.SessionID, opts.Verbose)
+		combined, included, err = buildBaselinePromptContext(opts.Prompt, hist, filtered, includeHistory, opts.MaxInputTokens, opts.SessionID, opts.Verbose, historyTemplate)
 		if err != nil {
 			return res, err
 		}
 	default:
-		combined, included = contextbuilder.Build(opts.Prompt, filtered, hist, contextbuilder.Options{IncludeHistory: includeHistory, MaxInputTokens: opts.MaxInputTokens})
+		var buildErr error
+		combined, included, buildErr = contextbuilder.Build(opts.Prompt, filtered, hist, contextbuilder.Options{IncludeHistory: includeHistory, MaxInputTokens: opts.MaxInputTokens, PreludeTemplate: historyTemplate})
+		if buildErr != nil {
+			return res, buildErr
+		}
 	}
 
 	directiveBlock := formatResponseDirectives(opts.ResponseDirectives)
@@ -173,7 +192,10 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 		}
 	}
 
-	header := buildHeader(combined)
+	header, err := buildHeader(combined, opts.Prompts)
+	if err != nil {
+		return res, err
+	}
 	res.Header = header
 	if opts.OnHeader != nil {
 		opts.OnHeader(header)
@@ -246,9 +268,12 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 	return res, nil
 }
 
-func buildBaselinePromptContext(prompt string, history []contextbuilder.Message, filePaths []string, includeHistory bool, maxInputTokens int, sessionID string, verbose bool) (string, []string, error) {
-	options := contextbuilder.Options{IncludeHistory: includeHistory, MaxInputTokens: maxInputTokens}
-	base, _ := contextbuilder.Build(prompt, nil, history, options)
+func buildBaselinePromptContext(prompt string, history []contextbuilder.Message, filePaths []string, includeHistory bool, maxInputTokens int, sessionID string, verbose bool, historyTemplate string) (string, []string, error) {
+	options := contextbuilder.Options{IncludeHistory: includeHistory, MaxInputTokens: maxInputTokens, PreludeTemplate: historyTemplate}
+	base, _, err := contextbuilder.Build(prompt, nil, history, options)
+	if err != nil {
+		return "", nil, err
+	}
 
 	if len(filePaths) == 0 {
 		return base, nil, nil
@@ -259,7 +284,10 @@ func buildBaselinePromptContext(prompt string, history []contextbuilder.Message,
 		if verbose {
 			fmt.Fprintf(os.Stderr, "[baseline-context] session id missing; falling back to raw file contents\n")
 		}
-		combined, included := contextbuilder.Build(prompt, filePaths, history, options)
+		combined, included, err := contextbuilder.Build(prompt, filePaths, history, options)
+		if err != nil {
+			return "", nil, err
+		}
 		return combined, included, nil
 	}
 
@@ -272,7 +300,10 @@ func buildBaselinePromptContext(prompt string, history []contextbuilder.Message,
 		if verbose {
 			fmt.Fprintf(os.Stderr, "[baseline-context] not inside a git repository; falling back to raw file contents: %v\n", err)
 		}
-		combined, included := contextbuilder.Build(prompt, filePaths, history, options)
+		combined, included, buildErr := contextbuilder.Build(prompt, filePaths, history, options)
+		if buildErr != nil {
+			return "", nil, buildErr
+		}
 		return combined, included, nil
 	}
 
@@ -281,7 +312,10 @@ func buildBaselinePromptContext(prompt string, history []contextbuilder.Message,
 		if verbose {
 			fmt.Fprintf(os.Stderr, "[baseline-context] ensure baseline failed; falling back to raw file contents: %v\n", err)
 		}
-		combined, included := contextbuilder.Build(prompt, filePaths, history, options)
+		combined, included, buildErr := contextbuilder.Build(prompt, filePaths, history, options)
+		if buildErr != nil {
+			return "", nil, buildErr
+		}
 		return combined, included, nil
 	}
 
@@ -305,7 +339,10 @@ func buildBaselinePromptContext(prompt string, history []contextbuilder.Message,
 		if verbose {
 			fmt.Fprintf(os.Stderr, "[baseline-context] no diff sections generated; falling back to raw file contents\n")
 		}
-		combined, fallbackIncluded := contextbuilder.Build(prompt, filePaths, history, options)
+		combined, fallbackIncluded, buildErr := contextbuilder.Build(prompt, filePaths, history, options)
+		if buildErr != nil {
+			return "", nil, buildErr
+		}
 		return combined, fallbackIncluded, nil
 	}
 
@@ -415,7 +452,7 @@ func invokeShellAgent(ctx context.Context, prompt string, opts RunOptions) (stri
 
 	err = cmd.Wait()
 	<-stderrDone
-	if stderrErr != nil {
+	if stderrErr != nil && !isClosedPipeError(stderrErr) {
 		return "", "", fmt.Errorf("shell-agent read stderr: %w", stderrErr)
 	}
 	if err != nil {
@@ -434,28 +471,40 @@ func invokeShellAgent(ctx context.Context, prompt string, opts RunOptions) (stri
 
 	stdoutText := strings.TrimSpace(stdoutBuf.String())
 	stderrText := strings.TrimSpace(stderrBuf.String())
-	contextBlock := formatShellAgentContext(stdoutText, stderrText)
+	contextBlock, formatErr := formatShellAgentContext(stdoutText, stderrText, opts.Prompts)
+	if formatErr != nil {
+		return "", "", formatErr
+	}
 	trajectory := extractTrajectoryPath(stdoutText, stderrText)
 	return contextBlock, trajectory, nil
 }
 
-func formatShellAgentContext(stdoutText, stderrText string) string {
-	var b strings.Builder
-	b.WriteString(shellAgentContextPrefix)
-	b.WriteString("\n\n")
-	if stdoutText != "" {
-		b.WriteString(stdoutText)
-		b.WriteString("\n")
+func formatShellAgentContext(stdoutText, stderrText string, cfg *llm.MCTPromptsConfig) (string, error) {
+	stdout := strings.TrimSpace(stdoutText)
+	stderr := strings.TrimSpace(stderrText)
+	prefix := shellAgentContextPrefix
+	if cfg != nil && strings.TrimSpace(cfg.ShellAgentContextPrefix) != "" {
+		prefix = strings.TrimSpace(cfg.ShellAgentContextPrefix)
 	}
-	if stderrText != "" {
-		if stdoutText != "" {
-			b.WriteString("\n")
-		}
-		b.WriteString("[stderr]\n")
-		b.WriteString(stderrText)
-		b.WriteString("\n")
+	if cfg == nil {
+		return "", fmt.Errorf("shell context template not configured")
 	}
-	return strings.TrimSpace(b.String())
+	tmpl := strings.TrimSpace(cfg.ShellAgentContextTemplate)
+	if tmpl == "" {
+		return "", fmt.Errorf("shell context template not configured")
+	}
+	data := map[string]any{
+		"Prefix":    prefix,
+		"Stdout":    stdout,
+		"Stderr":    stderr,
+		"HasStdout": stdout != "",
+		"HasStderr": stderr != "",
+	}
+	rendered, err := prompts.Render("mct_shell_context", tmpl, data, nil)
+	if err != nil {
+		return "", fmt.Errorf("render shell context template: %w", err)
+	}
+	return strings.TrimSpace(rendered), nil
 }
 
 func extractTrajectoryPath(outputs ...string) string {
@@ -654,6 +703,7 @@ func runReadmeManager(ctx context.Context, opts RunOptions, isAnswerOnly bool) e
 	if err != nil {
 		return err
 	}
+	mgr.SetPrompts(opts.Prompts)
 	mgr.SetMaxInputTokens(opts.MaxInputTokens)
 	mgr.SetPromptExecutor(func(execCtx context.Context, prompt string) (string, error) {
 		prev, hadPrev := os.LookupEnv(readme.SkipReadmeManagerEnv)
@@ -681,6 +731,7 @@ func runReadmeManager(ctx context.Context, opts RunOptions, isAnswerOnly bool) e
 			Verbose:              opts.Verbose,
 			MaxInputTokens:       opts.MaxInputTokens,
 			GlobalConfigPath:     opts.GlobalConfigPath,
+			Prompts:              opts.Prompts,
 		}
 		res, err := Run(execCtx, innerOpts)
 		if err != nil {
@@ -706,12 +757,65 @@ func deriveReadmeSessionID(commit string) string {
 	return fmt.Sprintf("readme-%s", trimmed)
 }
 
-func buildHeader(combined string) string {
+func buildHeader(combined string, cfg *llm.MCTPromptsConfig) (string, error) {
 	trimmed := strings.TrimSpace(combined)
-	if strings.HasPrefix(trimmed, "# User") {
-		return combined + "\n# Assistant\n\n"
+	if cfg != nil {
+		data := map[string]string{"Combined": combined}
+		var tmpl string
+		var name string
+		if strings.HasPrefix(trimmed, "# User") {
+			tmpl = strings.TrimSpace(cfg.HeaderExistingTemplate)
+			name = "mct_header_existing"
+		} else {
+			tmpl = strings.TrimSpace(cfg.HeaderUserTemplate)
+			name = "mct_header_user"
+		}
+		if tmpl == "" {
+			return "", fmt.Errorf("%s template not configured", name)
+		}
+		rendered, err := prompts.Render(name, tmpl, data, nil)
+		if err != nil {
+			return "", fmt.Errorf("render %s: %w", name, err)
+		}
+		return rendered, nil
 	}
-	return fmt.Sprintf("# User\n\n%s\n\n# Assistant\n\n", combined)
+	return "", fmt.Errorf("mct header templates not configured")
+}
+
+func validateMCTPromptsConfig(cfg *llm.MCTPromptsConfig) error {
+	if cfg == nil {
+		return fmt.Errorf("mct prompt templates not configured")
+	}
+	if strings.TrimSpace(cfg.ConversationHistoryTemplate) == "" {
+		return fmt.Errorf("conversation history template is required")
+	}
+	if strings.TrimSpace(cfg.HeaderUserTemplate) == "" {
+		return fmt.Errorf("header user template is required")
+	}
+	if strings.TrimSpace(cfg.HeaderExistingTemplate) == "" {
+		return fmt.Errorf("header existing template is required")
+	}
+	if strings.TrimSpace(cfg.ShellAgentContextTemplate) == "" {
+		return fmt.Errorf("shell agent context template is required")
+	}
+	if strings.TrimSpace(cfg.ReadmeSystemTemplate) == "" {
+		return fmt.Errorf("readme system template is required")
+	}
+	return nil
+}
+
+func isClosedPipeError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, os.ErrClosed) {
+		return true
+	}
+	if pe, ok := err.(*os.PathError); ok {
+		return isClosedPipeError(pe.Err)
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "file already closed") || strings.Contains(msg, "use of closed file")
 }
 
 func deriveFilename(source string) string {

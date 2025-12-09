@@ -12,13 +12,34 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/llm"
 )
 
+const testConversationTemplate = `{{- if .IncludeHistory -}}
+Conversation History:
+{{- range .History }}
+{{.Index}}. {{.DisplayRole}}{{if .Files}} (Files: {{join .Files ", "}}){{end}}:
+{{.Content}}{{- end}}
+Current Request:
+{{.UserPrompt}}
+{{- else -}}
+{{.UserPrompt}}
+{{- end }}`
+
+func withPrelude(opts Options) Options {
+	if strings.TrimSpace(opts.PreludeTemplate) == "" {
+		opts.PreludeTemplate = testConversationTemplate
+	}
+	return opts
+}
+
 func TestBuildIncludesConversationHistory(t *testing.T) {
 	history := []Message{
 		{Role: "user", Content: "Initial goal"},
 		{Role: "assistant", Content: "First answer", Files: []string{"file.go"}},
 	}
 
-	combined, included := Build("Follow-up question?", nil, history, Options{IncludeHistory: true})
+	combined, included, err := Build("Follow-up question?", nil, history, withPrelude(Options{IncludeHistory: true}))
+	if err != nil {
+		t.Fatalf("Build returned error: %v", err)
+	}
 
 	if len(included) != 0 {
 		t.Fatalf("expected no included files, got %v", included)
@@ -42,7 +63,10 @@ func TestBuildSkipsHistoryWhenNotRequested(t *testing.T) {
 		{Role: "assistant", Content: "First answer", Files: []string{"file.go"}},
 	}
 
-	combined, _ := Build("Follow-up question?", nil, history, Options{})
+	combined, _, err := Build("Follow-up question?", nil, history, withPrelude(Options{}))
+	if err != nil {
+		t.Fatalf("Build returned error: %v", err)
+	}
 
 	if strings.Contains(combined, "Conversation History:") {
 		t.Fatalf("did not expect conversation history, got %q", combined)
@@ -93,7 +117,10 @@ func TestBuildResolvesPathsFromRepoRoot(t *testing.T) {
 		}
 	})
 
-	combined, included := Build("Check file", []string{"src/main.go"}, nil, Options{})
+	combined, included, err := Build("Check file", []string{"src/main.go"}, nil, withPrelude(Options{}))
+	if err != nil {
+		t.Fatalf("Build returned error: %v", err)
+	}
 	if len(included) != 1 || included[0] != "src/main.go" {
 		t.Fatalf("expected included files to contain src/main.go, got %v", included)
 	}
@@ -136,7 +163,10 @@ func TestBuildAppliesTokenLimit(t *testing.T) {
 		t.Fatalf("write file: %v", err)
 	}
 
-	basePrompt, _ := Build("Hello", []string{"sample.txt"}, nil, Options{})
+	basePrompt, _, err := Build("Hello", []string{"sample.txt"}, nil, withPrelude(Options{}))
+	if err != nil {
+		t.Fatalf("Build returned error: %v", err)
+	}
 	baseTokens := llm.EstimateTokens(basePrompt)
 
 	lineFive := lines[4] + "\n"
@@ -146,7 +176,10 @@ func TestBuildAppliesTokenLimit(t *testing.T) {
 		t.Fatalf("unexpected token limit: %d", limit)
 	}
 
-	limitedPrompt, included := Build("Hello", []string{"sample.txt"}, nil, Options{MaxInputTokens: limit})
+	limitedPrompt, included, err := Build("Hello", []string{"sample.txt"}, nil, withPrelude(Options{MaxInputTokens: limit}))
+	if err != nil {
+		t.Fatalf("Build returned error: %v", err)
+	}
 	if len(included) != 1 || included[0] != "sample.txt" {
 		t.Fatalf("expected included sample.txt, got %v", included)
 	}

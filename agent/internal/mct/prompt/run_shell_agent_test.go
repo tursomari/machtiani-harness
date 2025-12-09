@@ -67,6 +67,7 @@ func TestShellAgentModeInvokesShellAgentAndSkipsFileDiscovery(t *testing.T) {
 		Runtime:      ModelRuntime{Resolved: llm.ResolvedModel{Model: "test-model", APIKey: "key", BaseURL: "https://example.com"}},
 		ExplicitName: "integration-test",
 		ShellAgent:   true,
+		Prompts:      testPromptsConfig(),
 	}
 
 	res, err := Run(context.Background(), opts)
@@ -141,6 +142,7 @@ func TestShellAgentModeForwardsModelOverride(t *testing.T) {
 		Runtime:         ModelRuntime{Resolved: llm.ResolvedModel{Model: "foo", APIKey: "key"}},
 		ShellAgent:      true,
 		ShellAgentModel: "shell-mini",
+		Prompts:         testPromptsConfig(),
 	}
 
 	if _, err := Run(context.Background(), opts); err != nil {
@@ -200,12 +202,13 @@ func TestShellAgentModeFallsBackToRuntimeAlias(t *testing.T) {
 			Alias:      "alias-from-runtime",
 			UsingAlias: true,
 			Resolved: llm.ResolvedModel{
-				Alias: "alias-from-runtime",
-				Model: "foo",
+				Alias:  "alias-from-runtime",
+				Model:  "foo",
 				APIKey: "key",
 			},
 		},
 		ShellAgent: true,
+		Prompts:    testPromptsConfig(),
 	}
 
 	if _, err := Run(context.Background(), opts); err != nil {
@@ -274,6 +277,7 @@ func TestShellAgentModeForwardsAPIKeyOverrides(t *testing.T) {
 			APIKeyOverrides: overrides,
 		},
 		ShellAgent: true,
+		Prompts:    testPromptsConfig(),
 	}
 
 	if _, err := Run(context.Background(), opts); err != nil {
@@ -350,6 +354,7 @@ func TestShellAgentModePropagatesError(t *testing.T) {
 		Runtime:      ModelRuntime{Resolved: llm.ResolvedModel{Model: "test-model"}},
 		ExplicitName: "integration-error",
 		ShellAgent:   true,
+		Prompts:      testPromptsConfig(),
 	}
 
 	_, err = Run(context.Background(), opts)
@@ -402,6 +407,7 @@ func TestFileDiscoveryRunsWhenShellAgentDisabled(t *testing.T) {
 		Runtime:      ModelRuntime{Resolved: llm.ResolvedModel{Model: "test-model"}},
 		ShellAgent:   false,
 		ExplicitName: "integration-default",
+		Prompts:      testPromptsConfig(),
 	}
 
 	res, err := Run(context.Background(), opts)

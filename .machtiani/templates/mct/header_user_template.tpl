@@ -1,6 +1,6 @@
 # User
 
-{combined}
+{{.Combined}}
 
 # Assistant
 

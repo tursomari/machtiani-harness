@@ -389,6 +389,12 @@ func TestLoadGlobalConfigSupportsTemplateFiles(t *testing.T) {
 	root := t.TempDir()
 	mustWriteFile(t, filepath.Join(root, "templates", "planner", "system.tpl"), "planner system file")
 	mustWriteFile(t, filepath.Join(root, "templates", "planner", "plan_prompt.tpl"), "plan prompt file")
+	mustWriteFile(t, filepath.Join(root, "templates", "planner", "plan_patch_rules.tpl"), "plan patch rules file")
+	mustWriteFile(t, filepath.Join(root, "templates", "planner", "plan_patch_strict_rules.tpl"), "plan patch strict rules file")
+	mustWriteFile(t, filepath.Join(root, "templates", "planner", "plan_patch_enabled_intro.tpl"), "enabled intro file")
+	mustWriteFile(t, filepath.Join(root, "templates", "planner", "plan_patch_disabled_intro.tpl"), "disabled intro file")
+	mustWriteFile(t, filepath.Join(root, "templates", "planner", "finalize_prompt.tpl"), "finalize prompt file")
+	mustWriteFile(t, filepath.Join(root, "templates", "planner", "review_prompt.tpl"), "review prompt file")
 	mustWriteFile(t, filepath.Join(root, "templates", "shell-agent", "timeout_template.tpl"), "timeout file")
 	mustWriteFile(t, filepath.Join(root, "templates", "shell-agent", "format_error_template.tpl"), "format file")
 	mustWriteFile(t, filepath.Join(root, "templates", "shell-agent", "action_observation_template.txt"), "action observation file")
@@ -397,14 +403,23 @@ func TestLoadGlobalConfigSupportsTemplateFiles(t *testing.T) {
 	mustWriteFile(t, filepath.Join(root, "templates", "shell-agent", "lightweight_error_template.txt"), "lw error file")
 	mustWriteFile(t, filepath.Join(root, "templates", "file-discovery", "system.tpl"), "file discovery system")
 	mustWriteFile(t, filepath.Join(root, "templates", "mct", "context_prefix.tpl"), "context prefix")
+	mustWriteFile(t, filepath.Join(root, "templates", "mct", "context_block.tpl"), "context block {{.Stdout}}")
 	mustWriteFile(t, filepath.Join(root, "templates", "mct", "header_user.tpl"), "header user")
 	mustWriteFile(t, filepath.Join(root, "templates", "mct", "header_existing.tpl"), "header existing")
+	mustWriteFile(t, filepath.Join(root, "templates", "mct", "conversation_history.tpl"), "history {{len .History}}")
+	mustWriteFile(t, filepath.Join(root, "templates", "mct", "readme_system.tpl"), "readme system")
 
 	content := `listen = "127.0.0.1:0"
 
 [prompts.planner]
 system_template = { file = "templates/planner/system.tpl" }
 plan_prompt = { file = "templates/planner/plan_prompt.tpl" }
+plan_patch_rules = { file = "templates/planner/plan_patch_rules.tpl" }
+plan_patch_strict_rules = { file = "templates/planner/plan_patch_strict_rules.tpl" }
+plan_patch_enabled_intro = { file = "templates/planner/plan_patch_enabled_intro.tpl" }
+plan_patch_disabled_intro = { file = "templates/planner/plan_patch_disabled_intro.tpl" }
+finalize_prompt = { file = "templates/planner/finalize_prompt.tpl" }
+review_prompt = { file = "templates/planner/review_prompt.tpl" }
 
 [prompts.shell-agent]
 timeout_template = { file = "templates/shell-agent/timeout_template.tpl" }
@@ -419,8 +434,11 @@ system_prompt_template = { file = "templates/file-discovery/system.tpl" }
 
 [prompts.mct]
 shell_agent_context_prefix = { file = "templates/mct/context_prefix.tpl" }
+shell_agent_context_template = { file = "templates/mct/context_block.tpl" }
 header_user_template = { file = "templates/mct/header_user.tpl" }
 header_existing_template = { file = "templates/mct/header_existing.tpl" }
+conversation_history_template = { file = "templates/mct/conversation_history.tpl" }
+readme_system_template = { file = "templates/mct/readme_system.tpl" }
 `
 
 	configPath := filepath.Join(root, "config.toml")
@@ -440,6 +458,24 @@ header_existing_template = { file = "templates/mct/header_existing.tpl" }
 	}
 	if cfg.Prompts.Planner.PlanPrompt != "plan prompt file" {
 		t.Fatalf("expected planner plan prompt from file, got %q", cfg.Prompts.Planner.PlanPrompt)
+	}
+	if cfg.Prompts.Planner.PlanPatchRules != "plan patch rules file" {
+		t.Fatalf("expected planner patch rules from file, got %q", cfg.Prompts.Planner.PlanPatchRules)
+	}
+	if cfg.Prompts.Planner.PlanPatchStrictRules != "plan patch strict rules file" {
+		t.Fatalf("expected planner strict patch rules from file, got %q", cfg.Prompts.Planner.PlanPatchStrictRules)
+	}
+	if cfg.Prompts.Planner.PlanPatchEnabledIntro != "enabled intro file" {
+		t.Fatalf("expected planner enabled intro from file, got %q", cfg.Prompts.Planner.PlanPatchEnabledIntro)
+	}
+	if cfg.Prompts.Planner.PlanPatchDisabledIntro != "disabled intro file" {
+		t.Fatalf("expected planner disabled intro from file, got %q", cfg.Prompts.Planner.PlanPatchDisabledIntro)
+	}
+	if cfg.Prompts.Planner.FinalizePrompt != "finalize prompt file" {
+		t.Fatalf("expected planner finalize prompt from file, got %q", cfg.Prompts.Planner.FinalizePrompt)
+	}
+	if cfg.Prompts.Planner.ReviewPrompt != "review prompt file" {
+		t.Fatalf("expected planner review prompt from file, got %q", cfg.Prompts.Planner.ReviewPrompt)
 	}
 	if cfg.Prompts.ShellAgent == nil {
 		t.Fatalf("expected shell-agent prompts from template files")
@@ -471,11 +507,20 @@ header_existing_template = { file = "templates/mct/header_existing.tpl" }
 	if cfg.Prompts.MCT.ShellAgentContextPrefix != "context prefix" {
 		t.Fatalf("expected mct context prefix from file, got %q", cfg.Prompts.MCT.ShellAgentContextPrefix)
 	}
+	if cfg.Prompts.MCT.ShellAgentContextTemplate != "context block {{.Stdout}}" {
+		t.Fatalf("expected mct context template from file, got %q", cfg.Prompts.MCT.ShellAgentContextTemplate)
+	}
 	if cfg.Prompts.MCT.HeaderUserTemplate != "header user" {
 		t.Fatalf("expected mct header user template from file, got %q", cfg.Prompts.MCT.HeaderUserTemplate)
 	}
 	if cfg.Prompts.MCT.HeaderExistingTemplate != "header existing" {
 		t.Fatalf("expected mct header existing template from file, got %q", cfg.Prompts.MCT.HeaderExistingTemplate)
+	}
+	if cfg.Prompts.MCT.ConversationHistoryTemplate != "history {{len .History}}" {
+		t.Fatalf("expected mct conversation history template from file, got %q", cfg.Prompts.MCT.ConversationHistoryTemplate)
+	}
+	if cfg.Prompts.MCT.ReadmeSystemTemplate != "readme system" {
+		t.Fatalf("expected readme system template from file, got %q", cfg.Prompts.MCT.ReadmeSystemTemplate)
 	}
 }
 

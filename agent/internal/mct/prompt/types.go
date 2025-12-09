@@ -41,6 +41,7 @@ type RunOptions struct {
 	PersistTmpData          bool
 	SessionTempRoot         string
 	ResponseDirectives      []string
+	Prompts                 *llm.MCTPromptsConfig
 }
 
 // ReadmeOptions configure optional internal README management hooks.

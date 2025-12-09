@@ -338,6 +338,10 @@ func handleSyncCommand(args []string) int {
 		return 1
 	}
 
+	var mctPrompts *llm.MCTPromptsConfig
+	if globalCfg.Prompts != nil {
+		mctPrompts = globalCfg.Prompts.MCT
+	}
 	if err := readmesync.Run(context.Background(), readmesync.Options{
 		Commit:               commit,
 		Verbose:              cfg.Verbose,
@@ -345,6 +349,7 @@ func handleSyncCommand(args []string) int {
 		Runtime:              runtimes.Orchestrator,
 		AnswerRuntime:        runtimes.Answer,
 		FileDiscoveryRuntime: runtimes.FileDiscovery,
+		Prompts:              mctPrompts,
 	}); err != nil {
 		fmt.Fprintln(os.Stderr, "Readme sync failed:", err)
 		return 1
@@ -379,13 +384,13 @@ func configureSessionFlags(fs *flag.FlagSet, cfg *session.Config, paramFlags, pa
 	fs.BoolVar(&cfg.TrajectoryStreamTokens, "trajectory-stream-tokens", false, "record LLM token streaming events in the trajectory (disabled by default)")
 	fs.IntVar(&cfg.TrajectoryExcerpt, "trajectory-excerpt", 512, "excerpt length (in characters) for prompts/responses captured in the trajectory")
 	fs.BoolVar(&cfg.TrajectoryOmitRepoRoot, "trajectory-omit-repo-root", false, "omit repo_root from trajectory events")
-    fs.BoolVar(&cfg.PatchNoApply, "patch-no-apply", false, "skip applying generated patches to the worktree (default: apply)")
-    fs.BoolVar(&cfg.Patch, "patch", false, "enable patch planning (disabled by default)")
-    fs.BoolVar(&cfg.PatchStrict, "patch-strict", true, "enable strict context-anchored patch mode (requires --patch)")
-    fs.BoolVar(&cfg.PatchFull, "patch-full", false, "Enable full file rewrite mode for patches, converting hunk patches to full file replacements")
-    fs.StringVar(&cfg.OpenAIAPIKey, "openai-api-key", "", "OpenAI-compatible API key (overrides env, deprecated)")
-    fs.StringVar(&cfg.OpenAIBaseURL, "openai-base-url", "", "OpenAI-compatible base URL (overrides env, deprecated)")
-    fs.StringVar(&cfg.OpenAIModel, "openai-model", "", "Direct upstream model name (deprecated; prefer --model)")
+	fs.BoolVar(&cfg.PatchNoApply, "patch-no-apply", false, "skip applying generated patches to the worktree (default: apply)")
+	fs.BoolVar(&cfg.Patch, "patch", false, "enable patch planning (disabled by default)")
+	fs.BoolVar(&cfg.PatchStrict, "patch-strict", true, "enable strict context-anchored patch mode (requires --patch)")
+	fs.BoolVar(&cfg.PatchFull, "patch-full", false, "Enable full file rewrite mode for patches, converting hunk patches to full file replacements")
+	fs.StringVar(&cfg.OpenAIAPIKey, "openai-api-key", "", "OpenAI-compatible API key (overrides env, deprecated)")
+	fs.StringVar(&cfg.OpenAIBaseURL, "openai-base-url", "", "OpenAI-compatible base URL (overrides env, deprecated)")
+	fs.StringVar(&cfg.OpenAIModel, "openai-model", "", "Direct upstream model name (deprecated; prefer --model)")
 	fs.StringVar(&cfg.SessionID, "session-id", "", "Existing session identifier to resume")
 	fs.BoolVar(&cfg.EnableTagFormat, "enable-tag-format", false, "Enable tag-format response directives and validation (experimental)")
 	fs.StringVar(&cfg.Mode, "mode", "", "Meta-orchestrator mode (coding, research, other)")

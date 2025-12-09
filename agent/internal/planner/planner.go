@@ -12,6 +12,7 @@ import (
 
 	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/patchlog"
+	"github.com/tursomari/machtiani/agent/internal/prompts"
 	"github.com/tursomari/machtiani/agent/internal/trajectory"
 )
 
@@ -31,6 +32,71 @@ const (
 	reviewDiffPreviewLimit  = 6000
 )
 
+const (
+	defaultPlanPatchDisabledIntro = "Patch requests are disabled for this run. Decide either to: (a) produce one single, high-signal repository-focused prompt, or (b) finalize if enough information is gathered."
+	defaultPlanPatchEnabledIntro  = "Decide either to: (a) produce one single, high-signal repository-focused prompt, (b) request a patch, or (c) finalize if enough information is gathered."
+	defaultPlanPatchRules         = `If patch, immediately follow with a single standalone JSON object ONLY (no commentary, no markdown fences).
+
+Patch JSON schema (when Decision: patch):
+{
+  "edits": [
+    { "path": string (repo-relative), "mode": one of replace|rewrite|create|delete,
+      "before": string (replace only), "after": string (replace only), "occurrence": number (1-based, optional),
+      "new_content": string (rewrite/create only) }
+  ],
+  "metadata": { "description": string (optional) }
+}
+Rules: use forward slashes; paths must be under repo root;
+replace requires before+after and file exists; rewrite requires new_content and file exists;
+create requires new_content and file must not exist; delete requires file exists.
+
+Minimal example (do not include this text in output):
+Decision: patch
+{
+  "edits": [
+    { "path": "README.md", "mode": "replace", "before": "teh", "after": "the", "occurrence": 1 }
+  ],
+  "metadata": { "description": "Fix README typo" }
+}
+
+When intentionally re-editing a file already updated this session, reload it from disk first and set metadata.force_repatch to true.
+`
+	defaultPlanPatchStrictRules = `If patch, immediately follow with a single standalone JSON object ONLY (no commentary, no markdown fences).
+
+Patch JSON schema (when Decision: patch):
+{
+  "edits": [
+    { "path": string, "mode": "patch", "start_line": int, "end_line": int, "new_content": string }
+  ],
+  "metadata": { "description": string (optional) }
+}
+Patch mode rules:
+  * Provide exactly one edit per request; queue further changes for later turns.
+  * use 1-based start_line; end_line = start_line for replacements, end_line = 0 for pure insertions.
+  * Delete lines by setting end_line >= start_line and leaving new_content empty.
+  * Preserve indentation and include any trailing newline you expect in new_content.
+  * Do not mutate other files in the same instruction.
+
+Strict patch planner flow:
+  1. Prompt the planner LLM with the goal/context to select the exact repo-relative file path that needs editing; parse that path from the reply.
+  2. Load that file directly from disk using the resolved path so you have the authoritative contents with line numbers.
+  3. Modify the in-memory copy with the lines you want inserted, removed, or rewritten.
+  4. Populate the JSON schema with start_line/end_line and new_content that reflect those concrete lines.
+  5. If the file changes later in the run, reload it from disk before producing the final patch.
+
+Minimal example (do not include this text in output):
+Decision: patch
+{
+  "edits": [
+    { "path": "docs/guide.md", "mode": "patch", "start_line": 12, "end_line": 12, "new_content": "This feature is experimental.\n" }
+  ],
+  "metadata": { "description": "Fix typo" }
+}
+
+When intentionally re-editing a file already updated this session, reload it from disk first and set metadata.force_repatch to true.
+`
+)
+
 type ClientConfig struct {
 	Model             llm.ResolvedModel
 	Extras            map[string]any
@@ -43,6 +109,7 @@ type ClientConfig struct {
 	PatchFull         bool
 	RepoRoot          string
 	SessionID         string
+	Prompts           *llm.PlannerPromptsConfig
 }
 
 type Client struct {
@@ -56,6 +123,55 @@ type Progress struct {
 	AppliedPatches      int
 	ForceRepatchExample bool
 	PendingReview       *PendingReview
+}
+
+type planTemplateData struct {
+	PatchEnabled    bool
+	StrictPatchMode bool
+	ForceRepatch    bool
+	SuccessFiles    []string
+	SuccessOverflow int
+	AppliedPatches  int
+	HasGoal         bool
+	Goal            string
+	HasTranscript   bool
+	Transcript      string
+	Step            int
+	MaxSteps        int
+	PatchIntro      string
+	PatchRules      string
+}
+
+type reviewTemplateData struct {
+	HasPending      bool
+	Pending         reviewPendingData
+	SuccessFiles    []string
+	SuccessOverflow int
+	AppliedPatches  int
+	Step            int
+	MaxSteps        int
+}
+
+type reviewPendingData struct {
+	Description    string
+	HasDescription bool
+	Sequence       int
+	Insertions     int
+	Deletions      int
+	HasDiffStats   bool
+	HasFiles       bool
+	Files          []string
+	PatchPath      string
+	UndoPatchPath  string
+	DiffPreview    string
+	HasDiffPreview bool
+}
+
+type finalizeTemplateData struct {
+	HasGoal       bool
+	Goal          string
+	HasTranscript bool
+	Transcript    string
 }
 
 // PendingReview captures metadata about the most recent patch awaiting
@@ -146,6 +262,21 @@ func appendSuccessFilesList(b *strings.Builder, files []string, limit int) {
 	if len(files) > limit {
 		fmt.Fprintf(b, "- … (%d more)\n", len(files)-limit)
 	}
+}
+
+func successFilesDisplay(files []string, limit int) ([]string, int) {
+	if len(files) == 0 {
+		return nil, 0
+	}
+	if limit <= 0 || limit > len(files) {
+		limit = len(files)
+	}
+	items := append([]string(nil), files[:limit]...)
+	overflow := 0
+	if len(files) > limit {
+		overflow = len(files) - limit
+	}
+	return items, overflow
 }
 
 // Plan decides the next action using only the transcript context.
@@ -495,6 +626,18 @@ func (c *Client) chat(ctx context.Context, prompt string) (string, error) {
 }
 
 func (c *Client) planPrompt(goal string, transcript string, step, maxSteps int) string {
+	if tpl := c.planTemplate(); tpl != "" {
+		data := c.buildPlanTemplateData(goal, transcript, step, maxSteps)
+		rendered, err := prompts.Render("planner_plan_prompt", tpl, data, nil)
+		if err == nil {
+			return rendered
+		}
+		fmt.Fprintf(os.Stderr, "[planner] plan prompt template error: %v\n", err)
+	}
+	return c.planPromptFallback(goal, transcript, step, maxSteps)
+}
+
+func (c *Client) planPromptFallback(goal string, transcript string, step, maxSteps int) string {
 	var b strings.Builder
 	b.WriteString("You are an agentic planner for mct. Read the transcript to understand the goal and prior turns. mct reads repository files and answers; it does not execute code.\n")
 	b.WriteString("Patch validation diagnostics are recorded in the transcript; use them to decide on next steps when patches fail.\n")
@@ -562,7 +705,91 @@ func (c *Client) planPrompt(goal string, transcript string, step, maxSteps int) 
 	return b.String()
 }
 
+func (c *Client) planTemplate() string {
+	if c.cfg.Prompts == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.cfg.Prompts.PlanPrompt)
+}
+
+func (c *Client) buildPlanTemplateData(goal string, transcript string, step, maxSteps int) planTemplateData {
+	display, overflow := successFilesDisplay(c.progress.SuccessFiles, successFilesPromptLimit)
+	goalTrim := strings.TrimSpace(goal)
+	transcriptTrim := strings.TrimSpace(transcript)
+	applied := c.progress.AppliedPatches
+	if applied < 0 {
+		applied = 0
+	}
+	data := planTemplateData{
+		PatchEnabled:    c.cfg.PatchEnabled,
+		StrictPatchMode: c.cfg.StrictPatchMode,
+		ForceRepatch:    c.progress.ForceRepatchExample,
+		SuccessFiles:    display,
+		SuccessOverflow: overflow,
+		AppliedPatches:  applied,
+		HasGoal:         goalTrim != "",
+		Goal:            goalTrim,
+		HasTranscript:   transcriptTrim != "",
+		Transcript:      transcriptTrim,
+		Step:            step,
+		MaxSteps:        maxSteps,
+		PatchIntro:      c.planPatchIntroText(),
+	}
+	if c.cfg.PatchEnabled {
+		data.PatchRules = c.planPatchRulesText(c.cfg.StrictPatchMode)
+	}
+	return data
+}
+
+func (c *Client) planPatchIntroText() string {
+	if c.cfg.Prompts != nil {
+		if c.cfg.PatchEnabled {
+			if val := strings.TrimSpace(c.cfg.Prompts.PlanPatchEnabledIntro); val != "" {
+				return val
+			}
+		} else {
+			if val := strings.TrimSpace(c.cfg.Prompts.PlanPatchDisabledIntro); val != "" {
+				return val
+			}
+		}
+	}
+	if c.cfg.PatchEnabled {
+		return defaultPlanPatchEnabledIntro
+	}
+	return defaultPlanPatchDisabledIntro
+}
+
+func (c *Client) planPatchRulesText(strict bool) string {
+	if c.cfg.Prompts != nil {
+		if strict {
+			if val := strings.TrimSpace(c.cfg.Prompts.PlanPatchStrictRules); val != "" {
+				return val
+			}
+		} else {
+			if val := strings.TrimSpace(c.cfg.Prompts.PlanPatchRules); val != "" {
+				return val
+			}
+		}
+	}
+	if strict {
+		return defaultPlanPatchStrictRules
+	}
+	return defaultPlanPatchRules
+}
+
 func (c *Client) reviewPrompt(goal string, transcript string, step, maxSteps int) string {
+	if tpl := c.reviewTemplate(); tpl != "" {
+		data := c.buildReviewTemplateData(step, maxSteps)
+		rendered, err := prompts.Render("planner_review_prompt", tpl, data, nil)
+		if err == nil {
+			return rendered
+		}
+		fmt.Fprintf(os.Stderr, "[planner] review prompt template error: %v\n", err)
+	}
+	return c.reviewPromptFallback(goal, transcript, step, maxSteps)
+}
+
+func (c *Client) reviewPromptFallback(goal string, transcript string, step, maxSteps int) string {
 	review := c.progress.PendingReview
 	var b strings.Builder
 	b.WriteString("A patch was just applied. Examine the diff to ensure the change was as intended and that you did not reduplicate or unnecessarily delete anything outside of your intention -- reject if you spot mistakes or risky alterations.\n")
@@ -607,6 +834,61 @@ func (c *Client) reviewPrompt(goal string, transcript string, step, maxSteps int
 	return b.String()
 }
 
+func (c *Client) reviewTemplate() string {
+	if c.cfg.Prompts == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.cfg.Prompts.ReviewPrompt)
+}
+
+func (c *Client) buildReviewTemplateData(step, maxSteps int) reviewTemplateData {
+	display, overflow := successFilesDisplay(c.progress.SuccessFiles, successFilesPromptLimit)
+	data := reviewTemplateData{
+		SuccessFiles:    display,
+		SuccessOverflow: overflow,
+		Step:            step,
+		MaxSteps:        maxSteps,
+	}
+	applied := c.progress.AppliedPatches
+	if applied > 0 {
+		data.AppliedPatches = applied
+	}
+	review := c.progress.PendingReview
+	if review == nil {
+		return data
+	}
+	data.HasPending = true
+	files := append([]string(nil), review.Files...)
+	patchPath := strings.TrimSpace(review.PatchPath)
+	undoPath := strings.TrimSpace(review.ReversePatchPath)
+	desc := strings.TrimSpace(sanitizeForPrompt(review.Description))
+	pending := reviewPendingData{
+		Description:    desc,
+		HasDescription: desc != "",
+		Sequence:       review.Sequence,
+		Insertions:     review.Insertions,
+		Deletions:      review.Deletions,
+		HasDiffStats:   review.Insertions != 0 || review.Deletions != 0,
+		Files:          files,
+		HasFiles:       len(files) > 0,
+		PatchPath:      patchPath,
+		UndoPatchPath:  undoPath,
+	}
+	if strings.TrimSpace(patchPath) != "" {
+		if preview, err := loadPatchDiffPreview(patchPath, reviewDiffPreviewLimit); err == nil {
+			trimmed := strings.TrimSpace(preview)
+			if trimmed != "" {
+				pending.DiffPreview = trimmed
+				pending.HasDiffPreview = true
+			}
+		} else {
+			fmt.Fprintf(os.Stderr, "[planner] diff preview error: %v\n", err)
+		}
+	}
+	data.Pending = pending
+	return data
+}
+
 func (c *Client) appendForceRepatchExample(b *strings.Builder) {
 	if !c.progress.ForceRepatchExample {
 		return
@@ -646,6 +928,18 @@ func loadPatchDiffPreview(path string, limit int) (string, error) {
 }
 
 func (c *Client) finalizePrompt(goal string, transcript string) string {
+	if tpl := c.finalizeTemplate(); tpl != "" {
+		data := c.buildFinalizeTemplateData(goal, transcript)
+		rendered, err := prompts.Render("planner_finalize_prompt", tpl, data, nil)
+		if err == nil {
+			return rendered
+		}
+		fmt.Fprintf(os.Stderr, "[planner] finalize prompt template error: %v\n", err)
+	}
+	return c.finalizePromptFallback(goal, transcript)
+}
+
+func (c *Client) finalizePromptFallback(goal string, transcript string) string {
 	var b strings.Builder
 	b.WriteString("You are the composer agent. Read the transcript (which contains the goal and mct turns) and write the final answer to the original goal.\n\n")
 	if strings.TrimSpace(goal) != "" {
@@ -658,6 +952,24 @@ func (c *Client) finalizePrompt(goal string, transcript string) string {
 	}
 	b.WriteString("Now produce a clear, self-contained final answer grounded in the evidence from prior turns. If there are gaps, call them out succinctly.")
 	return b.String()
+}
+
+func (c *Client) finalizeTemplate() string {
+	if c.cfg.Prompts == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.cfg.Prompts.FinalizePrompt)
+}
+
+func (c *Client) buildFinalizeTemplateData(goal, transcript string) finalizeTemplateData {
+	goalTrim := strings.TrimSpace(goal)
+	transcriptTrim := strings.TrimSpace(transcript)
+	return finalizeTemplateData{
+		HasGoal:       goalTrim != "",
+		Goal:          goalTrim,
+		HasTranscript: transcriptTrim != "",
+		Transcript:    transcriptTrim,
+	}
 }
 
 func truncateMiddle(s string, max int) string {

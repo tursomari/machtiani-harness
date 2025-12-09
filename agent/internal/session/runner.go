@@ -681,6 +681,7 @@ func Run(ctx context.Context, opts Options) Result {
 		GlobalConfigPath:        opts.GlobalConfigPath,
 		PersistTmpData:          cfg.persistTmpData,
 		SessionTempRoot:         sessionTempRoot,
+		Prompts:                 opts.GlobalConfig.Prompts,
 	}
 	if err := mctRunner.Resolve(); err != nil {
 		fmt.Fprintln(os.Stderr, "mct resolution error:", err)
@@ -725,6 +726,10 @@ func Run(ctx context.Context, opts Options) Result {
 		defer pRunner.Close()
 	}
 
+	var plannerPrompts *llm.PlannerPromptsConfig
+	if opts.GlobalConfig.Prompts != nil {
+		plannerPrompts = opts.GlobalConfig.Prompts.Planner
+	}
 	pl := planner.NewClient(planner.ClientConfig{
 		Model:             models.orchestrator.resolved,
 		Extras:            models.orchestrator.extras,
@@ -736,6 +741,7 @@ func Run(ctx context.Context, opts Options) Result {
 		StrictPatchMode:   effectiveStrict,
 		RepoRoot:          repoRoot,
 		SessionID:         sessionID,
+		Prompts:           plannerPrompts,
 	})
 
 	if !resumeMode || tr.Content() == "" {
@@ -1213,7 +1219,7 @@ func Run(ctx context.Context, opts Options) Result {
 			var preflightErr error
 			preflightReply := ""
 			if cfg.shellAgent {
-				preflightNote = "routing: shell (config override — something else, such as running a command in the shell)"
+				preflightNote = "routing: shell (config override — run commands via shell agent)"
 			} else {
 				ctxPre, cancelPre := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
 				ctxPre = attachTrajectory(ctxPre, trajectoryWriter, parentSpanID)
@@ -1223,7 +1229,7 @@ func Run(ctx context.Context, opts Options) Result {
 					fmt.Fprintln(os.Stderr, "Preflight routing error:", preflightErr)
 				}
 				routeLabel := "shell"
-				routeExplanation := "something else, such as running a command in the shell"
+				routeExplanation := "shell reply — run commands in the shell"
 				if !useShellAgent {
 					routeLabel = "file"
 					routeExplanation = "retrieving relevant files and context"

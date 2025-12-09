@@ -10,9 +10,9 @@ import (
 )
 
 const (
-	preflightSystemPrompt     = "You classify user requests for a developer assistant. Reply with exactly `yes` when the assistant should retrieve repository file content/filepaths. Reply with exactly `something else` when the assistant should use tools such as shell commands. Do not add any other words."
-	preflightQuestionTemplate = "User request:\n\n%s\n\nShould the assistant retrieve repository file content and filepaths? Reply with exactly `yes` or `something else`."
-	preflightFallbackPrompt   = "Do you want relevant file content and filepaths, or something else? Reply with 'yes' or 'something else'."
+	preflightSystemPrompt     = "You classify user requests for a developer assistant. Reply with exactly `content` when the assistant should retrieve repository file content or filepaths (e.g., Get file content of a file; Get file content of every file that has a sought keyword; Get instruction content from documentation). Reply with exactly `shell` when the assistant should use developer tools or shell commands (e.g., List filepaths in a directory; Get a list of files that has a sought keyword; Run tests or build the project). Do not add any other words."
+	preflightQuestionTemplate = "User request:\n\n%s\n\nShould the assistant retrieve repository file content and filepaths? Reply with exactly `content` or `shell`."
+	preflightFallbackPrompt   = "Do you want relevant file content and filepaths, or should the assistant run commands? Reply with 'content' or 'shell'."
 )
 
 var (
@@ -20,9 +20,10 @@ var (
 )
 
 // PreflightShellRouting runs a lightweight LLM check to decide whether the
-// prompt should use shell-agent mode. It returns true when shell-agent should
-// be used, along with the raw LLM reply. Errors (including empty replies)
-// default to shell-agent to preserve existing behaviour.
+// prompt should use shell-agent mode. It returns false when content-retrieval
+// mode is appropriate (LLM replies "content"), true when shell-agent mode
+// should be used (LLM replies "shell"). Errors and empty replies default to
+// shell-agent to preserve existing behaviour.
 func PreflightShellRouting(ctx context.Context, runtime ModelRuntime, prompt string) (bool, string, error) {
 	trimmedPrompt := strings.TrimSpace(prompt)
 	messages := []llm.Message{{Role: "system", Content: preflightSystemPrompt}}
@@ -59,11 +60,11 @@ func PreflightShellRouting(ctx context.Context, runtime ModelRuntime, prompt str
 		return true, firstLine, nil
 	}
 
-	if containsWord(tokens, "yes") {
+	if containsWord(tokens, "content") {
 		return false, firstLine, nil
 	}
 
-	if containsSequence(tokens, []string{"something", "else"}) {
+	if containsWord(tokens, "shell") {
 		return true, firstLine, nil
 	}
 

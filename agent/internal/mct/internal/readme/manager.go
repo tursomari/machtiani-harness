@@ -13,6 +13,7 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/git"
 	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/utils"
+	"github.com/tursomari/machtiani/agent/internal/prompts"
 )
 
 const (
@@ -38,6 +39,7 @@ type Manager struct {
 	Verbose          bool
 	PromptExecutor   PromptExecutor
 	maxInputTokens   int
+	Prompts          *llm.MCTPromptsConfig
 }
 
 // NewManager returns a manager rooted at the git toplevel containing cwd.
@@ -68,6 +70,11 @@ func NewManager(isAnswerOnly bool, verbose bool) (*Manager, error) {
 // SetPromptExecutor configures the callback used to generate README content.
 func (m *Manager) SetPromptExecutor(exec PromptExecutor) {
 	m.PromptExecutor = exec
+}
+
+// SetPrompts configures template-driven system prompts for the readme manager.
+func (m *Manager) SetPrompts(cfg *llm.MCTPromptsConfig) {
+	m.Prompts = cfg
 }
 
 // SetMaxInputTokens propagates the maximum prompt size constraint from the agent runtime.
@@ -289,7 +296,10 @@ func (m *Manager) buildReadmeContent(ctx context.Context, projectCommitHash, las
 		return buildMockReadme(stub, projectCommitHash, base, prevContent, significantFiles, diffStat, summary, diffDetail), nil
 	}
 
-	systemPrompt := "You are an internal documentation agent for this project. Write a cohesive internal README that reflects the current system state for engineers. Incorporate material architectural or service updates implied by the context, but do not mention commits, hashes, diffs, or change logs. The README must stand on its own, stay under 600 words, and use markdown."
+	systemPrompt, err := m.systemPrompt()
+	if err != nil {
+		return "", err
+	}
 
 	hasExistingReadme := strings.TrimSpace(prevContent) != "" && strings.TrimSpace(lastProcessed) != ""
 	var dynamicContext string
@@ -364,6 +374,21 @@ func (m *Manager) buildReadmeContent(ctx context.Context, projectCommitHash, las
 		return "", errors.New("readme prompt executor returned empty content")
 	}
 	return trimmed, nil
+}
+
+func (m *Manager) systemPrompt() (string, error) {
+	if m.Prompts == nil {
+		return "", fmt.Errorf("readme system prompt template not configured")
+	}
+	tmpl := strings.TrimSpace(m.Prompts.ReadmeSystemTemplate)
+	if tmpl == "" {
+		return "", fmt.Errorf("readme system prompt template not configured")
+	}
+	rendered, err := prompts.Render("readme_system_prompt", tmpl, nil, nil)
+	if err != nil {
+		return "", fmt.Errorf("render readme system prompt: %w", err)
+	}
+	return strings.TrimSpace(rendered), nil
 }
 
 func composeMCTPrompt(systemPrompt, dynamicContext, lastProcessed string) string {

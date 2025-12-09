@@ -26,16 +26,17 @@ type Runner struct {
 	GlobalConfigPath        string
 	PersistTmpData          bool
 	SessionTempRoot         string
+	Prompts                 *llm.PromptsConfig
 }
 
 type PromptInput struct {
-	Prompt         string
-	Mode           string
-	IncludeHistory bool
-	SourceFile     string
-	OnStreamHeader func(string)
-	OnStreamToken  func(string)
-	MaxInputTokens int
+	Prompt             string
+	Mode               string
+	IncludeHistory     bool
+	SourceFile         string
+	OnStreamHeader     func(string)
+	OnStreamToken      func(string)
+	MaxInputTokens     int
 	ResponseDirectives []string
 }
 
@@ -134,6 +135,10 @@ func (r *Runner) RunPrompt(ctx context.Context, sessionID string, in PromptInput
 	if r.EnableReadme && !r.DryRun && safeMode != "answer-only" {
 		readmeOpts = &promptsvc.ReadmeOptions{Enabled: true}
 	}
+	var mctPrompts *llm.MCTPromptsConfig
+	if r.Prompts != nil {
+		mctPrompts = r.Prompts.MCT
+	}
 	res, err := promptsvc.Run(childCtx, promptsvc.RunOptions{
 		Prompt:                  in.Prompt,
 		Mode:                    safeMode,
@@ -155,6 +160,7 @@ func (r *Runner) RunPrompt(ctx context.Context, sessionID string, in PromptInput
 		PersistTmpData:          r.PersistTmpData,
 		SessionTempRoot:         r.SessionTempRoot,
 		ResponseDirectives:      append([]string(nil), in.ResponseDirectives...),
+		Prompts:                 mctPrompts,
 	})
 	if useMarkdown && ms != nil {
 		_ = ms.Flush()
