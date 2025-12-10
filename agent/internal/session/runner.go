@@ -744,7 +744,8 @@ func Run(ctx context.Context, opts Options) Result {
 		Prompts:           plannerPrompts,
 	})
 
-	if !resumeMode || tr.Content() == "" {
+	isChildSession := strings.TrimSpace(cfg.parentSessionID) != ""
+	if !isChildSession && (!resumeMode || tr.Content() == "") {
 		if err := tr.WriteHeader(goal, sessionID, cfg); err != nil {
 			fmt.Fprintln(os.Stderr, "Error writing transcript header:", err)
 			return Result{ExitCode: 1, Err: err}
