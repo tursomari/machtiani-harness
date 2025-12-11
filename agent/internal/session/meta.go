@@ -373,7 +373,8 @@ func executeMetaPlan(ctx metaContext, plan metaPlanState) (metaPlanState, error)
 			if ctx.Display != nil {
 				ctx.Display.UpdateMetaTaskStatus(idx, task.Title, "running", task.SessionID)
 			}
-			result, err := runMetaTask(ctx, *task, basePrompt, resumePrompt)
+			includeBackground := idx == 0
+			result, err := runMetaTask(ctx, *task, basePrompt, resumePrompt, includeBackground)
 			task.Attempts++
 			resumePrompt = ""
 			if err != nil {
@@ -610,40 +611,57 @@ func composeTaskPrompt(sessionGoal, taskGoal, taskTitle, priorFinalAnswer string
 	taskTitle = strings.TrimSpace(taskTitle)
 	priorFinalAnswer = strings.TrimSpace(priorFinalAnswer)
 
-	taskContent := extractTaskFocus(taskGoal)
-	if taskContent == "" {
-		taskContent = taskTitle
+	detail := strings.TrimSpace(extractTaskDetail(taskGoal))
+	focus := strings.TrimSpace(extractTaskFocus(taskGoal))
+	primary := detail
+	if primary == "" {
+		primary = focus
 	}
-	if taskContent == "" {
-		taskContent = taskGoal
+	if primary == "" {
+		primary = taskTitle
 	}
-	taskContent = strings.TrimSpace(taskContent)
+	if primary == "" {
+		primary = taskGoal
+	}
+	primary = strings.TrimSpace(primary)
 
 	sections := make([]string, 0, 2)
 	if isFirstTask {
-		if taskContent != "" {
-			if strings.HasPrefix(taskContent, "***") && strings.HasSuffix(taskContent, "***") {
-				sections = append(sections, taskContent)
+		if primary != "" {
+			if strings.HasPrefix(primary, "***") && strings.HasSuffix(primary, "***") {
+				sections = append(sections, primary)
 			} else {
-				sections = append(sections, fmt.Sprintf("***%s***", taskContent))
+				sections = append(sections, fmt.Sprintf("***%s***", primary))
 			}
 		}
 		if sessionGoal != "" {
-			sections = append(sections, sessionGoal)
+			sections = append(sections, fmt.Sprintf("Original prompt:\n%s", sessionGoal))
 		}
 	} else {
-		if taskContent != "" {
-			sections = append(sections, taskContent)
+		if focus != "" {
+			sections = append(sections, focus)
 		}
 		if priorFinalAnswer != "" {
 			sections = append(sections, priorFinalAnswer)
-			if taskContent != "" {
-				sections = append(sections, taskContent)
+			if focus != "" {
+				sections = append(sections, focus)
 			}
 		}
 	}
 
 	return strings.Join(sections, "\n\n")
+}
+
+func extractTaskDetail(taskGoal string) string {
+	taskGoal = strings.TrimSpace(taskGoal)
+	if taskGoal == "" {
+		return ""
+	}
+	marker := "Task details:"
+	if idx := strings.Index(strings.ToLower(taskGoal), strings.ToLower(marker)); idx >= 0 {
+		return strings.TrimSpace(taskGoal[idx+len(marker):])
+	}
+	return ""
 }
 
 func composeRevisedGoalPrompt(basePrompt, userInput string) string {
@@ -712,7 +730,7 @@ type metaTaskRunResult struct {
 	Interrupted     bool
 }
 
-func runMetaTask(ctx metaContext, task metaTaskState, basePrompt string, resumePrompt string) (metaTaskRunResult, error) {
+func runMetaTask(ctx metaContext, task metaTaskState, basePrompt string, resumePrompt string, includeBackground bool) (metaTaskRunResult, error) {
 	if ctx.Config.dryRun {
 		sessionID := fmt.Sprintf("dry-run-%d", time.Now().UnixNano())
 		return metaTaskRunResult{
@@ -759,6 +777,7 @@ func runMetaTask(ctx metaContext, task metaTaskState, basePrompt string, resumeP
 	childOptions.Config.TrajectoryFile = ""
 	applyModeDefaults(&childOptions.Config, task.Mode)
 	applyTaskOverrides(&childOptions, task)
+	childOptions.Config.IncludeBackgroundTurn = includeBackground && !shouldResume
 	if ctx.RootCtx != nil {
 		childOptions.Context = ctx.RootCtx
 	}

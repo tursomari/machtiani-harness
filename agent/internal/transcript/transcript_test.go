@@ -42,6 +42,24 @@ func TestWriteTurn_Patcher(t *testing.T) {
 	}
 }
 
+func TestFormatGoalSectionInlinePrompt(t *testing.T) {
+	goal := "Investigate root cause\n\nReview logs"
+	got := formatGoalSection(goal)
+	want := "***Investigate root cause:Review logs***"
+	if got != want {
+		t.Fatalf("inline goal formatting mismatch:\nwant %q\n got %q", want, got)
+	}
+}
+
+func TestFormatGoalSectionProblemContext(t *testing.T) {
+	goal := "Task details: Investigate root cause\n\nLine 1 of answer\nLine 2 continued"
+	got := formatGoalSection(goal)
+	want := "***Investigate root cause***\n\n== PROBLEM:\n\nLine 1 of answer\nLine 2 continued"
+	if got != want {
+		t.Fatalf("problem goal formatting mismatch:\nwant %q\n got %q", want, got)
+	}
+}
+
 func TestTranscriptRestoreSeedsContent(t *testing.T) {
 	cwd, _ := os.Getwd()
 	t.Cleanup(func() { _ = os.Chdir(cwd) })

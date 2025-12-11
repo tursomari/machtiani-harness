@@ -31,21 +31,22 @@ type Config struct {
 	TrajectoryOmitRepoRoot  bool
 	PatchNoApply            bool
 	Patch                   bool
-    PatchStrict             bool
-    // Enable full file rewrite mode for patches, converting hunk patches to full file replacements
-    PatchFull               bool
-    OpenAIAPIKey            string
-    OpenAIBaseURL           string
-    OpenAIModel             string
-    ShellAgent              bool
-    ShellAgentModel         string
-	APIKeyOverrides         map[string]string
-	SessionID               string
-	EnableTagFormat         bool
-	PromptText              string
-	Mode                    string
-	MetaInstructionDir      string
-	ParentSessionID         string
+	PatchStrict             bool
+	// Enable full file rewrite mode for patches, converting hunk patches to full file replacements
+	PatchFull             bool
+	OpenAIAPIKey          string
+	OpenAIBaseURL         string
+	OpenAIModel           string
+	ShellAgent            bool
+	ShellAgentModel       string
+	APIKeyOverrides       map[string]string
+	SessionID             string
+	EnableTagFormat       bool
+	PromptText            string
+	Mode                  string
+	MetaInstructionDir    string
+	ParentSessionID       string
+	IncludeBackgroundTurn bool
 }
 
 type BuildInfo struct {
@@ -57,14 +58,14 @@ type BuildInfo struct {
 
 // Options groups the inputs required to run an agent session.
 type Options struct {
-	Config           Config
-	Goal             string
-	ParamPairs       []string
-	ParamJSON        []string
-	Build            BuildInfo
-	GlobalConfig     llm.Config
-	GlobalConfigPath string
-	APIKeyOverrides  map[string]string
+	Config              Config
+	Goal                string
+	ParamPairs          []string
+	ParamJSON           []string
+	Build               BuildInfo
+	GlobalConfig        llm.Config
+	GlobalConfigPath    string
+	APIKeyOverrides     map[string]string
 	Context             context.Context
 	ProcessTimerManager *ui.ProcessTimerManager
 }
@@ -101,13 +102,13 @@ type legacyConfig struct {
 	trajectoryOmitRepoRoot  bool
 	patchNoApply            bool
 	patch                   bool
-    patchStrict             bool
-    patchFull               bool
-    openAIAPIKey            string
-    openAIBaseURL           string
-    openAIModel             string
-    shellAgent              bool
-    shellAgentModel         string
+	patchStrict             bool
+	patchFull               bool
+	openAIAPIKey            string
+	openAIBaseURL           string
+	openAIModel             string
+	shellAgent              bool
+	shellAgentModel         string
 	apiKeyOverrides         map[string]string
 	enableTagFormat         bool
 	sessionID               string
@@ -115,10 +116,11 @@ type legacyConfig struct {
 	mode                    string
 	metaInstructionDir      string
 	parentSessionID         string
+	includeBackgroundTurn   bool
 }
 
 func newLegacyConfig(cfg Config) legacyConfig {
-    return legacyConfig{
+	return legacyConfig{
 		maxSteps:                cfg.MaxSteps,
 		orchModel:               cfg.OrchModel,
 		answerModel:             cfg.AnswerModel,
@@ -141,13 +143,13 @@ func newLegacyConfig(cfg Config) legacyConfig {
 		trajectoryOmitRepoRoot:  cfg.TrajectoryOmitRepoRoot,
 		patchNoApply:            cfg.PatchNoApply,
 		patch:                   cfg.Patch,
-        patchStrict:             cfg.PatchStrict,
-        patchFull:               cfg.PatchFull,
-        openAIAPIKey:            cfg.OpenAIAPIKey,
-        openAIBaseURL:           cfg.OpenAIBaseURL,
-        openAIModel:             cfg.OpenAIModel,
-        shellAgent:              cfg.ShellAgent,
-        shellAgentModel:         cfg.ShellAgentModel,
+		patchStrict:             cfg.PatchStrict,
+		patchFull:               cfg.PatchFull,
+		openAIAPIKey:            cfg.OpenAIAPIKey,
+		openAIBaseURL:           cfg.OpenAIBaseURL,
+		openAIModel:             cfg.OpenAIModel,
+		shellAgent:              cfg.ShellAgent,
+		shellAgentModel:         cfg.ShellAgentModel,
 		apiKeyOverrides:         llm.CopyAPIKeyOverridesForRuntime(cfg.APIKeyOverrides),
 		persistTmpData:          cfg.PersistTmpData,
 		enableTagFormat:         cfg.EnableTagFormat,
@@ -156,5 +158,6 @@ func newLegacyConfig(cfg Config) legacyConfig {
 		mode:                    cfg.Mode,
 		metaInstructionDir:      cfg.MetaInstructionDir,
 		parentSessionID:         cfg.ParentSessionID,
+		includeBackgroundTurn:   cfg.IncludeBackgroundTurn,
 	}
 }

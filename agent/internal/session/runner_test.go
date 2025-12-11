@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/tursomari/machtiani/agent/internal/transcript"
 )
 
 func withReadmeFunctionStubs(t *testing.T, head func() (string, error), commit func(string) (string, error), checkout func(string) error) {
@@ -182,5 +184,88 @@ func TestAnalyzeTagFormatInvalid(t *testing.T) {
 	}
 	if !foundMissing {
 		t.Fatalf("expected warning mentioning missing.go, got %v", warnings)
+	}
+}
+
+func TestStartTranscriptIfNeededWritesHeader(t *testing.T) {
+	sessionID := "child-session"
+	path := filepath.Join(t.TempDir(), "agent-transcript.adoc")
+	tr, err := transcript.NewWithPath(path, sessionID)
+	if err != nil {
+		t.Fatalf("NewWithPath error: %v", err)
+	}
+	defer tr.Close()
+
+	goal := "***Investigate the Goal***\n\nTask details: Investigate the Goal\n\nOriginal prompt"
+	started, err := startTranscriptIfNeeded(tr, goal, sessionID, legacyConfig{}, false)
+	if err != nil {
+		t.Fatalf("startTranscriptIfNeeded error: %v", err)
+	}
+	if !started {
+		t.Fatalf("expected transcript to start")
+	}
+	content := tr.Content()
+	if !strings.Contains(content, "***Investigate the Goal***") {
+		t.Fatalf("header missing emphasized description; got %q", content)
+	}
+	if !strings.Contains(content, "== PROBLEM:\n\nOriginal prompt") {
+		t.Fatalf("header missing problem context; got %q", content)
+	}
+}
+
+func TestStartTranscriptIfNeededSkipsWhenResuming(t *testing.T) {
+	sessionID := "resume-session"
+	path := filepath.Join(t.TempDir(), "agent-transcript.adoc")
+	tr, err := transcript.NewWithPath(path, sessionID)
+	if err != nil {
+		t.Fatalf("NewWithPath error: %v", err)
+	}
+	defer tr.Close()
+
+	goal := "***Investigate the Goal***\n\nOriginal prompt"
+	if started, err := startTranscriptIfNeeded(tr, goal, sessionID, legacyConfig{}, false); err != nil || !started {
+		t.Fatalf("initial start failed: started=%v err=%v", started, err)
+	}
+	first := tr.Content()
+
+	started, err := startTranscriptIfNeeded(tr, goal, sessionID, legacyConfig{}, true)
+	if err != nil {
+		t.Fatalf("resume startTranscriptIfNeeded error: %v", err)
+	}
+	if started {
+		t.Fatalf("expected resume call to skip header write")
+	}
+	if got := tr.Content(); got != first {
+		t.Fatalf("expected transcript content unchanged on resume; got %q want %q", got, first)
+	}
+}
+
+func TestStartTranscriptIfNeededChildIncludesBackgroundWhenRequested(t *testing.T) {
+	sessionID := "child-with-bg"
+	path := filepath.Join(t.TempDir(), "agent-transcript.adoc")
+	tr, err := transcript.NewWithPath(path, sessionID)
+	if err != nil {
+		t.Fatalf("NewWithPath error: %v", err)
+	}
+	defer tr.Close()
+
+	goal := "***Investigate the Goal***\n\nTask details: Investigate the Goal\n\nOriginal prompt"
+	cfg := legacyConfig{parentSessionID: "parent", includeBackgroundTurn: true}
+	started, err := startTranscriptIfNeeded(tr, goal, sessionID, cfg, false)
+	if err != nil {
+		t.Fatalf("startTranscriptIfNeeded error: %v", err)
+	}
+	if !started {
+		t.Fatalf("expected transcript to start")
+	}
+	if err := writeInitialBackgroundIfNeeded(tr, ".", cfg, true, started); err != nil {
+		t.Fatalf("writeInitialBackgroundIfNeeded error: %v", err)
+	}
+	content := tr.Content()
+	if !strings.Contains(content, backgroundQuestionPrompt) {
+		t.Fatalf("expected background question in transcript; got %q", content)
+	}
+	if !strings.Contains(content, backgroundFallbackAnswer) {
+		t.Fatalf("expected fallback background answer in transcript; got %q", content)
 	}
 }

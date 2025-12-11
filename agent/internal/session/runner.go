@@ -104,6 +104,38 @@ func (p *plannerProgressTracker) recordSuccess(files []string) {
 	p.applied++
 }
 
+func startTranscriptIfNeeded(tr *transcript.Transcript, goal, sessionID string, cfg legacyConfig, resumeMode bool) (bool, error) {
+	if tr == nil {
+		return false, nil
+	}
+	starting := !resumeMode || tr.Content() == ""
+	if starting {
+		if err := tr.WriteHeader(goal, sessionID, cfg); err != nil {
+			return false, err
+		}
+	}
+	return starting, nil
+}
+
+func writeInitialBackgroundIfNeeded(tr *transcript.Transcript, repoRoot string, cfg legacyConfig, isChildSession bool, startingTranscript bool) error {
+	if tr == nil || !startingTranscript {
+		return nil
+	}
+	if isChildSession && !cfg.includeBackgroundTurn {
+		return nil
+	}
+	prefillAnswer := backgroundFallbackAnswer
+	if backgroundText, err := loadProjectBackground(repoRoot); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: unable to load project background; falling back to sync prompt: %v\n", err)
+	} else {
+		if cfg.verbose {
+			fmt.Fprintf(os.Stderr, "Loaded internal README background (%d bytes).\n", len(backgroundText))
+		}
+		prefillAnswer = backgroundText
+	}
+	return tr.WriteTurn(0, backgroundQuestionPrompt, "", nil, prefillAnswer, "background")
+}
+
 func (p *plannerProgressTracker) appliedCount() int {
 	if p == nil {
 		return 0
@@ -745,26 +777,16 @@ func Run(ctx context.Context, opts Options) Result {
 	})
 
 	isChildSession := strings.TrimSpace(cfg.parentSessionID) != ""
-	if !isChildSession && (!resumeMode || tr.Content() == "") {
-		if err := tr.WriteHeader(goal, sessionID, cfg); err != nil {
-			fmt.Fprintln(os.Stderr, "Error writing transcript header:", err)
-			return Result{ExitCode: 1, Err: err}
-		}
+	startingTranscript, headerErr := startTranscriptIfNeeded(tr, goal, sessionID, cfg, resumeMode)
+	if headerErr != nil {
+		fmt.Fprintln(os.Stderr, "Error writing transcript header:", headerErr)
+		return Result{ExitCode: 1, Err: headerErr}
+	}
 
-		prefillAnswer := backgroundFallbackAnswer
-		if backgroundText, err := loadProjectBackground(repoRoot); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: unable to load project background; falling back to sync prompt: %v\n", err)
-		} else {
-			if cfg.verbose {
-				fmt.Fprintf(os.Stderr, "Loaded internal README background (%d bytes).\n", len(backgroundText))
-			}
-			prefillAnswer = backgroundText
-		}
-		if err := tr.WriteTurn(0, backgroundQuestionPrompt, "", nil, prefillAnswer, "background"); err != nil {
-			fmt.Fprintln(os.Stderr, "Transcript write error:", err)
-			sessionErr = err
-			return Result{ExitCode: 1, Err: err}
-		}
+	if err := writeInitialBackgroundIfNeeded(tr, repoRoot, cfg, isChildSession, startingTranscript); err != nil {
+		fmt.Fprintln(os.Stderr, "Transcript write error:", err)
+		sessionErr = err
+		return Result{ExitCode: 1, Err: err}
 	}
 
 	metaActive := strings.TrimSpace(cfg.mode) != "" && strings.TrimSpace(cfg.parentSessionID) == ""
