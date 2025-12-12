@@ -1,6 +1,6 @@
 Intent: {{.Intent}}
 Working directory: {{.CWD}}
 
-Produce the Bash command that satisfies the intent and wrap it in ```bash-command ... ```.
-Unless explicitly requested, do not include output-limiting pipes (head, tail, sed -n, etc.) or timeout wrappers; emit the full command.
-If this intent finalizes the task, write the final response to {{.FinalMarkerPath}} rather than printing it to stdout.
+Produce a single-line Bash command that satisfies the intent while following the safety rules, then wrap it in ```bash-command ... ```.
+If the intent cannot be satisfied within one safe command (for example, it would require chaining or a redirect that was not justified), return a command that prints a short explanation asking for a simpler request.
+If this intent finalizes the task, write the final response to {{.FinalMarkerPath}} (creating or overwriting the file) and avoid printing it to stdout.

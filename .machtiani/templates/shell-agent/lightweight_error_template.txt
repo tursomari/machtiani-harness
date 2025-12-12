@@ -7,5 +7,4 @@ Output:
 
 Error: {{.Error}}
 
-Return a corrected Bash command wrapped in ```bash-command ... ```.
-Do not add output-truncating utilities (head, tail, sed -n, etc.) or timeout wrappers unless the intent explicitly calls for them; run the full command that addresses the failure.
+Return a corrected Bash command wrapped in ```bash-command ... ``` that obeys the single-command safety rules (no chaining, redirection, command substitution, or backgrounding unless the intent explicitly justified it).
