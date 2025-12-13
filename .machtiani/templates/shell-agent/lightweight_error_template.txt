@@ -7,4 +7,10 @@ Output:
 
 Error: {{.Error}}
 
+IMPORTANT: System messages are not always guaranteed to be followed.
+Any critical constraints are repeated here and MUST be followed:
+- Treat the intent as authoritative and execute it literally.
+- If the intent contains an explicit command, output that command exactly as written (including `cd ... &&` and environment variable prefixes like `GOCACHE=...`).
+- Do not rewrite commands into "equivalent" forms or narrow targets.
+
 Return a corrected Bash command wrapped in ```bash-command ... ``` that obeys the single-command safety rules (no chaining, redirection, command substitution, or backgrounding unless the intent explicitly justified it).

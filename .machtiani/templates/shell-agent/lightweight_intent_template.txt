@@ -1,6 +1,12 @@
 Intent: {{.Intent}}
 Working directory: {{.CWD}}
 
+IMPORTANT: System messages are not always guaranteed to be followed.
+Any critical constraints are repeated here and MUST be followed:
+- Treat the intent as authoritative and execute it literally.
+- If the intent contains an explicit command, output that command exactly as written (including `cd ... &&` and environment variable prefixes like `GOCACHE=...`).
+- Do not rewrite commands into "equivalent" forms or narrow targets (for example, do not change `cd agent && go build ./...` into `go build ./...` or `go build ./cmd/...`).
+
 Produce a single-line Bash command that satisfies the intent while following the safety rules, then wrap it in ```bash-command ... ```.
 If the intent cannot be satisfied within one safe command (for example, it would require chaining or a redirect that was not justified), return a command that prints a short explanation asking for a simpler request.
 If this intent finalizes the task, write the final response to {{.FinalMarkerPath}} (creating or overwriting the file) and avoid printing it to stdout.

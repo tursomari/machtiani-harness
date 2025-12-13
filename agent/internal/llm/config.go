@@ -29,6 +29,8 @@ type Config struct {
 // ShellAgentConfig mirrors the shell-agent configuration section and is loaded
 // from the global TOML configuration under [shell-agent] (or legacy [agent]).
 type ShellAgentConfig struct {
+	// LightweightMaxAttempts is retained for backward-compatible parsing only.
+	// The shell agent no longer runs a lightweight translator stage.
 	LightweightMaxAttempts int     `toml:"lightweight_max_attempts"`
 	StepLimit              int     `toml:"step_limit"`
 	CostLimit              float64 `toml:"cost_limit"`
@@ -672,15 +674,15 @@ func parseShellAgentSection(path, section string, data map[string]any) (*ShellAg
 			p.ActionObservationTemplate = val
 			p.actionObservationTemplateSet = true
 		}
-		if raw, ok := data["lightweight_system_template"]; ok {
-			val, err := templateStringFromRaw(path, section, "lightweight_system_template", raw)
-			if err != nil {
-				return nil, nil, nil, err
-			}
-			p := ensureShellPrompts()
-			p.LightweightSystemTemplate = val
-			p.lightweightSystemTemplateSet = true
+	if raw, ok := data["lightweight_system_template"]; ok {
+		val, err := templateStringFromRaw(path, section, "lightweight_system_template", raw)
+		if err != nil {
+			return nil, nil, nil, err
 		}
+		p := ensureShellPrompts()
+		p.LightweightSystemTemplate = val
+		p.lightweightSystemTemplateSet = true
+	}
 		if raw, ok := data["lightweight_intent_template"]; ok {
 			val, err := templateStringFromRaw(path, section, "lightweight_intent_template", raw)
 			if err != nil {
