@@ -125,7 +125,7 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 			TrajectoryOverride: strings.TrimSpace(opts.FileDiscoveryTrajectory),
 			APIKeyOverrides:    llm.CopyAPIKeyOverridesForRuntime(fdRuntime.APIKeyOverrides),
 		}
-		discoCtx := llm.WithAPIKeyOverrides(ctx, fdRuntime.APIKeyOverrides)
+		discoCtx := llm.WithStage(llm.WithAPIKeyOverrides(ctx, fdRuntime.APIKeyOverrides), "file-discovery")
 		dr, err := discoveryRunnerRun(discoCtx, opts.Prompt, drModel, opts.SessionID, opts.Verbose)
 		if err != nil {
 			return res, fmt.Errorf("file discovery: %w", err)

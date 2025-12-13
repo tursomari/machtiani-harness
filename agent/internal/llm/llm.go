@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -36,7 +37,111 @@ var (
 const (
 	testStubEnv   = "MCT_LLM_TEST_STUB" // test-only knob to bypass network LLM calls
 	retryAfterCap = 15 * time.Second
+	llmInputLogEnv = "MCT_LLM_INPUT_LOG" // optional debug log file path for full LLM request inputs
+	llmStageEnv    = "MCT_LLM_STAGE"     // optional stage label for LLM calls (planner/shell-agent/etc)
 )
+
+func stageFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	if raw := ctx.Value(contextKeyLLMStage{}); raw != nil {
+		if v, ok := raw.(string); ok {
+			if v := strings.TrimSpace(v); v != "" {
+				return v
+			}
+		}
+	}
+	return ""
+}
+
+type contextKeyLLMStage struct{}
+
+// WithStage annotates the context so LLM request logs can identify the caller stage.
+func WithStage(ctx context.Context, stage string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	stage = strings.TrimSpace(stage)
+	if stage == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, contextKeyLLMStage{}, stage)
+}
+
+func llmInputLogPath() string {
+	if env := strings.TrimSpace(os.Getenv(llmInputLogEnv)); env != "" {
+		return env
+	}
+	cfg, err := loadConfig()
+	if err != nil || cfg == nil {
+		return ""
+	}
+	if cfg.config.Debug == nil {
+		return ""
+	}
+	return strings.TrimSpace(cfg.config.Debug.LLMInputLogPath)
+}
+
+func appendLLMInputLog(path string, payload any) {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(trimmed), 0o755); err != nil {
+		return
+	}
+	redacted := redactLLMInput(payload)
+	b, err := json.MarshalIndent(redacted, "", "  ")
+	if err != nil {
+		return
+	}
+	const maxBytes = 5 * 1024 * 1024
+	if len(b) > maxBytes {
+		b = b[:maxBytes]
+		b = append(b, []byte("\n...[truncated]\n")...)
+	}
+	f, err := os.OpenFile(trimmed, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	_, _ = f.WriteString(time.Now().UTC().Format(time.RFC3339Nano))
+	_, _ = f.WriteString("\n")
+	_, _ = f.Write(b)
+	_, _ = f.WriteString("\n\n")
+}
+
+func redactLLMInput(v any) any {
+	switch t := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(t))
+		for k, val := range t {
+			lower := strings.ToLower(strings.TrimSpace(k))
+			switch lower {
+			case "api_key", "apikey", "authorization", "x-api-key":
+				out[k] = "[redacted]"
+			default:
+				out[k] = redactLLMInput(val)
+			}
+		}
+		return out
+	case []any:
+		out := make([]any, len(t))
+		for i, item := range t {
+			out[i] = redactLLMInput(item)
+		}
+		return out
+	case []Message:
+		out := make([]map[string]any, 0, len(t))
+		for _, m := range t {
+			out = append(out, map[string]any{"role": m.Role, "content": m.Content})
+		}
+		return out
+	default:
+		return v
+	}
+}
 
 func modelSummary(model ResolvedModel) map[string]any {
 	return map[string]any{
@@ -516,6 +621,16 @@ func chatWithResolvedFallback(ctx context.Context, primary ResolvedModel, fallba
 	basePayload := mergeMaps(primary.Params, extraParams)
 	basePayload["model"] = primary.Model
 	basePayload["messages"] = messages
+	stage := stageFromContext(ctx)
+	if stage == "" {
+		stage = strings.TrimSpace(os.Getenv(llmStageEnv))
+	}
+	appendLLMInputLog(llmInputLogPath(), map[string]any{
+		"stage":   stage,
+		"model":   modelSummary(primary),
+		"stream":  stream,
+		"payload": basePayload,
+	})
 
 	nonStreamBody, err := encodePayload(basePayload, false)
 	if err != nil {

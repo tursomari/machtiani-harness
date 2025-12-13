@@ -52,6 +52,28 @@ export OPENAI_API_KEY=sk_...
 export OPENAI_BASE_URL=https://api.openai.com/v1   # or your provider
 export OPENAI_MODEL=gpt-4o-mini
 ```
+
+### Debugging: log full LLM inputs
+
+To dump the full JSON request payload (including the full prompt/messages) for
+every LLM call the agent makes, set a log file path. The file will be appended
+to with timestamped entries.
+
+WARNING: this writes prompts/context to disk.
+
+Option 1: environment variable
+```
+export MCT_LLM_INPUT_LOG=.machtiani/llm-input.log
+```
+
+Optional: set `MCT_LLM_STAGE` to tag log entries when a stage isn't explicitly
+set by the caller.
+
+Option 2: config file
+```toml
+[debug]
+llm_input_log_path = ".machtiani/llm-input.log"
+```
 Run the agent:
 ```
 mct-agent run "Explain X and identify root cause" --verbose

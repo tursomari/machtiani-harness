@@ -19,11 +19,17 @@ type Config struct {
 	Model            *ModelConfig               `toml:"model"`
 	Planner          *PlannerConfig             `toml:"planner"`
 	ShellAgent       *ShellAgentConfig          `toml:"shell-agent"`
+	Debug            *DebugConfig               `toml:"debug"`
 	Prompts          *PromptsConfig             `toml:"prompts"`
 	Environment      *EnvironmentConfig         `toml:"environment"`
 	Providers        map[string]ProviderConfig  `toml:"providers"`
 	Models           map[string]ModelDefinition `toml:"models"`
 	MetaOrchestrator *MetaOrchestratorConfig    `toml:"meta-orchestrator"`
+}
+
+// DebugConfig captures optional debugging toggles.
+type DebugConfig struct {
+	LLMInputLogPath string `toml:"llm_input_log_path"`
 }
 
 // ShellAgentConfig mirrors the shell-agent configuration section and is loaded

@@ -622,6 +622,7 @@ func (c *Client) chat(ctx context.Context, prompt string) (string, error) {
 		callCtx, cancel = context.WithTimeout(ctx, time.Duration(c.cfg.RequestTimeoutSec)*time.Second)
 		defer cancel()
 	}
+	callCtx = llm.WithStage(callCtx, "planner")
 	return llm.ChatWithResolved(callCtx, c.cfg.Model, c.cfg.Extras, messages)
 }
 
