@@ -11,6 +11,7 @@ import (
 	git "github.com/tursomari/machtiani/agent/internal/git"
 	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/prompts"
+	"github.com/tursomari/machtiani/agent/internal/templates"
 )
 
 const (
@@ -215,6 +216,11 @@ type conversationTemplateData struct {
 
 func buildPrelude(userPrompt string, history []Message, includeHistory bool, templateStr string) (string, error) {
 	trimmed := strings.TrimSpace(templateStr)
+	if trimmed == "" {
+		if embedded, err := templates.GetEmbeddedTemplate("mct.conversation_history_template"); err == nil {
+			trimmed = strings.TrimSpace(embedded)
+		}
+	}
 	if trimmed == "" {
 		return "", fmt.Errorf("conversation history template is required")
 	}

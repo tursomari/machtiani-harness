@@ -13,6 +13,7 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/patchlog"
 	"github.com/tursomari/machtiani/agent/internal/prompts"
+	"github.com/tursomari/machtiani/agent/internal/templates"
 	"github.com/tursomari/machtiani/agent/internal/trajectory"
 )
 
@@ -707,10 +708,15 @@ func (c *Client) planPromptFallback(goal string, transcript string, step, maxSte
 }
 
 func (c *Client) planTemplate() string {
-	if c.cfg.Prompts == nil {
-		return ""
+	if c.cfg.Prompts != nil {
+		if trimmed := strings.TrimSpace(c.cfg.Prompts.PlanPrompt); trimmed != "" {
+			return trimmed
+		}
 	}
-	return strings.TrimSpace(c.cfg.Prompts.PlanPrompt)
+	if embedded, err := templates.GetEmbeddedTemplate("planner.plan_prompt"); err == nil && embedded != "" {
+		return embedded
+	}
+	return ""
 }
 
 func (c *Client) buildPlanTemplateData(goal string, transcript string, step, maxSteps int) planTemplateData {
@@ -755,6 +761,15 @@ func (c *Client) planPatchIntroText() string {
 		}
 	}
 	if c.cfg.PatchEnabled {
+		if embedded, err := templates.GetEmbeddedTemplate("planner.plan_patch_enabled_intro"); err == nil && embedded != "" {
+			return embedded
+		}
+	} else {
+		if embedded, err := templates.GetEmbeddedTemplate("planner.plan_patch_disabled_intro"); err == nil && embedded != "" {
+			return embedded
+		}
+	}
+	if c.cfg.PatchEnabled {
 		return defaultPlanPatchEnabledIntro
 	}
 	return defaultPlanPatchDisabledIntro
@@ -770,6 +785,15 @@ func (c *Client) planPatchRulesText(strict bool) string {
 			if val := strings.TrimSpace(c.cfg.Prompts.PlanPatchRules); val != "" {
 				return val
 			}
+		}
+	}
+	if strict {
+		if embedded, err := templates.GetEmbeddedTemplate("planner.plan_patch_strict_rules"); err == nil && embedded != "" {
+			return embedded
+		}
+	} else {
+		if embedded, err := templates.GetEmbeddedTemplate("planner.plan_patch_rules"); err == nil && embedded != "" {
+			return embedded
 		}
 	}
 	if strict {
@@ -836,10 +860,15 @@ func (c *Client) reviewPromptFallback(goal string, transcript string, step, maxS
 }
 
 func (c *Client) reviewTemplate() string {
-	if c.cfg.Prompts == nil {
-		return ""
+	if c.cfg.Prompts != nil {
+		if trimmed := strings.TrimSpace(c.cfg.Prompts.ReviewPrompt); trimmed != "" {
+			return trimmed
+		}
 	}
-	return strings.TrimSpace(c.cfg.Prompts.ReviewPrompt)
+	if embedded, err := templates.GetEmbeddedTemplate("planner.review_prompt"); err == nil && embedded != "" {
+		return embedded
+	}
+	return ""
 }
 
 func (c *Client) buildReviewTemplateData(step, maxSteps int) reviewTemplateData {
@@ -956,10 +985,15 @@ func (c *Client) finalizePromptFallback(goal string, transcript string) string {
 }
 
 func (c *Client) finalizeTemplate() string {
-	if c.cfg.Prompts == nil {
-		return ""
+	if c.cfg.Prompts != nil {
+		if trimmed := strings.TrimSpace(c.cfg.Prompts.FinalizePrompt); trimmed != "" {
+			return trimmed
+		}
 	}
-	return strings.TrimSpace(c.cfg.Prompts.FinalizePrompt)
+	if embedded, err := templates.GetEmbeddedTemplate("planner.finalize_prompt"); err == nil && embedded != "" {
+		return embedded
+	}
+	return ""
 }
 
 func (c *Client) buildFinalizeTemplateData(goal, transcript string) finalizeTemplateData {

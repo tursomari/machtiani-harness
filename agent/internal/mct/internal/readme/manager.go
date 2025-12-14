@@ -14,6 +14,7 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/utils"
 	"github.com/tursomari/machtiani/agent/internal/prompts"
+	"github.com/tursomari/machtiani/agent/internal/templates"
 )
 
 const (
@@ -377,11 +378,16 @@ func (m *Manager) buildReadmeContent(ctx context.Context, projectCommitHash, las
 }
 
 func (m *Manager) systemPrompt() (string, error) {
-	if m.Prompts == nil {
-		return "", fmt.Errorf("readme system prompt template not configured")
+	var tmpl string
+	if m.Prompts != nil {
+		tmpl = strings.TrimSpace(m.Prompts.ReadmeSystemTemplate)
 	}
-	tmpl := strings.TrimSpace(m.Prompts.ReadmeSystemTemplate)
 	if tmpl == "" {
+		if embedded, err := templates.GetEmbeddedTemplate("mct.readme_system_template"); err == nil {
+			tmpl = embedded
+		}
+	}
+	if strings.TrimSpace(tmpl) == "" {
 		return "", fmt.Errorf("readme system prompt template not configured")
 	}
 	rendered, err := prompts.Render("readme_system_prompt", tmpl, nil, nil)

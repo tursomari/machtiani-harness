@@ -28,6 +28,7 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/patcher"
 	"github.com/tursomari/machtiani/agent/internal/patchlog"
 	"github.com/tursomari/machtiani/agent/internal/prompts"
+	"github.com/tursomari/machtiani/agent/internal/templates"
 	"github.com/tursomari/machtiani/agent/internal/shellbridge"
 	"github.com/tursomari/machtiani/agent/internal/trajectory"
 )
@@ -483,14 +484,26 @@ func formatShellAgentContext(stdoutText, stderrText string, cfg *llm.MCTPromptsC
 	stdout := strings.TrimSpace(stdoutText)
 	stderr := strings.TrimSpace(stderrText)
 	prefix := shellAgentContextPrefix
-	if cfg != nil && strings.TrimSpace(cfg.ShellAgentContextPrefix) != "" {
-		prefix = strings.TrimSpace(cfg.ShellAgentContextPrefix)
+	if cfg != nil {
+		if configured := strings.TrimSpace(cfg.ShellAgentContextPrefix); configured != "" {
+			prefix = configured
+		} else if embedded, err := templates.GetEmbeddedTemplate("mct.shell_agent_context_prefix"); err == nil && strings.TrimSpace(embedded) != "" {
+			prefix = embedded
+		}
+	} else if embedded, err := templates.GetEmbeddedTemplate("mct.shell_agent_context_prefix"); err == nil && strings.TrimSpace(embedded) != "" {
+		prefix = embedded
 	}
-	if cfg == nil {
-		return "", fmt.Errorf("shell context template not configured")
+
+	var tmpl string
+	if cfg != nil {
+		tmpl = strings.TrimSpace(cfg.ShellAgentContextTemplate)
 	}
-	tmpl := strings.TrimSpace(cfg.ShellAgentContextTemplate)
 	if tmpl == "" {
+		if embedded, err := templates.GetEmbeddedTemplate("mct.shell_agent_context_template"); err == nil {
+			tmpl = embedded
+		}
+	}
+	if strings.TrimSpace(tmpl) == "" {
 		return "", fmt.Errorf("shell context template not configured")
 	}
 	data := map[string]any{
@@ -759,32 +772,71 @@ func deriveReadmeSessionID(commit string) string {
 
 func buildHeader(combined string, cfg *llm.MCTPromptsConfig) (string, error) {
 	trimmed := strings.TrimSpace(combined)
-	if cfg != nil {
-		data := map[string]string{"Combined": combined}
-		var tmpl string
-		var name string
-		if strings.HasPrefix(trimmed, "# User") {
+	data := map[string]string{"Combined": combined}
+	var tmpl string
+	var name string
+	var embeddedKey string
+	if strings.HasPrefix(trimmed, "# User") {
+		name = "mct_header_existing"
+		embeddedKey = "mct.header_existing"
+		if cfg != nil {
 			tmpl = strings.TrimSpace(cfg.HeaderExistingTemplate)
-			name = "mct_header_existing"
-		} else {
+		}
+	} else {
+		name = "mct_header_user"
+		embeddedKey = "mct.header_user"
+		if cfg != nil {
 			tmpl = strings.TrimSpace(cfg.HeaderUserTemplate)
-			name = "mct_header_user"
 		}
-		if tmpl == "" {
-			return "", fmt.Errorf("%s template not configured", name)
-		}
-		rendered, err := prompts.Render(name, tmpl, data, nil)
-		if err != nil {
-			return "", fmt.Errorf("render %s: %w", name, err)
-		}
-		return rendered, nil
 	}
-	return "", fmt.Errorf("mct header templates not configured")
+	if tmpl == "" {
+		if embedded, err := templates.GetEmbeddedTemplate(embeddedKey); err == nil {
+			tmpl = embedded
+		}
+	}
+	if strings.TrimSpace(tmpl) == "" {
+		return "", fmt.Errorf("%s template not configured", name)
+	}
+	rendered, err := prompts.Render(name, tmpl, data, nil)
+	if err != nil {
+		return "", fmt.Errorf("render %s: %w", name, err)
+	}
+	return rendered, nil
 }
 
 func validateMCTPromptsConfig(cfg *llm.MCTPromptsConfig) error {
 	if cfg == nil {
-		return fmt.Errorf("mct prompt templates not configured")
+		cfg = &llm.MCTPromptsConfig{}
+	}
+	if strings.TrimSpace(cfg.ConversationHistoryTemplate) == "" {
+		if embedded, err := templates.GetEmbeddedTemplate("mct.conversation_history_template"); err == nil {
+			cfg.ConversationHistoryTemplate = embedded
+		}
+	}
+	if strings.TrimSpace(cfg.HeaderUserTemplate) == "" {
+		if embedded, err := templates.GetEmbeddedTemplate("mct.header_user"); err == nil {
+			cfg.HeaderUserTemplate = embedded
+		}
+	}
+	if strings.TrimSpace(cfg.HeaderExistingTemplate) == "" {
+		if embedded, err := templates.GetEmbeddedTemplate("mct.header_existing"); err == nil {
+			cfg.HeaderExistingTemplate = embedded
+		}
+	}
+	if strings.TrimSpace(cfg.ShellAgentContextTemplate) == "" {
+		if embedded, err := templates.GetEmbeddedTemplate("mct.shell_agent_context_template"); err == nil {
+			cfg.ShellAgentContextTemplate = embedded
+		}
+	}
+	if strings.TrimSpace(cfg.ReadmeSystemTemplate) == "" {
+		if embedded, err := templates.GetEmbeddedTemplate("mct.readme_system_template"); err == nil {
+			cfg.ReadmeSystemTemplate = embedded
+		}
+	}
+	if strings.TrimSpace(cfg.ShellAgentContextPrefix) == "" {
+		if embedded, err := templates.GetEmbeddedTemplate("mct.shell_agent_context_prefix"); err == nil {
+			cfg.ShellAgentContextPrefix = embedded
+		}
 	}
 	if strings.TrimSpace(cfg.ConversationHistoryTemplate) == "" {
 		return fmt.Errorf("conversation history template is required")
