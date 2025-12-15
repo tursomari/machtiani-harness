@@ -131,3 +131,38 @@ func TestWriteTurnInstructionSkipsQuestionLabel(t *testing.T) {
 		t.Fatalf("instruction text missing from transcript:\n%s", content)
 	}
 }
+
+func TestAppendRaw_UserFeedbackSection(t *testing.T) {
+	cwd, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	tmp := t.TempDir()
+	_ = os.Chdir(tmp)
+	t.Setenv("HOME", tmp)
+
+	tr, err := New("feedback-sess")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tr.Close()
+
+	if err := tr.WriteHeader("goal", "feedback-sess", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	feedback := "This is too marketing sounding. Use a domain-specific name."
+	block := "\n=== USER FEEDBACK\n\n" + feedback + "\n"
+	if err := tr.AppendRaw(block); err != nil {
+		t.Fatal(err)
+	}
+
+	content := tr.Content()
+	if !strings.Contains(content, "=== USER FEEDBACK") {
+		t.Fatalf("missing feedback header in transcript:\n%s", content)
+	}
+	if !strings.Contains(content, feedback) {
+		t.Fatalf("missing feedback body in transcript:\n%s", content)
+	}
+	if strings.Contains(content, "Planner decision: user-feedback") {
+		t.Fatalf("raw feedback should not include a planner decision line:\n%s", content)
+	}
+}

@@ -276,6 +276,7 @@ func Run(ctx context.Context, opts Options) Result {
 		resumeMode = true
 		loadedState = state
 		resumePrompt = strings.TrimSpace(inputPrompt)
+		turnsCompletedFromState := state.TurnsCompleted
 
 		storedGoal := strings.TrimSpace(state.Goal)
 		if storedGoal != "" {
@@ -284,6 +285,7 @@ func Run(ctx context.Context, opts Options) Result {
 		if goal == "" {
 			goal = resumePrompt
 		}
+		_ = turnsCompletedFromState
 		if strings.TrimSpace(cfgInput.TranscriptFile) == "" && strings.TrimSpace(state.TranscriptPath) != "" {
 			cfgInput.TranscriptFile = state.TranscriptPath
 		}
@@ -913,7 +915,16 @@ func Run(ctx context.Context, opts Options) Result {
 		}
 		trimmedResumePrompt := strings.TrimSpace(resumePrompt)
 		if trimmedResumePrompt != "" {
-			trFull = appendResumePromptContext(trFull, trimmedResumePrompt)
+			feedback := extractUserFeedback(trimmedResumePrompt)
+			resumePrompt = feedback
+			if err := tr.AppendRaw(fmt.Sprintf("\n=== USER FEEDBACK\n\n%s\n", feedback)); err != nil {
+				fmt.Fprintln(os.Stderr, "Transcript write error:", err)
+				sessionErr = err
+				finishTurn(sessTelemetry, turn, "user-feedback", "error", turnInfo, err)
+				turnsCompleted = userTurnCounter
+				return Result{ExitCode: 1, Err: err}
+			}
+			trFull = appendResumePromptContext(trFull, feedback)
 			turnInfo["resume_prompt"] = true
 		}
 		planCtx = attachTrajectory(planCtx, trajectoryWriter, parentSpanID)
@@ -2107,10 +2118,37 @@ func appendResumePromptContext(transcript, prompt string) string {
 		b.WriteString(trimmedTranscript)
 		b.WriteString("\n\n")
 	}
-	b.WriteString("## New instruction from the user\n\n")
+	b.WriteString("== USER FEEDBACK\n\n")
 	b.WriteString(prompt)
 	b.WriteString("\n")
 	return b.String()
+}
+
+func extractUserFeedback(prompt string) string {
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		return ""
+	}
+	if idx := strings.LastIndex(prompt, "\n\n\"\"\"\n"); idx != -1 {
+		candidate := prompt[idx+len("\n\n\"\"\"\n"):]
+		if end := strings.Index(candidate, "\n\"\"\"" ); end != -1 {
+			candidate = candidate[:end]
+		}
+		candidate = strings.TrimSpace(candidate)
+		if candidate != "" {
+			return candidate
+		}
+	}
+	if idx := strings.LastIndex(prompt, "The user provided additional guidance:"); idx != -1 {
+		candidate := prompt[idx+len("The user provided additional guidance:"):]
+		candidate = strings.TrimSpace(candidate)
+		candidate = strings.Trim(candidate, "\"\n")
+		candidate = strings.TrimSpace(candidate)
+		if candidate != "" {
+			return candidate
+		}
+	}
+	return prompt
 }
 
 func convertRewriteMissingToCreate(instr mctpatcher.Instructions, valErr *mctpatcher.ValidationError, verbose bool) (mctpatcher.Instructions, []int) {

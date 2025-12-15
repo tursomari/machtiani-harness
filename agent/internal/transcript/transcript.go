@@ -18,6 +18,21 @@ type Transcript struct {
 	traj *trajectory.Writer
 }
 
+func (t *Transcript) AppendRaw(text string) error {
+	if t == nil {
+		return nil
+	}
+	if text == "" {
+		return nil
+	}
+	t.mem.WriteString(text)
+	_, err := t.f.WriteString(text)
+	t.emit("raw", map[string]any{
+		"written_bytes": len(text),
+	})
+	return err
+}
+
 type PatchValidationMessage struct {
 	Severity string
 	Path     string
@@ -204,7 +219,9 @@ func normalizeInlineContext(text string) string {
 
 func (t *Transcript) WriteTurn(step int, question, savedPath string, retrieved []string, summary string, decision string) error {
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("\n== TURN %d\n\n", step))
+	if step >= 0 {
+		b.WriteString(fmt.Sprintf("\n== TURN %d\n\n", step))
+	}
 	b.WriteString(question + "\n\n")
 	if savedPath != "" {
 		b.WriteString("mct chat: " + savedPath + "\n\n")
