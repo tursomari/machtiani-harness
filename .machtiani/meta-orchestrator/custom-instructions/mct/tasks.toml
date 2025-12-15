@@ -1,0 +1,27 @@
+[[tasks]]
+step = 1
+title = "Understand the goal"
+description = "Restate the goal and identify the relevant code areas."
+shell_agent = false
+patch_mode = false
+
+[[tasks]]
+step = 2
+title = "Implement patch"
+description = "Implement the changes to satisfy the goal, updating tests/docs as needed."
+shell_agent = true
+patch_mode = true
+
+[[tasks]]
+step = 3
+title = "Validate"
+description = "Run available validations (build/test) and report results."
+shell_agent = false
+patch_mode = true
+
+[[tasks]]
+step = 4
+title = "Summarize"
+description = "Summarize what changed and any risks/follow-ups."
+shell_agent = false
+patch_mode = false

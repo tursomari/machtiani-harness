@@ -1,0 +1,20 @@
+[[tasks]]
+step = 1
+title = "Plan"
+description = "plan.txt"
+shell_agent = false
+patch_mode = false
+
+[[tasks]]
+step = 2
+title = "Patch"
+description = "patch.txt"
+shell_agent = true
+patch_mode = true
+
+[[tasks]]
+step = 3
+title = "Validate"
+description = "validate.txt"
+shell_agent = false
+patch_mode = true

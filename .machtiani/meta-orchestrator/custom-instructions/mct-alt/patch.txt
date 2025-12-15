@@ -1,0 +1,19 @@
+Patch Task Instructions
+
+- Follow these instruction unless otherwise instructed by the user.
+- Determine if the patch is simple and straightforward or is more involved or encompasses changes across multiple files.
+
+If a Patch Plan is appropriate
+- Create a concise and descriptive patch plan, including whether to expand or create tests against the change if it's a new feature or is a major change.
+
+Execution of the Patch Plan
+
+- Make all the changes outlined by the patch plan
+- Double check your changes after completing the patch plan
+- If applicable, after every patch is made and all the items in the plan are checked off, check for any build errors.
+- Determine whether it’s appropriate to expand existing tests to cover the change or create new tests, if it’s a new feature or other major impactful change.
+- Run tests to ensure all are passing. If not, diagnose the issue and fix the reason for the failing or faulty test.
+
+You don’t need to run tests to check off an item, just double check the change was made accurately and without corruption.
+
+Dutifully fix an errors causing compilation issues. Finally, run tests to ensure all are passing. If not, diagnose the issue and fix the reason for the failing or faulty test.

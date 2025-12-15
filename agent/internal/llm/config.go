@@ -1489,8 +1489,7 @@ func LoadMetaInstructions(mode, overrideDir string, cfg Config, configPath strin
 	if trimmedMode == "" {
 		return MetaInstructions{}, fmt.Errorf("meta-orchestrator mode is required")
 	}
-	filenameTOML := fmt.Sprintf("%s.toml", trimmedMode)
-	filenameTXT := fmt.Sprintf("%s.txt", trimmedMode)
+	tasksFile := filepath.Join(trimmedMode, "tasks.toml")
 
 	var candidates []string
 	appendCandidate := func(path string) {
@@ -1504,17 +1503,10 @@ func LoadMetaInstructions(mode, overrideDir string, cfg Config, configPath strin
 	}
 
 	addDirCandidates := func(dir string) {
-		appendCandidate(filepath.Join(dir, filenameTOML))
-		appendCandidate(filepath.Join(dir, filenameTXT))
+		appendCandidate(filepath.Join(dir, tasksFile))
 	}
 
 	addFileCandidates := func(path string) {
-		ext := strings.ToLower(strings.TrimSpace(filepath.Ext(path)))
-		if ext == "" {
-			appendCandidate(path + ".toml")
-			appendCandidate(path + ".txt")
-			return
-		}
 		appendCandidate(path)
 	}
 
@@ -1582,7 +1574,7 @@ func LoadMetaInstructions(mode, overrideDir string, cfg Config, configPath strin
 		raw := string(data)
 		switch format {
 		case MetaInstructionsFormatTOML:
-			tasks, perr := parseMetaInstructionTOML(data)
+			tasks, perr := parseMetaInstructionTOML(data, candidate)
 			if perr != nil {
 				return MetaInstructions{}, fmt.Errorf("parse meta instructions %s: %w", candidate, perr)
 			}
@@ -1608,7 +1600,7 @@ type metaInstructionsTOML struct {
 	Tasks []MetaInstructionTask `toml:"tasks"`
 }
 
-func parseMetaInstructionTOML(data []byte) ([]MetaInstructionTask, error) {
+func parseMetaInstructionTOML(data []byte, tomlFilePath string) ([]MetaInstructionTask, error) {
 	var parsed metaInstructionsTOML
 	if err := toml.Unmarshal(data, &parsed); err != nil {
 		return nil, err
@@ -1621,6 +1613,14 @@ func parseMetaInstructionTOML(data []byte) ([]MetaInstructionTask, error) {
 		normalized := task
 		normalized.Title = strings.TrimSpace(normalized.Title)
 		normalized.Description = strings.TrimSpace(normalized.Description)
+		if isFileReference(normalized.Description) {
+			filePath := filepath.Join(filepath.Dir(tomlFilePath), normalized.Description)
+			content, err := os.ReadFile(filePath)
+			if err != nil {
+				return nil, fmt.Errorf("failed to load description file %q for task %d: %w", filePath, idx, err)
+			}
+			normalized.Description = strings.TrimSpace(string(content))
+		}
 		if normalized.Title == "" {
 			return nil, fmt.Errorf("tasks[%d].title is required", idx)
 		}
@@ -1630,6 +1630,31 @@ func parseMetaInstructionTOML(data []byte) ([]MetaInstructionTask, error) {
 		tasks = append(tasks, normalized)
 	}
 	return tasks, nil
+}
+
+func isFileReference(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
+	}
+	if strings.ContainsAny(s, "\r\n") {
+		return false
+	}
+	if strings.Contains(s, " ") {
+		return false
+	}
+	if strings.Contains(s, "\\") {
+		return false
+	}
+	knownExts := map[string]bool{".txt": true, ".md": true, ".sh": true}
+	ext := strings.ToLower(filepath.Ext(s))
+	if knownExts[ext] {
+		return true
+	}
+	if strings.Contains(s, "/") {
+		return true
+	}
+	return false
 }
 
 func effectiveConfigDir(configPath string) string {

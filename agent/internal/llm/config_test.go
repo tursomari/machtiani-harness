@@ -223,7 +223,7 @@ provider = "fake"
 
 func TestLoadMetaInstructionsPrefersTomlInOverrideDir(t *testing.T) {
 	override := filepath.Join(t.TempDir(), "override")
-	mustWriteFile(t, filepath.Join(override, "coding.toml"), sampleCodingToml())
+	mustWriteFile(t, filepath.Join(override, "coding", "tasks.toml"), sampleCodingToml())
 
 	doc, err := LoadMetaInstructions("coding", override, Config{}, "")
 	if err != nil {
@@ -238,31 +238,8 @@ func TestLoadMetaInstructionsPrefersTomlInOverrideDir(t *testing.T) {
 	if doc.Tasks[0].Title != "Create an issue for the engineering team" {
 		t.Fatalf("unexpected first task title: %q", doc.Tasks[0].Title)
 	}
-	if doc.Path != filepath.Join(override, "coding.toml") {
-		t.Fatalf("expected path %s, got %s", filepath.Join(override, "coding.toml"), doc.Path)
-	}
-}
-
-func TestLoadMetaInstructionsFallsBackToTxtWhenTomlMissing(t *testing.T) {
-	override := filepath.Join(t.TempDir(), "override")
-	content := "- First task\n- Second task\n"
-	mustWriteFile(t, filepath.Join(override, "coding.txt"), content)
-
-	doc, err := LoadMetaInstructions("coding", override, Config{}, "")
-	if err != nil {
-		t.Fatalf("LoadMetaInstructions returned error: %v", err)
-	}
-	if doc.Format != MetaInstructionsFormatText {
-		t.Fatalf("expected text format, got %q", doc.Format)
-	}
-	if doc.Raw != content {
-		t.Fatalf("expected raw content %q, got %q", content, doc.Raw)
-	}
-	if len(doc.Tasks) != 0 {
-		t.Fatalf("expected no structured tasks, got %d", len(doc.Tasks))
-	}
-	if doc.Path != filepath.Join(override, "coding.txt") {
-		t.Fatalf("expected path %s, got %s", filepath.Join(override, "coding.txt"), doc.Path)
+	if doc.Path != filepath.Join(override, "coding", "tasks.toml") {
+		t.Fatalf("expected path %s, got %s", filepath.Join(override, "coding", "tasks.toml"), doc.Path)
 	}
 }
 
@@ -274,8 +251,7 @@ func TestLoadMetaInstructionsSearchOrder(t *testing.T) {
 	configPath := filepath.Join(configDir, "config.toml")
 	mustWriteFile(t, configPath, "")
 
-	mustWriteFile(t, filepath.Join(configDir, "coding.txt"), "legacy\n")
-	mustWriteFile(t, filepath.Join(configDir, "coding.toml"), sampleCodingToml())
+	mustWriteFile(t, filepath.Join(configDir, "coding", "tasks.toml"), sampleCodingToml())
 
 	cfg := Config{
 		MetaOrchestrator: &MetaOrchestratorConfig{
@@ -287,8 +263,8 @@ func TestLoadMetaInstructionsSearchOrder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadMetaInstructions returned error: %v", err)
 	}
-	if !strings.HasSuffix(doc.Path, "coding.toml") {
-		t.Fatalf("expected coding.toml to be selected, got %s", doc.Path)
+	if !strings.HasSuffix(doc.Path, filepath.Join("coding", "tasks.toml")) {
+		t.Fatalf("expected coding/tasks.toml to be selected, got %s", doc.Path)
 	}
 	if doc.Format != MetaInstructionsFormatTOML {
 		t.Fatalf("expected TOML format, got %q", doc.Format)
@@ -297,7 +273,7 @@ func TestLoadMetaInstructionsSearchOrder(t *testing.T) {
 
 func TestLoadMetaInstructionsInvalidTomlReturnsError(t *testing.T) {
 	dir := t.TempDir()
-	mustWriteFile(t, filepath.Join(dir, "coding.toml"), "[[tasks]\n title = \"broken\"")
+	mustWriteFile(t, filepath.Join(dir, "coding", "tasks.toml"), "[[tasks]\n title = \"broken\"")
 
 	_, err := LoadMetaInstructions("coding", dir, Config{}, "")
 	if err == nil {
@@ -310,7 +286,7 @@ func TestLoadMetaInstructionsPermissionError(t *testing.T) {
 		t.Skip("permissions semantics differ on Windows")
 	}
 	dir := t.TempDir()
-	path := filepath.Join(dir, "coding.toml")
+	path := filepath.Join(dir, "coding", "tasks.toml")
 	mustWriteFile(t, path, sampleCodingToml())
 	if err := os.Chmod(path, 0o000); err != nil {
 		t.Fatalf("chmod: %v", err)
@@ -318,6 +294,46 @@ func TestLoadMetaInstructionsPermissionError(t *testing.T) {
 	defer os.Chmod(path, 0o644)
 
 	_, err := LoadMetaInstructions("coding", dir, Config{}, "")
+	if err == nil {
+		t.Fatalf("expected error, got nil")
+	}
+}
+
+func TestParseMetaInstructionTOMLLoadsDescriptionFromExternalFile(t *testing.T) {
+	path := filepath.Join("testdata", "meta_instructions", "external", "tasks.toml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+
+	tasks, err := parseMetaInstructionTOML(data, path)
+	if err != nil {
+		t.Fatalf("parseMetaInstructionTOML: %v", err)
+	}
+	if len(tasks) != 2 {
+		t.Fatalf("expected 2 tasks, got %d", len(tasks))
+	}
+	if tasks[0].Description != "Hello from inline" {
+		t.Fatalf("unexpected inline description: %q", tasks[0].Description)
+	}
+	if tasks[1].Description != "Hello from file" {
+		t.Fatalf("unexpected file description: %q", tasks[1].Description)
+	}
+}
+
+func TestParseMetaInstructionTOMLFailsWhenExternalDescriptionMissing(t *testing.T) {
+	dir := t.TempDir()
+	tomlPath := filepath.Join(dir, "tasks.toml")
+	mustWriteFile(t, tomlPath, `[[tasks]]
+title = "Missing"
+description = "missing.txt"
+`)
+
+	data, err := os.ReadFile(tomlPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	_, err = parseMetaInstructionTOML(data, tomlPath)
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}
