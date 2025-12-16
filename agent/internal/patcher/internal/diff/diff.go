@@ -151,12 +151,20 @@ func sanitizePaths(patch []byte, files []string) []byte {
 			}
 		case strings.HasPrefix(line, "--- a/"):
 			path := strings.TrimPrefix(line, "--- a/")
-			path = trimToRel(path)
-			line = "--- a/" + path
+			if path == "/dev/null" || strings.HasSuffix(path, "/dev/null") {
+				line = "--- /dev/null"
+			} else {
+				path = trimToRel(path)
+				line = "--- a/" + path
+			}
 		case strings.HasPrefix(line, "+++ b/"):
 			path := strings.TrimPrefix(line, "+++ b/")
-			path = trimToRel(path)
-			line = "+++ b/" + path
+			if path == "/dev/null" || strings.HasSuffix(path, "/dev/null") {
+				line = "+++ /dev/null"
+			} else {
+				path = trimToRel(path)
+				line = "+++ b/" + path
+			}
 		}
 		out.WriteString(line)
 		out.WriteByte('\n')

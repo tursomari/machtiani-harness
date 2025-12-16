@@ -26,3 +26,17 @@ system_prompt_template = { file = "templates/file-discovery/system_prompt_templa
 shell_agent_context_prefix = { file = "templates/mct/shell_agent_context_prefix.tpl" }
 header_user_template = { file = "templates/mct/header_user_template.tpl" }
 header_existing_template = { file = "templates/mct/header_existing_template.tpl" }
+
+# Shared temporary workspace root.
+[environment]
+tmp_root = ".machtiani/tmp"
+
+# Optional ignore rules applied by file-discovery and shell-agent workspaces.
+[ignore]
+paths = ["node_modules", ".cache", "dist", "build"]
+extensions = [".png", ".jpg", ".pdf", ".exe"]
+git_synced_only = true
+
+# How sandbox changes are persisted back to the host.
+[patcher]
+strategy = "apply" # "apply"|"commit"|"export-only"

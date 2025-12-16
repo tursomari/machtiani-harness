@@ -18,14 +18,41 @@ import (
 
 // IsRepoRoot checks presence of a .git directory in the given path.
 func IsRepoRoot(path string) (bool, error) {
-	st, err := os.Stat(filepath.Join(path, ".git"))
+	gitPath := filepath.Join(path, ".git")
+	st, err := os.Stat(gitPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return false, nil
 		}
 		return false, err
 	}
-	return st.IsDir(), nil
+	if st.IsDir() {
+		return true, nil
+	}
+	// Worktrees use a gitfile `.git` that points at the real gitdir.
+	data, err := os.ReadFile(gitPath)
+	if err != nil {
+		return false, err
+	}
+	line := strings.TrimSpace(string(data))
+	if !strings.HasPrefix(line, "gitdir:") {
+		return false, nil
+	}
+	gitdir := strings.TrimSpace(strings.TrimPrefix(line, "gitdir:"))
+	if gitdir == "" {
+		return false, nil
+	}
+	if !filepath.IsAbs(gitdir) {
+		gitdir = filepath.Join(path, filepath.FromSlash(gitdir))
+	}
+	info, err := os.Stat(gitdir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return info.IsDir(), nil
 }
 
 // MakeTempMirror materializes the provided after-state content either into a
@@ -109,7 +136,30 @@ func MakeSessionWorkspace(src string) (string, func(), error) {
 		cleanup()
 		return "", func() {}, err
 	}
+	if err := ensureGitRepo(ws); err != nil {
+		cleanup()
+		return "", func() {}, err
+	}
 	return ws, cleanup, nil
+}
+
+func ensureGitRepo(dir string) error {
+	ok, err := IsRepoRoot(dir)
+	if err != nil {
+		return err
+	}
+	if ok {
+		return nil
+	}
+	cmd := exec.Command("git", "init")
+	cmd.Dir = dir
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("git init failed: %v\n%s", err, strings.TrimSpace(out.String()))
+	}
+	return nil
 }
 
 func copyRepoWorkspace(src, dst string) error {

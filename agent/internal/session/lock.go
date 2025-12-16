@@ -23,6 +23,9 @@ type sessionLock struct {
 }
 
 func acquireSessionLock(sessionID, sessionRoot string) (*sessionLock, error) {
+	if err := os.MkdirAll(sessionRoot, 0o755); err != nil {
+		return nil, fmt.Errorf("prepare session lock root %s: %w", sessionRoot, err)
+	}
 	lockPath := filepath.Join(sessionRoot, sessionLockFileName)
 	file, err := os.OpenFile(lockPath, os.O_RDWR|os.O_CREATE, 0o644)
 	if err != nil {

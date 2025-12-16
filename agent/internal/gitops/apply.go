@@ -114,7 +114,7 @@ func WorkspaceStatus(dir string) ([]string, error) {
 		return nil, fmt.Errorf("cannot check workspace status: %w", err)
 	}
 	dir = strings.TrimSpace(dir)
-	cmd := exec.Command("git", "status", "--porcelain")
+	cmd := exec.Command("git", "status", "--porcelain", "--ignore-submodules=all")
 	if dir != "" {
 		cmd.Dir = dir
 	}

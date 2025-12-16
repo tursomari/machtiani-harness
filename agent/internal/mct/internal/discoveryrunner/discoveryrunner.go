@@ -22,8 +22,27 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/session"
-	"github.com/tursomari/machtiani/agent/internal/tempdir"
 )
+
+const symlinkHashPrefix = "symlink:"
+
+// copyFile copies contents from src to dst with perms; best-effort.
+func copyFile(src, dst string, mode os.FileMode) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode.Perm())
+	if err != nil {
+		return err
+	}
+	defer func() { _ = out.Close() }()
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	return nil
+}
 
 // Result holds parsed file paths from file-discovery output
 type Result struct {
@@ -148,43 +167,34 @@ func Run(ctx context.Context, prompt string, model ModelSettings, sessionID stri
 		cfg.TrajectoryPath = trajectoryPath
 	}
 
-	var (
-		restoreWD      func()
-		cleanupSandbox func()
-	)
-	if useGitFilter() {
-		tmpDir, tmpCleanup, err := prepareGitFilteredWorkspace(effectiveSessionID, verbose)
-		switch {
-		case err != nil:
-			debugf(verbose, "mct: discovery sandbox disabled: %v", err)
-		case tmpDir == "":
-			debugf(verbose, "mct: discovery sandbox skipped: not a git repo or empty")
-			if tmpCleanup != nil {
-				tmpCleanup()
-			}
-		default:
-			wd, err2 := os.Getwd()
-			if err2 != nil {
-				tmpCleanup()
-				return Result{}, fmt.Errorf("discovery sandbox getwd: %w", err2)
-			}
-			if err2 = os.Chdir(tmpDir); err2 != nil {
-				tmpCleanup()
-				return Result{}, fmt.Errorf("discovery sandbox chdir: %w", err2)
-			}
-			debugf(verbose, "mct: discovery sandbox enabled at %s", tmpDir)
-			restoreWD = func() { _ = os.Chdir(wd) }
-			cleanupSandbox = tmpCleanup
+	var restoreWD func()
+	snapshotRoot := strings.TrimSpace(os.Getenv("MACHTIANI_TMP_ROOT"))
+	if snapshotRoot != "" {
+		snapshotPath := filepath.Join(snapshotRoot, "repo")
+		st, err := os.Stat(snapshotPath)
+		if err != nil {
+			return Result{}, fmt.Errorf("file-discovery requires repo snapshot at %s: %w", snapshotPath, err)
 		}
+		if !st.IsDir() {
+			return Result{}, fmt.Errorf("file-discovery requires repo snapshot directory at %s", snapshotPath)
+		}
+		wd, err := os.Getwd()
+		if err != nil {
+			return Result{}, fmt.Errorf("discovery snapshot getwd: %w", err)
+		}
+		if err := os.Chdir(snapshotPath); err != nil {
+			return Result{}, fmt.Errorf("discovery snapshot chdir: %w", err)
+		}
+		debugf(verbose, "mct: discovery snapshot enabled at %s", snapshotPath)
+		restoreWD = func() { _ = os.Chdir(wd) }
 	} else {
-		debugf(verbose, "mct: discovery sandbox disabled via MCT_USE_GIT_FILTER")
+		// No snapshot configured; operate on current working directory (e.g., sync command)
+		debugf(verbose, "mct: MACHTIANI_TMP_ROOT not set; file-discovery will use current working directory")
+		restoreWD = func() {}
 	}
 	defer func() {
 		if restoreWD != nil {
 			restoreWD()
-		}
-		if cleanupSandbox != nil {
-			cleanupSandbox()
 		}
 	}()
 
@@ -308,253 +318,12 @@ func Run(ctx context.Context, prompt string, model ModelSettings, sessionID stri
 }
 
 // useGitFilter reads MCT_USE_GIT_FILTER and returns true unless explicitly disabled.
-func useGitFilter() bool {
-	v := strings.ToLower(strings.TrimSpace(os.Getenv("MCT_USE_GIT_FILTER")))
-	if v == "false" || v == "0" || v == "no" {
-		return false
-	}
-	return true
-}
-
 // debugf writes debug lines to stderr when MCT_DEBUG is set.
 func debugf(verbose bool, format string, args ...any) {
 	if !verbose {
 		return
 	}
 	fmt.Fprintf(os.Stderr, format+"\n", args...)
-}
-
-// prepareGitFilteredWorkspace returns a directory mirroring the repository for
-// file-discovery. When a session identifier is available it incrementally
-// syncs a persistent workspace so new and modified files appear in subsequent
-// discovery turns. Without a session identifier it falls back to the legacy
-// ephemeral snapshot behavior.
-func prepareGitFilteredWorkspace(sessionID string, verbose bool) (string, func(), error) {
-	sessionID = strings.TrimSpace(sessionID)
-	if sessionID == "" {
-		return createEphemeralFilteredDir(verbose)
-	}
-	return ensurePersistentWorkspace(sessionID, verbose)
-}
-
-// createEphemeralFilteredDir mirrors the legacy behavior: build a throwaway
-// directory with hard links to tracked files only.
-func createEphemeralFilteredDir(verbose bool) (string, func(), error) {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return "", nil, err
-	}
-	if !gitIsRepo(cwd) {
-		return "", nil, nil
-	}
-	repoRoot, err := gitRepoRoot(cwd)
-	if err != nil {
-		return "", nil, nil
-	}
-	files, err := gitListTracked(repoRoot)
-	if err != nil {
-		return "", nil, nil
-	}
-	if len(files) == 0 {
-		return "", nil, nil
-	}
-	dir, err := tempdir.MkdirTemp("mct-discovery-")
-	if err != nil {
-		return "", nil, err
-	}
-	cleanup := func() { _ = os.RemoveAll(dir) }
-	if err := syncPathsIntoWorkspace(repoRoot, dir, files, verbose, nil, nil); err != nil {
-		cleanup()
-		return "", nil, err
-	}
-	return dir, cleanup, nil
-}
-
-// copyFile copies contents from src to dst with perms; best-effort.
-func copyFile(src, dst string, mode os.FileMode) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode.Perm())
-	if err != nil {
-		return err
-	}
-	defer func() { _ = out.Close() }()
-	if _, err := io.Copy(out, in); err != nil {
-		return err
-	}
-	return nil
-}
-
-const symlinkHashPrefix = "symlink:"
-
-func ensurePersistentWorkspace(sessionID string, verbose bool) (string, func(), error) {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return "", nil, err
-	}
-	if !gitIsRepo(cwd) {
-		return "", nil, nil
-	}
-	repoRoot, err := gitRepoRoot(cwd)
-	if err != nil {
-		return "", nil, nil
-	}
-	tracked, err := gitListTracked(repoRoot)
-	if err != nil {
-		return "", nil, err
-	}
-	base, err := artifacts.SessionScratchDirectory(sessionID)
-	if err != nil {
-		return "", nil, err
-	}
-	workspace := filepath.Join(base, "file-discovery", "workspace")
-	if err := os.MkdirAll(workspace, 0o755); err != nil {
-		return "", nil, fmt.Errorf("create discovery workspace: %w", err)
-	}
-
-	loadedState, err := session.LoadDiscoveryState()
-	if err != nil {
-		return "", nil, err
-	}
-	state := session.FileDiscoveryState{WorkspacePath: workspace, Files: make(map[string]session.FileMeta)}
-	if loadedState != nil {
-		state = *loadedState
-		if state.Files == nil {
-			state.Files = make(map[string]session.FileMeta)
-		}
-	}
-	state.WorkspacePath = workspace
-
-	trackedSet := make(map[string]struct{}, len(tracked))
-	for _, rel := range tracked {
-		norm := normalizeRepoPath(rel)
-		if norm == "" {
-			continue
-		}
-		trackedSet[norm] = struct{}{}
-	}
-
-	pendingSet := make(map[string]struct{})
-	for _, rel := range state.PendingPaths {
-		norm := normalizeRepoPath(rel)
-		if norm != "" {
-			pendingSet[norm] = struct{}{}
-		}
-	}
-
-	filesCopy := make(map[string]session.FileMeta, len(state.Files))
-	for k, v := range state.Files {
-		norm := normalizeRepoPath(k)
-		if norm == "" {
-			continue
-		}
-		filesCopy[norm] = v
-	}
-
-	for _, rel := range drainDiscoveryScratch(sessionID, verbose) {
-		if rel != "" {
-			pendingSet[rel] = struct{}{}
-		}
-	}
-
-	if filepath.Clean(state.WorkspacePath) != filepath.Clean(workspace) {
-		state.Files = make(map[string]session.FileMeta)
-		filesCopy = make(map[string]session.FileMeta)
-		pendingSet = make(map[string]struct{})
-		for rel := range trackedSet {
-			pendingSet[rel] = struct{}{}
-		}
-	}
-
-	if len(state.Files) == 0 {
-		for rel := range trackedSet {
-			pendingSet[rel] = struct{}{}
-		}
-	}
-
-	for rel := range trackedSet {
-		meta, ok := filesCopy[rel]
-		if ok {
-			need, err := needsSync(repoRoot, rel, meta, true)
-			if err != nil {
-				debugf(verbose, "mct: unable to inspect tracked file %s: %v", rel, err)
-				pendingSet[rel] = struct{}{}
-				continue
-			}
-			if !need {
-				continue
-			}
-		}
-		pendingSet[rel] = struct{}{}
-	}
-
-	for rel, meta := range filesCopy {
-		if _, tracked := trackedSet[rel]; tracked {
-			continue
-		}
-		need, err := needsSync(repoRoot, rel, meta, false)
-		if err != nil {
-			debugf(verbose, "mct: unable to inspect pending file %s: %v", rel, err)
-			pendingSet[rel] = struct{}{}
-			continue
-		}
-		if need {
-			pendingSet[rel] = struct{}{}
-		}
-	}
-
-	if len(pendingSet) == 0 {
-		return workspace, func() {}, nil
-	}
-
-	paths := make([]string, 0, len(pendingSet))
-	for rel := range pendingSet {
-		paths = append(paths, rel)
-	}
-	sort.Strings(paths)
-
-	err = syncPathsIntoWorkspace(repoRoot, workspace, paths, verbose, trackedSet, func(rel string, meta *session.FileMeta, removed bool) {
-		if removed {
-			delete(filesCopy, rel)
-			return
-		}
-		if meta == nil {
-			return
-		}
-		if _, ok := trackedSet[rel]; ok {
-			meta.Tracked = true
-		} else {
-			meta.Tracked = false
-		}
-		filesCopy[rel] = *meta
-	})
-	if err != nil {
-		return "", nil, err
-	}
-
-	_, err = session.UpdateDiscoveryState(func(st *session.FileDiscoveryState) error {
-		st.WorkspacePath = workspace
-		st.PendingPaths = nil
-		if st.Files == nil {
-			st.Files = make(map[string]session.FileMeta, len(filesCopy))
-		} else {
-			for k := range st.Files {
-				delete(st.Files, k)
-			}
-		}
-		for k, v := range filesCopy {
-			st.Files[k] = v
-		}
-		return nil
-	})
-	if err != nil {
-		return "", nil, err
-	}
-
-	return workspace, func() {}, nil
 }
 
 func syncPathsIntoWorkspace(repoRoot, workspace string, paths []string, verbose bool, tracked map[string]struct{}, cb func(rel string, meta *session.FileMeta, removed bool)) error {
@@ -782,29 +551,9 @@ func gitListTracked(dir string) ([]string, error) {
 	return gitpkg.ListTrackedFiles(dir)
 }
 
-// RefreshSyncedWorkspace updates the persistent discovery workspace immediately
-// after a patch is applied. It stages the provided changed paths and performs a
-// sync so subsequent discovery runs (or consecutive patch decisions) observe
-// the latest files without waiting for the next discovery invocation.
 func RefreshSyncedWorkspace(sessionID string, changed []string, verbose bool) error {
-	sid := strings.TrimSpace(sessionID)
-	if sid == "" {
-		// No stable session; nothing to refresh.
-		return nil
-	}
-	if len(changed) > 0 {
-		if err := session.AddPendingDiscoveryPaths(changed); err != nil {
-			return err
-		}
-	}
-	// ensurePersistentWorkspace will read pending paths (including those we
-	// just added) and perform the incremental sync.
-	_, cleanup, err := ensurePersistentWorkspace(sid, verbose)
-	if cleanup != nil {
-		cleanup()
-	}
-	if err != nil {
-		return err
-	}
+	_ = sessionID
+	_ = changed
+	_ = verbose
 	return nil
 }

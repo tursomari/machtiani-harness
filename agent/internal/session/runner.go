@@ -28,6 +28,7 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/trajectory"
 	"github.com/tursomari/machtiani/agent/internal/transcript"
 	"github.com/tursomari/machtiani/agent/internal/ui"
+	"github.com/tursomari/machtiani/agent/internal/workspace"
 )
 
 const (
@@ -388,9 +389,37 @@ func Run(ctx context.Context, opts Options) Result {
 			return Result{ExitCode: 1, Err: err}
 		}
 	}
-	if err := tempdir.SetSessionRoot(sessionTempRoot); err != nil {
+	globalConfig, _, _ := llm.LoadGlobalConfig()
+	tmpRoot := ""
+	if globalConfig.Environment != nil {
+		tmpRoot = strings.TrimSpace(globalConfig.Environment.TmpRoot)
+	}
+	if tmpRoot == "" {
+		tmpRoot = ".machtiani/tmp"
+	}
+	if abs, err := filepath.Abs(tmpRoot); err == nil {
+		tmpRoot = abs
+	}
+	workspaceRoot := filepath.Join(tmpRoot, "workspace-"+sessionID)
+	if _, _, err := workspace.EnsureRepoSnapshot(".", workspaceRoot); err != nil {
+		fmt.Fprintln(os.Stderr, "Warning: unable to prepare workspace repo snapshot:", err)
+	}
+	if err := tempdir.SetSessionRoot(workspaceRoot); err != nil {
 		fmt.Fprintln(os.Stderr, "Error preparing session temp root:", err)
 		return Result{ExitCode: 1, Err: err}
+	}
+	patchStrategy := ""
+	if globalConfig.Patcher != nil {
+		patchStrategy = strings.TrimSpace(globalConfig.Patcher.Strategy)
+	}
+	if patchStrategy == "" {
+		patchStrategy = "export-only"
+	}
+	if err := os.Setenv("MACHTIANI_PATCH_STRATEGY", patchStrategy); err != nil {
+		fmt.Fprintln(os.Stderr, "Warning: unable to export patch strategy:", err)
+	}
+	if err := os.Setenv("MACHTIANI_TMP_ROOT", workspaceRoot); err != nil {
+		fmt.Fprintln(os.Stderr, "Warning: unable to export tmp root:", err)
 	}
 	if err := os.Setenv("MACHTIANI_SESSION_TEMP_ROOT", sessionTempRoot); err != nil {
 		fmt.Fprintln(os.Stderr, "Warning: unable to export session temp root:", err)
@@ -409,6 +438,8 @@ func Run(ctx context.Context, opts Options) Result {
 			}
 		}
 		tempdir.ClearSessionRoot()
+		_ = os.Unsetenv("MACHTIANI_TMP_ROOT")
+		_ = os.Unsetenv("MACHTIANI_PATCH_STRATEGY")
 		if strings.TrimSpace(origSessionTempRootRaw) == "" {
 			_ = os.Unsetenv("MACHTIANI_SESSION_TEMP_ROOT")
 		} else {
@@ -734,21 +765,25 @@ func Run(ctx context.Context, opts Options) Result {
 	var pRunner *runner.PatcherRunner
 	if cfg.patch {
 		patchLogger := log.New(os.Stderr, "[patcher] ", log.LstdFlags)
-		pr := &runner.PatcherRunner{
-			Enabled:   true,
-			Verbose:   cfg.verbose,
-			DryRun:    cfg.dryRun,
-			SessionID: sessionID,
+			snapshotRepoRoot := filepath.Join(tempdir.SessionRoot(), "repo")
+			pr := &runner.PatcherRunner{
+				Enabled:   true,
+				Verbose:   cfg.verbose,
+				DryRun:    cfg.dryRun,
+				SessionID: sessionID,
 			Runtime:   models.patcher.toPromptRuntime(),
 			Service: patchersvc.NewService(
 				patchersvc.WithLogger(patchLogger),
 				patchersvc.WithStrictPatchMode(effectiveStrict),
 			),
-			RepoRoot:        repoRoot,
-			PersistTmpData:  cfg.persistTmpData,
-			SessionTempRoot: sessionTempRoot,
-			FullMode:        cfg.patchFull,
-		}
+				RepoRoot:        snapshotRepoRoot,
+				PersistTmpData:  cfg.persistTmpData,
+				SessionTempRoot: sessionTempRoot,
+				FullMode:        cfg.patchFull,
+				WorkspaceFactory: func(root string) (string, func(), error) {
+					return root, func() {}, nil
+				},
+			}
 		if err := pr.Resolve(); err != nil {
 			if cfg.verbose {
 				fmt.Fprintln(os.Stderr, "[patcher] resolve warning:", err)
@@ -872,6 +907,13 @@ func Run(ctx context.Context, opts Options) Result {
 	for {
 		if err := rootCtx.Err(); err != nil {
 			return interruptedResult(err)
+		}
+		// Preflight sync: refresh the snapshot from the host repo.
+		if root := strings.TrimSpace(tempdir.SessionRoot()); root != "" {
+			if _, _, err := workspace.EnsureRepoSnapshot(repoRoot, root); err != nil {
+				fmt.Fprintln(os.Stderr, "Error: host->snapshot refresh failed:", err)
+				return Result{ExitCode: 1, Err: err}
+			}
 		}
 		step := userTurnCounter + 1
 		var turn *turnTelemetry
@@ -1167,7 +1209,7 @@ func Run(ctx context.Context, opts Options) Result {
 			if userTurnCounter >= cfg.maxSteps {
 				goto Finalize
 			}
-			continue
+			goto TurnDone
 
 		case planner.DecisionReject:
 			review := pendingReview
@@ -1234,7 +1276,7 @@ func Run(ctx context.Context, opts Options) Result {
 				display.Notify(fmt.Sprintf("Patch %d rejected%s", discarded.Sequence, formatOptionalSuffix(discarded.Description)))
 			}
 			finishTurn(sessTelemetry, turn, turnDecision, "success", turnInfo, nil)
-			continue
+			goto TurnDone
 
 		case planner.DecisionAsk:
 			if question == "" {
@@ -1397,7 +1439,7 @@ func Run(ctx context.Context, opts Options) Result {
 			if userTurnCounter == cfg.maxSteps {
 				goto Finalize
 			}
-			continue
+			goto TurnDone
 
 		case planner.DecisionPatch:
 			if cfg.verbose {
@@ -1711,6 +1753,7 @@ func Run(ctx context.Context, opts Options) Result {
 					continue
 				}
 			}
+			// Snapshot refresh occurs at the end of every loop iteration.
 			if result == nil {
 				errEmpty := errors.New("patcher returned empty result")
 				stream.Abort("patcher returned no result")
@@ -1889,13 +1932,25 @@ func Run(ctx context.Context, opts Options) Result {
 			if shouldFinalizeAfterPatch && !plannerProgress.hasPendingReview() {
 				goto Finalize
 			}
-			continue
+			goto TurnDone
 
 		case planner.DecisionFinalize:
 			goto Finalize
 		default:
 			goto Finalize
 		}
+
+	TurnDone:
+		// Postflight sync: ensure snapshot edits land in the host repo.
+		if root := strings.TrimSpace(tempdir.SessionRoot()); root != "" {
+			snapshotRepoRoot := filepath.Join(root, "repo")
+			patchDir := filepath.Join(root, "patches")
+			if err := workspace.SyncSnapshotToHost(snapshotRepoRoot, repoRoot, patchDir); err != nil {
+				fmt.Fprintln(os.Stderr, "Error: snapshot->host sync failed:", err)
+				return Result{ExitCode: 1, Err: err}
+			}
+		}
+		continue
 	}
 
 Finalize:

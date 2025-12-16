@@ -22,9 +22,25 @@ type Config struct {
 	Debug            *DebugConfig               `toml:"debug"`
 	Prompts          *PromptsConfig             `toml:"prompts"`
 	Environment      *EnvironmentConfig         `toml:"environment"`
+	Ignore           *IgnoreConfig              `toml:"ignore"`
+	Patcher          *PatcherConfig             `toml:"patcher"`
 	Providers        map[string]ProviderConfig  `toml:"providers"`
 	Models           map[string]ModelDefinition `toml:"models"`
 	MetaOrchestrator *MetaOrchestratorConfig    `toml:"meta-orchestrator"`
+}
+
+// IgnoreConfig controls how the agent filters files when syncing code into a
+// sandbox/workspace.
+type IgnoreConfig struct {
+	Paths         []string `toml:"paths"`
+	Extensions    []string `toml:"extensions"`
+	GitSyncedOnly bool     `toml:"git_synced_only"`
+}
+
+// PatcherConfig defines how the shell-agent should persist sandbox edits back
+// to the host repository.
+type PatcherConfig struct {
+	Strategy string `toml:"strategy"`
 }
 
 // DebugConfig captures optional debugging toggles.
@@ -154,6 +170,7 @@ type EnvironmentConfig struct {
 	DockerfilePath   string            `toml:"dockerfile_path"`
 	Runtime          string            `toml:"runtime"`
 	TrajectoryDir    string            `toml:"trajectory_dir"`
+	TmpRoot          string            `toml:"tmp_root"`
 	ComputedImageTag string            `toml:"-"`
 }
 

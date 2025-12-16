@@ -168,6 +168,16 @@ func (s *Service) ApplyAndGeneratePatch(ctx context.Context, params mctpatcher.P
 		}
 	}
 
+	// Cleanup placeholders created by ensurePatchTargets so that the generated patch
+	// reflects a file creation rather than a modification, and so that the workspace
+	// is restored to its original state for atomic verification.
+	for rel := range createdFiles {
+		abs := filepath.Join(workspaceRoot, filepath.FromSlash(rel))
+		if err := os.Remove(abs); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, &mctpatcher.PatchGenerationError{Err: fmt.Errorf("cleanup placeholder %s: %w", rel, err)}
+		}
+	}
+
 	s.logf(params.Verbose, "generating patch via git diff --no-index")
 	mirrorDir, cleanup, err := fsutil.MakeTempMirror(afterMap, mirrorRoot)
 	if err != nil {

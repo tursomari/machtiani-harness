@@ -189,13 +189,8 @@ func TestApplyPerformsAtomicVerification(t *testing.T) {
 		t.Fatalf("workspace not updated after apply: %q", workspaceContent)
 	}
 
-	repoContent, err := os.ReadFile(filepath.Join(repoRoot, "foo.txt"))
-	if err != nil {
-		t.Fatalf("read repo file: %v", err)
-	}
-	if string(repoContent) != "new\n" {
-		t.Fatalf("repo root should reflect applied patch, got %q", repoContent)
-	}
+	// In snapshot-first mode, syncing the snapshot repo to the host is handled by
+	// the session runner, not the patcher runner.
 
 	if len(pr.applied) != 1 {
 		t.Fatalf("expected 1 logged patch, got %d", len(pr.applied))
@@ -203,8 +198,8 @@ func TestApplyPerformsAtomicVerification(t *testing.T) {
 	if pr.applied[0].ReversePath != res.ReversePatchPath {
 		t.Fatalf("reverse path not tracked in log")
 	}
-	if !pr.applied[0].Finalized {
-		t.Fatalf("expected patch marked finalized after apply")
+	if pr.applied[0].Finalized {
+		t.Fatalf("expected patch not marked finalized after apply")
 	}
 	if stub.lastParams.SessionID != "sess" {
 		t.Fatalf("session id not propagated: %+v", stub.lastParams)
@@ -331,25 +326,18 @@ func TestUndoRevertsPatch(t *testing.T) {
 		t.Fatalf("expected reverse patch path")
 	}
 
-	content, err := os.ReadFile(filepath.Join(repoRoot, "foo.txt"))
+	content, err := os.ReadFile(filepath.Join(workspaceDir, "foo.txt"))
 	if err != nil {
-		t.Fatalf("read repo file: %v", err)
+		t.Fatalf("read workspace file: %v", err)
 	}
 	if string(content) != "new\n" {
-		t.Fatalf("expected repo to contain new content before undo, got %q", content)
+		t.Fatalf("expected workspace to contain new content before undo, got %q", content)
 	}
 
 	if err := pr.Undo(res.ReversePatchPath); err != nil {
 		t.Fatalf("undo error: %v", err)
 	}
 
-	content, err = os.ReadFile(filepath.Join(repoRoot, "foo.txt"))
-	if err != nil {
-		t.Fatalf("read repo file: %v", err)
-	}
-	if string(content) != "old\n" {
-		t.Fatalf("expected repo to revert to original content, got %q", content)
-	}
 	workspaceContent, err := os.ReadFile(filepath.Join(workspaceDir, "foo.txt"))
 	if err != nil {
 		t.Fatalf("read workspace file: %v", err)

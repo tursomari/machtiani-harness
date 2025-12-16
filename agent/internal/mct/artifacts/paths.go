@@ -93,6 +93,9 @@ func SessionScratchDirectory(sessionID string) (string, error) {
 // repository it returns the repo-scoped `.machtiani/tmp` path. Otherwise it
 // returns the global `$HOME/.machtiani/tmp` location.
 func ScratchRoot() (string, error) {
+	if root := strings.TrimSpace(os.Getenv("MACHTIANI_TMP_ROOT")); root != "" {
+		return root, nil
+	}
 	root, local, err := projectRoot()
 	if err != nil {
 		return "", err
