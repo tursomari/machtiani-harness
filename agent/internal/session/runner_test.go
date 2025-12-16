@@ -205,8 +205,8 @@ func TestStartTranscriptIfNeededWritesHeader(t *testing.T) {
 		t.Fatalf("expected transcript to start")
 	}
 	content := tr.Content()
-	if !strings.Contains(content, "***Investigate the Goal***") {
-		t.Fatalf("header missing emphasized description; got %q", content)
+	if !strings.Contains(content, "Investigate the Goal") {
+		t.Fatalf("header missing description; got %q", content)
 	}
 	if !strings.Contains(content, "== PROBLEM:\n\nOriginal prompt") {
 		t.Fatalf("header missing problem context; got %q", content)

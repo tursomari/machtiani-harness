@@ -141,23 +141,23 @@ func formatGoalSection(goal string) string {
 
 	contextBlocks := extractGoalContext(paragraphs, detailsIdx)
 	if len(contextBlocks) == 0 {
-		return fmt.Sprintf("***%s***", descText)
+		return fmt.Sprintf("%s", descText)
 	}
 
 	if detailsIdx < 0 && len(contextBlocks) == 1 && !strings.Contains(contextBlocks[0], "\n") {
 		inline := normalizeInlineContext(contextBlocks[0])
 		if inline == "" {
-			return fmt.Sprintf("***%s***", descText)
+			return fmt.Sprintf("%s", descText)
 		}
-		return fmt.Sprintf("***%s:%s***", descText, inline)
+		return fmt.Sprintf("%s:%s", descText, inline)
 	}
 
 	context := strings.TrimSpace(strings.Join(contextBlocks, "\n\n"))
 	if context == "" {
-		return fmt.Sprintf("***%s***", descText)
+		return fmt.Sprintf("%s", descText)
 	}
 
-	return fmt.Sprintf("***%s***\n\n== PROBLEM:\n\n%s", descText, context)
+	return fmt.Sprintf("%s\n\n== PROBLEM:\n\n%s", descText, context)
 }
 
 func extractGoalDescription(paragraphs []string) (string, int) {
