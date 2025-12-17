@@ -40,3 +40,19 @@ git_synced_only = true
 # How sandbox changes are persisted back to the host.
 [patcher]
 strategy = "apply" # "apply"|"commit"|"export-only"
+
+# Snapshot workspace hydration settings.
+[workspace]
+# By default, only the root repository's `.git` is available in the snapshot.
+# Add repo-relative roots here to hydrate git metadata for submodules or nested
+# repos (e.g. fixtures) into the snapshot.
+#
+# Prefer the structured form (supports per-root branch allowlists):
+git_hydration = [
+  { root = ".", branches = ["master"] },
+  { root = "tests/repositories", branches = ["main"] },
+]
+
+# Legacy form (still supported when `git_hydration` is empty):
+# git_hydration_roots = ["."]
+# git_hydration_branches = ["main"]

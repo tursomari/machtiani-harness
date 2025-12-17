@@ -23,10 +23,29 @@ type Config struct {
 	Prompts          *PromptsConfig             `toml:"prompts"`
 	Environment      *EnvironmentConfig         `toml:"environment"`
 	Ignore           *IgnoreConfig              `toml:"ignore"`
+	Workspace        *WorkspaceConfig           `toml:"workspace"`
 	Patcher          *PatcherConfig             `toml:"patcher"`
 	Providers        map[string]ProviderConfig  `toml:"providers"`
 	Models           map[string]ModelDefinition `toml:"models"`
 	MetaOrchestrator *MetaOrchestratorConfig    `toml:"meta-orchestrator"`
+}
+
+// WorkspaceConfig controls snapshot hydration behavior.
+type WorkspaceConfig struct {
+	// GitHydration is a set of repo-relative roots and optional branch allowlists
+	// that control which directories should have their git metadata hydrated into
+	// the snapshot.
+	GitHydration []GitHydrationRule `toml:"git_hydration"`
+
+	// Legacy fields retained for backwards compatibility. When GitHydration is
+	// empty, GitHydrationRoots (and optionally GitHydrationBranches) are used.
+	GitHydrationRoots    []string `toml:"git_hydration_roots"`
+	GitHydrationBranches []string `toml:"git_hydration_branches"`
+}
+
+type GitHydrationRule struct {
+	Root     string   `toml:"root"`
+	Branches []string `toml:"branches"`
 }
 
 // IgnoreConfig controls how the agent filters files when syncing code into a
@@ -468,6 +487,44 @@ func parseConfig(path string) (Config, error) {
 	}
 	if v, ok := raw["default_model"].(string); ok {
 		cfg.DefaultModel = v
+	}
+	if workspaceRaw, ok := toMap(raw["workspace"]); ok {
+		workspace := &WorkspaceConfig{}
+		if rulesRaw, ok := toSlice(workspaceRaw["git_hydration"]); ok {
+			for idx, entry := range rulesRaw {
+				m, ok := toMap(entry)
+				if !ok {
+					return Config{}, fmt.Errorf("parse %s [workspace.git_hydration.%d]: expected table", path, idx)
+				}
+				rule := GitHydrationRule{}
+				if v, ok := m["root"].(string); ok {
+					rule.Root = v
+				}
+				if branches, ok := toSlice(m["branches"]); ok {
+					for _, b := range branches {
+						if s, ok := b.(string); ok {
+							rule.Branches = append(rule.Branches, s)
+						}
+					}
+				}
+				workspace.GitHydration = append(workspace.GitHydration, rule)
+			}
+		}
+		if roots, ok := toSlice(workspaceRaw["git_hydration_roots"]); ok {
+			for _, r := range roots {
+				if s, ok := r.(string); ok {
+					workspace.GitHydrationRoots = append(workspace.GitHydrationRoots, s)
+				}
+			}
+		}
+		if branches, ok := toSlice(workspaceRaw["git_hydration_branches"]); ok {
+			for _, b := range branches {
+				if s, ok := b.(string); ok {
+					workspace.GitHydrationBranches = append(workspace.GitHydrationBranches, s)
+				}
+			}
+		}
+		cfg.Workspace = workspace
 	}
 	if modelRaw, ok := toMap(raw["model"]); ok {
 		modelCfg, err := parseModelSection(path, modelRaw)
@@ -1168,6 +1225,11 @@ func toMap(v any) (map[string]any, bool) {
 	return m, ok
 }
 
+func toSlice(v any) ([]any, bool) {
+	slice, ok := v.([]any)
+	return slice, ok
+}
+
 func mapStringString(in map[string]any) (map[string]string, error) {
 	if len(in) == 0 {
 		return nil, nil
@@ -1377,6 +1439,13 @@ func cloneConfig(in Config) Config {
 		DefaultModel: in.DefaultModel,
 		Providers:    make(map[string]ProviderConfig, len(in.Providers)),
 		Models:       make(map[string]ModelDefinition, len(in.Models)),
+	}
+	if in.Workspace != nil {
+		ws := *in.Workspace
+		ws.GitHydration = append([]GitHydrationRule(nil), ws.GitHydration...)
+		ws.GitHydrationRoots = append([]string(nil), ws.GitHydrationRoots...)
+		ws.GitHydrationBranches = append([]string(nil), ws.GitHydrationBranches...)
+		clone.Workspace = &ws
 	}
 	if in.ShellAgent != nil {
 		agent := *in.ShellAgent

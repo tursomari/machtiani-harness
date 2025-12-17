@@ -44,6 +44,7 @@ var (
 	readmeCheckoutReadonlyFn = readmesync.CheckoutReadonlyREADME
 	tagFormatPattern         = regexp.MustCompile(`\[(?P<path>[^\[\]|]+?)\s*\|\s*(?P<start>[^:\]]+)\s*:\s*(?P<end>[^\]]+)\]`)
 	rewriteMissingPattern    = regexp.MustCompile(`edit\[(\d+)\]\s+rewrite requires existing file`)
+	workspaceRoot            string
 )
 
 type plannerProgressTracker struct {
@@ -400,14 +401,9 @@ func Run(ctx context.Context, opts Options) Result {
 	if abs, err := filepath.Abs(tmpRoot); err == nil {
 		tmpRoot = abs
 	}
-	workspaceRoot := filepath.Join(tmpRoot, "workspace-"+sessionID)
-	if _, _, err := workspace.EnsureRepoSnapshot(".", workspaceRoot); err != nil {
-		fmt.Fprintln(os.Stderr, "Warning: unable to prepare workspace repo snapshot:", err)
-	}
-	if err := tempdir.SetSessionRoot(workspaceRoot); err != nil {
-		fmt.Fprintln(os.Stderr, "Error preparing session temp root:", err)
-		return Result{ExitCode: 1, Err: err}
-	}
+	workspaceRoot = filepath.Join(tmpRoot, "workspace-"+sessionID)
+	// NOTE: workspace snapshot initialization happens after we resolve `repoRoot`
+	// via `newTrajectoryWriter` (see below).
 	patchStrategy := ""
 	if globalConfig.Patcher != nil {
 		patchStrategy = strings.TrimSpace(globalConfig.Patcher.Strategy)
@@ -457,6 +453,15 @@ func Run(ctx context.Context, opts Options) Result {
 	if trajErr != nil {
 		fmt.Fprintln(os.Stderr, "Trajectory setup error:", trajErr)
 		return Result{ExitCode: 1, Err: trajErr}
+	}
+	// Prepare the workspace repo snapshot using the resolved repo root.
+	workspaceRoot := filepath.Join(tmpRoot, "workspace-"+sessionID)
+	if _, _, err := workspace.EnsureRepoSnapshot(repoRoot, workspaceRoot); err != nil {
+		fmt.Fprintln(os.Stderr, "Warning: unable to prepare workspace repo snapshot:", err)
+	}
+	if err := tempdir.SetSessionRoot(workspaceRoot); err != nil {
+		fmt.Fprintln(os.Stderr, "Error preparing session temp root:", err)
+		return Result{ExitCode: 1, Err: err}
 	}
 	if trajectoryWriter != nil {
 		fmt.Fprintln(os.Stderr, "[trajectory] unified stream:", trajectoryWriter.Config().Path)
