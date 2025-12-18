@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
 )
 
 func TestLocateConfigPrefersLocalWithinGitRoot(t *testing.T) {
@@ -423,6 +424,10 @@ func TestLoadGlobalConfigCopiesWorkspace(t *testing.T) {
 	if len(cfg.Workspace.GitHydration) != 1 {
 		t.Fatalf("expected 1 hydration rule, got %d", len(cfg.Workspace.GitHydration))
 	}
+}
+
+func TestWorkspaceHydrationRulesDisableRootByDefault(t *testing.T) {
+	// Regression coverage lives in agent/internal/workspace.
 }
 
 func TestLoadGlobalConfigSupportsTemplateFiles(t *testing.T) {

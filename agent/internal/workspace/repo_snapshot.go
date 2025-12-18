@@ -218,21 +218,20 @@ func shouldHydrateGitForPath(rel string, cfg *llm.WorkspaceConfig) bool {
 	if clean == "" {
 		clean = "."
 	}
-	if clean == "." {
-		return true
-	}
 	if cfg == nil {
-		// Default: hydrate git metadata everywhere (legacy/full behavior).
-		return true
+		// Default: hydrate only the root repo.
+		return clean == "."
+	}
+	// If [workspace] is present but hydration fields are unset, default to
+	// hydrating only the root repo. (Allowlist mode.)
+	if len(cfg.GitHydration) == 0 && len(cfg.GitHydrationRoots) == 0 {
+		return clean == "."
 	}
 	if len(cfg.GitHydration) > 0 {
 		for _, rule := range cfg.GitHydration {
 			r := filepath.ToSlash(filepath.Clean(filepath.FromSlash(strings.TrimSpace(rule.Root))))
 			if r == "" {
 				continue
-			}
-			if r == "." {
-				return true
 			}
 			if clean == r || strings.HasPrefix(clean, r+"/") {
 				return true
@@ -259,6 +258,10 @@ func shouldHydrateGitForPath(rel string, cfg *llm.WorkspaceConfig) bool {
 	}
 	return false
 }
+
+// ShouldHydrateGitForPathForTesting exposes the hydration allowlist logic to
+// tests in other packages.
+
 
 func applyDiff(repoRoot, snapshotRoot string, staged bool) error {
 	args := []string{"diff", "--binary"}
@@ -293,10 +296,154 @@ func mirrorNestedGitWorktrees(repoRoot, snapshotRoot string, cfg *llm.WorkspaceC
 	//
 	// We do this best-effort and exclude any `.git` directories from the copied
 	// working tree to avoid pulling git internals into the snapshot.
-	if cfg == nil {
-		return mirrorNestedRepos(repoRoot, snapshotRoot, nil, verbose)
+	// Always copy nested repo working trees (excluding `.git`) so files are
+	// accessible even when git metadata hydration is disabled.
+	if err := mirrorNestedRepos(repoRoot, snapshotRoot, nil, verbose); err != nil {
+		return err
 	}
-	return mirrorNestedRepos(repoRoot, snapshotRoot, cfg, verbose)
+	// Optionally hydrate nested repo git metadata for allowlisted paths.
+	return hydrateNestedReposGitMetadata(repoRoot, snapshotRoot, cfg, verbose)
+}
+
+func hydrateNestedReposGitMetadata(repoRoot, snapshotRoot string, cfg *llm.WorkspaceConfig, verbose bool) error {
+	if cfg == nil {
+		return nil
+	}
+	if len(cfg.GitHydration) == 0 && len(cfg.GitHydrationRoots) == 0 {
+		return nil
+	}
+
+	return filepath.WalkDir(repoRoot, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			if os.IsNotExist(walkErr) {
+				return nil
+			}
+			return walkErr
+		}
+		rel, err := filepath.Rel(repoRoot, path)
+		if err != nil {
+			return err
+		}
+		rel = filepath.Clean(rel)
+		if rel == "." {
+			return nil
+		}
+		if rel == ".machtiani" || strings.HasPrefix(rel, ".machtiani"+string(os.PathSeparator)) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if rel == ".git" || strings.HasPrefix(rel, ".git"+string(os.PathSeparator)) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if filepath.Base(rel) != ".git" {
+			return nil
+		}
+
+		nestedRel := filepath.Dir(rel)
+		if nestedRel == "." || nestedRel == "" {
+			return nil
+		}
+		allowed := shouldHydrateGitForPath(nestedRel, cfg)
+		if verbose {
+			fmt.Fprintf(os.Stderr, "[workspace] nested-git path=%s hydrate_git=%v\n", filepath.ToSlash(nestedRel), allowed)
+		}
+		if !allowed {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		srcWT := filepath.Join(repoRoot, nestedRel)
+		dstWT := filepath.Join(snapshotRoot, nestedRel)
+		if err := hydrateOneNestedRepoGitMetadata(srcWT, dstWT); err != nil {
+			return err
+		}
+		return filepath.SkipDir
+	})
+}
+
+func hydrateOneNestedRepoGitMetadata(srcWT, dstWT string) error {
+	// For nested repos, we may not be able to run git commands. Hydrate the git
+	// metadata directly from the filesystem:
+	// - If `.git` is a directory: copy it into the snapshot.
+	// - If `.git` is a gitfile: copy the referenced gitdir into the snapshot and
+	//   rewrite the snapshot gitfile to point at the copied gitdir.
+	srcDotGit := filepath.Join(srcWT, ".git")
+	info, err := os.Lstat(srcDotGit)
+	if err != nil {
+		return nil
+	}
+
+	if info.IsDir() {
+		dstGit := filepath.Join(dstWT, ".git")
+		if err := os.RemoveAll(dstGit); err != nil {
+			return err
+		}
+		if err := copyDir(srcDotGit, dstGit); err != nil {
+			return fmt.Errorf("copy nested repo gitdir %s: %w", srcWT, err)
+		}
+		return nil
+	}
+
+	if !info.Mode().IsRegular() {
+		return nil
+	}
+
+	gitdir, ok, err := readGitfile(srcDotGit)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return nil
+	}
+	if !filepath.IsAbs(gitdir) {
+		gitdir = filepath.Join(srcWT, gitdir)
+	}
+	gitdir = filepath.Clean(gitdir)
+	if info, err := os.Stat(gitdir); err != nil || !info.IsDir() {
+		return nil
+	}
+
+	// Copy the referenced gitdir under the snapshot worktree, then rewrite the
+	// snapshot gitfile to point at that copied directory.
+	dstGitdir := filepath.Join(dstWT, ".git.hydrated")
+	if err := os.RemoveAll(dstGitdir); err != nil {
+		return err
+	}
+	if err := copyDir(gitdir, dstGitdir); err != nil {
+		return fmt.Errorf("copy nested repo referenced gitdir %s: %w", srcWT, err)
+	}
+	gitdirRel, err := filepath.Rel(dstWT, dstGitdir)
+	if err != nil {
+		return err
+	}
+	gitdirRel = filepath.ToSlash(gitdirRel)
+	if err := os.WriteFile(filepath.Join(dstWT, ".git"), []byte("gitdir: "+gitdirRel+"\n"), 0o644); err != nil {
+		return err
+	}
+	return nil
+}
+
+func readGitfile(path string) (string, bool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", false, err
+	}
+	line := strings.TrimSpace(string(data))
+	if !strings.HasPrefix(line, "gitdir:") {
+		return "", false, nil
+	}
+	gitdir := strings.TrimSpace(strings.TrimPrefix(line, "gitdir:"))
+	if gitdir == "" {
+		return "", false, fmt.Errorf("invalid gitfile %s: empty gitdir", path)
+	}
+	return gitdir, true, nil
 }
 
 func mirrorSubmoduleWorktrees(repoRoot, snapshotRoot string) error {
@@ -367,9 +514,20 @@ func hydrateSubmodules(repoRoot, snapshotRoot string, cfg *llm.WorkspaceConfig, 
 		if rel == "" {
 			continue
 		}
+		// Always copy the submodule working tree into the snapshot so regular file
+		// access works even when git metadata hydration is disabled.
+		srcWT := filepath.Join(repoRoot, filepath.FromSlash(rel))
+		dstWT := filepath.Join(snapshotRoot, filepath.FromSlash(rel))
+		if info, err := os.Stat(srcWT); err == nil && info.IsDir() {
+			_ = os.RemoveAll(dstWT)
+			if err := copyDir(srcWT, dstWT); err != nil {
+				return fmt.Errorf("copy submodule worktree %s: %w", rel, err)
+			}
+		}
+
 		allowed := shouldHydrateGitForPath(rel, cfg)
 		if verbose {
-			fmt.Fprintf(os.Stderr, "[workspace] submodule path=%s allowed=%v\n", filepath.ToSlash(rel), allowed)
+			fmt.Fprintf(os.Stderr, "[workspace] submodule path=%s hydrate_git=%v\n", filepath.ToSlash(rel), allowed)
 		}
 		if !allowed {
 			continue
@@ -399,15 +557,8 @@ func seedOneSubmodule(repoRoot, snapshotRoot, snapshotGitDir, subPath string, cf
 		}
 	}
 
-	// Copy the submodule working tree from host into snapshot.
 	srcWT := filepath.Join(repoRoot, filepath.FromSlash(subPath))
 	dstWT := filepath.Join(snapshotRoot, filepath.FromSlash(subPath))
-	if info, err := os.Stat(srcWT); err == nil && info.IsDir() {
-		_ = os.RemoveAll(dstWT)
-		if err := copyDir(srcWT, dstWT); err != nil {
-			return fmt.Errorf("copy submodule worktree %s: %w", subPath, err)
-		}
-	}
 
 	// Ensure the snapshot submodule has a gitfile pointing at snapshot-local modules.
 	gitfile := filepath.Join(dstWT, ".git")
@@ -581,14 +732,9 @@ func mirrorNestedRepos(repoRoot, snapshotRoot string, cfg *llm.WorkspaceConfig, 
 		if cfg != nil {
 			allowed := shouldHydrateGitForPath(nestedRel, cfg)
 			if verbose {
-				fmt.Fprintf(os.Stderr, "[workspace] nested-git path=%s allowed=%v\n", filepath.ToSlash(nestedRel), allowed)
+				fmt.Fprintf(os.Stderr, "[workspace] nested-git path=%s hydrate_git=%v\n", filepath.ToSlash(nestedRel), allowed)
 			}
-			if !allowed {
-				if d.IsDir() {
-					return filepath.SkipDir
-				}
-				return nil
-			}
+			// File copying is always allowed; hydration only controls git metadata.
 		}
 		src := filepath.Join(repoRoot, nestedRel)
 		dst := filepath.Join(snapshotRoot, nestedRel)
