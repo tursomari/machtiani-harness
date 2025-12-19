@@ -265,6 +265,39 @@ func listSnapshotFiles(snapshotRoot string) ([]string, error) {
 	return out, nil
 }
 
+
+func filterByGitIgnore(repoRoot string, paths []string) (map[string]bool, error) {
+	if len(paths) == 0 {
+		return make(map[string]bool), nil
+	}
+	if _, err := os.Stat(filepath.Join(repoRoot, ".gitignore")); err != nil {
+		// If there's no `.gitignore`, treat as "nothing ignored".
+		//
+		// In tests we often sync from a snapshot directory that isn't a Git repo.
+		// Running `git check-ignore --no-index` in that directory fails with exit
+		// status 128, but we still want ignore-by-config and hard-excludes to work.
+		return make(map[string]bool), nil
+	}
+	cmd := exec.Command("git", "check-ignore", "--stdin", "--no-index")
+	cmd.Dir = repoRoot
+	cmd.Stdin = strings.NewReader(strings.Join(paths, "\n"))
+	output, err := cmd.Output()
+	if err != nil {
+		// `git check-ignore` uses exit status 1 when no paths are ignored.
+		if ee, ok := err.(*exec.ExitError); !ok || ee.ExitCode() != 1 {
+			return nil, err
+		}
+	}
+	ignoredMap := make(map[string]bool)
+	for _, line := range strings.Split(string(output), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			ignoredMap[line] = true
+		}
+	}
+	return ignoredMap, nil
+}
+
 func syncCandidateSet(repoRoot string, created map[string]struct{}, ignoreCfg *llm.IgnoreConfig) (map[string]struct{}, error) {
 	tracked, err := listHostTracked(repoRoot)
 	if err != nil {

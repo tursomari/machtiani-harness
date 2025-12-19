@@ -43,6 +43,9 @@ func SyncSnapshotToHost(snapshotRepoRoot, hostRepoRoot, patchDir string) error {
 	if err != nil {
 		return fmt.Errorf("list snapshot files: %w", err)
 	}
+
+	// 1. Identify potential new files (not hard-excluded, not in config, not currently tracked)
+	var potentialNew []string
 	for _, rel := range snapshotFiles {
 		if hardExcluded(rel) || ignoredByConfig(rel, ignoreCfg) {
 			continue
@@ -50,7 +53,21 @@ func SyncSnapshotToHost(snapshotRepoRoot, hostRepoRoot, patchDir string) error {
 		if _, ok := candidates[rel]; ok {
 			continue
 		}
-		// Only adopt if it exists in snapshot and isn't in host tracked set.
+		potentialNew = append(potentialNew, rel)
+	}
+
+	// 2. Query Git to see if these files should be ignored by the host repo's
+	// `.gitignore`.
+	ignoredByGit, err := filterByGitIgnore(hostRepoRoot, potentialNew)
+	if err != nil {
+		return fmt.Errorf("git ignore check: %w", err)
+	}
+
+	// 3. Final adoption: only add files that passed the git-ignore check to BOTH sets
+	for _, rel := range potentialNew {
+		if ignoredByGit[rel] {
+			continue
+		}
 		candidates[rel] = struct{}{}
 		m.CreatedPaths[rel] = struct{}{}
 	}
@@ -58,6 +75,16 @@ func SyncSnapshotToHost(snapshotRepoRoot, hostRepoRoot, patchDir string) error {
 	var conflictErrs []error
 	for _, rel := range relPathList(candidates) {
 		if hardExcluded(rel) || ignoredByConfig(rel, ignoreCfg) {
+			delete(m.CreatedPaths, rel)
+			continue
+		}
+		if strings.HasPrefix(filepath.Base(rel), ".") {
+			// Extra safety: never sync dotfiles created in snapshot but not tracked.
+			// These are often caches or agent internals and are commonly gitignored.
+			delete(m.CreatedPaths, rel)
+			continue
+		}
+		if ignoredByGit, err := filterByGitIgnore(hostRepoRoot, []string{rel}); err == nil && ignoredByGit[rel] {
 			delete(m.CreatedPaths, rel)
 			continue
 		}
