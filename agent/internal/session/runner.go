@@ -770,7 +770,6 @@ func Run(ctx context.Context, opts Options) Result {
 	var pRunner *runner.PatcherRunner
 	if cfg.patch {
 		patchLogger := log.New(os.Stderr, "[patcher] ", log.LstdFlags)
-		snapshotRepoRoot := filepath.Join(tempdir.SessionRoot(), "repo")
 		pr := &runner.PatcherRunner{
 			Enabled:   true,
 			Verbose:   cfg.verbose,
@@ -781,7 +780,9 @@ func Run(ctx context.Context, opts Options) Result {
 				patchersvc.WithLogger(patchLogger),
 				patchersvc.WithStrictPatchMode(effectiveStrict),
 			),
-			RepoRoot:        snapshotRepoRoot,
+			// Apply patches to the host checkout (repoRoot) atomically.
+			// The patcher service operates on WorkspaceRoot (snapshotRepoRoot).
+			RepoRoot:        repoRoot,
 			PersistTmpData:  cfg.persistTmpData,
 			SessionTempRoot: sessionTempRoot,
 			FullMode:        cfg.patchFull,
@@ -1966,8 +1967,12 @@ func Run(ctx context.Context, opts Options) Result {
 			if useShellAgent {
 				shouldSync = true
 			}
-		case planner.DecisionPatch, planner.DecisionAccept, planner.DecisionReject:
-			// No sync for patcher turns; reviews are in-memory operations only
+		case planner.DecisionPatch:
+			// Patcher applies changes directly to the host checkout.
+			// No snapshot->host sync needed.
+			shouldSync = false
+		case planner.DecisionAccept, planner.DecisionReject:
+			// Reviews don't modify the snapshot.
 			shouldSync = false
 		}
 		if shouldSync {

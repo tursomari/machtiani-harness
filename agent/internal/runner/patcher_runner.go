@@ -147,6 +147,9 @@ func (p *PatcherRunner) Apply(ctx context.Context, instr mctpatcher.Instructions
 	if err != nil {
 		return nil, err
 	}
+	if verbose || p.Verbose {
+		fmt.Fprintf(os.Stderr, "[patcher] apply repo_root=%s workspace=%s patch=%s\n", p.repoAbs, p.workspaceDir, strings.TrimSpace(result.PatchPath))
+	}
 	if result.Sequence == 0 {
 		result.Sequence = seq
 	}
@@ -171,9 +174,6 @@ func (p *PatcherRunner) Apply(ctx context.Context, instr mctpatcher.Instructions
 			_ = gitops.ReversePatchInDir(p.repoAbs, reversePath, false)
 		}
 	}()
-
-	// Snapshot-first mode: do not validate/apply against RepoRoot here.
-	// The session runner is responsible for syncing snapshot->host.
 
 	if !workspacePatched {
 		if err = gitops.ApplyPatchInDir(p.workspaceDir, result.PatchPath, verbose || p.Verbose); err != nil {
@@ -222,14 +222,24 @@ func (p *PatcherRunner) Apply(ctx context.Context, instr mctpatcher.Instructions
 	}
 	workspacePatched = true
 
-	// Do not apply patches to RepoRoot here.
+	// Atomically apply to the host (RepoRoot).
 	//
-	// RepoRoot may point at the host checkout in some configurations. The session
-	// runner is responsible for syncing snapshot->host at the end of each turn.
-	// Applying here can create divergence and make the strict sync fail.
-	repoPatched = false
-	for _, rel := range result.FilesModified {
-		_ = rel
+	// In the session runner, RepoRoot points at the host checkout. The patcher
+	// service operates on the workspace (snapshot). We validate on the workspace,
+	// then apply the exact patch to the host.
+	//
+	// If applying to RepoRoot fails, deferred cleanup reverses both locations.
+	if filepath.Clean(p.repoAbs) == filepath.Clean(p.workspaceDir) {
+		// Nothing to do: workspace and RepoRoot are the same directory.
+		repoPatched = true
+	} else {
+		if err = gitops.ApplyPatchInDirWithCheck(p.repoAbs, result.PatchPath); err != nil {
+			return nil, fmt.Errorf("check patch applicability in repo root: %w", err)
+		}
+		if err = gitops.ApplyPatchInDir(p.repoAbs, result.PatchPath, verbose || p.Verbose); err != nil {
+			return nil, fmt.Errorf("apply patch in repo root: %w", err)
+		}
+		repoPatched = true
 	}
 
 	result.ReversePatchPath = reversePath
@@ -271,8 +281,7 @@ func (p *PatcherRunner) Undo(reversePatchPath string) error {
 	if entry != nil {
 		forwardPath = strings.TrimSpace(entry.Path)
 	}
-	// Snapshot-first mode: only revert in the patcher workspace.
-	// Host syncing is handled outside the patcher runner.
+	// Revert both the patcher workspace and RepoRoot.
 	if strings.TrimSpace(forwardPath) != "" {
 		if err := gitops.ReverseApplyInDir(p.workspaceDir, forwardPath, p.Verbose); err != nil {
 			if err2 := gitops.ReversePatchInDir(p.workspaceDir, reversePath, p.Verbose); err2 != nil {
@@ -283,6 +292,20 @@ func (p *PatcherRunner) Undo(reversePatchPath string) error {
 	} else {
 		if err := gitops.ReversePatchInDir(p.workspaceDir, reversePath, p.Verbose); err != nil {
 			return fmt.Errorf("undo patch in workspace: %w", err)
+		}
+	}
+	if p.repoAbs != "" && filepath.Clean(p.repoAbs) != filepath.Clean(p.workspaceDir) {
+		if strings.TrimSpace(forwardPath) != "" {
+			if err := gitops.ReverseApplyInDir(p.repoAbs, forwardPath, p.Verbose); err != nil {
+				if err2 := gitops.ReversePatchInDir(p.repoAbs, reversePath, p.Verbose); err2 != nil {
+					return fmt.Errorf("undo patch in repo root: %v (fallback failed: %w)", err, err2)
+				}
+				return fmt.Errorf("undo patch in repo root via -R failed; used reverse patch fallback")
+			}
+		} else {
+			if err := gitops.ReversePatchInDir(p.repoAbs, reversePath, p.Verbose); err != nil {
+				return fmt.Errorf("undo patch in repo root: %w", err)
+			}
 		}
 	}
 	if entry != nil {
