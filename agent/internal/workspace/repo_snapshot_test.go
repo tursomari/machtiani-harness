@@ -46,8 +46,7 @@ func TestMirrorNestedRepos_CopiesFilesWhenHydrationDisabled(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	cfg := &llm.WorkspaceConfig{}
-	if err := mirrorNestedRepos(repoRoot, snapshotRoot, cfg, false); err != nil {
+	if err := mirrorNestedRepos(repoRoot, snapshotRoot, nil, false); err != nil {
 		t.Fatalf("mirrorNestedRepos: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(snapshotRoot, "nested", "LICENSE")); err != nil {
@@ -76,7 +75,7 @@ func TestHydrateNestedReposGitMetadata_CopiesGitDir(t *testing.T) {
 	}
 
 	cfg := &llm.WorkspaceConfig{GitHydration: []llm.GitHydrationRule{{Root: "nested"}}}
-	if err := hydrateNestedReposGitMetadata(repoRoot, snapshotRoot, cfg, false); err != nil {
+	if err := hydrateNestedReposGitMetadata(repoRoot, snapshotRoot, cfg, nil, false); err != nil {
 		t.Fatalf("hydrateNestedReposGitMetadata: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(snapshotRoot, "nested", ".git", "HEAD")); err != nil {
@@ -111,7 +110,7 @@ func TestHydrateNestedReposGitMetadata_HydratesGitfile(t *testing.T) {
 	}
 
 	cfg := &llm.WorkspaceConfig{GitHydration: []llm.GitHydrationRule{{Root: "nested"}}}
-	if err := hydrateNestedReposGitMetadata(repoRoot, snapshotRoot, cfg, false); err != nil {
+	if err := hydrateNestedReposGitMetadata(repoRoot, snapshotRoot, cfg, nil, false); err != nil {
 		t.Fatalf("hydrateNestedReposGitMetadata: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(snapshotRoot, "nested", ".git.hydrated", "HEAD")); err != nil {

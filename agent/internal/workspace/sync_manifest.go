@@ -17,10 +17,10 @@ import (
 )
 
 type syncManifest struct {
-	Version       int                       `json:"version"`
-	Baseline      map[string]manifestEntry  `json:"baseline"`
-	CreatedPaths  map[string]struct{}       `json:"created_paths"`
-	IgnoreConfig  *llm.IgnoreConfig         `json:"ignore_config,omitempty"`
+	Version      int                      `json:"version"`
+	Baseline     map[string]manifestEntry `json:"baseline"`
+	CreatedPaths map[string]struct{}      `json:"created_paths"`
+	IgnoreConfig *llm.IgnoreConfig        `json:"ignore_config,omitempty"`
 }
 
 type manifestEntry struct {
@@ -162,6 +162,9 @@ func hardExcluded(rel string) bool {
 		return true
 	}
 	if clean == ".git" || strings.HasPrefix(clean, ".git/") || strings.Contains(clean, "/.git/") || strings.HasSuffix(clean, "/.git") {
+		return true
+	}
+	if clean == ".git.hydrated" || strings.HasPrefix(clean, ".git.hydrated/") || strings.Contains(clean, "/.git.hydrated/") || strings.HasSuffix(clean, "/.git.hydrated") {
 		return true
 	}
 	if clean == ".shell-agent" || strings.HasPrefix(clean, ".shell-agent/") || strings.Contains(clean, "/.shell-agent/") || strings.HasSuffix(clean, "/.shell-agent") {

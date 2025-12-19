@@ -123,11 +123,11 @@ func EnsureRepoSnapshot(workingDir, dstRoot string) (string, func(), error) {
 	// Worktrees share the same reference database as the main repo, so "hiding" refs
 	// in the snapshot by deleting them actually deletes them in the host repo.
 
-	if err := hydrateSubmodules(repoRoot, snapshotRoot, hydrationCfg, verbose); err != nil {
+	if err := hydrateSubmodules(repoRoot, snapshotRoot, hydrationCfg, ignoreCfg, verbose); err != nil {
 		cleanup()
 		return "", nil, err
 	}
-	if err := mirrorNestedGitWorktrees(repoRoot, snapshotRoot, hydrationCfg, verbose); err != nil {
+	if err := mirrorNestedGitWorktrees(repoRoot, snapshotRoot, hydrationCfg, ignoreCfg, verbose); err != nil {
 		cleanup()
 		return "", nil, err
 	}
@@ -262,7 +262,6 @@ func shouldHydrateGitForPath(rel string, cfg *llm.WorkspaceConfig) bool {
 // ShouldHydrateGitForPathForTesting exposes the hydration allowlist logic to
 // tests in other packages.
 
-
 func applyDiff(repoRoot, snapshotRoot string, staged bool) error {
 	args := []string{"diff", "--binary"}
 	if staged {
@@ -290,7 +289,7 @@ func applyDiff(repoRoot, snapshotRoot string, staged bool) error {
 	return nil
 }
 
-func mirrorNestedGitWorktrees(repoRoot, snapshotRoot string, cfg *llm.WorkspaceConfig, verbose bool) error {
+func mirrorNestedGitWorktrees(repoRoot, snapshotRoot string, cfg *llm.WorkspaceConfig, ignoreCfg *llm.IgnoreConfig, verbose bool) error {
 	// Copy nested git repos (non-submodule) so tools can inspect fixtures that
 	// are themselves git repositories.
 	//
@@ -298,14 +297,14 @@ func mirrorNestedGitWorktrees(repoRoot, snapshotRoot string, cfg *llm.WorkspaceC
 	// working tree to avoid pulling git internals into the snapshot.
 	// Always copy nested repo working trees (excluding `.git`) so files are
 	// accessible even when git metadata hydration is disabled.
-	if err := mirrorNestedRepos(repoRoot, snapshotRoot, nil, verbose); err != nil {
+	if err := mirrorNestedRepos(repoRoot, snapshotRoot, ignoreCfg, verbose); err != nil {
 		return err
 	}
 	// Optionally hydrate nested repo git metadata for allowlisted paths.
-	return hydrateNestedReposGitMetadata(repoRoot, snapshotRoot, cfg, verbose)
+	return hydrateNestedReposGitMetadata(repoRoot, snapshotRoot, cfg, ignoreCfg, verbose)
 }
 
-func hydrateNestedReposGitMetadata(repoRoot, snapshotRoot string, cfg *llm.WorkspaceConfig, verbose bool) error {
+func hydrateNestedReposGitMetadata(repoRoot, snapshotRoot string, cfg *llm.WorkspaceConfig, ignoreCfg *llm.IgnoreConfig, verbose bool) error {
 	if cfg == nil {
 		return nil
 	}
@@ -340,6 +339,14 @@ func hydrateNestedReposGitMetadata(repoRoot, snapshotRoot string, cfg *llm.Works
 			}
 			return nil
 		}
+
+		if ignoredByConfig(rel, ignoreCfg) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
 		if filepath.Base(rel) != ".git" {
 			return nil
 		}
@@ -483,7 +490,7 @@ func mirrorSubmoduleWorktrees(repoRoot, snapshotRoot string) error {
 	return nil
 }
 
-func hydrateSubmodules(repoRoot, snapshotRoot string, cfg *llm.WorkspaceConfig, verbose bool) error {
+func hydrateSubmodules(repoRoot, snapshotRoot string, cfg *llm.WorkspaceConfig, ignoreCfg *llm.IgnoreConfig, verbose bool) error {
 	// Offline-only: seed snapshot .git/modules from host and rewrite submodule
 	// gitfiles to point at the snapshot-local modules.
 	//
@@ -514,6 +521,11 @@ func hydrateSubmodules(repoRoot, snapshotRoot string, cfg *llm.WorkspaceConfig, 
 		if rel == "" {
 			continue
 		}
+
+		if ignoredByConfig(rel, ignoreCfg) {
+			continue
+		}
+
 		// Always copy the submodule working tree into the snapshot so regular file
 		// access works even when git metadata hydration is disabled.
 		srcWT := filepath.Join(repoRoot, filepath.FromSlash(rel))
@@ -532,14 +544,14 @@ func hydrateSubmodules(repoRoot, snapshotRoot string, cfg *llm.WorkspaceConfig, 
 		if !allowed {
 			continue
 		}
-		if err := seedOneSubmodule(repoRoot, snapshotRoot, snapshotGitDir, rel, cfg, rel, verbose); err != nil {
+		if err := seedOneSubmodule(repoRoot, snapshotRoot, snapshotGitDir, rel, cfg, ignoreCfg, rel, verbose); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func seedOneSubmodule(repoRoot, snapshotRoot, snapshotGitDir, subPath string, cfg *llm.WorkspaceConfig, allowPrefix string, verbose bool) error {
+func seedOneSubmodule(repoRoot, snapshotRoot, snapshotGitDir, subPath string, cfg *llm.WorkspaceConfig, ignoreCfg *llm.IgnoreConfig, allowPrefix string, verbose bool) error {
 	// Copy host module gitdir into snapshot module gitdir.
 	hostModule := filepath.Join(repoRoot, ".git", "modules", filepath.FromSlash(subPath))
 	snapModule := filepath.Join(snapshotGitDir, "modules", filepath.FromSlash(subPath))
@@ -609,7 +621,7 @@ func seedOneSubmodule(repoRoot, snapshotRoot, snapshotGitDir, subPath string, cf
 						continue
 					}
 				}
-				if err := seedOneSubmodule(repoRoot, snapshotRoot, snapshotGitDir, nestedPath, cfg, allowPrefix, verbose); err != nil {
+				if err := seedOneSubmodule(repoRoot, snapshotRoot, snapshotGitDir, nestedPath, cfg, ignoreCfg, allowPrefix, verbose); err != nil {
 					return err
 				}
 			}
@@ -691,7 +703,7 @@ func copyDir(src, dst string) error {
 	})
 }
 
-func mirrorNestedRepos(repoRoot, snapshotRoot string, cfg *llm.WorkspaceConfig, verbose bool) error {
+func mirrorNestedRepos(repoRoot, snapshotRoot string, ignoreCfg *llm.IgnoreConfig, verbose bool) error {
 	// Find nested git repos by looking for `.git` directories/files under the host
 	// checkout. Skip `.git` at the repo root and any `.git` under `.git/modules`.
 	return filepath.WalkDir(repoRoot, func(path string, d os.DirEntry, walkErr error) error {
@@ -721,6 +733,14 @@ func mirrorNestedRepos(repoRoot, snapshotRoot string, cfg *llm.WorkspaceConfig, 
 			}
 			return nil
 		}
+
+		if ignoredByConfig(rel, ignoreCfg) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
 		base := filepath.Base(rel)
 		if base != ".git" {
 			return nil
@@ -728,13 +748,6 @@ func mirrorNestedRepos(repoRoot, snapshotRoot string, cfg *llm.WorkspaceConfig, 
 		nestedRel := filepath.Dir(rel)
 		if nestedRel == "." || nestedRel == "" {
 			return nil
-		}
-		if cfg != nil {
-			allowed := shouldHydrateGitForPath(nestedRel, cfg)
-			if verbose {
-				fmt.Fprintf(os.Stderr, "[workspace] nested-git path=%s hydrate_git=%v\n", filepath.ToSlash(nestedRel), allowed)
-			}
-			// File copying is always allowed; hydration only controls git metadata.
 		}
 		src := filepath.Join(repoRoot, nestedRel)
 		dst := filepath.Join(snapshotRoot, nestedRel)

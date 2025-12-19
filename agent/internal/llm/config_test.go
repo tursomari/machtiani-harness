@@ -7,7 +7,6 @@ import (
 	"runtime"
 	"strings"
 	"testing"
-
 )
 
 func TestLocateConfigPrefersLocalWithinGitRoot(t *testing.T) {
@@ -103,6 +102,11 @@ api_key = "provider-key"
 [models.alias]
 provider = "fake"
 model = "alias-impl"
+
+[ignore]
+paths = ["tests/tmp/", "tests/repositories/undici"]
+extensions = [".log", ".tmp"]
+git_synced_only = true
 `
 
 	path := filepath.Join(t.TempDir(), "config.toml")
@@ -170,6 +174,18 @@ model = "alias-impl"
 	}
 	if cfg.Environment == nil || cfg.Environment.EnvVars["FOO"] != "bar" {
 		t.Fatalf("expected environment env_vars FOO=bar, got %+v", cfg.Environment)
+	}
+	if cfg.Ignore == nil {
+		t.Fatalf("expected ignore section to be parsed")
+	}
+	if len(cfg.Ignore.Paths) != 2 || cfg.Ignore.Paths[0] != "tests/tmp/" || cfg.Ignore.Paths[1] != "tests/repositories/undici" {
+		t.Fatalf("unexpected ignore paths: %v", cfg.Ignore.Paths)
+	}
+	if len(cfg.Ignore.Extensions) != 2 || cfg.Ignore.Extensions[0] != ".log" || cfg.Ignore.Extensions[1] != ".tmp" {
+		t.Fatalf("unexpected ignore extensions: %v", cfg.Ignore.Extensions)
+	}
+	if !cfg.Ignore.GitSyncedOnly {
+		t.Fatalf("expected git_synced_only to be true")
 	}
 }
 

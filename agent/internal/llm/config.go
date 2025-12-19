@@ -526,6 +526,27 @@ func parseConfig(path string) (Config, error) {
 		}
 		cfg.Workspace = workspace
 	}
+	if ignoreRaw, ok := toMap(raw["ignore"]); ok {
+		ignore := &IgnoreConfig{}
+		if paths, ok := toSlice(ignoreRaw["paths"]); ok {
+			for _, p := range paths {
+				if s, ok := p.(string); ok {
+					ignore.Paths = append(ignore.Paths, s)
+				}
+			}
+		}
+		if extensions, ok := toSlice(ignoreRaw["extensions"]); ok {
+			for _, e := range extensions {
+				if s, ok := e.(string); ok {
+					ignore.Extensions = append(ignore.Extensions, s)
+				}
+			}
+		}
+		if v, ok := ignoreRaw["git_synced_only"].(bool); ok {
+			ignore.GitSyncedOnly = v
+		}
+		cfg.Ignore = ignore
+	}
 	if modelRaw, ok := toMap(raw["model"]); ok {
 		modelCfg, err := parseModelSection(path, modelRaw)
 		if err != nil {
@@ -754,15 +775,15 @@ func parseShellAgentSection(path, section string, data map[string]any) (*ShellAg
 			p.ActionObservationTemplate = val
 			p.actionObservationTemplateSet = true
 		}
-	if raw, ok := data["lightweight_system_template"]; ok {
-		val, err := templateStringFromRaw(path, section, "lightweight_system_template", raw)
-		if err != nil {
-			return nil, nil, nil, err
+		if raw, ok := data["lightweight_system_template"]; ok {
+			val, err := templateStringFromRaw(path, section, "lightweight_system_template", raw)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			p := ensureShellPrompts()
+			p.LightweightSystemTemplate = val
+			p.lightweightSystemTemplateSet = true
 		}
-		p := ensureShellPrompts()
-		p.LightweightSystemTemplate = val
-		p.lightweightSystemTemplateSet = true
-	}
 		if raw, ok := data["lightweight_intent_template"]; ok {
 			val, err := templateStringFromRaw(path, section, "lightweight_intent_template", raw)
 			if err != nil {
@@ -1446,6 +1467,12 @@ func cloneConfig(in Config) Config {
 		ws.GitHydrationRoots = append([]string(nil), ws.GitHydrationRoots...)
 		ws.GitHydrationBranches = append([]string(nil), ws.GitHydrationBranches...)
 		clone.Workspace = &ws
+	}
+	if in.Ignore != nil {
+		ignore := *in.Ignore
+		ignore.Paths = append([]string(nil), ignore.Paths...)
+		ignore.Extensions = append([]string(nil), ignore.Extensions...)
+		clone.Ignore = &ignore
 	}
 	if in.ShellAgent != nil {
 		agent := *in.ShellAgent
