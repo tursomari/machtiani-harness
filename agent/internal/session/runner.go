@@ -770,25 +770,25 @@ func Run(ctx context.Context, opts Options) Result {
 	var pRunner *runner.PatcherRunner
 	if cfg.patch {
 		patchLogger := log.New(os.Stderr, "[patcher] ", log.LstdFlags)
-			snapshotRepoRoot := filepath.Join(tempdir.SessionRoot(), "repo")
-			pr := &runner.PatcherRunner{
-				Enabled:   true,
-				Verbose:   cfg.verbose,
-				DryRun:    cfg.dryRun,
-				SessionID: sessionID,
+		snapshotRepoRoot := filepath.Join(tempdir.SessionRoot(), "repo")
+		pr := &runner.PatcherRunner{
+			Enabled:   true,
+			Verbose:   cfg.verbose,
+			DryRun:    cfg.dryRun,
+			SessionID: sessionID,
 			Runtime:   models.patcher.toPromptRuntime(),
 			Service: patchersvc.NewService(
 				patchersvc.WithLogger(patchLogger),
 				patchersvc.WithStrictPatchMode(effectiveStrict),
 			),
-				RepoRoot:        snapshotRepoRoot,
-				PersistTmpData:  cfg.persistTmpData,
-				SessionTempRoot: sessionTempRoot,
-				FullMode:        cfg.patchFull,
-				WorkspaceFactory: func(root string) (string, func(), error) {
-					return root, func() {}, nil
-				},
-			}
+			RepoRoot:        snapshotRepoRoot,
+			PersistTmpData:  cfg.persistTmpData,
+			SessionTempRoot: sessionTempRoot,
+			FullMode:        cfg.patchFull,
+			WorkspaceFactory: func(root string) (string, func(), error) {
+				return root, func() {}, nil
+			},
+		}
 		if err := pr.Resolve(); err != nil {
 			if cfg.verbose {
 				fmt.Fprintln(os.Stderr, "[patcher] resolve warning:", err)
@@ -909,16 +909,10 @@ func Run(ctx context.Context, opts Options) Result {
 	}()
 
 	parentSpanID := ""
+	useShellAgent := false
 	for {
 		if err := rootCtx.Err(); err != nil {
 			return interruptedResult(err)
-		}
-		// Preflight sync: refresh the snapshot from the host repo.
-		if root := strings.TrimSpace(tempdir.SessionRoot()); root != "" {
-			if _, _, err := workspace.EnsureRepoSnapshot(repoRoot, root); err != nil {
-				fmt.Fprintln(os.Stderr, "Error: host->snapshot refresh failed:", err)
-				return Result{ExitCode: 1, Err: err}
-			}
 		}
 		step := userTurnCounter + 1
 		var turn *turnTelemetry
@@ -1295,7 +1289,7 @@ func Run(ctx context.Context, opts Options) Result {
 			if cfg.verbose {
 				fmt.Fprintln(os.Stderr, "Question:", question)
 			}
-			useShellAgent := cfg.shellAgent
+			useShellAgent = cfg.shellAgent
 			preflightNote := ""
 			var preflightErr error
 			preflightReply := ""
@@ -1322,6 +1316,18 @@ func Run(ctx context.Context, opts Options) Result {
 					preflightNote = fmt.Sprintf("preflight routing: %s (error fallback: %s) — %s", routeLabel, trimTo(preflightErr.Error(), 120), routeExplanation)
 				default:
 					preflightNote = fmt.Sprintf("preflight routing: %s (empty reply) — %s", routeLabel, routeExplanation)
+				}
+			}
+			// Preflight sync: refresh the snapshot from the host repo.
+			// Only needed when the shell-agent is selected (it may execute commands
+			// that depend on the latest host workspace state). File-discovery reads
+			// context only and should use the session snapshot as-is.
+			if useShellAgent {
+				if root := strings.TrimSpace(tempdir.SessionRoot()); root != "" {
+					if _, _, err := workspace.EnsureRepoSnapshot(repoRoot, root); err != nil {
+						fmt.Fprintln(os.Stderr, "Error: host->snapshot refresh failed:", err)
+						return Result{ExitCode: 1, Err: err}
+					}
 				}
 			}
 			mctRunner.ShellAgent = useShellAgent
@@ -1947,12 +1953,31 @@ func Run(ctx context.Context, opts Options) Result {
 
 	TurnDone:
 		// Postflight sync: ensure snapshot edits land in the host repo.
-		if root := strings.TrimSpace(tempdir.SessionRoot()); root != "" {
-			snapshotRepoRoot := filepath.Join(root, "repo")
-			patchDir := filepath.Join(root, "patches")
-			if err := workspace.SyncSnapshotToHost(snapshotRepoRoot, repoRoot, patchDir); err != nil {
-				fmt.Fprintln(os.Stderr, "Error: snapshot->host sync failed:", err)
-				return Result{ExitCode: 1, Err: err}
+		// Only sync for decisions that may have modified the snapshot:
+		// - DecisionPatch: No sync (patches already applied in workspace, no host changes expected)
+		// - DecisionAccept: No sync (reviews don't modify snapshot)
+		// - DecisionReject: No sync (review discards don't modify snapshot)
+		// - DecisionAsk: Sync only for shell-agent mode (file-discovery doesn't modify snapshot)
+		shouldSync := false
+		switch decision {
+		case planner.DecisionAsk:
+			// For DecisionAsk, only sync if shell-agent was used (executed commands may have modified files)
+			// File-discovery mode makes no modifications, so no sync needed
+			if useShellAgent {
+				shouldSync = true
+			}
+		case planner.DecisionPatch, planner.DecisionAccept, planner.DecisionReject:
+			// No sync for patcher turns; reviews are in-memory operations only
+			shouldSync = false
+		}
+		if shouldSync {
+			if root := strings.TrimSpace(tempdir.SessionRoot()); root != "" {
+				snapshotRepoRoot := filepath.Join(root, "repo")
+				patchDir := filepath.Join(root, "patches")
+				if err := workspace.SyncSnapshotToHost(snapshotRepoRoot, repoRoot, patchDir); err != nil {
+					fmt.Fprintln(os.Stderr, "Error: snapshot->host sync failed:", err)
+					return Result{ExitCode: 1, Err: err}
+				}
 			}
 		}
 		continue
@@ -2191,7 +2216,7 @@ func extractUserFeedback(prompt string) string {
 	}
 	if idx := strings.LastIndex(prompt, "\n\n\"\"\"\n"); idx != -1 {
 		candidate := prompt[idx+len("\n\n\"\"\"\n"):]
-		if end := strings.Index(candidate, "\n\"\"\"" ); end != -1 {
+		if end := strings.Index(candidate, "\n\"\"\""); end != -1 {
 			candidate = candidate[:end]
 		}
 		candidate = strings.TrimSpace(candidate)
