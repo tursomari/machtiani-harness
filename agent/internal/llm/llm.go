@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
 	"github.com/charmbracelet/glamour"
 	"github.com/tursomari/machtiani/agent/internal/trajectory"
 )
@@ -73,6 +74,11 @@ func llmInputLogPath() string {
 	if env := strings.TrimSpace(os.Getenv(llmInputLogEnv)); env != "" {
 		return env
 	}
+	if sid := strings.TrimSpace(os.Getenv("MACHTIANI_SESSION_ID")); sid != "" {
+		if p, err := artifacts.SessionLLMInputsFile(sid); err == nil {
+			return p
+		}
+	}
 	cfg, err := loadConfig()
 	if err != nil || cfg == nil {
 		return ""
@@ -92,24 +98,17 @@ func appendLLMInputLog(path string, payload any) {
 		return
 	}
 	redacted := redactLLMInput(payload)
-	b, err := json.MarshalIndent(redacted, "", "  ")
+	b, err := json.Marshal(redacted)
 	if err != nil {
 		return
-	}
-	const maxBytes = 5 * 1024 * 1024
-	if len(b) > maxBytes {
-		b = b[:maxBytes]
-		b = append(b, []byte("\n...[truncated]\n")...)
 	}
 	f, err := os.OpenFile(trimmed, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return
 	}
 	defer f.Close()
-	_, _ = f.WriteString(time.Now().UTC().Format(time.RFC3339Nano))
-	_, _ = f.WriteString("\n")
 	_, _ = f.Write(b)
-	_, _ = f.WriteString("\n\n")
+	_, _ = f.WriteString("\n")
 }
 
 func redactLLMInput(v any) any {

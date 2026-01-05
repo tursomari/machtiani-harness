@@ -35,67 +35,9 @@ const (
 
 const (
 	defaultPlanPatchDisabledIntro = "Patch requests are disabled for this run. Decide either to: (a) produce one single, high-signal repository-focused prompt, or (b) finalize if enough information is gathered."
-	defaultPlanPatchEnabledIntro  = "Decide either to: (a) produce one single, high-signal repository-focused prompt, (b) request a patch, or (c) finalize if enough information is gathered."
-	defaultPlanPatchRules         = `If patch, immediately follow with a single standalone JSON object ONLY (no commentary, no markdown fences).
-
-Patch JSON schema (when Decision: patch):
-{
-  "edits": [
-    { "path": string (repo-relative), "mode": one of replace|rewrite|create|delete,
-      "before": string (replace only), "after": string (replace only), "occurrence": number (1-based, optional),
-      "new_content": string (rewrite/create only) }
-  ],
-  "metadata": { "description": string (optional) }
-}
-Rules: use forward slashes; paths must be under repo root;
-replace requires before+after and file exists; rewrite requires new_content and file exists;
-create requires new_content and file must not exist; delete requires file exists.
-
-Minimal example (do not include this text in output):
-Decision: patch
-{
-  "edits": [
-    { "path": "README.md", "mode": "replace", "before": "teh", "after": "the", "occurrence": 1 }
-  ],
-  "metadata": { "description": "Fix README typo" }
-}
-
-When intentionally re-editing a file already updated this session, reload it from disk first and set metadata.force_repatch to true.
-`
-	defaultPlanPatchStrictRules = `If patch, immediately follow with a single standalone JSON object ONLY (no commentary, no markdown fences).
-
-Patch JSON schema (when Decision: patch):
-{
-  "edits": [
-    { "path": string, "mode": "patch", "start_line": int, "end_line": int, "new_content": string }
-  ],
-  "metadata": { "description": string (optional) }
-}
-Patch mode rules:
-  * Provide exactly one edit per request; queue further changes for later turns.
-  * use 1-based start_line; end_line = start_line for replacements, end_line = 0 for pure insertions.
-  * Delete lines by setting end_line >= start_line and leaving new_content empty.
-  * Preserve indentation and include any trailing newline you expect in new_content.
-  * Do not mutate other files in the same instruction.
-
-Strict patch planner flow:
-  1. Prompt the planner LLM with the goal/context to select the exact repo-relative file path that needs editing; parse that path from the reply.
-  2. Load that file directly from disk using the resolved path so you have the authoritative contents with line numbers.
-  3. Modify the in-memory copy with the lines you want inserted, removed, or rewritten.
-  4. Populate the JSON schema with start_line/end_line and new_content that reflect those concrete lines.
-  5. If the file changes later in the run, reload it from disk before producing the final patch.
-
-Minimal example (do not include this text in output):
-Decision: patch
-{
-  "edits": [
-    { "path": "docs/guide.md", "mode": "patch", "start_line": 12, "end_line": 12, "new_content": "This feature is experimental.\n" }
-  ],
-  "metadata": { "description": "Fix typo" }
-}
-
-When intentionally re-editing a file already updated this session, reload it from disk first and set metadata.force_repatch to true.
-`
+	defaultPlanPatchEnabledIntro  = "Decide either to: (a) produce one single, high-signal repository-focused prompt, (b) request a patch, or (c) finalize if enough information is gathered.\nAlternatively, to request a patch with minimal syntax:\nPatch: <repo-relative filepath>\nExample: Patch: src/main.go"
+	defaultPlanPatchRules         = "If patch, return only the JSON payload—no commentary or fences. The patch schema will be provided after you choose Decision: patch."
+	defaultPlanPatchStrictRules   = defaultPlanPatchRules
 )
 
 type ClientConfig struct {
@@ -407,6 +349,21 @@ func (c *Client) Plan(ctx context.Context, goal string, transcript string, step,
 		}
 		return dec, q, nil
 	}
+	if dec == DecisionPatch && strings.TrimSpace(q) != "" {
+		trimmed := strings.TrimSpace(q)
+		if !strings.HasPrefix(trimmed, "{") {
+			// Shorthand patch flow: the model selected a target path, not a JSON payload.
+			// Immediately route to strict patch generation with full schema instructions.
+			c.cfg.StrictPatchMode = true
+			strictPayload, err := c.runStrictPatchFlow(ctx, goal, transcript, step, maxSteps, trimmed)
+			if err != nil {
+				dec = DecisionAsk
+				q = strictPatchFallbackQuestion(err)
+			} else {
+				q = strictPayload
+			}
+		}
+	}
 	if dec == DecisionPatch && c.cfg.StrictPatchMode {
 		if !shouldUseStrictPatchMode(q) {
 			if c.cfg.Verbose {
@@ -628,83 +585,18 @@ func (c *Client) chat(ctx context.Context, prompt string) (string, error) {
 }
 
 func (c *Client) planPrompt(goal string, transcript string, step, maxSteps int) string {
-	if tpl := c.planTemplate(); tpl != "" {
-		data := c.buildPlanTemplateData(goal, transcript, step, maxSteps)
-		rendered, err := prompts.Render("planner_plan_prompt", tpl, data, nil)
-		if err == nil {
-			return rendered
-		}
+	tpl := c.planTemplate()
+	if tpl == "" {
+		fmt.Fprintln(os.Stderr, "[planner] plan prompt template missing")
+		return ""
+	}
+	data := c.buildPlanTemplateData(goal, transcript, step, maxSteps)
+	rendered, err := prompts.Render("planner_plan_prompt", tpl, data, nil)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "[planner] plan prompt template error: %v\n", err)
+		return ""
 	}
-	return c.planPromptFallback(goal, transcript, step, maxSteps)
-}
-
-func (c *Client) planPromptFallback(goal string, transcript string, step, maxSteps int) string {
-	var b strings.Builder
-	b.WriteString("You are an agentic planner for mct. Read the transcript to understand the goal and prior turns. mct reads repository files and answers; it does not execute code.\n")
-	b.WriteString("Patch validation diagnostics are recorded in the transcript; use them to decide on next steps when patches fail.\n")
-	if !c.cfg.PatchEnabled {
-		b.WriteString("Patch requests are disabled for this run. Decide either to: (a) produce one single, high-signal repository-focused prompt, or (b) finalize if enough information is gathered.\n")
-	} else {
-		b.WriteString("Decide either to: (a) produce one single, high-signal repository-focused prompt, (b) request a patch, or (c) finalize if enough information is gathered.\n")
-	}
-	b.WriteString("Your prompt MUST be addressed to mct, not the user. Avoid clarifying user intent; focus on code, files, functions, modules, architecture, logs, or tests.\n")
-	b.WriteString("Begin your reply immediately with `Decision:`—no commentary, whitespace, or reasoning before it.\n")
-	b.WriteString("If you need to reason, do it silently; any text before `Decision:` causes the run to fail.\n")
-	b.WriteString("Output strictly:\nDecision: ")
-	if !c.cfg.PatchEnabled {
-		b.WriteString("ask|finalize\n")
-	} else {
-		b.WriteString("ask|patch|finalize\n")
-	}
-	b.WriteString("If ask, a second line using exactly one of:\n- Question: <single best prompt>\n- Instruction: <single best prompt>\n- Message: <single best prompt>\n")
-	if c.cfg.PatchEnabled {
-		b.WriteString("If patch, immediately follow with a single standalone JSON object ONLY (no commentary, no markdown fences).\n\n")
-		if c.cfg.StrictPatchMode {
-			b.WriteString("Patch JSON schema (when Decision: patch):\n")
-			b.WriteString("{\n  \"edits\": [\n    { \"path\": string, \"mode\": \"patch\", \"start_line\": int, \"end_line\": int, \"new_content\": string }\n  ],\n  \"metadata\": { \"description\": string (optional) }\n}\n")
-			b.WriteString("Patch mode rules:\n")
-			b.WriteString("  * Provide exactly one edit per request; queue further changes for later turns.\n")
-			b.WriteString("  * use 1-based start_line; end_line = start_line for replacements, end_line = 0 for pure insertions.\n")
-			b.WriteString("  * Delete lines by setting end_line >= start_line and leaving new_content empty.\n")
-			b.WriteString("  * Preserve indentation and include any trailing newline you expect in new_content.\n")
-			b.WriteString("  * Do not mutate other files in the same instruction.\n\n")
-			b.WriteString("Strict patch planner flow:\n")
-			b.WriteString("  1. Prompt the planner LLM with the goal/context to select the exact repo-relative file path that needs editing; parse that path from the reply.\n")
-			b.WriteString("  2. Load that file directly from disk using the resolved path so you have the authoritative contents with line numbers.\n")
-			b.WriteString("  3. Modify the in-memory copy with the lines you want inserted, removed, or rewritten.\n")
-			b.WriteString("  4. Populate the JSON schema with start_line/end_line and new_content that reflect those concrete lines.\n")
-			b.WriteString("  5. If the file changes later in the run, reload it from disk before producing the final patch.\n\n")
-			b.WriteString("Minimal example (do not include this text in output):\n")
-			b.WriteString("Decision: patch\n{\n  \"edits\": [\n    { \"path\": \"docs/guide.md\", \"mode\": \"patch\", \"start_line\": 12, \"end_line\": 12, \"new_content\": \"This feature is experimental.\\n\" }\n  ],\n  \"metadata\": { \"description\": \"Fix typo\" }\n}\n\n")
-			b.WriteString("When intentionally re-editing a file already updated this session, reload it from disk first and set metadata.force_repatch to true.\n\n")
-		} else {
-			b.WriteString("Patch JSON schema (when Decision: patch):\n")
-			b.WriteString("{\n  \"edits\": [\n    { \"path\": string (repo-relative), \"mode\": one of replace|rewrite|create|delete,\n      \"before\": string (replace only), \"after\": string (replace only), \"occurrence\": number (1-based, optional),\n      \"new_content\": string (rewrite/create only) }\n  ],\n  \"metadata\": { \"description\": string (optional) }\n}\n")
-			b.WriteString("Rules: use forward slashes; paths must be under repo root;\n")
-			b.WriteString("replace requires before+after and file exists; rewrite requires new_content and file exists;\n")
-			b.WriteString("create requires new_content and file must not exist; delete requires file exists.\n\n")
-			b.WriteString("Minimal example (do not include this text in output):\n")
-			b.WriteString("Decision: patch\n{\n  \"edits\": [\n    { \"path\": \"README.md\", \"mode\": \"replace\", \"before\": \"teh\", \"after\": \"the\", \"occurrence\": 1 }\n  ],\n  \"metadata\": { \"description\": \"Fix README typo\" }\n}\n\n")
-			b.WriteString("When intentionally re-editing a file already updated this session, reload it from disk first and set metadata.force_repatch to true.\n\n")
-		}
-		c.appendForceRepatchExample(&b)
-	}
-
-	appendSuccessFilesSection(&b, c.progress.SuccessFiles, "Files already updated successfully this session (reload these paths before considering further edits; prefer new targets. If you must revisit one, set metadata.force_repatch: true):\n", successFilesPromptLimit)
-	if c.progress.AppliedPatches > 0 {
-		fmt.Fprintf(&b, "Strict patch successes so far: %d. Avoid redundant patches—finalize once all required files are complete.\n\n", c.progress.AppliedPatches)
-	}
-	if strings.TrimSpace(goal) != "" {
-		b.WriteString("Goal:\n")
-		b.WriteString(goal + "\n\n")
-	}
-	if strings.TrimSpace(transcript) != "" {
-		b.WriteString("Transcript:\n")
-		b.WriteString(transcript + "\n\n")
-	}
-	b.WriteString(fmt.Sprintf("Step %d of %d. Decide.\n", step, maxSteps))
-	return b.String()
+	return rendered
 }
 
 func (c *Client) planTemplate() string {
@@ -713,7 +605,7 @@ func (c *Client) planTemplate() string {
 			return trimmed
 		}
 	}
-	if embedded, err := templates.GetEmbeddedTemplate("planner.plan_prompt"); err == nil && embedded != "" {
+	if embedded, err := templates.GetEmbeddedTemplate("planner.plan_prompt"); err == nil {
 		return embedded
 	}
 	return ""
@@ -742,9 +634,7 @@ func (c *Client) buildPlanTemplateData(goal string, transcript string, step, max
 		MaxSteps:        maxSteps,
 		PatchIntro:      c.planPatchIntroText(),
 	}
-	if c.cfg.PatchEnabled {
-		data.PatchRules = c.planPatchRulesText(c.cfg.StrictPatchMode)
-	}
+	data.PatchRules = c.planPatchRulesText(c.cfg.StrictPatchMode)
 	return data
 }
 
@@ -758,15 +648,6 @@ func (c *Client) planPatchIntroText() string {
 			if val := strings.TrimSpace(c.cfg.Prompts.PlanPatchDisabledIntro); val != "" {
 				return val
 			}
-		}
-	}
-	if c.cfg.PatchEnabled {
-		if embedded, err := templates.GetEmbeddedTemplate("planner.plan_patch_enabled_intro"); err == nil && embedded != "" {
-			return embedded
-		}
-	} else {
-		if embedded, err := templates.GetEmbeddedTemplate("planner.plan_patch_disabled_intro"); err == nil && embedded != "" {
-			return embedded
 		}
 	}
 	if c.cfg.PatchEnabled {
@@ -785,15 +666,6 @@ func (c *Client) planPatchRulesText(strict bool) string {
 			if val := strings.TrimSpace(c.cfg.Prompts.PlanPatchRules); val != "" {
 				return val
 			}
-		}
-	}
-	if strict {
-		if embedded, err := templates.GetEmbeddedTemplate("planner.plan_patch_strict_rules"); err == nil && embedded != "" {
-			return embedded
-		}
-	} else {
-		if embedded, err := templates.GetEmbeddedTemplate("planner.plan_patch_rules"); err == nil && embedded != "" {
-			return embedded
 		}
 	}
 	if strict {
@@ -865,9 +737,6 @@ func (c *Client) reviewTemplate() string {
 			return trimmed
 		}
 	}
-	if embedded, err := templates.GetEmbeddedTemplate("planner.review_prompt"); err == nil && embedded != "" {
-		return embedded
-	}
 	return ""
 }
 
@@ -923,14 +792,7 @@ func (c *Client) appendForceRepatchExample(b *strings.Builder) {
 	if !c.progress.ForceRepatchExample {
 		return
 	}
-	b.WriteString("If the guard reports `Skipping patch because all target files were already updated earlier this session`, include `metadata.force_repatch: true` on the next patch. Example:\n")
-	b.WriteString("Decision: patch\n")
-	b.WriteString("{\n")
-	b.WriteString("  \"metadata\": { \"description\": \"Reapply earlier edit\", \"force_repatch\": true },\n")
-	b.WriteString("  \"edits\": [\n")
-	b.WriteString("    { \"path\": \"docs/guide.md\", \"mode\": \"patch\", \"start_line\": 12, \"end_line\": 12, \"new_content\": \"The corrected text.\\n\" }\n")
-	b.WriteString("  ]\n")
-	b.WriteString("}\n\n")
+	b.WriteString("If the guard reports `Skipping patch because all target files were already updated earlier this session`, include `metadata.force_repatch: true` on the next patch.\n\n")
 }
 
 func loadPatchDiffPreview(path string, limit int) (string, error) {
@@ -990,9 +852,6 @@ func (c *Client) finalizeTemplate() string {
 			return trimmed
 		}
 	}
-	if embedded, err := templates.GetEmbeddedTemplate("planner.finalize_prompt"); err == nil && embedded != "" {
-		return embedded
-	}
 	return ""
 }
 
@@ -1024,6 +883,18 @@ func parseDecision(resp string, patchEnabled bool) (Decision, string, string) {
 	trimmed := strings.TrimSpace(resp)
 	if trimmed == "" {
 		return "", "", ""
+	}
+	if patchEnabled {
+		trimmedLower := strings.ToLower(trimmed)
+		if strings.HasPrefix(trimmedLower, "patch:") {
+			path := strings.TrimSpace(trimmed[len("Patch:"):])
+			if path == "" {
+				return "", "", ""
+			}
+			// Shorthand patch requests specify the file path only.
+			// The planner will route to patch-generation with full schema instructions.
+			return DecisionPatch, path, ""
+		}
 	}
 
 	lines := strings.Split(trimmed, "\n")

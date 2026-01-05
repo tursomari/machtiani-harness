@@ -312,6 +312,7 @@ func Run(ctx context.Context, opts Options) Result {
 	if sessionID == "" {
 		sessionID = runner.GenerateSessionID()
 	}
+	_ = os.Setenv("MACHTIANI_SESSION_ID", sessionID)
 
 	cfgInput.SessionID = sessionID
 

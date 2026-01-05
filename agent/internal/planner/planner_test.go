@@ -40,6 +40,38 @@ func TestParseDecisionPatch(t *testing.T) {
 	}
 }
 
+func TestParseDecisionPatchShorthand(t *testing.T) {
+	resp := "Patch: src/main.go"
+	dec, remainder, preamble := parseDecision(resp, true)
+
+	if dec != DecisionPatch {
+		t.Fatalf("expected DecisionPatch, got %q", dec)
+	}
+	if remainder != "src/main.go" {
+		t.Fatalf("expected shorthand remainder to be patch path, got %q", remainder)
+	}
+	if preamble != "" {
+		t.Fatalf("expected empty preamble, got %q", preamble)
+	}
+}
+
+func TestPlanPatchShorthandRoutesToStrictPatchFlow(t *testing.T) {
+	client := NewClient(ClientConfig{PatchEnabled: true, StrictPatchMode: true, RepoRoot: t.TempDir()})
+	client.chatFn = func(context.Context, string) (string, error) {
+		return "Patch: src/main.go", nil
+	}
+	dec, payload, err := client.Plan(context.Background(), "goal", "transcript", 1, 3)
+	if err != nil {
+		t.Fatalf("Plan returned error: %v", err)
+	}
+	if dec != DecisionAsk {
+		t.Fatalf("expected shorthand to fall back to ask without repo files, got %q", dec)
+	}
+	if payload == "" {
+		t.Fatalf("expected fallback question to be non-empty")
+	}
+}
+
 func TestParseDecisionFinalize(t *testing.T) {
 	resp := "Decision: finalize"
 	dec, remainder, preamble := parseDecision(resp, true)
@@ -402,19 +434,30 @@ func TestPlanPromptIncludesMetadata(t *testing.T) {
 	}
 }
 
-func TestPlanPromptStrictModeIncludesPatchFlow(t *testing.T) {
+func TestPlanPromptHighlightsPatchShorthand(t *testing.T) {
+	c := NewClient(ClientConfig{DryRun: true, PatchEnabled: true})
+	prompt := c.planPrompt("goal", "", 2, 5)
+	want := []string{
+		"Patch: <repo-relative filepath>",
+	}
+	for _, w := range want {
+		if !contains(prompt, w) {
+			t.Fatalf("plan prompt missing %q:\n%s", w, prompt)
+		}
+	}
+}
+
+func TestPlanPromptStrictModeDefersPatchDetails(t *testing.T) {
 	c := NewClient(ClientConfig{DryRun: true, PatchEnabled: true, StrictPatchMode: true})
 	prompt := c.planPrompt("goal", "transcript", 3, 6)
-	checks := []string{
+
+	disallowed := []string{
 		"Strict patch planner flow:",
-		"1. Prompt the planner LLM with the goal/context to select the exact repo-relative file path",
-		"2. Load that file directly from disk",
-		"3. Modify the in-memory copy",
-		"4. Populate the JSON schema",
+		"Patch JSON schema",
 	}
-	for _, want := range checks {
-		if !contains(prompt, want) {
-			t.Fatalf("strict patch prompt missing %q:\n%s", want, prompt)
+	for _, bad := range disallowed {
+		if contains(prompt, bad) {
+			t.Fatalf("plan prompt should defer detailed patch guidance and omit %q:\n%s", bad, prompt)
 		}
 	}
 }

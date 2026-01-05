@@ -17,6 +17,7 @@ const (
 	readmeDirName     = "readme"
 	artifactDirName   = "artifacts"
 	patchesDirName    = "patches"
+	llmInputsDirName  = "llm"
 	trajectoryDirName = "trajectory"
 	scratchDirName    = "tmp"
 )
@@ -158,6 +159,26 @@ func SessionPatchesDirectory(sessionID string) (string, error) {
 		return "", err
 	}
 	return filepath.Join(artifactsDir, patchesDirName), nil
+}
+
+// SessionLLMDirectory returns the directory under the session artifacts
+// directory dedicated to storing LLM request/response logs.
+func SessionLLMDirectory(sessionID string) (string, error) {
+	artifactsDir, err := SessionArtifactsDirectory(sessionID)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(artifactsDir, llmInputsDirName), nil
+}
+
+// SessionLLMInputsFile returns the canonical path for the append-only LLM input
+// log within the session directory.
+func SessionLLMInputsFile(sessionID string) (string, error) {
+	dir, err := SessionLLMDirectory(sessionID)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "inputs.jsonl"), nil
 }
 
 // FileDiscoveryTrajectoryPath returns the canonical path for a file-discovery
