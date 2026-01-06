@@ -59,6 +59,21 @@ func DetectShowFileRequest(ctx context.Context, runtime ModelRuntime, plannerPro
 	if raw == "" {
 		return ShowFileDetection{IsShowFileRequest: false}, "", nil
 	}
+	// Models sometimes wrap JSON in markdown code fences or include extra text.
+	// Try to extract the first JSON object from the response.
+	if strings.HasPrefix(raw, "```") {
+		trimmed := strings.TrimSpace(raw)
+		trimmed = strings.TrimPrefix(trimmed, "```json")
+		trimmed = strings.TrimPrefix(trimmed, "```JSON")
+		trimmed = strings.TrimPrefix(trimmed, "```")
+		trimmed = strings.TrimSuffix(trimmed, "```")
+		raw = strings.TrimSpace(trimmed)
+	}
+	if i := strings.Index(raw, "{"); i >= 0 {
+		if j := strings.LastIndex(raw, "}"); j > i {
+			raw = raw[i : j+1]
+		}
+	}
 
 	var det ShowFileDetection
 	if jerr := json.Unmarshal([]byte(raw), &det); jerr != nil {
