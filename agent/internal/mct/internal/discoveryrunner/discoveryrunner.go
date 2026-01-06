@@ -173,20 +173,27 @@ func Run(ctx context.Context, prompt string, model ModelSettings, sessionID stri
 		snapshotPath := filepath.Join(snapshotRoot, "repo")
 		st, err := os.Stat(snapshotPath)
 		if err != nil {
-			return Result{}, fmt.Errorf("file-discovery requires repo snapshot at %s: %w", snapshotPath, err)
+			// When running file discovery under mct-agent, the session runner should
+			// have created a snapshot at $MACHTIANI_TMP_ROOT/repo. If it did not (e.g.
+			// earlier snapshot preparation failed), falling back to the current working
+			// directory keeps file discovery usable and lets the user see the original
+			// error elsewhere.
+			debugf(verbose, "mct: discovery snapshot missing at %s (%v); falling back to current working directory", snapshotPath, err)
+			restoreWD = func() {}
+		} else if !st.IsDir() {
+			debugf(verbose, "mct: discovery snapshot path is not a directory at %s; falling back to current working directory", snapshotPath)
+			restoreWD = func() {}
+		} else {
+			wd, err := os.Getwd()
+			if err != nil {
+				return Result{}, fmt.Errorf("discovery snapshot getwd: %w", err)
+			}
+			if err := os.Chdir(snapshotPath); err != nil {
+				return Result{}, fmt.Errorf("discovery snapshot chdir: %w", err)
+			}
+			debugf(verbose, "mct: discovery snapshot enabled at %s", snapshotPath)
+			restoreWD = func() { _ = os.Chdir(wd) }
 		}
-		if !st.IsDir() {
-			return Result{}, fmt.Errorf("file-discovery requires repo snapshot directory at %s", snapshotPath)
-		}
-		wd, err := os.Getwd()
-		if err != nil {
-			return Result{}, fmt.Errorf("discovery snapshot getwd: %w", err)
-		}
-		if err := os.Chdir(snapshotPath); err != nil {
-			return Result{}, fmt.Errorf("discovery snapshot chdir: %w", err)
-		}
-		debugf(verbose, "mct: discovery snapshot enabled at %s", snapshotPath)
-		restoreWD = func() { _ = os.Chdir(wd) }
 	} else {
 		// No snapshot configured; operate on current working directory (e.g., sync command)
 		debugf(verbose, "mct: MACHTIANI_TMP_ROOT not set; file-discovery will use current working directory")
