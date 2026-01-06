@@ -167,6 +167,46 @@ func TestAppendRaw_UserFeedbackSection(t *testing.T) {
 	}
 }
 
+func TestTranscriptStripsNULBytes(t *testing.T) {
+	cwd, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	tmp := t.TempDir()
+	_ = os.Chdir(tmp)
+	t.Setenv("HOME", tmp)
+
+	tr, err := New("nul-sess")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tr.Close()
+
+	if err := tr.WriteHeader("goal\x00with\x00nul", "nul-sess", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := tr.AppendRaw("raw\x00block\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tr.WriteTurn(1, "Question\x00here", "", nil, "Summary\x00here", "ask\x00"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tr.WriteFinal("Final\x00answer", 1, false); err != nil {
+		t.Fatal(err)
+	}
+
+	content := tr.Content()
+	if strings.ContainsRune(content, '\x00') {
+		t.Fatalf("in-memory transcript contains NUL bytes")
+	}
+
+	data, err := os.ReadFile(tr.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.ContainsRune(string(data), '\x00') {
+		t.Fatalf("on-disk transcript contains NUL bytes")
+	}
+}
+
 func TestDeduplicateFullDiffByFile_RemovesPriorTurns(t *testing.T) {
 	cwd, _ := os.Getwd()
 	t.Cleanup(func() { _ = os.Chdir(cwd) })

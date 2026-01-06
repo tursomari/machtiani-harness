@@ -19,10 +19,24 @@ type Transcript struct {
 	traj *trajectory.Writer
 }
 
+func sanitizeTranscriptText(text string) string {
+	if text == "" {
+		return text
+	}
+	if !strings.ContainsRune(text, '\x00') {
+		return text
+	}
+	return strings.ReplaceAll(text, "\x00", "")
+}
+
 func (t *Transcript) AppendRaw(text string) error {
 	if t == nil {
 		return nil
 	}
+	if text == "" {
+		return nil
+	}
+	text = sanitizeTranscriptText(text)
 	if text == "" {
 		return nil
 	}
@@ -112,6 +126,10 @@ func (t *Transcript) SetTrajectory(w *trajectory.Writer) {
 func (t *Transcript) WriteHeader(goal string, sessionID string, _ any) error {
 	formattedGoal := formatGoalSection(goal)
 	s := fmt.Sprintf("= MCT-AGENT TRANSCRIPT\n\n== GOAL:\n\n%s\n\n", formattedGoal)
+	s = sanitizeTranscriptText(s)
+	if s == "" {
+		return nil
+	}
 	t.mem.WriteString(s)
 	_, err := t.f.WriteString(s)
 	t.emit("header", map[string]any{
@@ -241,7 +259,10 @@ func (t *Transcript) WriteTurn(step int, question, savedPath string, retrieved [
 	b.WriteString("Planner decision: ")
 	b.WriteString(decision)
 	b.WriteString("\n")
-	s := b.String()
+	s := sanitizeTranscriptText(b.String())
+	if s == "" {
+		return nil
+	}
 	t.mem.WriteString(s)
 	_, err := t.f.WriteString(s)
 	t.emit("turn", map[string]any{
@@ -259,6 +280,10 @@ func (t *Transcript) WriteFinal(answer string, step int, capped bool) error {
 		note = " (reached max-steps cap)"
 	}
 	s := fmt.Sprintf("\n== CONCLUSION%s (after %d turn(s))\n\n%s\n", note, step, answer)
+	s = sanitizeTranscriptText(s)
+	if s == "" {
+		return nil
+	}
 	t.mem.WriteString(s)
 	_, err := t.f.WriteString(s)
 	t.emit("final", map[string]any{
@@ -352,7 +377,10 @@ func (t *Transcript) WritePatchValidation(step int, record PatchValidationRecord
 		b.WriteString(record.Error)
 		b.WriteString("\n")
 	}
-	s := b.String()
+	s := sanitizeTranscriptText(b.String())
+	if s == "" {
+		return nil
+	}
 	t.mem.WriteString(s)
 	_, err := t.f.WriteString(s)
 	t.emit("patch-validation", map[string]any{
@@ -392,6 +420,10 @@ func (t *Transcript) Restore(content string) error {
 	if t.f == nil {
 		return fmt.Errorf("transcript file not initialised")
 	}
+	if content == "" {
+		return nil
+	}
+	content = sanitizeTranscriptText(content)
 	if content == "" {
 		return nil
 	}
@@ -559,6 +591,7 @@ func (t *Transcript) DeduplicateFullDiffByFile(path string) error {
 	flushTurnForStep()
 
 	cleaned := strings.Join(newLines, "\n")
+	cleaned = sanitizeTranscriptText(cleaned)
 	if err := os.WriteFile(t.path, []byte(cleaned), 0o644); err != nil {
 		return fmt.Errorf("failed to write deduplicated transcript: %w", err)
 	}
