@@ -21,19 +21,8 @@ Patch validation diagnostics are recorded in the transcript; use them to decide 
 
 </reply-format>
 
-{{- if .SuccessFiles }}
-Files already updated successfully this session (reload these paths before considering further edits; prefer new targets. If you must revisit one, set metadata.force_repatch: true):
-{{- range .SuccessFiles }}
-- {{.}}
-{{- end }}
-{{- if gt .SuccessOverflow 0 }}- … ({{.SuccessOverflow}} more)
-{{- end }}
-
-{{- end }}
-{{- if gt .AppliedPatches 0 }}
-Strict patch successes so far: {{.AppliedPatches}}. Avoid redundant patches—finalize once all required files are complete.
-
-{{- end }}
+{{- /* Intentionally omit success-file tracking to avoid biasing decisions. */ -}}
+{{- /* Intentionally omit patch-success heuristics to avoid biasing decisions. */ -}}
 {{- if .HasGoal }}
 Goal:
 {{.Goal}}

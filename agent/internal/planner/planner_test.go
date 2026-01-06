@@ -349,14 +349,11 @@ func TestPlanPromptIncludesProgressSection(t *testing.T) {
 		AppliedPatches: 3,
 	})
 	prompt := client.planPrompt("Update licensing headers", "", 2, 5)
-	if !strings.Contains(prompt, "Files already updated successfully this session") {
-		t.Fatalf("expected prompt to include success section, got %q", prompt)
+	if strings.Contains(prompt, "Files already updated successfully this session") {
+		t.Fatalf("expected prompt to omit success files section, got %q", prompt)
 	}
-	if !strings.Contains(prompt, "LICENSE") || !strings.Contains(prompt, "lib/web/fetch/LICENSE") {
-		t.Fatalf("expected prompt to list success files, got %q", prompt)
-	}
-	if !strings.Contains(prompt, "Strict patch successes so far: 3") {
-		t.Fatalf("expected prompt to mention applied patch count, got %q", prompt)
+	if strings.Contains(prompt, "Strict patch successes so far") {
+		t.Fatalf("expected prompt to omit patch success heuristic, got %q", prompt)
 	}
 }
 
