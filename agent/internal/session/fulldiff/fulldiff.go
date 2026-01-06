@@ -24,8 +24,8 @@ type Logger interface {
 }
 
 type Options struct {
-	Verbose bool
-	Log     Logger
+	Verbose  bool
+	Log      Logger
 	Baseline *patchersvc.BaselineState
 }
 
@@ -62,8 +62,8 @@ func Inject(step int, repoRoot string, filesModified []string, tr Transcript, tr
 		return strings.Contains(section, "  + ") || strings.Contains(section, "  - ")
 	}
 
-	var diffBuilder strings.Builder
-	sectionsAdded := 0
+	writeStep := step
+	wroteAny := false
 	for _, file := range filesModified {
 		section, included, err := patchersvc.BuildBaselineDiffSection(opts.Baseline, repoRoot, file)
 		if err != nil {
@@ -77,54 +77,44 @@ func Inject(step int, repoRoot string, filesModified []string, tr Transcript, tr
 		if !containsChangeMarkers(section) {
 			continue
 		}
-		if sectionsAdded > 0 {
-			diffBuilder.WriteString("\n\n")
-		}
-		diffBuilder.WriteString(section)
-		sectionsAdded++
-	}
-	diffBytes := []byte(diffBuilder.String())
-	if strings.TrimSpace(string(diffBytes)) == "" {
-		logf("[full-diff] No baseline diff produced; skipping\n")
-		return
-	}
 
-	header := fmt.Sprintf("\n=== FULL DIFF OF PATCHED FILES: %s ===\n", strings.Join(filesModified, ", "))
-	footer := "\n===\n"
-	fullDiffContent := header + string(diffBytes) + footer
-	contentHash := fmt.Sprintf("%x", sha256.Sum256([]byte(fullDiffContent)))
+		question := fmt.Sprintf("Automatic full diff post-patch for: %s", file)
+		header := fmt.Sprintf("\n=== FULL DIFF OF PATCHED FILE: %s ===\n", file)
+		footer := "\n===\n"
+		fullDiffContent := header + section + footer
+		contentHash := fmt.Sprintf("%x", sha256.Sum256([]byte(fullDiffContent)))
 
-	shouldSkip := false
-	if tracker != nil {
-		for _, file := range filesModified {
-			if tracker.ShouldDeduplicateFile(file, contentHash) {
-				shouldSkip = true
-				if opts.Verbose {
-					logf("[full-diff] File %s already diffed with same content; skipping\n", file)
-				}
-				break
-			}
-		}
-	}
-	if shouldSkip {
-		return
-	}
-
-	for _, file := range filesModified {
+		// Always dedupe the transcript first to preserve the "single per file"
+		// invariant, even if the diff content hasn't changed.
 		if err := tr.DeduplicateFullDiffByFile(file); err != nil {
 			logf("[full-diff] Deduplication failed for %s: %v\n", file, err)
 		}
-	}
 
-	question := fmt.Sprintf("Automatic full diff post-patch for: %s", strings.Join(filesModified, ", "))
-	if err := tr.WriteTurn(step+1, question, "", filesModified, fullDiffContent, "full_diff"); err != nil {
-		logf("[full-diff] Transcript write failed: %v\n", err)
-		return
-	}
+		if tracker != nil && tracker.ShouldDeduplicateFile(file, contentHash) {
+			if opts.Verbose {
+				logf("[full-diff] File %s already diffed with same content; skipping\n", file)
+			}
+			continue
+		}
 
-	if tracker != nil {
-		for _, file := range filesModified {
+		writeStep++
+		if err := tr.WriteTurn(writeStep, question, "", []string{file}, fullDiffContent, "full_diff"); err != nil {
+			logf("[full-diff] Transcript write failed: %v\n", err)
+			return
+		}
+
+		if err := tr.DeduplicateFullDiffByFile(file); err != nil {
+			logf("[full-diff] Post-write deduplication failed for %s: %v\n", file, err)
+		}
+		wroteAny = true
+
+		if tracker != nil {
 			tracker.UpdateDeduplicationState(file, contentHash)
 		}
+	}
+
+	if !wroteAny {
+		logf("[full-diff] No baseline diff produced; skipping\n")
+		return
 	}
 }

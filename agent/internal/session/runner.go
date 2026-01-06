@@ -645,16 +645,18 @@ func Run(ctx context.Context, opts Options) Result {
 				}
 				fulldiff.Inject(pendingPatchDraft.Step, repoRoot, files, tr, plannerProgress, fulldiff.Options{Verbose: cfg.verbose, Baseline: baseline})
 				// Synthetic turn: keep transcript step count in sync.
-				userTurnCounter++
+				// full-diff injection now emits 0..N transcript turns (one per file).
 				if trajectoryWriter != nil {
 					trajectoryWriter.Emit(rootCtx, trajectory.Event{
 						Kind: "transcript_synthetic_full_diff",
 						Payload: map[string]any{
-							"op":   "full_diff",
-							"step": pendingPatchDraft.Step + 1,
+							"op":    "full_diff",
+							"step":  pendingPatchDraft.Step + 1,
+							"files": files,
 						},
 					})
 				}
+				userTurnCounter += len(files)
 			}
 		}
 		pendingPatchDraft = nil

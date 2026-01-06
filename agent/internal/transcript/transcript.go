@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	pathpkg "path"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
@@ -27,6 +27,41 @@ func sanitizeTranscriptText(text string) string {
 		return text
 	}
 	return strings.ReplaceAll(text, "\x00", "")
+}
+
+func (t *Transcript) compactNULsIfNeeded() error {
+	if t == nil {
+		return nil
+	}
+	content := t.Content()
+	if !strings.ContainsRune(content, '\x00') {
+		return nil
+	}
+	cleaned := sanitizeTranscriptText(content)
+	if err := t.rewrite(cleaned); err != nil {
+		return fmt.Errorf("failed to compact transcript: %w", err)
+	}
+	return nil
+}
+
+func (t *Transcript) rewrite(cleaned string) error {
+	if t == nil {
+		return nil
+	}
+	if err := t.f.Close(); err != nil {
+		return err
+	}
+	if err := os.WriteFile(t.path, []byte(cleaned), 0o644); err != nil {
+		return fmt.Errorf("failed to rewrite transcript: %w", err)
+	}
+	f, err := os.OpenFile(t.path, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return fmt.Errorf("failed to reopen transcript: %w", err)
+	}
+	t.f = f
+	t.mem.Reset()
+	t.mem.WriteString(cleaned)
+	return nil
 }
 
 func (t *Transcript) AppendRaw(text string) error {
@@ -263,6 +298,9 @@ func (t *Transcript) WriteTurn(step int, question, savedPath string, retrieved [
 	if s == "" {
 		return nil
 	}
+	if err := t.compactNULsIfNeeded(); err != nil {
+		return err
+	}
 	t.mem.WriteString(s)
 	_, err := t.f.WriteString(s)
 	t.emit("turn", map[string]any{
@@ -284,6 +322,9 @@ func (t *Transcript) WriteFinal(answer string, step int, capped bool) error {
 	if s == "" {
 		return nil
 	}
+	if err := t.compactNULsIfNeeded(); err != nil {
+		return err
+	}
 	t.mem.WriteString(s)
 	_, err := t.f.WriteString(s)
 	t.emit("final", map[string]any{
@@ -298,6 +339,7 @@ func (t *Transcript) WritePatchValidation(step int, record PatchValidationRecord
 	if t == nil {
 		return nil
 	}
+
 	var b strings.Builder
 	b.WriteString("\n=== PATCH VALIDATION")
 	if step > 0 {
@@ -381,6 +423,9 @@ func (t *Transcript) WritePatchValidation(step int, record PatchValidationRecord
 	if s == "" {
 		return nil
 	}
+	if err := t.compactNULsIfNeeded(); err != nil {
+		return err
+	}
 	t.mem.WriteString(s)
 	_, err := t.f.WriteString(s)
 	t.emit("patch-validation", map[string]any{
@@ -461,11 +506,11 @@ func (t *Transcript) emit(op string, payload map[string]any) {
 // file, ensuring the transcript contains at most one DecisionFullDiff per file.
 // This is best-effort: failures return errors but do not leave the transcript
 // file handle in an invalid state.
-func (t *Transcript) DeduplicateFullDiffByFile(path string) error {
+func (t *Transcript) DeduplicateFullDiffByFile(filePath string) error {
 	if t == nil {
 		return nil
 	}
-	norm := filepath.ToSlash(strings.TrimSpace(path))
+	norm := filepath.ToSlash(strings.TrimSpace(filePath))
 	if norm == "" {
 		return nil
 	}
@@ -474,128 +519,118 @@ func (t *Transcript) DeduplicateFullDiffByFile(path string) error {
 		return nil
 	}
 
+	normalize := func(p string) string {
+		rel := filepath.ToSlash(strings.TrimSpace(p))
+		if rel == "" {
+			return ""
+		}
+		return pathpkg.Clean(rel)
+	}
+
+	norm = normalize(norm)
 	lines := strings.Split(content, "\n")
-	newLines := make([]string, 0, len(lines))
+	prelude := make([]string, 0)
+	turns := make([]struct {
+		lines      []string
+		isFullDiff bool
+		files      map[string]struct{}
+	}, 0)
 
-	flushTurn := func(turnLines []string, isDup bool) {
-		if len(turnLines) == 0 {
-			return
+	addFile := func(files map[string]struct{}, p string) map[string]struct{} {
+		if p == "" {
+			return files
 		}
-		if isDup {
-			return
+		if files == nil {
+			files = map[string]struct{}{}
 		}
-		newLines = append(newLines, turnLines...)
+		files[p] = struct{}{}
+		return files
 	}
 
-	lastFullDiffStep := -1
-	for idx := len(lines) - 1; idx >= 0; idx-- {
-		line := strings.TrimSpace(lines[idx])
-		if line != "Planner decision: full_diff" {
-			continue
-		}
-		step := -1
-		for j := idx; j >= 0; j-- {
-			candidate := strings.TrimSpace(lines[j])
-			if strings.HasPrefix(candidate, "== TURN ") {
-				fields := strings.Fields(strings.TrimSpace(strings.TrimPrefix(candidate, "== TURN")))
-				if len(fields) > 0 {
-					if val, err := strconv.Atoi(fields[0]); err == nil {
-						step = val
-					}
-				}
-				break
-			}
-		}
-		if step < 0 {
-			continue
-		}
-		mentions := false
-		for j := idx; j >= 0; j-- {
-			candidate := strings.TrimSpace(lines[j])
-			if strings.HasPrefix(candidate, "== TURN ") {
-				break
-			}
-			if strings.HasPrefix(candidate, "Automatic full diff post-patch for:") {
-				filesPart := strings.TrimSpace(strings.TrimPrefix(candidate, "Automatic full diff post-patch for:"))
-				for _, file := range strings.Split(filesPart, ",") {
-					if filepath.ToSlash(strings.TrimSpace(file)) == norm {
-						mentions = true
-						break
-					}
-				}
-				break
-			}
-		}
-		if mentions {
-			lastFullDiffStep = step
-			break
-		}
-	}
-
-	var turnLines []string
 	inTurn := false
-	turnIsFullDiff := false
-	turnMentionsFile := false
-	turnStep := -1
+	inRetrieved := false
+	currentLines := []string{}
+	currentFiles := map[string]struct{}{}
+	currentIsFullDiff := false
 
-	flushTurnForStep := func() {
-		if len(turnLines) == 0 {
+	flushTurn := func() {
+		if !inTurn {
 			return
 		}
-		if lastFullDiffStep >= 0 && turnIsFullDiff && turnMentionsFile && turnStep != lastFullDiffStep {
-			flushTurn(turnLines, true)
-			return
-		}
-		flushTurn(turnLines, false)
+		turns = append(turns, struct {
+			lines      []string
+			isFullDiff bool
+			files      map[string]struct{}
+		}{
+			lines:      append([]string{}, currentLines...),
+			isFullDiff: currentIsFullDiff,
+			files:      currentFiles,
+		})
+		currentLines = []string{}
+		currentFiles = map[string]struct{}{}
+		currentIsFullDiff = false
+		inTurn = false
+		inRetrieved = false
 	}
 
 	for _, line := range lines {
 		if strings.HasPrefix(line, "== TURN ") {
-			flushTurnForStep()
-			turnLines = []string{line}
+			flushTurn()
 			inTurn = true
-			turnIsFullDiff = false
-			turnMentionsFile = false
-			turnStep = -1
-			fields := strings.Fields(strings.TrimSpace(strings.TrimPrefix(line, "== TURN")))
-			if len(fields) > 0 {
-				if val, err := strconv.Atoi(fields[0]); err == nil {
-					turnStep = val
-				}
-			}
+			inRetrieved = false
+			currentLines = []string{line}
+			currentFiles = map[string]struct{}{}
+			currentIsFullDiff = false
 			continue
 		}
 		if !inTurn {
-			newLines = append(newLines, line)
+			prelude = append(prelude, line)
 			continue
 		}
-		turnLines = append(turnLines, line)
+		currentLines = append(currentLines, line)
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "Planner decision:") {
-			if strings.TrimSpace(strings.TrimPrefix(trimmed, "Planner decision:")) == "full_diff" {
-				turnIsFullDiff = true
-			}
-			continue
-		}
-
-		if strings.HasPrefix(trimmed, "Automatic full diff post-patch for:") {
-			filesPart := strings.TrimSpace(strings.TrimPrefix(trimmed, "Automatic full diff post-patch for:"))
-			for _, file := range strings.Split(filesPart, ",") {
-				if filepath.ToSlash(strings.TrimSpace(file)) == norm {
-					turnMentionsFile = true
-					break
-				}
-			}
+		switch {
+		case strings.HasPrefix(trimmed, "Planner decision:"):
+			currentIsFullDiff = strings.TrimSpace(strings.TrimPrefix(trimmed, "Planner decision:")) == "full_diff"
+		case trimmed == "Retrieved File Paths:":
+			inRetrieved = true
+		case inRetrieved && strings.HasPrefix(trimmed, "* "):
+			currentFiles = addFile(currentFiles, normalize(strings.TrimPrefix(trimmed, "* ")))
+		case inRetrieved && trimmed == "":
+			inRetrieved = false
+		case inRetrieved:
+			inRetrieved = false
+		case strings.HasPrefix(trimmed, "Automatic full diff post-patch for:"):
+			currentFiles = addFile(currentFiles, normalize(strings.TrimPrefix(trimmed, "Automatic full diff post-patch for:")))
 		}
 	}
-	flushTurnForStep()
+	flushTurn()
+
+	lastMatch := -1
+	for idx, turn := range turns {
+		if !turn.isFullDiff {
+			continue
+		}
+		if _, ok := turn.files[norm]; ok {
+			lastMatch = idx
+		}
+	}
+
+	newLines := make([]string, 0, len(lines))
+	newLines = append(newLines, prelude...)
+	for idx, turn := range turns {
+		if turn.isFullDiff {
+			if _, ok := turn.files[norm]; ok && idx != lastMatch {
+				continue
+			}
+		}
+		newLines = append(newLines, turn.lines...)
+	}
 
 	cleaned := strings.Join(newLines, "\n")
 	cleaned = sanitizeTranscriptText(cleaned)
-	if err := os.WriteFile(t.path, []byte(cleaned), 0o644); err != nil {
+	if err := t.rewrite(cleaned); err != nil {
 		return fmt.Errorf("failed to write deduplicated transcript: %w", err)
 	}
-	t.mem.Reset()
-	t.mem.WriteString(cleaned)
 	return nil
 }

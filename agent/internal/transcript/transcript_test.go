@@ -251,6 +251,155 @@ func TestDeduplicateFullDiffByFile_RemovesPriorTurns(t *testing.T) {
 	}
 }
 
+func TestDeduplicateFullDiffByFile_PrefersLastTurnOrder(t *testing.T) {
+	cwd, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	tmp := t.TempDir()
+	_ = os.Chdir(tmp)
+	t.Setenv("HOME", tmp)
+
+	tr, err := New("full-diff-step")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tr.Close()
+
+	if err := tr.WriteHeader("goal", "full-diff-step", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := tr.WriteTurn(5, "Automatic full diff post-patch for: a.txt", "", []string{"a.txt"}, "diff-old", "full_diff"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tr.WriteTurn(4, "Automatic full diff post-patch for: a.txt", "", []string{"a.txt"}, "diff-new", "full_diff"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := tr.DeduplicateFullDiffByFile("a.txt"); err != nil {
+		t.Fatal(err)
+	}
+
+	content := tr.Content()
+	if strings.Contains(content, "diff-old") {
+		t.Fatalf("expected earlier full diff to be removed by position:\n%s", content)
+	}
+	if !strings.Contains(content, "diff-new") {
+		t.Fatalf("expected latest in transcript order to remain:\n%s", content)
+	}
+}
+
+func TestDeduplicateFullDiffByFile_UsesRetrievedPaths(t *testing.T) {
+	cwd, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	tmp := t.TempDir()
+	_ = os.Chdir(tmp)
+	t.Setenv("HOME", tmp)
+
+	tr, err := New("full-diff-retrieved")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tr.Close()
+
+	if err := tr.WriteHeader("goal", "full-diff-retrieved", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// The question references a different file name, but the retrieved path
+	// points to the target file with a leading ./.
+	if err := tr.WriteTurn(1, "Automatic full diff post-patch for: other.md", "", []string{"./README.md"}, "diff-old", "full_diff"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tr.WriteTurn(2, "Automatic full diff post-patch for: README.md", "", []string{"README.md"}, "diff-new", "full_diff"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := tr.DeduplicateFullDiffByFile("README.md"); err != nil {
+		t.Fatal(err)
+	}
+
+	content := tr.Content()
+	if strings.Contains(content, "diff-old") {
+		t.Fatalf("expected dedupe to key off retrieved paths:\n%s", content)
+	}
+	if !strings.Contains(content, "diff-new") {
+		t.Fatalf("expected latest README.md diff to remain:\n%s", content)
+	}
+}
+
+func TestDeduplicateFullDiffByFile_RetainsSingleFullDiff(t *testing.T) {
+	cwd, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	tmp := t.TempDir()
+	_ = os.Chdir(tmp)
+	t.Setenv("HOME", tmp)
+
+	tr, err := New("full-diff-single")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tr.Close()
+
+	if err := tr.WriteHeader("goal", "full-diff-single", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := tr.WriteTurn(1, "Automatic full diff post-patch for: a.txt", "", []string{"a.txt"}, "diff-only", "full_diff"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := tr.DeduplicateFullDiffByFile("a.txt"); err != nil {
+		t.Fatal(err)
+	}
+
+	content := tr.Content()
+	if !strings.Contains(content, "diff-only") {
+		t.Fatalf("expected single diff to remain after dedupe:\n%s", content)
+	}
+}
+
+func TestDeduplicateFullDiffByFile_DoesNotDeleteOtherFileFullDiff(t *testing.T) {
+	cwd, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	tmp := t.TempDir()
+	_ = os.Chdir(tmp)
+	t.Setenv("HOME", tmp)
+
+	tr, err := New("full-diff-sess-3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tr.Close()
+
+	if err := tr.WriteHeader("goal", "full-diff-sess-3", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := tr.WriteTurn(1, "Automatic full diff post-patch for: a.txt", "", []string{"a.txt"}, "diff-a-1", "full_diff"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tr.WriteTurn(2, "Automatic full diff post-patch for: b.txt", "", []string{"b.txt"}, "diff-b-1", "full_diff"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tr.WriteTurn(3, "Automatic full diff post-patch for: a.txt", "", []string{"a.txt"}, "diff-a-2", "full_diff"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := tr.DeduplicateFullDiffByFile("a.txt"); err != nil {
+		t.Fatal(err)
+	}
+
+	content := tr.Content()
+	if strings.Contains(content, "diff-a-1") {
+		t.Fatalf("expected older a.txt diff to be removed:\n%s", content)
+	}
+	if !strings.Contains(content, "diff-a-2") {
+		t.Fatalf("expected latest a.txt diff to remain:\n%s", content)
+	}
+	if !strings.Contains(content, "diff-b-1") {
+		t.Fatalf("expected b.txt diff to remain:\n%s", content)
+	}
+}
+
 func TestDeduplicateFullDiffByFile_NoopsForMissing(t *testing.T) {
 	cwd, _ := os.Getwd()
 	t.Cleanup(func() { _ = os.Chdir(cwd) })
@@ -277,5 +426,109 @@ func TestDeduplicateFullDiffByFile_NoopsForMissing(t *testing.T) {
 	after := tr.Content()
 	if before != after {
 		t.Fatalf("expected transcript unchanged")
+	}
+}
+
+func TestDeduplicateFullDiffByFile_StripsNULBytes(t *testing.T) {
+	cwd, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	tmp := t.TempDir()
+	_ = os.Chdir(tmp)
+	t.Setenv("HOME", tmp)
+
+	tr, err := New("full-diff-sess-nul")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tr.Close()
+
+	if err := tr.WriteHeader("goal", "full-diff-sess-nul", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := tr.WriteTurn(1, "Automatic full diff post-patch for: a.txt", "", []string{"a.txt"}, "diff1", "full_diff"); err != nil {
+		t.Fatal(err)
+	}
+
+	withNul := tr.Content() + "\x00\x00\x00"
+	if err := os.WriteFile(tr.Path(), []byte(withNul), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := tr.Restore(withNul); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := tr.DeduplicateFullDiffByFile("a.txt"); err != nil {
+		t.Fatal(err)
+	}
+	if strings.ContainsRune(tr.Content(), '\x00') {
+		t.Fatalf("expected transcript to strip NUL bytes")
+	}
+}
+
+func TestDeduplicateFullDiffByFile_DoesNotIntroduceNULBytes(t *testing.T) {
+	cwd, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	tmp := t.TempDir()
+	_ = os.Chdir(tmp)
+	t.Setenv("HOME", tmp)
+
+	tr, err := New("full-diff-sess-rewrite")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tr.Close()
+
+	if err := tr.WriteHeader("goal", "full-diff-sess-rewrite", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := tr.WriteTurn(1, "Automatic full diff post-patch for: a.txt", "", []string{"a.txt"}, "diff-a-1", "full_diff"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tr.WriteTurn(2, "Automatic full diff post-patch for: a.txt", "", []string{"a.txt"}, "diff-a-2", "full_diff"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := tr.DeduplicateFullDiffByFile("a.txt"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(tr.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.ContainsRune(string(data), '\x00') {
+		t.Fatalf("dedupe rewrite should not produce NUL bytes")
+	}
+}
+
+func TestWriteTurn_CompactsNULBytesBeforeWriting(t *testing.T) {
+	cwd, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	tmp := t.TempDir()
+	_ = os.Chdir(tmp)
+	t.Setenv("HOME", tmp)
+
+	tr, err := New("turn-nul")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tr.Close()
+
+	if err := tr.WriteHeader("goal", "turn-nul", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	withNul := tr.Content() + "\x00\x00\x00"
+	if err := os.WriteFile(tr.Path(), []byte(withNul), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := tr.Restore(withNul); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := tr.WriteTurn(1, "Something", "", nil, "", "ask"); err != nil {
+		t.Fatal(err)
+	}
+	if strings.ContainsRune(tr.Content(), '\x00') {
+		t.Fatalf("expected transcript to compact NUL bytes before writing")
 	}
 }
