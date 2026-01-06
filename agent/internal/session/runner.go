@@ -1291,6 +1291,54 @@ func Run(ctx context.Context, opts Options) Result {
 			if cfg.verbose {
 				fmt.Fprintln(os.Stderr, "Question:", question)
 			}
+			var showFileBanner string
+			showFileRetrieved := []string(nil)
+			showFileHandled := false
+			if !cfg.dryRun {
+				ctxDetect, cancelDetect := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
+				ctxDetect = attachTrajectory(ctxDetect, trajectoryWriter, parentSpanID)
+				detection, raw, err := promptsvc.DetectShowFileRequest(ctxDetect, mctRunner.Runtime, question)
+				cancelDetect()
+				if err != nil {
+					if cfg.verbose {
+						fmt.Fprintln(os.Stderr, "Show-file detection error:", err)
+					}
+					turnInfo["show_file_detection_error"] = trimTo(err.Error(), 200)
+					if strings.TrimSpace(raw) != "" {
+						turnInfo["show_file_detection_raw"] = trimTo(raw, 200)
+					}
+				} else {
+					turnInfo["show_file_request"] = detection.IsShowFileRequest
+					if strings.TrimSpace(raw) != "" {
+						turnInfo["show_file_detection_raw"] = trimTo(raw, 200)
+					}
+					if detection.IsShowFileRequest {
+						requested := filepath.Clean(strings.TrimSpace(detection.Filepath))
+						turnInfo["show_file_path"] = requested
+						if requested != "." && requested != "" && !filepath.IsAbs(requested) && !strings.HasPrefix(requested, "..") {
+							candidate := filepath.Join(repoRoot, requested)
+							content, rerr := os.ReadFile(candidate)
+							if rerr != nil {
+								if cfg.verbose {
+									fmt.Fprintln(os.Stderr, "Show-file read error:", rerr)
+								}
+								turnInfo["show_file_read_error"] = trimTo(rerr.Error(), 200)
+							} else {
+								header := fmt.Sprintf("\n--- Current content of file: %s ---\n", requested)
+								footer := "\n---\n"
+								showFileBanner = header + string(content) + footer
+								_ = tr.AppendRaw(showFileBanner)
+								showFileRetrieved = []string{requested}
+								showFileHandled = true
+								turnInfo["show_file_appended"] = true
+								turnInfo["show_file_bytes"] = len(content)
+							}
+						} else {
+							turnInfo["show_file_invalid_path"] = true
+						}
+					}
+				}
+			}
 			useShellAgent = cfg.shellAgent
 			preflightNote := ""
 			var preflightErr error
@@ -1334,7 +1382,9 @@ func Run(ctx context.Context, opts Options) Result {
 			}
 			mctRunner.ShellAgent = useShellAgent
 			indicator := "shell"
-			if !useShellAgent {
+			if showFileHandled {
+				indicator = "show"
+			} else if !useShellAgent {
 				indicator = "file"
 			}
 			metadata := append([]string(nil), baseOrchMetadata...)
@@ -1352,6 +1402,30 @@ func Run(ctx context.Context, opts Options) Result {
 				}
 			}
 			stream := display.BeginPrompt(question, orchPromptOpts)
+			if strings.TrimSpace(showFileBanner) != "" {
+				stream.OnChunk(showFileBanner)
+			}
+			if showFileHandled {
+				fullAns := strings.TrimSpace(showFileBanner)
+				if fullAns == "" {
+					fullAns = "[show-file]"
+				}
+				stream.Complete(fullAns)
+				if err := tr.WriteTurn(step, question, "", showFileRetrieved, fullAns, "ask"); err != nil {
+					fmt.Fprintln(os.Stderr, "Transcript write error:", err)
+					sessionErr = err
+					finishTurn(sessTelemetry, turn, turnDecision, "error", turnInfo, err)
+					return Result{ExitCode: 1, Err: err}
+				}
+				turnInfo["retrieved_count"] = len(showFileRetrieved)
+				userTurnCounter++
+				turnsCompleted = userTurnCounter
+				finishTurn(sessTelemetry, turn, turnDecision, "success", turnInfo, nil)
+				if userTurnCounter == cfg.maxSteps {
+					goto Finalize
+				}
+				goto TurnDone
+			}
 			input := runner.PromptInput{
 				Prompt:             question,
 				Mode:               "default",
