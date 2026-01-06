@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
@@ -422,4 +423,146 @@ func (t *Transcript) emit(op string, payload map[string]any) {
 	if err := t.traj.Emit(context.Background(), evt); err != nil {
 		fmt.Fprintf(os.Stderr, "[trajectory] transcript emit error: %v\n", err)
 	}
+}
+
+// DeduplicateFullDiffByFile removes prior full_diff turns referencing the given
+// file, ensuring the transcript contains at most one DecisionFullDiff per file.
+// This is best-effort: failures return errors but do not leave the transcript
+// file handle in an invalid state.
+func (t *Transcript) DeduplicateFullDiffByFile(path string) error {
+	if t == nil {
+		return nil
+	}
+	norm := filepath.ToSlash(strings.TrimSpace(path))
+	if norm == "" {
+		return nil
+	}
+	content := t.Content()
+	if strings.TrimSpace(content) == "" {
+		return nil
+	}
+
+	lines := strings.Split(content, "\n")
+	newLines := make([]string, 0, len(lines))
+
+	flushTurn := func(turnLines []string, isDup bool) {
+		if len(turnLines) == 0 {
+			return
+		}
+		if isDup {
+			return
+		}
+		newLines = append(newLines, turnLines...)
+	}
+
+	lastFullDiffStep := -1
+	for idx := len(lines) - 1; idx >= 0; idx-- {
+		line := strings.TrimSpace(lines[idx])
+		if line != "Planner decision: full_diff" {
+			continue
+		}
+		step := -1
+		for j := idx; j >= 0; j-- {
+			candidate := strings.TrimSpace(lines[j])
+			if strings.HasPrefix(candidate, "== TURN ") {
+				fields := strings.Fields(strings.TrimSpace(strings.TrimPrefix(candidate, "== TURN")))
+				if len(fields) > 0 {
+					if val, err := strconv.Atoi(fields[0]); err == nil {
+						step = val
+					}
+				}
+				break
+			}
+		}
+		if step < 0 {
+			continue
+		}
+		mentions := false
+		for j := idx; j >= 0; j-- {
+			candidate := strings.TrimSpace(lines[j])
+			if strings.HasPrefix(candidate, "== TURN ") {
+				break
+			}
+			if strings.HasPrefix(candidate, "Automatic full diff post-patch for:") {
+				filesPart := strings.TrimSpace(strings.TrimPrefix(candidate, "Automatic full diff post-patch for:"))
+				for _, file := range strings.Split(filesPart, ",") {
+					if filepath.ToSlash(strings.TrimSpace(file)) == norm {
+						mentions = true
+						break
+					}
+				}
+				break
+			}
+		}
+		if mentions {
+			lastFullDiffStep = step
+			break
+		}
+	}
+
+	var turnLines []string
+	inTurn := false
+	turnIsFullDiff := false
+	turnMentionsFile := false
+	turnStep := -1
+
+	flushTurnForStep := func() {
+		if len(turnLines) == 0 {
+			return
+		}
+		if lastFullDiffStep >= 0 && turnIsFullDiff && turnMentionsFile && turnStep != lastFullDiffStep {
+			flushTurn(turnLines, true)
+			return
+		}
+		flushTurn(turnLines, false)
+	}
+
+	for _, line := range lines {
+		if strings.HasPrefix(line, "== TURN ") {
+			flushTurnForStep()
+			turnLines = []string{line}
+			inTurn = true
+			turnIsFullDiff = false
+			turnMentionsFile = false
+			turnStep = -1
+			fields := strings.Fields(strings.TrimSpace(strings.TrimPrefix(line, "== TURN")))
+			if len(fields) > 0 {
+				if val, err := strconv.Atoi(fields[0]); err == nil {
+					turnStep = val
+				}
+			}
+			continue
+		}
+		if !inTurn {
+			newLines = append(newLines, line)
+			continue
+		}
+		turnLines = append(turnLines, line)
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "Planner decision:") {
+			if strings.TrimSpace(strings.TrimPrefix(trimmed, "Planner decision:")) == "full_diff" {
+				turnIsFullDiff = true
+			}
+			continue
+		}
+
+		if strings.HasPrefix(trimmed, "Automatic full diff post-patch for:") {
+			filesPart := strings.TrimSpace(strings.TrimPrefix(trimmed, "Automatic full diff post-patch for:"))
+			for _, file := range strings.Split(filesPart, ",") {
+				if filepath.ToSlash(strings.TrimSpace(file)) == norm {
+					turnMentionsFile = true
+					break
+				}
+			}
+		}
+	}
+	flushTurnForStep()
+
+	cleaned := strings.Join(newLines, "\n")
+	if err := os.WriteFile(t.path, []byte(cleaned), 0o644); err != nil {
+		return fmt.Errorf("failed to write deduplicated transcript: %w", err)
+	}
+	t.mem.Reset()
+	t.mem.WriteString(cleaned)
+	return nil
 }

@@ -24,11 +24,13 @@ import (
 	patchersvc "github.com/tursomari/machtiani/agent/internal/patcher"
 	"github.com/tursomari/machtiani/agent/internal/planner"
 	"github.com/tursomari/machtiani/agent/internal/runner"
+	"github.com/tursomari/machtiani/agent/internal/session/fulldiff"
 	"github.com/tursomari/machtiani/agent/internal/tempdir"
 	"github.com/tursomari/machtiani/agent/internal/trajectory"
 	"github.com/tursomari/machtiani/agent/internal/transcript"
 	"github.com/tursomari/machtiani/agent/internal/ui"
 	"github.com/tursomari/machtiani/agent/internal/workspace"
+	"time"
 )
 
 const (
@@ -52,6 +54,7 @@ type plannerProgressTracker struct {
 	successFiles     []string
 	applied          int
 	forceRepatchHint bool
+	fileDedupSet     map[string]string
 	pendingReview    *planner.PendingReview
 }
 
@@ -62,7 +65,10 @@ type patchTranscriptDraft struct {
 }
 
 func newPlannerProgressTracker(existing *PlannerProgressState) *plannerProgressTracker {
-	tracker := &plannerProgressTracker{successSet: make(map[string]struct{})}
+	tracker := &plannerProgressTracker{
+		successSet:   make(map[string]struct{}),
+		fileDedupSet: make(map[string]string),
+	}
 	if existing == nil {
 		return tracker
 	}
@@ -86,6 +92,37 @@ func newPlannerProgressTracker(existing *PlannerProgressState) *plannerProgressT
 
 func normalizePlannerPath(path string) string {
 	return filepath.ToSlash(strings.TrimSpace(path))
+}
+
+func (p *plannerProgressTracker) shouldDeduplicateFile(path string, contentHash string) bool {
+	if p == nil {
+		return false
+	}
+	norm := normalizePlannerPath(path)
+	if norm == "" {
+		return false
+	}
+	lastHash, exists := p.fileDedupSet[norm]
+	return exists && lastHash == contentHash
+}
+
+func (p *plannerProgressTracker) updateDeduplicationState(path string, contentHash string) {
+	if p == nil {
+		return
+	}
+	norm := normalizePlannerPath(path)
+	if norm == "" {
+		return
+	}
+	p.fileDedupSet[norm] = contentHash
+}
+
+func (p *plannerProgressTracker) ShouldDeduplicateFile(path string, contentHash string) bool {
+	return p.shouldDeduplicateFile(path, contentHash)
+}
+
+func (p *plannerProgressTracker) UpdateDeduplicationState(path string, contentHash string) {
+	p.updateDeduplicationState(path, contentHash)
 }
 
 func (p *plannerProgressTracker) recordSuccess(files []string) {
@@ -593,6 +630,32 @@ func Run(ctx context.Context, opts Options) Result {
 		}
 		if err := tr.WriteTurn(pendingPatchDraft.Step, question, "", nil, summary, decision); err != nil {
 			return err
+		}
+		if strings.ToLower(status) == "success" {
+			baseline, err := patchersvc.EnsureBaseline(sessionID, repoRoot, time.Now())
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "[full-diff] Failed to ensure baseline: %v\n", err)
+			} else {
+				files := []string(nil)
+				if review := plannerProgress.pendingReviewInfo(); review != nil {
+					files = append(files, review.Files...)
+				}
+				if len(files) == 0 {
+					files = append(files, plannerProgress.successList()...)
+				}
+				fulldiff.Inject(pendingPatchDraft.Step, repoRoot, files, tr, plannerProgress, fulldiff.Options{Verbose: cfg.verbose, Baseline: baseline})
+				// Synthetic turn: keep transcript step count in sync.
+				userTurnCounter++
+				if trajectoryWriter != nil {
+					trajectoryWriter.Emit(rootCtx, trajectory.Event{
+						Kind: "transcript_synthetic_full_diff",
+						Payload: map[string]any{
+							"op":   "full_diff",
+							"step": pendingPatchDraft.Step + 1,
+						},
+					})
+				}
+			}
 		}
 		pendingPatchDraft = nil
 		if pendingState != nil {
@@ -1904,6 +1967,12 @@ func Run(ctx context.Context, opts Options) Result {
 				)
 			}
 			ans := diffText
+
+			// --- BEGIN: Automatic DecisionFullDiff Injection (Post-Patch) ---
+			// NOTE: full diff is written after the patch turn so it appears immediately
+			// after the patch in the transcript.
+			// --- END: Automatic DecisionFullDiff Injection ---
+
 			// Defer transcript write until accept/reject so only one final
 			// patch turn is recorded (success or reject). Keep the diff in
 			// memory and surface it for the planner via augmented context.
@@ -1912,6 +1981,7 @@ func Run(ctx context.Context, opts Options) Result {
 				Description: descTrimmed,
 				Answer:      ans,
 			}
+
 			stream.Complete(ans)
 			lastAnswer = ans
 			review := &planner.PendingReview{

@@ -166,3 +166,76 @@ func TestAppendRaw_UserFeedbackSection(t *testing.T) {
 		t.Fatalf("raw feedback should not include a planner decision line:\n%s", content)
 	}
 }
+
+func TestDeduplicateFullDiffByFile_RemovesPriorTurns(t *testing.T) {
+	cwd, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	tmp := t.TempDir()
+	_ = os.Chdir(tmp)
+	t.Setenv("HOME", tmp)
+
+	tr, err := New("full-diff-sess")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tr.Close()
+
+	if err := tr.WriteHeader("goal", "full-diff-sess", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	files := []string{"a.txt", "b.txt"}
+	if err := tr.WriteTurn(1, "Automatic full diff post-patch for: a.txt", "", files, "diff1", "full_diff"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tr.WriteTurn(2, "Automatic full diff post-patch for: a.txt", "", files, "diff2", "full_diff"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tr.WriteTurn(3, "Something else", "", nil, "", "ask"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := tr.DeduplicateFullDiffByFile("a.txt"); err != nil {
+		t.Fatal(err)
+	}
+
+	content := tr.Content()
+	if strings.Contains(content, "== TURN 1") {
+		t.Fatalf("expected turn 1 to be removed:\n%s", content)
+	}
+	if !strings.Contains(content, "== TURN 2") {
+		t.Fatalf("expected latest full diff to remain:\n%s", content)
+	}
+	if !strings.Contains(content, "== TURN 3") {
+		t.Fatalf("expected unrelated turns to remain:\n%s", content)
+	}
+}
+
+func TestDeduplicateFullDiffByFile_NoopsForMissing(t *testing.T) {
+	cwd, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	tmp := t.TempDir()
+	_ = os.Chdir(tmp)
+	t.Setenv("HOME", tmp)
+
+	tr, err := New("full-diff-sess-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tr.Close()
+
+	if err := tr.WriteHeader("goal", "full-diff-sess-2", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := tr.WriteTurn(1, "Something else", "", nil, "", "ask"); err != nil {
+		t.Fatal(err)
+	}
+	before := tr.Content()
+	if err := tr.DeduplicateFullDiffByFile("a.txt"); err != nil {
+		t.Fatal(err)
+	}
+	after := tr.Content()
+	if before != after {
+		t.Fatalf("expected transcript unchanged")
+	}
+}
