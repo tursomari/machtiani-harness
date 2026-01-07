@@ -1025,7 +1025,7 @@ func Run(ctx context.Context, opts Options) Result {
 		if trimmedResumePrompt != "" {
 			feedback := extractUserFeedback(trimmedResumePrompt)
 			resumePrompt = feedback
-			if err := tr.AppendRaw(fmt.Sprintf("\n=== USER FEEDBACK\n\n%s\n", feedback)); err != nil {
+			if err := tr.AppendRaw(fmt.Sprintf("\n=== GOAL UPDATE\n\n%s\n", feedback)); err != nil {
 				fmt.Fprintln(os.Stderr, "Transcript write error:", err)
 				sessionErr = err
 				finishTurn(sessTelemetry, turn, "user-feedback", "error", turnInfo, err)
@@ -2355,7 +2355,7 @@ func appendResumePromptContext(transcript, prompt string) string {
 		b.WriteString(trimmedTranscript)
 		b.WriteString("\n\n")
 	}
-	b.WriteString("== USER FEEDBACK\n\n")
+	b.WriteString("== GOAL UPDATE\n\n")
 	b.WriteString(prompt)
 	b.WriteString("\n")
 	return b.String()

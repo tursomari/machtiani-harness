@@ -9,6 +9,10 @@ Patch validation diagnostics are recorded in the transcript; use them to decide 
     <constraint priority="critical">If you need to reason, do it silently; any text before `Decision:` causes the run to fail.</constraint>
     <constraint priority="high">Your prompt MUST be addressed to mct, not the user.</constraint>
     <constraint priority="high">Avoid clarifying user intent; focus on code, files, functions, modules, architecture, logs, or tests.</constraint>
+{{- if .HasGoalUpdate }}
+    <constraint priority="critical">The user has provided updated guidance below. This Latest Goal takes precedence over the original goal and any prior decisions. Prioritize satisfying the Latest Goal.</constraint>
+    <constraint priority="high">Even if the transcript contains a prior conclusion, continue planning toward the Latest Goal; do not finalize until it is addressed.</constraint>
+{{- end }}
   </constraints>
 
   <output>
@@ -29,11 +33,14 @@ Patch validation diagnostics are recorded in the transcript; use them to decide 
 </repatch>
 
 {{- end }}
-{{- /* Intentionally omit success-file tracking to avoid biasing decisions. */ -}}
-{{- /* Intentionally omit patch-success heuristics to avoid biasing decisions. */ -}}
 {{- if .HasGoal }}
 Goal:
 {{.Goal}}
+
+{{- end }}
+{{- if .HasGoalUpdate }}
+Latest Goal (takes precedence):
+{{.GoalUpdate}}
 
 {{- end }}
 {{- if .HasTranscript }}

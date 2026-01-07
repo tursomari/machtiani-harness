@@ -150,13 +150,13 @@ func TestAppendRaw_UserFeedbackSection(t *testing.T) {
 	}
 
 	feedback := "This is too marketing sounding. Use a domain-specific name."
-	block := "\n=== USER FEEDBACK\n\n" + feedback + "\n"
+	block := "\n=== GOAL UPDATE\n\n" + feedback + "\n"
 	if err := tr.AppendRaw(block); err != nil {
 		t.Fatal(err)
 	}
 
 	content := tr.Content()
-	if !strings.Contains(content, "=== USER FEEDBACK") {
+	if !strings.Contains(content, "=== GOAL UPDATE") {
 		t.Fatalf("missing feedback header in transcript:\n%s", content)
 	}
 	if !strings.Contains(content, feedback) {

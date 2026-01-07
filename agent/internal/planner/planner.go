@@ -77,6 +77,8 @@ type planTemplateData struct {
 	AppliedPatches  int
 	HasGoal         bool
 	Goal            string
+	HasGoalUpdate   bool
+	GoalUpdate      string
 	HasTranscript   bool
 	Transcript      string
 	Step            int
@@ -615,6 +617,9 @@ func (c *Client) buildPlanTemplateData(goal string, transcript string, step, max
 	display, overflow := successFilesDisplay(c.progress.SuccessFiles, successFilesPromptLimit)
 	goalTrim := strings.TrimSpace(goal)
 	transcriptTrim := strings.TrimSpace(transcript)
+
+	goalUpdate, _ := extractGoalUpdateFromTranscript(transcriptTrim)
+	hasGoalUpdate := strings.TrimSpace(goalUpdate) != ""
 	applied := c.progress.AppliedPatches
 	if applied < 0 {
 		applied = 0
@@ -628,6 +633,8 @@ func (c *Client) buildPlanTemplateData(goal string, transcript string, step, max
 		AppliedPatches:  applied,
 		HasGoal:         goalTrim != "",
 		Goal:            goalTrim,
+		HasGoalUpdate:   hasGoalUpdate,
+		GoalUpdate:      goalUpdate,
 		HasTranscript:   transcriptTrim != "",
 		Transcript:      transcriptTrim,
 		Step:            step,
@@ -636,6 +643,31 @@ func (c *Client) buildPlanTemplateData(goal string, transcript string, step, max
 	}
 	data.PatchRules = c.planPatchRulesText(c.cfg.StrictPatchMode)
 	return data
+}
+
+// extractGoalUpdateFromTranscript returns the content of the last goal update
+// marker and the transcript with that section removed.
+
+func extractGoalUpdateFromTranscript(transcript string) (goalUpdate string, cleanTranscript string) {
+	marker := "== GOAL UPDATE"
+	lastIdx := strings.LastIndex(transcript, marker)
+	if lastIdx == -1 {
+		return "", transcript
+	}
+
+	afterMarker := transcript[lastIdx+len(marker):]
+	afterMarker = strings.TrimLeft(afterMarker, "\n")
+
+	endIdx := strings.Index(afterMarker, "\n== ")
+	if endIdx == -1 {
+		goalUpdate = strings.TrimSpace(afterMarker)
+	} else {
+		goalUpdate = strings.TrimSpace(afterMarker[:endIdx])
+	}
+
+	cleanTranscript = strings.TrimSpace(transcript[:lastIdx])
+
+	return goalUpdate, cleanTranscript
 }
 
 func (c *Client) planPatchIntroText() string {
