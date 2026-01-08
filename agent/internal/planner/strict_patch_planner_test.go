@@ -28,10 +28,11 @@ func TestRunStrictPatchFlowLoadsFileSnapshot(t *testing.T) {
 	client.UpdateProgress(Progress{SuccessFiles: []string{"LICENSE"}, AppliedPatches: 1})
 	var mu sync.Mutex
 	call := 0
-	client.chatFn = func(_ context.Context, prompt string) (string, error) {
+	client.chatFn = func(_ context.Context, messages []llm.Message) (string, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		call++
+		prompt := renderMessagesForLogging(messages)
 		switch call {
 		case 1:
 			if !strings.Contains(prompt, "strict patch path selector") {
@@ -128,10 +129,11 @@ func TestStrictPatchNormalizationHandlesReplacementAlias(t *testing.T) {
 	client := NewClient(ClientConfig{RepoRoot: repoRoot})
 	var mu sync.Mutex
 	call := 0
-	client.chatFn = func(_ context.Context, prompt string) (string, error) {
+	client.chatFn = func(_ context.Context, messages []llm.Message) (string, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		call++
+		prompt := renderMessagesForLogging(messages)
 		switch call {
 		case 1:
 			return `{"path":"LICENSE","reason":"root license"}`, nil
@@ -198,10 +200,11 @@ func TestStrictPatchPromptUsesBaselineDiffWhenSessionAvailable(t *testing.T) {
 	client := NewClient(ClientConfig{RepoRoot: repoRoot})
 	var mu sync.Mutex
 	call := 0
-	client.chatFn = func(_ context.Context, prompt string) (string, error) {
+	client.chatFn = func(_ context.Context, messages []llm.Message) (string, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		call++
+		prompt := renderMessagesForLogging(messages)
 		switch call {
 		case 1:
 			return `{"path":"README.md","reason":"baseline diff"}`, nil
@@ -256,10 +259,11 @@ func TestStrictPatchPromptUsesBaselineDiffFromConfigWhenEnvMissing(t *testing.T)
 	client := NewClient(ClientConfig{RepoRoot: repoRoot, SessionID: "config-session"})
 	var mu sync.Mutex
 	call := 0
-	client.chatFn = func(_ context.Context, prompt string) (string, error) {
+	client.chatFn = func(_ context.Context, messages []llm.Message) (string, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		call++
+		prompt := renderMessagesForLogging(messages)
 		switch call {
 		case 1:
 			return `{"path":"README.md","reason":"baseline diff"}`, nil
@@ -308,10 +312,11 @@ func TestStrictPatchFailsWhenBaselineCaptureFails(t *testing.T) {
 	client := NewClient(ClientConfig{RepoRoot: repoRoot})
 	var mu sync.Mutex
 	call := 0
-	client.chatFn = func(_ context.Context, prompt string) (string, error) {
+	client.chatFn = func(_ context.Context, messages []llm.Message) (string, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		call++
+		prompt := renderMessagesForLogging(messages)
 		if call == 1 {
 			return fmt.Sprintf(`{"path":"%s","reason":"missing baseline"}`, relPath), nil
 		}
@@ -340,7 +345,7 @@ func TestStrictPatchNormalizationHandlesOldNewText(t *testing.T) {
 	client := NewClient(ClientConfig{RepoRoot: repoRoot})
 	var mu sync.Mutex
 	call := 0
-	client.chatFn = func(_ context.Context, _ string) (string, error) {
+	client.chatFn = func(_ context.Context, _ []llm.Message) (string, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		call++
@@ -400,10 +405,11 @@ func TestStrictPatchRequestsFullReloadTriggersRetry(t *testing.T) {
 	client := NewClient(ClientConfig{RepoRoot: repoRoot})
 	var mu sync.Mutex
 	call := 0
-	client.chatFn = func(_ context.Context, prompt string) (string, error) {
+	client.chatFn = func(_ context.Context, messages []llm.Message) (string, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		call++
+		prompt := renderMessagesForLogging(messages)
 		switch call {
 		case 1:
 			return `{"path":"big.txt","reason":"Large file edit"}`, nil
@@ -516,15 +522,15 @@ func TestStrictPatchAdjustsSnippetSourceForContext(t *testing.T) {
 	client := NewClient(ClientConfig{RepoRoot: repoRoot})
 	var mu sync.Mutex
 	call := 0
-	client.chatFn = func(_ context.Context, _ string) (string, error) {
+	client.chatFn = func(_ context.Context, _ []llm.Message) (string, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		call++
 		switch call {
 		case 1:
 			return `{"path":"LICENSE","reason":"update"}`, nil
-	case 2:
-		return `{
+		case 2:
+			return `{
 	  "metadata": {"description": "Adjust snippet"},
 	  "edits": [
 	    {
@@ -579,7 +585,7 @@ func TestStrictPatchRetriesOnEmptyChoices(t *testing.T) {
 	client := NewClient(ClientConfig{RepoRoot: repoRoot})
 	var mu sync.Mutex
 	call := 0
-	client.chatFn = func(_ context.Context, _ string) (string, error) {
+	client.chatFn = func(_ context.Context, _ []llm.Message) (string, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		call++

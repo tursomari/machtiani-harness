@@ -16,6 +16,7 @@ var templateMap = map[string]string{
 	"planner.instance_template":         "templates/planner/instance_template.tpl",
 	"planner.timeout_template":          "templates/planner/timeout_template.tpl",
 	"planner.format_error_template":     "templates/planner/format_error_template.tpl",
+	"planner.plan_system":               "templates/planner/plan_system.tpl",
 	"planner.plan_prompt":               "templates/planner/plan_prompt.tpl",
 	"planner.plan_patch_rules":          "templates/planner/plan_patch_rules.tpl",
 	"planner.plan_patch_strict_rules":   "templates/planner/plan_patch_strict_rules.tpl",
@@ -35,12 +36,12 @@ var templateMap = map[string]string{
 	"shell_agent.lightweight_error_template":  "templates/shell-agent/lightweight_error_template.txt",
 
 	// MCT
-	"mct.header_user":                  "templates/mct/header_user_template.tpl",
-	"mct.header_existing":              "templates/mct/header_existing_template.tpl",
-	"mct.shell_agent_context_prefix":   "templates/mct/shell_agent_context_prefix.tpl",
-	"mct.shell_agent_context_template": "templates/mct/shell_agent_context_template.tpl",
+	"mct.header_user":                   "templates/mct/header_user_template.tpl",
+	"mct.header_existing":               "templates/mct/header_existing_template.tpl",
+	"mct.shell_agent_context_prefix":    "templates/mct/shell_agent_context_prefix.tpl",
+	"mct.shell_agent_context_template":  "templates/mct/shell_agent_context_template.tpl",
 	"mct.conversation_history_template": "templates/mct/conversation_history_template.tpl",
-	"mct.readme_system_template":       "templates/mct/readme_system_template.tpl",
+	"mct.readme_system_template":        "templates/mct/readme_system_template.tpl",
 
 	// File discovery
 	"file_discovery.system_prompt_template": "templates/file-discovery/system_prompt_template.tpl",
@@ -58,4 +59,3 @@ func GetEmbeddedTemplate(key string) (string, error) {
 	}
 	return strings.TrimSpace(string(data)), nil
 }
-

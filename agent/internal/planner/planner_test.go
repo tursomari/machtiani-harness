@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/tursomari/machtiani/agent/internal/llm"
 )
 
 func TestParseDecisionAsk(t *testing.T) {
@@ -57,7 +59,7 @@ func TestParseDecisionPatchShorthand(t *testing.T) {
 
 func TestPlanPatchShorthandRoutesToStrictPatchFlow(t *testing.T) {
 	client := NewClient(ClientConfig{PatchEnabled: true, StrictPatchMode: true, RepoRoot: t.TempDir()})
-	client.chatFn = func(context.Context, string) (string, error) {
+	client.chatFn = func(context.Context, []llm.Message) (string, error) {
 		return "Patch: src/main.go", nil
 	}
 	dec, payload, err := client.Plan(context.Background(), "goal", "transcript", 1, 3)
@@ -284,7 +286,7 @@ func TestReviewPromptIncludesPatchDiffPreview(t *testing.T) {
 
 func TestPlanReviewModeParsesAccept(t *testing.T) {
 	client := NewClient(ClientConfig{})
-	client.chatFn = func(context.Context, string) (string, error) {
+	client.chatFn = func(context.Context, []llm.Message) (string, error) {
 		return "Decision: accept\nReason: ship it", nil
 	}
 	client.UpdateProgress(Progress{
@@ -304,7 +306,7 @@ func TestPlanReviewModeParsesAccept(t *testing.T) {
 
 func TestPlanReviewModeDefaultsToAcceptWhenMissingDecision(t *testing.T) {
 	client := NewClient(ClientConfig{})
-	client.chatFn = func(context.Context, string) (string, error) {
+	client.chatFn = func(context.Context, []llm.Message) (string, error) {
 		return "Looks great!", nil
 	}
 	client.UpdateProgress(Progress{
@@ -324,7 +326,7 @@ func TestPlanReviewModeDefaultsToAcceptWhenMissingDecision(t *testing.T) {
 
 func TestPlanReviewModeCoercesNonReviewDecisionToAccept(t *testing.T) {
 	client := NewClient(ClientConfig{})
-	client.chatFn = func(context.Context, string) (string, error) {
+	client.chatFn = func(context.Context, []llm.Message) (string, error) {
 		return "Decision: ask\nQuestion: what's next?", nil
 	}
 	client.UpdateProgress(Progress{
@@ -476,6 +478,107 @@ func TestPlanPromptDisabledOmitsPatchInstructions(t *testing.T) {
 	}
 }
 
+func TestBuildPlanMessagesNoGoalUpdate(t *testing.T) {
+	client := NewClient(ClientConfig{PatchEnabled: true})
+	messages := client.buildPlanMessages("Finish docs", "Transcript body", 2, 4)
+
+	wantRoles := []string{"system", "user", "assistant", "user"}
+	if len(messages) != len(wantRoles) {
+		t.Fatalf("expected %d messages, got %d", len(wantRoles), len(messages))
+	}
+	for i, role := range wantRoles {
+		if messages[i].Role != role {
+			t.Fatalf("message %d role = %q, want %q", i, messages[i].Role, role)
+		}
+	}
+	if !strings.Contains(messages[0].Content, "Decision: ask|patch|finalize") {
+		t.Fatalf("system prompt missing decision line: %q", messages[0].Content)
+	}
+	if messages[1].Content != "Finish docs" {
+		t.Fatalf("unexpected goal message: %q", messages[1].Content)
+	}
+	if messages[2].Content != "Transcript body" {
+		t.Fatalf("unexpected transcript message: %q", messages[2].Content)
+	}
+	if !strings.Contains(messages[3].Content, "Step 2 of 4") {
+		t.Fatalf("step message missing progress: %q", messages[3].Content)
+	}
+}
+
+func TestBuildPlanMessagesStripsGoalPreamble(t *testing.T) {
+	client := NewClient(ClientConfig{PatchEnabled: true})
+	transcript := strings.Join([]string{
+		"= MCT-AGENT TRANSCRIPT",
+		"",
+		"== GOAL:",
+		"",
+		"Finish docs",
+		"",
+		"== TURN 0",
+		"Question: start",
+	}, "\n")
+
+	messages := client.buildPlanMessages("Finish docs", transcript, 2, 4)
+	if len(messages) != 4 {
+		t.Fatalf("expected 4 messages, got %d", len(messages))
+	}
+	if messages[2].Role != "assistant" {
+		t.Fatalf("expected assistant transcript message, got %q", messages[2].Role)
+	}
+	if strings.Contains(messages[2].Content, "GOAL:") {
+		t.Fatalf("goal header should be stripped from transcript: %q", messages[2].Content)
+	}
+	if !strings.Contains(messages[2].Content, "TURN 0") {
+		t.Fatalf("transcript content missing turn data: %q", messages[2].Content)
+	}
+}
+
+func TestBuildPlanMessagesSplitsGoalUpdate(t *testing.T) {
+	client := NewClient(ClientConfig{PatchEnabled: false})
+	transcript := strings.Join([]string{
+		"= MCT-AGENT TRANSCRIPT",
+		"",
+		"== GOAL:",
+		"",
+		"Starting objective",
+		"",
+		"== TURN 0",
+		"Question: start",
+		"",
+		"=== GOAL UPDATE",
+		"Refined objective",
+		"",
+		"== TURN 1",
+		"Assistant: next steps",
+	}, "\n")
+
+	messages := client.buildPlanMessages("Initial goal", transcript, 1, 3)
+	wantRoles := []string{"system", "user", "assistant", "user", "assistant", "user"}
+	if len(messages) != len(wantRoles) {
+		t.Fatalf("expected %d messages, got %d", len(wantRoles), len(messages))
+	}
+	for i, role := range wantRoles {
+		if messages[i].Role != role {
+			t.Fatalf("message %d role = %q, want %q", i, messages[i].Role, role)
+		}
+	}
+	if strings.Contains(messages[2].Content, "GOAL:") {
+		t.Fatalf("expected goal header stripped from transcript: %q", messages[2].Content)
+	}
+	if !strings.Contains(messages[2].Content, "TURN 0") {
+		t.Fatalf("expected pre-update transcript in assistant message: %q", messages[2].Content)
+	}
+	if messages[3].Content != "Refined objective" {
+		t.Fatalf("unexpected goal update content: %q", messages[3].Content)
+	}
+	if !strings.Contains(messages[4].Content, "TURN 1") {
+		t.Fatalf("expected post-update transcript in assistant message: %q", messages[4].Content)
+	}
+	if !strings.Contains(messages[5].Content, "Step 1 of 3") {
+		t.Fatalf("step message missing progress: %q", messages[5].Content)
+	}
+}
+
 func TestFinalizePromptRetainsTranscript(t *testing.T) {
 	c := NewClient(ClientConfig{DryRun: true})
 	prompt := c.finalizePrompt("goal text", "transcript text")
@@ -526,10 +629,11 @@ func TestPlanReroutesRewriteToFullMode(t *testing.T) {
 
 	var mu sync.Mutex
 	call := 0
-	client.chatFn = func(_ context.Context, prompt string) (string, error) {
+	client.chatFn = func(_ context.Context, messages []llm.Message) (string, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		call++
+		prompt := renderMessagesForLogging(messages)
 		// 1. Plan prompt
 		if strings.Contains(prompt, "Decision: ask|patch|finalize") {
 			return "Decision: patch\n{}", nil
@@ -583,10 +687,11 @@ func TestPlanProactivelyBypassesStrictPatchForRewrite(t *testing.T) {
 
 	var mu sync.Mutex
 	call := 0
-	client.chatFn = func(_ context.Context, prompt string) (string, error) {
+	client.chatFn = func(_ context.Context, messages []llm.Message) (string, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		call++
+		prompt := renderMessagesForLogging(messages)
 		// 1. Plan prompt returns rewrite directly
 		if strings.Contains(prompt, "Decision: ask|patch|finalize") {
 			return "Decision: patch\n" + rewriteJSON, nil

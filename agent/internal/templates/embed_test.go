@@ -5,6 +5,7 @@ import "testing"
 func TestGetEmbeddedTemplate_KnownKeysLoad(t *testing.T) {
 	keys := []string{
 		"planner.plan_prompt",
+		"planner.plan_system",
 		"planner.plan_patch_rules",
 		"planner.finalize_prompt",
 		"shell_agent.system_template",
@@ -31,4 +32,3 @@ func TestGetEmbeddedTemplate_UnknownKeyErrors(t *testing.T) {
 		t.Fatalf("expected error")
 	}
 }
-

@@ -57,7 +57,7 @@ type ClientConfig struct {
 
 type Client struct {
 	cfg      ClientConfig
-	chatFn   func(context.Context, string) (string, error)
+	chatFn   func(context.Context, []llm.Message) (string, error)
 	progress Progress
 }
 
@@ -233,11 +233,17 @@ func (c *Client) Plan(ctx context.Context, goal string, transcript string, step,
 		return DecisionFinalize, "", nil
 	}
 	reviewMode := c.progress.PendingReview != nil
-	var prompt string
+	var (
+		messages  []llm.Message
+		promptLog string
+	)
 	if reviewMode {
-		prompt = c.reviewPrompt(goal, transcript, step, maxSteps)
+		prompt := c.reviewPrompt(goal, transcript, step, maxSteps)
+		promptLog = strings.TrimSpace(prompt)
+		messages = []llm.Message{{Role: "user", Content: promptLog}}
 	} else {
-		prompt = c.planPrompt(goal, transcript, step, maxSteps)
+		messages = c.buildPlanMessages(goal, transcript, step, maxSteps)
+		promptLog = renderMessagesForLogging(messages)
 	}
 	w, hasWriter := trajectory.FromContext(ctx)
 	parentSpan, _ := trajectory.ParentSpanID(ctx)
@@ -252,14 +258,14 @@ func (c *Client) Plan(ctx context.Context, goal string, transcript string, step,
 			"step":          step,
 			"max_steps":     maxSteps,
 		}
-		payload = trajectory.MergeExcerptWithPrefix(payload, trajectory.MakeTextExcerpt(prompt, w.ExcerptLen()), "prompt")
+		payload = trajectory.MergeExcerptWithPrefix(payload, trajectory.MakeTextExcerpt(promptLog, w.ExcerptLen()), "prompt")
 		if err := w.Emit(ctx, trajectory.Event{Kind: "planner.request", SpanID: span.ID, ParentSpanID: parentSpan, Payload: payload}); err != nil {
 			reportTrajectoryError(err)
 		}
 		chatCtx = trajectory.ContextWithParentSpan(ctx, span.ID)
 	}
 	start := time.Now()
-	resp, err := c.chat(chatCtx, prompt)
+	resp, err := c.chatMessages(chatCtx, messages)
 	duration := time.Since(start)
 	if err != nil {
 		if hasWriter {
@@ -313,7 +319,7 @@ func (c *Client) Plan(ctx context.Context, goal string, transcript string, step,
 			"duration_ms":   duration.Milliseconds(),
 			"parse_ok":      dec != "",
 		}
-		payload = trajectory.MergeExcerptWithPrefix(payload, trajectory.MakeTextExcerpt(prompt, w.ExcerptLen()), "prompt")
+		payload = trajectory.MergeExcerptWithPrefix(payload, trajectory.MakeTextExcerpt(promptLog, w.ExcerptLen()), "prompt")
 		payload = trajectory.MergeExcerptWithPrefix(payload, trajectory.MakeTextExcerpt(resp, w.ExcerptLen()), "response")
 		if dec != "" {
 			payload["parse"] = map[string]any{"decision": string(dec)}
@@ -432,7 +438,7 @@ func (c *Client) Plan(ctx context.Context, goal string, transcript string, step,
 			Alias:  strings.TrimSpace(c.cfg.Alias),
 			Step:   step,
 		}
-		if path, err := patchlog.WritePrompt(prompt, meta); err != nil {
+		if path, err := patchlog.WritePrompt(promptLog, meta); err != nil {
 			if c.cfg.Verbose {
 				fmt.Fprintf(os.Stderr, "[planner] failed to write patch prompt log: %v\n", err)
 			}
@@ -441,6 +447,50 @@ func (c *Client) Plan(ctx context.Context, goal string, transcript string, step,
 		}
 	}
 	return dec, q, nil
+}
+
+func (c *Client) buildPlanMessages(goal, transcript string, step, maxSteps int) []llm.Message {
+	systemPrompt := strings.TrimSpace(c.planSystemPrompt(goal, transcript, step, maxSteps))
+	goalTrim := strings.TrimSpace(goal)
+	goalUpdate, beforeUpdate, afterUpdate := splitTranscriptAtGoalUpdate(strings.TrimSpace(transcript))
+
+	messages := make([]llm.Message, 0, 6)
+	if systemPrompt != "" {
+		messages = append(messages, llm.Message{Role: "system", Content: systemPrompt})
+	}
+	if goalTrim != "" {
+		messages = append(messages, llm.Message{Role: "user", Content: goalTrim})
+	}
+	if beforeUpdate != "" {
+		messages = append(messages, llm.Message{Role: "assistant", Content: beforeUpdate})
+	}
+	if goalUpdate != "" {
+		messages = append(messages, llm.Message{Role: "user", Content: goalUpdate})
+	}
+	if afterUpdate != "" {
+		messages = append(messages, llm.Message{Role: "assistant", Content: afterUpdate})
+	}
+	messages = append(messages, llm.Message{Role: "user", Content: fmt.Sprintf("Step %d of %d. Decide.", step, maxSteps)})
+	return messages
+}
+
+func renderMessagesForLogging(messages []llm.Message) string {
+	var b strings.Builder
+	for _, msg := range messages {
+		content := strings.TrimSpace(msg.Content)
+		if content == "" {
+			continue
+		}
+		role := strings.TrimSpace(msg.Role)
+		if role == "" {
+			role = "unknown"
+		}
+		b.WriteString(role)
+		b.WriteString(":\n")
+		b.WriteString(content)
+		b.WriteString("\n\n")
+	}
+	return strings.TrimSpace(b.String())
 }
 
 func strictPatchFallbackQuestion(err error) string {
@@ -568,14 +618,23 @@ func (c *Client) Finalize(ctx context.Context, goal string, transcript string) (
 	return trimmed, nil
 }
 
-func (c *Client) chat(ctx context.Context, prompt string) (string, error) {
-	if strings.TrimSpace(prompt) == "" {
-		return "", errors.New("planner: prompt must not be empty")
+func (c *Client) chatMessages(ctx context.Context, messages []llm.Message) (string, error) {
+	if len(messages) == 0 {
+		return "", errors.New("planner: messages must not be empty")
+	}
+	hasContent := false
+	for _, msg := range messages {
+		if strings.TrimSpace(msg.Content) != "" {
+			hasContent = true
+			break
+		}
+	}
+	if !hasContent {
+		return "", errors.New("planner: messages must include content")
 	}
 	if c.chatFn != nil {
-		return c.chatFn(ctx, prompt)
+		return c.chatFn(ctx, messages)
 	}
-	messages := []llm.Message{{Role: "user", Content: prompt}}
 	callCtx := ctx
 	var cancel context.CancelFunc
 	if c.cfg.RequestTimeoutSec > 0 {
@@ -584,6 +643,40 @@ func (c *Client) chat(ctx context.Context, prompt string) (string, error) {
 	}
 	callCtx = llm.WithStage(callCtx, "planner")
 	return llm.ChatWithResolved(callCtx, c.cfg.Model, c.cfg.Extras, messages)
+}
+
+func (c *Client) chat(ctx context.Context, prompt string) (string, error) {
+	if strings.TrimSpace(prompt) == "" {
+		return "", errors.New("planner: prompt must not be empty")
+	}
+	return c.chatMessages(ctx, []llm.Message{{Role: "user", Content: prompt}})
+}
+
+func (c *Client) planSystemPrompt(goal string, transcript string, step, maxSteps int) string {
+	tpl := c.planSystemTemplate()
+	if tpl == "" {
+		fmt.Fprintln(os.Stderr, "[planner] plan system template missing")
+		return ""
+	}
+	data := c.buildPlanTemplateData(goal, transcript, step, maxSteps)
+	rendered, err := prompts.Render("planner_plan_system_prompt", tpl, data, nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[planner] plan system template error: %v\n", err)
+		return ""
+	}
+	return rendered
+}
+
+func (c *Client) planSystemTemplate() string {
+	if c.cfg.Prompts != nil {
+		if trimmed := strings.TrimSpace(c.cfg.Prompts.PlanPrompt); trimmed != "" {
+			return trimmed
+		}
+	}
+	if embedded, err := templates.GetEmbeddedTemplate("planner.plan_system"); err == nil {
+		return embedded
+	}
+	return ""
 }
 
 func (c *Client) planPrompt(goal string, transcript string, step, maxSteps int) string {
@@ -645,29 +738,93 @@ func (c *Client) buildPlanTemplateData(goal string, transcript string, step, max
 	return data
 }
 
+func splitTranscriptAtGoalUpdate(transcript string) (string, string, string) {
+	clean := stripTranscriptPreamble(strings.TrimSpace(transcript))
+	if clean == "" {
+		return "", "", ""
+	}
+
+	lines := strings.Split(clean, "\n")
+	markerIdx := -1
+	for i := len(lines) - 1; i >= 0; i-- {
+		if isGoalUpdateHeader(lines[i]) {
+			markerIdx = i
+			break
+		}
+	}
+
+	if markerIdx == -1 {
+		return "", clean, ""
+	}
+
+	before := strings.TrimSpace(strings.Join(lines[:markerIdx], "\n"))
+	afterLines := lines[markerIdx+1:]
+	endIdx := len(afterLines)
+	for i, line := range afterLines {
+		if isSectionHeader(line) {
+			endIdx = i
+			break
+		}
+	}
+	goalUpdate := strings.TrimSpace(strings.Join(afterLines[:endIdx], "\n"))
+	remaining := strings.TrimSpace(strings.Join(afterLines[endIdx:], "\n"))
+
+	return goalUpdate, before, remaining
+}
+
 // extractGoalUpdateFromTranscript returns the content of the last goal update
 // marker and the transcript with that section removed.
 
 func extractGoalUpdateFromTranscript(transcript string) (goalUpdate string, cleanTranscript string) {
-	marker := "== GOAL UPDATE"
-	lastIdx := strings.LastIndex(transcript, marker)
-	if lastIdx == -1 {
-		return "", transcript
+	goalUpdate, beforeUpdate, _ := splitTranscriptAtGoalUpdate(transcript)
+	if goalUpdate == "" {
+		return "", strings.TrimSpace(transcript)
 	}
+	return goalUpdate, beforeUpdate
+}
 
-	afterMarker := transcript[lastIdx+len(marker):]
-	afterMarker = strings.TrimLeft(afterMarker, "\n")
-
-	endIdx := strings.Index(afterMarker, "\n== ")
-	if endIdx == -1 {
-		goalUpdate = strings.TrimSpace(afterMarker)
-	} else {
-		goalUpdate = strings.TrimSpace(afterMarker[:endIdx])
+func stripTranscriptPreamble(transcript string) string {
+	trimmed := strings.TrimSpace(transcript)
+	if trimmed == "" {
+		return ""
 	}
+	turnMarker := "\n== TURN"
+	if idx := strings.Index(trimmed, turnMarker); idx != -1 {
+		return strings.TrimSpace(trimmed[idx+1:])
+	}
+	return trimmed
+}
 
-	cleanTranscript = strings.TrimSpace(transcript[:lastIdx])
+func isGoalUpdateHeader(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" {
+		return false
+	}
+	if !strings.HasSuffix(trimmed, "GOAL UPDATE") {
+		return false
+	}
+	head := strings.TrimSpace(strings.TrimSuffix(trimmed, "GOAL UPDATE"))
+	if head == "" {
+		return false
+	}
+	for i := 0; i < len(head); i++ {
+		if head[i] != '=' {
+			return false
+		}
+	}
+	return true
+}
 
-	return goalUpdate, cleanTranscript
+func isSectionHeader(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	if !strings.HasPrefix(trimmed, "=") {
+		return false
+	}
+	idx := 0
+	for idx < len(trimmed) && trimmed[idx] == '=' {
+		idx++
+	}
+	return idx > 0 && idx < len(trimmed) && trimmed[idx] == ' '
 }
 
 func (c *Client) planPatchIntroText() string {
