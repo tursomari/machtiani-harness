@@ -1,8 +1,10 @@
 package session
 
 import (
+	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -267,5 +269,98 @@ func TestStartTranscriptIfNeededChildIncludesBackgroundWhenRequested(t *testing.
 	}
 	if !strings.Contains(content, backgroundFallbackAnswer) {
 		t.Fatalf("expected fallback background answer in transcript; got %q", content)
+	}
+}
+
+type stubPatchPlanClient struct {
+	generatedPlan *PatchPlan
+	updatedPlan   *PatchPlan
+	existing      *PatchPlan
+	lastPatched   string
+}
+
+type collectingNotifier struct {
+	messages []string
+}
+
+func (c *collectingNotifier) Notify(msg string) {
+	c.messages = append(c.messages, msg)
+}
+
+func (s *stubPatchPlanClient) GeneratePatchPlan(context.Context, string, string) (*PatchPlan, error) {
+	return s.generatedPlan, nil
+}
+
+func (s *stubPatchPlanClient) UpdatePatchPlan(_ context.Context, _ string, _ string, existing *PatchPlan, lastPatchedFile string) (*PatchPlan, error) {
+	s.existing = existing
+	s.lastPatched = lastPatchedFile
+	return s.updatedPlan, nil
+}
+
+func TestInvokePatchPlanUpdateHookWritesTranscript(t *testing.T) {
+	tempDir := t.TempDir()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(tempDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(cwd)
+	})
+	cmd := exec.Command("git", "init")
+	cmd.Dir = tempDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init failed: %v (%s)", err, strings.TrimSpace(string(out)))
+	}
+
+	tr, err := transcript.NewWithPath(filepath.Join(tempDir, "agent-transcript.adoc"), "session-abc")
+	if err != nil {
+		t.Fatalf("transcript init: %v", err)
+	}
+	t.Cleanup(func() {
+		tr.Close()
+	})
+
+	client := &stubPatchPlanClient{
+		generatedPlan: &PatchPlan{Items: []PatchPlanItem{{Description: "add docs"}}},
+		updatedPlan:   &PatchPlan{Items: []PatchPlanItem{{Description: "add docs", Complete: true}}},
+	}
+	notifier := &collectingNotifier{}
+
+	ctx := context.Background()
+	if err := invokePatchPlanUpdateHook(ctx, client, tr, "session-abc", "goal", "transcript body", "", notifier); err != nil {
+		t.Fatalf("invokePatchPlanUpdateHook (create) error: %v", err)
+	}
+	first := tr.Content()
+	if !strings.Contains(first, "PATCH PLAN CREATED") {
+		t.Fatalf("expected creation entry in transcript, got %q", first)
+	}
+	if !strings.Contains(first, `"description": "add docs"`) {
+		t.Fatalf("expected plan JSON in transcript, got %q", first)
+	}
+	if len(notifier.messages) == 0 || !strings.Contains(notifier.messages[0], "created") {
+		t.Fatalf("expected notifier to record creation message, got %+v", notifier.messages)
+	}
+
+	if err := invokePatchPlanUpdateHook(ctx, client, tr, "session-abc", "goal", "transcript body", "last.txt", notifier); err != nil {
+		t.Fatalf("invokePatchPlanUpdateHook (update) error: %v", err)
+	}
+	updated := tr.Content()
+	if !strings.Contains(updated, "PATCH PLAN UPDATED") {
+		t.Fatalf("expected update entry in transcript, got %q", updated)
+	}
+	if !strings.Contains(updated, `"complete": true`) {
+		t.Fatalf("expected updated plan JSON in transcript, got %q", updated)
+	}
+	if len(notifier.messages) < 2 || !strings.Contains(notifier.messages[1], "updated") {
+		t.Fatalf("expected notifier to record update message, got %+v", notifier.messages)
+	}
+	if client.existing == nil || len(client.existing.Items) != 1 {
+		t.Fatalf("expected previous plan passed to update, got %+v", client.existing)
+	}
+	if client.lastPatched != "last.txt" {
+		t.Fatalf("expected last patched file recorded, got %q", client.lastPatched)
 	}
 }

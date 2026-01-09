@@ -24,6 +24,8 @@ var templateMap = map[string]string{
 	"planner.plan_patch_disabled_intro": "templates/planner/plan_patch_disabled_intro.tpl",
 	"planner.finalize_prompt":           "templates/planner/finalize_prompt.tpl",
 	"planner.review_prompt":             "templates/planner/review_prompt.tpl",
+	"planner.patch_plan_generate":       "templates/planner/patch_plan_generate.tpl",
+	"planner.patch_plan_update":         "templates/planner/patch_plan_update.tpl",
 
 	// Shell-agent
 	"shell_agent.system_template":             "templates/shell-agent/system_template.tpl",

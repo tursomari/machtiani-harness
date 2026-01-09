@@ -17,6 +17,9 @@ const sessionStateFile = "session-state.json"
 
 var ErrSessionStateNotFound = errors.New("session state not found")
 
+type PatchPlanItem = planner.PatchPlanItem
+type PatchPlan = planner.PatchPlan
+
 type SessionState struct {
 	SessionID          string                 `json:"session_id"`
 	Goal               string                 `json:"goal"`
@@ -127,6 +130,57 @@ func RemoveSessionState(sessionID string) error {
 	path := filepath.Join(dir, sessionStateFile)
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove session state: %w", err)
+	}
+	return nil
+}
+
+// LoadPatchPlan returns the cached patch plan for a session. When the patch
+// plan file is missing, it returns (nil, nil).
+func LoadPatchPlan(sessionID string) (*PatchPlan, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return nil, errors.New("session id required to load patch plan")
+	}
+	path, err := artifacts.SessionPatchPlanFile(sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("resolve patch plan path: %w", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read patch plan: %w", err)
+	}
+	var plan PatchPlan
+	if err := json.Unmarshal(data, &plan); err != nil {
+		return nil, fmt.Errorf("unmarshal patch plan: %w", err)
+	}
+	return &plan, nil
+}
+
+// SavePatchPlan persists the provided patch plan for the session.
+func SavePatchPlan(sessionID string, plan *PatchPlan) error {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return errors.New("session id required to save patch plan")
+	}
+	if plan == nil {
+		return errors.New("patch plan required")
+	}
+	path, err := artifacts.SessionPatchPlanFile(sessionID)
+	if err != nil {
+		return fmt.Errorf("resolve patch plan path: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("ensure patch plan directory: %w", err)
+	}
+	data, err := json.MarshalIndent(plan, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal patch plan: %w", err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return fmt.Errorf("write patch plan: %w", err)
 	}
 	return nil
 }

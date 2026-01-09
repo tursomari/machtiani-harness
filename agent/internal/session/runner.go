@@ -56,6 +56,16 @@ type plannerProgressTracker struct {
 	forceRepatchHint bool
 	fileDedupSet     map[string]string
 	pendingReview    *planner.PendingReview
+	lastPatchedFile  string
+}
+
+type patchPlanUpdater interface {
+	GeneratePatchPlan(ctx context.Context, goal, transcript string) (*planner.PatchPlan, error)
+	UpdatePatchPlan(ctx context.Context, goal, transcript string, existing *planner.PatchPlan, lastPatchedFile string) (*planner.PatchPlan, error)
+}
+
+type patchPlanNotifier interface {
+	Notify(string)
 }
 
 type patchTranscriptDraft struct {
@@ -92,6 +102,27 @@ func newPlannerProgressTracker(existing *PlannerProgressState) *plannerProgressT
 
 func normalizePlannerPath(path string) string {
 	return filepath.ToSlash(strings.TrimSpace(path))
+}
+
+func (p *plannerProgressTracker) setLastPatchedFile(path string) {
+	if p == nil {
+		return
+	}
+	p.lastPatchedFile = normalizePlannerPath(path)
+}
+
+func (p *plannerProgressTracker) getLastPatchedFile() string {
+	if p == nil {
+		return ""
+	}
+	return p.lastPatchedFile
+}
+
+func extractPrimaryPatchTarget(instr mctpatcher.Instructions) string {
+	if len(instr.Edits) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(instr.Edits[0].Path)
 }
 
 func (p *plannerProgressTracker) shouldDeduplicateFile(path string, contentHash string) bool {
@@ -173,6 +204,64 @@ func writeInitialBackgroundIfNeeded(tr *transcript.Transcript, repoRoot string, 
 		prefillAnswer = backgroundText
 	}
 	return tr.WriteTurn(0, backgroundQuestionPrompt, "", nil, prefillAnswer, "background")
+}
+
+func writePatchPlanTranscriptEntry(tr *transcript.Transcript, plan *PatchPlan, action string) error {
+	if tr == nil || plan == nil {
+		return nil
+	}
+	data, err := json.MarshalIndent(plan, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal patch plan for transcript: %w", err)
+	}
+	label := strings.ToUpper(strings.TrimSpace(action))
+	if label == "" {
+		label = "UPDATE"
+	}
+	var b strings.Builder
+	b.WriteString("\n== PATCH PLAN ")
+	b.WriteString(label)
+	b.WriteString("\n\n")
+	b.Write(data)
+	b.WriteString("\n")
+	if err := tr.AppendRaw(b.String()); err != nil {
+		return fmt.Errorf("append patch plan transcript: %w", err)
+	}
+	return nil
+}
+
+func invokePatchPlanUpdateHook(ctx context.Context, pl patchPlanUpdater, tr *transcript.Transcript, sessionID, goal, transcriptContent, lastPatchedFile string, notifier patchPlanNotifier) error {
+	existing, err := LoadPatchPlan(sessionID)
+	if err != nil {
+		return fmt.Errorf("load patch plan: %w", err)
+	}
+
+	var updated *PatchPlan
+	action := "UPDATED"
+	if existing == nil {
+		action = "CREATED"
+		updated, err = pl.GeneratePatchPlan(ctx, goal, transcriptContent)
+	} else {
+		updated, err = pl.UpdatePatchPlan(ctx, goal, transcriptContent, existing, lastPatchedFile)
+	}
+	if err != nil {
+		return fmt.Errorf("generate/update plan: %w", err)
+	}
+	if updated == nil {
+		return nil
+	}
+	if err := SavePatchPlan(sessionID, updated); err != nil {
+		return fmt.Errorf("save patch plan: %w", err)
+	}
+	if err := writePatchPlanTranscriptEntry(tr, updated, action); err != nil {
+		return err
+	}
+	if notifier != nil {
+		total, complete := updated.Progress()
+		status := strings.ToLower(action)
+		notifier.Notify(fmt.Sprintf("Patch plan %s (%d/%d complete)", status, complete, total))
+	}
+	return nil
 }
 
 func (p *plannerProgressTracker) appliedCount() int {
@@ -1000,6 +1089,7 @@ func Run(ctx context.Context, opts Options) Result {
 			perr       error
 			planCtx    context.Context
 			planCancel context.CancelFunc
+			patchPlan  *PatchPlan
 		)
 		pl.UpdateProgress(plannerProgress.snapshot())
 		planCtx, planCancel = makeTurnContext(rootCtx, cfg.timeoutPerTurn)
@@ -1034,9 +1124,21 @@ func Run(ctx context.Context, opts Options) Result {
 			}
 			trFull = appendResumePromptContext(trFull, feedback)
 			turnInfo["resume_prompt"] = true
+			if cfg.patch {
+				if err := invokePatchPlanUpdateHook(planCtx, pl, tr, sessionID, goal, trFull, "", display); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: patch plan hook (goal update) failed: %v\n", err)
+				}
+			}
 		}
 		planCtx = attachTrajectory(planCtx, trajectoryWriter, parentSpanID)
-		decision, question, perr = pl.Plan(planCtx, goal, trFull, step, cfg.maxSteps)
+		if cfg.patch {
+			if loadedPlan, err := LoadPatchPlan(sessionID); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to load patch plan: %v\n", err)
+			} else {
+				patchPlan = loadedPlan
+			}
+		}
+		decision, question, perr = pl.Plan(planCtx, goal, trFull, step, cfg.maxSteps, patchPlan)
 		if trimmedResumePrompt != "" {
 			resumePrompt = ""
 		}
@@ -1136,6 +1238,40 @@ func Run(ctx context.Context, opts Options) Result {
 			finishTurn(sessTelemetry, turn, "planner", "error", turnInfo, perr)
 			turnsCompleted = userTurnCounter
 			return Result{ExitCode: 1, Err: perr}
+		}
+
+		if cfg.patch && decision == planner.DecisionFinalize {
+			if patchPlan == nil {
+				if loadedPlan, err := LoadPatchPlan(sessionID); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to load patch plan: %v\n", err)
+				} else {
+					patchPlan = loadedPlan
+				}
+			}
+			planCompleteBeforeHook := patchPlan != nil && patchPlan.AllComplete()
+			if !planCompleteBeforeHook {
+				if err := invokePatchPlanUpdateHook(rootCtx, pl, tr, sessionID, goal, trFull, plannerProgress.getLastPatchedFile(), display); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: patch plan update hook failed before finalizing: %v\n", err)
+				} else if refreshed, err := LoadPatchPlan(sessionID); err == nil {
+					patchPlan = refreshed
+				}
+			}
+			if patchPlan != nil {
+				totalItems, completedItems := patchPlan.Progress()
+				turnInfo["patch_plan_items"] = totalItems
+				turnInfo["patch_plan_complete_items"] = completedItems
+				if display != nil {
+					display.Notify(fmt.Sprintf("Patch plan status: %d/%d complete", completedItems, totalItems))
+				}
+			}
+			if !planCompleteBeforeHook {
+				decision = planner.DecisionAsk
+				question = "Instruction: Patch plan incomplete—continue patching until all plan items are complete."
+				turnInfo["planner_decision_override"] = "finalize_blocked_incomplete_patch_plan"
+				if display != nil {
+					display.Notify("Finalize blocked: patch plan incomplete")
+				}
+			}
 		}
 
 		if cfg.verbose {
@@ -1668,6 +1804,18 @@ func Run(ctx context.Context, opts Options) Result {
 				}
 				continue
 			}
+			targetFile := extractPrimaryPatchTarget(instr)
+			if cfg.patch {
+				lastPatched := plannerProgress.getLastPatchedFile()
+				if lastPatched != "" && targetFile != "" {
+					normalizedTarget := normalizePlannerPath(targetFile)
+					if normalizedTarget != lastPatched {
+						if err := invokePatchPlanUpdateHook(rootCtx, pl, tr, sessionID, goal, tr.Content(), lastPatched, display); err != nil {
+							fmt.Fprintf(os.Stderr, "Warning: patch plan update hook failed: %v\n", err)
+						}
+					}
+				}
+			}
 			skipAllSuccess := false
 			skipPaths := []string{}
 			forceRepatch := instr.Metadata != nil && instr.Metadata.ForceRepatch
@@ -1996,6 +2144,9 @@ func Run(ctx context.Context, opts Options) Result {
 				Deletions:        result.Deletions,
 			}
 			if len(result.FilesModified) > 0 {
+				plannerProgress.setLastPatchedFile(result.FilesModified[0])
+			}
+			if len(result.FilesModified) > 0 {
 				recordDiscoveryPending(sessionID, result.FilesModified, cfg.verbose)
 				// Also refresh the persistent discovery workspace immediately so
 				// consecutive patch decisions see updated files without waiting for
@@ -2141,6 +2292,33 @@ Finalize:
 		userTurnCounter = turnsCompleted
 		return interruptedResult(err)
 	}
+	var finalizePatchPlan *PatchPlan
+	if cfg.patch {
+		lastPatched := plannerProgress.getLastPatchedFile()
+		if loadedPlan, err := LoadPatchPlan(sessionID); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to load patch plan: %v\n", err)
+		} else {
+			finalizePatchPlan = loadedPlan
+		}
+		planCompleteBeforeHook := finalizePatchPlan != nil && finalizePatchPlan.AllComplete()
+		if !planCompleteBeforeHook {
+			if err := invokePatchPlanUpdateHook(rootCtx, pl, tr, sessionID, goal, tr.Content(), lastPatched, display); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: pre-finalize patch plan hook failed: %v\n", err)
+			}
+			if refreshed, err := LoadPatchPlan(sessionID); err == nil {
+				finalizePatchPlan = refreshed
+			}
+		}
+		if finalizePatchPlan != nil {
+			if display != nil {
+				totalItems, completedItems := finalizePatchPlan.Progress()
+				display.Notify(fmt.Sprintf("Patch plan status: %d/%d complete", completedItems, totalItems))
+			}
+			if !finalizePatchPlan.AllComplete() {
+				fmt.Fprintf(os.Stderr, "Warning: finalizing with incomplete patch plan\n")
+			}
+		}
+	}
 	// One last planning opportunity before finalizing: if planner returns patch, run exactly one patch turn.
 	{
 		step := countTurns(tr.Content()) + 1
@@ -2152,7 +2330,7 @@ Finalize:
 		trFull := tr.Content()
 		ctx = attachTrajectory(ctx, trajectoryWriter, parentSpanID)
 		pl.UpdateProgress(plannerProgress.snapshot())
-		lastDec, lastBody, err := pl.Plan(ctx, goal, trFull, step, cfg.maxSteps)
+		lastDec, lastBody, err := pl.Plan(ctx, goal, trFull, step, cfg.maxSteps, finalizePatchPlan)
 		cancel()
 		if err == nil && lastDec == planner.DecisionPatch {
 			if pRunner == nil {

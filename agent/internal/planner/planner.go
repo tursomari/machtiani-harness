@@ -69,22 +69,24 @@ type Progress struct {
 }
 
 type planTemplateData struct {
-	PatchEnabled    bool
-	StrictPatchMode bool
-	ForceRepatch    bool
-	SuccessFiles    []string
-	SuccessOverflow int
-	AppliedPatches  int
-	HasGoal         bool
-	Goal            string
-	HasGoalUpdate   bool
-	GoalUpdate      string
-	HasTranscript   bool
-	Transcript      string
-	Step            int
-	MaxSteps        int
-	PatchIntro      string
-	PatchRules      string
+	PatchEnabled      bool
+	StrictPatchMode   bool
+	ForceRepatch      bool
+	SuccessFiles      []string
+	SuccessOverflow   int
+	AppliedPatches    int
+	HasPatchPlan      bool
+	PatchPlanComplete bool
+	HasGoal           bool
+	Goal              string
+	HasGoalUpdate     bool
+	GoalUpdate        string
+	HasTranscript     bool
+	Transcript        string
+	Step              int
+	MaxSteps          int
+	PatchIntro        string
+	PatchRules        string
 }
 
 type reviewTemplateData struct {
@@ -225,7 +227,7 @@ func successFilesDisplay(files []string, limit int) ([]string, int) {
 }
 
 // Plan decides the next action using only the transcript context.
-func (c *Client) Plan(ctx context.Context, goal string, transcript string, step, maxSteps int) (Decision, string, error) {
+func (c *Client) Plan(ctx context.Context, goal string, transcript string, step, maxSteps int, patchPlan *PatchPlan) (Decision, string, error) {
 	if c.cfg.DryRun {
 		if step < maxSteps {
 			return DecisionAsk, "From the transcript, ask mct for the next most informative repository-focused prompt.", nil
@@ -242,7 +244,7 @@ func (c *Client) Plan(ctx context.Context, goal string, transcript string, step,
 		promptLog = strings.TrimSpace(prompt)
 		messages = []llm.Message{{Role: "user", Content: promptLog}}
 	} else {
-		messages = c.buildPlanMessages(goal, transcript, step, maxSteps)
+		messages = c.buildPlanMessages(goal, transcript, step, maxSteps, patchPlan)
 		promptLog = renderMessagesForLogging(messages)
 	}
 	w, hasWriter := trajectory.FromContext(ctx)
@@ -449,8 +451,8 @@ func (c *Client) Plan(ctx context.Context, goal string, transcript string, step,
 	return dec, q, nil
 }
 
-func (c *Client) buildPlanMessages(goal, transcript string, step, maxSteps int) []llm.Message {
-	systemPrompt := strings.TrimSpace(c.planSystemPrompt(goal, transcript, step, maxSteps))
+func (c *Client) buildPlanMessages(goal, transcript string, step, maxSteps int, patchPlan *PatchPlan) []llm.Message {
+	systemPrompt := strings.TrimSpace(c.planSystemPrompt(goal, transcript, step, maxSteps, patchPlan))
 	goalTrim := strings.TrimSpace(goal)
 	goalUpdate, beforeUpdate, afterUpdate := splitTranscriptAtGoalUpdate(strings.TrimSpace(transcript))
 
@@ -652,13 +654,13 @@ func (c *Client) chat(ctx context.Context, prompt string) (string, error) {
 	return c.chatMessages(ctx, []llm.Message{{Role: "user", Content: prompt}})
 }
 
-func (c *Client) planSystemPrompt(goal string, transcript string, step, maxSteps int) string {
+func (c *Client) planSystemPrompt(goal string, transcript string, step, maxSteps int, patchPlan *PatchPlan) string {
 	tpl := c.planSystemTemplate()
 	if tpl == "" {
 		fmt.Fprintln(os.Stderr, "[planner] plan system template missing")
 		return ""
 	}
-	data := c.buildPlanTemplateData(goal, transcript, step, maxSteps)
+	data := c.buildPlanTemplateData(goal, transcript, step, maxSteps, patchPlan)
 	rendered, err := prompts.Render("planner_plan_system_prompt", tpl, data, nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[planner] plan system template error: %v\n", err)
@@ -679,13 +681,13 @@ func (c *Client) planSystemTemplate() string {
 	return ""
 }
 
-func (c *Client) planPrompt(goal string, transcript string, step, maxSteps int) string {
+func (c *Client) planPrompt(goal string, transcript string, step, maxSteps int, patchPlan *PatchPlan) string {
 	tpl := c.planTemplate()
 	if tpl == "" {
 		fmt.Fprintln(os.Stderr, "[planner] plan prompt template missing")
 		return ""
 	}
-	data := c.buildPlanTemplateData(goal, transcript, step, maxSteps)
+	data := c.buildPlanTemplateData(goal, transcript, step, maxSteps, patchPlan)
 	rendered, err := prompts.Render("planner_plan_prompt", tpl, data, nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[planner] plan prompt template error: %v\n", err)
@@ -706,7 +708,7 @@ func (c *Client) planTemplate() string {
 	return ""
 }
 
-func (c *Client) buildPlanTemplateData(goal string, transcript string, step, maxSteps int) planTemplateData {
+func (c *Client) buildPlanTemplateData(goal string, transcript string, step, maxSteps int, patchPlan *PatchPlan) planTemplateData {
 	display, overflow := successFilesDisplay(c.progress.SuccessFiles, successFilesPromptLimit)
 	goalTrim := strings.TrimSpace(goal)
 	transcriptTrim := strings.TrimSpace(transcript)
@@ -733,6 +735,10 @@ func (c *Client) buildPlanTemplateData(goal string, transcript string, step, max
 		Step:            step,
 		MaxSteps:        maxSteps,
 		PatchIntro:      c.planPatchIntroText(),
+	}
+	if c.cfg.PatchEnabled {
+		data.HasPatchPlan = patchPlan != nil && len(patchPlan.Items) > 0
+		data.PatchPlanComplete = patchPlan != nil && patchPlan.AllComplete()
 	}
 	data.PatchRules = c.planPatchRulesText(c.cfg.StrictPatchMode)
 	return data
@@ -1053,6 +1059,171 @@ func (c *Client) buildFinalizeTemplateData(goal, transcript string) finalizeTemp
 		HasTranscript: transcriptTrim != "",
 		Transcript:    transcriptTrim,
 	}
+}
+
+type patchPlanGenerateData struct {
+	Goal       string
+	Transcript string
+}
+
+type patchPlanUpdateData struct {
+	Goal             string
+	ExistingPlanJSON string
+	RecentTranscript string
+	LastPatchedFile  string
+}
+
+// GeneratePatchPlan asks the LLM to propose a plan of file edits based on the goal and transcript.
+// Returns nil when the response cannot be parsed so patch flow can continue without a plan.
+func (c *Client) GeneratePatchPlan(ctx context.Context, goal, transcript string) (*PatchPlan, error) {
+	prompt := c.renderPatchPlanGeneratePrompt(goal, transcript)
+	if prompt == "" {
+		return nil, nil
+	}
+	plan, err := c.requestPatchPlan(ctx, prompt)
+	if err != nil {
+		return nil, err
+	}
+	if plan != nil {
+		return plan, nil
+	}
+	fallback := c.simplifiedPatchPlanGeneratePrompt(goal, transcript)
+	if fallback == "" || fallback == prompt {
+		return nil, nil
+	}
+	return c.requestPatchPlan(ctx, fallback)
+}
+
+// UpdatePatchPlan refreshes an existing plan, marking items complete when appropriate and adding new tasks.
+// Returns nil when the response cannot be parsed so patch flow can continue without a plan.
+func (c *Client) UpdatePatchPlan(ctx context.Context, goal, transcript string, existing *PatchPlan, lastPatchedFile string) (*PatchPlan, error) {
+	dataJSON := ""
+	if existing != nil {
+		if encoded, err := json.MarshalIndent(existing, "", "  "); err == nil {
+			dataJSON = string(encoded)
+		} else {
+			fmt.Fprintf(os.Stderr, "[planner] failed to marshal existing patch plan: %v\n", err)
+		}
+	}
+	prompt := c.renderPatchPlanUpdatePrompt(goal, transcript, dataJSON, lastPatchedFile)
+	if prompt == "" {
+		return nil, nil
+	}
+	plan, err := c.requestPatchPlan(ctx, prompt)
+	if err != nil {
+		return nil, err
+	}
+	if plan != nil {
+		return plan, nil
+	}
+	fallback := c.simplifiedPatchPlanUpdatePrompt(goal, transcript, dataJSON, lastPatchedFile)
+	if fallback == "" || fallback == prompt {
+		return nil, nil
+	}
+	return c.requestPatchPlan(ctx, fallback)
+}
+
+func (c *Client) renderPatchPlanGeneratePrompt(goal, transcript string) string {
+	tpl, err := templates.GetEmbeddedTemplate("planner.patch_plan_generate")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[planner] patch plan generate template missing: %v\n", err)
+		return ""
+	}
+	data := patchPlanGenerateData{Goal: strings.TrimSpace(goal), Transcript: strings.TrimSpace(transcript)}
+	rendered, err := prompts.Render("planner_patch_plan_generate", tpl, data, nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[planner] patch plan generate template error: %v\n", err)
+		return ""
+	}
+	return rendered
+}
+
+func (c *Client) renderPatchPlanUpdatePrompt(goal, transcript, existingPlanJSON, lastPatchedFile string) string {
+	tpl, err := templates.GetEmbeddedTemplate("planner.patch_plan_update")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[planner] patch plan update template missing: %v\n", err)
+		return ""
+	}
+	data := patchPlanUpdateData{
+		Goal:             strings.TrimSpace(goal),
+		ExistingPlanJSON: strings.TrimSpace(existingPlanJSON),
+		RecentTranscript: strings.TrimSpace(transcript),
+		LastPatchedFile:  strings.TrimSpace(lastPatchedFile),
+	}
+	rendered, err := prompts.Render("planner_patch_plan_update", tpl, data, nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[planner] patch plan update template error: %v\n", err)
+		return ""
+	}
+	return rendered
+}
+
+func (c *Client) simplifiedPatchPlanGeneratePrompt(goal, transcript string) string {
+	goal = strings.TrimSpace(goal)
+	transcript = strings.TrimSpace(transcript)
+	if goal == "" && transcript == "" {
+		return ""
+	}
+	return fmt.Sprintf("Goal: %s\nTranscript:\n%s\nReturn only JSON patch plan with items describing file edits.", goal, transcript)
+}
+
+func (c *Client) simplifiedPatchPlanUpdatePrompt(goal, transcript, existingPlanJSON, lastPatchedFile string) string {
+	goal = strings.TrimSpace(goal)
+	transcript = strings.TrimSpace(transcript)
+	existingPlanJSON = strings.TrimSpace(existingPlanJSON)
+	lastPatchedFile = strings.TrimSpace(lastPatchedFile)
+	if goal == "" && transcript == "" && existingPlanJSON == "" {
+		return ""
+	}
+	var b strings.Builder
+	if goal != "" {
+		fmt.Fprintf(&b, "Goal: %s\n", goal)
+	}
+	if lastPatchedFile != "" {
+		fmt.Fprintf(&b, "Patched file: %s\n", lastPatchedFile)
+	}
+	if existingPlanJSON != "" {
+		b.WriteString("Current plan:\n")
+		b.WriteString(existingPlanJSON)
+		b.WriteString("\n")
+	}
+	if transcript != "" {
+		b.WriteString("Recent transcript:\n")
+		b.WriteString(transcript)
+		b.WriteString("\n")
+	}
+	b.WriteString("Return updated JSON patch plan with completed items marked.")
+	return b.String()
+}
+
+func (c *Client) requestPatchPlan(ctx context.Context, prompt string) (*PatchPlan, error) {
+	resp, err := c.chat(ctx, prompt)
+	if err != nil {
+		return nil, err
+	}
+	plan, err := parsePatchPlan(resp)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[planner] patch plan parse failed: %v\n", err)
+		return nil, nil
+	}
+	return plan, nil
+}
+
+func parsePatchPlan(raw string) (*PatchPlan, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil, errors.New("empty patch plan response")
+	}
+	start := strings.Index(trimmed, "{")
+	end := strings.LastIndex(trimmed, "}")
+	if start != -1 && end != -1 && start < end {
+		trimmed = strings.TrimSpace(trimmed[start : end+1])
+	}
+	var plan PatchPlan
+	if err := json.Unmarshal([]byte(trimmed), &plan); err != nil {
+		return nil, err
+	}
+	return &plan, nil
 }
 
 func truncateMiddle(s string, max int) string {
