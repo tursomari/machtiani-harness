@@ -634,3 +634,143 @@ func (t *Transcript) DeduplicateFullDiffByFile(filePath string) error {
 	}
 	return nil
 }
+
+// DeduplicatePatchPlan removes all prior patch plan sections
+// (== PATCH PLAN CREATED / == PATCH PLAN UPDATED), keeping only the latest one.
+func (t *Transcript) DeduplicatePatchPlan() error {
+	if t == nil {
+		return nil
+	}
+	content := t.Content()
+	if strings.TrimSpace(content) == "" {
+		return nil
+	}
+
+	lines := strings.Split(content, "\n")
+
+	// Find all patch plan section boundaries
+	type sectionBounds struct {
+		start int
+		end   int
+	}
+	var sections []sectionBounds
+
+	for i := 0; i < len(lines); i++ {
+		line := lines[i]
+		if strings.HasPrefix(line, "== PATCH PLAN CREATED") || strings.HasPrefix(line, "== PATCH PLAN UPDATED") {
+			start := i
+			end := len(lines) - 1
+			// Find end of this section (next == marker or EOF)
+			for j := i + 1; j < len(lines); j++ {
+				if strings.HasPrefix(lines[j], "== ") {
+					end = j - 1
+					break
+				}
+			}
+			sections = append(sections, sectionBounds{start: start, end: end})
+		}
+	}
+
+	// Nothing to deduplicate if 0 or 1 sections
+	if len(sections) <= 1 {
+		return nil
+	}
+
+	// Mark lines to remove (all sections except the last)
+	removeSet := make(map[int]struct{})
+	for _, sec := range sections[:len(sections)-1] {
+		for i := sec.start; i <= sec.end; i++ {
+			removeSet[i] = struct{}{}
+		}
+	}
+
+	// Build new content excluding removed lines
+	newLines := make([]string, 0, len(lines))
+	for idx, line := range lines {
+		if _, skip := removeSet[idx]; skip {
+			continue
+		}
+		newLines = append(newLines, line)
+	}
+
+	cleaned := strings.Join(newLines, "\n")
+	cleaned = sanitizeTranscriptText(cleaned)
+	if err := t.rewrite(cleaned); err != nil {
+		return fmt.Errorf("failed to write deduplicated transcript: %w", err)
+	}
+	return nil
+}
+
+// WritePatchPlanCreated writes an initial patch plan to the transcript.
+// It first removes any prior patch plan sections to keep only the latest.
+func (t *Transcript) WritePatchPlanCreated(step int, planDetails string) error {
+	if t == nil {
+		return nil
+	}
+	// Remove prior patch plan sections before writing the new one
+	if err := t.DeduplicatePatchPlan(); err != nil {
+		return err
+	}
+
+	var b strings.Builder
+	b.WriteString("\n== PATCH PLAN CREATED ==\n")
+	if step > 0 {
+		b.WriteString(fmt.Sprintf("Step: %d\n", step))
+	}
+	b.WriteString(planDetails)
+	if !strings.HasSuffix(planDetails, "\n") {
+		b.WriteString("\n")
+	}
+
+	s := sanitizeTranscriptText(b.String())
+	if s == "" {
+		return nil
+	}
+	t.mem.WriteString(s)
+	_, err := t.f.WriteString(s)
+	t.emit("patch_plan_created", map[string]any{
+		"step":          step,
+		"written_bytes": len(s),
+	})
+	if err != nil {
+		return err
+	}
+	return t.compactNULsIfNeeded()
+}
+
+// WritePatchPlanUpdated writes an updated patch plan to the transcript.
+// It first removes any prior patch plan sections to keep only the latest.
+func (t *Transcript) WritePatchPlanUpdated(step int, planDetails string) error {
+	if t == nil {
+		return nil
+	}
+	// Remove prior patch plan sections before writing the new one
+	if err := t.DeduplicatePatchPlan(); err != nil {
+		return err
+	}
+
+	var b strings.Builder
+	b.WriteString("\n== PATCH PLAN UPDATED ==\n")
+	if step > 0 {
+		b.WriteString(fmt.Sprintf("Step: %d\n", step))
+	}
+	b.WriteString(planDetails)
+	if !strings.HasSuffix(planDetails, "\n") {
+		b.WriteString("\n")
+	}
+
+	s := sanitizeTranscriptText(b.String())
+	if s == "" {
+		return nil
+	}
+	t.mem.WriteString(s)
+	_, err := t.f.WriteString(s)
+	t.emit("patch_plan_updated", map[string]any{
+		"step":          step,
+		"written_bytes": len(s),
+	})
+	if err != nil {
+		return err
+	}
+	return t.compactNULsIfNeeded()
+}

@@ -532,3 +532,157 @@ func TestWriteTurn_CompactsNULBytesBeforeWriting(t *testing.T) {
 		t.Fatalf("expected transcript to compact NUL bytes before writing")
 	}
 }
+
+func TestDeduplicatePatchPlan_RemovesPriorSections(t *testing.T) {
+	cwd, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	tmp := t.TempDir()
+	_ = os.Chdir(tmp)
+	t.Setenv("HOME", tmp)
+
+	tr, err := New("patch-plan-sess")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tr.Close()
+
+	if err := tr.WriteHeader("goal", "patch-plan-sess", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// Add multiple patch plan sections
+	if err := tr.AppendRaw("\n== PATCH PLAN CREATED\n\nFirst plan content\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tr.AppendRaw("\n== PATCH PLAN UPDATED\n\nSecond plan content\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tr.AppendRaw("\n== PATCH PLAN CREATED\n\nThird plan content\n"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := tr.DeduplicatePatchPlan(); err != nil {
+		t.Fatal(err)
+	}
+
+	content := tr.Content()
+	if strings.Contains(content, "First plan content") {
+		t.Fatalf("expected first patch plan to be removed:\n%s", content)
+	}
+	if strings.Contains(content, "Second plan content") {
+		t.Fatalf("expected second patch plan to be removed:\n%s", content)
+	}
+	if !strings.Contains(content, "Third plan content") {
+		t.Fatalf("expected latest patch plan to remain:\n%s", content)
+	}
+}
+
+func TestDeduplicatePatchPlan_PreservesOtherContent(t *testing.T) {
+	cwd, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	tmp := t.TempDir()
+	_ = os.Chdir(tmp)
+	t.Setenv("HOME", tmp)
+
+	tr, err := New("patch-plan-preserve")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tr.Close()
+
+	if err := tr.WriteHeader("goal", "patch-plan-preserve", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := tr.WriteTurn(1, "Question 1", "", nil, "Answer 1", "ask"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tr.AppendRaw("\n== PATCH PLAN CREATED\n\nOld plan\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tr.WriteTurn(2, "Question 2", "", nil, "Answer 2", "ask"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tr.AppendRaw("\n== PATCH PLAN UPDATED\n\nNew plan\n"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := tr.DeduplicatePatchPlan(); err != nil {
+		t.Fatal(err)
+	}
+
+	content := tr.Content()
+	if !strings.Contains(content, "Answer 1") {
+		t.Fatalf("expected turn 1 to remain:\n%s", content)
+	}
+	if !strings.Contains(content, "Answer 2") {
+		t.Fatalf("expected turn 2 to remain:\n%s", content)
+	}
+	if strings.Contains(content, "Old plan") {
+		t.Fatalf("expected old patch plan to be removed:\n%s", content)
+	}
+	if !strings.Contains(content, "New plan") {
+		t.Fatalf("expected new patch plan to remain:\n%s", content)
+	}
+}
+
+func TestDeduplicatePatchPlan_NoopsWhenNoPlan(t *testing.T) {
+	cwd, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	tmp := t.TempDir()
+	_ = os.Chdir(tmp)
+	t.Setenv("HOME", tmp)
+
+	tr, err := New("patch-plan-noop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tr.Close()
+
+	if err := tr.WriteHeader("goal", "patch-plan-noop", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := tr.WriteTurn(1, "Question", "", nil, "Answer", "ask"); err != nil {
+		t.Fatal(err)
+	}
+
+	before := tr.Content()
+	if err := tr.DeduplicatePatchPlan(); err != nil {
+		t.Fatal(err)
+	}
+	after := tr.Content()
+
+	if before != after {
+		t.Fatalf("expected transcript unchanged when no patch plan exists")
+	}
+}
+
+func TestDeduplicatePatchPlan_RetainsSinglePlan(t *testing.T) {
+	cwd, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	tmp := t.TempDir()
+	_ = os.Chdir(tmp)
+	t.Setenv("HOME", tmp)
+
+	tr, err := New("patch-plan-single")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tr.Close()
+
+	if err := tr.WriteHeader("goal", "patch-plan-single", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := tr.AppendRaw("\n== PATCH PLAN CREATED\n\nOnly plan\n"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := tr.DeduplicatePatchPlan(); err != nil {
+		t.Fatal(err)
+	}
+
+	content := tr.Content()
+	if !strings.Contains(content, "Only plan") {
+		t.Fatalf("expected single patch plan to remain:\n%s", content)
+	}
+}
