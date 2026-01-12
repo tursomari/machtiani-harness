@@ -77,6 +77,7 @@ type planTemplateData struct {
 	AppliedPatches    int
 	HasPatchPlan      bool
 	PatchPlanComplete bool
+	AllowFinalize     bool
 	HasGoal           bool
 	Goal              string
 	HasGoalUpdate     bool
@@ -735,6 +736,7 @@ func (c *Client) buildPlanTemplateData(goal string, transcript string, step, max
 		Step:            step,
 		MaxSteps:        maxSteps,
 		PatchIntro:      c.planPatchIntroText(),
+		AllowFinalize:   true,
 	}
 	if c.cfg.PatchEnabled {
 		data.HasPatchPlan = patchPlan != nil && len(patchPlan.Items) > 0

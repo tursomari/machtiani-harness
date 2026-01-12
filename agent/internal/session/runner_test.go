@@ -330,8 +330,12 @@ func TestInvokePatchPlanUpdateHookWritesTranscript(t *testing.T) {
 	notifier := &collectingNotifier{}
 
 	ctx := context.Background()
-	if err := invokePatchPlanUpdateHook(ctx, client, tr, "session-abc", "goal", "transcript body", "", notifier); err != nil {
+	createdPlan, err := invokePatchPlanUpdateHook(ctx, client, tr, "session-abc", "goal", "transcript body", "", notifier, true)
+	if err != nil {
 		t.Fatalf("invokePatchPlanUpdateHook (create) error: %v", err)
+	}
+	if createdPlan == nil {
+		t.Fatalf("expected patch plan to be created")
 	}
 	first := tr.Content()
 	if !strings.Contains(first, "PATCH PLAN CREATED") {
@@ -344,8 +348,12 @@ func TestInvokePatchPlanUpdateHookWritesTranscript(t *testing.T) {
 		t.Fatalf("expected notifier to record creation message, got %+v", notifier.messages)
 	}
 
-	if err := invokePatchPlanUpdateHook(ctx, client, tr, "session-abc", "goal", "transcript body", "last.txt", notifier); err != nil {
+	updatedPlan, err := invokePatchPlanUpdateHook(ctx, client, tr, "session-abc", "goal", "transcript body", "last.txt", notifier, false)
+	if err != nil {
 		t.Fatalf("invokePatchPlanUpdateHook (update) error: %v", err)
+	}
+	if updatedPlan == nil {
+		t.Fatalf("expected patch plan to be updated")
 	}
 	updated := tr.Content()
 	if !strings.Contains(updated, "PATCH PLAN UPDATED") {

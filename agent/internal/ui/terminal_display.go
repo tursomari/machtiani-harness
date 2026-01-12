@@ -182,8 +182,8 @@ func (t *TerminalDisplay) EndSession() {
 
 // Notify prints an informational line within the current session timeline.
 func (t *TerminalDisplay) Notify(message string) {
-	clean := strings.TrimSpace(message)
-	if clean == "" {
+	lines := sanitizeLines(message)
+	if len(lines) == 0 {
 		return
 	}
 	t.withLock(func() {
@@ -191,13 +191,13 @@ func (t *TerminalDisplay) Notify(message string) {
 			t.started = true
 		}
 		t.ensureTimerLocked()
-		if t.current != nil && t.current.interruptWithNotificationLocked(clean) {
+		if t.current != nil && t.current.interruptWithNotificationLocked(lines) {
 			return
 		}
 		if t.current != nil {
 			t.current.flushLineLocked()
 		}
-		t.printNotificationLineLocked(clean)
+		t.printNotificationLinesLocked(lines)
 	})
 }
 
@@ -463,6 +463,12 @@ func (s *PromptStream) flushLineLocked() {
 	s.renderedLines = s.renderedLines[:0]
 }
 
+func (t *TerminalDisplay) printNotificationLinesLocked(lines []string) {
+	for _, line := range lines {
+		t.printNotificationLineLocked(line)
+	}
+}
+
 func (t *TerminalDisplay) printNotificationLineLocked(message string) {
 	text := sanitizeLine(message)
 	if text == "" {
@@ -506,13 +512,13 @@ func (s *PromptStream) writeSanitizedLinesLocked(lines []string) {
 	s.renderedLines = append(s.renderedLines[:0], lines...)
 }
 
-func (s *PromptStream) interruptWithNotificationLocked(message string) bool {
-	if s == nil || s.done || !s.started || s.linesPrinted == 0 {
+func (s *PromptStream) interruptWithNotificationLocked(lines []string) bool {
+	if s == nil || s.done || !s.started || s.linesPrinted == 0 || len(lines) == 0 {
 		return false
 	}
 	sanitizedSnapshot := append([]string(nil), s.renderedLines...)
 	s.clearPreviousLinesLocked()
-	s.display.printNotificationLineLocked(message)
+	s.display.printNotificationLinesLocked(lines)
 	s.writeSanitizedLinesLocked(sanitizedSnapshot)
 	return true
 }
@@ -532,6 +538,20 @@ func sanitizeLine(text string) string {
 	}
 	fields := strings.Fields(text)
 	return strings.Join(fields, " ")
+}
+
+func sanitizeLines(text string) []string {
+	text = strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")
+	parts := strings.Split(text, "\n")
+	lines := make([]string, 0, len(parts))
+	for _, part := range parts {
+		clean := sanitizeLine(part)
+		if clean == "" {
+			continue
+		}
+		lines = append(lines, clean)
+	}
+	return lines
 }
 
 func detectWidth(out io.Writer) int {

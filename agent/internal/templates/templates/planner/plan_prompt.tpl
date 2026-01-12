@@ -16,7 +16,15 @@ Patch validation diagnostics are recorded in the transcript; use them to decide 
   </constraints>
 
   <output>
-    <line position="1">Decision: {{if .PatchEnabled}}ask|patch|finalize{{else}}ask|finalize{{end}}</line>
+    {{- if and .PatchEnabled .AllowFinalize }}
+    <line position="1">Decision: ask|patch|finalize</line>
+    {{- else if .PatchEnabled }}
+    <line position="1">Decision: ask|patch</line>
+    {{- else if .AllowFinalize }}
+    <line position="1">Decision: ask|finalize</line>
+    {{- else }}
+    <line position="1">Decision: ask</line>
+    {{- end }}
     <line position="2" when="Decision is 'ask'">One of: Question: <single best prompt> | Instruction: <single best prompt> | Message: <single best prompt></line>
     {{- if .PatchEnabled }}
     <line position="2" when="Decision is 'patch'">Patch: <repo-relative filepath></line>
