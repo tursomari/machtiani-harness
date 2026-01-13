@@ -702,14 +702,10 @@ func (t *Transcript) DeduplicatePatchPlan() error {
 }
 
 // WritePatchPlanCreated writes an initial patch plan to the transcript.
-// It first removes any prior patch plan sections to keep only the latest.
+// It then removes any prior patch plan sections to keep only the latest.
 func (t *Transcript) WritePatchPlanCreated(step int, planDetails string) error {
 	if t == nil {
 		return nil
-	}
-	// Remove prior patch plan sections before writing the new one
-	if err := t.DeduplicatePatchPlan(); err != nil {
-		return err
 	}
 
 	var b strings.Builder
@@ -728,25 +724,24 @@ func (t *Transcript) WritePatchPlanCreated(step int, planDetails string) error {
 	}
 	t.mem.WriteString(s)
 	_, err := t.f.WriteString(s)
-	t.emit("patch_plan_created", map[string]any{
-		"step":          step,
-		"written_bytes": len(s),
-	})
+		t.emit("patch_plan_created", map[string]any{
+			"step":          step,
+			"written_bytes": len(s),
+		})
 	if err != nil {
+		return err
+	}
+	if err := t.DeduplicatePatchPlan(); err != nil {
 		return err
 	}
 	return t.compactNULsIfNeeded()
 }
 
 // WritePatchPlanUpdated writes an updated patch plan to the transcript.
-// It first removes any prior patch plan sections to keep only the latest.
+// It then removes any prior patch plan sections to keep only the latest.
 func (t *Transcript) WritePatchPlanUpdated(step int, planDetails string) error {
 	if t == nil {
 		return nil
-	}
-	// Remove prior patch plan sections before writing the new one
-	if err := t.DeduplicatePatchPlan(); err != nil {
-		return err
 	}
 
 	var b strings.Builder
@@ -765,11 +760,14 @@ func (t *Transcript) WritePatchPlanUpdated(step int, planDetails string) error {
 	}
 	t.mem.WriteString(s)
 	_, err := t.f.WriteString(s)
-	t.emit("patch_plan_updated", map[string]any{
-		"step":          step,
-		"written_bytes": len(s),
-	})
+		t.emit("patch_plan_updated", map[string]any{
+			"step":          step,
+			"written_bytes": len(s),
+		})
 	if err != nil {
+		return err
+	}
+	if err := t.DeduplicatePatchPlan(); err != nil {
 		return err
 	}
 	return t.compactNULsIfNeeded()

@@ -210,10 +210,6 @@ func writePatchPlanTranscriptEntry(tr *transcript.Transcript, plan *PatchPlan, a
 	if tr == nil || plan == nil {
 		return nil
 	}
-	// Remove all prior patch plan sections, keeping only the latest
-	if err := tr.DeduplicatePatchPlan(); err != nil {
-		return fmt.Errorf("deduplicate patch plan: %w", err)
-	}
 	data, err := json.MarshalIndent(plan, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal patch plan for transcript: %w", err)
@@ -230,6 +226,10 @@ func writePatchPlanTranscriptEntry(tr *transcript.Transcript, plan *PatchPlan, a
 	b.WriteString("\n")
 	if err := tr.AppendRaw(b.String()); err != nil {
 		return fmt.Errorf("append patch plan transcript: %w", err)
+	}
+	// Remove all prior patch plan sections, keeping only the latest
+	if err := tr.DeduplicatePatchPlan(); err != nil {
+		return fmt.Errorf("deduplicate patch plan: %w", err)
 	}
 	return nil
 }

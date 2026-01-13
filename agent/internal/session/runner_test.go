@@ -242,6 +242,33 @@ func TestStartTranscriptIfNeededSkipsWhenResuming(t *testing.T) {
 	}
 }
 
+func TestWritePatchPlanTranscriptEntryDeduplicates(t *testing.T) {
+	sessionID := "patch-plan-dedupe"
+	path := filepath.Join(t.TempDir(), "agent-transcript.adoc")
+	tr, err := transcript.NewWithPath(path, sessionID)
+	if err != nil {
+		t.Fatalf("NewWithPath error: %v", err)
+	}
+	defer tr.Close()
+
+	plan := &PatchPlan{Items: []PatchPlanItem{{Description: "first", Complete: false}}}
+	if err := writePatchPlanTranscriptEntry(tr, plan, "created"); err != nil {
+		t.Fatalf("first writePatchPlanTranscriptEntry error: %v", err)
+	}
+	plan.Items[0].Complete = true
+	if err := writePatchPlanTranscriptEntry(tr, plan, "updated"); err != nil {
+		t.Fatalf("second writePatchPlanTranscriptEntry error: %v", err)
+	}
+
+	content := tr.Content()
+	if strings.Count(content, "PATCH PLAN") != 1 {
+		t.Fatalf("expected only one patch plan section, got %d\n%s", strings.Count(content, "PATCH PLAN"), content)
+	}
+	if !strings.Contains(content, "PATCH PLAN UPDATED") {
+		t.Fatalf("expected updated plan to remain\n%s", content)
+	}
+}
+
 func TestStartTranscriptIfNeededChildIncludesBackgroundWhenRequested(t *testing.T) {
 	sessionID := "child-with-bg"
 	path := filepath.Join(t.TempDir(), "agent-transcript.adoc")
