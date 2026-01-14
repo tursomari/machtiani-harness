@@ -283,6 +283,13 @@ func formatPatchPlanForDisplay(plan *PatchPlan) string {
 	}
 	total, complete := plan.Progress()
 	var b strings.Builder
+	goal := strings.TrimSpace(plan.Goal)
+	if goal != "" {
+		b.WriteString(goal)
+	}
+	if b.Len() > 0 {
+		b.WriteString("\n")
+	}
 	fmt.Fprintf(&b, "Patch plan status: %d/%d complete", complete, total)
 	for idx, item := range plan.Items {
 		state := "[ ]"

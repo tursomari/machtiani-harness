@@ -545,13 +545,36 @@ func sanitizeLines(text string) []string {
 	parts := strings.Split(text, "\n")
 	lines := make([]string, 0, len(parts))
 	for _, part := range parts {
-		clean := sanitizeLine(part)
+		clean := sanitizeLinePreserveIndent(part)
 		if clean == "" {
 			continue
 		}
 		lines = append(lines, clean)
 	}
 	return lines
+}
+
+func sanitizeLinePreserveIndent(text string) string {
+	replacer := strings.NewReplacer("\r", " ", "\t", " ")
+	text = replacer.Replace(text)
+	text = strings.TrimRight(text, " ")
+	if text == "" {
+		return ""
+	}
+	leading := len(text) - len(strings.TrimLeft(text, " "))
+	core := strings.TrimSpace(text)
+	if core == "" {
+		return ""
+	}
+	fields := strings.Fields(core)
+	if len(fields) == 0 {
+		return ""
+	}
+	collapsed := strings.Join(fields, " ")
+	if leading == 0 {
+		return collapsed
+	}
+	return strings.Repeat(" ", leading) + collapsed
 }
 
 func detectWidth(out io.Writer) int {

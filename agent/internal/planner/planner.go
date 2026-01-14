@@ -1166,7 +1166,7 @@ func (c *Client) simplifiedPatchPlanGeneratePrompt(goal, transcript string) stri
 	if goal == "" && transcript == "" {
 		return ""
 	}
-	return fmt.Sprintf("Goal: %s\nTranscript:\n%s\nReturn only JSON patch plan with items describing file edits.", goal, transcript)
+	return fmt.Sprintf("Goal: %s\nTranscript:\n%s\nReturn only JSON patch plan with a goal summary and items describing file edits in format: {\"goal\": \"<intro statement>\", \"items\": [...]}.", goal, transcript)
 }
 
 func (c *Client) simplifiedPatchPlanUpdatePrompt(goal, transcript, existingPlanJSON, lastPatchedFile string) string {
@@ -1194,7 +1194,7 @@ func (c *Client) simplifiedPatchPlanUpdatePrompt(goal, transcript, existingPlanJ
 		b.WriteString(transcript)
 		b.WriteString("\n")
 	}
-	b.WriteString("Return updated JSON patch plan with completed items marked.")
+	b.WriteString("Return updated JSON patch plan with the goal preserved or refined and completed items marked in format: {\"goal\": \"<intro statement>\", \"items\": [...]}.")
 	return b.String()
 }
 

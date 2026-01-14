@@ -8,6 +8,7 @@ type PatchPlanItem struct {
 
 // PatchPlan aggregates patch tasks for a session.
 type PatchPlan struct {
+	Goal  string          `json:"goal"`
 	Items []PatchPlanItem `json:"items"`
 }
 

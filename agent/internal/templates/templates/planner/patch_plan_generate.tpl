@@ -7,9 +7,10 @@ Transcript context:
 
 Output ONLY valid JSON in this exact format (no markdown fences, no commentary):
 {
+  "goal": "<intro statement>",
   "items": [
     {"description": "<file path>: <brief description of change>", "complete": false}
   ]
 }
 
-Each item should describe one logical file change. Be specific about file paths.
+Each item should describe one logical file change. Be specific about file paths. The goal should be a high-level summary of the overall intended changes.
