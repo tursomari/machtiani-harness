@@ -736,11 +736,13 @@ func (c *Client) buildPlanTemplateData(goal string, transcript string, step, max
 		Step:            step,
 		MaxSteps:        maxSteps,
 		PatchIntro:      c.planPatchIntroText(),
-		AllowFinalize:   true,
 	}
 	if c.cfg.PatchEnabled {
 		data.HasPatchPlan = patchPlan != nil && len(patchPlan.Items) > 0
 		data.PatchPlanComplete = patchPlan != nil && patchPlan.AllComplete()
+		data.AllowFinalize = data.PatchPlanComplete
+	} else {
+		data.AllowFinalize = true
 	}
 	data.PatchRules = c.planPatchRulesText(c.cfg.StrictPatchMode)
 	return data

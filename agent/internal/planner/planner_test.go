@@ -425,7 +425,7 @@ func TestPlannerRejectsInvalidPatchJSON(t *testing.T) {
 func TestPlanPromptIncludesMetadata(t *testing.T) {
 	c := NewClient(ClientConfig{DryRun: true, PatchEnabled: true})
 	prompt := c.planPrompt("goal text", "transcript text", 1, 4, nil)
-	want := []string{"Decision: ask|patch|finalize", "Goal:", "Transcript:", "Step 1 of 4"}
+	want := []string{"Decision: ask|patch", "Goal:", "Transcript:", "Step 1 of 4"}
 	for _, w := range want {
 		if !contains(prompt, w) {
 			t.Fatalf("plan prompt missing %q:\n%s", w, prompt)
@@ -433,12 +433,80 @@ func TestPlanPromptIncludesMetadata(t *testing.T) {
 	}
 }
 
-func TestPlanPromptExposesFinalizeWhenPatchPlanIncomplete(t *testing.T) {
+func TestPlanPromptAllowsFinalizeWhenPatchPlanComplete(t *testing.T) {
+	c := NewClient(ClientConfig{DryRun: true, PatchEnabled: true})
+	plan := &PatchPlan{Items: []PatchPlanItem{{Description: "update README", Complete: true}}}
+	prompt := c.planPrompt("goal text", "transcript text", 1, 4, plan)
+	if !strings.Contains(prompt, "Decision: ask|patch|finalize") {
+		t.Fatalf("plan prompt should expose finalize when patch plan is complete:\n%s", prompt)
+	}
+}
+
+func TestPlanPromptBlocksFinalizeWhenPatchPlanIncomplete(t *testing.T) {
 	c := NewClient(ClientConfig{DryRun: true, PatchEnabled: true})
 	plan := &PatchPlan{Items: []PatchPlanItem{{Description: "update README", Complete: false}}}
 	prompt := c.planPrompt("goal text", "transcript text", 1, 4, plan)
-	if !strings.Contains(prompt, "Decision: ask|patch|finalize") {
-		t.Fatalf("plan prompt should expose finalize even when patch plan incomplete:\n%s", prompt)
+	if strings.Contains(prompt, "Decision: ask|patch|finalize") {
+		t.Fatalf("plan prompt should hide finalize when patch plan is incomplete:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "Decision: ask|patch") {
+		t.Fatalf("plan prompt should still expose ask|patch when plan incomplete:\n%s", prompt)
+	}
+}
+
+func TestPlanPromptFromFileGatesFinalize(t *testing.T) {
+	root := t.TempDir()
+	templatePath := filepath.Join(root, "templates", "planner", "plan_prompt.tpl")
+	if err := os.MkdirAll(filepath.Dir(templatePath), 0o755); err != nil {
+		t.Fatalf("mkdir templates: %v", err)
+	}
+	templateContent := strings.TrimSpace(`EXTERNAL TEMPLATE
+<reply-format>
+  <output>
+    {{- if and .PatchEnabled .AllowFinalize }}
+    <line position="1">Decision: ask|patch|finalize</line>
+    {{- else if .PatchEnabled }}
+    <line position="1">Decision: ask|patch</line>
+    {{- else }}
+    <line position="1">Decision: ask</line>
+    {{- end }}
+  </output>
+</reply-format>
+`) + "\n"
+	if err := os.WriteFile(templatePath, []byte(templateContent), 0o644); err != nil {
+		t.Fatalf("write template: %v", err)
+	}
+	configPath := filepath.Join(root, "config.toml")
+	configContent := `listen = "127.0.0.1:0"
+
+[prompts.planner]
+plan_prompt = { file = "templates/planner/plan_prompt.tpl" }
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	t.Setenv("MACHTIANI_CONFIG", configPath)
+	llm.ResetConfigForTesting()
+	t.Cleanup(llm.ResetConfigForTesting)
+
+	cfg, _, err := llm.LoadGlobalConfig()
+	if err != nil {
+		t.Fatalf("LoadGlobalConfig: %v", err)
+	}
+	if cfg.Prompts == nil || cfg.Prompts.Planner == nil {
+		t.Fatalf("expected planner prompts from file config")
+	}
+	client := NewClient(ClientConfig{DryRun: true, PatchEnabled: true, Prompts: cfg.Prompts.Planner})
+	plan := &PatchPlan{Items: []PatchPlanItem{{Description: "update README", Complete: false}}}
+	prompt := client.planPrompt("goal text", "transcript text", 1, 4, plan)
+	if !strings.Contains(prompt, "EXTERNAL TEMPLATE") {
+		t.Fatalf("expected file-based template content in prompt, got:\n%s", prompt)
+	}
+	if strings.Contains(prompt, "Decision: ask|patch|finalize") {
+		t.Fatalf("file-based plan prompt should hide finalize when patch plan is incomplete:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "Decision: ask|patch") {
+		t.Fatalf("file-based plan prompt should still expose ask|patch when plan incomplete:\n%s", prompt)
 	}
 }
 
@@ -500,7 +568,7 @@ func TestBuildPlanMessagesNoGoalUpdate(t *testing.T) {
 			t.Fatalf("message %d role = %q, want %q", i, messages[i].Role, role)
 		}
 	}
-	if !strings.Contains(messages[0].Content, "Decision: ask|patch|finalize") {
+	if !strings.Contains(messages[0].Content, "Decision: ask|patch") {
 		t.Fatalf("system prompt missing decision line: %q", messages[0].Content)
 	}
 	if messages[1].Content != "Finish docs" {
@@ -644,7 +712,7 @@ func TestPlanReroutesRewriteToFullMode(t *testing.T) {
 		call++
 		prompt := renderMessagesForLogging(messages)
 		// 1. Plan prompt
-		if strings.Contains(prompt, "Decision: ask|patch|finalize") {
+		if strings.Contains(prompt, "Decision: ask|patch") {
 			return "Decision: patch\n{}", nil
 		}
 		// 2. Strict patch path selection (first attempt)
@@ -702,7 +770,7 @@ func TestPlanProactivelyBypassesStrictPatchForRewrite(t *testing.T) {
 		call++
 		prompt := renderMessagesForLogging(messages)
 		// 1. Plan prompt returns rewrite directly
-		if strings.Contains(prompt, "Decision: ask|patch|finalize") {
+		if strings.Contains(prompt, "Decision: ask|patch") {
 			return "Decision: patch\n" + rewriteJSON, nil
 		}
 		t.Fatalf("unexpected call %d with prompt: %s", call, prompt)
