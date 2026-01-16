@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -359,9 +360,11 @@ func metaPlanPath(sessionID string) (string, error) {
 func executeMetaPlan(ctx metaContext, plan metaPlanState) (metaPlanState, error) {
 	tasks := append([]metaTaskState(nil), plan.Tasks...)
 	metaTurn := 1000
-	for idx := range tasks {
+	idx := 0
+	for idx < len(tasks) {
 		task := &tasks[idx]
 		if task.Status == "complete" {
+			idx++
 			continue
 		}
 		resumePrompt := ""
@@ -412,72 +415,90 @@ func executeMetaPlan(ctx metaContext, plan metaPlanState) (metaPlanState, error)
 			task.Transcript = result.TranscriptPath
 			task.FinalAnswer = result.FinalAnswerPath
 
-			confirmed := true
-			if ctx.Display != nil {
-				confirmed = ctx.Display.PromptUser(fmt.Sprintf("Proceed with marking task %d (%s) as complete?", idx+1, task.Title))
+			selection, selectionErr := promptMetaTaskSelection(ctx.Display, tasks)
+			if selectionErr != nil {
+				fmt.Fprintf(os.Stderr, "Meta prompt selection error: %v\n", selectionErr)
+				selection.decision = metaDecisionFeedback
 			}
-			if confirmed {
-				task.Status = "complete"
-				endSummary := buildMetaEndSummary(*task)
-				writeMetaTurn(ctx, metaTurn+1, fmt.Sprintf("Meta task result: %s", task.Title), endSummary, "meta-end")
-				metaTurn += 2
-				updated := plan
-				updated.Tasks = tasks
-				if perr := persistMetaPlan(ctx.SessionID, updated); perr != nil {
-					return updated, perr
+			switch selection.decision {
+			case metaDecisionComplete:
+				updated, err := finalizeMetaTask(ctx, plan, tasks, idx, &metaTurn)
+				if err != nil {
+					return updated, err
 				}
-				if ctx.Display != nil {
-					ctx.Display.UpdateMetaTaskStatus(idx, task.Title, "complete", task.SessionID)
+				currentStep := taskStepNumber(*task, idx+1)
+				stepIndex := buildTaskStepIndex(tasks)
+				if nextIdx, ok := stepIndex[currentStep+1]; ok {
+					idx = nextIdx
+				} else {
+					idx = len(tasks)
 				}
 				break
-			}
-
-			additionalInput := ""
-			var inputErr error
-			if ctx.Display != nil {
-				additionalInput, inputErr = ctx.Display.PromptInput(fmt.Sprintf("Provide additional instructions to continue session %s (leave blank to interrupt)", strings.TrimSpace(result.SessionID)))
-			}
-			if inputErr != nil {
-				fmt.Fprintf(os.Stderr, "Meta prompt input error: %v\n", inputErr)
-			}
-			additionalInput = strings.TrimSpace(additionalInput)
-			if additionalInput == "" || inputErr != nil {
-				sessionID := strings.TrimSpace(result.SessionID)
-				declineSummary := "User declined to proceed after completion."
-				if sessionID != "" {
-					declineSummary = fmt.Sprintf("User declined to proceed after completion; resume session %s.", sessionID)
+			case metaDecisionJump:
+				updated, err := finalizeMetaTask(ctx, plan, tasks, idx, &metaTurn)
+				if err != nil {
+					return updated, err
 				}
-				task.Status = "interrupted"
-				task.Summary = declineSummary
+				if selection.targetIndex >= 0 && selection.targetIndex < len(tasks) {
+					if tasks[selection.targetIndex].Status == "complete" {
+						tasks[selection.targetIndex].Status = "pending"
+					}
+					idx = selection.targetIndex
+					break
+				}
+				idx++
+				break
+			case metaDecisionFeedback:
+				additionalInput := ""
+				var inputErr error
+				if ctx.Display != nil {
+					additionalInput, inputErr = ctx.Display.PromptInput(fmt.Sprintf("Provide additional instructions to continue session %s (leave blank to interrupt)", strings.TrimSpace(result.SessionID)))
+				}
+				if inputErr != nil {
+					fmt.Fprintf(os.Stderr, "Meta prompt input error: %v\n", inputErr)
+				}
+				additionalInput = strings.TrimSpace(additionalInput)
+				if additionalInput == "" || inputErr != nil {
+					sessionID := strings.TrimSpace(result.SessionID)
+					declineSummary := "User declined to proceed after completion."
+					if sessionID != "" {
+						declineSummary = fmt.Sprintf("User declined to proceed after completion; resume session %s.", sessionID)
+					}
+					task.Status = "interrupted"
+					task.Summary = declineSummary
+					endSummary := buildMetaEndSummary(*task)
+					writeMetaTurn(ctx, metaTurn+1, fmt.Sprintf("Meta task result: %s", task.Title), endSummary, "meta-end")
+					metaTurn += 2
+					updated := plan
+					updated.Tasks = tasks
+					if perr := persistMetaPlan(ctx.SessionID, updated); perr != nil {
+						return updated, perr
+					}
+					if ctx.Display != nil {
+						ctx.Display.UpdateMetaTaskStatus(idx, task.Title, "interrupted", task.SessionID)
+					}
+					return updated, fmt.Errorf("orchestrator interrupted by user after task %d completion", idx+1)
+				}
+
+				task.Status = "pending"
+				task.Summary = fmt.Sprintf("User guidance pending incorporation: %s", additionalInput)
+				task.Goal = integrateUserGuidance(task.Goal, additionalInput)
+				if sessionID := strings.TrimSpace(task.SessionID); sessionID != "" {
+					if err := updateChildSessionGoal(sessionID, task.Goal); err != nil {
+						fmt.Fprintf(os.Stderr, "Meta goal update warning for %s: %v\n", sessionID, err)
+					}
+				}
+				nextBasePrompt := composeTaskPrompt(ctx.Goal, task.Goal, task.Title, priorAnswer, idx == 0)
+				resumePrompt = composeRevisedGoalPrompt(nextBasePrompt, additionalInput)
 				endSummary := buildMetaEndSummary(*task)
 				writeMetaTurn(ctx, metaTurn+1, fmt.Sprintf("Meta task result: %s", task.Title), endSummary, "meta-end")
 				metaTurn += 2
-				updated := plan
-				updated.Tasks = tasks
-				if perr := persistMetaPlan(ctx.SessionID, updated); perr != nil {
-					return updated, perr
-				}
 				if ctx.Display != nil {
-					ctx.Display.UpdateMetaTaskStatus(idx, task.Title, "interrupted", task.SessionID)
-				}
-				return updated, fmt.Errorf("orchestrator interrupted by user after task %d completion", idx+1)
-			}
-
-			task.Status = "pending"
-			task.Summary = fmt.Sprintf("User guidance pending incorporation: %s", additionalInput)
-			task.Goal = integrateUserGuidance(task.Goal, additionalInput)
-			if sessionID := strings.TrimSpace(task.SessionID); sessionID != "" {
-				if err := updateChildSessionGoal(sessionID, task.Goal); err != nil {
-					fmt.Fprintf(os.Stderr, "Meta goal update warning for %s: %v\n", sessionID, err)
+					ctx.Display.UpdateMetaTaskStatus(idx, task.Title, "resuming", task.SessionID)
 				}
 			}
-			nextBasePrompt := composeTaskPrompt(ctx.Goal, task.Goal, task.Title, priorAnswer, idx == 0)
-			resumePrompt = composeRevisedGoalPrompt(nextBasePrompt, additionalInput)
-			endSummary := buildMetaEndSummary(*task)
-			writeMetaTurn(ctx, metaTurn+1, fmt.Sprintf("Meta task result: %s", task.Title), endSummary, "meta-end")
-			metaTurn += 2
-			if ctx.Display != nil {
-				ctx.Display.UpdateMetaTaskStatus(idx, task.Title, "resuming", task.SessionID)
+			if selection.decision == metaDecisionComplete || selection.decision == metaDecisionJump {
+				break
 			}
 		}
 	}
@@ -486,6 +507,89 @@ func executeMetaPlan(ctx metaContext, plan metaPlanState) (metaPlanState, error)
 		return plan, perr
 	}
 	return plan, nil
+}
+
+type metaPostTaskDecision int
+
+const (
+	metaDecisionComplete metaPostTaskDecision = iota
+	metaDecisionFeedback
+	metaDecisionJump
+)
+
+type metaPostTaskSelection struct {
+	decision    metaPostTaskDecision
+	targetIndex int
+}
+
+func promptMetaTaskSelection(display *ui.TerminalDisplay, tasks []metaTaskState) (metaPostTaskSelection, error) {
+	if display == nil {
+		return metaPostTaskSelection{decision: metaDecisionComplete}, nil
+	}
+	options := []string{
+		"- mark as complete - choose \"c\"",
+		"- give feedback     - choose \"f\"",
+	}
+	stepIndex := buildTaskStepIndex(tasks)
+	for idx, task := range tasks {
+		step := taskStepNumber(task, idx+1)
+		options = append(options, fmt.Sprintf("- run %s - choose \"%d\"", task.Title, step))
+	}
+
+	for {
+		choice, err := display.PromptSelection("Select next action:", options)
+		if err != nil {
+			return metaPostTaskSelection{decision: metaDecisionFeedback}, err
+		}
+		trimmed := strings.TrimSpace(strings.ToLower(choice))
+		switch trimmed {
+		case "c":
+			return metaPostTaskSelection{decision: metaDecisionComplete}, nil
+		case "f":
+			return metaPostTaskSelection{decision: metaDecisionFeedback}, nil
+		}
+		if step, err := strconv.Atoi(trimmed); err == nil {
+			if target, ok := stepIndex[step]; ok {
+				return metaPostTaskSelection{decision: metaDecisionJump, targetIndex: target}, nil
+			}
+		}
+		display.Notify(fmt.Sprintf("Invalid choice %q. Enter c, f, or a task number.", choice))
+	}
+}
+
+func buildTaskStepIndex(tasks []metaTaskState) map[int]int {
+	stepIndex := make(map[int]int, len(tasks))
+	for idx, task := range tasks {
+		step := taskStepNumber(task, idx+1)
+		if _, exists := stepIndex[step]; !exists {
+			stepIndex[step] = idx
+		}
+	}
+	return stepIndex
+}
+
+func taskStepNumber(task metaTaskState, fallback int) int {
+	if task.Step > 0 {
+		return task.Step
+	}
+	return fallback
+}
+
+func finalizeMetaTask(ctx metaContext, plan metaPlanState, tasks []metaTaskState, idx int, metaTurn *int) (metaPlanState, error) {
+	task := &tasks[idx]
+	task.Status = "complete"
+	endSummary := buildMetaEndSummary(*task)
+	writeMetaTurn(ctx, *metaTurn+1, fmt.Sprintf("Meta task result: %s", task.Title), endSummary, "meta-end")
+	*metaTurn += 2
+	updated := plan
+	updated.Tasks = tasks
+	if perr := persistMetaPlan(ctx.SessionID, updated); perr != nil {
+		return updated, perr
+	}
+	if ctx.Display != nil {
+		ctx.Display.UpdateMetaTaskStatus(idx, task.Title, "complete", task.SessionID)
+	}
+	return updated, nil
 }
 
 func writeMetaTurn(ctx metaContext, step int, question, summary, decision string) {

@@ -759,6 +759,36 @@ func formatElapsed(d time.Duration) string {
 	return fmt.Sprintf("%d:%02d", minutes, remaining)
 }
 
+func (t *TerminalDisplay) PromptSelection(prompt string, options []string) (string, error) {
+	var (
+		response string
+		readErr  error
+	)
+	t.withLock(func() {
+		t.refreshTerminalSizeLocked()
+		prompt = strings.TrimSpace(prompt)
+		if prompt != "" {
+			fmt.Fprintln(t.out, prompt)
+		}
+		for _, option := range options {
+			clean := strings.TrimSpace(option)
+			if clean == "" {
+				continue
+			}
+			fmt.Fprintln(t.out, clean)
+		}
+		fmt.Fprint(t.out, "Choice: ")
+		reader := bufio.NewReader(os.Stdin)
+		input, err := reader.ReadString('\n')
+		if err != nil {
+			readErr = err
+			return
+		}
+		response = strings.TrimSpace(input)
+	})
+	return response, readErr
+}
+
 func (t *TerminalDisplay) PromptUser(prompt string) bool {
 	var confirmed bool
 	t.withLock(func() {

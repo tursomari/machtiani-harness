@@ -234,6 +234,44 @@ func TestPromptInputReturnsTrimmedValue(t *testing.T) {
 	}
 }
 
+func TestPromptSelectionReturnsSelection(t *testing.T) {
+	var buf bytes.Buffer
+	display := newTestDisplay(&buf)
+	oldStdin := os.Stdin
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("create pipe: %v", err)
+	}
+	os.Stdin = r
+	defer func() {
+		os.Stdin = oldStdin
+		_ = r.Close()
+	}()
+
+	go func() {
+		_, _ = w.Write([]byte("c\n"))
+		_ = w.Close()
+	}()
+
+	value, err := display.PromptSelection("Select next action:", []string{
+		"- mark as complete - choose \"c\"",
+		"- give feedback - choose \"f\"",
+	})
+	if err != nil {
+		t.Fatalf("prompt options error: %v", err)
+	}
+	if value != "c" {
+		t.Fatalf("expected selection 'c', got %q", value)
+	}
+	output := buf.String()
+	if !strings.Contains(output, "Select next action:") {
+		t.Fatalf("expected prompt output, got %q", output)
+	}
+	if !strings.Contains(output, "mark as complete") {
+		t.Fatalf("expected options output, got %q", output)
+	}
+}
+
 func newTestDisplay(buf *bytes.Buffer) *TerminalDisplay {
 	return NewTerminalDisplay(buf, nil, "", "")
 }
