@@ -1,16 +1,13 @@
-## Run available validations
+Create concise and informative report build and tests results. Highlight any failing test cases. Describe the issue causing the error, if any (don't solve it).
 
+Out-of-scope: any environment setup (like missing git repos) or connectivity issues.
+
+## Run available validations
 
 Format.
 
 ```
 gofmt -w path/to/file
-```
-
-Build.
-
-```
-cd agent && GOCACHE=$(pwd)/.gocache go build ./...
 ```
 
 Test.
@@ -21,6 +18,8 @@ cd agent && GOCACHE=$(pwd)/.gocache go test ./...
 
 Do not run any `run-live` or `undici` related tests that require network access. Don't go off on a tangent. Run builds and tests as instructed and don't set any timeouts. To run a formatter, run `gofmt -w /path/to/file`.
 
-## Fix any issues
+## Do not fix any issues
 
-Fix any issue that surface from your validations. Don't not stop trying until format, build, and tests are complete successfully without error.
+- Do not fix any issue that surface from your validations.
+
+- Do not worry about any failures from environment setup or connectivity.
