@@ -41,12 +41,14 @@ const (
 )
 
 var (
-	readmeHeadCommitFn       = readmesync.HeadCommit
-	readmeCommitForProjectFn = readmesync.READMECommitForProject
-	readmeCheckoutReadonlyFn = readmesync.CheckoutReadonlyREADME
-	tagFormatPattern         = regexp.MustCompile(`\[(?P<path>[^\[\]|]+?)\s*\|\s*(?P<start>[^:\]]+)\s*:\s*(?P<end>[^\]]+)\]`)
-	rewriteMissingPattern    = regexp.MustCompile(`edit\[(\d+)\]\s+rewrite requires existing file`)
-	workspaceRoot            string
+	readmeHeadCommitFn          = readmesync.HeadCommit
+	readmeCommitForProjectFn    = readmesync.READMECommitForProject
+	readmeCheckoutReadonlyFn    = readmesync.CheckoutReadonlyREADME
+	loadPatchPlanFn             = LoadPatchPlan
+	formatPatchPlanForDisplayFn = formatPatchPlanForDisplay
+	tagFormatPattern            = regexp.MustCompile(`\[(?P<path>[^\[\]|]+?)\s*\|\s*(?P<start>[^:\]]+)\s*:\s*(?P<end>[^\]]+)\]`)
+	rewriteMissingPattern       = regexp.MustCompile(`edit\[(\d+)\]\s+rewrite requires existing file`)
+	workspaceRoot               string
 )
 
 type plannerProgressTracker struct {
@@ -1082,7 +1084,7 @@ func Run(ctx context.Context, opts Options) Result {
 					return Result{ExitCode: 1, Err: err}
 				}
 			}
-			if err := writeFinalAnswer(sessionID, outcome.FinalAnswer, cfg.finalFile, cfg.verbose, cfg.dryRun); err != nil {
+			if err := writeFinalAnswer(sessionID, appendPatchPlanToFinalAnswer(outcome.FinalAnswer, sessionID), cfg.finalFile, cfg.verbose, cfg.dryRun); err != nil {
 				fmt.Fprintln(os.Stderr, "Final file write error:", err)
 				sessionErr = err
 				display.EndSession()
@@ -1263,7 +1265,7 @@ func Run(ctx context.Context, opts Options) Result {
 					turnsCompleted = userTurnCounter
 					return Result{ExitCode: 1, Err: err}
 				}
-				if err := writeFinalAnswer(sessionID, answer, cfg.finalFile, cfg.verbose, cfg.dryRun); err != nil {
+				if err := writeFinalAnswer(sessionID, appendPatchPlanToFinalAnswer(answer, sessionID), cfg.finalFile, cfg.verbose, cfg.dryRun); err != nil {
 					fmt.Fprintln(os.Stderr, "Final file write error:", err)
 					sessionErr = err
 					finishTurn(sessTelemetry, turn, "finalize", "error", turnInfo, err)
@@ -1382,7 +1384,7 @@ func Run(ctx context.Context, opts Options) Result {
 				turnsCompleted = userTurnCounter
 				return Result{ExitCode: 1, Err: err}
 			}
-			if err := writeFinalAnswer(sessionID, answer, cfg.finalFile, cfg.verbose, cfg.dryRun); err != nil {
+			if err := writeFinalAnswer(sessionID, appendPatchPlanToFinalAnswer(answer, sessionID), cfg.finalFile, cfg.verbose, cfg.dryRun); err != nil {
 				fmt.Fprintln(os.Stderr, "Final file write error:", err)
 				sessionErr = err
 				finishTurn(sessTelemetry, turn, "finalize", "error", turnInfo, err)
@@ -2585,7 +2587,7 @@ Finalize:
 		turnsCompleted = turns
 		return Result{ExitCode: 1, Err: err}
 	}
-	if err := writeFinalAnswer(sessionID, answer, cfg.finalFile, cfg.verbose, cfg.dryRun); err != nil {
+	if err := writeFinalAnswer(sessionID, appendPatchPlanToFinalAnswer(answer, sessionID), cfg.finalFile, cfg.verbose, cfg.dryRun); err != nil {
 		fmt.Fprintln(os.Stderr, "Final file write error:", err)
 		sessionErr = err
 		turnsCompleted = turns
@@ -2915,4 +2917,22 @@ func recordDiscoveryPending(sessionID string, files []string, verbose bool) {
 			return
 		}
 	}
+
+}
+
+// appendPatchPlanToFinalAnswer loads the patch plan and appends it to the answer if valid.
+// If the plan does not exist or cannot be loaded/parsed, the original answer is returned.
+func appendPatchPlanToFinalAnswer(answer, sessionID string) string {
+	plan, err := loadPatchPlanFn(sessionID)
+	if err != nil || plan == nil {
+		return answer
+	}
+	rendered := formatPatchPlanForDisplayFn(plan)
+	if strings.TrimSpace(rendered) == "" {
+		return answer
+	}
+	if strings.TrimSpace(answer) == "" {
+		return rendered
+	}
+	return strings.TrimRight(answer, "\n") + "\n\n" + rendered
 }
