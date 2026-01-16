@@ -499,6 +499,50 @@ func TestDeduplicateFullDiffByFile_DoesNotIntroduceNULBytes(t *testing.T) {
 	}
 }
 
+func TestExtractFullDiffsFromContent_DeduplicatesByFile(t *testing.T) {
+	content := strings.Join([]string{
+		"== TURN 1",
+		"",
+		"Automatic full diff post-patch for: file.txt",
+		"",
+		"Retrieved File Paths:",
+		"* file.txt",
+		"",
+		"=== ANSWER",
+		"",
+		"=== FULL DIFF OF PATCHED FILE: file.txt ===",
+		"diff one",
+		"===",
+		"",
+		"Planner decision: FULL_DIFF",
+		"== TURN 2",
+		"",
+		"Automatic full diff post-patch for: file.txt",
+		"",
+		"=== ANSWER",
+		"",
+		"=== FULL DIFF OF PATCHED FILE: file.txt ===",
+		"diff two",
+		"===",
+		"",
+		"Planner decision: full_diff",
+	}, "\n")
+
+	fullDiffs, err := ExtractFullDiffsFromContent(content)
+	if err != nil {
+		t.Fatalf("ExtractFullDiffsFromContent error: %v", err)
+	}
+
+	want := strings.Join([]string{
+		"=== FULL DIFF OF PATCHED FILE: file.txt ===",
+		"diff two",
+		"===",
+	}, "\n")
+	if fullDiffs != want {
+		t.Fatalf("unexpected full diffs:\n%s", fullDiffs)
+	}
+}
+
 func TestWriteTurn_CompactsNULBytesBeforeWriting(t *testing.T) {
 	cwd, _ := os.Getwd()
 	t.Cleanup(func() { _ = os.Chdir(cwd) })
@@ -568,8 +612,8 @@ func TestDeduplicatePatchPlan_RemovesPriorSections(t *testing.T) {
 	if strings.Contains(content, "First plan content") {
 		t.Fatalf("expected first patch plan to be removed:\n%s", content)
 	}
-	if strings.Contains(content, "Second plan content") {
-		t.Fatalf("expected second patch plan to be removed:\n%s", content)
+	if !strings.Contains(content, "Second plan content") {
+		t.Fatalf("expected second patch plan to remain:\n%s", content)
 	}
 	if !strings.Contains(content, "Third plan content") {
 		t.Fatalf("expected latest patch plan to remain:\n%s", content)
@@ -617,8 +661,8 @@ func TestDeduplicatePatchPlan_PreservesOtherContent(t *testing.T) {
 	if !strings.Contains(content, "Answer 2") {
 		t.Fatalf("expected turn 2 to remain:\n%s", content)
 	}
-	if strings.Contains(content, "Old plan") {
-		t.Fatalf("expected old patch plan to be removed:\n%s", content)
+	if !strings.Contains(content, "Old plan") {
+		t.Fatalf("expected old patch plan to remain:\n%s", content)
 	}
 	if !strings.Contains(content, "New plan") {
 		t.Fatalf("expected new patch plan to remain:\n%s", content)

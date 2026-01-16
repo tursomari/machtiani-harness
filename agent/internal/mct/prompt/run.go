@@ -19,6 +19,7 @@ import (
 
 	"github.com/tursomari/machtiani/agent/internal/git"
 	"github.com/tursomari/machtiani/agent/internal/llm"
+	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/contextbuilder"
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/discoveryrunner"
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/naming"
@@ -28,9 +29,10 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/patcher"
 	"github.com/tursomari/machtiani/agent/internal/patchlog"
 	"github.com/tursomari/machtiani/agent/internal/prompts"
-	"github.com/tursomari/machtiani/agent/internal/templates"
 	"github.com/tursomari/machtiani/agent/internal/shellbridge"
+	"github.com/tursomari/machtiani/agent/internal/templates"
 	"github.com/tursomari/machtiani/agent/internal/trajectory"
+	"github.com/tursomari/machtiani/agent/internal/transcript"
 )
 
 var (
@@ -233,6 +235,9 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 	if len(included) > 0 {
 		res.FullText += formatRetrievedSection(included)
 	}
+	if fullDiffs, err := loadFullDiffsForSession(opts.SessionID, opts.Verbose); err == nil && strings.TrimSpace(fullDiffs) != "" {
+		res.FullText = appendFullDiffSection(res.FullText, fullDiffs)
+	}
 	res.RetrievedFiles = append([]string(nil), included...)
 	if shellTrajectory != "" {
 		res.TrajectoryPath = shellTrajectory
@@ -358,6 +363,59 @@ func buildBaselinePromptContext(prompt string, history []contextbuilder.Message,
 	builder.WriteString(diffBlock)
 
 	return builder.String(), included, nil
+}
+
+func loadFullDiffsForSession(sessionID string, verbose bool) (string, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return "", nil
+	}
+	chatDir, err := artifacts.SessionChatDirectory(sessionID)
+	if err != nil {
+		return "", err
+	}
+	transcriptPath := filepath.Join(chatDir, "agent-transcript.adoc")
+	data, err := os.ReadFile(transcriptPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			if verbose {
+				fmt.Fprintf(os.Stderr, "[full-diff] transcript not found at %s\n", transcriptPath)
+			}
+			return "", nil
+		}
+		if verbose {
+			fmt.Fprintf(os.Stderr, "[full-diff] read transcript failed: %v\n", err)
+		}
+		return "", err
+	}
+	fullDiffs, err := transcript.ExtractFullDiffsFromContent(string(data))
+	if err != nil {
+		if verbose {
+			fmt.Fprintf(os.Stderr, "[full-diff] extract failed: %v\n", err)
+		}
+		return "", err
+	}
+	if verbose && strings.TrimSpace(fullDiffs) == "" {
+		fmt.Fprintln(os.Stderr, "[full-diff] no full diffs found")
+	}
+	return fullDiffs, nil
+}
+
+func appendFullDiffSection(base, fullDiffs string) string {
+	trimmedDiffs := strings.TrimRight(fullDiffs, "\n")
+	if strings.TrimSpace(trimmedDiffs) == "" {
+		return base
+	}
+	const sectionHeader = "# Full Diffs of Patched Files"
+	marker := "\n\n---\n\n" + sectionHeader
+	if idx := strings.Index(base, marker); idx != -1 {
+		base = strings.TrimRight(base[:idx], "\n")
+	}
+	section := marker + "\n\n" + trimmedDiffs
+	if strings.TrimSpace(base) == "" {
+		return strings.TrimLeft(section, "\n")
+	}
+	return strings.TrimRight(base, "\n") + section
 }
 
 func isPatcherPromptMode(mode string) bool {

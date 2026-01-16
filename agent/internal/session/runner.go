@@ -229,9 +229,9 @@ func writePatchPlanTranscriptEntry(tr *transcript.Transcript, plan *PatchPlan, a
 	if err := tr.AppendRaw(b.String()); err != nil {
 		return fmt.Errorf("append patch plan transcript: %w", err)
 	}
-	// Remove all prior patch plan sections, keeping only the latest
+	// Remove older patch plan sections, keeping recent history.
 	if err := tr.DeduplicatePatchPlan(); err != nil {
-		return fmt.Errorf("deduplicate patch plan: %w", err)
+		fmt.Fprintf(os.Stderr, "[patch-plan] deduplicate failed: %v\n", err)
 	}
 	return nil
 }
@@ -1108,13 +1108,14 @@ func Run(ctx context.Context, opts Options) Result {
 					return Result{ExitCode: 1, Err: err}
 				}
 			}
-			if err := writeFinalAnswer(sessionID, appendPatchPlanToFinalAnswer(outcome.FinalAnswer, sessionID), cfg.finalFile, cfg.verbose, cfg.dryRun); err != nil {
+			finalAnswer := appendFinalAnswerExtras(outcome.FinalAnswer, sessionID, cfg.verbose)
+			if err := writeFinalAnswer(sessionID, finalAnswer, cfg.finalFile, cfg.verbose, cfg.dryRun); err != nil {
 				fmt.Fprintln(os.Stderr, "Final file write error:", err)
 				sessionErr = err
 				display.EndSession()
 				return Result{ExitCode: 1, Err: err}
 			}
-			presentFinalAnswer(display, outcome.FinalAnswer)
+			presentFinalAnswer(display, finalAnswer)
 			display.EndSession()
 			return Result{ExitCode: 0, Status: sessionStatus, Turns: turnsCompleted, SessionID: sessionID}
 		}
@@ -1289,14 +1290,15 @@ func Run(ctx context.Context, opts Options) Result {
 					turnsCompleted = userTurnCounter
 					return Result{ExitCode: 1, Err: err}
 				}
-				if err := writeFinalAnswer(sessionID, appendPatchPlanToFinalAnswer(answer, sessionID), cfg.finalFile, cfg.verbose, cfg.dryRun); err != nil {
+				finalAnswer := appendFinalAnswerExtras(answer, sessionID, cfg.verbose)
+				if err := writeFinalAnswer(sessionID, finalAnswer, cfg.finalFile, cfg.verbose, cfg.dryRun); err != nil {
 					fmt.Fprintln(os.Stderr, "Final file write error:", err)
 					sessionErr = err
 					finishTurn(sessTelemetry, turn, "finalize", "error", turnInfo, err)
 					turnsCompleted = userTurnCounter
 					return Result{ExitCode: 1, Err: err}
 				}
-				presentFinalAnswer(display, answer)
+				presentFinalAnswer(display, finalAnswer)
 				display.EndSession()
 				sessionClosed = true
 				turnDecision = "finalize"
@@ -1410,14 +1412,15 @@ func Run(ctx context.Context, opts Options) Result {
 				turnsCompleted = userTurnCounter
 				return Result{ExitCode: 1, Err: err}
 			}
-			if err := writeFinalAnswer(sessionID, appendPatchPlanToFinalAnswer(answer, sessionID), cfg.finalFile, cfg.verbose, cfg.dryRun); err != nil {
+			finalAnswer := appendFinalAnswerExtras(answer, sessionID, cfg.verbose)
+			if err := writeFinalAnswer(sessionID, finalAnswer, cfg.finalFile, cfg.verbose, cfg.dryRun); err != nil {
 				fmt.Fprintln(os.Stderr, "Final file write error:", err)
 				sessionErr = err
 				finishTurn(sessTelemetry, turn, "finalize", "error", turnInfo, err)
 				turnsCompleted = userTurnCounter
 				return Result{ExitCode: 1, Err: err}
 			}
-			presentFinalAnswer(display, answer)
+			presentFinalAnswer(display, finalAnswer)
 			display.EndSession()
 			sessionClosed = true
 			turnDecision = "finalize"
@@ -2615,13 +2618,14 @@ Finalize:
 		turnsCompleted = turns
 		return Result{ExitCode: 1, Err: err}
 	}
-	if err := writeFinalAnswer(sessionID, appendPatchPlanToFinalAnswer(answer, sessionID), cfg.finalFile, cfg.verbose, cfg.dryRun); err != nil {
+	finalAnswer := appendFinalAnswerExtras(answer, sessionID, cfg.verbose)
+	if err := writeFinalAnswer(sessionID, finalAnswer, cfg.finalFile, cfg.verbose, cfg.dryRun); err != nil {
 		fmt.Fprintln(os.Stderr, "Final file write error:", err)
 		sessionErr = err
 		turnsCompleted = turns
 		return Result{ExitCode: 1, Err: err}
 	}
-	presentFinalAnswer(display, answer)
+	presentFinalAnswer(display, finalAnswer)
 	display.EndSession()
 	sessionClosed = true
 	sessionStatus = "success"
@@ -2965,4 +2969,70 @@ func appendPatchPlanToFinalAnswer(answer, sessionID string) string {
 		return rendered
 	}
 	return strings.TrimRight(answer, "\n") + "\n\n" + rendered
+}
+
+func appendFinalAnswerExtras(answer, sessionID string, verbose bool) string {
+	answer = appendPatchPlanToFinalAnswer(answer, sessionID)
+	return appendFullDiffsToFinalAnswer(answer, sessionID, verbose)
+}
+
+func appendFullDiffsToFinalAnswer(answer, sessionID string, verbose bool) string {
+	fullDiffs, err := loadFullDiffsForSession(sessionID, verbose)
+	if err != nil || strings.TrimSpace(fullDiffs) == "" {
+		return answer
+	}
+	return appendFullDiffSection(answer, fullDiffs)
+}
+
+func loadFullDiffsForSession(sessionID string, verbose bool) (string, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return "", nil
+	}
+	chatDir, err := artifacts.SessionChatDirectory(sessionID)
+	if err != nil {
+		return "", err
+	}
+	transcriptPath := filepath.Join(chatDir, "agent-transcript.adoc")
+	data, err := os.ReadFile(transcriptPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			if verbose {
+				fmt.Fprintf(os.Stderr, "[full-diff] transcript not found at %s\n", transcriptPath)
+			}
+			return "", nil
+		}
+		if verbose {
+			fmt.Fprintf(os.Stderr, "[full-diff] read transcript failed: %v\n", err)
+		}
+		return "", err
+	}
+	fullDiffs, err := transcript.ExtractFullDiffsFromContent(string(data))
+	if err != nil {
+		if verbose {
+			fmt.Fprintf(os.Stderr, "[full-diff] extract failed: %v\n", err)
+		}
+		return "", err
+	}
+	if verbose && strings.TrimSpace(fullDiffs) == "" {
+		fmt.Fprintln(os.Stderr, "[full-diff] no full diffs found")
+	}
+	return fullDiffs, nil
+}
+
+func appendFullDiffSection(base, fullDiffs string) string {
+	trimmedDiffs := strings.TrimRight(fullDiffs, "\n")
+	if strings.TrimSpace(trimmedDiffs) == "" {
+		return base
+	}
+	const sectionHeader = "# Full Diffs of Patched Files"
+	marker := "\n\n---\n\n" + sectionHeader
+	if idx := strings.Index(base, marker); idx != -1 {
+		base = strings.TrimRight(base[:idx], "\n")
+	}
+	section := marker + "\n\n" + trimmedDiffs
+	if strings.TrimSpace(base) == "" {
+		return strings.TrimLeft(section, "\n")
+	}
+	return strings.TrimRight(base, "\n") + section
 }

@@ -263,8 +263,11 @@ func TestWritePatchPlanTranscriptEntryDeduplicates(t *testing.T) {
 	}
 
 	content := tr.Content()
-	if strings.Count(content, "PATCH PLAN") != 1 {
-		t.Fatalf("expected only one patch plan section, got %d\n%s", strings.Count(content, "PATCH PLAN"), content)
+	if strings.Count(content, "PATCH PLAN") != 2 {
+		t.Fatalf("expected two patch plan sections, got %d\n%s", strings.Count(content, "PATCH PLAN"), content)
+	}
+	if !strings.Contains(content, "PATCH PLAN CREATED") {
+		t.Fatalf("expected created plan to remain\n%s", content)
 	}
 	if !strings.Contains(content, "PATCH PLAN UPDATED") {
 		t.Fatalf("expected updated plan to remain\n%s", content)

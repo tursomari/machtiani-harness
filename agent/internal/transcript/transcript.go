@@ -6,6 +6,7 @@ import (
 	"os"
 	pathpkg "path"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
@@ -372,6 +373,193 @@ func (t *Transcript) Content() string {
 	return t.mem.String()
 }
 
+// ExtractFullDiffs returns the formatted full diffs for all patched files
+// from the transcript, in the order they appear.
+func (t *Transcript) ExtractFullDiffs() (string, error) {
+	if t == nil {
+		return "", nil
+	}
+	return ExtractFullDiffsFromContent(t.Content())
+}
+
+// ExtractFullDiffsFromContent parses the transcript content for full_diff turns
+// and returns the concatenated diff summaries in order.
+func ExtractFullDiffsFromContent(content string) (string, error) {
+	if strings.TrimSpace(content) == "" {
+		return "", nil
+	}
+
+	normalize := func(p string) string {
+		trimmed := strings.TrimSpace(p)
+		if trimmed == "" {
+			return ""
+		}
+		cleaned := pathpkg.Clean(filepath.ToSlash(trimmed))
+		if cleaned == "." {
+			return ""
+		}
+		return cleaned
+	}
+
+	extractFile := func(line string) string {
+		trimmed := strings.TrimSpace(line)
+		upper := strings.ToUpper(trimmed)
+		if strings.HasPrefix(strings.ToLower(trimmed), "automatic full diff post-patch for:") {
+			return normalize(strings.TrimSpace(trimmed[len("automatic full diff post-patch for:"):]))
+		}
+		const headerPrefix = "=== FULL DIFF OF PATCHED FILE:"
+		if strings.HasPrefix(upper, headerPrefix) {
+			rest := strings.TrimSpace(trimmed[len(headerPrefix):])
+			rest = strings.TrimSpace(strings.TrimSuffix(rest, "==="))
+			return normalize(rest)
+		}
+		return ""
+	}
+
+	trimAnswer := func(lines []string) string {
+		start := 0
+		for start < len(lines) && strings.TrimSpace(lines[start]) == "" {
+			start++
+		}
+		end := len(lines)
+		for end > start && strings.TrimSpace(lines[end-1]) == "" {
+			end--
+		}
+		if start >= end {
+			return ""
+		}
+		return strings.Join(lines[start:end], "\n")
+	}
+
+	lines := strings.Split(content, "\n")
+	decisions := make([]struct {
+		file    string
+		content string
+		order   int
+	}, 0)
+	indices := map[string]int{}
+	order := 0
+
+	var (
+		inTurn      bool
+		inAnswer    bool
+		inRetrieved bool
+		decision    string
+		answerLines []string
+		turnFile    string
+	)
+
+	resetTurn := func() {
+		inTurn = false
+		inAnswer = false
+		inRetrieved = false
+		decision = ""
+		answerLines = nil
+		turnFile = ""
+	}
+
+	flushTurn := func() {
+		if !inTurn {
+			return
+		}
+		decisionValue := strings.ToLower(strings.TrimSpace(decision))
+		if decisionValue == "full_diff" {
+			summary := trimAnswer(answerLines)
+			if summary != "" {
+				order++
+				fileKey := normalize(turnFile)
+				if fileKey == "" {
+					decisions = append(decisions, struct {
+						file    string
+						content string
+						order   int
+					}{file: "", content: summary, order: order})
+				} else if idx, ok := indices[fileKey]; ok {
+					decisions[idx].content = summary
+					decisions[idx].order = order
+				} else {
+					indices[fileKey] = len(decisions)
+					decisions = append(decisions, struct {
+						file    string
+						content string
+						order   int
+					}{file: fileKey, content: summary, order: order})
+				}
+			}
+		}
+		resetTurn()
+	}
+
+	isTurnHeader := func(line string) bool {
+		trimmed := strings.TrimSpace(line)
+		return strings.HasPrefix(strings.ToUpper(trimmed), "== TURN ")
+	}
+
+	for _, line := range lines {
+		if isTurnHeader(line) {
+			flushTurn()
+			inTurn = true
+			continue
+		}
+		if !inTurn {
+			continue
+		}
+		trimmed := strings.TrimSpace(line)
+		if strings.EqualFold(trimmed, "=== ANSWER") {
+			inAnswer = true
+			continue
+		}
+		if strings.HasPrefix(strings.ToLower(trimmed), "planner decision:") {
+			decision = strings.TrimSpace(trimmed[len("planner decision:"):])
+			inAnswer = false
+			continue
+		}
+		if strings.EqualFold(trimmed, "Retrieved File Paths:") {
+			inRetrieved = true
+			continue
+		}
+		if inRetrieved {
+			if strings.HasPrefix(strings.TrimSpace(trimmed), "*") {
+				file := strings.TrimSpace(strings.TrimPrefix(trimmed, "*"))
+				if normalized := normalize(file); normalized != "" && turnFile == "" {
+					turnFile = normalized
+				}
+				continue
+			}
+			if trimmed == "" {
+				inRetrieved = false
+				continue
+			}
+			inRetrieved = false
+		}
+		if candidate := extractFile(line); candidate != "" {
+			turnFile = candidate
+		}
+		if inAnswer {
+			answerLines = append(answerLines, line)
+		}
+	}
+	flushTurn()
+
+	if len(decisions) == 0 {
+		return "", nil
+	}
+	sort.Slice(decisions, func(i, j int) bool {
+		return decisions[i].order < decisions[j].order
+	})
+	fullDiffs := make([]string, 0, len(decisions))
+	for _, item := range decisions {
+		if strings.TrimSpace(item.content) == "" {
+			continue
+		}
+		fullDiffs = append(fullDiffs, item.content)
+	}
+	if len(fullDiffs) == 0 {
+		return "", nil
+	}
+	return strings.Join(fullDiffs, "\n\n"), nil
+}
+
 // Restore seeds the transcript with existing content, typically used when resuming
 // an interrupted session.
 func (t *Transcript) Restore(content string) error {
@@ -551,8 +739,11 @@ func (t *Transcript) DeduplicateFullDiffByFile(filePath string) error {
 	return nil
 }
 
-// DeduplicatePatchPlan removes all prior patch plan sections
-// (== PATCH PLAN CREATED / == PATCH PLAN UPDATED), keeping only the latest one.
+const patchPlanDedupKeep = 2
+
+// DeduplicatePatchPlan removes older patch plan sections
+// (== PATCH PLAN CREATED / == PATCH PLAN UPDATED), keeping the most recent ones.
+// The retention count is controlled by patchPlanDedupKeep.
 func (t *Transcript) DeduplicatePatchPlan() error {
 	if t == nil {
 		return nil
@@ -587,14 +778,14 @@ func (t *Transcript) DeduplicatePatchPlan() error {
 		}
 	}
 
-	// Nothing to deduplicate if 0 or 1 sections
-	if len(sections) <= 1 {
+	// Nothing to deduplicate if within the retention limit.
+	if patchPlanDedupKeep <= 0 || len(sections) <= patchPlanDedupKeep {
 		return nil
 	}
 
-	// Mark lines to remove (all sections except the last)
+	// Mark lines to remove (all sections except the most recent N)
 	removeSet := make(map[int]struct{})
-	for _, sec := range sections[:len(sections)-1] {
+	for _, sec := range sections[:len(sections)-patchPlanDedupKeep] {
 		for i := sec.start; i <= sec.end; i++ {
 			removeSet[i] = struct{}{}
 		}
@@ -618,7 +809,7 @@ func (t *Transcript) DeduplicatePatchPlan() error {
 }
 
 // WritePatchPlanCreated writes an initial patch plan to the transcript.
-// It then removes any prior patch plan sections to keep only the latest.
+// It then removes older patch plan sections to keep recent history.
 func (t *Transcript) WritePatchPlanCreated(step int, planDetails string) error {
 	if t == nil {
 		return nil
@@ -648,13 +839,13 @@ func (t *Transcript) WritePatchPlanCreated(step int, planDetails string) error {
 		return err
 	}
 	if err := t.DeduplicatePatchPlan(); err != nil {
-		return err
+		fmt.Fprintf(os.Stderr, "[patch-plan] deduplicate failed: %v\n", err)
 	}
 	return t.compactNULsIfNeeded()
 }
 
 // WritePatchPlanUpdated writes an updated patch plan to the transcript.
-// It then removes any prior patch plan sections to keep only the latest.
+// It then removes older patch plan sections to keep recent history.
 func (t *Transcript) WritePatchPlanUpdated(step int, planDetails string) error {
 	if t == nil {
 		return nil
@@ -684,7 +875,7 @@ func (t *Transcript) WritePatchPlanUpdated(step int, planDetails string) error {
 		return err
 	}
 	if err := t.DeduplicatePatchPlan(); err != nil {
-		return err
+		fmt.Fprintf(os.Stderr, "[patch-plan] deduplicate failed: %v\n", err)
 	}
 	return t.compactNULsIfNeeded()
 }
