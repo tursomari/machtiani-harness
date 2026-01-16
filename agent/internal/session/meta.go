@@ -371,13 +371,24 @@ func executeMetaPlan(ctx metaContext, plan metaPlanState) (metaPlanState, error)
 		for {
 			priorAnswer := loadPreviousFinalAnswer(tasks[:idx])
 			basePrompt := composeTaskPrompt(ctx.Goal, task.Goal, task.Title, priorAnswer, idx == 0)
+			headerPrompt := strings.TrimSpace(ctx.Options.OriginalPrompt)
+			if headerPrompt == "" {
+				headerPrompt = ctx.Goal
+			}
+			if idx > 0 {
+				if strings.TrimSpace(priorAnswer) != "" {
+					headerPrompt = priorAnswer
+				} else {
+					headerPrompt = basePrompt
+				}
+			}
 			startSummary := buildMetaStartSummary(ctx.Goal, *task, tasks[:idx])
 			writeMetaTurn(ctx, metaTurn, fmt.Sprintf("Meta task start: %s", task.Title), startSummary, "meta-start")
 			if ctx.Display != nil {
 				ctx.Display.UpdateMetaTaskStatus(idx, task.Title, "running", task.SessionID)
 			}
 			includeBackground := idx == 0
-			result, err := runMetaTask(ctx, *task, basePrompt, resumePrompt, includeBackground)
+			result, err := runMetaTask(ctx, *task, basePrompt, headerPrompt, resumePrompt, includeBackground)
 			task.Attempts++
 			resumePrompt = ""
 			if err != nil {
@@ -693,6 +704,13 @@ func buildMetaEndSummary(task metaTaskState) string {
 	return b.String()
 }
 
+func taskHeaderDescription(task metaTaskState) string {
+	if desc := strings.TrimSpace(task.Description); desc != "" {
+		return desc
+	}
+	return strings.TrimSpace(task.Title)
+}
+
 func loadPreviousFinalAnswer(prior []metaTaskState) string {
 	if len(prior) == 0 {
 		return ""
@@ -834,7 +852,7 @@ type metaTaskRunResult struct {
 	Interrupted     bool
 }
 
-func runMetaTask(ctx metaContext, task metaTaskState, basePrompt string, resumePrompt string, includeBackground bool) (metaTaskRunResult, error) {
+func runMetaTask(ctx metaContext, task metaTaskState, basePrompt string, headerPrompt string, resumePrompt string, includeBackground bool) (metaTaskRunResult, error) {
 	if ctx.Config.dryRun {
 		sessionID := fmt.Sprintf("dry-run-%d", time.Now().UnixNano())
 		return metaTaskRunResult{
@@ -852,6 +870,11 @@ func runMetaTask(ctx metaContext, task metaTaskState, basePrompt string, resumeP
 	} else {
 		childOptions.Goal = basePrompt
 	}
+	childOptions.OriginalPrompt = strings.TrimSpace(headerPrompt)
+	if childOptions.OriginalPrompt == "" {
+		childOptions.OriginalPrompt = childOptions.Goal
+	}
+	childOptions.TaskDescription = taskHeaderDescription(task)
 	statusNormalized := strings.ToLower(strings.TrimSpace(task.Status))
 	resumeSession := strings.TrimSpace(task.SessionID)
 	shouldResume := false

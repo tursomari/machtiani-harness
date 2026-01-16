@@ -176,13 +176,13 @@ func (p *plannerProgressTracker) recordSuccess(files []string) {
 	p.applied++
 }
 
-func startTranscriptIfNeeded(tr *transcript.Transcript, goal, sessionID string, cfg legacyConfig, resumeMode bool) (bool, error) {
+func startTranscriptIfNeeded(tr *transcript.Transcript, originalPrompt, taskDescription, sessionID string, cfg legacyConfig, resumeMode bool) (bool, error) {
 	if tr == nil {
 		return false, nil
 	}
 	starting := !resumeMode || tr.Content() == ""
 	if starting {
-		if err := tr.WriteHeader(goal, sessionID, cfg); err != nil {
+		if err := tr.WriteHeader(originalPrompt, taskDescription, sessionID, cfg); err != nil {
 			return false, err
 		}
 	}
@@ -425,6 +425,11 @@ func Run(ctx context.Context, opts Options) Result {
 		fmt.Fprintln(os.Stderr, "Error: empty issue/question provided")
 		return Result{ExitCode: 2, Err: errors.New("empty goal")}
 	}
+	originalPrompt := opts.OriginalPrompt
+	if strings.TrimSpace(originalPrompt) == "" {
+		originalPrompt = opts.Goal
+	}
+	taskDescription := opts.TaskDescription
 	goal := inputPrompt
 
 	cfgInput := opts.Config
@@ -453,6 +458,14 @@ func Run(ctx context.Context, opts Options) Result {
 		if storedGoal != "" {
 			goal = storedGoal
 		}
+		storedOriginal := strings.TrimSpace(state.OriginalPrompt)
+		if storedOriginal != "" {
+			originalPrompt = state.OriginalPrompt
+		}
+		storedTask := strings.TrimSpace(state.TaskDescription)
+		if storedTask != "" {
+			taskDescription = state.TaskDescription
+		}
 		if goal == "" {
 			goal = resumePrompt
 		}
@@ -477,6 +490,11 @@ func Run(ctx context.Context, opts Options) Result {
 		fmt.Fprintln(os.Stderr, "Error: unable to determine session goal")
 		return Result{ExitCode: 1, Err: errors.New("missing session goal")}
 	}
+	if strings.TrimSpace(originalPrompt) == "" {
+		originalPrompt = goal
+	}
+	opts.OriginalPrompt = originalPrompt
+	opts.TaskDescription = taskDescription
 
 	if sessionID == "" {
 		sessionID = runner.GenerateSessionID()
@@ -808,9 +826,11 @@ func Run(ctx context.Context, opts Options) Result {
 	defer func() {
 		if interrupted {
 			state := SessionState{
-				SessionID:      sessionID,
-				Goal:           goal,
-				TurnsCompleted: turnsCompleted,
+				SessionID:       sessionID,
+				Goal:            goal,
+				OriginalPrompt:  originalPrompt,
+				TaskDescription: taskDescription,
+				TurnsCompleted:  turnsCompleted,
 			}
 			if tr != nil {
 				state.TranscriptPath = tr.Path()
@@ -841,9 +861,11 @@ func Run(ctx context.Context, opts Options) Result {
 		}
 		if keepSessionState {
 			state := SessionState{
-				SessionID:      sid,
-				Goal:           goal,
-				TurnsCompleted: turnsCompleted,
+				SessionID:       sid,
+				Goal:            goal,
+				OriginalPrompt:  originalPrompt,
+				TaskDescription: taskDescription,
+				TurnsCompleted:  turnsCompleted,
 			}
 			if pendingState != nil {
 				state = *pendingState
@@ -1018,7 +1040,7 @@ func Run(ctx context.Context, opts Options) Result {
 	})
 
 	isChildSession := strings.TrimSpace(cfg.parentSessionID) != ""
-	startingTranscript, headerErr := startTranscriptIfNeeded(tr, goal, sessionID, cfg, resumeMode)
+	startingTranscript, headerErr := startTranscriptIfNeeded(tr, originalPrompt, taskDescription, sessionID, cfg, resumeMode)
 	if headerErr != nil {
 		fmt.Fprintln(os.Stderr, "Error writing transcript header:", headerErr)
 		return Result{ExitCode: 1, Err: headerErr}
@@ -1063,6 +1085,8 @@ func Run(ctx context.Context, opts Options) Result {
 				pendingState = &SessionState{
 					SessionID:          sessionID,
 					Goal:               goal,
+					OriginalPrompt:     originalPrompt,
+					TaskDescription:    taskDescription,
 					TurnsCompleted:     turnsCompleted,
 					TranscriptPath:     tr.Path(),
 					Transcript:         tr.Content(),
@@ -1282,9 +1306,11 @@ func Run(ctx context.Context, opts Options) Result {
 				sessionStatus = "success"
 				keepSessionState = true
 				pendingState = &SessionState{
-					SessionID:      sessionID,
-					Goal:           goal,
-					TurnsCompleted: turnsCompleted,
+					SessionID:       sessionID,
+					Goal:            goal,
+					OriginalPrompt:  originalPrompt,
+					TaskDescription: taskDescription,
+					TurnsCompleted:  turnsCompleted,
 				}
 				if tr != nil {
 					pendingState.TranscriptPath = tr.Path()
@@ -1401,9 +1427,11 @@ func Run(ctx context.Context, opts Options) Result {
 			sessionStatus = "success"
 			keepSessionState = true
 			pendingState = &SessionState{
-				SessionID:      sessionID,
-				Goal:           goal,
-				TurnsCompleted: turnsCompleted,
+				SessionID:       sessionID,
+				Goal:            goal,
+				OriginalPrompt:  originalPrompt,
+				TaskDescription: taskDescription,
+				TurnsCompleted:  turnsCompleted,
 			}
 			if tr != nil {
 				pendingState.TranscriptPath = tr.Path()
@@ -2600,9 +2628,11 @@ Finalize:
 	turnsCompleted = turns
 	keepSessionState = true
 	pendingState = &SessionState{
-		SessionID:      sessionID,
-		Goal:           goal,
-		TurnsCompleted: turnsCompleted,
+		SessionID:       sessionID,
+		Goal:            goal,
+		OriginalPrompt:  originalPrompt,
+		TaskDescription: taskDescription,
+		TurnsCompleted:  turnsCompleted,
 	}
 	if tr != nil {
 		pendingState.TranscriptPath = tr.Path()

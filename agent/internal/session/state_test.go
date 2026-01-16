@@ -14,11 +14,13 @@ import (
 func TestSaveLoadSessionStateRoundTrip(t *testing.T) {
 	sessionID := fmt.Sprintf("test-session-%d", time.Now().UnixNano())
 	state := SessionState{
-		SessionID:      sessionID,
-		Goal:           "Review database migrations",
-		TurnsCompleted: 3,
-		TranscriptPath: "/tmp/mct/transcript.md",
-		Transcript:     "# existing transcript\n\ncontent here\n",
+		SessionID:       sessionID,
+		Goal:            "Review database migrations",
+		OriginalPrompt:  "Review database migrations in detail",
+		TaskDescription: "Validate migration ordering",
+		TurnsCompleted:  3,
+		TranscriptPath:  "/tmp/mct/transcript.md",
+		Transcript:      "# existing transcript\n\ncontent here\n",
 		PlannerProgress: &PlannerProgressState{
 			SuccessFiles:   []string{"README.md", "db/migrations/20240101.sql"},
 			AppliedPatches: 2,
@@ -60,6 +62,12 @@ func TestSaveLoadSessionStateRoundTrip(t *testing.T) {
 	}
 	if loaded.Goal != state.Goal {
 		t.Fatalf("unexpected goal: got %q want %q", loaded.Goal, state.Goal)
+	}
+	if loaded.OriginalPrompt != state.OriginalPrompt {
+		t.Fatalf("unexpected original prompt: got %q want %q", loaded.OriginalPrompt, state.OriginalPrompt)
+	}
+	if loaded.TaskDescription != state.TaskDescription {
+		t.Fatalf("unexpected task description: got %q want %q", loaded.TaskDescription, state.TaskDescription)
 	}
 	if loaded.TurnsCompleted != state.TurnsCompleted {
 		t.Fatalf("unexpected turns completed: got %d want %d", loaded.TurnsCompleted, state.TurnsCompleted)

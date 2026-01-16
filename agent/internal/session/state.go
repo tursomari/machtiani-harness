@@ -23,6 +23,8 @@ type PatchPlan = planner.PatchPlan
 type SessionState struct {
 	SessionID          string                 `json:"session_id"`
 	Goal               string                 `json:"goal"`
+	OriginalPrompt     string                 `json:"original_prompt,omitempty"`
+	TaskDescription    string                 `json:"task_description,omitempty"`
 	TurnsCompleted     int                    `json:"turns_completed"`
 	TranscriptPath     string                 `json:"transcript_path,omitempty"`
 	Transcript         string                 `json:"transcript"`

@@ -20,7 +20,7 @@ func TestWriteTurn_Patcher(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tr.Close()
-	if err := tr.WriteHeader("goal", "sess", nil); err != nil {
+	if err := tr.WriteHeader("goal", "", "sess", nil); err != nil {
 		t.Fatal(err)
 	}
 	// No savedPath line for patcher
@@ -42,21 +42,20 @@ func TestWriteTurn_Patcher(t *testing.T) {
 	}
 }
 
-func TestFormatGoalSectionInlinePrompt(t *testing.T) {
+func TestFormatGoalSectionVerbatim(t *testing.T) {
 	goal := "Investigate root cause\n\nReview logs"
-	got := formatGoalSection(goal)
-	want := "Investigate root cause:Review logs"
-	if got != want {
-		t.Fatalf("inline goal formatting mismatch:\nwant %q\n got %q", want, got)
+	got := formatGoalSection(goal, "")
+	if got != goal {
+		t.Fatalf("goal formatting mismatch:\nwant %q\n got %q", goal, got)
 	}
 }
 
-func TestFormatGoalSectionProblemContext(t *testing.T) {
-	goal := "Task details: Investigate root cause\n\nLine 1 of answer\nLine 2 continued"
-	got := formatGoalSection(goal)
-	want := "Investigate root cause\n\n== PROBLEM:\n\nLine 1 of answer\nLine 2 continued"
+func TestFormatGoalSectionAppendsTaskDescription(t *testing.T) {
+	goal := "Investigate root cause\n\nReview logs"
+	got := formatGoalSection(goal, "Trace recent deploys")
+	want := "Investigate root cause\n\nReview logs\n\n---\nTrace recent deploys\n---"
 	if got != want {
-		t.Fatalf("problem goal formatting mismatch:\nwant %q\n got %q", want, got)
+		t.Fatalf("task description formatting mismatch:\nwant %q\n got %q", want, got)
 	}
 }
 
@@ -114,7 +113,7 @@ func TestWriteTurnInstructionSkipsQuestionLabel(t *testing.T) {
 	}
 	defer tr.Close()
 
-	if err := tr.WriteHeader("goal", "instr-sess", nil); err != nil {
+	if err := tr.WriteHeader("goal", "", "instr-sess", nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -145,7 +144,7 @@ func TestAppendRaw_UserFeedbackSection(t *testing.T) {
 	}
 	defer tr.Close()
 
-	if err := tr.WriteHeader("goal", "feedback-sess", nil); err != nil {
+	if err := tr.WriteHeader("goal", "", "feedback-sess", nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -180,7 +179,7 @@ func TestTranscriptStripsNULBytes(t *testing.T) {
 	}
 	defer tr.Close()
 
-	if err := tr.WriteHeader("goal\x00with\x00nul", "nul-sess", nil); err != nil {
+	if err := tr.WriteHeader("goal\x00with\x00nul", "", "nul-sess", nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := tr.AppendRaw("raw\x00block\n"); err != nil {
@@ -220,7 +219,7 @@ func TestDeduplicateFullDiffByFile_RemovesPriorTurns(t *testing.T) {
 	}
 	defer tr.Close()
 
-	if err := tr.WriteHeader("goal", "full-diff-sess", nil); err != nil {
+	if err := tr.WriteHeader("goal", "", "full-diff-sess", nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -264,7 +263,7 @@ func TestDeduplicateFullDiffByFile_PrefersLastTurnOrder(t *testing.T) {
 	}
 	defer tr.Close()
 
-	if err := tr.WriteHeader("goal", "full-diff-step", nil); err != nil {
+	if err := tr.WriteHeader("goal", "", "full-diff-step", nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -301,7 +300,7 @@ func TestDeduplicateFullDiffByFile_UsesRetrievedPaths(t *testing.T) {
 	}
 	defer tr.Close()
 
-	if err := tr.WriteHeader("goal", "full-diff-retrieved", nil); err != nil {
+	if err := tr.WriteHeader("goal", "", "full-diff-retrieved", nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -340,7 +339,7 @@ func TestDeduplicateFullDiffByFile_RetainsSingleFullDiff(t *testing.T) {
 	}
 	defer tr.Close()
 
-	if err := tr.WriteHeader("goal", "full-diff-single", nil); err != nil {
+	if err := tr.WriteHeader("goal", "", "full-diff-single", nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := tr.WriteTurn(1, "Automatic full diff post-patch for: a.txt", "", []string{"a.txt"}, "diff-only", "full_diff"); err != nil {
@@ -370,7 +369,7 @@ func TestDeduplicateFullDiffByFile_DoesNotDeleteOtherFileFullDiff(t *testing.T) 
 	}
 	defer tr.Close()
 
-	if err := tr.WriteHeader("goal", "full-diff-sess-3", nil); err != nil {
+	if err := tr.WriteHeader("goal", "", "full-diff-sess-3", nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -413,7 +412,7 @@ func TestDeduplicateFullDiffByFile_NoopsForMissing(t *testing.T) {
 	}
 	defer tr.Close()
 
-	if err := tr.WriteHeader("goal", "full-diff-sess-2", nil); err != nil {
+	if err := tr.WriteHeader("goal", "", "full-diff-sess-2", nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := tr.WriteTurn(1, "Something else", "", nil, "", "ask"); err != nil {
@@ -442,7 +441,7 @@ func TestDeduplicateFullDiffByFile_StripsNULBytes(t *testing.T) {
 	}
 	defer tr.Close()
 
-	if err := tr.WriteHeader("goal", "full-diff-sess-nul", nil); err != nil {
+	if err := tr.WriteHeader("goal", "", "full-diff-sess-nul", nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := tr.WriteTurn(1, "Automatic full diff post-patch for: a.txt", "", []string{"a.txt"}, "diff1", "full_diff"); err != nil {
@@ -478,7 +477,7 @@ func TestDeduplicateFullDiffByFile_DoesNotIntroduceNULBytes(t *testing.T) {
 	}
 	defer tr.Close()
 
-	if err := tr.WriteHeader("goal", "full-diff-sess-rewrite", nil); err != nil {
+	if err := tr.WriteHeader("goal", "", "full-diff-sess-rewrite", nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := tr.WriteTurn(1, "Automatic full diff post-patch for: a.txt", "", []string{"a.txt"}, "diff-a-1", "full_diff"); err != nil {
@@ -513,7 +512,7 @@ func TestWriteTurn_CompactsNULBytesBeforeWriting(t *testing.T) {
 	}
 	defer tr.Close()
 
-	if err := tr.WriteHeader("goal", "turn-nul", nil); err != nil {
+	if err := tr.WriteHeader("goal", "", "turn-nul", nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -546,7 +545,7 @@ func TestDeduplicatePatchPlan_RemovesPriorSections(t *testing.T) {
 	}
 	defer tr.Close()
 
-	if err := tr.WriteHeader("goal", "patch-plan-sess", nil); err != nil {
+	if err := tr.WriteHeader("goal", "", "patch-plan-sess", nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -590,7 +589,7 @@ func TestDeduplicatePatchPlan_PreservesOtherContent(t *testing.T) {
 	}
 	defer tr.Close()
 
-	if err := tr.WriteHeader("goal", "patch-plan-preserve", nil); err != nil {
+	if err := tr.WriteHeader("goal", "", "patch-plan-preserve", nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -639,7 +638,7 @@ func TestDeduplicatePatchPlan_NoopsWhenNoPlan(t *testing.T) {
 	}
 	defer tr.Close()
 
-	if err := tr.WriteHeader("goal", "patch-plan-noop", nil); err != nil {
+	if err := tr.WriteHeader("goal", "", "patch-plan-noop", nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := tr.WriteTurn(1, "Question", "", nil, "Answer", "ask"); err != nil {
@@ -670,7 +669,7 @@ func TestDeduplicatePatchPlan_RetainsSinglePlan(t *testing.T) {
 	}
 	defer tr.Close()
 
-	if err := tr.WriteHeader("goal", "patch-plan-single", nil); err != nil {
+	if err := tr.WriteHeader("goal", "", "patch-plan-single", nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := tr.AppendRaw("\n== PATCH PLAN CREATED\n\nOnly plan\n"); err != nil {

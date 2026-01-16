@@ -83,7 +83,7 @@ func TestUpdateChildSessionGoalPersists(t *testing.T) {
 	}
 
 	sessionID := "test-session"
-	original := SessionState{SessionID: sessionID, Goal: "Original goal"}
+	original := SessionState{SessionID: sessionID, Goal: "Original goal", OriginalPrompt: "Original goal"}
 	if err := SaveSessionState(original); err != nil {
 		t.Fatalf("save session state: %v", err)
 	}
@@ -104,5 +104,8 @@ func TestUpdateChildSessionGoalPersists(t *testing.T) {
 	}
 	if current.Goal != revised {
 		t.Fatalf("expected goal %q, got %q", revised, current.Goal)
+	}
+	if current.OriginalPrompt != original.OriginalPrompt {
+		t.Fatalf("expected original prompt %q, got %q", original.OriginalPrompt, current.OriginalPrompt)
 	}
 }

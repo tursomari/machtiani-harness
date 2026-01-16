@@ -158,8 +158,8 @@ func (t *Transcript) SetTrajectory(w *trajectory.Writer) {
 	t.traj = w
 }
 
-func (t *Transcript) WriteHeader(goal string, sessionID string, _ any) error {
-	formattedGoal := formatGoalSection(goal)
+func (t *Transcript) WriteHeader(originalPrompt string, taskDescription string, sessionID string, _ any) error {
+	formattedGoal := formatGoalSection(originalPrompt, taskDescription)
 	s := fmt.Sprintf("= MCT-AGENT TRANSCRIPT\n\n== GOAL:\n\n%s\n\n", formattedGoal)
 	s = sanitizeTranscriptText(s)
 	if s == "" {
@@ -174,101 +174,17 @@ func (t *Transcript) WriteHeader(goal string, sessionID string, _ any) error {
 	return err
 }
 
-// formatGoalSection normalizes the GOAL header to highlight the task description
-// and funnel the remaining prompt or carry-over context under a GOAL Context
-// subheading.
-func formatGoalSection(goal string) string {
-	trimmed := strings.TrimSpace(goal)
-	if trimmed == "" {
+// formatGoalSection renders the transcript GOAL section with the original
+// prompt verbatim, optionally appending a meta task description block.
+func formatGoalSection(originalPrompt string, taskDescription string) string {
+	if strings.TrimSpace(originalPrompt) == "" {
 		return ""
 	}
-
-	paragraphs := splitGoalParagraphs(trimmed)
-	description, detailsIdx := extractGoalDescription(paragraphs)
-	descText := stripGoalEmphasis(description)
-	if descText == "" && len(paragraphs) > 0 {
-		descText = stripGoalEmphasis(paragraphs[0])
+	trimmedTask := strings.TrimSpace(taskDescription)
+	if trimmedTask == "" {
+		return originalPrompt
 	}
-	if descText == "" {
-		return ""
-	}
-
-	contextBlocks := extractGoalContext(paragraphs, detailsIdx)
-	if len(contextBlocks) == 0 {
-		return fmt.Sprintf("%s", descText)
-	}
-
-	if detailsIdx < 0 && len(contextBlocks) == 1 && !strings.Contains(contextBlocks[0], "\n") {
-		inline := normalizeInlineContext(contextBlocks[0])
-		if inline == "" {
-			return fmt.Sprintf("%s", descText)
-		}
-		return fmt.Sprintf("%s:%s", descText, inline)
-	}
-
-	context := strings.TrimSpace(strings.Join(contextBlocks, "\n\n"))
-	if context == "" {
-		return fmt.Sprintf("%s", descText)
-	}
-
-	return fmt.Sprintf("%s\n\n== PROBLEM:\n\n%s", descText, context)
-}
-
-func extractGoalDescription(paragraphs []string) (string, int) {
-	for idx, block := range paragraphs {
-		lower := strings.ToLower(strings.TrimSpace(block))
-		if strings.HasPrefix(lower, "task details:") {
-			detail := strings.TrimSpace(block[len("Task details:"):])
-			if detail != "" {
-				return detail, idx
-			}
-		}
-	}
-	return "", -1
-}
-
-func extractGoalContext(paragraphs []string, detailsIdx int) []string {
-	if len(paragraphs) == 0 {
-		return nil
-	}
-	start := detailsIdx + 1
-	if detailsIdx < 0 {
-		start = 1
-	}
-	if start >= len(paragraphs) {
-		return nil
-	}
-	return paragraphs[start:]
-}
-
-func splitGoalParagraphs(goal string) []string {
-	blocks := strings.Split(goal, "\n\n")
-	out := make([]string, 0, len(blocks))
-	for _, block := range blocks {
-		trimmed := strings.TrimSpace(block)
-		if trimmed == "" {
-			continue
-		}
-		out = append(out, trimmed)
-	}
-	return out
-}
-
-func stripGoalEmphasis(text string) string {
-	trimmed := strings.TrimSpace(text)
-	if trimmed == "" {
-		return ""
-	}
-	trimmed = strings.Trim(trimmed, "*")
-	return strings.TrimSpace(trimmed)
-}
-
-func normalizeInlineContext(text string) string {
-	trimmed := strings.TrimSpace(text)
-	if trimmed == "" {
-		return ""
-	}
-	return strings.Join(strings.Fields(trimmed), " ")
+	return fmt.Sprintf("%s\n\n---\n%s\n---", originalPrompt, trimmedTask)
 }
 
 func (t *Transcript) WriteTurn(step int, question, savedPath string, retrieved []string, summary string, decision string) error {
@@ -724,10 +640,10 @@ func (t *Transcript) WritePatchPlanCreated(step int, planDetails string) error {
 	}
 	t.mem.WriteString(s)
 	_, err := t.f.WriteString(s)
-		t.emit("patch_plan_created", map[string]any{
-			"step":          step,
-			"written_bytes": len(s),
-		})
+	t.emit("patch_plan_created", map[string]any{
+		"step":          step,
+		"written_bytes": len(s),
+	})
 	if err != nil {
 		return err
 	}
@@ -760,10 +676,10 @@ func (t *Transcript) WritePatchPlanUpdated(step int, planDetails string) error {
 	}
 	t.mem.WriteString(s)
 	_, err := t.f.WriteString(s)
-		t.emit("patch_plan_updated", map[string]any{
-			"step":          step,
-			"written_bytes": len(s),
-		})
+	t.emit("patch_plan_updated", map[string]any{
+		"step":          step,
+		"written_bytes": len(s),
+	})
 	if err != nil {
 		return err
 	}

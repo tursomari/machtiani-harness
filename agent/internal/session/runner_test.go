@@ -198,8 +198,9 @@ func TestStartTranscriptIfNeededWritesHeader(t *testing.T) {
 	}
 	defer tr.Close()
 
-	goal := "***Investigate the Goal***\n\nTask details: Investigate the Goal\n\nOriginal prompt"
-	started, err := startTranscriptIfNeeded(tr, goal, sessionID, legacyConfig{}, false)
+	originalPrompt := "Original prompt"
+	taskDescription := "Investigate the Goal"
+	started, err := startTranscriptIfNeeded(tr, originalPrompt, taskDescription, sessionID, legacyConfig{}, false)
 	if err != nil {
 		t.Fatalf("startTranscriptIfNeeded error: %v", err)
 	}
@@ -207,11 +208,11 @@ func TestStartTranscriptIfNeededWritesHeader(t *testing.T) {
 		t.Fatalf("expected transcript to start")
 	}
 	content := tr.Content()
-	if !strings.Contains(content, "Investigate the Goal") {
-		t.Fatalf("header missing description; got %q", content)
+	if !strings.Contains(content, originalPrompt) {
+		t.Fatalf("header missing original prompt; got %q", content)
 	}
-	if !strings.Contains(content, "== PROBLEM:\n\nOriginal prompt") {
-		t.Fatalf("header missing problem context; got %q", content)
+	if !strings.Contains(content, "---\n"+taskDescription+"\n---") {
+		t.Fatalf("header missing task description block; got %q", content)
 	}
 }
 
@@ -224,13 +225,14 @@ func TestStartTranscriptIfNeededSkipsWhenResuming(t *testing.T) {
 	}
 	defer tr.Close()
 
-	goal := "***Investigate the Goal***\n\nOriginal prompt"
-	if started, err := startTranscriptIfNeeded(tr, goal, sessionID, legacyConfig{}, false); err != nil || !started {
+	originalPrompt := "Original prompt"
+	taskDescription := "Investigate the Goal"
+	if started, err := startTranscriptIfNeeded(tr, originalPrompt, taskDescription, sessionID, legacyConfig{}, false); err != nil || !started {
 		t.Fatalf("initial start failed: started=%v err=%v", started, err)
 	}
 	first := tr.Content()
 
-	started, err := startTranscriptIfNeeded(tr, goal, sessionID, legacyConfig{}, true)
+	started, err := startTranscriptIfNeeded(tr, originalPrompt, taskDescription, sessionID, legacyConfig{}, true)
 	if err != nil {
 		t.Fatalf("resume startTranscriptIfNeeded error: %v", err)
 	}
@@ -278,9 +280,10 @@ func TestStartTranscriptIfNeededChildIncludesBackgroundWhenRequested(t *testing.
 	}
 	defer tr.Close()
 
-	goal := "***Investigate the Goal***\n\nTask details: Investigate the Goal\n\nOriginal prompt"
+	originalPrompt := "Original prompt"
+	taskDescription := "Investigate the Goal"
 	cfg := legacyConfig{parentSessionID: "parent", includeBackgroundTurn: true}
-	started, err := startTranscriptIfNeeded(tr, goal, sessionID, cfg, false)
+	started, err := startTranscriptIfNeeded(tr, originalPrompt, taskDescription, sessionID, cfg, false)
 	if err != nil {
 		t.Fatalf("startTranscriptIfNeeded error: %v", err)
 	}

@@ -60,6 +60,8 @@ type BuildInfo struct {
 type Options struct {
 	Config              Config
 	Goal                string
+	OriginalPrompt      string
+	TaskDescription     string
 	ParamPairs          []string
 	ParamJSON           []string
 	Build               BuildInfo
