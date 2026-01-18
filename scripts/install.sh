@@ -11,7 +11,7 @@ usage() {
 Usage: $(basename "$0") [--install-peripherals]
 
 Installs the mct-agent binary by default. Pass --install-peripherals to also
-build and install mct, file-discovery, shell-agent, and patcher.
+build and install mct, file-discovery, snippet-discovery, shell-agent, and patcher.
 Environment:
   PREFIX   Destination prefix for the install (default: \$HOME/.local)
 EOF
@@ -99,6 +99,19 @@ if $INSTALL_PERIPHERALS; then
   install -m 0755 "$REPO_ROOT/agent/internal/mct/bin/mct" "$BIN_DIR/mct"
   install -m 0755 "$REPO_ROOT/agent/internal/mct/bin/file-discovery" "$BIN_DIR/file-discovery"
 
+  log "Building snippet-discovery"
+  SNIPPET_COMMIT="$(git_short_commit "$REPO_ROOT/agent/internal/snippet-discovery")"
+  SNIPPET_DIRTY="$(git_dirty_flag "$REPO_ROOT/agent/internal/snippet-discovery")"
+  SNIPPET_VERSION="dev-${SNIPPET_COMMIT}"
+  if [ "$SNIPPET_DIRTY" = "dirty" ]; then
+    SNIPPET_VERSION="${SNIPPET_VERSION}-dirty"
+  fi
+  SNIPPET_LDFLAGS="-X main.version=${SNIPPET_VERSION} -X main.commit=${SNIPPET_COMMIT} -X main.builtAt=${BUILD_AT} -X main.dirty=${SNIPPET_DIRTY}"
+  (
+    cd "$REPO_ROOT/agent/internal/snippet-discovery"
+    go build -buildvcs=true -ldflags "$SNIPPET_LDFLAGS" -o "$BIN_DIR/snippet-discovery" ./cmd/snippet-discovery
+  )
+
   log "Building patcher"
   PATCHER_COMMIT="$(git_short_commit "$REPO_ROOT/agent/internal/patcher")"
   PATCHER_DIRTY="$(git_dirty_flag "$REPO_ROOT/agent/internal/patcher")"
@@ -132,6 +145,8 @@ if $INSTALL_PERIPHERALS; then
   "$BIN_DIR/patcher" --version 2>/dev/null || log "  (patcher not executable?)"
   log "file-discovery -version =>"
   "$BIN_DIR/file-discovery" -version 2>/dev/null || log "  (file-discovery not executable?)"
+  log "snippet-discovery -version =>"
+  "$BIN_DIR/snippet-discovery" -version 2>/dev/null || log "  (snippet-discovery not executable?)"
   log "shell-agent --help (usage) =>"
   "$BIN_DIR/shell-agent" --help 2>/dev/null | head -n 1 || log "  (shell-agent not executable?)"
 fi
