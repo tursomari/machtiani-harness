@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"sort"
@@ -25,26 +26,76 @@ type Config struct {
 	MaxLinesPerFile int
 	LogJSON         bool
 	Verbose         bool
+	ErrorStreamPath string
+	ErrorStream     io.WriteCloser
 	TrajectoryPath  string
 	NoTrajectory    bool
 }
 
 // Logger provides simple structured logging to stderr.
 type Logger struct {
-	JSON bool
-	V    bool
+	JSON        bool
+	V           bool
+	ErrorStream io.Writer
 }
 
 func (l Logger) Log(event string, kv map[string]any) {
+	if kv == nil {
+		kv = map[string]any{}
+	}
 	if l.JSON {
-		m := map[string]any{"event": event}
-		for k, v := range kv {
-			m[k] = v
+		l.writeJSON(os.Stderr, event, kv)
+	} else {
+		log.Print(formatKV(event, kv))
+	}
+	if l.ErrorStream != nil && event == "error" {
+		if l.JSON {
+			l.writeJSON(l.ErrorStream, event, kv)
+		} else {
+			_, _ = fmt.Fprintln(l.ErrorStream, formatKV(event, kv))
 		}
-		enc := json.NewEncoder(os.Stderr)
-		_ = enc.Encode(m)
+	}
+}
+
+func (l Logger) Info(msg string)  { l.Log("info", map[string]any{"msg": msg}) }
+func (l Logger) Warn(msg string)  { l.Log("warn", map[string]any{"msg": msg}) }
+func (l Logger) Error(msg string) { l.Log("error", map[string]any{"msg": msg}) }
+func (l Logger) Debug(event string, kv map[string]any) {
+	if !l.V {
 		return
 	}
+	l.Log(event, kv)
+}
+
+func (l Logger) ErrorWithFields(msg string, kv map[string]any) {
+	fields := map[string]any{"msg": msg}
+	for k, v := range kv {
+		fields[k] = v
+	}
+	l.Log("error", fields)
+}
+
+type nopWriteCloser struct {
+	io.Writer
+}
+
+func (n nopWriteCloser) Close() error { return nil }
+
+func OpenErrorStream(path string) (io.WriteCloser, error) {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return nil, nil
+	}
+	if trimmed == "-" {
+		return nopWriteCloser{Writer: os.Stderr}, nil
+	}
+	if strings.HasPrefix(trimmed, "/dev/fd/") || strings.HasPrefix(trimmed, "/proc/self/fd/") {
+		return os.OpenFile(trimmed, os.O_WRONLY, 0)
+	}
+	return os.OpenFile(trimmed, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
+}
+
+func formatKV(event string, kv map[string]any) string {
 	b := &strings.Builder{}
 	b.WriteString(event)
 	if len(kv) > 0 {
@@ -61,12 +112,17 @@ func (l Logger) Log(event string, kv map[string]any) {
 			fmt.Fprintf(b, "%s=%v", k, kv[k])
 		}
 	}
-	log.Print(b.String())
+	return b.String()
 }
 
-func (l Logger) Info(msg string)  { l.Log("info", map[string]any{"msg": msg}) }
-func (l Logger) Warn(msg string)  { l.Log("warn", map[string]any{"msg": msg}) }
-func (l Logger) Error(msg string) { l.Log("error", map[string]any{"msg": msg}) }
+func (l Logger) writeJSON(w io.Writer, event string, kv map[string]any) {
+	m := map[string]any{"event": event}
+	for k, v := range kv {
+		m[k] = v
+	}
+	enc := json.NewEncoder(w)
+	_ = enc.Encode(m)
+}
 
 // TrajectoryRecorder writes JSONL events describing the run.
 type TrajectoryRecorder struct {
@@ -180,6 +236,7 @@ func RedactConfig(cfg Config) map[string]any {
 		"maxLinesPerFile": cfg.MaxLinesPerFile,
 		"logJSON":         cfg.LogJSON,
 		"verbose":         cfg.Verbose,
+		"errorStreamPath": cfg.ErrorStreamPath,
 		"trajectoryPath":  cfg.TrajectoryPath,
 		"noTrajectory":    cfg.NoTrajectory,
 	}

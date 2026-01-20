@@ -40,6 +40,9 @@ The tool prints a JSON mapping of file paths to line ranges:
 - `-timeout` seconds (default 60)
 - `-max-lines` lines per file for `<show>` output (default 500)
 - `-max-transcript` bytes cap for stdin transcript (default 300000)
+- `-log-json` for JSON-formatted stderr logs
+- `-v` for verbose debug logs
+- `-error-stream` to stream structured errors to a file/pipe
 - `-trajectory` / `-no-trajectory`
 
 Trajectory logging:
@@ -56,6 +59,16 @@ another/file
 ```
 
 Final output: JSON only (no surrounding text).
+
+## Debugging
+Verbose logging (`-v`) logs LLM request/response previews, show tool stats, and validation steps. Structured error streaming (`-error-stream`) emits line-delimited error events to a file or named pipe; the format follows `-log-json` if enabled.
+
+Examples:
+```bash
+./snippet-discovery -v -r "find auth logic" -f internal/auth.go
+./snippet-discovery -error-stream /tmp/tui.fifo -r "..." -f internal/auth.go
+./snippet-discovery -v -log-json -error-stream /dev/fd/3 -r "..." -f internal/auth.go
+```
 
 ## Workspace snapshots
 If `MACHTIANI_WORKSPACE_ROOT` is set, the CLI will operate in that directory. Otherwise, if `MACHTIANI_TMP_ROOT` is set, it will look for a snapshot at `$MACHTIANI_TMP_ROOT/repo` and fall back to the current working directory if missing.

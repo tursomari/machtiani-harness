@@ -94,6 +94,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  -max-transcript <bytes>  Global transcript cap bytes (default 300000)")
 	fmt.Fprintln(os.Stderr, "  -log-json                Log JSON to stderr (default false)")
 	fmt.Fprintln(os.Stderr, "  -v                       Verbose logging (default false)")
+	fmt.Fprintln(os.Stderr, "  -error-stream <path>     Stream structured errors to a file or pipe")
 	fmt.Fprintln(os.Stderr, "\nTrajectory:")
 	fmt.Fprintln(os.Stderr, "  -trajectory <path>       Path to trajectory JSONL file (default auto-named)")
 	fmt.Fprintln(os.Stderr, "  -no-trajectory           Disable trajectory recording")
@@ -119,6 +120,7 @@ func main() {
 	flag.IntVar(&cfg.MaxTranscript, "max-transcript", 300000, "Global transcript cap bytes")
 	flag.BoolVar(&cfg.LogJSON, "log-json", false, "Log JSON to stderr")
 	flag.BoolVar(&cfg.Verbose, "v", false, "Verbose logging")
+	flag.StringVar(&cfg.ErrorStreamPath, "error-stream", "", "Path to stream structured errors (optional)")
 	flag.StringVar(&cfg.TrajectoryPath, "trajectory", "", "Path to trajectory JSONL file; defaults to auto-named in cwd")
 	flag.BoolVar(&cfg.NoTrajectory, "no-trajectory", false, "Disable trajectory recording")
 	var apiKeyOverrideFlags multiString
@@ -145,12 +147,20 @@ func main() {
 		os.Exit(0)
 	}
 
+	errorStream, err := cfgpkg.OpenErrorStream(cfg.ErrorStreamPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "failed to open error stream:", err)
+		os.Exit(2)
+	}
+	cfg.ErrorStream = errorStream
+	lg := cfgpkg.Logger{JSON: cfg.LogJSON, V: cfg.Verbose, ErrorStream: errorStream}
+
 	cfg.FilePaths = append(cfg.FilePaths, fileFlags...)
 	paramPairs := append([]string(nil), paramFlags...)
 	paramJSONVals := append([]string(nil), paramJSON...)
 	apiOverrides, err := llm.ParseAPIKeyOverrides(apiKeyOverrideFlags)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		lg.ErrorWithFields("invalid api key overrides", map[string]any{"category": "api_key_override", "error": err.Error()})
 		os.Exit(2)
 	}
 	cfg.APIKeyOverrides = apiOverrides
@@ -159,13 +169,10 @@ func main() {
 	runtime, err := resolveModelRuntime(&cfg, effectiveAlias, openAIModel, paramPairs, paramJSONVals, apiOverrides)
 	if err != nil {
 		if miss, ok := err.(*missingConfigError); ok {
-			fmt.Fprintln(os.Stderr, "Missing model config: set:")
-			for _, item := range miss.items {
-				fmt.Fprintln(os.Stderr, " - ", item)
-			}
+			lg.ErrorWithFields("missing model config", map[string]any{"category": "missing_model_config", "missing": miss.items})
 			os.Exit(2)
 		}
-		fmt.Fprintln(os.Stderr, "Model resolution error:", err)
+		lg.ErrorWithFields("model resolution error", map[string]any{"category": "model_resolution_error", "error": err.Error()})
 		os.Exit(1)
 	}
 

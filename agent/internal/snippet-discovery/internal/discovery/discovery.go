@@ -55,6 +55,55 @@ type snippetOutput map[string][]lineRange
 var reShowBlock = regexp.MustCompile(`(?s)<show>(.*?)</show>`)
 
 const maxFinalRetries = 2
+const maxDebugContent = 4000
+
+func truncateForLog(content string, limit int) (string, bool) {
+	if limit <= 0 || len(content) <= limit {
+		return content, false
+	}
+	return content[:limit] + "…", true
+}
+
+func summarizeMessages(msgs []chatMessage, limit int) ([]map[string]any, int, int) {
+	if len(msgs) == 0 {
+		return nil, 0, 0
+	}
+	result := make([]map[string]any, len(msgs))
+	totalTokens := 0
+	totalBytes := 0
+	for i, msg := range msgs {
+		tokens := llm.EstimateTokens(msg.Content)
+		bytes := len(msg.Content)
+		totalTokens += tokens
+		totalBytes += bytes
+		preview, truncated := truncateForLog(msg.Content, limit)
+		entry := map[string]any{
+			"role":           msg.Role,
+			"content":        preview,
+			"content_bytes":  bytes,
+			"content_tokens": tokens,
+		}
+		if truncated {
+			entry["truncated"] = true
+		}
+		result[i] = entry
+	}
+	return result, totalTokens, totalBytes
+}
+
+func summarizeContent(content string, limit int) map[string]any {
+	tokens := llm.EstimateTokens(content)
+	preview, truncated := truncateForLog(content, limit)
+	result := map[string]any{
+		"content":        preview,
+		"content_bytes":  len(content),
+		"content_tokens": tokens,
+	}
+	if truncated {
+		result["truncated"] = true
+	}
+	return result
+}
 
 func readAllStdin(limit int) (string, bool, error) {
 	var buf bytes.Buffer
@@ -430,15 +479,27 @@ func Run(ctx context.Context, cfg cfgpkg.Config, llmCfg LLMSettings) int {
 	log.SetOutput(os.Stderr)
 	log.SetFlags(0)
 
-	lg := cfgpkg.Logger{JSON: cfg.LogJSON, V: cfg.Verbose}
+	errorStream := cfg.ErrorStream
+	if errorStream == nil && strings.TrimSpace(cfg.ErrorStreamPath) != "" {
+		opened, err := cfgpkg.OpenErrorStream(cfg.ErrorStreamPath)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "failed to open error stream:", err)
+			return 2
+		}
+		errorStream = opened
+		cfg.ErrorStream = opened
+	}
+	if errorStream != nil {
+		defer func() { _ = errorStream.Close() }()
+	}
+
+	lg := cfgpkg.Logger{JSON: cfg.LogJSON, V: cfg.Verbose, ErrorStream: errorStream}
 	if strings.TrimSpace(cfg.Reason) == "" {
-		lg.Error("reason is required")
-		fmt.Fprintln(os.Stderr, "reason is required")
+		lg.ErrorWithFields("reason is required", map[string]any{"category": "validation_error", "field": "reason"})
 		return 2
 	}
 	if len(cfg.FilePaths) == 0 {
-		lg.Error("at least one file path is required")
-		fmt.Fprintln(os.Stderr, "at least one file path is required")
+		lg.ErrorWithFields("at least one file path is required", map[string]any{"category": "validation_error", "field": "file_paths"})
 		return 2
 	}
 	if cfg.MaxRounds <= 0 {
@@ -470,16 +531,14 @@ func Run(ctx context.Context, cfg cfgpkg.Config, llmCfg LLMSettings) int {
 
 	restoreWD, err := applyWorkspaceRoot(lg, &tr)
 	if err != nil {
-		lg.Error("failed to apply workspace root")
-		fmt.Fprintln(os.Stderr, "failed to apply workspace root:", err)
+		lg.ErrorWithFields("failed to apply workspace root", map[string]any{"category": "workspace_root_error", "error": err.Error()})
 		return 1
 	}
 	defer restoreWD()
 
 	filePaths, allowList, err := normalizeInputPaths(cfg.FilePaths)
 	if err != nil {
-		lg.Error("invalid file paths")
-		fmt.Fprintln(os.Stderr, err)
+		lg.ErrorWithFields("invalid file paths", map[string]any{"category": "file_path_error", "error": err.Error()})
 		return 2
 	}
 	if tr.Enabled {
@@ -489,7 +548,7 @@ func Run(ctx context.Context, cfg cfgpkg.Config, llmCfg LLMSettings) int {
 
 	transcript, truncated, err := readAllStdin(cfg.MaxTranscript)
 	if err != nil {
-		lg.Warn("failed to read stdin transcript")
+		lg.Log("warn", map[string]any{"msg": "failed to read stdin transcript", "error": err.Error()})
 	}
 
 	messages := []chatMessage{{Role: "system", Content: buildSystemPrompt()}}
@@ -508,13 +567,23 @@ func Run(ctx context.Context, cfg cfgpkg.Config, llmCfg LLMSettings) int {
 			tr.Event("round_start", round, map[string]any{"round": round, "transcript_bytes": transcriptBytes, "messages": len(messages)})
 			tr.Event("llm_request", round, map[string]any{"messages": messages})
 		}
+		if lg.V {
+			summary, tokens, bytes := summarizeMessages(messages, maxDebugContent)
+			lg.Debug("llm_request", map[string]any{
+				"round":         round,
+				"model":         llmCfg.Model.Model,
+				"provider":      llmCfg.Model.ProviderName,
+				"messages":      summary,
+				"prompt_tokens": tokens,
+				"prompt_bytes":  bytes,
+			})
+		}
 
 		llmCtx, cancel := context.WithTimeout(ctx, time.Duration(cfg.TimeoutSec)*time.Second)
 		assistantContent, err := chatInvoker(llmCtx, llmCfg, messages)
 		cancel()
 		if err != nil {
-			lg.Error("chat API error")
-			fmt.Fprintln(os.Stderr, "chat API error:", err)
+			lg.ErrorWithFields("chat API error", map[string]any{"category": "chat_api_error", "error": err.Error(), "round": round})
 			if tr.Enabled {
 				tr.Event("run_end", round, map[string]any{"exit_code": 1, "reason": "chat_error"})
 			}
@@ -522,6 +591,12 @@ func Run(ctx context.Context, cfg cfgpkg.Config, llmCfg LLMSettings) int {
 		}
 		if tr.Enabled {
 			tr.Event("llm_response", round, map[string]any{"content": assistantContent})
+		}
+		if lg.V {
+			responseSummary := summarizeContent(assistantContent, maxDebugContent)
+			responseSummary["round"] = round
+			responseSummary["model"] = llmCfg.Model.Model
+			lg.Debug("llm_response", responseSummary)
 		}
 		transcriptBytes += len(assistantContent)
 
@@ -531,13 +606,25 @@ func Run(ctx context.Context, cfg cfgpkg.Config, llmCfg LLMSettings) int {
 				msg := buildShowRejectMessage(reject)
 				messages = append(messages, chatMessage{Role: "user", Content: msg})
 				transcriptBytes += len(msg)
+				if lg.V {
+					lg.Debug("show_rejected", map[string]any{"round": round, "reason": reject})
+				}
 				if tr.Enabled {
 					tr.Event("show_rejected", round, map[string]any{"reason": reject})
 				}
 				continue
 			}
+			if lg.V {
+				lg.Debug("show_execute", map[string]any{"round": round, "paths": showCmd.Paths, "max_lines": cfg.MaxLinesPerFile})
+			}
 			output, stats, err := showCmd.Execute(cfg.MaxLinesPerFile, allowList)
 			if err != nil {
+				lg.ErrorWithFields("show command error", map[string]any{
+					"category": "show_execute_error",
+					"error":    err.Error(),
+					"round":    round,
+					"paths":    showCmd.Paths,
+				})
 				msg := buildShowRejectMessage(err.Error())
 				messages = append(messages, chatMessage{Role: "user", Content: msg})
 				transcriptBytes += len(msg)
@@ -545,6 +632,9 @@ func Run(ctx context.Context, cfg cfgpkg.Config, llmCfg LLMSettings) int {
 					tr.Event("show_error", round, map[string]any{"error": err.Error()})
 				}
 				continue
+			}
+			if lg.V {
+				lg.Debug("show_result", map[string]any{"round": round, "files": stats.Files, "lines": stats.Lines, "truncated": stats.Truncated})
 			}
 			messages = append(messages, chatMessage{Role: "user", Content: output})
 			transcriptBytes += len(output)
@@ -555,6 +645,13 @@ func Run(ctx context.Context, cfg cfgpkg.Config, llmCfg LLMSettings) int {
 		}
 
 		parsed, _, hasJSON, err := parseFinalOutput(assistantContent)
+		if lg.V {
+			errMsg := ""
+			if err != nil {
+				errMsg = err.Error()
+			}
+			lg.Debug("final_parse", map[string]any{"round": round, "has_json": hasJSON, "error": errMsg})
+		}
 		if !hasJSON {
 			msg := buildToolCallMissingMessage()
 			messages = append(messages, chatMessage{Role: "user", Content: msg})
@@ -565,6 +662,7 @@ func Run(ctx context.Context, cfg cfgpkg.Config, llmCfg LLMSettings) int {
 			continue
 		}
 		if err != nil {
+			lg.ErrorWithFields("final output parse error", map[string]any{"category": "final_parse_error", "error": err.Error(), "round": round})
 			msg := buildFinalizeRejectMessage(err.Error())
 			messages = append(messages, chatMessage{Role: "user", Content: msg})
 			transcriptBytes += len(msg)
@@ -573,8 +671,16 @@ func Run(ctx context.Context, cfg cfgpkg.Config, llmCfg LLMSettings) int {
 			}
 			continue
 		}
+		rangeCount := 0
+		for _, ranges := range parsed {
+			rangeCount += len(ranges)
+		}
+		if lg.V {
+			lg.Debug("final_validate_start", map[string]any{"round": round, "paths": len(parsed), "ranges": rangeCount})
+		}
 		normalized, err := validateFinalOutput(parsed, allowList)
 		if err != nil {
+			lg.ErrorWithFields("final output validation error", map[string]any{"category": "final_validate_error", "error": err.Error(), "round": round})
 			msg := buildFinalizeRejectMessage(err.Error())
 			messages = append(messages, chatMessage{Role: "user", Content: msg})
 			transcriptBytes += len(msg)
@@ -582,6 +688,9 @@ func Run(ctx context.Context, cfg cfgpkg.Config, llmCfg LLMSettings) int {
 				tr.Event("final_invalid", round, map[string]any{"error": err.Error()})
 			}
 			continue
+		}
+		if lg.V {
+			lg.Debug("final_validate_ok", map[string]any{"round": round, "paths": len(normalized), "ranges": rangeCount})
 		}
 		orderedKeys := make([]string, 0, len(normalized))
 		for k := range normalized {
@@ -594,12 +703,11 @@ func Run(ctx context.Context, cfg cfgpkg.Config, llmCfg LLMSettings) int {
 		}
 		payload, err := json.MarshalIndent(final, "", "  ")
 		if err != nil {
-			lg.Error("failed to marshal JSON output")
-			fmt.Fprintln(os.Stderr, "failed to marshal JSON output:", err)
+			lg.ErrorWithFields("failed to marshal JSON output", map[string]any{"category": "output_marshal_error", "error": err.Error()})
 			return 1
 		}
 		if _, err := fmt.Fprintln(os.Stdout, string(payload)); err != nil {
-			lg.Error("failed to write JSON output")
+			lg.ErrorWithFields("failed to write JSON output", map[string]any{"category": "output_write_error", "error": err.Error()})
 		}
 		if tr.Enabled {
 			tr.Event("final_output", round, map[string]any{"paths": orderedKeys})
@@ -616,16 +724,36 @@ func Run(ctx context.Context, cfg cfgpkg.Config, llmCfg LLMSettings) int {
 			tr.Event("forced_finalization", cfg.MaxRounds+retry+1, map[string]any{"retry": retry + 1})
 			tr.Event("llm_request", cfg.MaxRounds+retry+1, map[string]any{"messages": messages})
 		}
+		if lg.V {
+			summary, tokens, bytes := summarizeMessages(messages, maxDebugContent)
+			lg.Debug("llm_request", map[string]any{
+				"round":         cfg.MaxRounds + retry + 1,
+				"model":         llmCfg.Model.Model,
+				"provider":      llmCfg.Model.ProviderName,
+				"messages":      summary,
+				"prompt_tokens": tokens,
+				"prompt_bytes":  bytes,
+			})
+		}
 		llmCtx, cancel := context.WithTimeout(ctx, time.Duration(cfg.TimeoutSec)*time.Second)
 		assistantContent, err := chatInvoker(llmCtx, llmCfg, messages)
 		cancel()
 		if err != nil {
-			lg.Error("chat API error during forced finalization")
-			fmt.Fprintln(os.Stderr, "chat API error:", err)
+			lg.ErrorWithFields("chat API error during forced finalization", map[string]any{
+				"category": "chat_api_error",
+				"error":    err.Error(),
+				"round":    cfg.MaxRounds + retry + 1,
+			})
 			continue
 		}
 		if tr.Enabled {
 			tr.Event("llm_response", cfg.MaxRounds+retry+1, map[string]any{"content": assistantContent})
+		}
+		if lg.V {
+			responseSummary := summarizeContent(assistantContent, maxDebugContent)
+			responseSummary["round"] = cfg.MaxRounds + retry + 1
+			responseSummary["model"] = llmCfg.Model.Model
+			lg.Debug("llm_response", responseSummary)
 		}
 		parsed, _, hasJSON, err := parseFinalOutput(assistantContent)
 		if !hasJSON || err != nil {
@@ -640,7 +768,7 @@ func Run(ctx context.Context, cfg cfgpkg.Config, llmCfg LLMSettings) int {
 			continue
 		}
 		if _, err := fmt.Fprintln(os.Stdout, string(payload)); err != nil {
-			lg.Error("failed to write JSON output")
+			lg.ErrorWithFields("failed to write JSON output", map[string]any{"category": "output_write_error", "error": err.Error()})
 		}
 		if tr.Enabled {
 			tr.Event("final_output", cfg.MaxRounds+retry+1, map[string]any{"paths": len(normalized)})
