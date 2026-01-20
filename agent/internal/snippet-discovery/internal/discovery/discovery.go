@@ -262,15 +262,32 @@ func extractJSONObjectRange(text string) (int, int, bool) {
 	return 0, 0, false
 }
 
+func stripMarkdownCodeFence(content string) string {
+	trimmed := strings.TrimSpace(content)
+	if strings.HasPrefix(trimmed, "```") {
+		newline := strings.IndexByte(trimmed, '\n')
+		if newline == -1 {
+			return trimmed
+		}
+		trimmed = trimmed[newline+1:]
+	}
+	trimmed = strings.TrimSpace(trimmed)
+	if strings.HasSuffix(trimmed, "```") {
+		trimmed = strings.TrimSpace(strings.TrimSuffix(trimmed, "```"))
+	}
+	return trimmed
+}
+
 func parseFinalOutput(content string) (snippetOutput, string, bool, error) {
-	start, end, ok := extractJSONObjectRange(content)
+	stripped := stripMarkdownCodeFence(content)
+	start, end, ok := extractJSONObjectRange(stripped)
 	if !ok {
 		return nil, "", false, nil
 	}
-	if strings.TrimSpace(content[:start]) != "" || strings.TrimSpace(content[end:]) != "" {
+	if strings.TrimSpace(stripped[:start]) != "" || strings.TrimSpace(stripped[end:]) != "" {
 		return nil, "", true, errors.New("output must be only JSON")
 	}
-	trimmed := strings.TrimSpace(content[start:end])
+	trimmed := strings.TrimSpace(stripped[start:end])
 	var output snippetOutput
 	if err := json.Unmarshal([]byte(trimmed), &output); err != nil {
 		return nil, "", true, fmt.Errorf("invalid JSON: %w", err)
