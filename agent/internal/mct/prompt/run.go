@@ -151,10 +151,143 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 			return res, err
 		}
 	default:
-		var buildErr error
-		combined, included, buildErr = contextbuilder.Build(opts.Prompt, filtered, hist, contextbuilder.Options{IncludeHistory: includeHistory, MaxInputTokens: opts.MaxInputTokens, PreludeTemplate: historyTemplate})
+		options := contextbuilder.Options{IncludeHistory: includeHistory, MaxInputTokens: opts.MaxInputTokens, PreludeTemplate: historyTemplate}
+		if len(filtered) == 0 {
+			var buildErr error
+			combined, included, buildErr = contextbuilder.Build(opts.Prompt, filtered, hist, options)
+			if buildErr != nil {
+				return res, buildErr
+			}
+			break
+		}
+		prelude, _, buildErr := contextbuilder.Build(opts.Prompt, nil, hist, options)
 		if buildErr != nil {
 			return res, buildErr
+		}
+		repoRoot := ""
+		if cwd, err := os.Getwd(); err == nil {
+			if root, err := git.RepoRoot(cwd); err == nil {
+				repoRoot = root
+			}
+		}
+		detection := ShowFileDetection{IsShowFileRequest: true, Filepaths: filtered, Reason: opts.Prompt}
+		snippetRuntime := opts.FileDiscoveryRuntime
+		if strings.TrimSpace(snippetRuntime.Resolved.Model) == "" {
+			snippetRuntime = opts.Runtime
+		}
+		snippetModelAlias := strings.TrimSpace(snippetRuntime.Alias)
+		snippets, snippetErr := FetchFileSnippets(ctx, detection, repoRoot, snippetModelAlias, snippetRuntime.APIKeyOverrides, opts.Verbose)
+		fallbackSet := map[string]struct{}{}
+		fallbackFiles := []string{}
+		addFallback := func(path string) {
+			normalized := normalizeShowFilePath(path)
+			if normalized == "" {
+				return
+			}
+			if _, ok := fallbackSet[normalized]; ok {
+				return
+			}
+			fallbackSet[normalized] = struct{}{}
+			fallbackFiles = append(fallbackFiles, normalized)
+		}
+		snippetFiles := map[string][]LineRange{}
+		emptySnippetFiles := []string{}
+		warnings := []string{}
+		reasons := []string{}
+		var partialErr *SnippetDiscoveryPartialError
+		if snippetErr != nil {
+			if errors.As(snippetErr, &partialErr) {
+				for _, path := range partialErr.Missing {
+					addFallback(path)
+				}
+				invalidPaths := make([]string, 0, len(partialErr.Invalid))
+				for path := range partialErr.Invalid {
+					invalidPaths = append(invalidPaths, path)
+				}
+				sort.Strings(invalidPaths)
+				for _, path := range invalidPaths {
+					addFallback(path)
+				}
+				if len(partialErr.Missing) > 0 {
+					warnings = append(warnings, fmt.Sprintf("snippet-discovery returned no snippets for: %s", strings.Join(partialErr.Missing, ", ")))
+				}
+				if len(partialErr.Invalid) > 0 {
+					details := make([]string, 0, len(invalidPaths))
+					for _, path := range invalidPaths {
+						details = append(details, fmt.Sprintf("%s (%s)", path, partialErr.Invalid[path]))
+					}
+					warnings = append(warnings, fmt.Sprintf("snippet-discovery returned invalid snippets for: %s", strings.Join(details, ", ")))
+				}
+				reasons = append(reasons, "partial_results")
+			} else {
+				for _, path := range filtered {
+					addFallback(path)
+				}
+				warnings = append(warnings, fmt.Sprintf("snippet-discovery failed (%s)", strings.TrimSpace(snippetErr.Error())))
+				reasons = append(reasons, "snippet_error")
+			}
+		}
+		for path, ranges := range snippets {
+			if len(ranges) == 0 {
+				emptySnippetFiles = append(emptySnippetFiles, path)
+				continue
+			}
+			snippetFiles[path] = ranges
+		}
+		if len(emptySnippetFiles) > 0 {
+			sort.Strings(emptySnippetFiles)
+			for _, path := range emptySnippetFiles {
+				addFallback(path)
+			}
+			warnings = append(warnings, fmt.Sprintf("snippet-discovery returned empty snippets for: %s", strings.Join(emptySnippetFiles, ", ")))
+			reasons = append(reasons, "empty_snippets")
+		}
+		var snippetText string
+		var snippetPaths []string
+		if len(snippetFiles) > 0 {
+			var snippetWarnings []string
+			snippetText, snippetPaths, snippetWarnings = FormatSnippetsResponse(snippetFiles, "", repoRoot)
+			warnings = append(warnings, snippetWarnings...)
+		}
+		var fullText string
+		var fullPaths []string
+		if len(fallbackFiles) > 0 {
+			var fallbackWarnings []string
+			fullText, fullPaths, fallbackWarnings = FormatFullFileFallback(fallbackFiles, repoRoot, snippetErr)
+			warnings = append(warnings, fallbackWarnings...)
+		}
+		sections := []string{}
+		if strings.TrimSpace(prelude) != "" {
+			sections = append(sections, strings.TrimRight(prelude, "\n"))
+		}
+		if strings.TrimSpace(snippetText) != "" {
+			sections = append(sections, snippetText)
+		}
+		if strings.TrimSpace(fullText) != "" {
+			sections = append(sections, fullText)
+		}
+		combined = strings.Join(sections, "\n\n")
+		included = append(included, snippetPaths...)
+		included = append(included, fullPaths...)
+		if len(fallbackFiles) > 0 {
+			payload := map[string]any{"files": append([]string(nil), fallbackFiles...)}
+			if len(reasons) > 0 {
+				payload["reasons"] = append([]string(nil), reasons...)
+			}
+			evt := trajectory.Event{Kind: "snippet_fallback", Payload: payload}
+			if parentID, ok := trajectory.ParentSpanID(ctx); ok {
+				evt.ParentSpanID = parentID
+			}
+			_ = trajectory.EmitFromContext(ctx, evt)
+		}
+		if opts.Verbose {
+			for _, warning := range warnings {
+				trimmed := strings.TrimSpace(warning)
+				if trimmed == "" {
+					continue
+				}
+				fmt.Fprintf(os.Stderr, "[snippet-fallback] %s\n", trimmed)
+			}
 		}
 	}
 

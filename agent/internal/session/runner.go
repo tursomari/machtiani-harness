@@ -1595,28 +1595,135 @@ func Run(ctx context.Context, opts Options) Result {
 						turnInfo["show_file_detection_raw"] = trimTo(raw, 200)
 					}
 					if detection.IsShowFileRequest {
-						requested := filepath.Clean(strings.TrimSpace(detection.Filepath))
-						turnInfo["show_file_path"] = requested
-						if requested != "." && requested != "" && !filepath.IsAbs(requested) && !strings.HasPrefix(requested, "..") {
-							candidate := filepath.Join(repoRoot, requested)
-							content, rerr := os.ReadFile(candidate)
-							if rerr != nil {
+						requested := append([]string(nil), detection.Filepaths...)
+						if len(requested) == 0 && strings.TrimSpace(detection.Filepath) != "" {
+							requested = []string{strings.TrimSpace(detection.Filepath)}
+						}
+						if len(requested) == 0 {
+							turnInfo["show_file_invalid_path"] = true
+						} else {
+							turnInfo["show_file_paths"] = append([]string(nil), requested...)
+							turnInfo["show_file_path"] = requested[0]
+							if strings.TrimSpace(detection.Reason) != "" {
+								turnInfo["show_file_reason"] = trimTo(detection.Reason, 200)
+							}
+							ctxSnippet, cancelSnippet := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
+							ctxSnippet = attachTrajectory(ctxSnippet, trajectoryWriter, parentSpanID)
+							snippetRuntime := mctRunner.FileDiscoveryRuntime
+							if strings.TrimSpace(snippetRuntime.Resolved.Model) == "" {
+								snippetRuntime = mctRunner.Runtime
+							}
+							snippetModelAlias := strings.TrimSpace(snippetRuntime.Alias)
+							snippets, serr := promptsvc.FetchFileSnippets(ctxSnippet, detection, repoRoot, snippetModelAlias, snippetRuntime.APIKeyOverrides, cfg.verbose)
+							if serr != nil {
 								if cfg.verbose {
-									fmt.Fprintln(os.Stderr, "Show-file read error:", rerr)
+									fmt.Fprintln(os.Stderr, "Show-file snippet discovery error:", serr)
 								}
-								turnInfo["show_file_read_error"] = trimTo(rerr.Error(), 200)
+								turnInfo["show_file_snippet_error"] = trimTo(serr.Error(), 200)
+							}
+							fallbackSet := map[string]struct{}{}
+							fallbackFiles := []string{}
+							addFallback := func(path string) {
+								if strings.TrimSpace(path) == "" {
+									return
+								}
+								if _, ok := fallbackSet[path]; ok {
+									return
+								}
+								fallbackSet[path] = struct{}{}
+								fallbackFiles = append(fallbackFiles, path)
+							}
+							snippetFiles := map[string][]promptsvc.LineRange{}
+							emptySnippetFiles := []string{}
+							warnings := []string{}
+							reasons := []string{}
+							var partialErr *promptsvc.SnippetDiscoveryPartialError
+							if serr != nil {
+								if errors.As(serr, &partialErr) {
+									for _, path := range partialErr.Missing {
+										addFallback(path)
+									}
+									invalidPaths := make([]string, 0, len(partialErr.Invalid))
+									for path := range partialErr.Invalid {
+										invalidPaths = append(invalidPaths, path)
+									}
+									sort.Strings(invalidPaths)
+									for _, path := range invalidPaths {
+										addFallback(path)
+									}
+									warnings = append(warnings, showFilePartialWarnings(partialErr)...)
+									reasons = append(reasons, "partial_results")
+								} else {
+									for _, path := range requested {
+										addFallback(path)
+									}
+									reasons = append(reasons, "snippet_error")
+								}
+							}
+							for path, ranges := range snippets {
+								if len(ranges) == 0 {
+									emptySnippetFiles = append(emptySnippetFiles, path)
+									continue
+								}
+								snippetFiles[path] = ranges
+							}
+							if len(emptySnippetFiles) > 0 {
+								sort.Strings(emptySnippetFiles)
+								for _, path := range emptySnippetFiles {
+									addFallback(path)
+								}
+								warnings = append(warnings, fmt.Sprintf("snippet-discovery returned empty snippets for: %s", strings.Join(emptySnippetFiles, ", ")))
+								reasons = append(reasons, "empty_snippets")
+							}
+
+							var snippetBanner string
+							var snippetRetrieved []string
+							if len(snippetFiles) > 0 {
+								var snippetWarnings []string
+								snippetBanner, snippetRetrieved, snippetWarnings = promptsvc.FormatSnippetsResponse(snippetFiles, detection.Reason, repoRoot)
+								warnings = append(warnings, snippetWarnings...)
+								turnInfo["show_file_snippet_count"] = countSnippetRanges(snippetFiles)
+							}
+							var fallbackBanner string
+							var fallbackRetrieved []string
+							if len(fallbackFiles) > 0 {
+								var fallbackWarnings []string
+								fallbackBanner, fallbackRetrieved, fallbackWarnings = promptsvc.FormatFullFileFallback(fallbackFiles, repoRoot, serr)
+								warnings = append(warnings, fallbackWarnings...)
+								turnInfo["show_file_fallback"] = true
+							}
+							if snippetBanner != "" && fallbackBanner != "" {
+								showFileBanner = snippetBanner + "\n\n" + fallbackBanner
 							} else {
-								header := fmt.Sprintf("\n--- Current content of file: %s ---\n", requested)
-								footer := "\n---\n"
-								showFileBanner = header + string(content) + footer
-								_ = tr.AppendRaw(showFileBanner)
-								showFileRetrieved = []string{requested}
+								showFileBanner = snippetBanner + fallbackBanner
+							}
+							showFileRetrieved = append(showFileRetrieved, snippetRetrieved...)
+							showFileRetrieved = append(showFileRetrieved, fallbackRetrieved...)
+							showFileBanner = appendShowFileWarnings(showFileBanner, warnings)
+							if strings.TrimSpace(showFileBanner) != "" {
 								showFileHandled = true
 								turnInfo["show_file_appended"] = true
-								turnInfo["show_file_bytes"] = len(content)
 							}
-						} else {
-							turnInfo["show_file_invalid_path"] = true
+							if len(fallbackFiles) > 0 {
+								payload := map[string]any{"files": append([]string(nil), fallbackFiles...)}
+								if len(reasons) > 0 {
+									payload["reasons"] = append([]string(nil), reasons...)
+								}
+								evt := trajectory.Event{Kind: "snippet_fallback", Payload: payload}
+								if parentID, ok := trajectory.ParentSpanID(ctxSnippet); ok {
+									evt.ParentSpanID = parentID
+								}
+								if err := trajectory.EmitFromContext(ctxSnippet, evt); err != nil && cfg.verbose {
+									fmt.Fprintf(os.Stderr, "[trajectory] snippet fallback emit error: %v\n", err)
+								}
+							}
+							if cancelSnippet != nil {
+								cancelSnippet()
+							}
+							if showFileHandled {
+								turnInfo["show_file_files"] = append([]string(nil), showFileRetrieved...)
+								turnInfo["show_file_paths"] = append([]string(nil), requested...)
+							}
 						}
 					}
 				}
