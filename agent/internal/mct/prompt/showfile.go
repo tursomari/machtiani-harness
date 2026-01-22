@@ -1,4 +1,5 @@
 package prompt
+
 import (
 	"bytes"
 	"context"
@@ -135,12 +136,96 @@ func (e *SnippetDiscoveryPartialError) Error() string {
 		for _, path := range paths {
 			details = append(details, fmt.Sprintf("%s (%s)", path, e.Invalid[path]))
 		}
-		parts = append(parts, fmt.Sprintf("invalid snippets: %s", strings.Join(details, ", ")))
+		parts = append(parts, fmt.Sprintf("invalid entries: %s", strings.Join(details, ", ")))
 	}
 	if len(parts) == 0 {
 		return "snippet-discovery returned partial results"
 	}
 	return strings.Join(parts, "; ")
+}
+
+func (e *SnippetDiscoveryPartialError) Kinds() map[string]struct{} {
+	if e == nil {
+		return nil
+	}
+	kinds := map[string]struct{}{}
+	if len(e.Missing) > 0 {
+		kinds["missing_snippets"] = struct{}{}
+	}
+	for _, reason := range e.Invalid {
+		kind := classifySnippetDiscoveryErrorText(reason)
+		if kind == "" {
+			continue
+		}
+		kinds[kind] = struct{}{}
+	}
+	if len(kinds) == 0 {
+		return nil
+	}
+	return kinds
+}
+
+func SnippetDiscoveryReasonKinds(partial *SnippetDiscoveryPartialError) []string {
+	kinds := partial.Kinds()
+	if len(kinds) == 0 {
+		return nil
+	}
+	ordered := make([]string, 0, len(kinds))
+	for kind := range kinds {
+		ordered = append(ordered, kind)
+	}
+	sort.Strings(ordered)
+	return ordered
+}
+
+func SnippetDiscoveryErrorKind(err error) string {
+	if err == nil {
+		return ""
+	}
+	return classifySnippetDiscoveryErrorText(err.Error())
+}
+
+func classifySnippetDiscoveryRunError(runErr error, stderr string) string {
+	if runErr == nil {
+		return ""
+	}
+	if errors.Is(runErr, context.DeadlineExceeded) {
+		return "timeout"
+	}
+	combined := strings.TrimSpace(stderr)
+	if combined != "" {
+		combined = combined + " " + runErr.Error()
+	} else {
+		combined = runErr.Error()
+	}
+	kind := classifySnippetDiscoveryErrorText(combined)
+	if kind == "snippet_error" {
+		if exitErr, ok := runErr.(*exec.ExitError); ok && exitErr.ExitCode() == 2 {
+			return "invalid_path"
+		}
+	}
+	return kind
+}
+
+func classifySnippetDiscoveryErrorText(text string) string {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return ""
+	}
+	lower := strings.ToLower(trimmed)
+	switch {
+	case strings.Contains(lower, "context deadline exceeded"), strings.Contains(lower, "timeout"):
+		return "timeout"
+	case strings.Contains(lower, "chat api error"), strings.Contains(lower, "chat_api_error"):
+		return "llm_error"
+	case strings.Contains(lower, "final output parse error"), strings.Contains(lower, "final_parse_error"), strings.Contains(lower, "final output validation error"), strings.Contains(lower, "final_validate_error"), strings.Contains(lower, "invalid json"):
+		return "parse_error"
+	case strings.Contains(lower, "invalid range"), strings.Contains(lower, "range"):
+		return "parse_error"
+	case strings.Contains(lower, "file_path_error"), strings.Contains(lower, "invalid path"), strings.Contains(lower, "path not readable"), strings.Contains(lower, "no such file"), strings.Contains(lower, "is a directory"), strings.Contains(lower, "path must"), strings.Contains(lower, "path escapes repo root"):
+		return "invalid_path"
+	}
+	return "snippet_error"
 }
 
 var (
@@ -150,25 +235,92 @@ var (
 
 // FetchFileSnippets runs snippet-discovery with a model alias (typically the file-discovery model).
 func FetchFileSnippets(ctx context.Context, detection ShowFileDetection, repoRoot, modelAlias string, apiKeyOverrides map[string]string, verbose bool) (map[string][]LineRange, error) {
-	filepaths := normalizeShowFilePaths(detection.Filepaths)
+	rawPaths := append([]string(nil), detection.Filepaths...)
+	if len(rawPaths) == 0 && strings.TrimSpace(detection.Filepath) != "" {
+		rawPaths = []string{detection.Filepath}
+	}
+	filepaths, invalidPaths := preflightShowFilePaths(rawPaths, repoRoot)
 	if len(filepaths) == 0 {
+		if len(invalidPaths) > 0 {
+			return nil, &SnippetDiscoveryPartialError{Invalid: invalidPaths}
+		}
 		return nil, errors.New("no file paths provided")
 	}
 	reason := detection.VerbatimQuestion
 	if strings.TrimSpace(reason) == "" {
 		reason = normalizeSnippetReason(detection.Reason, filepaths)
 	}
-	raw, err := runSnippetDiscovery(ctx, repoRoot, reason, filepaths, modelAlias, apiKeyOverrides, verbose)
+	cleaned, partialErr, err := runSnippetDiscoveryWithRetry(ctx, repoRoot, reason, filepaths, modelAlias, apiKeyOverrides, verbose)
 	if err != nil {
 		return nil, err
 	}
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return nil, errors.New("snippet-discovery returned empty output")
+	if len(invalidPaths) > 0 {
+		partialErr = mergeSnippetDiscoveryPartialErrors(partialErr, &SnippetDiscoveryPartialError{Invalid: invalidPaths})
+	}
+	if len(cleaned) == 0 {
+		if partialErr != nil {
+			return nil, partialErr
+		}
+		return nil, errors.New("snippet-discovery returned no snippets")
+	}
+	if partialErr != nil {
+		return cleaned, partialErr
+	}
+	return cleaned, nil
+}
+
+func runSnippetDiscoveryWithRetry(ctx context.Context, repoRoot, reason string, filepaths []string, modelAlias string, apiKeyOverrides map[string]string, verbose bool) (map[string][]LineRange, *SnippetDiscoveryPartialError, error) {
+	raw, err := runSnippetDiscovery(ctx, repoRoot, reason, filepaths, modelAlias, apiKeyOverrides, verbose)
+	if err != nil {
+		if len(filepaths) > 1 {
+			cleaned, partialErr := retrySnippetDiscoveryByFile(ctx, repoRoot, reason, filepaths, modelAlias, apiKeyOverrides, verbose)
+			return cleaned, partialErr, nil
+		}
+		return nil, nil, err
+	}
+	cleaned, partialErr, err := parseSnippetDiscoveryOutput(raw, filepaths)
+	if err != nil {
+		if len(filepaths) > 1 {
+			cleaned, retryErr := retrySnippetDiscoveryByFile(ctx, repoRoot, reason, filepaths, modelAlias, apiKeyOverrides, verbose)
+			return cleaned, retryErr, nil
+		}
+		return nil, nil, err
+	}
+	return cleaned, partialErr, nil
+}
+
+func retrySnippetDiscoveryByFile(ctx context.Context, repoRoot, reason string, filepaths []string, modelAlias string, apiKeyOverrides map[string]string, verbose bool) (map[string][]LineRange, *SnippetDiscoveryPartialError) {
+	cleaned := map[string][]LineRange{}
+	var partialErr *SnippetDiscoveryPartialError
+	for _, path := range filepaths {
+		raw, err := runSnippetDiscovery(ctx, repoRoot, reason, []string{path}, modelAlias, apiKeyOverrides, verbose)
+		if err != nil {
+			partialErr = mergeSnippetDiscoveryPartialErrors(partialErr, &SnippetDiscoveryPartialError{Invalid: map[string]string{path: trimSnippetDiscoveryText(err.Error(), 200)}})
+			continue
+		}
+		parsed, parsedPartial, err := parseSnippetDiscoveryOutput(raw, []string{path})
+		if err != nil {
+			partialErr = mergeSnippetDiscoveryPartialErrors(partialErr, &SnippetDiscoveryPartialError{Invalid: map[string]string{path: trimSnippetDiscoveryText(err.Error(), 200)}})
+			continue
+		}
+		for k, ranges := range parsed {
+			cleaned[k] = ranges
+		}
+		if parsedPartial != nil {
+			partialErr = mergeSnippetDiscoveryPartialErrors(partialErr, parsedPartial)
+		}
+	}
+	return cleaned, partialErr
+}
+
+func parseSnippetDiscoveryOutput(raw string, requested []string) (map[string][]LineRange, *SnippetDiscoveryPartialError, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil, nil, errors.New("snippet-discovery returned empty output")
 	}
 	var decoded map[string][]LineRange
-	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
-		return nil, fmt.Errorf("parse snippet-discovery output: %w", err)
+	if err := json.Unmarshal([]byte(trimmed), &decoded); err != nil {
+		return nil, nil, fmt.Errorf("parse snippet-discovery output: %w", err)
 	}
 	cleaned := make(map[string][]LineRange, len(decoded))
 	invalid := map[string]string{}
@@ -196,7 +348,7 @@ func FetchFileSnippets(ctx context.Context, detection ShowFileDetection, repoRoo
 			cleaned[normalized] = []LineRange{}
 		}
 	}
-	missing := missingSnippetFiles(filepaths, cleaned)
+	missing := missingSnippetFiles(requested, cleaned)
 	var partialErr *SnippetDiscoveryPartialError
 	if len(missing) > 0 || len(invalid) > 0 {
 		partialErr = &SnippetDiscoveryPartialError{Missing: missing, Invalid: invalid}
@@ -204,16 +356,39 @@ func FetchFileSnippets(ctx context.Context, detection ShowFileDetection, repoRoo
 	if partialErr != nil && len(partialErr.Missing) == 0 && len(partialErr.Invalid) == 0 {
 		partialErr = nil
 	}
-	if len(cleaned) == 0 {
-		if partialErr != nil {
-			return nil, partialErr
+	return cleaned, partialErr, nil
+}
+
+func mergeSnippetDiscoveryPartialErrors(parts ...*SnippetDiscoveryPartialError) *SnippetDiscoveryPartialError {
+	var merged SnippetDiscoveryPartialError
+	seenMissing := map[string]struct{}{}
+	for _, part := range parts {
+		if part == nil {
+			continue
 		}
-		return nil, errors.New("snippet-discovery returned no snippets")
+		for _, missing := range part.Missing {
+			if _, ok := seenMissing[missing]; ok {
+				continue
+			}
+			seenMissing[missing] = struct{}{}
+			merged.Missing = append(merged.Missing, missing)
+		}
+		if len(part.Invalid) > 0 {
+			if merged.Invalid == nil {
+				merged.Invalid = map[string]string{}
+			}
+			for path, reason := range part.Invalid {
+				if _, ok := merged.Invalid[path]; ok {
+					continue
+				}
+				merged.Invalid[path] = reason
+			}
+		}
 	}
-	if partialErr != nil {
-		return cleaned, partialErr
+	if len(merged.Missing) == 0 && len(merged.Invalid) == 0 {
+		return nil
 	}
-	return cleaned, nil
+	return &merged
 }
 
 func formatSnippetsResponse(snippets map[string][]LineRange, reason string) string {
@@ -319,7 +494,13 @@ func formatFullFileFallbackWithRoot(filepaths []string, repoRoot string, err err
 	var b strings.Builder
 	b.WriteString("## File Context (full file fallback)\n\n")
 	if err != nil {
-		b.WriteString(fmt.Sprintf("Warning: snippet-discovery failed (%s). Showing full files instead.\n\n", strings.TrimSpace(err.Error())))
+		trimmed := strings.TrimSpace(err.Error())
+		var partialErr *SnippetDiscoveryPartialError
+		if errors.As(err, &partialErr) {
+			b.WriteString(fmt.Sprintf("Warning: snippet-discovery returned partial results (%s). Showing full files for remaining paths.\n\n", trimmed))
+		} else {
+			b.WriteString(fmt.Sprintf("Warning: snippet-discovery failed (%s). Showing full files instead.\n\n", trimmed))
+		}
 	}
 	if len(paths) == 0 {
 		return strings.TrimRight(b.String(), "\n"), nil, []string{"no valid file paths"}
@@ -378,19 +559,93 @@ func normalizeShowFilePaths(paths []string) []string {
 }
 
 func normalizeShowFilePath(path string) string {
+	normalized, _ := normalizeShowFilePathWithRoot(path, "")
+	return normalized
+}
+
+func normalizeShowFilePathWithRoot(path, repoRoot string) (string, string) {
 	trimmed := strings.TrimSpace(path)
 	if trimmed == "" {
-		return ""
+		return "", "path is empty"
 	}
 	trimmed = strings.TrimPrefix(trimmed, "./")
 	if filepath.IsAbs(trimmed) {
-		return ""
+		if strings.TrimSpace(repoRoot) == "" {
+			return "", "path must be relative"
+		}
+		rel, err := filepath.Rel(repoRoot, trimmed)
+		if err != nil {
+			return "", "path must be within repo root"
+		}
+		if rel == "." || strings.HasPrefix(rel, "..") {
+			return "", "path must be within repo root"
+		}
+		trimmed = rel
 	}
 	cleaned := filepath.ToSlash(filepath.Clean(trimmed))
 	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
-		return ""
+		return "", "path must not contain .."
 	}
-	return cleaned
+	return cleaned, ""
+}
+
+func preflightShowFilePaths(paths []string, repoRoot string) ([]string, map[string]string) {
+	seen := map[string]struct{}{}
+	cleaned := []string{}
+	invalid := map[string]string{}
+	for _, path := range paths {
+		normalized, reason := normalizeShowFilePathWithRoot(path, repoRoot)
+		if reason != "" {
+			recordInvalidPath(invalid, path, normalized, reason)
+			continue
+		}
+		if _, ok := seen[normalized]; ok {
+			continue
+		}
+		resolved, err := resolveReferencePath(normalized, repoRoot)
+		if err != nil {
+			recordInvalidPath(invalid, normalized, normalized, err.Error())
+			continue
+		}
+		info, err := os.Stat(resolved)
+		if err != nil {
+			recordInvalidPath(invalid, normalized, normalized, fmt.Sprintf("path not readable: %v", err))
+			continue
+		}
+		if info.IsDir() {
+			recordInvalidPath(invalid, normalized, normalized, "path is a directory")
+			continue
+		}
+		seen[normalized] = struct{}{}
+		cleaned = append(cleaned, normalized)
+		if len(cleaned) >= maxShowFilePaths {
+			break
+		}
+	}
+	if len(invalid) == 0 {
+		invalid = nil
+	}
+	return cleaned, invalid
+}
+
+func recordInvalidPath(invalid map[string]string, rawPath, normalizedPath, reason string) {
+	if invalid == nil || reason == "" {
+		return
+	}
+	key := normalizedPath
+	if key == "" {
+		key = strings.TrimSpace(rawPath)
+	}
+	if key == "" {
+		key = rawPath
+	}
+	if key == "" {
+		return
+	}
+	if _, ok := invalid[key]; ok {
+		return
+	}
+	invalid[key] = reason
 }
 
 func normalizeSnippetReason(reason string, filepaths []string) string {
@@ -497,6 +752,11 @@ func logSnippetDiscoveryInvocation(ctx context.Context, reason string, filepaths
 	}
 	if trimmed := strings.TrimSpace(stderr); trimmed != "" {
 		payload["stderr_preview"] = trimSnippetDiscoveryText(trimmed, 400)
+	}
+	if runErr != nil {
+		if kind := classifySnippetDiscoveryRunError(runErr, stderr); kind != "" {
+			payload["error_kind"] = kind
+		}
 	}
 	evt := trajectory.Event{Kind: "snippet_discovery", Payload: payload}
 	if parentID, ok := trajectory.ParentSpanID(ctx); ok {

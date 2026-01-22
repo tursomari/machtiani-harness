@@ -119,8 +119,8 @@ func TestInjectRemovesPriorFullDiffsForSameFile(t *testing.T) {
 	Inject(6, repo, []string{"README.md"}, tr, nil, Options{Baseline: baseline})
 
 	content := tr.Content()
-	if count := strings.Count(content, "=== FULL DIFF OF PATCHED FILE: README.md ==="); count != 1 {
-		t.Fatalf("expected single full diff, got %d:\n%s", count, content)
+	if count := strings.Count(content, "=== UNIFIED DIFF OF PATCHED FILE: README.md ==="); count != 1 {
+		t.Fatalf("expected single unified diff, got %d:\n%s", count, content)
 	}
 	if !strings.Contains(content, "second change") {
 		t.Fatalf("expected latest diff content to remain:\n%s", content)

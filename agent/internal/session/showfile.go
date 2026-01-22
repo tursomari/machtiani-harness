@@ -51,7 +51,7 @@ func showFilePartialWarnings(partial *promptsvc.SnippetDiscoveryPartialError) []
 		for _, path := range paths {
 			details = append(details, fmt.Sprintf("%s (%s)", path, partial.Invalid[path]))
 		}
-		warnings = append(warnings, fmt.Sprintf("snippet-discovery returned invalid snippets for: %s", strings.Join(details, ", ")))
+		warnings = append(warnings, fmt.Sprintf("snippet-discovery returned invalid entries for: %s", strings.Join(details, ", ")))
 	}
 	return warnings
 }

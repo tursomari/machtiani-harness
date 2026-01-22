@@ -4,11 +4,28 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/tursomari/machtiani/agent/internal/llm"
 )
+
+func writeTestRepo(t *testing.T, files map[string]string) string {
+	t.Helper()
+	repo := t.TempDir()
+	for path, content := range files {
+		full := filepath.Join(repo, filepath.FromSlash(path))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+	return repo
+}
 
 func TestDetectShowFileRequestParsesTrue(t *testing.T) {
 	t.Cleanup(func() { chatWithResolvedFallback = llm.ChatWithResolvedFallback })
@@ -95,6 +112,7 @@ func TestFetchFileSnippetsSingleFile(t *testing.T) {
 	if normalizedPath == "" {
 		t.Fatal("failed to normalize test path")
 	}
+	repoRoot := writeTestRepo(t, map[string]string{normalizedPath: "package patcher"})
 	var gotReason string
 	var gotRepoRoot string
 	var gotPaths []string
@@ -111,15 +129,15 @@ func TestFetchFileSnippetsSingleFile(t *testing.T) {
 
 	det := ShowFileDetection{IsShowFileRequest: true, Filepaths: []string{normalizedPath}, Reason: "patch logic"}
 	overrides := map[string]string{"openrouter": "token"}
-	snippets, err := FetchFileSnippets(context.Background(), det, "/repo", "file-discovery-model", overrides, false)
+	snippets, err := FetchFileSnippets(context.Background(), det, repoRoot, "file-discovery-model", overrides, false)
 	if err != nil {
 		t.Fatalf("FetchFileSnippets error: %v", err)
 	}
 	if gotReason != "patch logic" {
 		t.Fatalf("expected reason to be passed through, got %q", gotReason)
 	}
-	if gotRepoRoot != "/repo" {
-		t.Fatalf("expected repo root /repo, got %q", gotRepoRoot)
+	if gotRepoRoot != repoRoot {
+		t.Fatalf("expected repo root %q, got %q", repoRoot, gotRepoRoot)
 	}
 	if len(gotPaths) != 1 || gotPaths[0] != normalizedPath {
 		t.Fatalf("unexpected filepaths: %v", gotPaths)
@@ -143,6 +161,7 @@ func TestFetchFileSnippetsUsesVerbatimQuestion(t *testing.T) {
 	if normalizedPath == "" {
 		t.Fatal("failed to normalize test path")
 	}
+	repoRoot := writeTestRepo(t, map[string]string{normalizedPath: "package patcher"})
 	var gotReason string
 	runSnippetDiscovery = func(ctx context.Context, repoRoot, reason string, filepaths []string, modelAlias string, apiKeyOverrides map[string]string, verbose bool) (string, error) {
 		gotReason = reason
@@ -155,7 +174,7 @@ func TestFetchFileSnippetsUsesVerbatimQuestion(t *testing.T) {
 		Reason:            "generated reason",
 		VerbatimQuestion:  "Question: show me the patcher file",
 	}
-	if _, err := FetchFileSnippets(context.Background(), det, "/repo", "", nil, false); err != nil {
+	if _, err := FetchFileSnippets(context.Background(), det, repoRoot, "", nil, false); err != nil {
 		t.Fatalf("FetchFileSnippets error: %v", err)
 	}
 	if gotReason != det.VerbatimQuestion {
@@ -163,15 +182,86 @@ func TestFetchFileSnippetsUsesVerbatimQuestion(t *testing.T) {
 	}
 }
 
+func TestFetchFileSnippetsPreflightInvalidPath(t *testing.T) {
+	originalRunner := runSnippetDiscovery
+	t.Cleanup(func() { runSnippetDiscovery = originalRunner })
+	repoRoot := writeTestRepo(t, map[string]string{"a.go": "package a"})
+	var gotPaths []string
+	runSnippetDiscovery = func(ctx context.Context, repoRoot, reason string, filepaths []string, modelAlias string, apiKeyOverrides map[string]string, verbose bool) (string, error) {
+		gotPaths = append([]string(nil), filepaths...)
+		return `{"a.go":[{"start":1,"end":1}]}`, nil
+	}
+
+	det := ShowFileDetection{IsShowFileRequest: true, Filepaths: []string{"a.go", "missing.go"}, Reason: "check"}
+	snippets, err := FetchFileSnippets(context.Background(), det, repoRoot, "", nil, false)
+	if err == nil {
+		t.Fatalf("expected partial error")
+	}
+	var partial *SnippetDiscoveryPartialError
+	if !errors.As(err, &partial) {
+		t.Fatalf("expected partial error type, got %v", err)
+	}
+	if len(gotPaths) != 1 || gotPaths[0] != "a.go" {
+		t.Fatalf("expected preflight to pass only a.go, got %v", gotPaths)
+	}
+	if _, ok := snippets["a.go"]; !ok {
+		t.Fatalf("expected snippets for a.go")
+	}
+	if partial.Invalid == nil || partial.Invalid["missing.go"] == "" {
+		t.Fatalf("expected invalid entry for missing.go")
+	}
+}
+
+func TestFetchFileSnippetsRetriesPerFile(t *testing.T) {
+	originalRunner := runSnippetDiscovery
+	t.Cleanup(func() { runSnippetDiscovery = originalRunner })
+	repoRoot := writeTestRepo(t, map[string]string{"a.go": "package a", "b.go": "package b"})
+	var calls [][]string
+	runSnippetDiscovery = func(ctx context.Context, repoRoot, reason string, filepaths []string, modelAlias string, apiKeyOverrides map[string]string, verbose bool) (string, error) {
+		calls = append(calls, append([]string(nil), filepaths...))
+		if len(filepaths) > 1 {
+			return "", errors.New("bulk failure")
+		}
+		switch filepaths[0] {
+		case "a.go":
+			return `{"a.go":[{"start":1,"end":1}]}`, nil
+		case "b.go":
+			return "", errors.New("per-file boom")
+		default:
+			return "", errors.New("unexpected path")
+		}
+	}
+
+	det := ShowFileDetection{IsShowFileRequest: true, Filepaths: []string{"a.go", "b.go"}, Reason: "check"}
+	snippets, err := FetchFileSnippets(context.Background(), det, repoRoot, "", nil, false)
+	if err == nil {
+		t.Fatalf("expected partial error")
+	}
+	var partial *SnippetDiscoveryPartialError
+	if !errors.As(err, &partial) {
+		t.Fatalf("expected partial error type, got %v", err)
+	}
+	if len(calls) != 3 {
+		t.Fatalf("expected 3 snippet-discovery calls, got %d", len(calls))
+	}
+	if _, ok := snippets["a.go"]; !ok {
+		t.Fatalf("expected snippets for a.go")
+	}
+	if partial.Invalid == nil || partial.Invalid["b.go"] == "" {
+		t.Fatalf("expected invalid entry for b.go")
+	}
+}
+
 func TestFetchFileSnippetsPartialMissing(t *testing.T) {
 	originalRunner := runSnippetDiscovery
 	t.Cleanup(func() { runSnippetDiscovery = originalRunner })
+	repoRoot := writeTestRepo(t, map[string]string{"a.go": "package a", "b.go": "package b"})
 	runSnippetDiscovery = func(ctx context.Context, repoRoot, reason string, filepaths []string, modelAlias string, apiKeyOverrides map[string]string, verbose bool) (string, error) {
 		return `{"a.go":[{"start":3,"end":4}]}`, nil
 	}
 
 	det := ShowFileDetection{IsShowFileRequest: true, Filepaths: []string{"a.go", "b.go"}, Reason: "compare"}
-	snippets, err := FetchFileSnippets(context.Background(), det, "", "", nil, false)
+	snippets, err := FetchFileSnippets(context.Background(), det, repoRoot, "", nil, false)
 	if err == nil {
 		t.Fatalf("expected partial error")
 	}
@@ -190,12 +280,13 @@ func TestFetchFileSnippetsPartialMissing(t *testing.T) {
 func TestFetchFileSnippetsEmptyRanges(t *testing.T) {
 	originalRunner := runSnippetDiscovery
 	t.Cleanup(func() { runSnippetDiscovery = originalRunner })
+	repoRoot := writeTestRepo(t, map[string]string{"a.go": "package a"})
 	runSnippetDiscovery = func(ctx context.Context, repoRoot, reason string, filepaths []string, modelAlias string, apiKeyOverrides map[string]string, verbose bool) (string, error) {
 		return `{"a.go":[]}`, nil
 	}
 
 	det := ShowFileDetection{IsShowFileRequest: true, Filepaths: []string{"a.go"}, Reason: "check"}
-	snippets, err := FetchFileSnippets(context.Background(), det, "", "", nil, false)
+	snippets, err := FetchFileSnippets(context.Background(), det, repoRoot, "", nil, false)
 	if err != nil {
 		t.Fatalf("FetchFileSnippets error: %v", err)
 	}
@@ -209,12 +300,13 @@ func TestFetchFileSnippetsEmptyRanges(t *testing.T) {
 func TestFetchFileSnippetsError(t *testing.T) {
 	originalRunner := runSnippetDiscovery
 	t.Cleanup(func() { runSnippetDiscovery = originalRunner })
+	repoRoot := writeTestRepo(t, map[string]string{"a.go": "package a"})
 	runSnippetDiscovery = func(ctx context.Context, repoRoot, reason string, filepaths []string, modelAlias string, apiKeyOverrides map[string]string, verbose bool) (string, error) {
 		return "", errors.New("boom")
 	}
 
 	det := ShowFileDetection{IsShowFileRequest: true, Filepaths: []string{"a.go"}, Reason: "check"}
-	if _, err := FetchFileSnippets(context.Background(), det, "", "", nil, false); err == nil {
+	if _, err := FetchFileSnippets(context.Background(), det, repoRoot, "", nil, false); err == nil {
 		t.Fatalf("expected error")
 	}
 }

@@ -194,6 +194,18 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 		emptySnippetFiles := []string{}
 		warnings := []string{}
 		reasons := []string{}
+		reasonSet := map[string]struct{}{}
+		addReason := func(reason string) {
+			trimmed := strings.TrimSpace(reason)
+			if trimmed == "" {
+				return
+			}
+			if _, ok := reasonSet[trimmed]; ok {
+				return
+			}
+			reasonSet[trimmed] = struct{}{}
+			reasons = append(reasons, trimmed)
+		}
 		var partialErr *SnippetDiscoveryPartialError
 		if snippetErr != nil {
 			if errors.As(snippetErr, &partialErr) {
@@ -216,15 +228,21 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 					for _, path := range invalidPaths {
 						details = append(details, fmt.Sprintf("%s (%s)", path, partialErr.Invalid[path]))
 					}
-					warnings = append(warnings, fmt.Sprintf("snippet-discovery returned invalid snippets for: %s", strings.Join(details, ", ")))
+					warnings = append(warnings, fmt.Sprintf("snippet-discovery returned invalid entries for: %s", strings.Join(details, ", ")))
 				}
-				reasons = append(reasons, "partial_results")
+				for _, kind := range SnippetDiscoveryReasonKinds(partialErr) {
+					addReason(kind)
+				}
 			} else {
 				for _, path := range filtered {
 					addFallback(path)
 				}
 				warnings = append(warnings, fmt.Sprintf("snippet-discovery failed (%s)", strings.TrimSpace(snippetErr.Error())))
-				reasons = append(reasons, "snippet_error")
+				reason := SnippetDiscoveryErrorKind(snippetErr)
+				if reason == "" {
+					reason = "snippet_error"
+				}
+				addReason(reason)
 			}
 		}
 		for path, ranges := range snippets {
@@ -240,7 +258,7 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 				addFallback(path)
 			}
 			warnings = append(warnings, fmt.Sprintf("snippet-discovery returned empty snippets for: %s", strings.Join(emptySnippetFiles, ", ")))
-			reasons = append(reasons, "empty_snippets")
+			addReason("empty_snippets")
 		}
 		var snippetText string
 		var snippetPaths []string
@@ -492,7 +510,7 @@ func buildBaselinePromptContext(prompt string, history []contextbuilder.Message,
 		builder.WriteString(base)
 		builder.WriteString("\n\n")
 	}
-	builder.WriteString("Here are baseline-relative diffs with line numbers for the referenced files:\n\n")
+	builder.WriteString("Here are baseline-relative unified diffs for the referenced files:\n\n")
 	builder.WriteString(diffBlock)
 
 	return builder.String(), included, nil

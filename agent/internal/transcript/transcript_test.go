@@ -224,10 +224,10 @@ func TestDeduplicateFullDiffByFile_RemovesPriorTurns(t *testing.T) {
 	}
 
 	files := []string{"a.txt", "b.txt"}
-	if err := tr.WriteTurn(1, "Automatic full diff post-patch for: a.txt", "", files, "diff1", "full_diff"); err != nil {
+	if err := tr.WriteTurn(1, "Automatic unified diff post-patch for: a.txt", "", files, "diff1", "full_diff"); err != nil {
 		t.Fatal(err)
 	}
-	if err := tr.WriteTurn(2, "Automatic full diff post-patch for: a.txt", "", files, "diff2", "full_diff"); err != nil {
+	if err := tr.WriteTurn(2, "Automatic unified diff post-patch for: a.txt", "", files, "diff2", "full_diff"); err != nil {
 		t.Fatal(err)
 	}
 	if err := tr.WriteTurn(3, "Something else", "", nil, "", "ask"); err != nil {
@@ -267,10 +267,10 @@ func TestDeduplicateFullDiffByFile_PrefersLastTurnOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := tr.WriteTurn(5, "Automatic full diff post-patch for: a.txt", "", []string{"a.txt"}, "diff-old", "full_diff"); err != nil {
+	if err := tr.WriteTurn(5, "Automatic unified diff post-patch for: a.txt", "", []string{"a.txt"}, "diff-old", "full_diff"); err != nil {
 		t.Fatal(err)
 	}
-	if err := tr.WriteTurn(4, "Automatic full diff post-patch for: a.txt", "", []string{"a.txt"}, "diff-new", "full_diff"); err != nil {
+	if err := tr.WriteTurn(4, "Automatic unified diff post-patch for: a.txt", "", []string{"a.txt"}, "diff-new", "full_diff"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -306,10 +306,10 @@ func TestDeduplicateFullDiffByFile_UsesRetrievedPaths(t *testing.T) {
 
 	// The question references a different file name, but the retrieved path
 	// points to the target file with a leading ./.
-	if err := tr.WriteTurn(1, "Automatic full diff post-patch for: other.md", "", []string{"./README.md"}, "diff-old", "full_diff"); err != nil {
+	if err := tr.WriteTurn(1, "Automatic unified diff post-patch for: other.md", "", []string{"./README.md"}, "diff-old", "full_diff"); err != nil {
 		t.Fatal(err)
 	}
-	if err := tr.WriteTurn(2, "Automatic full diff post-patch for: README.md", "", []string{"README.md"}, "diff-new", "full_diff"); err != nil {
+	if err := tr.WriteTurn(2, "Automatic unified diff post-patch for: README.md", "", []string{"README.md"}, "diff-new", "full_diff"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -342,7 +342,7 @@ func TestDeduplicateFullDiffByFile_RetainsSingleFullDiff(t *testing.T) {
 	if err := tr.WriteHeader("goal", "", "full-diff-single", nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := tr.WriteTurn(1, "Automatic full diff post-patch for: a.txt", "", []string{"a.txt"}, "diff-only", "full_diff"); err != nil {
+	if err := tr.WriteTurn(1, "Automatic unified diff post-patch for: a.txt", "", []string{"a.txt"}, "diff-only", "full_diff"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -373,13 +373,13 @@ func TestDeduplicateFullDiffByFile_DoesNotDeleteOtherFileFullDiff(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	if err := tr.WriteTurn(1, "Automatic full diff post-patch for: a.txt", "", []string{"a.txt"}, "diff-a-1", "full_diff"); err != nil {
+	if err := tr.WriteTurn(1, "Automatic unified diff post-patch for: a.txt", "", []string{"a.txt"}, "diff-a-1", "full_diff"); err != nil {
 		t.Fatal(err)
 	}
-	if err := tr.WriteTurn(2, "Automatic full diff post-patch for: b.txt", "", []string{"b.txt"}, "diff-b-1", "full_diff"); err != nil {
+	if err := tr.WriteTurn(2, "Automatic unified diff post-patch for: b.txt", "", []string{"b.txt"}, "diff-b-1", "full_diff"); err != nil {
 		t.Fatal(err)
 	}
-	if err := tr.WriteTurn(3, "Automatic full diff post-patch for: a.txt", "", []string{"a.txt"}, "diff-a-2", "full_diff"); err != nil {
+	if err := tr.WriteTurn(3, "Automatic unified diff post-patch for: a.txt", "", []string{"a.txt"}, "diff-a-2", "full_diff"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -444,7 +444,7 @@ func TestDeduplicateFullDiffByFile_StripsNULBytes(t *testing.T) {
 	if err := tr.WriteHeader("goal", "", "full-diff-sess-nul", nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := tr.WriteTurn(1, "Automatic full diff post-patch for: a.txt", "", []string{"a.txt"}, "diff1", "full_diff"); err != nil {
+	if err := tr.WriteTurn(1, "Automatic unified diff post-patch for: a.txt", "", []string{"a.txt"}, "diff1", "full_diff"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -480,10 +480,10 @@ func TestDeduplicateFullDiffByFile_DoesNotIntroduceNULBytes(t *testing.T) {
 	if err := tr.WriteHeader("goal", "", "full-diff-sess-rewrite", nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := tr.WriteTurn(1, "Automatic full diff post-patch for: a.txt", "", []string{"a.txt"}, "diff-a-1", "full_diff"); err != nil {
+	if err := tr.WriteTurn(1, "Automatic unified diff post-patch for: a.txt", "", []string{"a.txt"}, "diff-a-1", "full_diff"); err != nil {
 		t.Fatal(err)
 	}
-	if err := tr.WriteTurn(2, "Automatic full diff post-patch for: a.txt", "", []string{"a.txt"}, "diff-a-2", "full_diff"); err != nil {
+	if err := tr.WriteTurn(2, "Automatic unified diff post-patch for: a.txt", "", []string{"a.txt"}, "diff-a-2", "full_diff"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -503,25 +503,25 @@ func TestExtractFullDiffsFromContent_DeduplicatesByFile(t *testing.T) {
 	content := strings.Join([]string{
 		"== TURN 1",
 		"",
-		"Automatic full diff post-patch for: file.txt",
+		"Automatic unified diff post-patch for: file.txt",
 		"",
 		"Retrieved File Paths:",
 		"* file.txt",
 		"",
 		"=== ANSWER",
 		"",
-		"=== FULL DIFF OF PATCHED FILE: file.txt ===",
+		"=== UNIFIED DIFF OF PATCHED FILE: file.txt ===",
 		"diff one",
 		"===",
 		"",
 		"Planner decision: FULL_DIFF",
 		"== TURN 2",
 		"",
-		"Automatic full diff post-patch for: file.txt",
+		"Automatic unified diff post-patch for: file.txt",
 		"",
 		"=== ANSWER",
 		"",
-		"=== FULL DIFF OF PATCHED FILE: file.txt ===",
+		"=== UNIFIED DIFF OF PATCHED FILE: file.txt ===",
 		"diff two",
 		"===",
 		"",
@@ -534,7 +534,7 @@ func TestExtractFullDiffsFromContent_DeduplicatesByFile(t *testing.T) {
 	}
 
 	want := strings.Join([]string{
-		"=== FULL DIFF OF PATCHED FILE: file.txt ===",
+		"=== UNIFIED DIFF OF PATCHED FILE: file.txt ===",
 		"diff two",
 		"===",
 	}, "\n")

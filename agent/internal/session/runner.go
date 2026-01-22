@@ -1638,6 +1638,18 @@ func Run(ctx context.Context, opts Options) Result {
 							emptySnippetFiles := []string{}
 							warnings := []string{}
 							reasons := []string{}
+							reasonSet := map[string]struct{}{}
+							addReason := func(reason string) {
+								trimmed := strings.TrimSpace(reason)
+								if trimmed == "" {
+									return
+								}
+								if _, ok := reasonSet[trimmed]; ok {
+									return
+								}
+								reasonSet[trimmed] = struct{}{}
+								reasons = append(reasons, trimmed)
+							}
 							var partialErr *promptsvc.SnippetDiscoveryPartialError
 							if serr != nil {
 								if errors.As(serr, &partialErr) {
@@ -1653,12 +1665,18 @@ func Run(ctx context.Context, opts Options) Result {
 										addFallback(path)
 									}
 									warnings = append(warnings, showFilePartialWarnings(partialErr)...)
-									reasons = append(reasons, "partial_results")
+									for _, kind := range promptsvc.SnippetDiscoveryReasonKinds(partialErr) {
+										addReason(kind)
+									}
 								} else {
 									for _, path := range requested {
 										addFallback(path)
 									}
-									reasons = append(reasons, "snippet_error")
+									reason := promptsvc.SnippetDiscoveryErrorKind(serr)
+									if reason == "" {
+										reason = "snippet_error"
+									}
+									addReason(reason)
 								}
 							}
 							for path, ranges := range snippets {
@@ -1674,7 +1692,7 @@ func Run(ctx context.Context, opts Options) Result {
 									addFallback(path)
 								}
 								warnings = append(warnings, fmt.Sprintf("snippet-discovery returned empty snippets for: %s", strings.Join(emptySnippetFiles, ", ")))
-								reasons = append(reasons, "empty_snippets")
+								addReason("empty_snippets")
 							}
 
 							var snippetBanner string

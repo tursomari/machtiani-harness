@@ -160,33 +160,67 @@ func normalizeRelPath(path string) (string, error) {
 	return cleaned, nil
 }
 
-func normalizeInputPaths(paths []string) ([]string, map[string]struct{}, error) {
+func normalizeInputPaths(paths []string) ([]string, map[string]struct{}, map[string]string, error) {
 	seen := map[string]struct{}{}
+	invalid := map[string]string{}
 	var normalized []string
 	for _, raw := range paths {
 		cleaned, err := normalizeRelPath(raw)
 		if err != nil {
-			return nil, nil, fmt.Errorf("invalid path %q: %w", raw, err)
+			recordInvalidPath(invalid, raw, cleaned, fmt.Sprintf("invalid path: %v", err))
+			continue
 		}
 		if _, ok := seen[cleaned]; ok {
 			continue
 		}
 		st, err := os.Stat(filepath.FromSlash(cleaned))
 		if err != nil {
-			return nil, nil, fmt.Errorf("path %q not readable: %w", raw, err)
+			recordInvalidPath(invalid, raw, cleaned, fmt.Sprintf("path not readable: %v", err))
+			continue
 		}
 		if st.IsDir() {
-			return nil, nil, fmt.Errorf("path %q is a directory", raw)
+			recordInvalidPath(invalid, raw, cleaned, "path is a directory")
+			continue
 		}
 		f, err := os.Open(filepath.FromSlash(cleaned))
 		if err != nil {
-			return nil, nil, fmt.Errorf("path %q not readable: %w", raw, err)
+			recordInvalidPath(invalid, raw, cleaned, fmt.Sprintf("path not readable: %v", err))
+			continue
 		}
 		_ = f.Close()
 		seen[cleaned] = struct{}{}
 		normalized = append(normalized, cleaned)
 	}
-	return normalized, seen, nil
+	if len(normalized) == 0 {
+		if len(invalid) > 0 {
+			return nil, nil, invalid, errors.New("no valid file paths")
+		}
+		return nil, nil, nil, errors.New("no file paths provided")
+	}
+	if len(invalid) == 0 {
+		invalid = nil
+	}
+	return normalized, seen, invalid, nil
+}
+
+func recordInvalidPath(invalid map[string]string, rawPath, cleaned, reason string) {
+	if invalid == nil || reason == "" {
+		return
+	}
+	key := cleaned
+	if key == "" {
+		key = strings.TrimSpace(rawPath)
+	}
+	if key == "" {
+		key = rawPath
+	}
+	if key == "" {
+		return
+	}
+	if _, ok := invalid[key]; ok {
+		return
+	}
+	invalid[key] = reason
 }
 
 func parseShowBlock(content string) (showCommand, bool, string) {
@@ -553,10 +587,16 @@ func Run(ctx context.Context, cfg cfgpkg.Config, llmCfg LLMSettings) int {
 	}
 	defer restoreWD()
 
-	filePaths, allowList, err := normalizeInputPaths(cfg.FilePaths)
+	filePaths, allowList, invalidPaths, err := normalizeInputPaths(cfg.FilePaths)
 	if err != nil {
 		lg.ErrorWithFields("invalid file paths", map[string]any{"category": "file_path_error", "error": err.Error()})
 		return 2
+	}
+	if len(invalidPaths) > 0 {
+		lg.Log("warn", map[string]any{"msg": "skipping invalid file paths", "invalid_paths": invalidPaths})
+		if tr.Enabled {
+			tr.Event("path_skip", 0, map[string]any{"invalid_paths": invalidPaths})
+		}
 	}
 	if tr.Enabled {
 		cwd, _ := os.Getwd()

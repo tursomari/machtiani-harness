@@ -1,6 +1,7 @@
 package fulldiff
 
 import (
+	"bufio"
 	"crypto/sha256"
 	"fmt"
 	"os"
@@ -42,24 +43,32 @@ func Inject(step int, repoRoot string, filesModified []string, tr Transcript, tr
 	}
 
 	if opts.Baseline == nil {
-		logf("[full-diff] Missing baseline state; skipping full diff\n")
+		logf("[full-diff] Missing baseline state; skipping unified diff\n")
 		return
-	}
-
-	stripUnified := func(section string) string {
-		marker := "\n\nUnified diff (baseline vs workspace):\n"
-		idx := strings.Index(section, marker)
-		if idx < 0 {
-			return section
-		}
-		return strings.TrimRight(section[:idx], "\n")
 	}
 
 	containsChangeMarkers := func(section string) bool {
 		// We accept baseline diff sections as "changed" if they include any added or
-		// removed lines in the diff rendering. BuildBaselineDiffSection emits
-		// line-numbered full diffs using "  + " and "  - " markers.
-		return strings.Contains(section, "  + ") || strings.Contains(section, "  - ")
+		// removed lines in the unified diff rendering.
+		scanner := bufio.NewScanner(strings.NewReader(section))
+		for scanner.Scan() {
+			line := scanner.Text()
+			switch {
+			case strings.HasPrefix(line, "+++ "):
+				continue
+			case strings.HasPrefix(line, "--- "):
+				continue
+			case strings.HasPrefix(line, "@@"):
+				continue
+			case strings.HasPrefix(line, "```"):
+				continue
+			case strings.HasPrefix(line, "+"):
+				return true
+			case strings.HasPrefix(line, "-"):
+				return true
+			}
+		}
+		return false
 	}
 
 	writeStep := step
@@ -73,13 +82,12 @@ func Inject(step int, repoRoot string, filesModified []string, tr Transcript, tr
 		if !included {
 			continue
 		}
-		section = stripUnified(section)
 		if !containsChangeMarkers(section) {
 			continue
 		}
 
-		question := fmt.Sprintf("Automatic full diff post-patch for: %s", file)
-		header := fmt.Sprintf("\n=== FULL DIFF OF PATCHED FILE: %s ===\n", file)
+		question := fmt.Sprintf("Automatic unified diff post-patch for: %s", file)
+		header := fmt.Sprintf("\n=== UNIFIED DIFF OF PATCHED FILE: %s ===\n", file)
 		footer := "\n===\n"
 		fullDiffContent := header + section + footer
 		contentHash := fmt.Sprintf("%x", sha256.Sum256([]byte(fullDiffContent)))

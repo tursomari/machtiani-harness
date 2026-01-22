@@ -404,12 +404,24 @@ func ExtractFullDiffsFromContent(content string) (string, error) {
 	extractFile := func(line string) string {
 		trimmed := strings.TrimSpace(line)
 		upper := strings.ToUpper(trimmed)
-		if strings.HasPrefix(strings.ToLower(trimmed), "automatic full diff post-patch for:") {
-			return normalize(strings.TrimSpace(trimmed[len("automatic full diff post-patch for:"):]))
+		lower := strings.ToLower(trimmed)
+		const unifiedPrefix = "automatic unified diff post-patch for:"
+		const fullPrefix = "automatic full diff post-patch for:"
+		switch {
+		case strings.HasPrefix(lower, unifiedPrefix):
+			return normalize(strings.TrimSpace(trimmed[len(unifiedPrefix):]))
+		case strings.HasPrefix(lower, fullPrefix):
+			return normalize(strings.TrimSpace(trimmed[len(fullPrefix):]))
 		}
-		const headerPrefix = "=== FULL DIFF OF PATCHED FILE:"
-		if strings.HasPrefix(upper, headerPrefix) {
-			rest := strings.TrimSpace(trimmed[len(headerPrefix):])
+		const unifiedHeaderPrefix = "=== UNIFIED DIFF OF PATCHED FILE:"
+		const fullHeaderPrefix = "=== FULL DIFF OF PATCHED FILE:"
+		switch {
+		case strings.HasPrefix(upper, unifiedHeaderPrefix):
+			rest := strings.TrimSpace(trimmed[len(unifiedHeaderPrefix):])
+			rest = strings.TrimSpace(strings.TrimSuffix(rest, "==="))
+			return normalize(rest)
+		case strings.HasPrefix(upper, fullHeaderPrefix):
+			rest := strings.TrimSpace(trimmed[len(fullHeaderPrefix):])
 			rest = strings.TrimSpace(strings.TrimSuffix(rest, "==="))
 			return normalize(rest)
 		}
@@ -704,6 +716,8 @@ func (t *Transcript) DeduplicateFullDiffByFile(filePath string) error {
 			inRetrieved = false
 		case inRetrieved:
 			inRetrieved = false
+		case strings.HasPrefix(trimmed, "Automatic unified diff post-patch for:"):
+			currentFiles = addFile(currentFiles, normalize(strings.TrimPrefix(trimmed, "Automatic unified diff post-patch for:")))
 		case strings.HasPrefix(trimmed, "Automatic full diff post-patch for:"):
 			currentFiles = addFile(currentFiles, normalize(strings.TrimPrefix(trimmed, "Automatic full diff post-patch for:")))
 		}

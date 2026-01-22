@@ -133,6 +133,33 @@ func TestSnippetDiscoveryInvalidPath(t *testing.T) {
 	}
 }
 
+func TestSnippetDiscoverySkipsInvalidPath(t *testing.T) {
+	bin := buildBinary(t, "e2e_stub_llm")
+	repo := makeFixtureRepo(t)
+	responses := "<show>\nfoo.txt\n</show>|{\"foo.txt\":[{\"start\":1,\"end\":1}]}"
+	env := append(baseEnv(), "SNIPPET_DISCOVERY_E2E_RESPONSES="+responses)
+	args := []string{
+		"-r", "mixed paths",
+		"-f", "foo.txt",
+		"-f", "missing.txt",
+		"-openai-api-key", "test",
+		"-openai-base-url", "http://example",
+		"-openai-model", "test",
+		"-no-trajectory",
+	}
+	res := runBin(t, bin, repo, args, env)
+	if res.code != 0 {
+		t.Fatalf("exit=%d stderr=%s", res.code, res.stderr)
+	}
+	var parsed map[string][]map[string]int
+	if err := json.Unmarshal([]byte(res.stdout), &parsed); err != nil {
+		t.Fatalf("invalid json output: %v\n%s", err, res.stdout)
+	}
+	if len(parsed["foo.txt"]) != 1 || parsed["foo.txt"][0]["start"] != 1 {
+		t.Fatalf("unexpected output: %v", parsed)
+	}
+}
+
 func TestSnippetDiscoveryTrajectory(t *testing.T) {
 	bin := buildBinary(t, "e2e_stub_llm")
 	repo := makeFixtureRepo(t)
