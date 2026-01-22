@@ -59,6 +59,7 @@ type plannerProgressTracker struct {
 	fileDedupSet     map[string]string
 	pendingReview    *planner.PendingReview
 	lastPatchedFile  string
+	patchPlanPending bool
 }
 
 type patchPlanUpdater interface {
@@ -118,6 +119,20 @@ func (p *plannerProgressTracker) getLastPatchedFile() string {
 		return ""
 	}
 	return p.lastPatchedFile
+}
+
+func (p *plannerProgressTracker) needsPatchPlanUpdate() bool {
+	if p == nil {
+		return false
+	}
+	return p.patchPlanPending
+}
+
+func (p *plannerProgressTracker) markPatchPlanUpdated() {
+	if p == nil {
+		return
+	}
+	p.patchPlanPending = false
 }
 
 func extractPrimaryPatchTarget(instr mctpatcher.Instructions) string {
@@ -279,6 +294,20 @@ func invokePatchPlanUpdateHook(ctx context.Context, pl patchPlanUpdater, tr *tra
 	return updated, nil
 }
 
+func updatePatchPlanIfNeeded(ctx context.Context, pl patchPlanUpdater, tr *transcript.Transcript, sessionID, goal, transcriptContent, lastPatchedFile string, notifier patchPlanNotifier, progress *plannerProgressTracker) (*PatchPlan, error) {
+	if progress == nil || !progress.needsPatchPlanUpdate() {
+		return nil, nil
+	}
+	updated, err := invokePatchPlanUpdateHook(ctx, pl, tr, sessionID, goal, transcriptContent, lastPatchedFile, notifier, false)
+	if err != nil {
+		return nil, err
+	}
+	if updated != nil {
+		progress.markPatchPlanUpdated()
+	}
+	return updated, nil
+}
+
 func formatPatchPlanForDisplay(plan *PatchPlan) string {
 	if plan == nil {
 		return ""
@@ -367,6 +396,7 @@ func (p *plannerProgressTracker) commitPendingReview() *planner.PendingReview {
 	}
 	reviewCopy := p.pendingReview.Clone()
 	p.recordSuccess(p.pendingReview.Files)
+	p.patchPlanPending = true
 	p.pendingReview = nil
 	return reviewCopy
 }
@@ -1201,10 +1231,10 @@ func Run(ctx context.Context, opts Options) Result {
 		planCtx = attachTrajectory(planCtx, trajectoryWriter, parentSpanID)
 		patchPlanComplete := false
 		if cfg.patch {
-			monitoredPlan, err := invokePatchPlanUpdateHook(planCtx, pl, tr, sessionID, goal, trFull, plannerProgress.getLastPatchedFile(), display, false)
+			monitoredPlan, err := updatePatchPlanIfNeeded(planCtx, pl, tr, sessionID, goal, trFull, plannerProgress.getLastPatchedFile(), display, plannerProgress)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: patch plan monitor failed: %v\n", err)
-			} else {
+			} else if monitoredPlan != nil {
 				patchPlan = monitoredPlan
 			}
 			if patchPlan == nil {
@@ -2054,18 +2084,6 @@ func Run(ctx context.Context, opts Options) Result {
 				}
 				continue
 			}
-			targetFile := extractPrimaryPatchTarget(instr)
-			if cfg.patch {
-				lastPatched := plannerProgress.getLastPatchedFile()
-				if lastPatched != "" && targetFile != "" {
-					normalizedTarget := normalizePlannerPath(targetFile)
-					if normalizedTarget != lastPatched {
-						if _, err := invokePatchPlanUpdateHook(rootCtx, pl, tr, sessionID, goal, tr.Content(), lastPatched, display, true); err != nil {
-							fmt.Fprintf(os.Stderr, "Warning: patch plan update hook failed: %v\n", err)
-						}
-					}
-				}
-			}
 			skipAllSuccess := false
 			skipPaths := []string{}
 			forceRepatch := instr.Metadata != nil && instr.Metadata.ForceRepatch
@@ -2544,16 +2562,18 @@ Finalize:
 	}
 	var finalizePatchPlan *PatchPlan
 	if cfg.patch {
-		hookCtx, hookCancel := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
-		hookCtx = attachTrajectory(hookCtx, trajectoryWriter, parentSpanID)
-		monitoredPlan, err := invokePatchPlanUpdateHook(hookCtx, pl, tr, sessionID, goal, tr.Content(), plannerProgress.getLastPatchedFile(), display, false)
-		if hookCancel != nil {
-			hookCancel()
-		}
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: patch plan monitor failed before finalizing: %v\n", err)
-		} else {
-			finalizePatchPlan = monitoredPlan
+		if plannerProgress.needsPatchPlanUpdate() {
+			hookCtx, hookCancel := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
+			hookCtx = attachTrajectory(hookCtx, trajectoryWriter, parentSpanID)
+			monitoredPlan, err := updatePatchPlanIfNeeded(hookCtx, pl, tr, sessionID, goal, tr.Content(), plannerProgress.getLastPatchedFile(), display, plannerProgress)
+			if hookCancel != nil {
+				hookCancel()
+			}
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: patch plan monitor failed before finalizing: %v\n", err)
+			} else if monitoredPlan != nil {
+				finalizePatchPlan = monitoredPlan
+			}
 		}
 		if finalizePatchPlan == nil {
 			if loadedPlan, err := LoadPatchPlan(sessionID); err != nil {

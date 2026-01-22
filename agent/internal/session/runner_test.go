@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tursomari/machtiani/agent/internal/planner"
 	"github.com/tursomari/machtiani/agent/internal/transcript"
 )
 
@@ -310,6 +311,8 @@ type stubPatchPlanClient struct {
 	updatedPlan   *PatchPlan
 	existing      *PatchPlan
 	lastPatched   string
+	generateCalls int
+	updateCalls   int
 }
 
 type collectingNotifier struct {
@@ -321,10 +324,12 @@ func (c *collectingNotifier) Notify(msg string) {
 }
 
 func (s *stubPatchPlanClient) GeneratePatchPlan(context.Context, string, string) (*PatchPlan, error) {
+	s.generateCalls++
 	return s.generatedPlan, nil
 }
 
 func (s *stubPatchPlanClient) UpdatePatchPlan(_ context.Context, _ string, _ string, existing *PatchPlan, lastPatchedFile string) (*PatchPlan, error) {
+	s.updateCalls++
 	s.existing = existing
 	s.lastPatched = lastPatchedFile
 	return s.updatedPlan, nil
@@ -403,5 +408,109 @@ func TestInvokePatchPlanUpdateHookWritesTranscript(t *testing.T) {
 	}
 	if client.lastPatched != "last.txt" {
 		t.Fatalf("expected last patched file recorded, got %q", client.lastPatched)
+	}
+}
+
+func TestUpdatePatchPlanIfNeededSkipsWithoutPending(t *testing.T) {
+	tempDir := t.TempDir()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(tempDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(cwd)
+	})
+	cmd := exec.Command("git", "init")
+	cmd.Dir = tempDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init failed: %v (%s)", err, strings.TrimSpace(string(out)))
+	}
+
+	sessionID := "session-skip"
+	plan := &PatchPlan{Items: []PatchPlanItem{{Description: "task"}}}
+	if err := SavePatchPlan(sessionID, plan); err != nil {
+		t.Fatalf("save patch plan: %v", err)
+	}
+
+	tr, err := transcript.NewWithPath(filepath.Join(tempDir, "agent-transcript.adoc"), sessionID)
+	if err != nil {
+		t.Fatalf("transcript init: %v", err)
+	}
+	t.Cleanup(func() {
+		tr.Close()
+	})
+
+	client := &stubPatchPlanClient{updatedPlan: plan}
+	progress := newPlannerProgressTracker(nil)
+
+	updated, err := updatePatchPlanIfNeeded(context.Background(), client, tr, sessionID, "goal", "transcript", progress.getLastPatchedFile(), nil, progress)
+	if err != nil {
+		t.Fatalf("updatePatchPlanIfNeeded error: %v", err)
+	}
+	if updated != nil {
+		t.Fatalf("expected no patch plan update, got %+v", updated)
+	}
+	if client.updateCalls != 0 {
+		t.Fatalf("expected update hook not called, got %d", client.updateCalls)
+	}
+}
+
+func TestUpdatePatchPlanIfNeededRunsAfterCommit(t *testing.T) {
+	tempDir := t.TempDir()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(tempDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(cwd)
+	})
+	cmd := exec.Command("git", "init")
+	cmd.Dir = tempDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init failed: %v (%s)", err, strings.TrimSpace(string(out)))
+	}
+
+	sessionID := "session-update"
+	plan := &PatchPlan{Items: []PatchPlanItem{{Description: "task"}}}
+	if err := SavePatchPlan(sessionID, plan); err != nil {
+		t.Fatalf("save patch plan: %v", err)
+	}
+
+	tr, err := transcript.NewWithPath(filepath.Join(tempDir, "agent-transcript.adoc"), sessionID)
+	if err != nil {
+		t.Fatalf("transcript init: %v", err)
+	}
+	t.Cleanup(func() {
+		tr.Close()
+	})
+
+	updatedPlan := &PatchPlan{Items: []PatchPlanItem{{Description: "task", Complete: true}}}
+	client := &stubPatchPlanClient{updatedPlan: updatedPlan}
+	progress := newPlannerProgressTracker(nil)
+	progress.setLastPatchedFile("file.go")
+	progress.beginPendingReview(&planner.PendingReview{Files: []string{"file.go"}})
+	progress.commitPendingReview()
+
+	updated, err := updatePatchPlanIfNeeded(context.Background(), client, tr, sessionID, "goal", "transcript", progress.getLastPatchedFile(), nil, progress)
+	if err != nil {
+		t.Fatalf("updatePatchPlanIfNeeded error: %v", err)
+	}
+	if updated == nil {
+		t.Fatalf("expected patch plan update")
+	}
+	if client.updateCalls != 1 {
+		t.Fatalf("expected update hook called once, got %d", client.updateCalls)
+	}
+	if client.lastPatched != "file.go" {
+		t.Fatalf("expected last patched file recorded, got %q", client.lastPatched)
+	}
+	if progress.needsPatchPlanUpdate() {
+		t.Fatalf("expected patch plan update cleared")
 	}
 }
