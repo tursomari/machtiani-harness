@@ -13,8 +13,10 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/tursomari/machtiani/agent/internal/llm"
 	cfgpkg "github.com/tursomari/machtiani/agent/internal/snippet-discovery/internal/config"
@@ -56,6 +58,7 @@ var reShowBlock = regexp.MustCompile(`(?s)<show>(.*?)</show>`)
 
 const maxFinalRetries = 2
 const maxDebugContent = 4000
+const binarySampleSize = 8000
 
 func truncateForLog(content string, limit int) (string, bool) {
 	if limit <= 0 || len(content) <= limit {
@@ -160,6 +163,54 @@ func normalizeRelPath(path string) (string, error) {
 	return cleaned, nil
 }
 
+func isBinaryContent(data []byte) bool {
+	if len(data) == 0 {
+		return false
+	}
+	if bytes.IndexByte(data, 0) != -1 {
+		return true
+	}
+	printable := 0
+	suspicious := 0
+	for len(data) > 0 {
+		r, size := utf8.DecodeRune(data)
+		if r == utf8.RuneError && size == 1 {
+			suspicious++
+			data = data[1:]
+			continue
+		}
+		data = data[size:]
+		if r == '\n' || r == '\r' || r == '\t' || r == '\f' || r == '\b' {
+			printable++
+			continue
+		}
+		if strconv.IsPrint(r) {
+			printable++
+		} else {
+			suspicious++
+		}
+	}
+	total := printable + suspicious
+	if total == 0 {
+		return false
+	}
+	return suspicious*3 >= total
+}
+
+func isBinaryFile(path string) (bool, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+	buf := make([]byte, binarySampleSize)
+	n, err := f.Read(buf)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return false, err
+	}
+	return isBinaryContent(buf[:n]), nil
+}
+
 func normalizeInputPaths(paths []string) ([]string, map[string]struct{}, map[string]string, error) {
 	seen := map[string]struct{}{}
 	invalid := map[string]string{}
@@ -173,7 +224,8 @@ func normalizeInputPaths(paths []string) ([]string, map[string]struct{}, map[str
 		if _, ok := seen[cleaned]; ok {
 			continue
 		}
-		st, err := os.Stat(filepath.FromSlash(cleaned))
+		onDisk := filepath.FromSlash(cleaned)
+		st, err := os.Stat(onDisk)
 		if err != nil {
 			recordInvalidPath(invalid, raw, cleaned, fmt.Sprintf("path not readable: %v", err))
 			continue
@@ -182,12 +234,15 @@ func normalizeInputPaths(paths []string) ([]string, map[string]struct{}, map[str
 			recordInvalidPath(invalid, raw, cleaned, "path is a directory")
 			continue
 		}
-		f, err := os.Open(filepath.FromSlash(cleaned))
+		isBinary, err := isBinaryFile(onDisk)
 		if err != nil {
 			recordInvalidPath(invalid, raw, cleaned, fmt.Sprintf("path not readable: %v", err))
 			continue
 		}
-		_ = f.Close()
+		if isBinary {
+			recordInvalidPath(invalid, raw, cleaned, "binary file (content detected)")
+			continue
+		}
 		seen[cleaned] = struct{}{}
 		normalized = append(normalized, cleaned)
 	}

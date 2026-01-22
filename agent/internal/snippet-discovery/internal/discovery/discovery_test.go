@@ -110,3 +110,27 @@ func TestLineRangeBounds(t *testing.T) {
 		t.Fatalf("expected backwards range error")
 	}
 }
+
+func TestNormalizeInputPathsSkipsBinary(t *testing.T) {
+	_, restore := withTempDir(t)
+	defer restore()
+
+	if err := os.WriteFile("binary.dat", []byte{0x00, 0x01, 0x02, 0x03}, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	writeTempFile(t, ".", "text.txt", "hello\n")
+
+	paths, _, invalid, err := normalizeInputPaths([]string{"binary.dat", "text.txt"})
+	if err != nil {
+		t.Fatalf("normalizeInputPaths error: %v", err)
+	}
+	if len(paths) != 1 || paths[0] != "text.txt" {
+		t.Fatalf("expected only text.txt, got: %v", paths)
+	}
+	if invalid == nil {
+		t.Fatalf("expected invalid map")
+	}
+	if reason, ok := invalid["binary.dat"]; !ok || !strings.Contains(reason, "binary") {
+		t.Fatalf("expected binary.dat to be skipped for binary reason, got: %v", invalid)
+	}
+}
