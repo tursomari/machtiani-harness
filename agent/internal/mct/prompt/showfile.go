@@ -1,5 +1,4 @@
 package prompt
-
 import (
 	"bytes"
 	"context"
@@ -29,6 +28,7 @@ type ShowFileDetection struct {
 	Filepath          string   `json:"filepath"`
 	Filepaths         []string `json:"filepaths"`
 	Reason            string   `json:"reason,omitempty"`
+	VerbatimQuestion  string   `json:"-"`
 }
 
 func (s ShowFileDetection) normalize() ShowFileDetection {
@@ -58,6 +58,7 @@ func (s ShowFileDetection) normalize() ShowFileDetection {
 // the planner is requesting that we show the full contents of a particular
 // repository file.
 func DetectShowFileRequest(ctx context.Context, runtime ModelRuntime, plannerPrompt string) (ShowFileDetection, string, error) {
+	verbatimPrompt := plannerPrompt
 	trimmedPrompt := strings.TrimSpace(plannerPrompt)
 	if trimmedPrompt == "" {
 		return ShowFileDetection{IsShowFileRequest: false}, "", nil
@@ -102,6 +103,7 @@ func DetectShowFileRequest(ctx context.Context, runtime ModelRuntime, plannerPro
 	if jerr := json.Unmarshal([]byte(raw), &det); jerr != nil {
 		return ShowFileDetection{IsShowFileRequest: false}, raw, jerr
 	}
+	det.VerbatimQuestion = verbatimPrompt
 	return det.normalize(), raw, nil
 }
 
@@ -152,7 +154,10 @@ func FetchFileSnippets(ctx context.Context, detection ShowFileDetection, repoRoo
 	if len(filepaths) == 0 {
 		return nil, errors.New("no file paths provided")
 	}
-	reason := normalizeSnippetReason(detection.Reason, filepaths)
+	reason := detection.VerbatimQuestion
+	if strings.TrimSpace(reason) == "" {
+		reason = normalizeSnippetReason(detection.Reason, filepaths)
+	}
 	raw, err := runSnippetDiscovery(ctx, repoRoot, reason, filepaths, modelAlias, apiKeyOverrides, verbose)
 	if err != nil {
 		return nil, err

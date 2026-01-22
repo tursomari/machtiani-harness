@@ -1607,6 +1607,7 @@ func Run(ctx context.Context, opts Options) Result {
 							if strings.TrimSpace(detection.Reason) != "" {
 								turnInfo["show_file_reason"] = trimTo(detection.Reason, 200)
 							}
+							detection.VerbatimQuestion = question
 							ctxSnippet, cancelSnippet := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
 							ctxSnippet = attachTrajectory(ctxSnippet, trajectoryWriter, parentSpanID)
 							snippetRuntime := mctRunner.FileDiscoveryRuntime
@@ -1680,7 +1681,11 @@ func Run(ctx context.Context, opts Options) Result {
 							var snippetRetrieved []string
 							if len(snippetFiles) > 0 {
 								var snippetWarnings []string
-								snippetBanner, snippetRetrieved, snippetWarnings = promptsvc.FormatSnippetsResponse(snippetFiles, detection.Reason, repoRoot)
+								snippetReason := detection.VerbatimQuestion
+								if strings.TrimSpace(snippetReason) == "" {
+									snippetReason = detection.Reason
+								}
+								snippetBanner, snippetRetrieved, snippetWarnings = promptsvc.FormatSnippetsResponse(snippetFiles, snippetReason, repoRoot)
 								warnings = append(warnings, snippetWarnings...)
 								turnInfo["show_file_snippet_count"] = countSnippetRanges(snippetFiles)
 							}

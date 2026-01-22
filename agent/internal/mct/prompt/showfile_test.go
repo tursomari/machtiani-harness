@@ -136,6 +136,33 @@ func TestFetchFileSnippetsSingleFile(t *testing.T) {
 	}
 }
 
+func TestFetchFileSnippetsUsesVerbatimQuestion(t *testing.T) {
+	originalRunner := runSnippetDiscovery
+	t.Cleanup(func() { runSnippetDiscovery = originalRunner })
+	normalizedPath := normalizeShowFilePath("agent/internal/patcher/patcher.go")
+	if normalizedPath == "" {
+		t.Fatal("failed to normalize test path")
+	}
+	var gotReason string
+	runSnippetDiscovery = func(ctx context.Context, repoRoot, reason string, filepaths []string, modelAlias string, apiKeyOverrides map[string]string, verbose bool) (string, error) {
+		gotReason = reason
+		return fmt.Sprintf(`{"%s":[{"start":1,"end":2}]}`, normalizedPath), nil
+	}
+
+	det := ShowFileDetection{
+		IsShowFileRequest: true,
+		Filepaths:         []string{normalizedPath},
+		Reason:            "generated reason",
+		VerbatimQuestion:  "Question: show me the patcher file",
+	}
+	if _, err := FetchFileSnippets(context.Background(), det, "/repo", "", nil, false); err != nil {
+		t.Fatalf("FetchFileSnippets error: %v", err)
+	}
+	if gotReason != det.VerbatimQuestion {
+		t.Fatalf("expected verbatim reason %q, got %q", det.VerbatimQuestion, gotReason)
+	}
+}
+
 func TestFetchFileSnippetsPartialMissing(t *testing.T) {
 	originalRunner := runSnippetDiscovery
 	t.Cleanup(func() { runSnippetDiscovery = originalRunner })
