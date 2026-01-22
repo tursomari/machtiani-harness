@@ -97,6 +97,7 @@ func TestParseDecisionVariants(t *testing.T) {
 		wantSubstr string
 	}{
 		{name: "InstructionVariant", resp: "Decision: instruction\nInstruction: Examine the database schema.", want: DecisionAsk, wantSubstr: "database schema"},
+		{name: "InstructionInline", resp: "Decision: Instruction: Examine the database schema.", want: DecisionAsk, wantSubstr: "database schema"},
 		{name: "QuestionVariant", resp: "Decision: question\nQuestion: What modules exist?", want: DecisionAsk, wantSubstr: "What modules"},
 		{name: "MessageVariant", resp: "Decision: message\nMessage: Review the API endpoints.", want: DecisionAsk, wantSubstr: "API endpoints"},
 	}

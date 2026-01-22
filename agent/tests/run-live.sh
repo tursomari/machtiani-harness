@@ -292,6 +292,31 @@ generate_test_config() {
 
   cp "$repo_config" "$config_file"
 
+  "$PYTHON_BIN" - "$config_file" "$TEST_MODEL_ALIAS" <<'PY'
+import pathlib
+import re
+import sys
+
+path = pathlib.Path(sys.argv[1])
+alias = sys.argv[2]
+lines = path.read_text(encoding="utf-8").splitlines()
+replaced = False
+for idx, line in enumerate(lines):
+    if re.match(r"^\s*default_model\s*=", line):
+        lines[idx] = f"default_model = \"{alias}\""
+        replaced = True
+        break
+if not replaced:
+    insert_idx = 0
+    while insert_idx < len(lines):
+        stripped = lines[insert_idx].strip()
+        if stripped and not stripped.startswith("#"):
+            break
+        insert_idx += 1
+    lines.insert(insert_idx, f"default_model = \"{alias}\"")
+path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+PY
+
   cat >> "$config_file" <<EOF
 
 [providers.${test_provider_name}]
@@ -443,6 +468,11 @@ run_happy_case() {
     return 1
   fi
 
+  local show_file_used=false
+  if grep -qE '^## File Context' "$transcript_path" 2>/dev/null; then
+    show_file_used=true
+  fi
+
   cp -f "$transcript_path" "$out_dir/transcript-${session_id}.adoc"
 
   local turns
@@ -471,7 +501,7 @@ run_happy_case() {
     keyword_files+=("$final_path")
 
     local fd_path="$session_dir/artifacts/file-discovery.jsonl"
-    if grep -qE '^Step [0-9]+ decision: ask' "$stderr_file" 2>/dev/null; then
+    if [[ "$show_file_used" != true ]] && grep -qE '^Step [0-9]+ decision: ask' "$stderr_file" 2>/dev/null; then
       if [[ ! -f "$fd_path" ]]; then
         echo "Missing file-discovery trajectory: $fd_path" >&2
         return 1

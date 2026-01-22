@@ -1299,18 +1299,28 @@ func parseDecision(resp string, patchEnabled bool) (Decision, string, string) {
 	if len(parts) != 2 {
 		return "", "", ""
 	}
-	decisionStr := strings.TrimSpace(strings.ToLower(parts[1]))
+	decisionTail := strings.TrimSpace(parts[1])
+	decisionStr := strings.TrimSpace(strings.ToLower(decisionTail))
+	decisionWord := decisionStr
+	if decisionWord != "" {
+		fields := strings.FieldsFunc(decisionWord, func(r rune) bool {
+			return r == ':' || r == ' ' || r == '\t'
+		})
+		if len(fields) > 0 {
+			decisionWord = fields[0]
+		}
+	}
 	var decision Decision
 	switch {
 	case strings.Contains(decisionStr, string(DecisionAccept)):
 		decision = DecisionAccept
 	case strings.Contains(decisionStr, string(DecisionReject)):
 		decision = DecisionReject
-	case decisionStr == string(DecisionAsk) || decisionStr == "question" || decisionStr == "instruction" || decisionStr == "message":
+	case decisionWord == string(DecisionAsk) || decisionWord == "question" || decisionWord == "instruction" || decisionWord == "message":
 		decision = DecisionAsk
-	case decisionStr == string(DecisionPatch):
+	case decisionWord == string(DecisionPatch):
 		decision = DecisionPatch
-	case decisionStr == string(DecisionFinalize):
+	case decisionWord == string(DecisionFinalize):
 		decision = DecisionFinalize
 	default:
 		return "", "", ""
@@ -1320,6 +1330,9 @@ func parseDecision(resp string, patchEnabled bool) (Decision, string, string) {
 		return DecisionAsk, "Question: Considering the current transcript, produce the single next high-signal repository-focused prompt for mct.", strings.Join(preambleLines, "\n")
 	}
 	remainder := strings.TrimSpace(strings.Join(lines[decisionIdx+1:], "\n"))
+	if decision == DecisionAsk && remainder == "" && decisionTail != "" && strings.ToLower(decisionTail) != decisionWord {
+		remainder = decisionTail
+	}
 	return decision, remainder, strings.Join(preambleLines, "\n")
 }
 
