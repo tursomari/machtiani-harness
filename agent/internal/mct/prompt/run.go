@@ -40,6 +40,7 @@ var (
 	discoveryRunnerRun       = discoveryrunner.Run
 	shellAgentCommandContext = exec.CommandContext
 	patchPromptLogger        = patchlog.WritePrompt
+	detectShowFileRequest    = DetectShowFileRequest
 )
 
 const shellAgentContextPrefix = "Here is possibly relevant information from the shell agent."
@@ -105,6 +106,7 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 	included := []string(nil)
 	fileDiscoveryRan := false
 	var filtered []string
+	assistantOverride := ""
 
 	if !isAnswerOnly && !opts.ShellAgent {
 		ignoreFiles, err := utils.ReadIgnoreFile(".machtiani.ignore")
@@ -152,6 +154,65 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 		}
 	default:
 		options := contextbuilder.Options{IncludeHistory: includeHistory, MaxInputTokens: opts.MaxInputTokens, PreludeTemplate: historyTemplate}
+		repoRoot := ""
+		if cwd, err := os.Getwd(); err == nil {
+			if root, err := git.RepoRoot(cwd); err == nil {
+				repoRoot = root
+			}
+		}
+		var cleanedDiscoveryPaths []string
+		invalidDiscoveryPaths := map[string]string(nil)
+		if len(filtered) > 0 {
+			cleanedDiscoveryPaths, invalidDiscoveryPaths = preflightShowFilePaths(filtered, repoRoot)
+			if len(invalidDiscoveryPaths) == 0 {
+				invalidDiscoveryPaths = nil
+			}
+		}
+		if len(filtered) == 0 || len(invalidDiscoveryPaths) > 0 {
+			showFileRuntime := opts.FileDiscoveryRuntime
+			if strings.TrimSpace(showFileRuntime.Resolved.Model) == "" {
+				showFileRuntime = opts.Runtime
+			}
+			detection, _, err := detectShowFileRequest(ctx, showFileRuntime, opts.Prompt)
+			if err != nil && opts.Verbose {
+				fmt.Fprintf(os.Stderr, "[show-file] detection error: %v\n", err)
+			}
+			if detection.IsShowFileRequest {
+				requested := append([]string(nil), detection.Filepaths...)
+				if len(requested) == 0 && strings.TrimSpace(detection.Filepath) != "" {
+					requested = []string{strings.TrimSpace(detection.Filepath)}
+				}
+				cleaned, invalid := preflightShowFilePaths(requested, repoRoot)
+				if len(cleaned) == 0 {
+					if len(invalidDiscoveryPaths) > 0 {
+						if invalid == nil {
+							invalid = map[string]string{}
+						}
+						for path, reason := range invalidDiscoveryPaths {
+							if _, ok := invalid[path]; ok {
+								continue
+							}
+							invalid[path] = reason
+						}
+					}
+					assistantOverride = FormatShowFileDiscoveryAsk(invalid)
+					var buildErr error
+					combined, included, buildErr = contextbuilder.Build(opts.Prompt, nil, hist, options)
+					if buildErr != nil {
+						return res, buildErr
+					}
+					break
+				}
+				filtered = cleaned
+			} else if len(filtered) == 0 {
+				var buildErr error
+				combined, included, buildErr = contextbuilder.Build(opts.Prompt, filtered, hist, options)
+				if buildErr != nil {
+					return res, buildErr
+				}
+				break
+			}
+		}
 		if len(filtered) == 0 {
 			var buildErr error
 			combined, included, buildErr = contextbuilder.Build(opts.Prompt, filtered, hist, options)
@@ -160,15 +221,12 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 			}
 			break
 		}
+		if len(cleanedDiscoveryPaths) > 0 && len(invalidDiscoveryPaths) == 0 {
+			filtered = cleanedDiscoveryPaths
+		}
 		prelude, _, buildErr := contextbuilder.Build(opts.Prompt, nil, hist, options)
 		if buildErr != nil {
 			return res, buildErr
-		}
-		repoRoot := ""
-		if cwd, err := os.Getwd(); err == nil {
-			if root, err := git.RepoRoot(cwd); err == nil {
-				repoRoot = root
-			}
 		}
 		detection := ShowFileDetection{IsShowFileRequest: true, Filepaths: filtered, Reason: opts.Prompt}
 		snippetRuntime := opts.FileDiscoveryRuntime
@@ -374,9 +432,15 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 		}
 	}
 	chatCtx := llm.WithAPIKeyOverrides(ctx, answerRuntime.APIKeyOverrides)
-	assistant, err := chatStreamWithRuntime(chatCtx, answerRuntime.Resolved, answerRuntime.FallbackAliases, answerRuntime.FallbackResolved, copyExtrasMap(answerRuntime.Extras), messages, opts.OnToken)
-	if err != nil {
-		return res, err
+	assistant := assistantOverride
+	if assistant == "" {
+		var err error
+		assistant, err = chatStreamWithRuntime(chatCtx, answerRuntime.Resolved, answerRuntime.FallbackAliases, answerRuntime.FallbackResolved, copyExtrasMap(answerRuntime.Extras), messages, opts.OnToken)
+		if err != nil {
+			return res, err
+		}
+	} else if opts.OnToken != nil {
+		opts.OnToken(assistant)
 	}
 	if enriched, injected := maybeInjectTagSnippets(assistant, opts.ResponseDirectives, included, opts.Verbose); injected {
 		assistant = enriched
@@ -1385,6 +1449,23 @@ func formatResponseDirectives(directives []string) string {
 	}
 
 	return strings.TrimSpace(b.String())
+}
+
+func FormatShowFileDiscoveryAsk(invalid map[string]string) string {
+	if len(invalid) == 0 {
+		return "I couldn't find any valid file paths to show. Which repository-relative file(s) should I show?"
+	}
+	details := make([]string, 0, len(invalid))
+	for path, reason := range invalid {
+		trimmed := strings.TrimSpace(reason)
+		if trimmed == "" {
+			details = append(details, path)
+			continue
+		}
+		details = append(details, fmt.Sprintf("%s (%s)", path, trimmed))
+	}
+	sort.Strings(details)
+	return fmt.Sprintf("I couldn't use the requested file path(s): %s. Which repository-relative file(s) should I show?", strings.Join(details, ", "))
 }
 
 func shouldLogPatchPrompt(opts RunOptions) bool {

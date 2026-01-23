@@ -628,6 +628,10 @@ func preflightShowFilePaths(paths []string, repoRoot string) ([]string, map[stri
 	return cleaned, invalid
 }
 
+func PreflightShowFilePaths(paths []string, repoRoot string) ([]string, map[string]string) {
+	return preflightShowFilePaths(paths, repoRoot)
+}
+
 func recordInvalidPath(invalid map[string]string, rawPath, normalizedPath, reason string) {
 	if invalid == nil || reason == "" {
 		return

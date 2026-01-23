@@ -400,6 +400,12 @@ func TestFileDiscoveryRunsWhenShellAgentDisabled(t *testing.T) {
 	}
 	t.Cleanup(func() { chatStreamWithRuntime = origChat })
 
+	origDetect := detectShowFileRequest
+	detectShowFileRequest = func(ctx context.Context, runtime ModelRuntime, plannerPrompt string) (ShowFileDetection, string, error) {
+		return ShowFileDetection{IsShowFileRequest: false}, "", nil
+	}
+	t.Cleanup(func() { detectShowFileRequest = origDetect })
+
 	opts := RunOptions{
 		Prompt:       "Summarize the project state",
 		Mode:         "default",
