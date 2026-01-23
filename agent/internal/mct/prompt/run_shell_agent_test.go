@@ -46,19 +46,16 @@ func TestShellAgentModeInvokesShellAgentAndSkipsFileDiscovery(t *testing.T) {
 
 	binDir := t.TempDir()
 	logPath := filepath.Join(binDir, "shell-agent.log")
-	trajPath := filepath.Join(binDir, "trajectory-20241010-123000.json")
 	scriptPath := filepath.Join(binDir, "shell-agent")
 	script := "#!/bin/sh\n" +
 		"set -e\n" +
 		"printf '%s\\n' \"$@\" > \"$SHELL_AGENT_TEST_LOG\"\n" +
-		"printf 'shell agent stdout for %s\\n' \"$*\"\n" +
-		"printf 'Trajectory: %s\\n' \"$SHELL_AGENT_TEST_TRAJ\"\n"
+		"printf 'shell agent stdout for %s\\n' \"$*\"\n"
 	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
 		t.Fatalf("write shell-agent stub: %v", err)
 	}
 	t.Setenv("PATH", binDir+":"+os.Getenv("PATH"))
 	t.Setenv("SHELL_AGENT_TEST_LOG", logPath)
-	t.Setenv("SHELL_AGENT_TEST_TRAJ", trajPath)
 
 	opts := RunOptions{
 		Prompt:       "Collect deployment diagnostics",
@@ -80,8 +77,8 @@ func TestShellAgentModeInvokesShellAgentAndSkipsFileDiscovery(t *testing.T) {
 	if res.FileDiscoveryRan {
 		t.Fatalf("expected FileDiscoveryRan to be false")
 	}
-	if res.TrajectoryPath != trajPath {
-		t.Fatalf("unexpected trajectory path: want %q got %q", trajPath, res.TrajectoryPath)
+	if res.TrajectoryPath != "" {
+		t.Fatalf("expected empty trajectory path, got %q", res.TrajectoryPath)
 	}
 
 	data, err := os.ReadFile(logPath)
@@ -251,18 +248,15 @@ func TestShellAgentModeForwardsAPIKeyOverrides(t *testing.T) {
 
 	binDir := t.TempDir()
 	logPath := filepath.Join(binDir, "shell-agent-api.log")
-	trajPath := filepath.Join(binDir, "trajectory-20241011-123000.json")
 	scriptPath := filepath.Join(binDir, "shell-agent")
 	script := "#!/bin/sh\n" +
 		"set -e\n" +
-		"printf '%s\\n' \"$@\" > \"$SHELL_AGENT_TEST_LOG\"\n" +
-		"printf 'Trajectory: %s\\n' \"$SHELL_AGENT_TEST_TRAJ\"\n"
+		"printf '%s\\n' \"$@\" > \"$SHELL_AGENT_TEST_LOG\"\n"
 	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
 		t.Fatalf("write shell-agent stub: %v", err)
 	}
 	t.Setenv("PATH", binDir+":"+os.Getenv("PATH"))
 	t.Setenv("SHELL_AGENT_TEST_LOG", logPath)
-	t.Setenv("SHELL_AGENT_TEST_TRAJ", trajPath)
 
 	overrides := map[string]string{
 		"openrouter": "override-1",

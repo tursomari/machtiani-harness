@@ -116,7 +116,7 @@ mct-agent run "triage regression" \
 ## How It Works
 - The agent controls the loop: it plans either `Decision: ask` with one next question or `Decision: finalize`.
 - On `ask`, it runs the `mct` prompt service via Go packages, retrieving the answer text and retrieved-path metadata without invoking external binaries. The service still writes `.machtiani/sessions/<session-id>/chat/machtiani-response.md` for compatibility, and the agent records the paths plus answer payload directly from memory.
-- When `--shell-agent` is enabled, the agent first invokes the external `shell-agent` binary, tags the combined prompt with the transcript (`Here is possibly relevant information from the shell agent.`), and then asks the configured LLM for the final response. The trajectory path emitted by `shell-agent` is surfaced in the agent telemetry for post-run inspection.
+- When `--shell-agent` is enabled, the agent first invokes the external `shell-agent` binary, tags the combined prompt with the transcript (`Here is possibly relevant information from the shell agent.`), and then asks the configured LLM for the final response. The shell-agent trajectory JSON file is still saved for post-run inspection.
 - It maintains a concise evolving summary/evidence log across turns.
 - On finalize (or at `--max-steps`), the agent composes the final answer via its own LLM and prints it.
 - A transcript is saved to `.machtiani/sessions/<session-id>/chat/agent-transcript.adoc` with per-turn entries and the final conclusion.
