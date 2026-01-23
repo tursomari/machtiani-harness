@@ -11,6 +11,7 @@ import (
 
 	"github.com/tursomari/machtiani/agent/internal/git"
 	"github.com/tursomari/machtiani/agent/internal/llm"
+	worktreeutils "github.com/tursomari/machtiani/agent/internal/worktree"
 )
 
 // EnsureRepoSnapshot creates a detached git worktree at dstRoot/repo.
@@ -166,6 +167,18 @@ func EnsureRepoSnapshot(workingDir, dstRoot string) (string, func(), error) {
 	if err := saveManifest(manifestPath, m); err != nil {
 		cleanup()
 		return "", nil, fmt.Errorf("persist sync manifest: %w", err)
+	}
+
+	if err := worktreeutils.SanitizeGitdirPointerForContainer(snapshotRoot); err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("sanitize gitdir pointer: %w", err)
+	}
+	if err := worktreeutils.SanitizeWorktreeConfigForContainer(snapshotRoot); err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("sanitize worktree config: %w", err)
+	}
+	if err := worktreeutils.SanitizeSubmoduleURLsForContainer(snapshotRoot, repoRoot); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to sanitize submodule URLs for container context: %v\n", err)
 	}
 
 	return snapshotRoot, cleanup, nil
