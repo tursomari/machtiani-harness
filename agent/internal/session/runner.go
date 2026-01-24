@@ -2525,7 +2525,9 @@ func Run(ctx context.Context, opts Options) Result {
 				// Also refresh the persistent discovery workspace immediately so
 				// consecutive patch decisions see updated files without waiting for
 				// the next file-discovery invocation.
-				_ = mctsync.RefreshSyncedWorkspace(sessionID, result.FilesModified, cfg.verbose)
+				if err := mctsync.RefreshSyncedWorkspace(sessionID, result.FilesModified, cfg.verbose); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: discovery workspace refresh failed: %v\n", err)
+				}
 			}
 			plannerProgress.beginPendingReview(review)
 			autoAcceptNote := ""

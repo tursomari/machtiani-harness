@@ -22,6 +22,8 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/session"
+	"github.com/tursomari/machtiani/agent/internal/tempdir"
+	"github.com/tursomari/machtiani/agent/internal/workspace"
 )
 
 const symlinkHashPrefix = "symlink:"
@@ -559,8 +561,23 @@ func gitListTracked(dir string) ([]string, error) {
 }
 
 func RefreshSyncedWorkspace(sessionID string, changed []string, verbose bool) error {
-	_ = sessionID
-	_ = changed
-	_ = verbose
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" || len(changed) == 0 {
+		return nil
+	}
+
+	repoRoot, err := gitRepoRoot(".")
+	if err != nil {
+		return fmt.Errorf("resolve repo root: %w", err)
+	}
+	root := strings.TrimSpace(tempdir.SessionRoot())
+	if root == "" {
+		debugf(verbose, "mct: session root missing; skip workspace refresh")
+		return nil
+	}
+	if _, _, err := workspace.EnsureRepoSnapshot(repoRoot, root); err != nil {
+		return fmt.Errorf("refresh discovery snapshot: %w", err)
+	}
+	debugf(verbose, "mct: refreshed discovery snapshot from host (files=%d)", len(changed))
 	return nil
 }
