@@ -1663,38 +1663,82 @@ func Run(ctx context.Context, opts Options) Result {
 					if strings.TrimSpace(raw) != "" {
 						turnInfo["show_file_detection_raw"] = trimTo(raw, 200)
 					}
-						if detection.IsShowFileRequest {
-							requested := append([]string(nil), detection.Filepaths...)
-							if len(requested) == 0 && strings.TrimSpace(detection.Filepath) != "" {
-								requested = []string{strings.TrimSpace(detection.Filepath)}
-							}
-							mentioned := showFilePathMentioned(question, requested)
-							if !mentioned {
-								turnInfo["show_file_inferred_path"] = true
-							} else if len(requested) == 0 {
-								turnInfo["show_file_invalid_path"] = true
+					if detection.IsShowFileRequest {
+						requested := append([]string(nil), detection.Filepaths...)
+						if len(requested) == 0 && strings.TrimSpace(detection.Filepath) != "" {
+							requested = []string{strings.TrimSpace(detection.Filepath)}
+						}
+						mentioned := showFilePathMentioned(question, requested)
+						if !mentioned {
+							turnInfo["show_file_inferred_path"] = true
+						} else if len(requested) == 0 {
+							turnInfo["show_file_invalid_path"] = true
+						} else {
+							discovered := []string(nil)
+							var discoveryErr error
+							ctxDiscovery, cancelDiscovery := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
+							ctxDiscovery = attachTrajectory(ctxDiscovery, trajectoryWriter, parentSpanID)
+							result, err := promptsvc.RunFileDiscovery(
+								ctxDiscovery,
+								question,
+								mctRunner.FileDiscoveryRuntime,
+								mctRunner.Runtime,
+								mctRunner.FileDiscoveryTrajectory,
+								sessionID,
+								cfg.verbose,
+							)
+							if err != nil {
+								if cfg.verbose {
+									fmt.Fprintln(os.Stderr, "Show-file discovery error:", err)
+								}
+								turnInfo["show_file_discovery_error"] = trimTo(err.Error(), 200)
+								discoveryErr = err
 							} else {
-								cleaned, invalid := promptsvc.PreflightShowFilePaths(requested, repoRoot)
-								if len(cleaned) == 0 {
-									turnInfo["show_file_invalid_path"] = true
-									turnInfo["show_file_paths"] = append([]string(nil), requested...)
-									turnInfo["show_file_path"] = requested[0]
-									showFileBanner = promptsvc.FormatShowFileDiscoveryAsk(invalid)
-									if strings.TrimSpace(showFileBanner) != "" {
-										showFileHandled = true
-										showFileInvalidAsk = true
-										turnInfo["show_file_appended"] = true
-									}
-								} else {
-									requested = cleaned
-									turnInfo["show_file_paths"] = append([]string(nil), requested...)
-									turnInfo["show_file_path"] = requested[0]
-									if strings.TrimSpace(detection.Reason) != "" {
-										turnInfo["show_file_reason"] = trimTo(detection.Reason, 200)
-									}
-									detection.VerbatimQuestion = question
-									detection.Filepaths = append([]string(nil), requested...)
-									detection.Filepath = requested[0]
+								discovered = result
+							}
+							merged := mergeShowFilePaths(requested, discovered)
+							payload := map[string]any{
+								"explicit_paths_count":   len(requested),
+								"discovered_paths_count": len(discovered),
+								"merged_paths_count":     len(merged),
+								"timeout_per_turn_sec":   cfg.timeoutPerTurn,
+							}
+							if discoveryErr != nil {
+								payload["error"] = trimTo(discoveryErr.Error(), 200)
+							}
+							evt := trajectory.Event{Kind: "show_file_discovery", Payload: payload}
+							if parentID, ok := trajectory.ParentSpanID(ctxDiscovery); ok {
+								evt.ParentSpanID = parentID
+							}
+							if err := trajectory.EmitFromContext(ctxDiscovery, evt); err != nil && cfg.verbose {
+								fmt.Fprintf(os.Stderr, "[trajectory] show-file discovery emit error: %v\n", err)
+							}
+							cancelDiscovery()
+
+							cleaned, invalid := promptsvc.PreflightShowFilePaths(merged, repoRoot)
+							if len(cleaned) == 0 {
+								turnInfo["show_file_invalid_path"] = true
+								if len(merged) > 0 {
+									turnInfo["show_file_paths"] = append([]string(nil), merged...)
+									turnInfo["show_file_path"] = merged[0]
+								}
+								showFileBanner = promptsvc.FormatShowFileDiscoveryAsk(invalid)
+								if strings.TrimSpace(showFileBanner) != "" {
+									showFileHandled = true
+									showFileInvalidAsk = true
+									turnInfo["show_file_appended"] = true
+								}
+							} else {
+								requested = cleaned
+								turnInfo["show_file_paths"] = append([]string(nil), requested...)
+								turnInfo["show_file_path"] = requested[0]
+								if strings.TrimSpace(detection.Reason) != "" {
+									turnInfo["show_file_reason"] = trimTo(detection.Reason, 200)
+								}
+								detection.VerbatimQuestion = question
+								detection.Filepaths = append([]string(nil), requested...)
+								detection.Filepath = requested[0]
+								detection.Preflighted = true
 								ctxSnippet, cancelSnippet := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
 								ctxSnippet = attachTrajectory(ctxSnippet, trajectoryWriter, parentSpanID)
 								snippetRuntime := mctRunner.FileDiscoveryRuntime

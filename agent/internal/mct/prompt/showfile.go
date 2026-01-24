@@ -30,6 +30,7 @@ type ShowFileDetection struct {
 	Filepaths         []string `json:"filepaths"`
 	Reason            string   `json:"reason,omitempty"`
 	VerbatimQuestion  string   `json:"-"`
+	Preflighted       bool     `json:"-"`
 }
 
 func (s ShowFileDetection) normalize() ShowFileDetection {
@@ -239,7 +240,11 @@ func FetchFileSnippets(ctx context.Context, detection ShowFileDetection, repoRoo
 	if len(rawPaths) == 0 && strings.TrimSpace(detection.Filepath) != "" {
 		rawPaths = []string{detection.Filepath}
 	}
-	filepaths, invalidPaths := preflightShowFilePaths(rawPaths, repoRoot)
+	filepaths := rawPaths
+	invalidPaths := map[string]string(nil)
+	if !detection.Preflighted {
+		filepaths, invalidPaths = preflightShowFilePaths(rawPaths, repoRoot)
+	}
 	if len(filepaths) == 0 {
 		if len(invalidPaths) > 0 {
 			return nil, &SnippetDiscoveryPartialError{Invalid: invalidPaths}

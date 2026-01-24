@@ -2,6 +2,7 @@ package session
 
 import (
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -62,4 +63,31 @@ func countSnippetRanges(snippets map[string][]promptsvc.LineRange) int {
 		count += len(ranges)
 	}
 	return count
+}
+
+func mergeShowFilePaths(explicit, discovered []string) []string {
+	merged := make([]string, 0, len(explicit)+len(discovered))
+	seen := map[string]struct{}{}
+	add := func(path string) {
+		trimmed := strings.TrimSpace(path)
+		if trimmed == "" {
+			return
+		}
+		normalized := filepath.ToSlash(filepath.Clean(trimmed))
+		if normalized == "" {
+			return
+		}
+		if _, ok := seen[normalized]; ok {
+			return
+		}
+		seen[normalized] = struct{}{}
+		merged = append(merged, normalized)
+	}
+	for _, path := range explicit {
+		add(path)
+	}
+	for _, path := range discovered {
+		add(path)
+	}
+	return merged
 }
