@@ -123,6 +123,10 @@ func EnsureRepoSnapshot(workingDir, dstRoot string) (string, func(), error) {
 	// We removed limitSnapshotRefsBestEffort because it is unsafe for git worktrees.
 	// Worktrees share the same reference database as the main repo, so "hiding" refs
 	// in the snapshot by deleting them actually deletes them in the host repo.
+	if err := hydrateRootGitMetadata(repoRoot, snapshotRoot, hydrationCfg, verbose); err != nil {
+		cleanup()
+		return "", nil, err
+	}
 
 	if err := hydrateSubmodules(repoRoot, snapshotRoot, hydrationCfg, ignoreCfg, verbose); err != nil {
 		cleanup()
@@ -168,7 +172,6 @@ func EnsureRepoSnapshot(workingDir, dstRoot string) (string, func(), error) {
 		cleanup()
 		return "", nil, fmt.Errorf("persist sync manifest: %w", err)
 	}
-
 	if err := worktreeutils.SanitizeGitdirPointerForContainer(snapshotRoot); err != nil {
 		cleanup()
 		return "", nil, fmt.Errorf("sanitize gitdir pointer: %w", err)
@@ -298,6 +301,53 @@ func applyDiff(repoRoot, snapshotRoot string, staged bool) error {
 	cmd.Stderr = &errb
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("git apply failed: %w: %s", err, strings.TrimSpace(errb.String()))
+	}
+	return nil
+}
+
+func hydrateRootGitMetadata(repoRoot, snapshotRoot string, cfg *llm.WorkspaceConfig, verbose bool) error {
+	if !shouldHydrateGitForPath(".", cfg) {
+		return nil
+	}
+	snapshotGitDir, err := resolveGitDir(snapshotRoot)
+	if err != nil {
+		return err
+	}
+	if snapshotGitDir == "" {
+		return nil
+	}
+	if pathWithinRoot(snapshotRoot, snapshotGitDir) {
+		return nil
+	}
+	commonGitDir, err := git.CommonDir(repoRoot)
+	if err != nil {
+		return err
+	}
+	hydratedDir := filepath.Join(snapshotRoot, ".git.hydrated")
+	if verbose {
+		fmt.Fprintf(os.Stderr, "[workspace] root-git hydrate=%s\n", hydratedDir)
+	}
+	if err := os.RemoveAll(hydratedDir); err != nil {
+		return err
+	}
+	if err := copyDir(snapshotGitDir, hydratedDir); err != nil {
+		return fmt.Errorf("copy snapshot gitdir %s: %w", snapshotGitDir, err)
+	}
+	commonDst := filepath.Join(hydratedDir, "common")
+	if err := os.RemoveAll(commonDst); err != nil {
+		return err
+	}
+	if err := copyDir(commonGitDir, commonDst); err != nil {
+		return fmt.Errorf("copy common gitdir %s: %w", commonGitDir, err)
+	}
+	if err := rewriteFileWithMode(filepath.Join(hydratedDir, "commondir"), "common"); err != nil {
+		return fmt.Errorf("rewrite commondir: %w", err)
+	}
+	if err := rewriteFileIfExists(filepath.Join(hydratedDir, "gitdir"), filepath.Join(snapshotRoot, ".git")); err != nil {
+		return fmt.Errorf("rewrite gitdir: %w", err)
+	}
+	if err := rewriteFileWithMode(filepath.Join(snapshotRoot, ".git"), "gitdir: .git.hydrated"); err != nil {
+		return fmt.Errorf("rewrite gitfile: %w", err)
 	}
 	return nil
 }
@@ -657,6 +707,43 @@ func resolveGitDir(repoRoot string) (string, error) {
 		return filepath.Clean(gitDir), nil
 	}
 	return filepath.Clean(filepath.Join(repoRoot, gitDir)), nil
+}
+
+func rewriteFileWithMode(path, content string) error {
+	mode := os.FileMode(0o644)
+	if info, err := os.Stat(path); err == nil {
+		mode = info.Mode().Perm()
+	}
+	trimmed := strings.TrimRight(content, "\n") + "\n"
+	if err := os.WriteFile(path, []byte(trimmed), mode); err != nil {
+		return err
+	}
+	return nil
+}
+
+func rewriteFileIfExists(path, content string) error {
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	return rewriteFileWithMode(path, content)
+}
+
+func pathWithinRoot(root, target string) bool {
+	rel, err := filepath.Rel(root, target)
+	if err != nil {
+		return false
+	}
+	rel = filepath.Clean(rel)
+	if rel == "." {
+		return true
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return false
+	}
+	return true
 }
 
 func copyDir(src, dst string) error {

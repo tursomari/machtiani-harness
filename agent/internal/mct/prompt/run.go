@@ -755,6 +755,9 @@ func invokeShellAgent(ctx context.Context, prompt string, opts RunOptions) (stri
 
 func formatShellAgentContext(stdoutText, stderrText string, cfg *llm.MCTPromptsConfig) (string, error) {
 	stdout := strings.TrimSpace(stdoutText)
+	if block, ok := extractShellAgentResultBlock(stdoutText); ok {
+		stdout = block
+	}
 	stderr := strings.TrimSpace(stderrText)
 	prefix := shellAgentContextPrefix
 	if cfg != nil {
