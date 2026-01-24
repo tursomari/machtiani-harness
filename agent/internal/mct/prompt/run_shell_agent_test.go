@@ -34,13 +34,9 @@ func TestShellAgentModeInvokesShellAgentAndSkipsFileDiscovery(t *testing.T) {
 	t.Cleanup(func() { discoveryRunnerRun = origDiscovery })
 
 	origChat := chatStreamWithRuntime
-	var capturedPrompt string
 	chatStreamWithRuntime = func(ctx context.Context, resolved llm.ResolvedModel, aliases []string, fallbacks []llm.ResolvedModel, extras map[string]any, msgs []llm.Message, onToken func(string)) (string, error) {
-		if len(msgs) != 1 {
-			t.Fatalf("expected single message, got %d", len(msgs))
-		}
-		capturedPrompt = msgs[0].Content
-		return "assistant", nil
+		t.Fatalf("chat stream should be bypassed when shell agent returns output")
+		return "", nil
 	}
 	t.Cleanup(func() { chatStreamWithRuntime = origChat })
 
@@ -50,7 +46,9 @@ func TestShellAgentModeInvokesShellAgentAndSkipsFileDiscovery(t *testing.T) {
 	script := "#!/bin/sh\n" +
 		"set -e\n" +
 		"printf '%s\\n' \"$@\" > \"$SHELL_AGENT_TEST_LOG\"\n" +
-		"printf 'shell agent stdout for %s\\n' \"$*\"\n"
+		"printf '%s\\n' \"BEGIN_SHELL_AGENT_RESULT\"\n" +
+		"printf '%s\\n' \"shell agent output\"\n" +
+		"printf '%s\\n' \"END_SHELL_AGENT_RESULT\"\n"
 	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
 		t.Fatalf("write shell-agent stub: %v", err)
 	}
@@ -92,11 +90,8 @@ func TestShellAgentModeInvokesShellAgentAndSkipsFileDiscovery(t *testing.T) {
 	if !strings.HasSuffix(logLine, "Collect deployment diagnostics") {
 		t.Fatalf("shell-agent invocation missing prompt: %q", logLine)
 	}
-	if capturedPrompt == "" {
-		t.Fatalf("expected prompt to reach llm runner")
-	}
-	if !strings.Contains(capturedPrompt, shellAgentContextPrefix) {
-		t.Fatalf("expected shell-agent context in prompt: %q", capturedPrompt)
+	if res.Assistant != "shell agent output" {
+		t.Fatalf("expected shell agent output, got %q", res.Assistant)
 	}
 }
 

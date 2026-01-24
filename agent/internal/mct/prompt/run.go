@@ -379,6 +379,7 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 
 	shellTrajectory := ""
 	shellAgentUsed := false
+	shellAgentOutput := ""
 	if opts.ShellAgent {
 		if strings.TrimSpace(opts.ShellAgentModel) == "" {
 			candidate := strings.TrimSpace(opts.Runtime.Alias)
@@ -389,13 +390,17 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 				opts.ShellAgentModel = candidate
 			}
 		}
-		contextBlock, trajectoryPath, err := invokeShellAgent(ctx, combined, opts)
+		contextBlock, verbatimBlock, trajectoryPath, err := invokeShellAgent(ctx, combined, opts)
 		if err != nil {
 			return res, err
 		}
 		shellTrajectory = trajectoryPath
 		shellAgentUsed = true
-		if strings.TrimSpace(contextBlock) != "" {
+		shellAgentOutput = verbatimBlock
+		if strings.TrimSpace(shellAgentOutput) == "" {
+			shellAgentOutput = ""
+		}
+		if shellAgentOutput == "" && strings.TrimSpace(contextBlock) != "" {
 			if strings.TrimSpace(combined) != "" {
 				combined = combined + "\n\n" + contextBlock
 			} else {
@@ -433,17 +438,24 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 	}
 	chatCtx := llm.WithAPIKeyOverrides(ctx, answerRuntime.APIKeyOverrides)
 	assistant := assistantOverride
+	assistantFromShell := false
+	if shellAgentOutput != "" {
+		assistant = shellAgentOutput
+		assistantFromShell = true
+	}
 	if assistant == "" {
 		var err error
 		assistant, err = chatStreamWithRuntime(chatCtx, answerRuntime.Resolved, answerRuntime.FallbackAliases, answerRuntime.FallbackResolved, copyExtrasMap(answerRuntime.Extras), messages, opts.OnToken)
 		if err != nil {
 			return res, err
 		}
-	} else if opts.OnToken != nil {
+	} else if opts.OnToken != nil && !assistantFromShell {
 		opts.OnToken(assistant)
 	}
-	if enriched, injected := maybeInjectTagSnippets(assistant, opts.ResponseDirectives, included, opts.Verbose); injected {
-		assistant = enriched
+	if !assistantFromShell {
+		if enriched, injected := maybeInjectTagSnippets(assistant, opts.ResponseDirectives, included, opts.Verbose); injected {
+			assistant = enriched
+		}
 	}
 	res.Assistant = assistant
 	res.FullText = header + assistant
@@ -642,7 +654,7 @@ func isPatcherPromptMode(mode string) bool {
 	}
 }
 
-func invokeShellAgent(ctx context.Context, prompt string, opts RunOptions) (string, string, error) {
+func invokeShellAgent(ctx context.Context, prompt string, opts RunOptions) (string, string, string, error) {
 	args := make([]string, 0, 3)
 	if opts.Verbose {
 		args = append(args, "-verbose")
@@ -691,15 +703,15 @@ func invokeShellAgent(ctx context.Context, prompt string, opts RunOptions) (stri
 
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
-		return "", "", fmt.Errorf("shell-agent stdout pipe: %w", err)
+		return "", "", "", fmt.Errorf("shell-agent stdout pipe: %w", err)
 	}
 	stderrPipe, err := cmd.StderrPipe()
 	if err != nil {
-		return "", "", fmt.Errorf("shell-agent stderr pipe: %w", err)
+		return "", "", "", fmt.Errorf("shell-agent stderr pipe: %w", err)
 	}
 
 	if err := cmd.Start(); err != nil {
-		return "", "", fmt.Errorf("shell-agent start: %w", err)
+		return "", "", "", fmt.Errorf("shell-agent start: %w", err)
 	}
 
 	var stdoutBuf bytes.Buffer
@@ -721,13 +733,13 @@ func invokeShellAgent(ctx context.Context, prompt string, opts RunOptions) (stri
 		_ = cmd.Process.Kill()
 		<-stderrDone
 		_ = cmd.Wait()
-		return "", "", fmt.Errorf("shell-agent read stdout: %w", err)
+		return "", "", "", fmt.Errorf("shell-agent read stdout: %w", err)
 	}
 
 	err = cmd.Wait()
 	<-stderrDone
 	if stderrErr != nil && !isClosedPipeError(stderrErr) {
-		return "", "", fmt.Errorf("shell-agent read stderr: %w", stderrErr)
+		return "", "", "", fmt.Errorf("shell-agent read stderr: %w", stderrErr)
 	}
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
@@ -736,29 +748,36 @@ func invokeShellAgent(ctx context.Context, prompt string, opts RunOptions) (stri
 				stderrMsg = strings.TrimSpace(stdoutBuf.String())
 			}
 			if stderrMsg != "" {
-				return "", "", fmt.Errorf("shell-agent exited with code %d: %s", exitErr.ExitCode(), stderrMsg)
+				return "", "", "", fmt.Errorf("shell-agent exited with code %d: %s", exitErr.ExitCode(), stderrMsg)
 			}
-			return "", "", fmt.Errorf("shell-agent exited with code %d", exitErr.ExitCode())
+			return "", "", "", fmt.Errorf("shell-agent exited with code %d", exitErr.ExitCode())
 		}
-		return "", "", fmt.Errorf("shell-agent wait: %w", err)
+		return "", "", "", fmt.Errorf("shell-agent wait: %w", err)
 	}
 
 	stdoutText := strings.TrimSpace(stdoutBuf.String())
 	stderrText := strings.TrimSpace(stderrBuf.String())
-	contextBlock, formatErr := formatShellAgentContext(stdoutText, stderrText, opts.Prompts)
+	contextBlock, formatErr := formatShellAgentContext(stdoutText, stderrText, opts.Prompts, false)
 	if formatErr != nil {
-		return "", "", formatErr
+		return "", "", "", formatErr
 	}
+	verbatimOutput, _ := formatShellAgentContext(stdoutText, stderrText, opts.Prompts, true)
 	trajectory := extractTrajectoryPath(stdoutText, stderrText)
-	return contextBlock, trajectory, nil
+	return contextBlock, verbatimOutput, trajectory, nil
 }
 
-func formatShellAgentContext(stdoutText, stderrText string, cfg *llm.MCTPromptsConfig) (string, error) {
+func formatShellAgentContext(stdoutText, stderrText string, cfg *llm.MCTPromptsConfig, verbatim bool) (string, error) {
 	stdout := strings.TrimSpace(stdoutText)
 	if block, ok := extractShellAgentResultBlock(stdoutText); ok {
 		stdout = block
 	}
 	stderr := strings.TrimSpace(stderrText)
+	if verbatim {
+		if stdout != "" {
+			return stdout, nil
+		}
+		return stderr, nil
+	}
 	prefix := shellAgentContextPrefix
 	if cfg != nil {
 		if configured := strings.TrimSpace(cfg.ShellAgentContextPrefix); configured != "" {
