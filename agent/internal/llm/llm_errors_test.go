@@ -28,7 +28,7 @@ func TestExecuteStreamUnreachableHostError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
-	_, err = performStream(req, nil)
+	_, _, err = performStream(req, nil)
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}
@@ -67,7 +67,7 @@ func TestExecuteStreamHTTPResponseError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
-	_, err = performStream(req, nil)
+	_, _, err = performStream(req, nil)
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}
@@ -101,7 +101,7 @@ func TestExecuteOnceUnreachableHostError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
-	_, err = performNonStream(req)
+	_, _, err = performNonStream(req)
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}
@@ -140,7 +140,7 @@ func TestExecuteOnceHTTPResponseError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
-	_, err = performNonStream(req)
+	_, _, err = performNonStream(req)
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}

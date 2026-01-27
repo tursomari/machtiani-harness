@@ -768,6 +768,8 @@ func Run(ctx context.Context, opts Options) Result {
 	display := ui.NewTerminalDisplay(os.Stdout, timerMgr, sessionID, strings.TrimSpace(cfg.parentSessionID))
 	var failoverCancel context.CancelFunc
 	var failoverDone <-chan struct{}
+	var cacheUsageCancel context.CancelFunc
+	var cacheUsageDone <-chan struct{}
 	var shellActionCancel context.CancelFunc
 	var shellActionDone <-chan struct{}
 	if trajectoryWriter != nil {
@@ -777,6 +779,13 @@ func Run(ctx context.Context, opts Options) Result {
 		} else {
 			failoverCancel = cancel
 			failoverDone = done
+		}
+		cancel, done, err = startLLMCacheUsageLogger(display, trajectoryWriter.Config().Path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[trajectory] cache usage listener setup error: %v\n", err)
+		} else {
+			cacheUsageCancel = cancel
+			cacheUsageDone = done
 		}
 		// Start shell-agent action streamer to surface shell actions in real-time
 		cancel, done, err = startShellActionStreamer(display, trajectoryWriter.Config().Path)
@@ -793,6 +802,12 @@ func Run(ctx context.Context, opts Options) Result {
 		}
 		if failoverDone != nil {
 			<-failoverDone
+		}
+		if cacheUsageCancel != nil {
+			cacheUsageCancel()
+		}
+		if cacheUsageDone != nil {
+			<-cacheUsageDone
 		}
 		if shellActionCancel != nil {
 			shellActionCancel()
@@ -1530,8 +1545,8 @@ func Run(ctx context.Context, opts Options) Result {
 				fmt.Fprintln(os.Stderr, "Planner warning:", perr)
 				fmt.Fprintln(os.Stderr, "Falling back to finalizing with current transcript.")
 				ctxF, cancelF := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
-					ctxF = attachTrajectory(ctxF, trajectoryWriter, parentSpanID)
-					answer, ferr := pl.Finalize(ctxF, conv, goal)
+				ctxF = attachTrajectory(ctxF, trajectoryWriter, parentSpanID)
+				answer, ferr := pl.Finalize(ctxF, conv, goal)
 				var ctxFErr error
 				if ctxF != nil {
 					ctxFErr = ctxF.Err()
@@ -1658,8 +1673,8 @@ func Run(ctx context.Context, opts Options) Result {
 
 		if decision == planner.DecisionFinalize {
 			ctx, cancelF := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
-				ctx = attachTrajectory(ctx, trajectoryWriter, parentSpanID)
-				answer, ferr := pl.Finalize(ctx, conv, goal)
+			ctx = attachTrajectory(ctx, trajectoryWriter, parentSpanID)
+			answer, ferr := pl.Finalize(ctx, conv, goal)
 			var finalizeCtxErr error
 			if ctx != nil {
 				finalizeCtxErr = ctx.Err()

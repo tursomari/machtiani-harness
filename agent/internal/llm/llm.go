@@ -153,6 +153,103 @@ func modelSummary(model ResolvedModel) map[string]any {
 	}
 }
 
+func applyCacheControl(ctx context.Context, messages []Message, model ResolvedModel) []any {
+	if messages == nil {
+		return nil
+	}
+	cacheKey := strings.TrimSpace(model.CacheKeyName)
+	if cacheKey == "" || model.CacheTriggerThreshold <= 0 || len(model.CacheControl) == 0 {
+		return messagesToAny(messages)
+	}
+
+	if len(messages) == 0 {
+		return messagesToAny(messages)
+	}
+
+	totalTokens := 0
+	for _, msg := range messages {
+		totalTokens += estimateTokensFromMetadata(msg)
+	}
+	if totalTokens < model.CacheTriggerThreshold {
+		return messagesToAny(messages)
+	}
+
+	lookback := model.CacheLookbackOffset
+	if lookback <= 0 {
+		lookback = 1
+	}
+	anchorIndex := len(messages) - lookback
+	if anchorIndex < 0 {
+		anchorIndex = 0
+	} else if anchorIndex >= len(messages) {
+		anchorIndex = len(messages) - 1
+	}
+	for anchorIndex > 0 && strings.EqualFold(strings.TrimSpace(messages[anchorIndex].Role), "assistant") {
+		anchorIndex--
+	}
+
+	result := make([]any, len(messages))
+	for i, msg := range messages {
+		if i != anchorIndex {
+			result[i] = map[string]any{
+				"role":    msg.Role,
+				"content": msg.Content,
+			}
+			continue
+		}
+		result[i] = map[string]any{
+			"role": msg.Role,
+			"content": []any{
+				map[string]any{
+					"type":   "text",
+					"text":   msg.Content,
+					cacheKey: model.CacheControl,
+				},
+			},
+		}
+	}
+
+	emitLLMEvent(ctx, "info", "llm.cache.injected", map[string]any{
+		"anchor_index":   anchorIndex,
+		"total_messages": len(messages),
+		"total_tokens":   totalTokens,
+		"threshold":      model.CacheTriggerThreshold,
+		"lookback":       model.CacheLookbackOffset,
+	}, nil)
+
+	return result
+}
+
+func messagesToAny(messages []Message) []any {
+	if messages == nil {
+		return nil
+	}
+	result := make([]any, len(messages))
+	for i, msg := range messages {
+		result[i] = map[string]any{
+			"role":    msg.Role,
+			"content": msg.Content,
+		}
+	}
+	return result
+}
+
+func estimateTokensFromMetadata(msg Message) int {
+	if msg.Metadata != nil {
+		if raw, ok := msg.Metadata["estimated_tokens"]; ok {
+			switch val := raw.(type) {
+			case int:
+				return val
+			case int64:
+				return int(val)
+			case float64:
+				return int(val)
+			}
+		}
+	}
+	return EstimateMessageTokens(msg)
+}
+
 func classifyLLMError(err error) (string, string) {
 	if err == nil {
 		return "", ""
@@ -469,6 +566,42 @@ func (e *partialResponseError) Unwrap() error {
 	return e.Err
 }
 
+type responseUsage struct {
+	PromptTokens        int                  `json:"prompt_tokens"`
+	CompletionTokens    int                  `json:"completion_tokens"`
+	TotalTokens         int                  `json:"total_tokens"`
+	CacheDiscount       *float64             `json:"cache_discount"`
+	PromptTokensDetails *promptTokensDetails `json:"prompt_tokens_details"`
+}
+
+type promptTokensDetails struct {
+	CachedTokens     int `json:"cached_tokens"`
+	CacheWriteTokens int `json:"cache_write_tokens"`
+}
+
+func emitCacheUsage(ctx context.Context, model ResolvedModel, usage *responseUsage) {
+	if usage == nil {
+		return
+	}
+	if usage.PromptTokensDetails == nil && usage.CacheDiscount == nil {
+		return
+	}
+	payload := map[string]any{
+		"model":             modelSummary(model),
+		"prompt_tokens":     usage.PromptTokens,
+		"completion_tokens": usage.CompletionTokens,
+		"total_tokens":      usage.TotalTokens,
+	}
+	if usage.PromptTokensDetails != nil {
+		payload["cached_tokens"] = usage.PromptTokensDetails.CachedTokens
+		payload["cache_write_tokens"] = usage.PromptTokensDetails.CacheWriteTokens
+	}
+	if usage.CacheDiscount != nil {
+		payload["cache_discount"] = *usage.CacheDiscount
+	}
+	emitLLMEvent(ctx, "info", "llm.cache.usage", payload, nil)
+}
+
 func emitStreamFallbackEvent(ctx context.Context, model ResolvedModel, err error, partial bool, prefixLen int) {
 	payload := map[string]any{
 		"model":              modelSummary(model),
@@ -620,7 +753,7 @@ func chatWithResolvedFallback(ctx context.Context, primary ResolvedModel, fallba
 
 	basePayload := mergeMaps(primary.Params, extraParams)
 	basePayload["model"] = primary.Model
-	basePayload["messages"] = messages
+	basePayload["messages"] = applyCacheControl(ctx, messages, primary)
 	stage := stageFromContext(ctx)
 	if stage == "" {
 		stage = strings.TrimSpace(os.Getenv(llmStageEnv))
@@ -709,7 +842,7 @@ func chatWithResolvedFallback(ctx context.Context, primary ResolvedModel, fallba
 		}
 		payload := mergeMaps(fallbackModel.Params, extraParams)
 		payload["model"] = fallbackModel.Model
-		payload["messages"] = messages
+		payload["messages"] = applyCacheControl(ctx, messages, fallbackModel)
 
 		body, err := encodePayload(payload, false)
 		if err != nil {
@@ -852,7 +985,7 @@ func tryStreamThenFallback(ctx context.Context, model ResolvedModel, streamBody,
 	if streamAttempt == nil {
 		attemptCtx = ctx
 	}
-	result, err := executeStream(attemptCtx, model, streamBody, wrapped)
+	result, usage, err := executeStream(attemptCtx, model, streamBody, wrapped)
 	if streamAttempt != nil {
 		extra := map[string]any{
 			"partial_output":     emitted,
@@ -861,6 +994,7 @@ func tryStreamThenFallback(ctx context.Context, model ResolvedModel, streamBody,
 		streamAttempt.finish(err, extra)
 	}
 	if err == nil {
+		emitCacheUsage(attemptCtx, model, usage)
 		return result, nil
 	}
 	emitStreamFallbackEvent(attemptCtx, model, err, emitted, streamedPrefix.Len())
@@ -888,10 +1022,10 @@ func tryStreamThenFallback(ctx context.Context, model ResolvedModel, streamBody,
 	return fallbackResult, nil
 }
 
-func executeStream(ctx context.Context, model ResolvedModel, body []byte, onToken func(string)) (string, error) {
+func executeStream(ctx context.Context, model ResolvedModel, body []byte, onToken func(string)) (string, *responseUsage, error) {
 	req, err := buildRequest(ctx, model, body)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	return performStream(req, onToken)
 }
@@ -917,11 +1051,12 @@ func executeOnceWithRetries(ctx context.Context, model ResolvedModel, body []byt
 			}
 			return "", err
 		}
-		result, err := performNonStream(req)
+		result, usage, err := performNonStream(req)
 		if attemptAttempt != nil {
 			attemptAttempt.finish(err, nil)
 		}
 		if err == nil {
+			emitCacheUsage(attemptCtx, model, usage)
 			return result, nil
 		}
 		lastErr = err
@@ -947,19 +1082,20 @@ func executeOnceWithRetries(ctx context.Context, model ResolvedModel, body []byt
 	return "", errors.New("non-stream retries exhausted")
 }
 
-func performStream(req *http.Request, onToken func(string)) (string, error) {
+func performStream(req *http.Request, onToken func(string)) (string, *responseUsage, error) {
 	resp, err := streamingHTTPClient.Do(req)
 	if err != nil {
-		return "", &UnreachableHostError{URL: req.URL.String(), Err: err}
+		return "", nil, &UnreachableHostError{URL: req.URL.String(), Err: err}
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
-		return "", &HTTPResponseError{URL: req.URL.String(), Status: resp.StatusCode, Body: strings.TrimSpace(string(b)), Header: resp.Header.Clone()}
+		return "", nil, &HTTPResponseError{URL: req.URL.String(), Status: resp.StatusCode, Body: strings.TrimSpace(string(b)), Header: resp.Header.Clone()}
 	}
 
 	var full strings.Builder
+	var usage *responseUsage
 	reader := bufio.NewReader(resp.Body)
 	for {
 		line, err := reader.ReadString('\n')
@@ -975,8 +1111,12 @@ func performStream(req *http.Request, onToken func(string)) (string, error) {
 							Content string `json:"content"`
 						} `json:"delta"`
 					} `json:"choices"`
+					Usage *responseUsage `json:"usage"`
 				}
 				if err := json.Unmarshal([]byte(payload), &obj); err == nil {
+					if obj.Usage != nil {
+						usage = obj.Usage
+					}
 					if len(obj.Choices) > 0 {
 						tok := obj.Choices[0].Delta.Content
 						if tok != "" {
@@ -993,22 +1133,22 @@ func performStream(req *http.Request, onToken func(string)) (string, error) {
 			break
 		}
 		if err != nil {
-			return full.String(), err
+			return full.String(), usage, err
 		}
 	}
-	return full.String(), nil
+	return full.String(), usage, nil
 }
 
-func performNonStream(req *http.Request) (string, error) {
+func performNonStream(req *http.Request) (string, *responseUsage, error) {
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", &UnreachableHostError{URL: req.URL.String(), Err: err}
+		return "", nil, &UnreachableHostError{URL: req.URL.String(), Err: err}
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return "", &HTTPResponseError{URL: req.URL.String(), Status: resp.StatusCode, Body: strings.TrimSpace(string(body)), Header: resp.Header.Clone()}
+		return "", nil, &HTTPResponseError{URL: req.URL.String(), Status: resp.StatusCode, Body: strings.TrimSpace(string(body)), Header: resp.Header.Clone()}
 	}
 
 	var parsed struct {
@@ -1017,14 +1157,15 @@ func performNonStream(req *http.Request) (string, error) {
 				Content string `json:"content"`
 			} `json:"message"`
 		} `json:"choices"`
+		Usage *responseUsage `json:"usage"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
-		return "", err
+		return "", nil, err
 	}
 	if len(parsed.Choices) == 0 {
-		return "", ErrNoChoices
+		return "", nil, ErrNoChoices
 	}
-	return parsed.Choices[0].Message.Content, nil
+	return parsed.Choices[0].Message.Content, parsed.Usage, nil
 }
 
 func emitWithPrefix(ctx context.Context, onToken func(string), prefix, full string, model ResolvedModel) {

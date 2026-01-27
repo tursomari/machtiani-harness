@@ -238,6 +238,56 @@ provider = "fake"
 	}
 }
 
+func TestLoadGlobalConfigParsesModelCacheConfig(t *testing.T) {
+	content := `listen = "127.0.0.1:0"
+
+[providers.fake]
+base_url = "https://example.com/v1"
+api_key = "provider-key"
+
+[models.cached]
+provider = "fake"
+model = "cached-model"
+cache_key_name = "cache_control"
+cache_control = { type = "ephemeral" }
+cache_trigger_threshold = 100
+cache_lookback_offset = 3
+temperature = 0.2
+`
+
+	path := filepath.Join(t.TempDir(), "config.toml")
+	mustWriteFile(t, path, content)
+	t.Setenv("MACHTIANI_CONFIG", path)
+	ResetConfigForTesting()
+
+	cfg, _, err := LoadGlobalConfig()
+	if err != nil {
+		t.Fatalf("LoadGlobalConfig: %v", err)
+	}
+	model, ok := cfg.Models["cached"]
+	if !ok {
+		t.Fatalf("expected cached model definition")
+	}
+	if model.CacheKeyName != "cache_control" {
+		t.Fatalf("expected cache_key_name cache_control, got %q", model.CacheKeyName)
+	}
+	if model.CacheTriggerThreshold != 100 {
+		t.Fatalf("expected cache_trigger_threshold 100, got %d", model.CacheTriggerThreshold)
+	}
+	if model.CacheLookbackOffset != 3 {
+		t.Fatalf("expected cache_lookback_offset 3, got %d", model.CacheLookbackOffset)
+	}
+	if model.CacheControl["type"] != "ephemeral" {
+		t.Fatalf("expected cache_control type ephemeral, got %v", model.CacheControl)
+	}
+	if model.Params["temperature"] != 0.2 {
+		t.Fatalf("expected temperature param, got %v", model.Params["temperature"])
+	}
+	if _, ok := model.Params["cache_key_name"]; ok {
+		t.Fatalf("cache_key_name should not be in params")
+	}
+}
+
 func TestLoadMetaInstructionsPrefersTomlInOverrideDir(t *testing.T) {
 	override := filepath.Join(t.TempDir(), "override")
 	mustWriteFile(t, filepath.Join(override, "coding", "tasks.toml"), sampleCodingToml())

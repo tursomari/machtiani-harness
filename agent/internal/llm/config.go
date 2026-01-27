@@ -243,6 +243,11 @@ type ModelDefinition struct {
 	Provider string         `toml:"provider"`
 	Model    string         `toml:"model"`
 	Params   map[string]any `toml:"params"`
+
+	CacheKeyName          string         `toml:"cache_key_name"`
+	CacheControl          map[string]any `toml:"cache_control"`
+	CacheTriggerThreshold int            `toml:"cache_trigger_threshold"`
+	CacheLookbackOffset   int            `toml:"cache_lookback_offset"`
 }
 
 type ResolvedModel struct {
@@ -255,6 +260,11 @@ type ResolvedModel struct {
 	Endpoint     string
 	Model        string
 	Params       map[string]any
+
+	CacheKeyName          string
+	CacheControl          map[string]any
+	CacheTriggerThreshold int
+	CacheLookbackOffset   int
 }
 
 type configData struct {
@@ -319,14 +329,18 @@ func ResolveModelWithOverrides(alias string, overrides map[string]string) (Resol
 	}
 
 	resolved := ResolvedModel{
-		Alias:        effectiveAlias,
-		ProviderName: providerName,
-		BaseURL:      baseURL,
-		Headers:      copyStringMap(provider.Headers),
-		Query:        copyStringMap(provider.Query),
-		Endpoint:     strings.TrimSpace(provider.Endpoint),
-		Model:        strings.TrimSpace(modelDef.Model),
-		Params:       deepCopyMap(modelDef.Params),
+		Alias:                 effectiveAlias,
+		ProviderName:          providerName,
+		BaseURL:               baseURL,
+		Headers:               copyStringMap(provider.Headers),
+		Query:                 copyStringMap(provider.Query),
+		Endpoint:              strings.TrimSpace(provider.Endpoint),
+		Model:                 strings.TrimSpace(modelDef.Model),
+		Params:                deepCopyMap(modelDef.Params),
+		CacheKeyName:          strings.TrimSpace(modelDef.CacheKeyName),
+		CacheControl:          deepCopyMap(modelDef.CacheControl),
+		CacheTriggerThreshold: modelDef.CacheTriggerThreshold,
+		CacheLookbackOffset:   modelDef.CacheLookbackOffset,
 	}
 
 	configKey := strings.TrimSpace(provider.APIKey)
@@ -665,6 +679,30 @@ func parseConfig(path string) (Config, error) {
 						return Config{}, fmt.Errorf("parse %s [models.%s]: model must be string", path, name)
 					}
 					model.Model = str
+				case "cache_key_name":
+					str, ok := v.(string)
+					if !ok {
+						return Config{}, fmt.Errorf("parse %s [models.%s]: cache_key_name must be string", path, name)
+					}
+					model.CacheKeyName = str
+				case "cache_control":
+					m, ok := toMap(v)
+					if !ok {
+						return Config{}, fmt.Errorf("parse %s [models.%s.cache_control]: expected table", path, name)
+					}
+					model.CacheControl = deepCopyMap(m)
+				case "cache_trigger_threshold":
+					val, ok := toInt(v)
+					if !ok {
+						return Config{}, fmt.Errorf("parse %s [models.%s]: cache_trigger_threshold must be number", path, name)
+					}
+					model.CacheTriggerThreshold = val
+				case "cache_lookback_offset":
+					val, ok := toInt(v)
+					if !ok {
+						return Config{}, fmt.Errorf("parse %s [models.%s]: cache_lookback_offset must be number", path, name)
+					}
+					model.CacheLookbackOffset = val
 				case "params":
 					m, ok := toMap(v)
 					if !ok {
@@ -1556,8 +1594,12 @@ func cloneConfig(in Config) Config {
 	}
 	for name, model := range in.Models {
 		copyModel := ModelDefinition{
-			Provider: model.Provider,
-			Model:    model.Model,
+			Provider:              model.Provider,
+			Model:                 model.Model,
+			CacheKeyName:          model.CacheKeyName,
+			CacheControl:          deepCopyMap(model.CacheControl),
+			CacheTriggerThreshold: model.CacheTriggerThreshold,
+			CacheLookbackOffset:   model.CacheLookbackOffset,
 		}
 		if len(model.Params) > 0 {
 			copyModel.Params = deepCopyMap(model.Params)
@@ -1590,15 +1632,19 @@ func ResetConfigForTesting() {
 // mutating shared state.
 func CloneResolvedModel(in ResolvedModel) ResolvedModel {
 	clone := ResolvedModel{
-		Alias:        in.Alias,
-		ProviderName: in.ProviderName,
-		BaseURL:      in.BaseURL,
-		APIKey:       in.APIKey,
-		Headers:      copyStringMap(in.Headers),
-		Query:        copyStringMap(in.Query),
-		Endpoint:     in.Endpoint,
-		Model:        in.Model,
-		Params:       deepCopyMap(in.Params),
+		Alias:                 in.Alias,
+		ProviderName:          in.ProviderName,
+		BaseURL:               in.BaseURL,
+		APIKey:                in.APIKey,
+		Headers:               copyStringMap(in.Headers),
+		Query:                 copyStringMap(in.Query),
+		Endpoint:              in.Endpoint,
+		Model:                 in.Model,
+		Params:                deepCopyMap(in.Params),
+		CacheKeyName:          in.CacheKeyName,
+		CacheControl:          deepCopyMap(in.CacheControl),
+		CacheTriggerThreshold: in.CacheTriggerThreshold,
+		CacheLookbackOffset:   in.CacheLookbackOffset,
 	}
 	return clone
 }
