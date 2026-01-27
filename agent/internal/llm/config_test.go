@@ -449,6 +449,7 @@ func TestWorkspaceHydrationRulesDisableRootByDefault(t *testing.T) {
 func TestLoadGlobalConfigSupportsTemplateFiles(t *testing.T) {
 	root := t.TempDir()
 	mustWriteFile(t, filepath.Join(root, "templates", "planner", "system.tpl"), "planner system file")
+	mustWriteFile(t, filepath.Join(root, "templates", "planner", "plan_system_prompt.tpl"), "planner plan system file")
 	mustWriteFile(t, filepath.Join(root, "templates", "planner", "plan_prompt.tpl"), "plan prompt file")
 	mustWriteFile(t, filepath.Join(root, "templates", "planner", "plan_patch_rules.tpl"), "plan patch rules file")
 	mustWriteFile(t, filepath.Join(root, "templates", "planner", "plan_patch_strict_rules.tpl"), "plan patch strict rules file")
@@ -474,6 +475,7 @@ func TestLoadGlobalConfigSupportsTemplateFiles(t *testing.T) {
 
 [prompts.planner]
 system_template = { file = "templates/planner/system.tpl" }
+plan_system_prompt = { file = "templates/planner/plan_system_prompt.tpl" }
 plan_prompt = { file = "templates/planner/plan_prompt.tpl" }
 plan_patch_rules = { file = "templates/planner/plan_patch_rules.tpl" }
 plan_patch_strict_rules = { file = "templates/planner/plan_patch_strict_rules.tpl" }
@@ -516,6 +518,9 @@ readme_system_template = { file = "templates/mct/readme_system.tpl" }
 	}
 	if cfg.Prompts.Planner.SystemTemplate != "planner system file" {
 		t.Fatalf("expected planner system template from file, got %q", cfg.Prompts.Planner.SystemTemplate)
+	}
+	if cfg.Prompts.Planner.PlanSystemPrompt != "planner plan system file" {
+		t.Fatalf("expected planner plan system prompt from file, got %q", cfg.Prompts.Planner.PlanSystemPrompt)
 	}
 	if cfg.Prompts.Planner.PlanPrompt != "plan prompt file" {
 		t.Fatalf("expected planner plan prompt from file, got %q", cfg.Prompts.Planner.PlanPrompt)

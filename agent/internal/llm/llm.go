@@ -18,14 +18,15 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
 	"github.com/charmbracelet/glamour"
+	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
 	"github.com/tursomari/machtiani/agent/internal/trajectory"
 )
 
 type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role     string         `json:"role"`
+	Content  string         `json:"content"`
+	Metadata map[string]any `json:"-"`
 }
 
 var ErrNoChoices = errors.New("no choices returned")
@@ -36,8 +37,8 @@ var (
 )
 
 const (
-	testStubEnv   = "MCT_LLM_TEST_STUB" // test-only knob to bypass network LLM calls
-	retryAfterCap = 15 * time.Second
+	testStubEnv    = "MCT_LLM_TEST_STUB" // test-only knob to bypass network LLM calls
+	retryAfterCap  = 15 * time.Second
 	llmInputLogEnv = "MCT_LLM_INPUT_LOG" // optional debug log file path for full LLM request inputs
 	llmStageEnv    = "MCT_LLM_STAGE"     // optional stage label for LLM calls (planner/shell-agent/etc)
 )

@@ -31,3 +31,7 @@ func EstimateTokens(input string) int {
 	}
 	return tokens
 }
+
+func EstimateMessageTokens(msg Message) int {
+	return EstimateTokens(msg.Content)
+}

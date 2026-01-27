@@ -104,6 +104,7 @@ type PlannerPromptsConfig struct {
 	InstanceTemplate       string `toml:"instance_template"`
 	TimeoutTemplate        string `toml:"timeout_template"`
 	FormatErrorTemplate    string `toml:"format_error_template"`
+	PlanSystemPrompt       string `toml:"plan_system_prompt"`
 	PlanPrompt             string `toml:"plan_prompt"`
 	PlanPatchRules         string `toml:"plan_patch_rules"`
 	PlanPatchStrictRules   string `toml:"plan_patch_strict_rules"`
@@ -116,6 +117,7 @@ type PlannerPromptsConfig struct {
 	instanceTemplateSet       bool `toml:"-"`
 	timeoutTemplateSet        bool `toml:"-"`
 	formatErrorTemplateSet    bool `toml:"-"`
+	planSystemPromptSet       bool `toml:"-"`
 	planPromptSet             bool `toml:"-"`
 	planPatchRulesSet         bool `toml:"-"`
 	planPatchStrictRulesSet   bool `toml:"-"`
@@ -862,6 +864,15 @@ func parsePlannerSection(path, section string, data map[string]any) (*PlannerCon
 		p.FormatErrorTemplate = val
 		p.formatErrorTemplateSet = true
 	}
+	if raw, ok := data["plan_system_prompt"]; ok {
+		val, err := templateStringFromRaw(path, section, "plan_system_prompt", raw)
+		if err != nil {
+			return nil, nil, err
+		}
+		p := ensurePrompts()
+		p.PlanSystemPrompt = val
+		p.planSystemPromptSet = true
+	}
 	if raw, ok := data["plan_prompt"]; ok {
 		val, err := templateStringFromRaw(path, section, "plan_prompt", raw)
 		if err != nil {
@@ -1095,6 +1106,10 @@ func mergePlannerPromptSources(base, override *PlannerPromptsConfig) *PlannerPro
 	if override.formatErrorTemplateSet {
 		base.FormatErrorTemplate = override.FormatErrorTemplate
 		base.formatErrorTemplateSet = true
+	}
+	if override.planSystemPromptSet {
+		base.PlanSystemPrompt = override.PlanSystemPrompt
+		base.planSystemPromptSet = true
 	}
 	if override.planPromptSet {
 		base.PlanPrompt = override.PlanPrompt

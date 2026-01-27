@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/tursomari/machtiani/agent/internal/conversation"
 	"github.com/tursomari/machtiani/agent/internal/llm"
 )
 
@@ -62,7 +63,8 @@ func TestPlanPatchShorthandRoutesToStrictPatchFlow(t *testing.T) {
 	client.chatFn = func(context.Context, []llm.Message) (string, error) {
 		return "Patch: src/main.go", nil
 	}
-	dec, payload, err := client.Plan(context.Background(), "goal", "transcript", 1, 3, nil)
+	conv := conversation.New("sess-plan", "goal")
+	dec, payload, err := client.Plan(context.Background(), conv, "goal", "transcript", 1, 3, nil)
 	if err != nil {
 		t.Fatalf("Plan returned error: %v", err)
 	}
@@ -86,6 +88,14 @@ func TestParseDecisionFinalize(t *testing.T) {
 	}
 	if preamble != "" {
 		t.Fatalf("expected empty preamble, got %q", preamble)
+	}
+}
+
+func TestPlanRequiresConversation(t *testing.T) {
+	client := NewClient(ClientConfig{PatchEnabled: true})
+	_, _, err := client.Plan(context.Background(), nil, "goal", "transcript", 1, 3, nil)
+	if err == nil {
+		t.Fatalf("expected error when conversation is nil")
 	}
 }
 
@@ -293,7 +303,7 @@ func TestPlanReviewModeParsesAccept(t *testing.T) {
 	client.UpdateProgress(Progress{
 		PendingReview: &PendingReview{PatchPath: "patch.diff"},
 	})
-	dec, reason, err := client.Plan(context.Background(), "goal", "transcript", 2, 5, nil)
+	dec, reason, err := client.Plan(context.Background(), nil, "goal", "transcript", 2, 5, nil)
 	if err != nil {
 		t.Fatalf("Plan returned error: %v", err)
 	}
@@ -313,7 +323,7 @@ func TestPlanReviewModeDefaultsToAcceptWhenMissingDecision(t *testing.T) {
 	client.UpdateProgress(Progress{
 		PendingReview: &PendingReview{PatchPath: "patch.diff"},
 	})
-	dec, note, err := client.Plan(context.Background(), "goal", "transcript", 1, 4, nil)
+	dec, note, err := client.Plan(context.Background(), nil, "goal", "transcript", 1, 4, nil)
 	if err != nil {
 		t.Fatalf("Plan returned error: %v", err)
 	}
@@ -333,7 +343,7 @@ func TestPlanReviewModeCoercesNonReviewDecisionToAccept(t *testing.T) {
 	client.UpdateProgress(Progress{
 		PendingReview: &PendingReview{PatchPath: "patch.diff"},
 	})
-	dec, note, err := client.Plan(context.Background(), "goal", "transcript", 2, 5, nil)
+	dec, note, err := client.Plan(context.Background(), nil, "goal", "transcript", 2, 5, nil)
 	if err != nil {
 		t.Fatalf("Plan returned error: %v", err)
 	}
@@ -351,7 +361,7 @@ func TestPlanPromptIncludesProgressSection(t *testing.T) {
 		SuccessFiles:   []string{"LICENSE", "lib/web/fetch/LICENSE", "LICENSE"},
 		AppliedPatches: 3,
 	})
-	prompt := client.planPrompt("Update licensing headers", "", 2, 5, nil)
+	prompt := client.planPrompt(nil, "Update licensing headers", "", 2, 5, nil)
 	if strings.Contains(prompt, "Files already updated successfully this session") {
 		t.Fatalf("expected prompt to omit success files section, got %q", prompt)
 	}
@@ -425,7 +435,7 @@ func TestPlannerRejectsInvalidPatchJSON(t *testing.T) {
 
 func TestPlanPromptIncludesMetadata(t *testing.T) {
 	c := NewClient(ClientConfig{DryRun: true, PatchEnabled: true})
-	prompt := c.planPrompt("goal text", "transcript text", 1, 4, nil)
+	prompt := c.planPrompt(nil, "goal text", "transcript text", 1, 4, nil)
 	want := []string{"Decision: ask|patch", "Goal:", "Transcript:", "Step 1 of 4"}
 	for _, w := range want {
 		if !contains(prompt, w) {
@@ -437,7 +447,7 @@ func TestPlanPromptIncludesMetadata(t *testing.T) {
 func TestPlanPromptAllowsFinalizeWhenPatchPlanComplete(t *testing.T) {
 	c := NewClient(ClientConfig{DryRun: true, PatchEnabled: true})
 	plan := &PatchPlan{Items: []PatchPlanItem{{Description: "update README", Complete: true}}}
-	prompt := c.planPrompt("goal text", "transcript text", 1, 4, plan)
+	prompt := c.planPrompt(nil, "goal text", "transcript text", 1, 4, plan)
 	if !strings.Contains(prompt, "Decision: ask|patch|finalize") {
 		t.Fatalf("plan prompt should expose finalize when patch plan is complete:\n%s", prompt)
 	}
@@ -446,7 +456,7 @@ func TestPlanPromptAllowsFinalizeWhenPatchPlanComplete(t *testing.T) {
 func TestPlanPromptBlocksFinalizeWhenPatchPlanIncomplete(t *testing.T) {
 	c := NewClient(ClientConfig{DryRun: true, PatchEnabled: true})
 	plan := &PatchPlan{Items: []PatchPlanItem{{Description: "update README", Complete: false}}}
-	prompt := c.planPrompt("goal text", "transcript text", 1, 4, plan)
+	prompt := c.planPrompt(nil, "goal text", "transcript text", 1, 4, plan)
 	if strings.Contains(prompt, "Decision: ask|patch|finalize") {
 		t.Fatalf("plan prompt should hide finalize when patch plan is incomplete:\n%s", prompt)
 	}
@@ -499,7 +509,7 @@ plan_prompt = { file = "templates/planner/plan_prompt.tpl" }
 	}
 	client := NewClient(ClientConfig{DryRun: true, PatchEnabled: true, Prompts: cfg.Prompts.Planner})
 	plan := &PatchPlan{Items: []PatchPlanItem{{Description: "update README", Complete: false}}}
-	prompt := client.planPrompt("goal text", "transcript text", 1, 4, plan)
+	prompt := client.planPrompt(nil, "goal text", "transcript text", 1, 4, plan)
 	if !strings.Contains(prompt, "EXTERNAL TEMPLATE") {
 		t.Fatalf("expected file-based template content in prompt, got:\n%s", prompt)
 	}
@@ -513,7 +523,7 @@ plan_prompt = { file = "templates/planner/plan_prompt.tpl" }
 
 func TestPlanPromptHighlightsPatchShorthand(t *testing.T) {
 	c := NewClient(ClientConfig{DryRun: true, PatchEnabled: true})
-	prompt := c.planPrompt("goal", "", 2, 5, nil)
+	prompt := c.planPrompt(nil, "goal", "", 2, 5, nil)
 	want := []string{
 		"Patch: <repo-relative filepath>",
 	}
@@ -526,7 +536,7 @@ func TestPlanPromptHighlightsPatchShorthand(t *testing.T) {
 
 func TestPlanPromptStrictModeDefersPatchDetails(t *testing.T) {
 	c := NewClient(ClientConfig{DryRun: true, PatchEnabled: true, StrictPatchMode: true})
-	prompt := c.planPrompt("goal", "transcript", 3, 6, nil)
+	prompt := c.planPrompt(nil, "goal", "transcript", 3, 6, nil)
 
 	disallowed := []string{
 		"Strict patch planner flow:",
@@ -541,7 +551,7 @@ func TestPlanPromptStrictModeDefersPatchDetails(t *testing.T) {
 
 func TestPlanPromptDisabledOmitsPatchInstructions(t *testing.T) {
 	c := NewClient(ClientConfig{DryRun: true})
-	prompt := c.planPrompt("goal", "transcript", 2, 4, nil)
+	prompt := c.planPrompt(nil, "goal", "transcript", 2, 4, nil)
 	if contains(prompt, "Decision: ask|patch|finalize") {
 		t.Fatalf("prompt should not list patch option when patching is disabled:\n%s", prompt)
 	}
@@ -556,11 +566,36 @@ func TestPlanPromptDisabledOmitsPatchInstructions(t *testing.T) {
 	}
 }
 
+func TestPlanSystemPromptOmitsTranscript(t *testing.T) {
+	client := NewClient(ClientConfig{
+		Prompts: &llm.PlannerPromptsConfig{
+			SystemTemplate:   "Shell system prompt",
+			PlanSystemPrompt: "System prompt: {{.Transcript}}",
+			PlanPrompt:       "Plan prompt: {{.Transcript}}",
+		},
+	})
+	conv := conversation.New("sess-system", "Finish docs")
+	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask"})
+	prompt := client.planSystemPrompt(conv, "Finish docs", 1, 3, nil)
+	if strings.Contains(prompt, "Shell system prompt") {
+		t.Fatalf("system prompt should ignore shell template, got %q", prompt)
+	}
+	if strings.Contains(prompt, "Plan prompt") {
+		t.Fatalf("expected system template, got %q", prompt)
+	}
+	if strings.Contains(prompt, "Question: start") {
+		t.Fatalf("system prompt should omit transcript body, got %q", prompt)
+	}
+}
+
 func TestBuildPlanMessagesNoGoalUpdate(t *testing.T) {
 	client := NewClient(ClientConfig{PatchEnabled: true})
-	messages := client.buildPlanMessages("Finish docs", "Transcript body", 2, 4, nil)
+	conv := conversation.New("sess-1", "Finish docs")
+	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask"})
+	conv.AddMessage("assistant", "Answer: done", map[string]any{"type": "answer", "turn": 1})
+	messages := client.buildPlanMessages(conv, "Finish docs", 2, 4, nil)
 
-	wantRoles := []string{"system", "user", "assistant", "user"}
+	wantRoles := []string{"system", "user", "assistant", "assistant", "user"}
 	if len(messages) != len(wantRoles) {
 		t.Fatalf("expected %d messages, got %d", len(wantRoles), len(messages))
 	}
@@ -575,96 +610,41 @@ func TestBuildPlanMessagesNoGoalUpdate(t *testing.T) {
 	if messages[1].Content != "Finish docs" {
 		t.Fatalf("unexpected goal message: %q", messages[1].Content)
 	}
-	if messages[2].Content != "Transcript body" {
-		t.Fatalf("unexpected transcript message: %q", messages[2].Content)
+	if messages[2].Content != "Question: start" {
+		t.Fatalf("unexpected ask message: %q", messages[2].Content)
 	}
-	if !strings.Contains(messages[3].Content, "Step 2 of 4") {
-		t.Fatalf("step message missing progress: %q", messages[3].Content)
+	if messages[3].Content != "Answer: done" {
+		t.Fatalf("unexpected answer message: %q", messages[3].Content)
+	}
+	if !strings.Contains(messages[4].Content, "Step 2 of 4") {
+		t.Fatalf("step message missing progress: %q", messages[4].Content)
 	}
 }
 
-func TestBuildPlanMessagesStripsGoalPreamble(t *testing.T) {
+func TestBuildPlanMessagesUsesConversation(t *testing.T) {
 	client := NewClient(ClientConfig{PatchEnabled: true})
-	transcript := strings.Join([]string{
-		"= MCT-AGENT TRANSCRIPT",
-		"",
-		"== GOAL:",
-		"",
-		"Finish docs",
-		"",
-		"== TURN 0",
-		"Question: start",
-	}, "\n")
-
-	messages := client.buildPlanMessages("Finish docs", transcript, 2, 4, nil)
+	conv := conversation.New("sess-2", "Finish docs")
+	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask"})
+	messages := client.buildPlanMessages(conv, "Finish docs", 2, 4, nil)
 	if len(messages) != 4 {
 		t.Fatalf("expected 4 messages, got %d", len(messages))
 	}
 	if messages[2].Role != "assistant" {
 		t.Fatalf("expected assistant transcript message, got %q", messages[2].Role)
 	}
-	if strings.Contains(messages[2].Content, "GOAL:") {
-		t.Fatalf("goal header should be stripped from transcript: %q", messages[2].Content)
-	}
-	if !strings.Contains(messages[2].Content, "TURN 0") {
-		t.Fatalf("transcript content missing turn data: %q", messages[2].Content)
+	if messages[2].Content != "Question: start" {
+		t.Fatalf("unexpected ask content: %q", messages[2].Content)
 	}
 }
 
-func TestBuildPlanMessagesSplitsGoalUpdate(t *testing.T) {
-	client := NewClient(ClientConfig{PatchEnabled: false})
-	transcript := strings.Join([]string{
-		"= MCT-AGENT TRANSCRIPT",
-		"",
-		"== GOAL:",
-		"",
-		"Starting objective",
-		"",
-		"== TURN 0",
-		"Question: start",
-		"",
-		"=== GOAL UPDATE",
-		"Refined objective",
-		"",
-		"== TURN 1",
-		"Assistant: next steps",
-	}, "\n")
-
-	messages := client.buildPlanMessages("Initial goal", transcript, 1, 3, nil)
-	wantRoles := []string{"system", "user", "assistant", "user", "assistant", "user"}
-	if len(messages) != len(wantRoles) {
-		t.Fatalf("expected %d messages, got %d", len(wantRoles), len(messages))
-	}
-	for i, role := range wantRoles {
-		if messages[i].Role != role {
-			t.Fatalf("message %d role = %q, want %q", i, messages[i].Role, role)
-		}
-	}
-	if strings.Contains(messages[2].Content, "GOAL:") {
-		t.Fatalf("expected goal header stripped from transcript: %q", messages[2].Content)
-	}
-	if !strings.Contains(messages[2].Content, "TURN 0") {
-		t.Fatalf("expected pre-update transcript in assistant message: %q", messages[2].Content)
-	}
-	if messages[3].Content != "Refined objective" {
-		t.Fatalf("unexpected goal update content: %q", messages[3].Content)
-	}
-	if !strings.Contains(messages[4].Content, "TURN 1") {
-		t.Fatalf("expected post-update transcript in assistant message: %q", messages[4].Content)
-	}
-	if !strings.Contains(messages[5].Content, "Step 1 of 3") {
-		t.Fatalf("step message missing progress: %q", messages[5].Content)
-	}
-}
-
-func TestFinalizePromptRetainsTranscript(t *testing.T) {
+func TestFinalizePromptOmitsTranscript(t *testing.T) {
 	c := NewClient(ClientConfig{DryRun: true})
 	prompt := c.finalizePrompt("goal text", "transcript text")
-	want := []string{"Goal:", "goal text", "Transcript:", "transcript text"}
-	for _, w := range want {
-		if !contains(prompt, w) {
-			t.Fatalf("finalize prompt missing %q:\n%s", w, prompt)
-		}
+	if !contains(prompt, "Goal:") || !contains(prompt, "goal text") {
+		t.Fatalf("finalize prompt missing goal:\n%s", prompt)
+	}
+	if contains(prompt, "Transcript:") || contains(prompt, "transcript text") {
+		t.Fatalf("finalize prompt should omit transcript:\n%s", prompt)
 	}
 }
 
@@ -729,7 +709,8 @@ func TestPlanReroutesRewriteToFullMode(t *testing.T) {
 		return "", nil
 	}
 
-	dec, payload, err := client.Plan(context.Background(), "goal", "transcript", 1, 5, nil)
+	conv := conversation.New("sess-plan-rewrite", "goal")
+	dec, payload, err := client.Plan(context.Background(), conv, "goal", "transcript", 1, 5, nil)
 	if err != nil {
 		t.Fatalf("Plan error: %v", err)
 	}
@@ -778,7 +759,8 @@ func TestPlanProactivelyBypassesStrictPatchForRewrite(t *testing.T) {
 		return "", nil
 	}
 
-	dec, payload, err := client.Plan(context.Background(), "goal", "transcript", 1, 5, nil)
+	conv := conversation.New("sess-plan-strict", "goal")
+	dec, payload, err := client.Plan(context.Background(), conv, "goal", "transcript", 1, 5, nil)
 	if err != nil {
 		t.Fatalf("Plan error: %v", err)
 	}

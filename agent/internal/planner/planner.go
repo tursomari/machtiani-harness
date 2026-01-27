@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tursomari/machtiani/agent/internal/conversation"
 	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/patchlog"
 	"github.com/tursomari/machtiani/agent/internal/prompts"
@@ -228,7 +229,7 @@ func successFilesDisplay(files []string, limit int) ([]string, int) {
 }
 
 // Plan decides the next action using only the transcript context.
-func (c *Client) Plan(ctx context.Context, goal string, transcript string, step, maxSteps int, patchPlan *PatchPlan) (Decision, string, error) {
+func (c *Client) Plan(ctx context.Context, conv *conversation.Conversation, goal string, transcript string, step, maxSteps int, patchPlan *PatchPlan) (Decision, string, error) {
 	if c.cfg.DryRun {
 		if step < maxSteps {
 			return DecisionAsk, "From the transcript, ask mct for the next most informative repository-focused prompt.", nil
@@ -240,14 +241,18 @@ func (c *Client) Plan(ctx context.Context, goal string, transcript string, step,
 		messages  []llm.Message
 		promptLog string
 	)
+	if !reviewMode && conv == nil {
+		return "", "", errors.New("planner: conversation is required")
+	}
 	if reviewMode {
 		prompt := c.reviewPrompt(goal, transcript, step, maxSteps)
 		promptLog = strings.TrimSpace(prompt)
-		messages = []llm.Message{{Role: "user", Content: promptLog}}
+		messages = []llm.Message{messageWithEstimatedTokens("user", promptLog)}
 	} else {
-		messages = c.buildPlanMessages(goal, transcript, step, maxSteps, patchPlan)
+		messages = c.buildPlanMessages(conv, goal, step, maxSteps, patchPlan)
 		promptLog = renderMessagesForLogging(messages)
 	}
+	c.logTokenEstimate(messages)
 	w, hasWriter := trajectory.FromContext(ctx)
 	parentSpan, _ := trajectory.ParentSpanID(ctx)
 	chatCtx := ctx
@@ -452,29 +457,36 @@ func (c *Client) Plan(ctx context.Context, goal string, transcript string, step,
 	return dec, q, nil
 }
 
-func (c *Client) buildPlanMessages(goal, transcript string, step, maxSteps int, patchPlan *PatchPlan) []llm.Message {
-	systemPrompt := strings.TrimSpace(c.planSystemPrompt(goal, transcript, step, maxSteps, patchPlan))
-	goalTrim := strings.TrimSpace(goal)
-	goalUpdate, beforeUpdate, afterUpdate := splitTranscriptAtGoalUpdate(strings.TrimSpace(transcript))
-
-	messages := make([]llm.Message, 0, 6)
-	if systemPrompt != "" {
-		messages = append(messages, llm.Message{Role: "system", Content: systemPrompt})
+func (c *Client) buildPlanMessages(conv *conversation.Conversation, goal string, step, maxSteps int, patchPlan *PatchPlan) []llm.Message {
+	goalForPrompt := strings.TrimSpace(goal)
+	if current := strings.TrimSpace(conv.CurrentGoal()); current != "" {
+		goalForPrompt = current
 	}
-	if goalTrim != "" {
-		messages = append(messages, llm.Message{Role: "user", Content: goalTrim})
-	}
-	if beforeUpdate != "" {
-		messages = append(messages, llm.Message{Role: "assistant", Content: beforeUpdate})
-	}
-	if goalUpdate != "" {
-		messages = append(messages, llm.Message{Role: "user", Content: goalUpdate})
-	}
-	if afterUpdate != "" {
-		messages = append(messages, llm.Message{Role: "assistant", Content: afterUpdate})
-	}
-	messages = append(messages, llm.Message{Role: "user", Content: fmt.Sprintf("Step %d of %d. Decide.", step, maxSteps)})
+	systemPrompt := strings.TrimSpace(c.planSystemPrompt(conv, goalForPrompt, step, maxSteps, patchPlan))
+	messages := conv.ToChatMessages(systemPrompt)
+	stepMsg := fmt.Sprintf("Step %d of %d. Decide.", step, maxSteps)
+	messages = append(messages, messageWithEstimatedTokens("user", stepMsg))
 	return messages
+}
+
+func messageWithEstimatedTokens(role, content string) llm.Message {
+	msg := llm.Message{Role: role, Content: content}
+	if strings.TrimSpace(content) == "" {
+		return msg
+	}
+	msg.Metadata = map[string]any{"estimated_tokens": llm.EstimateMessageTokens(msg)}
+	return msg
+}
+
+func (c *Client) logTokenEstimate(messages []llm.Message) {
+	if !c.cfg.Verbose {
+		return
+	}
+	total := 0
+	for _, msg := range messages {
+		total += llm.EstimateMessageTokens(msg)
+	}
+	fmt.Fprintf(os.Stderr, "[planner] estimated prompt tokens: %d\n", total)
 }
 
 func renderMessagesForLogging(messages []llm.Message) string {
@@ -539,12 +551,23 @@ func shouldUseStrictPatchMode(payloadJSON string) bool {
 	return true
 }
 
-// Finalize composes the final answer using only the transcript content.
-func (c *Client) Finalize(ctx context.Context, goal string, transcript string) (string, error) {
+// Finalize composes the final answer using the structured conversation.
+func (c *Client) Finalize(ctx context.Context, conv *conversation.Conversation, goal string) (string, error) {
 	if c.cfg.DryRun {
 		return "[dry-run] Final answer would be composed here based on accumulated evidence.", nil
 	}
-	prompt := c.finalizePrompt(goal, transcript)
+	if conv == nil {
+		return "", errors.New("planner: conversation is required")
+	}
+	goalForPrompt := strings.TrimSpace(goal)
+	if current := strings.TrimSpace(conv.CurrentGoal()); current != "" {
+		goalForPrompt = current
+	}
+	systemPrompt := strings.TrimSpace(c.finalizePrompt(goalForPrompt, ""))
+	messages := conv.ToChatMessages(systemPrompt)
+	messages = append(messages, messageWithEstimatedTokens("user", "Provide the final response."))
+	promptLog := renderMessagesForLogging(messages)
+	c.logTokenEstimate(messages)
 	w, hasWriter := trajectory.FromContext(ctx)
 	parentSpan, _ := trajectory.ParentSpanID(ctx)
 	callCtx := ctx
@@ -557,14 +580,14 @@ func (c *Client) Finalize(ctx context.Context, goal string, transcript string) (
 			"model_name":    c.cfg.Model.Model,
 			"operation":     "finalize",
 		}
-		payload = trajectory.MergeExcerptWithPrefix(payload, trajectory.MakeTextExcerpt(prompt, w.ExcerptLen()), "prompt")
+		payload = trajectory.MergeExcerptWithPrefix(payload, trajectory.MakeTextExcerpt(promptLog, w.ExcerptLen()), "prompt")
 		if err := w.Emit(ctx, trajectory.Event{Kind: "planner.request", SpanID: span.ID, ParentSpanID: parentSpan, Payload: payload}); err != nil {
 			reportTrajectoryError(err)
 		}
 		callCtx = trajectory.ContextWithParentSpan(ctx, span.ID)
 	}
 	start := time.Now()
-	resp, err := c.chat(callCtx, prompt)
+	resp, err := c.chatMessages(callCtx, messages)
 	duration := time.Since(start)
 	if err != nil {
 		if hasWriter {
@@ -605,7 +628,7 @@ func (c *Client) Finalize(ctx context.Context, goal string, transcript string) (
 			"duration_ms":   duration.Milliseconds(),
 			"parse_ok":      true,
 		}
-		payload = trajectory.MergeExcerptWithPrefix(payload, trajectory.MakeTextExcerpt(prompt, w.ExcerptLen()), "prompt")
+		payload = trajectory.MergeExcerptWithPrefix(payload, trajectory.MakeTextExcerpt(promptLog, w.ExcerptLen()), "prompt")
 		payload = trajectory.MergeExcerptWithPrefix(payload, trajectory.MakeTextExcerpt(resp, w.ExcerptLen()), "response")
 		payload["parse"] = map[string]any{"decision": "finalize"}
 		evt := trajectory.Event{
@@ -655,13 +678,13 @@ func (c *Client) chat(ctx context.Context, prompt string) (string, error) {
 	return c.chatMessages(ctx, []llm.Message{{Role: "user", Content: prompt}})
 }
 
-func (c *Client) planSystemPrompt(goal string, transcript string, step, maxSteps int, patchPlan *PatchPlan) string {
+func (c *Client) planSystemPrompt(conv *conversation.Conversation, goal string, step, maxSteps int, patchPlan *PatchPlan) string {
 	tpl := c.planSystemTemplate()
 	if tpl == "" {
 		fmt.Fprintln(os.Stderr, "[planner] plan system template missing")
 		return ""
 	}
-	data := c.buildPlanTemplateData(goal, transcript, step, maxSteps, patchPlan)
+	data := c.buildPlanTemplateData(conv, goal, "", step, maxSteps, patchPlan)
 	rendered, err := prompts.Render("planner_plan_system_prompt", tpl, data, nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[planner] plan system template error: %v\n", err)
@@ -672,7 +695,7 @@ func (c *Client) planSystemPrompt(goal string, transcript string, step, maxSteps
 
 func (c *Client) planSystemTemplate() string {
 	if c.cfg.Prompts != nil {
-		if trimmed := strings.TrimSpace(c.cfg.Prompts.PlanPrompt); trimmed != "" {
+		if trimmed := strings.TrimSpace(c.cfg.Prompts.PlanSystemPrompt); trimmed != "" {
 			return trimmed
 		}
 	}
@@ -682,13 +705,13 @@ func (c *Client) planSystemTemplate() string {
 	return ""
 }
 
-func (c *Client) planPrompt(goal string, transcript string, step, maxSteps int, patchPlan *PatchPlan) string {
+func (c *Client) planPrompt(conv *conversation.Conversation, goal string, transcript string, step, maxSteps int, patchPlan *PatchPlan) string {
 	tpl := c.planTemplate()
 	if tpl == "" {
 		fmt.Fprintln(os.Stderr, "[planner] plan prompt template missing")
 		return ""
 	}
-	data := c.buildPlanTemplateData(goal, transcript, step, maxSteps, patchPlan)
+	data := c.buildPlanTemplateData(conv, goal, transcript, step, maxSteps, patchPlan)
 	rendered, err := prompts.Render("planner_plan_prompt", tpl, data, nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[planner] plan prompt template error: %v\n", err)
@@ -709,12 +732,16 @@ func (c *Client) planTemplate() string {
 	return ""
 }
 
-func (c *Client) buildPlanTemplateData(goal string, transcript string, step, maxSteps int, patchPlan *PatchPlan) planTemplateData {
+func (c *Client) buildPlanTemplateData(conv *conversation.Conversation, goal string, transcript string, step, maxSteps int, patchPlan *PatchPlan) planTemplateData {
 	display, overflow := successFilesDisplay(c.progress.SuccessFiles, successFilesPromptLimit)
 	goalTrim := strings.TrimSpace(goal)
 	transcriptTrim := strings.TrimSpace(transcript)
-
-	goalUpdate, _ := extractGoalUpdateFromTranscript(transcriptTrim)
+	goalUpdate := ""
+	if conv != nil {
+		if update, ok := conv.LatestGoalUpdate(); ok {
+			goalUpdate = update
+		}
+	}
 	hasGoalUpdate := strings.TrimSpace(goalUpdate) != ""
 	applied := c.progress.AppliedPatches
 	if applied < 0 {
@@ -746,95 +773,6 @@ func (c *Client) buildPlanTemplateData(goal string, transcript string, step, max
 	}
 	data.PatchRules = c.planPatchRulesText(c.cfg.StrictPatchMode)
 	return data
-}
-
-func splitTranscriptAtGoalUpdate(transcript string) (string, string, string) {
-	clean := stripTranscriptPreamble(strings.TrimSpace(transcript))
-	if clean == "" {
-		return "", "", ""
-	}
-
-	lines := strings.Split(clean, "\n")
-	markerIdx := -1
-	for i := len(lines) - 1; i >= 0; i-- {
-		if isGoalUpdateHeader(lines[i]) {
-			markerIdx = i
-			break
-		}
-	}
-
-	if markerIdx == -1 {
-		return "", clean, ""
-	}
-
-	before := strings.TrimSpace(strings.Join(lines[:markerIdx], "\n"))
-	afterLines := lines[markerIdx+1:]
-	endIdx := len(afterLines)
-	for i, line := range afterLines {
-		if isSectionHeader(line) {
-			endIdx = i
-			break
-		}
-	}
-	goalUpdate := strings.TrimSpace(strings.Join(afterLines[:endIdx], "\n"))
-	remaining := strings.TrimSpace(strings.Join(afterLines[endIdx:], "\n"))
-
-	return goalUpdate, before, remaining
-}
-
-// extractGoalUpdateFromTranscript returns the content of the last goal update
-// marker and the transcript with that section removed.
-
-func extractGoalUpdateFromTranscript(transcript string) (goalUpdate string, cleanTranscript string) {
-	goalUpdate, beforeUpdate, _ := splitTranscriptAtGoalUpdate(transcript)
-	if goalUpdate == "" {
-		return "", strings.TrimSpace(transcript)
-	}
-	return goalUpdate, beforeUpdate
-}
-
-func stripTranscriptPreamble(transcript string) string {
-	trimmed := strings.TrimSpace(transcript)
-	if trimmed == "" {
-		return ""
-	}
-	turnMarker := "\n== TURN"
-	if idx := strings.Index(trimmed, turnMarker); idx != -1 {
-		return strings.TrimSpace(trimmed[idx+1:])
-	}
-	return trimmed
-}
-
-func isGoalUpdateHeader(line string) bool {
-	trimmed := strings.TrimSpace(line)
-	if trimmed == "" {
-		return false
-	}
-	if !strings.HasSuffix(trimmed, "GOAL UPDATE") {
-		return false
-	}
-	head := strings.TrimSpace(strings.TrimSuffix(trimmed, "GOAL UPDATE"))
-	if head == "" {
-		return false
-	}
-	for i := 0; i < len(head); i++ {
-		if head[i] != '=' {
-			return false
-		}
-	}
-	return true
-}
-
-func isSectionHeader(line string) bool {
-	trimmed := strings.TrimSpace(line)
-	if !strings.HasPrefix(trimmed, "=") {
-		return false
-	}
-	idx := 0
-	for idx < len(trimmed) && trimmed[idx] == '=' {
-		idx++
-	}
-	return idx > 0 && idx < len(trimmed) && trimmed[idx] == ' '
 }
 
 func (c *Client) planPatchIntroText() string {
@@ -1019,27 +957,25 @@ func loadPatchDiffPreview(path string, limit int) (string, error) {
 }
 
 func (c *Client) finalizePrompt(goal string, transcript string) string {
+	_ = transcript
 	if tpl := c.finalizeTemplate(); tpl != "" {
-		data := c.buildFinalizeTemplateData(goal, transcript)
+		data := c.buildFinalizeTemplateData(goal, "")
 		rendered, err := prompts.Render("planner_finalize_prompt", tpl, data, nil)
 		if err == nil {
 			return rendered
 		}
 		fmt.Fprintf(os.Stderr, "[planner] finalize prompt template error: %v\n", err)
 	}
-	return c.finalizePromptFallback(goal, transcript)
+	return c.finalizePromptFallback(goal, "")
 }
 
 func (c *Client) finalizePromptFallback(goal string, transcript string) string {
+	_ = transcript
 	var b strings.Builder
-	b.WriteString("You are the composer agent. Read the transcript (which contains the goal and mct turns) and write the final answer to the original goal.\n\n")
+	b.WriteString("You are the composer agent. Read the conversation above (which contains the goal and mct turns) and write the final answer to the original goal.\n\n")
 	if strings.TrimSpace(goal) != "" {
 		b.WriteString("Goal:\n")
 		b.WriteString(goal + "\n\n")
-	}
-	if strings.TrimSpace(transcript) != "" {
-		b.WriteString("Transcript:\n")
-		b.WriteString(transcript + "\n\n")
 	}
 	b.WriteString("Now produce a clear, self-contained final answer grounded in the evidence from prior turns. If there are gaps, call them out succinctly.")
 	return b.String()
@@ -1055,8 +991,9 @@ func (c *Client) finalizeTemplate() string {
 }
 
 func (c *Client) buildFinalizeTemplateData(goal, transcript string) finalizeTemplateData {
+	_ = transcript
 	goalTrim := strings.TrimSpace(goal)
-	transcriptTrim := strings.TrimSpace(transcript)
+	transcriptTrim := ""
 	return finalizeTemplateData{
 		HasGoal:       goalTrim != "",
 		Goal:          goalTrim,

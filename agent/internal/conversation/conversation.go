@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/tursomari/machtiani/agent/internal/llm"
 )
 
 // Conversation captures the structured transcript for a session.
@@ -89,6 +91,24 @@ func (c *Conversation) CurrentGoal() string {
 		}
 	}
 	return goal
+}
+
+func (c *Conversation) LatestGoalUpdate() (string, bool) {
+	if c == nil {
+		return "", false
+	}
+	for i := len(c.Messages) - 1; i >= 0; i-- {
+		msg := c.Messages[i]
+		msgType := getType(msg.Metadata)
+		switch msgType {
+		case "goal_update", "user_feedback":
+			trimmed := strings.TrimSpace(msg.Content)
+			if trimmed != "" {
+				return trimmed, true
+			}
+		}
+	}
+	return "", false
 }
 
 // Marshal serializes the conversation to JSON with indentation.
@@ -205,6 +225,60 @@ func (c *Conversation) ToTranscript() (string, error) {
 	}
 
 	return sanitize(b.String()), nil
+}
+
+// ToChatMessages converts the structured conversation into chat messages.
+func (c *Conversation) ToChatMessages(systemPrompt string) []llm.Message {
+	trimmedSystem := strings.TrimSpace(systemPrompt)
+	count := 0
+	if c != nil {
+		count = len(c.Messages)
+	}
+	if trimmedSystem != "" {
+		count++
+	}
+	output := make([]llm.Message, 0, count)
+	if trimmedSystem != "" {
+		output = append(output, llm.Message{
+			Role:    "system",
+			Content: trimmedSystem,
+			Metadata: map[string]any{
+				"estimated_tokens": llm.EstimateMessageTokens(llm.Message{Content: trimmedSystem}),
+			},
+		})
+	}
+	if c == nil {
+		return output
+	}
+	for _, msg := range c.Messages {
+		msgType := getType(msg.Metadata)
+		role := ""
+		switch msgType {
+		case "original_goal", "goal_update", "user_feedback":
+			role = "user"
+		case "ask", "answer", "raw", "raw_block":
+			role = "assistant"
+		default:
+			continue
+		}
+		if strings.TrimSpace(msg.Content) == "" {
+			continue
+		}
+		meta := cloneMetadata(msg.Metadata)
+		if meta == nil {
+			meta = map[string]any{}
+		}
+		if msg.Turn != nil {
+			meta["turn"] = *msg.Turn
+		}
+		meta["estimated_tokens"] = llm.EstimateMessageTokens(llm.Message{Content: msg.Content})
+		output = append(output, llm.Message{
+			Role:     role,
+			Content:  msg.Content,
+			Metadata: meta,
+		})
+	}
+	return output
 }
 
 func renderHeader(goal string) string {

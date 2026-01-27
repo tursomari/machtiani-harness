@@ -1495,7 +1495,7 @@ func Run(ctx context.Context, opts Options) Result {
 				}
 			}
 		}
-		decision, question, perr = pl.Plan(planCtx, goal, trFull, step, cfg.maxSteps, patchPlan)
+		decision, question, perr = pl.Plan(planCtx, conv, goal, trFull, step, cfg.maxSteps, patchPlan)
 		if trimmedResumePrompt != "" {
 			resumePrompt = ""
 		}
@@ -1530,9 +1530,8 @@ func Run(ctx context.Context, opts Options) Result {
 				fmt.Fprintln(os.Stderr, "Planner warning:", perr)
 				fmt.Fprintln(os.Stderr, "Falling back to finalizing with current transcript.")
 				ctxF, cancelF := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
-				trFull := tr.Content()
-				ctxF = attachTrajectory(ctxF, trajectoryWriter, parentSpanID)
-				answer, ferr := pl.Finalize(ctxF, goal, trFull)
+					ctxF = attachTrajectory(ctxF, trajectoryWriter, parentSpanID)
+					answer, ferr := pl.Finalize(ctxF, conv, goal)
 				var ctxFErr error
 				if ctxF != nil {
 					ctxFErr = ctxF.Err()
@@ -1659,9 +1658,8 @@ func Run(ctx context.Context, opts Options) Result {
 
 		if decision == planner.DecisionFinalize {
 			ctx, cancelF := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
-			trFull := tr.Content()
-			ctx = attachTrajectory(ctx, trajectoryWriter, parentSpanID)
-			answer, ferr := pl.Finalize(ctx, goal, trFull)
+				ctx = attachTrajectory(ctx, trajectoryWriter, parentSpanID)
+				answer, ferr := pl.Finalize(ctx, conv, goal)
 			var finalizeCtxErr error
 			if ctx != nil {
 				finalizeCtxErr = ctx.Err()
@@ -2931,7 +2929,7 @@ Finalize:
 		trFull := tr.Content()
 		ctx = attachTrajectory(ctx, trajectoryWriter, parentSpanID)
 		pl.UpdateProgress(plannerProgress.snapshot())
-		lastDec, lastBody, err := pl.Plan(ctx, goal, trFull, step, cfg.maxSteps, finalizePatchPlan)
+		lastDec, lastBody, err := pl.Plan(ctx, conv, goal, trFull, step, cfg.maxSteps, finalizePatchPlan)
 		cancel()
 		if err == nil && lastDec == planner.DecisionPatch {
 			if pRunner == nil {
@@ -3070,9 +3068,8 @@ Finalize:
 	}
 	turns := countTurns(tr.Content())
 	ctx, cancelF := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
-	trFull := tr.Content()
 	ctx = attachTrajectory(ctx, trajectoryWriter, parentSpanID)
-	answer, ferr := pl.Finalize(ctx, goal, trFull)
+	answer, ferr := pl.Finalize(ctx, conv, goal)
 	var finalCtxErr error
 	if ctx != nil {
 		finalCtxErr = ctx.Err()

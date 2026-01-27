@@ -151,3 +151,80 @@ func TestToTranscriptRendersGoalUpdateBlock(t *testing.T) {
 		t.Fatalf("goal update transcript mismatch:\nwant:\n%s\n----\n got:\n%s", expected, got)
 	}
 }
+
+func TestToChatMessagesEmptyConversation(t *testing.T) {
+	conv := &Conversation{}
+	messages := conv.ToChatMessages("System prompt")
+	if len(messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(messages))
+	}
+	if messages[0].Role != "system" {
+		t.Fatalf("expected system role, got %q", messages[0].Role)
+	}
+	if messages[0].Content != "System prompt" {
+		t.Fatalf("unexpected system prompt: %q", messages[0].Content)
+	}
+	if messages[0].Metadata == nil {
+		t.Fatalf("expected metadata on system message")
+	}
+	if _, ok := messages[0].Metadata["estimated_tokens"].(int); !ok {
+		t.Fatalf("expected estimated_tokens in metadata, got %v", messages[0].Metadata)
+	}
+}
+
+func TestToChatMessagesSingleTurn(t *testing.T) {
+	conv := New("sess-chat", "Investigate issue")
+	conv.AddMessage("assistant", "What happened?", map[string]any{"type": "ask", "turn": 1, "decision": "ask"})
+	conv.AddMessage("assistant", "All good", map[string]any{"type": "answer", "turn": 1, "retrieved_files": []string{"README.md"}})
+
+	messages := conv.ToChatMessages("System prompt")
+	wantRoles := []string{"system", "user", "assistant", "assistant"}
+	if len(messages) != len(wantRoles) {
+		t.Fatalf("expected %d messages, got %d", len(wantRoles), len(messages))
+	}
+	for i, role := range wantRoles {
+		if messages[i].Role != role {
+			t.Fatalf("message %d role = %q, want %q", i, messages[i].Role, role)
+		}
+		if messages[i].Metadata == nil {
+			t.Fatalf("message %d missing metadata", i)
+		}
+		if _, ok := messages[i].Metadata["estimated_tokens"].(int); !ok {
+			t.Fatalf("message %d missing token estimate", i)
+		}
+	}
+	if messages[1].Content != "Investigate issue" {
+		t.Fatalf("unexpected goal content: %q", messages[1].Content)
+	}
+	if messages[2].Content != "What happened?" {
+		t.Fatalf("unexpected ask content: %q", messages[2].Content)
+	}
+	if messages[2].Metadata["decision"] != "ask" {
+		t.Fatalf("unexpected ask metadata: %v", messages[2].Metadata)
+	}
+	if messages[2].Metadata["turn"] != 1 {
+		t.Fatalf("unexpected ask turn metadata: %v", messages[2].Metadata)
+	}
+}
+
+func TestToChatMessagesOrdersGoalUpdate(t *testing.T) {
+	conv := New("sess-goal", "Initial goal")
+	conv.AddMessage("assistant", "Question", map[string]any{"type": "ask", "turn": 1, "decision": "ask"})
+	conv.AddMessage("assistant", "Answer", map[string]any{"type": "answer", "turn": 1})
+	conv.AddMessage("user", "Updated goal", map[string]any{"type": "goal_update"})
+	conv.AddMessage("assistant", "Next question", map[string]any{"type": "ask", "turn": 2, "decision": "ask"})
+
+	messages := conv.ToChatMessages("")
+	wantRoles := []string{"user", "assistant", "assistant", "user", "assistant"}
+	if len(messages) != len(wantRoles) {
+		t.Fatalf("expected %d messages, got %d", len(wantRoles), len(messages))
+	}
+	for i, role := range wantRoles {
+		if messages[i].Role != role {
+			t.Fatalf("message %d role = %q, want %q", i, messages[i].Role, role)
+		}
+	}
+	if messages[3].Content != "Updated goal" {
+		t.Fatalf("unexpected goal update content: %q", messages[3].Content)
+	}
+}
