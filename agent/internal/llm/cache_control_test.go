@@ -91,28 +91,32 @@ func TestApplyCacheControlInjectsAtLookback(t *testing.T) {
 	}
 }
 
-func TestApplyCacheControlNudgesOffAssistant(t *testing.T) {
+func TestApplyCacheControlInsertsMarkerAfterAssistant(t *testing.T) {
 	model := ResolvedModel{
 		CacheKeyName:          "cache_control",
 		CacheControl:          map[string]any{"type": "ephemeral"},
 		CacheTriggerThreshold: 10,
-		CacheLookbackOffset:   1,
+		CacheLookbackOffset:   2,
 	}
 	messages := []Message{
 		{Role: "user", Content: "intro", Metadata: map[string]any{"estimated_tokens": 6}},
 		{Role: "assistant", Content: "reply", Metadata: map[string]any{"estimated_tokens": 6}},
 		{Role: "assistant", Content: "followup", Metadata: map[string]any{"estimated_tokens": 6}},
+		{Role: "assistant", Content: "tail", Metadata: map[string]any{"estimated_tokens": 6}},
 	}
 
 	got := applyCacheControl(context.Background(), messages, model)
-	if len(got) != len(messages) {
-		t.Fatalf("expected %d messages, got %d", len(messages), len(got))
+	if len(got) != len(messages)+1 {
+		t.Fatalf("expected %d messages, got %d", len(messages)+1, len(got))
 	}
 	anchor := cacheAnchorIndex(t, got, model.CacheKeyName)
-	if anchor != 0 {
-		t.Fatalf("expected anchor index 0, got %d", anchor)
+	if anchor != 2 {
+		t.Fatalf("expected anchor index 2, got %d", anchor)
 	}
 	anchorMsg := messageMap(t, got[anchor])
+	if anchorMsg["role"] != "user" {
+		t.Fatalf("expected anchor role user, got %v", anchorMsg["role"])
+	}
 	parts := contentParts(t, anchorMsg)
 	if len(parts) != 1 {
 		t.Fatalf("expected 1 content part, got %d", len(parts))
@@ -121,20 +125,29 @@ func TestApplyCacheControlNudgesOffAssistant(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected content part map, got %T", parts[0])
 	}
-	if part["text"] != messages[anchor].Content {
-		t.Fatalf("expected cached text %q, got %v", messages[anchor].Content, part["text"])
+	if part["text"] != cacheAnchorMarkerText {
+		t.Fatalf("expected cached text %q, got %v", cacheAnchorMarkerText, part["text"])
 	}
 	if _, ok := part[model.CacheKeyName]; !ok {
 		t.Fatalf("expected cache control field on anchor")
 	}
+	originalIndex := 0
 	for i, raw := range got {
 		if i == anchor {
 			continue
 		}
 		msg := messageMap(t, raw)
-		if _, ok := msg["content"].(string); !ok {
+		content, ok := msg["content"].(string)
+		if !ok {
 			t.Fatalf("message %d content should be string, got %T", i, msg["content"])
 		}
+		if content != messages[originalIndex].Content {
+			t.Fatalf("message %d content mismatch: got %q want %q", i, content, messages[originalIndex].Content)
+		}
+		originalIndex++
+	}
+	if originalIndex != len(messages) {
+		t.Fatalf("expected to see %d original messages, saw %d", len(messages), originalIndex)
 	}
 }
 

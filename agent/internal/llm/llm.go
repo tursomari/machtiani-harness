@@ -37,10 +37,11 @@ var (
 )
 
 const (
-	testStubEnv    = "MCT_LLM_TEST_STUB" // test-only knob to bypass network LLM calls
-	retryAfterCap  = 15 * time.Second
-	llmInputLogEnv = "MCT_LLM_INPUT_LOG" // optional debug log file path for full LLM request inputs
-	llmStageEnv    = "MCT_LLM_STAGE"     // optional stage label for LLM calls (planner/shell-agent/etc)
+	testStubEnv           = "MCT_LLM_TEST_STUB" // test-only knob to bypass network LLM calls
+	retryAfterCap         = 15 * time.Second
+	llmInputLogEnv        = "MCT_LLM_INPUT_LOG" // optional debug log file path for full LLM request inputs
+	llmStageEnv           = "MCT_LLM_STAGE"     // optional stage label for LLM calls (planner/shell-agent/etc)
+	cacheAnchorMarkerText = "[cache anchor]"
 )
 
 func stageFromContext(ctx context.Context) string {
@@ -184,17 +185,50 @@ func applyCacheControl(ctx context.Context, messages []Message, model ResolvedMo
 	} else if anchorIndex >= len(messages) {
 		anchorIndex = len(messages) - 1
 	}
-	for anchorIndex > 0 && strings.EqualFold(strings.TrimSpace(messages[anchorIndex].Role), "assistant") {
-		anchorIndex--
+
+	messageMap := func(msg Message) map[string]any {
+		return map[string]any{
+			"role":    msg.Role,
+			"content": msg.Content,
+		}
+	}
+	cacheAnchor := func(text string) map[string]any {
+		return map[string]any{
+			"role": "user",
+			"content": []any{
+				map[string]any{
+					"type":   "text",
+					"text":   text,
+					cacheKey: model.CacheControl,
+				},
+			},
+		}
+	}
+
+	if strings.EqualFold(strings.TrimSpace(messages[anchorIndex].Role), "assistant") {
+		result := make([]any, 0, len(messages)+1)
+		for i, msg := range messages {
+			if i == anchorIndex {
+				result = append(result, cacheAnchor(cacheAnchorMarkerText))
+			}
+			result = append(result, messageMap(msg))
+		}
+
+		emitLLMEvent(ctx, "info", "llm.cache.injected", map[string]any{
+			"anchor_index":   anchorIndex,
+			"total_messages": len(result),
+			"total_tokens":   totalTokens,
+			"threshold":      model.CacheTriggerThreshold,
+			"lookback":       model.CacheLookbackOffset,
+		}, nil)
+
+		return result
 	}
 
 	result := make([]any, len(messages))
 	for i, msg := range messages {
 		if i != anchorIndex {
-			result[i] = map[string]any{
-				"role":    msg.Role,
-				"content": msg.Content,
-			}
+			result[i] = messageMap(msg)
 			continue
 		}
 		result[i] = map[string]any{
