@@ -206,6 +206,41 @@ func TestTranscriptStripsNULBytes(t *testing.T) {
 	}
 }
 
+func TestAppendBlockSanitizesContent(t *testing.T) {
+	cwd, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	tmp := t.TempDir()
+	_ = os.Chdir(tmp)
+	t.Setenv("HOME", tmp)
+
+	tr, err := New("block-sess")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tr.Close()
+
+	if err := tr.WriteHeader("goal", "", "block-sess", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	block := "raw\x00block\n"
+	if err := tr.AppendBlock(block); err != nil {
+		t.Fatalf("AppendBlock returned error: %v", err)
+	}
+
+	content := tr.Content()
+	if strings.ContainsRune(content, '\x00') {
+		t.Fatalf("in-memory transcript contains NUL bytes after AppendBlock")
+	}
+	data, err := os.ReadFile(tr.Path())
+	if err != nil {
+		t.Fatalf("failed to read transcript: %v", err)
+	}
+	if strings.ContainsRune(string(data), '\x00') {
+		t.Fatalf("on-disk transcript contains NUL bytes after AppendBlock")
+	}
+}
+
 func TestDeduplicateFullDiffByFile_RemovesPriorTurns(t *testing.T) {
 	cwd, _ := os.Getwd()
 	t.Cleanup(func() { _ = os.Chdir(cwd) })

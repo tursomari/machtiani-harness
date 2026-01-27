@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tursomari/machtiani/agent/internal/conversation"
 	"github.com/tursomari/machtiani/agent/internal/planner"
 	"github.com/tursomari/machtiani/agent/internal/transcript"
 )
@@ -294,7 +295,7 @@ func TestStartTranscriptIfNeededChildIncludesBackgroundWhenRequested(t *testing.
 	if !started {
 		t.Fatalf("expected transcript to start")
 	}
-	if err := writeInitialBackgroundIfNeeded(tr, ".", cfg, true, started); err != nil {
+	if err := writeInitialBackgroundIfNeeded(tr, ".", cfg, true, started, nil); err != nil {
 		t.Fatalf("writeInitialBackgroundIfNeeded error: %v", err)
 	}
 	content := tr.Content()
@@ -512,5 +513,174 @@ func TestUpdatePatchPlanIfNeededRunsAfterCommit(t *testing.T) {
 	}
 	if progress.needsPatchPlanUpdate() {
 		t.Fatalf("expected patch plan update cleared")
+	}
+}
+
+func TestConversationDualWriteMatchesLegacyTranscript(t *testing.T) {
+	cwd, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	tmp := t.TempDir()
+	_ = os.Chdir(tmp)
+	t.Setenv("HOME", tmp)
+
+	sessionID := "conv-sess"
+	goal := "Finish documentation"
+	formattedGoal := formatGoalText(goal, "")
+
+	legacy, err := transcript.New("legacy-" + sessionID)
+	if err != nil {
+		t.Fatalf("legacy transcript init: %v", err)
+	}
+	if err := legacy.WriteHeader(goal, "", sessionID, nil); err != nil {
+		legacy.Close()
+		t.Fatalf("legacy WriteHeader: %v", err)
+	}
+	if err := legacy.WriteTurn(1, "What should we document?", "/tmp/chat.md", []string{"README.md"}, "Document usage", "ask"); err != nil {
+		legacy.Close()
+		t.Fatalf("legacy WriteTurn: %v", err)
+	}
+	expected := legacy.Content()
+	legacy.Close()
+
+	conv := conversation.New(sessionID, formattedGoal)
+	conversationRendered, err := conv.ToTranscript()
+	if err != nil {
+		t.Fatalf("conversation ToTranscript: %v", err)
+	}
+
+	tr, err := transcript.New(sessionID)
+	if err != nil {
+		t.Fatalf("transcript init: %v", err)
+	}
+	defer tr.Close()
+	if err := tr.WriteHeader(goal, "", sessionID, nil); err != nil {
+		t.Fatalf("WriteHeader: %v", err)
+	}
+
+	renderDelta := func() (string, string, error) {
+		rendered, err := conv.ToTranscript()
+		if err != nil {
+			return "", "", err
+		}
+		if conversationRendered != "" && !strings.HasPrefix(rendered, conversationRendered) {
+			return rendered, "", errors.New("conversation render lost prefix")
+		}
+		return rendered, rendered[len(conversationRendered):], nil
+	}
+
+	conv.AddMessage("assistant", "What should we document?", map[string]any{"type": "ask", "turn": 1, "decision": "ask"})
+	conv.AddMessage("assistant", "Document usage", map[string]any{"type": "answer", "turn": 1, "chat_path": "/tmp/chat.md", "retrieved_files": []string{"README.md"}})
+	rendered, delta, err := renderDelta()
+	if err != nil {
+		t.Fatalf("renderDelta error: %v", err)
+	}
+	if err := tr.AppendBlock(delta); err != nil {
+		t.Fatalf("AppendBlock error: %v", err)
+	}
+	conversationRendered = rendered
+
+	if got := tr.Content(); got != expected {
+		t.Fatalf("transcript mismatch:\nwant:\n%s\n----\n got:\n%s", expected, got)
+	}
+}
+
+func TestConversationResumeRestoresTranscript(t *testing.T) {
+	cwd, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	tmp := t.TempDir()
+	_ = os.Chdir(tmp)
+	t.Setenv("HOME", tmp)
+
+	sessionID := "resume-conv"
+	goal := "Stabilize builds"
+	formattedGoal := formatGoalText(goal, "")
+
+	legacy, err := transcript.New(sessionID)
+	if err != nil {
+		t.Fatalf("legacy transcript init: %v", err)
+	}
+	if err := legacy.WriteHeader(goal, "", sessionID, nil); err != nil {
+		legacy.Close()
+		t.Fatalf("legacy WriteHeader: %v", err)
+	}
+	if err := legacy.WriteTurn(1, "Check pipeline?", "/tmp/chat.md", []string{"pipeline.md"}, "Yes", "ask"); err != nil {
+		legacy.Close()
+		t.Fatalf("legacy WriteTurn: %v", err)
+	}
+	expected := legacy.Content()
+	legacyPath := legacy.Path()
+	legacy.Close()
+
+	conv := conversation.New(sessionID, formattedGoal)
+	conv.AddMessage("assistant", "Check pipeline?", map[string]any{"type": "ask", "turn": 1, "decision": "ask"})
+	conv.AddMessage("assistant", "Yes", map[string]any{"type": "answer", "turn": 1, "chat_path": "/tmp/chat.md", "retrieved_files": []string{"pipeline.md"}})
+	convJSON, err := conv.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal conversation: %v", err)
+	}
+
+	convLoaded, err := conversation.Unmarshal(convJSON)
+	if err != nil {
+		t.Fatalf("Unmarshal conversation: %v", err)
+	}
+	rendered, err := convLoaded.ToTranscript()
+	if err != nil {
+		t.Fatalf("ToTranscript: %v", err)
+	}
+
+	restored, err := transcript.NewWithPath(legacyPath, sessionID)
+	if err != nil {
+		t.Fatalf("NewWithPath: %v", err)
+	}
+	defer restored.Close()
+	if err := restored.Restore(rendered); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+
+	if got := restored.Content(); got != expected {
+		t.Fatalf("restored transcript mismatch:\nwant:\n%s\n----\n got:\n%s", expected, got)
+	}
+}
+
+func TestRestoreTranscriptFromConversationRewritesStaleContent(t *testing.T) {
+	cwd, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	tmp := t.TempDir()
+	_ = os.Chdir(tmp)
+	t.Setenv("HOME", tmp)
+
+	sessionID := "stale-restore"
+	goal := "Keep transcripts consistent"
+	formattedGoal := formatGoalText(goal, "")
+
+	conv := conversation.New(sessionID, formattedGoal)
+	convRendered, err := conv.ToTranscript()
+	if err != nil {
+		t.Fatalf("ToTranscript: %v", err)
+	}
+
+	tr, err := transcript.New(sessionID)
+	if err != nil {
+		t.Fatalf("transcript init: %v", err)
+	}
+	defer tr.Close()
+
+	if err := tr.Restore("stale transcript\n"); err != nil {
+		t.Fatalf("seed stale transcript: %v", err)
+	}
+
+	if err := restoreTranscriptFromConversation(tr, convRendered, true); err != nil {
+		t.Fatalf("restoreTranscriptFromConversation: %v", err)
+	}
+
+	if tr.Content() != convRendered {
+		t.Fatalf("transcript not rewritten from conversation:\nwant:\n%s\n----\n got:\n%s", convRendered, tr.Content())
+	}
+	data, err := os.ReadFile(tr.Path())
+	if err != nil {
+		t.Fatalf("read transcript: %v", err)
+	}
+	if string(data) != convRendered {
+		t.Fatalf("on-disk transcript not rewritten; got:\n%s", string(data))
 	}
 }

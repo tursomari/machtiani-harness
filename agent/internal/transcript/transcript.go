@@ -84,6 +84,30 @@ func (t *Transcript) AppendRaw(text string) error {
 	return err
 }
 
+// AppendBlock writes a pre-rendered transcript block after sanitizing and
+// compacting existing NUL bytes.
+func (t *Transcript) AppendBlock(block string) error {
+	if t == nil {
+		return nil
+	}
+	if block == "" {
+		return nil
+	}
+	block = sanitizeTranscriptText(block)
+	if block == "" {
+		return nil
+	}
+	if err := t.compactNULsIfNeeded(); err != nil {
+		return err
+	}
+	t.mem.WriteString(block)
+	_, err := t.f.WriteString(block)
+	t.emit("block", map[string]any{
+		"written_bytes": len(block),
+	})
+	return err
+}
+
 type PatchValidationMessage struct {
 	Severity string
 	Path     string
@@ -588,14 +612,7 @@ func (t *Transcript) Restore(content string) error {
 	if content == "" {
 		return nil
 	}
-	if _, err := t.f.WriteString(content); err != nil {
-		return err
-	}
-	t.mem.Reset()
-	if _, err := t.mem.WriteString(content); err != nil {
-		return err
-	}
-	return nil
+	return t.rewrite(content)
 }
 
 func (t *Transcript) emit(op string, payload map[string]any) {

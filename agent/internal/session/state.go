@@ -28,6 +28,8 @@ type SessionState struct {
 	TurnsCompleted     int                    `json:"turns_completed"`
 	TranscriptPath     string                 `json:"transcript_path,omitempty"`
 	Transcript         string                 `json:"transcript"`
+	ConversationPath   string                 `json:"conversation_path,omitempty"`
+	ConversationJSON   string                 `json:"conversation_json,omitempty"`
 	UpdatedAt          time.Time              `json:"updated_at"`
 	ParentSessionID    string                 `json:"parent_session_id,omitempty"`
 	MetaModes          []string               `json:"meta_modes,omitempty"`

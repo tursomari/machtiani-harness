@@ -14,13 +14,15 @@ import (
 func TestSaveLoadSessionStateRoundTrip(t *testing.T) {
 	sessionID := fmt.Sprintf("test-session-%d", time.Now().UnixNano())
 	state := SessionState{
-		SessionID:       sessionID,
-		Goal:            "Review database migrations",
-		OriginalPrompt:  "Review database migrations in detail",
-		TaskDescription: "Validate migration ordering",
-		TurnsCompleted:  3,
-		TranscriptPath:  "/tmp/mct/transcript.md",
-		Transcript:      "# existing transcript\n\ncontent here\n",
+		SessionID:        sessionID,
+		Goal:             "Review database migrations",
+		OriginalPrompt:   "Review database migrations in detail",
+		TaskDescription:  "Validate migration ordering",
+		TurnsCompleted:   3,
+		TranscriptPath:   "/tmp/mct/transcript.md",
+		Transcript:       "# existing transcript\n\ncontent here\n",
+		ConversationPath: "/tmp/mct/conversation.json",
+		ConversationJSON: "{\n  \"messages\": []\n}",
 		PlannerProgress: &PlannerProgressState{
 			SuccessFiles:   []string{"README.md", "db/migrations/20240101.sql"},
 			AppliedPatches: 2,
@@ -77,6 +79,12 @@ func TestSaveLoadSessionStateRoundTrip(t *testing.T) {
 	}
 	if loaded.Transcript != state.Transcript {
 		t.Fatalf("unexpected transcript content: got %q want %q", loaded.Transcript, state.Transcript)
+	}
+	if loaded.ConversationPath != state.ConversationPath {
+		t.Fatalf("unexpected conversation path: got %q want %q", loaded.ConversationPath, state.ConversationPath)
+	}
+	if loaded.ConversationJSON != state.ConversationJSON {
+		t.Fatalf("unexpected conversation json: got %q want %q", loaded.ConversationJSON, state.ConversationJSON)
 	}
 	if loaded.UpdatedAt.IsZero() {
 		t.Fatalf("expected UpdatedAt to be set")

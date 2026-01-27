@@ -73,6 +73,16 @@ func SessionPatchPlanFile(sessionID string) (string, error) {
 	return filepath.Join(artifactsDir, "patch-plan.json"), nil
 }
 
+// SessionConversationFile returns the canonical path for the session
+// conversation JSON.
+func SessionConversationFile(sessionID string) (string, error) {
+	artifactsDir, err := SessionArtifactsDirectory(sessionID)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(artifactsDir, "conversation.json"), nil
+}
+
 // SessionTrajectoryDirectory returns the directory for trajectory JSONL files
 // under the session root. The directory may not exist; callers should ensure it
 // is created before writing files.

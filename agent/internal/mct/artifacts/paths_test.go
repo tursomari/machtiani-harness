@@ -192,6 +192,23 @@ func TestSessionPatchesDirectoryLocalRepo(t *testing.T) {
 	})
 }
 
+func TestSessionConversationFileLocalRepo(t *testing.T) {
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+
+	withWorkingDir(t, repoDir, func() {
+		const sessionID = "session-conv"
+		path, err := SessionConversationFile(sessionID)
+		if err != nil {
+			t.Fatalf("SessionConversationFile: %v", err)
+		}
+		expected := filepath.Join(repoDir, ".machtiani", "sessions", sessionID, "artifacts", "conversation.json")
+		if path != expected {
+			t.Fatalf("expected %s, got %s", expected, path)
+		}
+	})
+}
+
 func TestReadmeDirectoryLocalRepo(t *testing.T) {
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)

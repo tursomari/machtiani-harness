@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/tursomari/machtiani/agent/internal/conversation"
 	"github.com/tursomari/machtiani/agent/internal/llm"
 	mctsync "github.com/tursomari/machtiani/agent/internal/mct"
 	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
@@ -225,6 +226,18 @@ func (p *plannerProgressTracker) recordSuccess(files []string) {
 	p.applied++
 }
 
+func formatGoalText(originalPrompt, taskDescription string) string {
+	originalPrompt = strings.TrimSpace(originalPrompt)
+	if originalPrompt == "" {
+		return ""
+	}
+	trimmedTask := strings.TrimSpace(taskDescription)
+	if trimmedTask == "" {
+		return originalPrompt
+	}
+	return fmt.Sprintf("%s\n\n---\n%s\n---", originalPrompt, trimmedTask)
+}
+
 func startTranscriptIfNeeded(tr *transcript.Transcript, originalPrompt, taskDescription, sessionID string, cfg legacyConfig, resumeMode bool) (bool, error) {
 	if tr == nil {
 		return false, nil
@@ -238,7 +251,31 @@ func startTranscriptIfNeeded(tr *transcript.Transcript, originalPrompt, taskDesc
 	return starting, nil
 }
 
-func writeInitialBackgroundIfNeeded(tr *transcript.Transcript, repoRoot string, cfg legacyConfig, isChildSession bool, startingTranscript bool) error {
+func restoreTranscriptFromConversation(tr *transcript.Transcript, conversationRendered string, resumeMode bool) error {
+	if tr == nil {
+		return nil
+	}
+	if !resumeMode {
+		return nil
+	}
+	if strings.TrimSpace(conversationRendered) == "" {
+		return nil
+	}
+	existing := tr.Content()
+	if existing == conversationRendered {
+		return nil
+	}
+	sanitizedExisting := strings.ReplaceAll(existing, "\x00", "")
+	if sanitizedExisting != conversationRendered {
+		return tr.Restore(conversationRendered)
+	}
+	if existing != sanitizedExisting {
+		return tr.Restore(conversationRendered)
+	}
+	return nil
+}
+
+func writeInitialBackgroundIfNeeded(tr *transcript.Transcript, repoRoot string, cfg legacyConfig, isChildSession bool, startingTranscript bool, writeTurn func(step int, question, savedPath string, retrieved []string, summary string, decision string) error) error {
 	if tr == nil || !startingTranscript {
 		return nil
 	}
@@ -254,7 +291,10 @@ func writeInitialBackgroundIfNeeded(tr *transcript.Transcript, repoRoot string, 
 		}
 		prefillAnswer = backgroundText
 	}
-	return tr.WriteTurn(0, backgroundQuestionPrompt, "", nil, prefillAnswer, "background")
+	if writeTurn == nil {
+		return tr.WriteTurn(0, backgroundQuestionPrompt, "", nil, prefillAnswer, "background")
+	}
+	return writeTurn(0, backgroundQuestionPrompt, "", nil, prefillAnswer, "background")
 }
 
 func writePatchPlanTranscriptEntry(tr *transcript.Transcript, plan *PatchPlan, action string) error {
@@ -559,11 +599,17 @@ func Run(ctx context.Context, opts Options) Result {
 	}
 	opts.OriginalPrompt = originalPrompt
 	opts.TaskDescription = taskDescription
+	conversationGoal := formatGoalText(originalPrompt, taskDescription)
 
 	if sessionID == "" {
 		sessionID = runner.GenerateSessionID()
 	}
 	_ = os.Setenv("MACHTIANI_SESSION_ID", sessionID)
+	conversationPath, convPathErr := artifacts.SessionConversationFile(sessionID)
+	if convPathErr != nil {
+		fmt.Fprintln(os.Stderr, "Error resolving conversation path:", convPathErr)
+		return Result{ExitCode: 1, Err: convPathErr}
+	}
 
 	cfgInput.SessionID = sessionID
 
@@ -767,6 +813,11 @@ func Run(ctx context.Context, opts Options) Result {
 
 	var tr *transcript.Transcript
 	resumeTranscript := ""
+	var conv *conversation.Conversation
+	conversationRendered := ""
+	conversationJSON := ""
+	var saveConversation func() error
+	var writeTurn func(step int, question, savedPath string, retrieved []string, summary string, decision string) error
 	if resumeMode && loadedState != nil {
 		resumeTranscript = loadedState.Transcript
 		if strings.TrimSpace(resumeTranscript) == "" && strings.TrimSpace(loadedState.TranscriptPath) != "" {
@@ -842,7 +893,7 @@ func Run(ctx context.Context, opts Options) Result {
 			}
 			summary += strings.Join(additional, "\n")
 		}
-		if err := tr.WriteTurn(pendingPatchDraft.Step, question, "", nil, summary, decision); err != nil {
+		if err := writeTurn(pendingPatchDraft.Step, question, "", nil, summary, decision); err != nil {
 			return err
 		}
 		if strings.ToLower(status) == "success" {
@@ -900,6 +951,13 @@ func Run(ctx context.Context, opts Options) Result {
 				state.TranscriptPath = tr.Path()
 				state.Transcript = tr.Content()
 			}
+			if conv != nil {
+				if conversationJSON == "" {
+					_ = saveConversation()
+				}
+				state.ConversationPath = conversationPath
+				state.ConversationJSON = conversationJSON
+			}
 			state.ParentSessionID = strings.TrimSpace(cfg.parentSessionID)
 			if strings.TrimSpace(state.MetaInstructionDir) == "" {
 				dir := strings.TrimSpace(cfg.metaInstructionDir)
@@ -937,6 +995,17 @@ func Run(ctx context.Context, opts Options) Result {
 				state.TranscriptPath = tr.Path()
 				state.Transcript = tr.Content()
 			}
+			if conv != nil {
+				if conversationJSON == "" {
+					_ = saveConversation()
+				}
+				if state.ConversationPath == "" {
+					state.ConversationPath = conversationPath
+				}
+				if state.ConversationJSON == "" {
+					state.ConversationJSON = conversationJSON
+				}
+			}
 			if state.TranscriptPath == "" && tr != nil {
 				state.TranscriptPath = tr.Path()
 			}
@@ -971,6 +1040,142 @@ func Run(ctx context.Context, opts Options) Result {
 			return Result{ExitCode: 1, Err: err}
 		}
 	}
+
+	loadConversation := func() error {
+		if resumeMode {
+			if data, err := os.ReadFile(conversationPath); err == nil {
+				conv, err = conversation.Unmarshal(data)
+				if err != nil {
+					return err
+				}
+				conversationJSON = string(data)
+			} else if loadedState != nil && strings.TrimSpace(loadedState.ConversationJSON) != "" {
+				conv, err = conversation.Unmarshal([]byte(loadedState.ConversationJSON))
+				if err != nil {
+					return err
+				}
+				conversationJSON = loadedState.ConversationJSON
+			} else {
+				return fmt.Errorf("conversation json missing for resume")
+			}
+		}
+		if conv == nil {
+			conv = conversation.New(sessionID, conversationGoal)
+		}
+		if strings.TrimSpace(conv.OriginalGoal) == "" {
+			conv.OriginalGoal = conversationGoal
+		}
+		rendered, err := conv.ToTranscript()
+		if err != nil {
+			return err
+		}
+		conversationRendered = rendered
+		return nil
+	}
+
+	saveConversation = func() error {
+		if conv == nil {
+			return nil
+		}
+		data, err := conv.Marshal()
+		if err != nil {
+			return err
+		}
+		conversationJSON = string(data)
+		if strings.TrimSpace(conversationPath) == "" {
+			return nil
+		}
+		if err := os.MkdirAll(filepath.Dir(conversationPath), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(conversationPath, data, 0o644)
+	}
+
+	renderConversationDelta := func() (string, string, error) {
+		if conv == nil {
+			return "", "", nil
+		}
+		rendered, err := conv.ToTranscript()
+		if err != nil {
+			return "", "", err
+		}
+		if conversationRendered != "" && !strings.HasPrefix(rendered, conversationRendered) {
+			return rendered, "", fmt.Errorf("conversation transcript desync")
+		}
+		delta := rendered[len(conversationRendered):]
+		return rendered, delta, nil
+	}
+
+	appendConversationTurn := func(step int, question, savedPath string, retrieved []string, summary string, decision string) error {
+		if conv == nil || tr == nil {
+			if tr == nil {
+				return nil
+			}
+			return tr.WriteTurn(step, question, savedPath, retrieved, summary, decision)
+		}
+		conv.AddMessage("assistant", question, map[string]any{
+			"type":     "ask",
+			"turn":     step,
+			"decision": decision,
+		})
+		conv.AddMessage("assistant", summary, map[string]any{
+			"type":            "answer",
+			"turn":            step,
+			"retrieved_files": retrieved,
+			"chat_path":       savedPath,
+		})
+		rendered, delta, err := renderConversationDelta()
+		if err != nil {
+			return err
+		}
+		if delta != "" {
+			if err := tr.AppendBlock(delta); err != nil {
+				return err
+			}
+		}
+		conversationRendered = rendered
+		return saveConversation()
+	}
+
+	appendConversationRaw := func(role, content, metaType string) error {
+		if conv == nil || tr == nil {
+			if tr == nil {
+				return nil
+			}
+			switch strings.ToLower(strings.TrimSpace(metaType)) {
+			case "goal_update", "user_feedback":
+				return tr.AppendRaw(fmt.Sprintf("\n=== GOAL UPDATE\n\n%s\n", content))
+			default:
+				return tr.AppendRaw(content)
+			}
+		}
+		conv.AddMessage(role, content, map[string]any{"type": metaType})
+		rendered, delta, err := renderConversationDelta()
+		if err != nil {
+			return err
+		}
+		if delta != "" {
+			if err := tr.AppendBlock(delta); err != nil {
+				return err
+			}
+		}
+		conversationRendered = rendered
+		return saveConversation()
+	}
+
+	if err := loadConversation(); err != nil {
+		fmt.Fprintln(os.Stderr, "Error loading conversation:", err)
+		return Result{ExitCode: 1, Err: err}
+	}
+	if err := restoreTranscriptFromConversation(tr, conversationRendered, resumeMode); err != nil {
+		fmt.Fprintln(os.Stderr, "Error restoring transcript from conversation:", err)
+		return Result{ExitCode: 1, Err: err}
+	}
+	if err := saveConversation(); err != nil {
+		fmt.Fprintln(os.Stderr, "Error saving conversation:", err)
+		return Result{ExitCode: 1, Err: err}
+	}
+	writeTurn = appendConversationTurn
 
 	if cfg.verbose {
 		fmt.Fprintln(os.Stderr, "mct-agent starting; transcript:", tr.Path())
@@ -1110,7 +1315,7 @@ func Run(ctx context.Context, opts Options) Result {
 		return Result{ExitCode: 1, Err: headerErr}
 	}
 
-	if err := writeInitialBackgroundIfNeeded(tr, repoRoot, cfg, isChildSession, startingTranscript); err != nil {
+	if err := writeInitialBackgroundIfNeeded(tr, repoRoot, cfg, isChildSession, startingTranscript, appendConversationTurn); err != nil {
 		fmt.Fprintln(os.Stderr, "Transcript write error:", err)
 		sessionErr = err
 		return Result{ExitCode: 1, Err: err}
@@ -1154,6 +1359,8 @@ func Run(ctx context.Context, opts Options) Result {
 					TurnsCompleted:     turnsCompleted,
 					TranscriptPath:     tr.Path(),
 					Transcript:         tr.Content(),
+					ConversationPath:   conversationPath,
+					ConversationJSON:   conversationJSON,
 					ParentSessionID:    strings.TrimSpace(cfg.parentSessionID),
 					MetaModes:          metaModesFromPlan(outcome.Plan),
 					MetaInstructionDir: instructionDir,
@@ -1165,7 +1372,7 @@ func Run(ctx context.Context, opts Options) Result {
 			sessionStatus = "success"
 			sessionErr = nil
 			if strings.TrimSpace(outcome.FinalAnswer) != "" {
-				if err := tr.WriteTurn(1, "Meta-Orchestrator Summary", "", nil, outcome.FinalAnswer, "meta-summary"); err != nil {
+				if err := writeTurn(1, "Meta-Orchestrator Summary", "", nil, outcome.FinalAnswer, "meta-summary"); err != nil {
 					fmt.Fprintln(os.Stderr, "Transcript write error:", err)
 					sessionErr = err
 					display.EndSession()
@@ -1247,7 +1454,7 @@ func Run(ctx context.Context, opts Options) Result {
 		if trimmedResumePrompt != "" {
 			feedback := extractUserFeedback(trimmedResumePrompt)
 			resumePrompt = feedback
-			if err := tr.AppendRaw(fmt.Sprintf("\n=== GOAL UPDATE\n\n%s\n", feedback)); err != nil {
+			if err := appendConversationRaw("user", feedback, "goal_update"); err != nil {
 				fmt.Fprintln(os.Stderr, "Transcript write error:", err)
 				sessionErr = err
 				finishTurn(sessTelemetry, turn, "user-feedback", "error", turnInfo, err)
@@ -1382,6 +1589,13 @@ func Run(ctx context.Context, opts Options) Result {
 					pendingState.TranscriptPath = tr.Path()
 					pendingState.Transcript = tr.Content()
 				}
+				if conv != nil {
+					if conversationJSON == "" {
+						_ = saveConversation()
+					}
+					pendingState.ConversationPath = conversationPath
+					pendingState.ConversationJSON = conversationJSON
+				}
 				applyPlannerProgress(pendingState)
 				printResumeHint("=== SESSION COMPLETE ===", turnsCompleted)
 				return Result{ExitCode: 0, Status: sessionStatus, Turns: userTurnCounter, SessionID: sessionID}
@@ -1503,6 +1717,13 @@ func Run(ctx context.Context, opts Options) Result {
 			if tr != nil {
 				pendingState.TranscriptPath = tr.Path()
 				pendingState.Transcript = tr.Content()
+			}
+			if conv != nil {
+				if conversationJSON == "" {
+					_ = saveConversation()
+				}
+				pendingState.ConversationPath = conversationPath
+				pendingState.ConversationJSON = conversationJSON
 			}
 			applyPlannerProgress(pendingState)
 			printResumeHint("=== SESSION COMPLETE ===", turnsCompleted)
@@ -1959,7 +2180,7 @@ func Run(ctx context.Context, opts Options) Result {
 					fullAns = "[show-file]"
 				}
 				stream.Complete(fullAns)
-				if err := tr.WriteTurn(step, question, "", showFileRetrieved, fullAns, "ask"); err != nil {
+				if err := writeTurn(step, question, "", showFileRetrieved, fullAns, "ask"); err != nil {
 					fmt.Fprintln(os.Stderr, "Transcript write error:", err)
 					sessionErr = err
 					finishTurn(sessTelemetry, turn, turnDecision, "error", turnInfo, err)
@@ -2049,7 +2270,7 @@ func Run(ctx context.Context, opts Options) Result {
 			if block := strings.TrimSpace(result.DirectiveBlock); block != "" {
 				transcriptQuestion = transcriptQuestion + "\n\n" + block
 			}
-			if err := tr.WriteTurn(step, transcriptQuestion, savedPath, retrieved, fullAns, "ask"); err != nil {
+			if err := writeTurn(step, transcriptQuestion, savedPath, retrieved, fullAns, "ask"); err != nil {
 				fmt.Fprintln(os.Stderr, "Transcript write error:", err)
 				sessionErr = err
 				finishTurn(sessTelemetry, turn, turnDecision, "error", turnInfo, err)
@@ -2164,7 +2385,7 @@ func Run(ctx context.Context, opts Options) Result {
 			jsonBytes, jerr := parser.ExtractPatchJSONPayload(question)
 			if jerr != nil {
 				stream.Abort("invalid patch payload")
-				_ = tr.WriteTurn(step, "Patcher: invalid input JSON", "", nil, "Error extracting JSON: "+jerr.Error(), "patch-error")
+				_ = writeTurn(step, "Patcher: invalid input JSON", "", nil, "Error extracting JSON: "+jerr.Error(), "patch-error")
 				recordPatchError("invalid_patch_payload", jerr, nil)
 				if shouldFinalizeAfterPatch {
 					goto Finalize
@@ -2183,7 +2404,7 @@ func Run(ctx context.Context, opts Options) Result {
 			dec.DisallowUnknownFields()
 			if derr := dec.Decode(&instr); derr != nil {
 				stream.Abort("invalid patch payload")
-				_ = tr.WriteTurn(step, "Patcher: invalid instructions", "", nil, "Error decoding JSON: "+derr.Error(), "patch-error")
+				_ = writeTurn(step, "Patcher: invalid instructions", "", nil, "Error decoding JSON: "+derr.Error(), "patch-error")
 				recordPatchError("invalid_patch_instructions", derr, nil)
 				if shouldFinalizeAfterPatch {
 					goto Finalize
@@ -2222,7 +2443,7 @@ func Run(ctx context.Context, opts Options) Result {
 			if skipAllSuccess && len(skipPaths) > 0 && !forceRepatch && false {
 				skipMsg := fmt.Sprintf("Skipping patch because all target files were already updated earlier this session: %s. Reload the latest file contents before generating another patch.", strings.Join(skipPaths, ", "))
 				stream.Abort("patch skipped (already updated)")
-				_ = tr.WriteTurn(step, "Patcher: skip (already updated)", "", nil, skipMsg, "patch-error")
+				_ = writeTurn(step, "Patcher: skip (already updated)", "", nil, skipMsg, "patch-error")
 				turnInfo["patch_skip_already_updated"] = skipPaths
 				extra := map[string]any{"skip_files": skipPaths}
 				recordPatchError("patch_skipped_already_success", fmt.Errorf("patch targeted previously updated files"), extra)
@@ -2255,7 +2476,7 @@ func Run(ctx context.Context, opts Options) Result {
 					summary = precheckErr.Error()
 				}
 				stream.Abort("patch instructions invalid")
-				if err := tr.WriteTurn(step, patchTurnLabel, "", nil, summary, "patch-error"); err != nil {
+				if err := writeTurn(step, patchTurnLabel, "", nil, summary, "patch-error"); err != nil {
 					fmt.Fprintln(os.Stderr, "Transcript write error:", err)
 					sessionErr = err
 					recordPatchError("transcript_write_error", err, map[string]any{"patch_error_context": "precheck_summary"})
@@ -2279,7 +2500,7 @@ func Run(ctx context.Context, opts Options) Result {
 			if pRunner == nil {
 				errDisabled := errors.New("patch runner disabled")
 				stream.Abort("patch runner unavailable")
-				_ = tr.WriteTurn(step, patchTurnLabel, "", nil, "Error: patch runner disabled", "patch-error")
+				_ = writeTurn(step, patchTurnLabel, "", nil, "Error: patch runner disabled", "patch-error")
 				recordPatchError("patch_runner_unavailable", errDisabled, nil)
 				if shouldFinalizeAfterPatch {
 					goto Finalize
@@ -2288,7 +2509,7 @@ func Run(ctx context.Context, opts Options) Result {
 			}
 			if err := pRunner.Resolve(); err != nil {
 				stream.Abort("patcher resolve failed")
-				_ = tr.WriteTurn(step, patchTurnLabel, "", nil, "Error: "+err.Error(), "patch-error")
+				_ = writeTurn(step, patchTurnLabel, "", nil, "Error: "+err.Error(), "patch-error")
 				recordPatchError("patch_runner_resolve", err, nil)
 				if shouldFinalizeAfterPatch {
 					goto Finalize
@@ -2338,7 +2559,7 @@ func Run(ctx context.Context, opts Options) Result {
 				case errors.As(applyErr, &cleanErr):
 					stream.Abort("patch validation failed")
 					summary := "Patch validation failed. See diagnostics below."
-					if err := tr.WriteTurn(step, patchTurnLabel, "", nil, summary, "patch-error"); err != nil {
+					if err := writeTurn(step, patchTurnLabel, "", nil, summary, "patch-error"); err != nil {
 						fmt.Fprintln(os.Stderr, "Transcript write error:", err)
 						sessionErr = err
 						recordPatchError("transcript_write_error", err, map[string]any{"patch_error_context": "validation_summary"})
@@ -2376,7 +2597,7 @@ func Run(ctx context.Context, opts Options) Result {
 					continue
 				case errors.As(applyErr, &valErr):
 					stream.Abort("patch validation error")
-					_ = tr.WriteTurn(step, patchTurnLabel, "", nil, valErr.Error(), "patch-error")
+					_ = writeTurn(step, patchTurnLabel, "", nil, valErr.Error(), "patch-error")
 					recordPatchError("patch_validation_error", valErr, nil)
 					if shouldFinalizeAfterPatch {
 						goto Finalize
@@ -2393,7 +2614,7 @@ func Run(ctx context.Context, opts Options) Result {
 					continue
 				case errors.As(applyErr, &genErr):
 					stream.Abort("patch generation error")
-					_ = tr.WriteTurn(step, patchTurnLabel, "", nil, genErr.Error(), "patch-error")
+					_ = writeTurn(step, patchTurnLabel, "", nil, genErr.Error(), "patch-error")
 					recordPatchError("patch_generation_error", genErr, nil)
 					if shouldFinalizeAfterPatch {
 						goto Finalize
@@ -2410,7 +2631,7 @@ func Run(ctx context.Context, opts Options) Result {
 					continue
 				default:
 					stream.Abort("patcher execution error")
-					_ = tr.WriteTurn(step, patchTurnLabel, "", nil, applyErr.Error(), "patch-error")
+					_ = writeTurn(step, patchTurnLabel, "", nil, applyErr.Error(), "patch-error")
 					recordPatchError("patch_apply_error", applyErr, nil)
 					if shouldFinalizeAfterPatch {
 						goto Finalize
@@ -2431,7 +2652,7 @@ func Run(ctx context.Context, opts Options) Result {
 			if result == nil {
 				errEmpty := errors.New("patcher returned empty result")
 				stream.Abort("patcher returned no result")
-				_ = tr.WriteTurn(step, patchTurnLabel, "", nil, errEmpty.Error(), "patch-error")
+				_ = writeTurn(step, patchTurnLabel, "", nil, errEmpty.Error(), "patch-error")
 				recordPatchError("patch_empty_result", errEmpty, nil)
 				if shouldFinalizeAfterPatch {
 					goto Finalize
@@ -2727,7 +2948,7 @@ Finalize:
 				if jerr != nil {
 					stream.Abort("invalid patch payload")
 					stream = nil
-					_ = tr.WriteTurn(step, "Patcher: pre-finalize (invalid JSON)", "", nil, jerr.Error(), "patch-error")
+					_ = writeTurn(step, "Patcher: pre-finalize (invalid JSON)", "", nil, jerr.Error(), "patch-error")
 					handled = true
 				}
 				if !handled {
@@ -2740,12 +2961,12 @@ Finalize:
 					if derr := dec.Decode(&instr); derr != nil {
 						stream.Abort("invalid patch payload")
 						stream = nil
-						_ = tr.WriteTurn(step, "Patcher: pre-finalize (decode error)", "", nil, derr.Error(), "patch-error")
+						_ = writeTurn(step, "Patcher: pre-finalize (decode error)", "", nil, derr.Error(), "patch-error")
 						handled = true
 					} else if err := pRunner.Resolve(); err != nil {
 						stream.Abort("patcher resolve failed")
 						stream = nil
-						_ = tr.WriteTurn(step, "Patcher: pre-finalize (resolve failed)", "", nil, err.Error(), "patch-error")
+						_ = writeTurn(step, "Patcher: pre-finalize (resolve failed)", "", nil, err.Error(), "patch-error")
 						handled = true
 					} else {
 						ctxP, cancelP := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
@@ -2787,7 +3008,7 @@ Finalize:
 									stream.Abort("patcher execution error")
 									stream = nil
 								}
-								_ = tr.WriteTurn(step, "Patcher: pre-finalize (error)", "", nil, trimTo(applyErr.Error(), 800), "patch-error")
+								_ = writeTurn(step, "Patcher: pre-finalize (error)", "", nil, trimTo(applyErr.Error(), 800), "patch-error")
 							}
 							handled = true
 						} else if result == nil {
@@ -2795,7 +3016,7 @@ Finalize:
 								stream.Abort("patcher returned no result")
 								stream = nil
 							}
-							_ = tr.WriteTurn(step, "Patcher: pre-finalize (empty result)", "", nil, "patcher returned empty result", "patch-error")
+							_ = writeTurn(step, "Patcher: pre-finalize (empty result)", "", nil, "patcher returned empty result", "patch-error")
 							handled = true
 						} else {
 							qline := "Patcher: pre-finalize"
@@ -2833,7 +3054,7 @@ Finalize:
 									finalizeStatus,
 								)
 							}
-							_ = tr.WriteTurn(step, qline, "", nil, diffText, "patch")
+							_ = writeTurn(step, qline, "", nil, diffText, "patch")
 							if stream != nil {
 								stream.Complete(diffText)
 							}
@@ -2899,6 +3120,13 @@ Finalize:
 	if tr != nil {
 		pendingState.TranscriptPath = tr.Path()
 		pendingState.Transcript = tr.Content()
+	}
+	if conv != nil {
+		if conversationJSON == "" {
+			_ = saveConversation()
+		}
+		pendingState.ConversationPath = conversationPath
+		pendingState.ConversationJSON = conversationJSON
 	}
 	applyPlannerProgress(pendingState)
 	printResumeHint("=== SESSION COMPLETE ===", turnsCompleted)
