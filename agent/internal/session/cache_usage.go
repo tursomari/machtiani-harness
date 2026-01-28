@@ -63,10 +63,14 @@ func formatLLMCacheUsageEvent(evt listener.Event) string {
 		return ""
 	}
 	modelLabel := describeFailoverModel(evt.Payload["model"])
-	if modelLabel != "" && modelLabel != "unknown model" {
-		return fmt.Sprintf("[llm cache] %s: %s", modelLabel, strings.Join(parts, " "))
+	componentLabel := strings.TrimSpace(evt.Component)
+	if componentLabel == "" {
+		componentLabel = "unknown"
 	}
-	return fmt.Sprintf("[llm cache] %s", strings.Join(parts, " "))
+	if modelLabel != "" && modelLabel != "unknown model" {
+		return fmt.Sprintf("[llm cache] %s (%s): %s", modelLabel, componentLabel, strings.Join(parts, " "))
+	}
+	return fmt.Sprintf("[llm cache] (%s): %s", componentLabel, strings.Join(parts, " "))
 }
 
 func intFromAny(v any) (int, bool) {

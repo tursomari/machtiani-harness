@@ -424,12 +424,16 @@ func emitLLMEvent(ctx context.Context, level, kind string, payload map[string]an
 		payload = map[string]any{}
 	}
 	payload["event_version"] = 1
+	component := stageFromContext(ctx)
+	if component == "" {
+		component = "llm"
+	}
 	evt := trajectory.Event{
 		Level:     level,
 		Kind:      kind,
 		SpanID:    trajectory.NewSpanID(),
 		Payload:   payload,
-		Component: "llm",
+		Component: component,
 	}
 	if parent, ok := trajectory.ParentSpanID(ctx); ok && parent != "" {
 		evt.ParentSpanID = parent
