@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -637,6 +638,92 @@ func TestBuildPlanMessagesUsesConversation(t *testing.T) {
 	}
 }
 
+func TestBuildPlanMessagesInsertsCacheAnchorMetadata(t *testing.T) {
+	model := llm.ResolvedModel{
+		CacheKeyName:          "cache_control",
+		CacheControl:          map[string]any{"type": "ephemeral"},
+		CacheTriggerThreshold: 1,
+		CacheLookbackOffset:   1,
+	}
+	client := NewClient(ClientConfig{Model: model})
+	conv := conversation.New("sess-anchor", "Goal")
+	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask"})
+	client.buildPlanMessages(conv, "Goal", 2, 4, nil)
+
+	anchors := cacheAnchorIndexes(conv)
+	if len(anchors) != 1 {
+		t.Fatalf("expected 1 cache anchor, got %d", len(anchors))
+	}
+	metadata := conv.Messages[anchors[0]].Metadata
+	if cacheAnchorInt(metadata, llm.CacheAnchorSequenceMetadataKey) != 1 {
+		t.Fatalf("expected anchor_seq 1, got %v", metadata[llm.CacheAnchorSequenceMetadataKey])
+	}
+	if cacheAnchorInt(metadata, llm.CacheAnchorTurnMetadataKey) != 2 {
+		t.Fatalf("expected anchor_turn 2, got %v", metadata[llm.CacheAnchorTurnMetadataKey])
+	}
+	if cacheAnchorInt(metadata, llm.CacheAnchorTokensMetadataKey) <= 0 {
+		t.Fatalf("expected anchor_tokens to be set, got %v", metadata[llm.CacheAnchorTokensMetadataKey])
+	}
+	if cacheAnchorBool(metadata, llm.CacheAnchorRetiredMetadataKey) {
+		t.Fatalf("expected anchor to be active")
+	}
+}
+
+func TestBuildPlanMessagesKeepsAnchorStable(t *testing.T) {
+	model := llm.ResolvedModel{
+		CacheKeyName:          "cache_control",
+		CacheControl:          map[string]any{"type": "ephemeral"},
+		CacheTriggerThreshold: 1,
+		CacheReanchorTokens:   1000,
+		CacheReanchorMessages: 1000,
+	}
+	client := NewClient(ClientConfig{Model: model})
+	conv := conversation.New("sess-stable", "Goal")
+	conv.AddMessage("user", llm.CacheAnchorMarkerText, map[string]any{"type": "cache_anchor", llm.CacheAnchorSequenceMetadataKey: 1})
+	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask"})
+	client.buildPlanMessages(conv, "Goal", 2, 4, nil)
+
+	anchors := cacheAnchorIndexes(conv)
+	if len(anchors) != 1 {
+		t.Fatalf("expected 1 cache anchor, got %d", len(anchors))
+	}
+	if cacheAnchorBool(conv.Messages[anchors[0]].Metadata, llm.CacheAnchorRetiredMetadataKey) {
+		t.Fatalf("expected anchor to remain active")
+	}
+}
+
+func TestBuildPlanMessagesRotatesCacheAnchor(t *testing.T) {
+	model := llm.ResolvedModel{
+		CacheKeyName:                 "cache_control",
+		CacheControl:                 map[string]any{"type": "ephemeral"},
+		CacheTriggerThreshold:        1,
+		CacheReanchorTokens:          1,
+		CacheReanchorMinCachedTokens: 5,
+	}
+	client := NewClient(ClientConfig{Model: model})
+	conv := conversation.New("sess-rotate", "Goal")
+	conv.AddMessage("user", llm.CacheAnchorMarkerText, map[string]any{
+		"type":                                 "cache_anchor",
+		llm.CacheAnchorSequenceMetadataKey:     1,
+		llm.CacheAnchorCachedTokensMetadataKey: 5,
+	})
+	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask"})
+	client.buildPlanMessages(conv, "Goal", 3, 6, nil)
+
+	anchors := cacheAnchorIndexes(conv)
+	if len(anchors) != 2 {
+		t.Fatalf("expected 2 cache anchors, got %d", len(anchors))
+	}
+	first := conv.Messages[anchors[0]].Metadata
+	second := conv.Messages[anchors[1]].Metadata
+	if !cacheAnchorBool(first, llm.CacheAnchorRetiredMetadataKey) {
+		t.Fatalf("expected original anchor to be retired")
+	}
+	if cacheAnchorInt(second, llm.CacheAnchorSequenceMetadataKey) != 2 {
+		t.Fatalf("expected new anchor_seq 2, got %v", second[llm.CacheAnchorSequenceMetadataKey])
+	}
+}
+
 func TestFinalizePromptOmitsTranscript(t *testing.T) {
 	c := NewClient(ClientConfig{DryRun: true})
 	prompt := c.finalizePrompt("goal text", "transcript text")
@@ -659,6 +746,70 @@ func index(s, sub string) int {
 		}
 	}
 	return -1
+}
+
+func cacheAnchorIndexes(conv *conversation.Conversation) []int {
+	if conv == nil {
+		return nil
+	}
+	indexes := []int{}
+	for i, msg := range conv.Messages {
+		if msg.Metadata == nil {
+			continue
+		}
+		val, ok := msg.Metadata["type"].(string)
+		if !ok {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(val), "cache_anchor") {
+			indexes = append(indexes, i)
+		}
+	}
+	return indexes
+}
+
+func cacheAnchorInt(metadata map[string]any, key string) int {
+	if metadata == nil {
+		return 0
+	}
+	if raw, ok := metadata[key]; ok {
+		switch v := raw.(type) {
+		case int:
+			return v
+		case int64:
+			return int(v)
+		case float64:
+			return int(v)
+		case string:
+			if parsed, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+				return parsed
+			}
+		}
+	}
+	return 0
+}
+
+func cacheAnchorBool(metadata map[string]any, key string) bool {
+	if metadata == nil {
+		return false
+	}
+	if raw, ok := metadata[key]; ok {
+		switch v := raw.(type) {
+		case bool:
+			return v
+		case string:
+			if parsed, err := strconv.ParseBool(strings.TrimSpace(v)); err == nil {
+				return parsed
+			}
+		case int:
+			return v != 0
+		case int64:
+			return v != 0
+		case float64:
+			return v != 0
+		}
+	}
+	return false
 }
 
 func TestPlanReroutesRewriteToFullMode(t *testing.T) {

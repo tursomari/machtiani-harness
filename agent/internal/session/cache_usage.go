@@ -54,7 +54,7 @@ func formatLLMCacheUsageEvent(evt listener.Event) string {
 		parts = append(parts, fmt.Sprintf("cached=%d", cachedTokens))
 	}
 	if writeTokens, ok := intFromAny(evt.Payload["cache_write_tokens"]); ok {
-		parts = append(parts, fmt.Sprintf("write=%d", writeTokens))
+		parts = append(parts, fmt.Sprintf("cache-write=%d", writeTokens))
 	}
 	if discount, ok := floatFromAny(evt.Payload["cache_discount"]); ok {
 		parts = append(parts, fmt.Sprintf("discount=%.2f", discount))
@@ -133,4 +133,26 @@ func floatFromAny(v any) (float64, bool) {
 		}
 	}
 	return 0, false
+}
+
+func boolFromAny(v any) (bool, bool) {
+	switch val := v.(type) {
+	case bool:
+		return val, true
+	case int:
+		return val != 0, true
+	case int64:
+		return val != 0, true
+	case float64:
+		return val != 0, true
+	case string:
+		trimmed := strings.TrimSpace(val)
+		if trimmed == "" {
+			return false, false
+		}
+		if parsed, err := strconv.ParseBool(trimmed); err == nil {
+			return parsed, true
+		}
+	}
+	return false, false
 }

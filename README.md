@@ -167,6 +167,32 @@ model    = "openai/gpt-5-nano"
 
 Keys inside `[planner]`, `[shell-agent]`, `[model]`, and `[environment]` are shared across Machtiani binaries; omit `model.api_key` to keep credentials out of the file. When you need an alternate model temporarily, pass `--shell-agent-model <alias>` to `mct-agent run --shell-agent` or to the standalone `shell-agent` binary.
 
+### Prompt Caching (per model)
+Prompt caching is configured per entry under `[models.<alias>]`. To enable it, set a cache key name, cache control payload, a token threshold, and (optionally) a lookback offset for the initial anchor placement:
+
+```toml
+[models.haiku]
+provider = "openrouter"
+model = "anthropic/claude-haiku-4.5"
+cache_key_name = "cache_control"
+cache_control = { type = "ephemeral" }
+cache_trigger_threshold = 4096
+cache_lookback_offset = 1
+```
+
+To rotate anchors as the prompt grows, set one or both re-anchor thresholds. Rotation is disabled when these are unset or `0`:
+
+```toml
+cache_reanchor_tokens = 4096
+cache_reanchor_messages = 20
+cache_reanchor_min_cached_tokens = 2048
+```
+
+- `cache_reanchor_tokens`: rotate when tokens since the active anchor exceed this.
+- `cache_reanchor_messages`: rotate when messages since the active anchor exceed this.
+- `cache_reanchor_min_cached_tokens`: require at least this many cached tokens before rotating.
+- `cache_lookback_offset`: controls the initial anchor placement (how far from the end).
+
 ### Environment Variables and Flags
 `OPENAI_*` (or the legacy `AGENT_MODEL_*`) environment variables still work; they override missing parts of `[model]` and remain useful for secrets. Command-line flags such as `--openai-api-key` continue to take highest precedence.
 

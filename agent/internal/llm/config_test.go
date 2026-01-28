@@ -252,6 +252,9 @@ cache_key_name = "cache_control"
 cache_control = { type = "ephemeral" }
 cache_trigger_threshold = 100
 cache_lookback_offset = 3
+cache_reanchor_tokens = 500
+cache_reanchor_messages = 8
+cache_reanchor_min_cached_tokens = 200
 temperature = 0.2
 `
 
@@ -277,6 +280,15 @@ temperature = 0.2
 	if model.CacheLookbackOffset != 3 {
 		t.Fatalf("expected cache_lookback_offset 3, got %d", model.CacheLookbackOffset)
 	}
+	if model.CacheReanchorTokens != 500 {
+		t.Fatalf("expected cache_reanchor_tokens 500, got %d", model.CacheReanchorTokens)
+	}
+	if model.CacheReanchorMessages != 8 {
+		t.Fatalf("expected cache_reanchor_messages 8, got %d", model.CacheReanchorMessages)
+	}
+	if model.CacheReanchorMinCachedTokens != 200 {
+		t.Fatalf("expected cache_reanchor_min_cached_tokens 200, got %d", model.CacheReanchorMinCachedTokens)
+	}
 	if model.CacheControl["type"] != "ephemeral" {
 		t.Fatalf("expected cache_control type ephemeral, got %v", model.CacheControl)
 	}
@@ -285,6 +297,45 @@ temperature = 0.2
 	}
 	if _, ok := model.Params["cache_key_name"]; ok {
 		t.Fatalf("cache_key_name should not be in params")
+	}
+}
+
+func TestLoadGlobalConfigDefaultsReanchorFields(t *testing.T) {
+	content := `listen = "127.0.0.1:0"
+
+[providers.fake]
+base_url = "https://example.com/v1"
+api_key = "provider-key"
+
+[models.cached]
+provider = "fake"
+model = "cached-model"
+cache_key_name = "cache_control"
+cache_control = { type = "ephemeral" }
+cache_trigger_threshold = 100
+`
+
+	path := filepath.Join(t.TempDir(), "config.toml")
+	mustWriteFile(t, path, content)
+	t.Setenv("MACHTIANI_CONFIG", path)
+	ResetConfigForTesting()
+
+	cfg, _, err := LoadGlobalConfig()
+	if err != nil {
+		t.Fatalf("LoadGlobalConfig: %v", err)
+	}
+	model, ok := cfg.Models["cached"]
+	if !ok {
+		t.Fatalf("expected cached model definition")
+	}
+	if model.CacheReanchorTokens != 0 {
+		t.Fatalf("expected default cache_reanchor_tokens 0, got %d", model.CacheReanchorTokens)
+	}
+	if model.CacheReanchorMessages != 0 {
+		t.Fatalf("expected default cache_reanchor_messages 0, got %d", model.CacheReanchorMessages)
+	}
+	if model.CacheReanchorMinCachedTokens != 0 {
+		t.Fatalf("expected default cache_reanchor_min_cached_tokens 0, got %d", model.CacheReanchorMinCachedTokens)
 	}
 }
 

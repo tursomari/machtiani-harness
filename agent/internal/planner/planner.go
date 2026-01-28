@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -67,6 +68,35 @@ type Progress struct {
 	AppliedPatches      int
 	ForceRepatchExample bool
 	PendingReview       *PendingReview
+}
+
+type cacheUsageTracker struct {
+	maxCachedTokens int
+}
+
+func (t *cacheUsageTracker) Observe(_ llm.ResolvedModel, usage llm.CacheUsageInfo) {
+	if usage.CachedTokens > t.maxCachedTokens {
+		t.maxCachedTokens = usage.CachedTokens
+	}
+}
+
+func (t *cacheUsageTracker) UpdateConversation(conv *conversation.Conversation) {
+	if t == nil || conv == nil || t.maxCachedTokens <= 0 {
+		return
+	}
+	anchorIndex := activeCacheAnchorIndex(conv)
+	if anchorIndex < 0 {
+		return
+	}
+	metadata := conv.Messages[anchorIndex].Metadata
+	if metadata == nil {
+		metadata = map[string]any{}
+	}
+	current := anchorCachedTokens(metadata)
+	if t.maxCachedTokens > current {
+		metadata[llm.CacheAnchorCachedTokensMetadataKey] = t.maxCachedTokens
+	}
+	conv.Messages[anchorIndex].Metadata = metadata
 }
 
 type planTemplateData struct {
@@ -272,6 +302,11 @@ func (c *Client) Plan(ctx context.Context, conv *conversation.Conversation, goal
 		}
 		chatCtx = trajectory.ContextWithParentSpan(ctx, span.ID)
 	}
+	var usageTracker *cacheUsageTracker
+	if !reviewMode && conv != nil && cacheControlEnabled(c.cfg.Model) {
+		usageTracker = &cacheUsageTracker{}
+		chatCtx = llm.WithCacheUsageObserver(chatCtx, usageTracker.Observe)
+	}
 	start := time.Now()
 	resp, err := c.chatMessages(chatCtx, messages)
 	duration := time.Since(start)
@@ -304,6 +339,9 @@ func (c *Client) Plan(ctx context.Context, conv *conversation.Conversation, goal
 			}
 		}
 		return "", "", err
+	}
+	if usageTracker != nil {
+		usageTracker.UpdateConversation(conv)
 	}
 	if c.cfg.Verbose {
 		fmt.Fprintln(os.Stderr, "[planner] model response:", truncateMiddle(strings.TrimSpace(resp), 1800))
@@ -467,25 +505,36 @@ func (c *Client) buildPlanMessages(conv *conversation.Conversation, goal string,
 	stepMsg := fmt.Sprintf("Step %d of %d. Decide.", step, maxSteps)
 	stepMessage := messageWithEstimatedTokens("user", stepMsg)
 	messages = append(messages, stepMessage)
-	return c.ensurePlanCacheAnchor(conv, systemPrompt, stepMessage, messages)
+	return c.ensurePlanCacheAnchor(conv, systemPrompt, stepMessage, messages, step)
 }
 
-func (c *Client) ensurePlanCacheAnchor(conv *conversation.Conversation, systemPrompt string, stepMessage llm.Message, messages []llm.Message) []llm.Message {
+func (c *Client) ensurePlanCacheAnchor(conv *conversation.Conversation, systemPrompt string, stepMessage llm.Message, messages []llm.Message, step int) []llm.Message {
 	if conv == nil {
 		return messages
 	}
 	if !cacheControlEnabled(c.cfg.Model) {
 		return messages
 	}
-	if conversationHasCacheAnchor(conv) {
-		return messages
-	}
 	if estimatePlanTokens(messages) < c.cfg.Model.CacheTriggerThreshold {
 		return messages
 	}
-	anchorIndex := cacheAnchorIndexForPlan(len(messages), c.cfg.Model.CacheLookbackOffset)
-	insertIndex := cacheAnchorInsertIndex(anchorIndex, messages, len(conv.Messages), systemPrompt != "")
-	conv.InsertMessageAt(insertIndex, "user", llm.CacheAnchorMarkerText, map[string]any{"type": "cache_anchor"})
+	anchorIndex := activeCacheAnchorIndex(conv)
+	if anchorIndex < 0 {
+		initialAnchorIndex := cacheAnchorIndexForPlan(len(messages), c.cfg.Model.CacheLookbackOffset)
+		insertIndex := cacheAnchorInsertIndex(initialAnchorIndex, messages, len(conv.Messages), systemPrompt != "")
+		anchorTokens := estimatePlanTokens(messages)
+		conv.InsertMessageAt(insertIndex, "user", llm.CacheAnchorMarkerText, newCacheAnchorMetadata(conv, step, anchorTokens))
+		refreshed := conv.ToChatMessages(systemPrompt)
+		refreshed = append(refreshed, stepMessage)
+		return refreshed
+	}
+	if !shouldRotateCacheAnchor(c.cfg.Model, conv.Messages[anchorIndex].Metadata, messages) {
+		return messages
+	}
+	markCacheAnchorRetired(conv, anchorIndex)
+	insertIndex := cacheAnchorInsertIndex(len(messages)-1, messages, len(conv.Messages), systemPrompt != "")
+	anchorTokens := estimatePlanTokens(messages)
+	conv.InsertMessageAt(insertIndex, "user", llm.CacheAnchorMarkerText, newCacheAnchorMetadata(conv, step, anchorTokens))
 	refreshed := conv.ToChatMessages(systemPrompt)
 	refreshed = append(refreshed, stepMessage)
 	return refreshed
@@ -495,23 +544,184 @@ func cacheControlEnabled(model llm.ResolvedModel) bool {
 	return strings.TrimSpace(model.CacheKeyName) != "" && model.CacheTriggerThreshold > 0 && len(model.CacheControl) > 0
 }
 
-func conversationHasCacheAnchor(conv *conversation.Conversation) bool {
+func activeCacheAnchorIndex(conv *conversation.Conversation) int {
 	if conv == nil {
+		return -1
+	}
+	for i := len(conv.Messages) - 1; i >= 0; i-- {
+		msg := conv.Messages[i]
+		if !isCacheAnchorMessage(msg.Metadata) {
+			continue
+		}
+		if cacheAnchorRetired(msg.Metadata) {
+			continue
+		}
+		return i
+	}
+	return -1
+}
+
+func isCacheAnchorMessage(metadata map[string]any) bool {
+	if metadata == nil {
 		return false
 	}
-	for _, msg := range conv.Messages {
-		if msg.Metadata == nil {
-			continue
-		}
-		val, ok := msg.Metadata["type"].(string)
-		if !ok {
-			continue
-		}
-		if strings.EqualFold(strings.TrimSpace(val), "cache_anchor") {
-			return true
+	val, ok := metadata["type"].(string)
+	if !ok {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(val), "cache_anchor")
+}
+
+func cacheAnchorRetired(metadata map[string]any) bool {
+	if metadata == nil {
+		return false
+	}
+	if raw, ok := metadata[llm.CacheAnchorRetiredMetadataKey]; ok {
+		switch v := raw.(type) {
+		case bool:
+			return v
+		case string:
+			return strings.EqualFold(strings.TrimSpace(v), "true")
+		case int:
+			return v != 0
+		case int64:
+			return v != 0
+		case float64:
+			return v != 0
 		}
 	}
 	return false
+}
+
+func shouldRotateCacheAnchor(model llm.ResolvedModel, anchorMetadata map[string]any, messages []llm.Message) bool {
+	if model.CacheReanchorTokens <= 0 && model.CacheReanchorMessages <= 0 {
+		return false
+	}
+	anchorIndex := cacheAnchorMessageIndex(messages)
+	if anchorIndex < 0 {
+		return false
+	}
+	if model.CacheReanchorTokens > 0 {
+		tokensSince := estimatePlanTokens(messages[anchorIndex+1:])
+		if tokensSince >= model.CacheReanchorTokens {
+			if cacheReanchorMinSatisfied(anchorMetadata, model.CacheReanchorMinCachedTokens) {
+				return true
+			}
+		}
+	}
+	if model.CacheReanchorMessages > 0 {
+		messagesSince := len(messages) - anchorIndex - 1
+		if messagesSince >= model.CacheReanchorMessages {
+			if cacheReanchorMinSatisfied(anchorMetadata, model.CacheReanchorMinCachedTokens) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func cacheReanchorMinSatisfied(anchorMetadata map[string]any, minCachedTokens int) bool {
+	if minCachedTokens <= 0 {
+		return true
+	}
+	return anchorCachedTokens(anchorMetadata) >= minCachedTokens
+}
+
+func markCacheAnchorRetired(conv *conversation.Conversation, index int) {
+	if conv == nil || index < 0 || index >= len(conv.Messages) {
+		return
+	}
+	metadata := conv.Messages[index].Metadata
+	if metadata == nil {
+		metadata = map[string]any{}
+	}
+	metadata[llm.CacheAnchorRetiredMetadataKey] = true
+	conv.Messages[index].Metadata = metadata
+}
+
+func cacheAnchorMessageIndex(messages []llm.Message) int {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Metadata == nil {
+			continue
+		}
+		val, ok := messages[i].Metadata["type"].(string)
+		if !ok {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(val), "cache_anchor") && !cacheAnchorRetired(messages[i].Metadata) {
+			return i
+		}
+	}
+	return -1
+}
+
+func newCacheAnchorMetadata(conv *conversation.Conversation, step, anchorTokens int) map[string]any {
+	seq := nextCacheAnchorSeq(conv)
+	metadata := map[string]any{
+		"type":                             "cache_anchor",
+		llm.CacheAnchorSequenceMetadataKey: seq,
+		llm.CacheAnchorTurnMetadataKey:     step,
+		llm.CacheAnchorTokensMetadataKey:   anchorTokens,
+	}
+	return metadata
+}
+
+func anchorCachedTokens(metadata map[string]any) int {
+	if metadata == nil {
+		return 0
+	}
+	if raw, ok := metadata[llm.CacheAnchorCachedTokensMetadataKey]; ok {
+		switch v := raw.(type) {
+		case int:
+			return v
+		case int64:
+			return int(v)
+		case float64:
+			return int(v)
+		case string:
+			if parsed, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+				return parsed
+			}
+		}
+	}
+	return 0
+}
+
+func nextCacheAnchorSeq(conv *conversation.Conversation) int {
+	if conv == nil {
+		return 1
+	}
+	maxSeq := 0
+	count := 0
+	for _, msg := range conv.Messages {
+		if !isCacheAnchorMessage(msg.Metadata) {
+			continue
+		}
+		count++
+		if raw, ok := msg.Metadata[llm.CacheAnchorSequenceMetadataKey]; ok {
+			switch v := raw.(type) {
+			case int:
+				if v > maxSeq {
+					maxSeq = v
+				}
+			case int64:
+				if int(v) > maxSeq {
+					maxSeq = int(v)
+				}
+			case float64:
+				if int(v) > maxSeq {
+					maxSeq = int(v)
+				}
+			}
+		}
+	}
+	if maxSeq > 0 {
+		return maxSeq + 1
+	}
+	if count > 0 {
+		return count + 1
+	}
+	return 1
 }
 
 func estimatePlanTokens(messages []llm.Message) int {

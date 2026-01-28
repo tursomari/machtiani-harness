@@ -39,12 +39,17 @@ var (
 )
 
 const (
-	testStubEnv           = "MCT_LLM_TEST_STUB" // test-only knob to bypass network LLM calls
-	retryAfterCap         = 15 * time.Second
-	llmInputLogEnv        = "MCT_LLM_INPUT_LOG" // optional debug log file path for full LLM request inputs
-	llmStageEnv           = "MCT_LLM_STAGE"     // optional stage label for LLM calls (planner/shell-agent/etc)
-	CacheAnchorMarkerText = "[cache anchor]"
-	cacheAnchorMarkerText = CacheAnchorMarkerText
+	testStubEnv                        = "MCT_LLM_TEST_STUB" // test-only knob to bypass network LLM calls
+	retryAfterCap                      = 15 * time.Second
+	llmInputLogEnv                     = "MCT_LLM_INPUT_LOG" // optional debug log file path for full LLM request inputs
+	llmStageEnv                        = "MCT_LLM_STAGE"     // optional stage label for LLM calls (planner/shell-agent/etc)
+	CacheAnchorMarkerText              = "[cache anchor]"
+	cacheAnchorMarkerText              = CacheAnchorMarkerText
+	CacheAnchorRetiredMetadataKey      = "cache_anchor_retired"
+	CacheAnchorSequenceMetadataKey     = "anchor_seq"
+	CacheAnchorTurnMetadataKey         = "anchor_turn"
+	CacheAnchorTokensMetadataKey       = "anchor_tokens"
+	CacheAnchorCachedTokensMetadataKey = "anchor_cached_tokens"
 )
 
 func stageFromContext(ctx context.Context) string {
@@ -63,6 +68,16 @@ func stageFromContext(ctx context.Context) string {
 
 type contextKeyLLMStage struct{}
 
+type contextKeyCacheUsageObserver struct{}
+
+type CacheUsageInfo struct {
+	CachedTokens     int
+	CacheWriteTokens int
+	CacheDiscount    *float64
+}
+
+type CacheUsageObserver func(model ResolvedModel, usage CacheUsageInfo)
+
 // WithStage annotates the context so LLM request logs can identify the caller stage.
 func WithStage(ctx context.Context, stage string) context.Context {
 	if ctx == nil {
@@ -73,6 +88,16 @@ func WithStage(ctx context.Context, stage string) context.Context {
 		return ctx
 	}
 	return context.WithValue(ctx, contextKeyLLMStage{}, stage)
+}
+
+func WithCacheUsageObserver(ctx context.Context, observer CacheUsageObserver) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if observer == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, contextKeyCacheUsageObserver{}, observer)
 }
 
 func llmInputLogPath() string {
@@ -207,6 +232,10 @@ func applyCacheControl(ctx context.Context, messages []Message, model ResolvedMo
 
 	anchorIndex := cacheAnchorMessageIndex(messages)
 	useStoredAnchor := anchorIndex >= 0
+	anchorPrevIndex := -1
+	if useStoredAnchor {
+		anchorPrevIndex = cacheAnchorPreviousIndex(messages, anchorIndex)
+	}
 	if !useStoredAnchor {
 		lookback := model.CacheLookbackOffset
 		if lookback <= 0 {
@@ -220,7 +249,9 @@ func applyCacheControl(ctx context.Context, messages []Message, model ResolvedMo
 		}
 	}
 
+	insertedAnchor := false
 	if !useStoredAnchor && strings.EqualFold(strings.TrimSpace(messages[anchorIndex].Role), "assistant") {
+		insertedAnchor = true
 		result := make([]any, 0, len(messages)+1)
 		for i, msg := range messages {
 			if i == anchorIndex {
@@ -229,7 +260,8 @@ func applyCacheControl(ctx context.Context, messages []Message, model ResolvedMo
 			result = append(result, messageMap(msg))
 		}
 
-		emitCacheDiagnostics(ctx, anchorIndex, len(result), totalTokens, model, result)
+		cacheDetails := cacheDiagnosticsDetailsForAnchor(messages, anchorIndex, anchorPrevIndex, insertedAnchor)
+		emitCacheDiagnostics(ctx, anchorIndex, len(result), totalTokens, model, result, cacheDetails)
 		return result
 	}
 
@@ -247,7 +279,8 @@ func applyCacheControl(ctx context.Context, messages []Message, model ResolvedMo
 		}
 	}
 
-	emitCacheDiagnostics(ctx, anchorIndex, len(result), totalTokens, model, result)
+	cacheDetails := cacheDiagnosticsDetailsForAnchor(messages, anchorIndex, anchorPrevIndex, insertedAnchor)
+	emitCacheDiagnostics(ctx, anchorIndex, len(result), totalTokens, model, result, cacheDetails)
 	return result
 }
 
@@ -266,35 +299,111 @@ func messagesToAny(messages []Message) []any {
 }
 
 func cacheAnchorMessageIndex(messages []Message) int {
-	anchor := -1
-	for i, msg := range messages {
-		if msg.Metadata == nil {
-			continue
-		}
-		raw, ok := msg.Metadata["type"]
-		if !ok {
-			continue
-		}
-		val, ok := raw.(string)
-		if !ok {
-			continue
-		}
-		if strings.EqualFold(strings.TrimSpace(val), "cache_anchor") {
-			anchor = i
-			break
+	for i := len(messages) - 1; i >= 0; i-- {
+		if isCacheAnchorMessage(messages[i]) && !cacheAnchorRetired(messages[i].Metadata) {
+			return i
 		}
 	}
-	return anchor
+	return -1
 }
 
-func emitCacheDiagnostics(ctx context.Context, anchorIndex, messageCount, totalTokens int, model ResolvedModel, messages []any) {
+func cacheAnchorPreviousIndex(messages []Message, activeIndex int) int {
+	if activeIndex <= 0 {
+		return -1
+	}
+	for i := activeIndex - 1; i >= 0; i-- {
+		if isCacheAnchorMessage(messages[i]) {
+			return i
+		}
+	}
+	return -1
+}
+
+func isCacheAnchorMessage(msg Message) bool {
+	if msg.Metadata == nil {
+		return false
+	}
+	raw, ok := msg.Metadata["type"]
+	if !ok {
+		return false
+	}
+	val, ok := raw.(string)
+	if !ok {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(val), "cache_anchor")
+}
+
+func cacheAnchorRetired(metadata map[string]any) bool {
+	if metadata == nil {
+		return false
+	}
+	raw, ok := metadata[CacheAnchorRetiredMetadataKey]
+	if !ok {
+		return false
+	}
+	switch val := raw.(type) {
+	case bool:
+		return val
+	case string:
+		return strings.EqualFold(strings.TrimSpace(val), "true")
+	case int:
+		return val != 0
+	case int64:
+		return val != 0
+	case float64:
+		return val != 0
+	default:
+		return false
+	}
+}
+
+type cacheDiagnosticsDetails struct {
+	AnchorPrevIndex     int
+	TokensSinceAnchor   int
+	MessagesSinceAnchor int
+}
+
+func cacheDiagnosticsDetailsForAnchor(messages []Message, anchorIndex, anchorPrevIndex int, insertedAnchor bool) cacheDiagnosticsDetails {
+	startIndex := anchorIndex + 1
+	if insertedAnchor {
+		startIndex = anchorIndex
+	}
+	if startIndex < 0 {
+		startIndex = 0
+	}
+	if startIndex > len(messages) {
+		startIndex = len(messages)
+	}
+	return cacheDiagnosticsDetails{
+		AnchorPrevIndex:     anchorPrevIndex,
+		TokensSinceAnchor:   estimateTokensFromMessages(messages[startIndex:]),
+		MessagesSinceAnchor: len(messages) - startIndex,
+	}
+}
+
+func estimateTokensFromMessages(messages []Message) int {
+	total := 0
+	for _, msg := range messages {
+		total += estimateTokensFromMetadata(msg)
+	}
+	return total
+}
+
+func emitCacheDiagnostics(ctx context.Context, anchorIndex, messageCount, totalTokens int, model ResolvedModel, messages []any, details cacheDiagnosticsDetails) {
 	payload := map[string]any{
-		"anchor_index":   anchorIndex,
-		"message_count":  messageCount,
-		"total_messages": messageCount,
-		"total_tokens":   totalTokens,
-		"threshold":      model.CacheTriggerThreshold,
-		"lookback":       model.CacheLookbackOffset,
+		"anchor_index":          anchorIndex,
+		"message_count":         messageCount,
+		"total_messages":        messageCount,
+		"total_tokens":          totalTokens,
+		"threshold":             model.CacheTriggerThreshold,
+		"lookback":              model.CacheLookbackOffset,
+		"tokens_since_anchor":   details.TokensSinceAnchor,
+		"messages_since_anchor": details.MessagesSinceAnchor,
+	}
+	if details.AnchorPrevIndex >= 0 {
+		payload["anchor_prev_index"] = details.AnchorPrevIndex
+		payload["anchor_rotated"] = true
 	}
 	if stageFromContext(ctx) == "planner" {
 		if prefix := cachePrefixHash(messages, anchorIndex); prefix != "" {
@@ -742,6 +851,17 @@ func emitCacheUsage(ctx context.Context, model ResolvedModel, usage *responseUsa
 	if usage.PromptTokensDetails == nil && usage.CacheDiscount == nil {
 		return
 	}
+	if observer := cacheUsageObserverFromContext(ctx); observer != nil {
+		info := CacheUsageInfo{}
+		if usage.PromptTokensDetails != nil {
+			info.CachedTokens = usage.PromptTokensDetails.CachedTokens
+			info.CacheWriteTokens = usage.PromptTokensDetails.CacheWriteTokens
+		}
+		if usage.CacheDiscount != nil {
+			info.CacheDiscount = usage.CacheDiscount
+		}
+		observer(model, info)
+	}
 	payload := map[string]any{
 		"model":             modelSummary(model),
 		"prompt_tokens":     usage.PromptTokens,
@@ -756,6 +876,18 @@ func emitCacheUsage(ctx context.Context, model ResolvedModel, usage *responseUsa
 		payload["cache_discount"] = *usage.CacheDiscount
 	}
 	emitLLMEvent(ctx, "info", "llm.cache.usage", payload, nil)
+}
+
+func cacheUsageObserverFromContext(ctx context.Context) CacheUsageObserver {
+	if ctx == nil {
+		return nil
+	}
+	if raw := ctx.Value(contextKeyCacheUsageObserver{}); raw != nil {
+		if observer, ok := raw.(CacheUsageObserver); ok {
+			return observer
+		}
+	}
+	return nil
 }
 
 func emitStreamFallbackEvent(ctx context.Context, model ResolvedModel, err error, partial bool, prefixLen int) {

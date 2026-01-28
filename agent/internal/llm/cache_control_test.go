@@ -191,6 +191,28 @@ func TestApplyCacheControlUsesStoredAnchor(t *testing.T) {
 	}
 }
 
+func TestApplyCacheControlSkipsRetiredAnchor(t *testing.T) {
+	model := ResolvedModel{
+		CacheKeyName:          "cache_control",
+		CacheControl:          map[string]any{"type": "ephemeral"},
+		CacheTriggerThreshold: 10,
+		CacheLookbackOffset:   1,
+	}
+	messages := []Message{
+		{Role: "user", Content: "first", Metadata: map[string]any{"estimated_tokens": 6}},
+		{Role: "user", Content: cacheAnchorMarkerText, Metadata: map[string]any{"type": "cache_anchor", "estimated_tokens": 6}},
+		{Role: "assistant", Content: "middle", Metadata: map[string]any{"estimated_tokens": 6}},
+		{Role: "user", Content: cacheAnchorMarkerText, Metadata: map[string]any{"type": "cache_anchor", CacheAnchorRetiredMetadataKey: true, "estimated_tokens": 6}},
+		{Role: "assistant", Content: "tail", Metadata: map[string]any{"estimated_tokens": 6}},
+	}
+
+	got := applyCacheControl(context.Background(), messages, model)
+	anchor := cacheAnchorIndex(t, got, model.CacheKeyName)
+	if anchor != 1 {
+		t.Fatalf("expected anchor index 1, got %d", anchor)
+	}
+}
+
 func cacheAnchorIndex(t *testing.T, messages []any, cacheKey string) int {
 	t.Helper()
 	anchor := -1
