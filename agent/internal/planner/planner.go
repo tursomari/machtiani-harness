@@ -465,8 +465,124 @@ func (c *Client) buildPlanMessages(conv *conversation.Conversation, goal string,
 	systemPrompt := strings.TrimSpace(c.planSystemPrompt(conv, goalForPrompt, step, maxSteps, patchPlan))
 	messages := conv.ToChatMessages(systemPrompt)
 	stepMsg := fmt.Sprintf("Step %d of %d. Decide.", step, maxSteps)
-	messages = append(messages, messageWithEstimatedTokens("user", stepMsg))
-	return messages
+	stepMessage := messageWithEstimatedTokens("user", stepMsg)
+	messages = append(messages, stepMessage)
+	return c.ensurePlanCacheAnchor(conv, systemPrompt, stepMessage, messages)
+}
+
+func (c *Client) ensurePlanCacheAnchor(conv *conversation.Conversation, systemPrompt string, stepMessage llm.Message, messages []llm.Message) []llm.Message {
+	if conv == nil {
+		return messages
+	}
+	if !cacheControlEnabled(c.cfg.Model) {
+		return messages
+	}
+	if conversationHasCacheAnchor(conv) {
+		return messages
+	}
+	if estimatePlanTokens(messages) < c.cfg.Model.CacheTriggerThreshold {
+		return messages
+	}
+	anchorIndex := cacheAnchorIndexForPlan(len(messages), c.cfg.Model.CacheLookbackOffset)
+	insertIndex := cacheAnchorInsertIndex(anchorIndex, messages, len(conv.Messages), systemPrompt != "")
+	conv.InsertMessageAt(insertIndex, "user", llm.CacheAnchorMarkerText, map[string]any{"type": "cache_anchor"})
+	refreshed := conv.ToChatMessages(systemPrompt)
+	refreshed = append(refreshed, stepMessage)
+	return refreshed
+}
+
+func cacheControlEnabled(model llm.ResolvedModel) bool {
+	return strings.TrimSpace(model.CacheKeyName) != "" && model.CacheTriggerThreshold > 0 && len(model.CacheControl) > 0
+}
+
+func conversationHasCacheAnchor(conv *conversation.Conversation) bool {
+	if conv == nil {
+		return false
+	}
+	for _, msg := range conv.Messages {
+		if msg.Metadata == nil {
+			continue
+		}
+		val, ok := msg.Metadata["type"].(string)
+		if !ok {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(val), "cache_anchor") {
+			return true
+		}
+	}
+	return false
+}
+
+func estimatePlanTokens(messages []llm.Message) int {
+	total := 0
+	for _, msg := range messages {
+		if msg.Metadata != nil {
+			if raw, ok := msg.Metadata["estimated_tokens"]; ok {
+				switch val := raw.(type) {
+				case int:
+					total += val
+					continue
+				case int64:
+					total += int(val)
+					continue
+				case float64:
+					total += int(val)
+					continue
+				}
+			}
+		}
+		total += llm.EstimateMessageTokens(msg)
+	}
+	return total
+}
+
+func cacheAnchorIndexForPlan(messageCount int, lookback int) int {
+	if messageCount <= 0 {
+		return 0
+	}
+	if lookback <= 0 {
+		lookback = 1
+	}
+	anchorIndex := messageCount - lookback
+	if anchorIndex < 0 {
+		return 0
+	}
+	if anchorIndex >= messageCount {
+		return messageCount - 1
+	}
+	return anchorIndex
+}
+
+func cacheAnchorInsertIndex(anchorIndex int, messages []llm.Message, convCount int, hasSystem bool) int {
+	systemOffset := 0
+	if hasSystem {
+		systemOffset = 1
+	}
+	insertIndex := anchorIndex - systemOffset
+	if insertIndex < 0 {
+		insertIndex = 0
+	}
+	if insertIndex > convCount {
+		insertIndex = convCount
+	}
+	if anchorIndex < 0 || anchorIndex >= len(messages) {
+		return insertIndex
+	}
+	role := strings.ToLower(strings.TrimSpace(messages[anchorIndex].Role))
+	if role == "user" {
+		convEndIndex := systemOffset + convCount
+		if anchorIndex < convEndIndex {
+			insertIndex++
+		}
+	}
+	if insertIndex < 0 {
+		insertIndex = 0
+	}
+	if insertIndex > convCount {
+		insertIndex = convCount
+	}
+	return insertIndex
 }
 
 func messageWithEstimatedTokens(role, content string) llm.Message {

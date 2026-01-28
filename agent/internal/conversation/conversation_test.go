@@ -228,3 +228,20 @@ func TestToChatMessagesOrdersGoalUpdate(t *testing.T) {
 		t.Fatalf("unexpected goal update content: %q", messages[3].Content)
 	}
 }
+
+func TestToChatMessagesIncludesCacheAnchor(t *testing.T) {
+	conv := New("sess-anchor", "Goal")
+	conv.AddMessage("user", "[cache anchor]", map[string]any{"type": "cache_anchor"})
+	conv.AddMessage("assistant", "Answer", map[string]any{"type": "answer", "turn": 1})
+
+	messages := conv.ToChatMessages("")
+	if len(messages) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(messages))
+	}
+	if messages[1].Role != "user" {
+		t.Fatalf("expected cache anchor role user, got %q", messages[1].Role)
+	}
+	if messages[1].Content != "[cache anchor]" {
+		t.Fatalf("unexpected cache anchor content: %q", messages[1].Content)
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -41,7 +43,8 @@ const (
 	retryAfterCap         = 15 * time.Second
 	llmInputLogEnv        = "MCT_LLM_INPUT_LOG" // optional debug log file path for full LLM request inputs
 	llmStageEnv           = "MCT_LLM_STAGE"     // optional stage label for LLM calls (planner/shell-agent/etc)
-	cacheAnchorMarkerText = "[cache anchor]"
+	CacheAnchorMarkerText = "[cache anchor]"
+	cacheAnchorMarkerText = CacheAnchorMarkerText
 )
 
 func stageFromContext(ctx context.Context) string {
@@ -175,37 +178,49 @@ func applyCacheControl(ctx context.Context, messages []Message, model ResolvedMo
 		return messagesToAny(messages)
 	}
 
-	lookback := model.CacheLookbackOffset
-	if lookback <= 0 {
-		lookback = 1
+	textPart := func(text string, cacheValue map[string]any) map[string]any {
+		part := map[string]any{
+			"type": "text",
+			"text": text,
+		}
+		if cacheValue != nil {
+			part[cacheKey] = cacheValue
+		}
+		return part
 	}
-	anchorIndex := len(messages) - lookback
-	if anchorIndex < 0 {
-		anchorIndex = 0
-	} else if anchorIndex >= len(messages) {
-		anchorIndex = len(messages) - 1
-	}
-
 	messageMap := func(msg Message) map[string]any {
 		return map[string]any{
-			"role":    msg.Role,
-			"content": msg.Content,
+			"role": msg.Role,
+			"content": []any{
+				textPart(msg.Content, nil),
+			},
 		}
 	}
 	cacheAnchor := func(text string) map[string]any {
 		return map[string]any{
 			"role": "user",
 			"content": []any{
-				map[string]any{
-					"type":   "text",
-					"text":   text,
-					cacheKey: model.CacheControl,
-				},
+				textPart(text, model.CacheControl),
 			},
 		}
 	}
 
-	if strings.EqualFold(strings.TrimSpace(messages[anchorIndex].Role), "assistant") {
+	anchorIndex := cacheAnchorMessageIndex(messages)
+	useStoredAnchor := anchorIndex >= 0
+	if !useStoredAnchor {
+		lookback := model.CacheLookbackOffset
+		if lookback <= 0 {
+			lookback = 1
+		}
+		anchorIndex = len(messages) - lookback
+		if anchorIndex < 0 {
+			anchorIndex = 0
+		} else if anchorIndex >= len(messages) {
+			anchorIndex = len(messages) - 1
+		}
+	}
+
+	if !useStoredAnchor && strings.EqualFold(strings.TrimSpace(messages[anchorIndex].Role), "assistant") {
 		result := make([]any, 0, len(messages)+1)
 		for i, msg := range messages {
 			if i == anchorIndex {
@@ -214,14 +229,7 @@ func applyCacheControl(ctx context.Context, messages []Message, model ResolvedMo
 			result = append(result, messageMap(msg))
 		}
 
-		emitLLMEvent(ctx, "info", "llm.cache.injected", map[string]any{
-			"anchor_index":   anchorIndex,
-			"total_messages": len(result),
-			"total_tokens":   totalTokens,
-			"threshold":      model.CacheTriggerThreshold,
-			"lookback":       model.CacheLookbackOffset,
-		}, nil)
-
+		emitCacheDiagnostics(ctx, anchorIndex, len(result), totalTokens, model, result)
 		return result
 	}
 
@@ -234,23 +242,12 @@ func applyCacheControl(ctx context.Context, messages []Message, model ResolvedMo
 		result[i] = map[string]any{
 			"role": msg.Role,
 			"content": []any{
-				map[string]any{
-					"type":   "text",
-					"text":   msg.Content,
-					cacheKey: model.CacheControl,
-				},
+				textPart(msg.Content, model.CacheControl),
 			},
 		}
 	}
 
-	emitLLMEvent(ctx, "info", "llm.cache.injected", map[string]any{
-		"anchor_index":   anchorIndex,
-		"total_messages": len(messages),
-		"total_tokens":   totalTokens,
-		"threshold":      model.CacheTriggerThreshold,
-		"lookback":       model.CacheLookbackOffset,
-	}, nil)
-
+	emitCacheDiagnostics(ctx, anchorIndex, len(result), totalTokens, model, result)
 	return result
 }
 
@@ -266,6 +263,127 @@ func messagesToAny(messages []Message) []any {
 		}
 	}
 	return result
+}
+
+func cacheAnchorMessageIndex(messages []Message) int {
+	anchor := -1
+	for i, msg := range messages {
+		if msg.Metadata == nil {
+			continue
+		}
+		raw, ok := msg.Metadata["type"]
+		if !ok {
+			continue
+		}
+		val, ok := raw.(string)
+		if !ok {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(val), "cache_anchor") {
+			anchor = i
+			break
+		}
+	}
+	return anchor
+}
+
+func emitCacheDiagnostics(ctx context.Context, anchorIndex, messageCount, totalTokens int, model ResolvedModel, messages []any) {
+	payload := map[string]any{
+		"anchor_index":   anchorIndex,
+		"message_count":  messageCount,
+		"total_messages": messageCount,
+		"total_tokens":   totalTokens,
+		"threshold":      model.CacheTriggerThreshold,
+		"lookback":       model.CacheLookbackOffset,
+	}
+	if stageFromContext(ctx) == "planner" {
+		if prefix := cachePrefixHash(messages, anchorIndex); prefix != "" {
+			payload["prefix_hash"] = prefix
+		}
+	}
+	emitLLMEvent(ctx, "info", "llm.cache.injected", payload, nil)
+}
+
+func cachePrefixHash(messages []any, anchorIndex int) string {
+	if anchorIndex < 0 || anchorIndex >= len(messages) {
+		return ""
+	}
+	var b strings.Builder
+	for i := 0; i <= anchorIndex && i < len(messages); i++ {
+		msg, ok := messages[i].(map[string]any)
+		if !ok {
+			continue
+		}
+		b.WriteString("role=")
+		b.WriteString(stableValueString(msg["role"]))
+		b.WriteString(";content=")
+		b.WriteString(stableValueString(msg["content"]))
+		b.WriteString("\n")
+	}
+	sum := sha256.Sum256([]byte(b.String()))
+	return fmt.Sprintf("%x", sum[:])
+}
+
+func stableValueString(val any) string {
+	switch v := val.(type) {
+	case nil:
+		return "null"
+	case string:
+		return strconv.Quote(v)
+	case bool:
+		return strconv.FormatBool(v)
+	case int:
+		return strconv.Itoa(v)
+	case int64:
+		return strconv.FormatInt(v, 10)
+	case float64:
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	case float32:
+		return strconv.FormatFloat(float64(v), 'f', -1, 32)
+	case []any:
+		var b strings.Builder
+		b.WriteString("[")
+		for i, item := range v {
+			if i > 0 {
+				b.WriteString(",")
+			}
+			b.WriteString(stableValueString(item))
+		}
+		b.WriteString("]")
+		return b.String()
+	case []string:
+		items := make([]any, len(v))
+		for i, item := range v {
+			items[i] = item
+		}
+		return stableValueString(items)
+	case map[string]string:
+		items := make(map[string]any, len(v))
+		for key, value := range v {
+			items[key] = value
+		}
+		return stableValueString(items)
+	case map[string]any:
+		keys := make([]string, 0, len(v))
+		for key := range v {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		var b strings.Builder
+		b.WriteString("{")
+		for i, key := range keys {
+			if i > 0 {
+				b.WriteString(",")
+			}
+			b.WriteString(strconv.Quote(key))
+			b.WriteString(":")
+			b.WriteString(stableValueString(v[key]))
+		}
+		b.WriteString("}")
+		return b.String()
+	default:
+		return fmt.Sprintf("%v", v)
+	}
 }
 
 func estimateTokensFromMetadata(msg Message) int {

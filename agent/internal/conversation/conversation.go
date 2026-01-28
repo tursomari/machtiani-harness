@@ -73,6 +73,38 @@ func (c *Conversation) AddMessage(role, content string, metadata map[string]any)
 	c.UpdatedAt = ts
 }
 
+// InsertMessageAt inserts a message at the requested index, clamping to the
+// valid slice bounds. Metadata is shallow-copied and timestamps updated.
+func (c *Conversation) InsertMessageAt(index int, role, content string, metadata map[string]any) {
+	if c == nil {
+		return
+	}
+	if index < 0 {
+		index = 0
+	}
+	if index > len(c.Messages) {
+		index = len(c.Messages)
+	}
+	ts := time.Now().UTC()
+	msg := Message{
+		Role:      strings.TrimSpace(role),
+		Content:   content,
+		Metadata:  cloneMetadata(metadata),
+		Timestamp: ts,
+	}
+	if msg.Metadata != nil {
+		if turn, ok := coerceInt(msg.Metadata["turn"]); ok {
+			msg.Turn = &turn
+		}
+	}
+	if index == len(c.Messages) {
+		c.Messages = append(c.Messages, msg)
+	} else {
+		c.Messages = append(c.Messages[:index], append([]Message{msg}, c.Messages[index:]...)...)
+	}
+	c.UpdatedAt = ts
+}
+
 // CurrentGoal returns the latest goal text from goal_update messages, falling
 // back to the original goal when none are present.
 func (c *Conversation) CurrentGoal() string {
@@ -254,7 +286,7 @@ func (c *Conversation) ToChatMessages(systemPrompt string) []llm.Message {
 		msgType := getType(msg.Metadata)
 		role := ""
 		switch msgType {
-		case "original_goal", "goal_update", "user_feedback":
+		case "original_goal", "goal_update", "user_feedback", "cache_anchor":
 			role = "user"
 		case "ask", "answer", "raw", "raw_block":
 			role = "assistant"

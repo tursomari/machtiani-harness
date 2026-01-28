@@ -770,6 +770,8 @@ func Run(ctx context.Context, opts Options) Result {
 	var failoverDone <-chan struct{}
 	var cacheUsageCancel context.CancelFunc
 	var cacheUsageDone <-chan struct{}
+	var cacheDiagnosticsCancel context.CancelFunc
+	var cacheDiagnosticsDone <-chan struct{}
 	var shellActionCancel context.CancelFunc
 	var shellActionDone <-chan struct{}
 	if trajectoryWriter != nil {
@@ -786,6 +788,13 @@ func Run(ctx context.Context, opts Options) Result {
 		} else {
 			cacheUsageCancel = cancel
 			cacheUsageDone = done
+		}
+		cancel, done, err = startLLMCacheDiagnosticsLogger(display, trajectoryWriter.Config().Path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[trajectory] cache diagnostics listener setup error: %v\n", err)
+		} else {
+			cacheDiagnosticsCancel = cancel
+			cacheDiagnosticsDone = done
 		}
 		// Start shell-agent action streamer to surface shell actions in real-time
 		cancel, done, err = startShellActionStreamer(display, trajectoryWriter.Config().Path)
@@ -808,6 +817,12 @@ func Run(ctx context.Context, opts Options) Result {
 		}
 		if cacheUsageDone != nil {
 			<-cacheUsageDone
+		}
+		if cacheDiagnosticsCancel != nil {
+			cacheDiagnosticsCancel()
+		}
+		if cacheDiagnosticsDone != nil {
+			<-cacheDiagnosticsDone
 		}
 		if shellActionCancel != nil {
 			shellActionCancel()

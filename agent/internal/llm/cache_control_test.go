@@ -59,14 +59,7 @@ func TestApplyCacheControlInjectsAtLookback(t *testing.T) {
 		t.Fatalf("expected anchor index 2, got %d", anchor)
 	}
 	anchorMsg := messageMap(t, got[anchor])
-	parts := contentParts(t, anchorMsg)
-	if len(parts) != 1 {
-		t.Fatalf("expected 1 content part, got %d", len(parts))
-	}
-	part, ok := parts[0].(map[string]any)
-	if !ok {
-		t.Fatalf("expected content part map, got %T", parts[0])
-	}
+	part := contentTextPart(t, anchorMsg)
 	if part["type"] != "text" {
 		t.Fatalf("expected content type text, got %v", part["type"])
 	}
@@ -85,8 +78,15 @@ func TestApplyCacheControlInjectsAtLookback(t *testing.T) {
 			continue
 		}
 		msg := messageMap(t, raw)
-		if _, ok := msg["content"].(string); !ok {
-			t.Fatalf("message %d content should be string, got %T", i, msg["content"])
+		part := contentTextPart(t, msg)
+		if part["type"] != "text" {
+			t.Fatalf("message %d content type should be text, got %v", i, part["type"])
+		}
+		if part["text"] != messages[i].Content {
+			t.Fatalf("message %d content mismatch: got %q want %q", i, part["text"], messages[i].Content)
+		}
+		if _, ok := part[model.CacheKeyName]; ok {
+			t.Fatalf("message %d unexpectedly has cache control", i)
 		}
 	}
 }
@@ -117,14 +117,7 @@ func TestApplyCacheControlInsertsMarkerAfterAssistant(t *testing.T) {
 	if anchorMsg["role"] != "user" {
 		t.Fatalf("expected anchor role user, got %v", anchorMsg["role"])
 	}
-	parts := contentParts(t, anchorMsg)
-	if len(parts) != 1 {
-		t.Fatalf("expected 1 content part, got %d", len(parts))
-	}
-	part, ok := parts[0].(map[string]any)
-	if !ok {
-		t.Fatalf("expected content part map, got %T", parts[0])
-	}
+	part := contentTextPart(t, anchorMsg)
 	if part["text"] != cacheAnchorMarkerText {
 		t.Fatalf("expected cached text %q, got %v", cacheAnchorMarkerText, part["text"])
 	}
@@ -137,17 +130,64 @@ func TestApplyCacheControlInsertsMarkerAfterAssistant(t *testing.T) {
 			continue
 		}
 		msg := messageMap(t, raw)
-		content, ok := msg["content"].(string)
-		if !ok {
-			t.Fatalf("message %d content should be string, got %T", i, msg["content"])
+		part := contentTextPart(t, msg)
+		if part["type"] != "text" {
+			t.Fatalf("message %d content type should be text, got %v", i, part["type"])
 		}
-		if content != messages[originalIndex].Content {
-			t.Fatalf("message %d content mismatch: got %q want %q", i, content, messages[originalIndex].Content)
+		if part["text"] != messages[originalIndex].Content {
+			t.Fatalf("message %d content mismatch: got %q want %q", i, part["text"], messages[originalIndex].Content)
+		}
+		if _, ok := part[model.CacheKeyName]; ok {
+			t.Fatalf("message %d unexpectedly has cache control", i)
 		}
 		originalIndex++
 	}
 	if originalIndex != len(messages) {
 		t.Fatalf("expected to see %d original messages, saw %d", len(messages), originalIndex)
+	}
+}
+
+func TestApplyCacheControlUsesStoredAnchor(t *testing.T) {
+	model := ResolvedModel{
+		CacheKeyName:          "cache_control",
+		CacheControl:          map[string]any{"type": "ephemeral"},
+		CacheTriggerThreshold: 10,
+		CacheLookbackOffset:   1,
+	}
+	messages := []Message{
+		{Role: "user", Content: "first", Metadata: map[string]any{"estimated_tokens": 6}},
+		{Role: "user", Content: cacheAnchorMarkerText, Metadata: map[string]any{"type": "cache_anchor", "estimated_tokens": 6}},
+		{Role: "assistant", Content: "tail", Metadata: map[string]any{"estimated_tokens": 6}},
+	}
+
+	got := applyCacheControl(context.Background(), messages, model)
+	if len(got) != len(messages) {
+		t.Fatalf("expected %d messages, got %d", len(messages), len(got))
+	}
+	anchor := cacheAnchorIndex(t, got, model.CacheKeyName)
+	if anchor != 1 {
+		t.Fatalf("expected anchor index 1, got %d", anchor)
+	}
+	anchorMsg := messageMap(t, got[anchor])
+	part := contentTextPart(t, anchorMsg)
+	if part["text"] != cacheAnchorMarkerText {
+		t.Fatalf("expected cached text %q, got %v", cacheAnchorMarkerText, part["text"])
+	}
+	for i, raw := range got {
+		if i == anchor {
+			continue
+		}
+		msg := messageMap(t, raw)
+		part := contentTextPart(t, msg)
+		if part["type"] != "text" {
+			t.Fatalf("message %d content type should be text, got %v", i, part["type"])
+		}
+		if part["text"] != messages[i].Content {
+			t.Fatalf("message %d content mismatch: got %q want %q", i, part["text"], messages[i].Content)
+		}
+		if _, ok := part[model.CacheKeyName]; ok {
+			t.Fatalf("message %d unexpectedly has cache control", i)
+		}
 	}
 }
 
@@ -194,4 +234,17 @@ func contentParts(t *testing.T, msg map[string]any) []any {
 		t.Fatalf("expected content array, got %T", msg["content"])
 	}
 	return parts
+}
+
+func contentTextPart(t *testing.T, msg map[string]any) map[string]any {
+	t.Helper()
+	parts := contentParts(t, msg)
+	if len(parts) != 1 {
+		t.Fatalf("expected 1 content part, got %d", len(parts))
+	}
+	part, ok := parts[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected content part map, got %T", parts[0])
+	}
+	return part
 }
