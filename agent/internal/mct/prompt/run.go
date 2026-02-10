@@ -769,6 +769,15 @@ func invokeShellAgent(ctx context.Context, prompt string, opts RunOptions) (stri
 func formatShellAgentContext(stdoutText, stderrText string, cfg *llm.MCTPromptsConfig, verbatim bool) (string, error) {
 	stdout := strings.TrimSpace(stdoutText)
 	if block, ok := extractShellAgentResultBlock(stdoutText); ok {
+		if shellAgentLimitsExceeded(block) {
+			return "", fmt.Errorf("shell-agent exited with LimitsExceeded")
+		}
+		if verbatim {
+			if result, ok := extractShellAgentResultText(block); ok && strings.TrimSpace(result) != "" {
+				return strings.TrimSpace(result), nil
+			}
+			return strings.TrimSpace(block), nil
+		}
 		stdout = block
 	}
 	stderr := strings.TrimSpace(stderrText)
@@ -813,6 +822,26 @@ func formatShellAgentContext(stdoutText, stderrText string, cfg *llm.MCTPromptsC
 		return "", fmt.Errorf("render shell context template: %w", err)
 	}
 	return strings.TrimSpace(rendered), nil
+}
+
+func shellAgentLimitsExceeded(resultBlock string) bool {
+	lines := strings.Split(resultBlock, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if !strings.HasPrefix(strings.ToLower(line), "exit status:") {
+			continue
+		}
+		parts := strings.SplitN(line, ":", 2)
+		if len(parts) != 2 {
+			return false
+		}
+		status := strings.TrimSpace(parts[1])
+		return strings.EqualFold(status, "LimitsExceeded")
+	}
+	return false
 }
 
 func extractTrajectoryPath(outputs ...string) string {

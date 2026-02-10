@@ -75,9 +75,11 @@ type ShellAgentConfig struct {
 	LightweightMaxAttempts int     `toml:"lightweight_max_attempts"`
 	StepLimit              int     `toml:"step_limit"`
 	CostLimit              float64 `toml:"cost_limit"`
+	FinalizeRemainingSteps int     `toml:"finalize_remaining_steps"`
 
 	stepLimitSet bool `toml:"-"`
 	costLimitSet bool `toml:"-"`
+	finalizeRemainingStepsSet bool `toml:"-"`
 }
 
 // PlannerConfig captures configuration intended for the orchestration planner
@@ -880,6 +882,10 @@ func parseShellAgentSection(path, section string, data map[string]any) (*ShellAg
 	if val, ok := toFloat(data["cost_limit"]); ok {
 		agent.CostLimit = val
 		agent.costLimitSet = true
+	}
+	if val, ok := toInt(data["finalize_remaining_steps"]); ok {
+		agent.FinalizeRemainingSteps = val
+		agent.finalizeRemainingStepsSet = true
 	}
 	return agent, shellPrompts, plannerPrompts, nil
 }

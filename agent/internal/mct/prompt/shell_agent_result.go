@@ -29,3 +29,26 @@ func extractShellAgentResultBlock(output string) (string, bool) {
 
 	return block, true
 }
+
+// extractShellAgentResultText extracts the Result payload from a result block.
+// It returns false when no Result line is present.
+func extractShellAgentResultText(block string) (string, bool) {
+	lines := strings.Split(block, "\n")
+	for idx, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		lower := strings.ToLower(trimmed)
+		if !strings.HasPrefix(lower, "result:") {
+			continue
+		}
+		payload := strings.TrimSpace(trimmed[len("result:"):])
+		rest := strings.Join(lines[idx+1:], "\n")
+		if rest != "" {
+			if payload != "" {
+				return payload + "\n" + rest, true
+			}
+			return rest, true
+		}
+		return payload, true
+	}
+	return "", false
+}

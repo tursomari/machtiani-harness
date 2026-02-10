@@ -34,3 +34,15 @@ func TestExtractShellAgentResultBlockEmpty(t *testing.T) {
 		t.Fatalf("expected empty block to be ignored, got %q", block)
 	}
 }
+
+func TestExtractShellAgentResultText(t *testing.T) {
+	block := "Exit Status: Submitted\nResult: line one\nline two\nline three"
+	result, ok := extractShellAgentResultText(block)
+	if !ok {
+		t.Fatalf("expected to extract result text")
+	}
+	expected := "line one\nline two\nline three"
+	if result != expected {
+		t.Fatalf("expected result %q, got %q", expected, result)
+	}
+}
