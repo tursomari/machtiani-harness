@@ -1918,147 +1918,145 @@ func Run(ctx context.Context, opts Options) Result {
 							requested = []string{strings.TrimSpace(detection.Filepath)}
 						}
 						mentioned := showFilePathMentioned(question, requested)
-						if !mentioned {
+						if len(requested) > 0 && !mentioned {
 							turnInfo["show_file_inferred_path"] = true
-						} else if len(requested) == 0 {
-							turnInfo["show_file_invalid_path"] = true
+						}
+						discovered := []string(nil)
+						var discoveryErr error
+						ctxDiscovery, cancelDiscovery := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
+						ctxDiscovery = attachTrajectory(ctxDiscovery, trajectoryWriter, parentSpanID)
+						result, err := promptsvc.RunFileDiscovery(
+							ctxDiscovery,
+							question,
+							mctRunner.FileDiscoveryRuntime,
+							mctRunner.Runtime,
+							mctRunner.FileDiscoveryTrajectory,
+							sessionID,
+							cfg.verbose,
+						)
+						if err != nil {
+							if cfg.verbose {
+								fmt.Fprintln(os.Stderr, "Show-file discovery error:", err)
+							}
+							turnInfo["show_file_discovery_error"] = trimTo(err.Error(), 200)
+							discoveryErr = err
 						} else {
-							discovered := []string(nil)
-							var discoveryErr error
-							ctxDiscovery, cancelDiscovery := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
-							ctxDiscovery = attachTrajectory(ctxDiscovery, trajectoryWriter, parentSpanID)
-							result, err := promptsvc.RunFileDiscovery(
-								ctxDiscovery,
-								question,
-								mctRunner.FileDiscoveryRuntime,
-								mctRunner.Runtime,
-								mctRunner.FileDiscoveryTrajectory,
-								sessionID,
-								cfg.verbose,
-							)
-							if err != nil {
-								if cfg.verbose {
-									fmt.Fprintln(os.Stderr, "Show-file discovery error:", err)
-								}
-								turnInfo["show_file_discovery_error"] = trimTo(err.Error(), 200)
-								discoveryErr = err
-							} else {
-								discovered = result
-							}
-							merged := mergeShowFilePaths(requested, discovered)
-							payload := map[string]any{
-								"explicit_paths_count":   len(requested),
-								"discovered_paths_count": len(discovered),
-								"merged_paths_count":     len(merged),
-								"timeout_per_turn_sec":   cfg.timeoutPerTurn,
-							}
-							if discoveryErr != nil {
-								payload["error"] = trimTo(discoveryErr.Error(), 200)
-							}
-							evt := trajectory.Event{Kind: "show_file_discovery", Payload: payload}
-							if parentID, ok := trajectory.ParentSpanID(ctxDiscovery); ok {
-								evt.ParentSpanID = parentID
-							}
-							if err := trajectory.EmitFromContext(ctxDiscovery, evt); err != nil && cfg.verbose {
-								fmt.Fprintf(os.Stderr, "[trajectory] show-file discovery emit error: %v\n", err)
-							}
-							cancelDiscovery()
+							discovered = result
+						}
+						merged := mergeShowFilePaths(requested, discovered)
+						payload := map[string]any{
+							"explicit_paths_count":   len(requested),
+							"discovered_paths_count": len(discovered),
+							"merged_paths_count":     len(merged),
+							"timeout_per_turn_sec":   cfg.timeoutPerTurn,
+						}
+						if discoveryErr != nil {
+							payload["error"] = trimTo(discoveryErr.Error(), 200)
+						}
+						evt := trajectory.Event{Kind: "show_file_discovery", Payload: payload}
+						if parentID, ok := trajectory.ParentSpanID(ctxDiscovery); ok {
+							evt.ParentSpanID = parentID
+						}
+						if err := trajectory.EmitFromContext(ctxDiscovery, evt); err != nil && cfg.verbose {
+							fmt.Fprintf(os.Stderr, "[trajectory] show-file discovery emit error: %v\n", err)
+						}
+						cancelDiscovery()
 
-							cleaned, invalid := promptsvc.PreflightShowFilePaths(merged, repoRoot)
-							if len(cleaned) == 0 {
-								turnInfo["show_file_invalid_path"] = true
-								if len(merged) > 0 {
-									turnInfo["show_file_paths"] = append([]string(nil), merged...)
-									turnInfo["show_file_path"] = merged[0]
+						cleaned, invalid := promptsvc.PreflightShowFilePaths(merged, repoRoot)
+						if len(cleaned) == 0 {
+							turnInfo["show_file_invalid_path"] = true
+							if len(merged) > 0 {
+								turnInfo["show_file_paths"] = append([]string(nil), merged...)
+								turnInfo["show_file_path"] = merged[0]
+							}
+							showFileBanner = promptsvc.FormatShowFileDiscoveryAsk(invalid)
+							if strings.TrimSpace(showFileBanner) != "" {
+								showFileHandled = true
+								showFileInvalidAsk = true
+								turnInfo["show_file_appended"] = true
+							}
+						} else {
+							requested = cleaned
+							turnInfo["show_file_paths"] = append([]string(nil), requested...)
+							turnInfo["show_file_path"] = requested[0]
+							if strings.TrimSpace(detection.Reason) != "" {
+								turnInfo["show_file_reason"] = trimTo(detection.Reason, 200)
+							}
+							detection.VerbatimQuestion = question
+							detection.Filepaths = append([]string(nil), requested...)
+							detection.Filepath = requested[0]
+							detection.Preflighted = true
+							ctxSnippet, cancelSnippet := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
+							ctxSnippet = attachTrajectory(ctxSnippet, trajectoryWriter, parentSpanID)
+							snippetRuntime := mctRunner.FileDiscoveryRuntime
+							if strings.TrimSpace(snippetRuntime.Resolved.Model) == "" {
+								snippetRuntime = mctRunner.Runtime
+							}
+							snippetModelAlias := strings.TrimSpace(snippetRuntime.Alias)
+							snippets, serr := promptsvc.FetchFileSnippets(ctxSnippet, detection, repoRoot, snippetModelAlias, snippetRuntime.APIKeyOverrides, cfg.verbose)
+							if serr != nil {
+								if cfg.verbose {
+									fmt.Fprintln(os.Stderr, "Show-file snippet discovery error:", serr)
 								}
-								showFileBanner = promptsvc.FormatShowFileDiscoveryAsk(invalid)
-								if strings.TrimSpace(showFileBanner) != "" {
-									showFileHandled = true
-									showFileInvalidAsk = true
-									turnInfo["show_file_appended"] = true
+								turnInfo["show_file_snippet_error"] = trimTo(serr.Error(), 200)
+							}
+							fallbackSet := map[string]struct{}{}
+							fallbackFiles := []string{}
+							addFallback := func(path string) {
+								if strings.TrimSpace(path) == "" {
+									return
 								}
-							} else {
-								requested = cleaned
-								turnInfo["show_file_paths"] = append([]string(nil), requested...)
-								turnInfo["show_file_path"] = requested[0]
-								if strings.TrimSpace(detection.Reason) != "" {
-									turnInfo["show_file_reason"] = trimTo(detection.Reason, 200)
+								if _, ok := fallbackSet[path]; ok {
+									return
 								}
-								detection.VerbatimQuestion = question
-								detection.Filepaths = append([]string(nil), requested...)
-								detection.Filepath = requested[0]
-								detection.Preflighted = true
-								ctxSnippet, cancelSnippet := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
-								ctxSnippet = attachTrajectory(ctxSnippet, trajectoryWriter, parentSpanID)
-								snippetRuntime := mctRunner.FileDiscoveryRuntime
-								if strings.TrimSpace(snippetRuntime.Resolved.Model) == "" {
-									snippetRuntime = mctRunner.Runtime
+								fallbackSet[path] = struct{}{}
+								fallbackFiles = append(fallbackFiles, path)
+							}
+							snippetFiles := map[string][]promptsvc.LineRange{}
+							emptySnippetFiles := []string{}
+							warnings := []string{}
+							reasons := []string{}
+							reasonSet := map[string]struct{}{}
+							addReason := func(reason string) {
+								trimmed := strings.TrimSpace(reason)
+								if trimmed == "" {
+									return
 								}
-								snippetModelAlias := strings.TrimSpace(snippetRuntime.Alias)
-								snippets, serr := promptsvc.FetchFileSnippets(ctxSnippet, detection, repoRoot, snippetModelAlias, snippetRuntime.APIKeyOverrides, cfg.verbose)
-								if serr != nil {
-									if cfg.verbose {
-										fmt.Fprintln(os.Stderr, "Show-file snippet discovery error:", serr)
+								if _, ok := reasonSet[trimmed]; ok {
+									return
+								}
+								reasonSet[trimmed] = struct{}{}
+								reasons = append(reasons, trimmed)
+							}
+							var partialErr *promptsvc.SnippetDiscoveryPartialError
+							if serr != nil {
+								if errors.As(serr, &partialErr) {
+									for _, path := range partialErr.Missing {
+										addFallback(path)
 									}
-									turnInfo["show_file_snippet_error"] = trimTo(serr.Error(), 200)
+									invalidPaths := make([]string, 0, len(partialErr.Invalid))
+									for path := range partialErr.Invalid {
+										invalidPaths = append(invalidPaths, path)
+									}
+									sort.Strings(invalidPaths)
+									for _, path := range invalidPaths {
+										addFallback(path)
+									}
+									warnings = append(warnings, showFilePartialWarnings(partialErr)...)
+									for _, kind := range promptsvc.SnippetDiscoveryReasonKinds(partialErr) {
+										addReason(kind)
+									}
+								} else {
+									for _, path := range requested {
+										addFallback(path)
+									}
+									reason := promptsvc.SnippetDiscoveryErrorKind(serr)
+									if reason == "" {
+										reason = "snippet_error"
+									}
+									addReason(reason)
 								}
-								fallbackSet := map[string]struct{}{}
-								fallbackFiles := []string{}
-								addFallback := func(path string) {
-									if strings.TrimSpace(path) == "" {
-										return
-									}
-									if _, ok := fallbackSet[path]; ok {
-										return
-									}
-									fallbackSet[path] = struct{}{}
-									fallbackFiles = append(fallbackFiles, path)
-								}
-								snippetFiles := map[string][]promptsvc.LineRange{}
-								emptySnippetFiles := []string{}
-								warnings := []string{}
-								reasons := []string{}
-								reasonSet := map[string]struct{}{}
-								addReason := func(reason string) {
-									trimmed := strings.TrimSpace(reason)
-									if trimmed == "" {
-										return
-									}
-									if _, ok := reasonSet[trimmed]; ok {
-										return
-									}
-									reasonSet[trimmed] = struct{}{}
-									reasons = append(reasons, trimmed)
-								}
-								var partialErr *promptsvc.SnippetDiscoveryPartialError
-								if serr != nil {
-									if errors.As(serr, &partialErr) {
-										for _, path := range partialErr.Missing {
-											addFallback(path)
-										}
-										invalidPaths := make([]string, 0, len(partialErr.Invalid))
-										for path := range partialErr.Invalid {
-											invalidPaths = append(invalidPaths, path)
-										}
-										sort.Strings(invalidPaths)
-										for _, path := range invalidPaths {
-											addFallback(path)
-										}
-										warnings = append(warnings, showFilePartialWarnings(partialErr)...)
-										for _, kind := range promptsvc.SnippetDiscoveryReasonKinds(partialErr) {
-											addReason(kind)
-										}
-									} else {
-										for _, path := range requested {
-											addFallback(path)
-										}
-										reason := promptsvc.SnippetDiscoveryErrorKind(serr)
-										if reason == "" {
-											reason = "snippet_error"
-										}
-										addReason(reason)
-									}
-								}
+							}
 								for path, ranges := range snippets {
 									if len(ranges) == 0 {
 										emptySnippetFiles = append(emptySnippetFiles, path)
@@ -2131,8 +2129,7 @@ func Run(ctx context.Context, opts Options) Result {
 						}
 					}
 				}
-			}
-			useShellAgent = cfg.shellAgent
+				useShellAgent = cfg.shellAgent
 			preflightNote := ""
 			var preflightErr error
 			preflightReply := ""
