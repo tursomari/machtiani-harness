@@ -182,6 +182,159 @@ func TestFetchFileSnippetsUsesVerbatimQuestion(t *testing.T) {
 	}
 }
 
+func TestParseFullFileTagsSurroundedByText(t *testing.T) {
+	cases := []struct {
+		name     string
+		question string
+	}{
+		{name: "beginning", question: `<full_file path="a.go" /> please show this`},
+		{name: "middle", question: `please show <full_file path="a.go" /> with context`},
+		{name: "end", question: `please show this file <full_file path="a.go" />`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			paths := parseFullFileTags(tc.question)
+			if len(paths) != 1 || paths[0] != "a.go" {
+				t.Fatalf("unexpected parsed paths: %v", paths)
+			}
+		})
+	}
+}
+
+func TestParseFullFileTagsCapsAtMax(t *testing.T) {
+	question := `<full_file path="a.go" /> <full_file path="b.go" /> <full_file path="c.go" /> <full_file path="d.go" />`
+	paths := parseFullFileTags(question)
+	if len(paths) != maxFullFileTags {
+		t.Fatalf("expected %d paths, got %d", maxFullFileTags, len(paths))
+	}
+	if paths[len(paths)-1] != "c.go" {
+		t.Fatalf("expected c.go as last parsed path, got %v", paths)
+	}
+}
+
+func TestParseFullFileTagsIgnoresInvalidPaths(t *testing.T) {
+	question := `<full_file path="/abs.go" /> <full_file path="../bad.go" /> <full_file path="a.go" />`
+	paths := parseFullFileTags(question)
+	if len(paths) != 1 || paths[0] != "a.go" {
+		t.Fatalf("unexpected parsed paths: %v", paths)
+	}
+}
+
+func TestFetchFileSnippetsFullFileTagSkipsSnippetDiscovery(t *testing.T) {
+	originalRunner := runSnippetDiscovery
+	t.Cleanup(func() { runSnippetDiscovery = originalRunner })
+	repoRoot := writeTestRepo(t, map[string]string{"a.go": "package a\n"})
+	called := false
+	runSnippetDiscovery = func(ctx context.Context, repoRoot, reason string, filepaths []string, modelAlias string, apiKeyOverrides map[string]string, verbose bool) (string, error) {
+		called = true
+		return "", errors.New("snippet discovery should not run for full file tags")
+	}
+
+	det := ShowFileDetection{
+		IsShowFileRequest: true,
+		Filepaths:         []string{"a.go"},
+		VerbatimQuestion:  `Question: <full_file path="a.go" />`,
+	}
+	snippets, err := FetchFileSnippets(context.Background(), det, repoRoot, "", nil, false)
+	if err != nil {
+		t.Fatalf("FetchFileSnippets error: %v", err)
+	}
+	if called {
+		t.Fatalf("expected snippet discovery to be skipped")
+	}
+	ranges := snippets["a.go"]
+	if len(ranges) != 1 || ranges[0].Start != 1 || ranges[0].End != maxFullFileRangeEnd {
+		t.Fatalf("unexpected full file snippets: %v", ranges)
+	}
+}
+
+func TestFetchFileSnippetsFullFileTagUsesReasonWhenVerbatimEmpty(t *testing.T) {
+	originalRunner := runSnippetDiscovery
+	t.Cleanup(func() { runSnippetDiscovery = originalRunner })
+	repoRoot := writeTestRepo(t, map[string]string{"a.go": "package a\n"})
+	called := false
+	runSnippetDiscovery = func(ctx context.Context, repoRoot, reason string, filepaths []string, modelAlias string, apiKeyOverrides map[string]string, verbose bool) (string, error) {
+		called = true
+		return "", errors.New("snippet discovery should not run for full file tags")
+	}
+
+	det := ShowFileDetection{
+		IsShowFileRequest: true,
+		Filepaths:         []string{"a.go"},
+		Reason:            `show please <full_file path="a.go" />`,
+	}
+	snippets, err := FetchFileSnippets(context.Background(), det, repoRoot, "", nil, false)
+	if err != nil {
+		t.Fatalf("FetchFileSnippets error: %v", err)
+	}
+	if called {
+		t.Fatalf("expected snippet discovery to be skipped")
+	}
+	ranges := snippets["a.go"]
+	if len(ranges) != 1 || ranges[0].Start != 1 || ranges[0].End != maxFullFileRangeEnd {
+		t.Fatalf("unexpected full file snippets: %v", ranges)
+	}
+}
+
+func TestFetchFileSnippetsFullFileTagMixedWithSnippets(t *testing.T) {
+	originalRunner := runSnippetDiscovery
+	t.Cleanup(func() { runSnippetDiscovery = originalRunner })
+	repoRoot := writeTestRepo(t, map[string]string{"a.go": "package a\n", "b.go": "package b\n"})
+	var gotPaths []string
+	runSnippetDiscovery = func(ctx context.Context, repoRoot, reason string, filepaths []string, modelAlias string, apiKeyOverrides map[string]string, verbose bool) (string, error) {
+		gotPaths = append([]string(nil), filepaths...)
+		return `{"b.go":[{"start":1,"end":1}]}`, nil
+	}
+
+	det := ShowFileDetection{
+		IsShowFileRequest: true,
+		Filepaths:         []string{"a.go", "b.go"},
+		VerbatimQuestion:  `Question: show both <full_file path="a.go" />`,
+	}
+	snippets, err := FetchFileSnippets(context.Background(), det, repoRoot, "", nil, false)
+	if err != nil {
+		t.Fatalf("FetchFileSnippets error: %v", err)
+	}
+	if len(gotPaths) != 1 || gotPaths[0] != "b.go" {
+		t.Fatalf("expected snippet discovery to run only for b.go, got %v", gotPaths)
+	}
+	if fullRanges := snippets["a.go"]; len(fullRanges) != 1 || fullRanges[0].End != maxFullFileRangeEnd {
+		t.Fatalf("expected full file ranges for a.go, got %v", fullRanges)
+	}
+	if bRanges := snippets["b.go"]; len(bRanges) != 1 || bRanges[0].Start != 1 || bRanges[0].End != 1 {
+		t.Fatalf("unexpected b.go ranges: %v", bRanges)
+	}
+}
+
+func TestFetchFileSnippetsFullFileTagTooLargeFallsBack(t *testing.T) {
+	originalRunner := runSnippetDiscovery
+	t.Cleanup(func() { runSnippetDiscovery = originalRunner })
+	largeContent := strings.Repeat("a", maxFullFileBytes+1)
+	repoRoot := writeTestRepo(t, map[string]string{"a.go": largeContent})
+	called := false
+	runSnippetDiscovery = func(ctx context.Context, repoRoot, reason string, filepaths []string, modelAlias string, apiKeyOverrides map[string]string, verbose bool) (string, error) {
+		called = true
+		return `{"a.go":[{"start":1,"end":1}]}`, nil
+	}
+
+	det := ShowFileDetection{
+		IsShowFileRequest: true,
+		Filepaths:         []string{"a.go"},
+		VerbatimQuestion:  `Question: <full_file path="a.go" />`,
+	}
+	snippets, err := FetchFileSnippets(context.Background(), det, repoRoot, "", nil, false)
+	if err != nil {
+		t.Fatalf("FetchFileSnippets error: %v", err)
+	}
+	if !called {
+		t.Fatalf("expected snippet discovery to run for oversized full file")
+	}
+	ranges := snippets["a.go"]
+	if len(ranges) != 1 || ranges[0].End == maxFullFileRangeEnd {
+		t.Fatalf("expected snippet ranges for a.go, got %v", ranges)
+	}
+}
+
 func TestFetchFileSnippetsPreflightInvalidPath(t *testing.T) {
 	originalRunner := runSnippetDiscovery
 	t.Cleanup(func() { runSnippetDiscovery = originalRunner })

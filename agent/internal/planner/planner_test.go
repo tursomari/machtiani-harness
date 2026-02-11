@@ -589,6 +589,15 @@ func TestPlanSystemPromptOmitsTranscript(t *testing.T) {
 	}
 }
 
+func TestPlanSystemPromptIncludesFullFileTagGuidance(t *testing.T) {
+	client := NewClient(ClientConfig{})
+	conv := conversation.New("sess-system", "Finish docs")
+	prompt := client.planSystemPrompt(conv, "Finish docs", 1, 3, nil)
+	if !strings.Contains(prompt, `<full_file path="path/to/file.go" />`) {
+		t.Fatalf("expected full_file tag guidance in system prompt, got %q", prompt)
+	}
+}
+
 func TestBuildPlanMessagesNoGoalUpdate(t *testing.T) {
 	client := NewClient(ClientConfig{PatchEnabled: true})
 	conv := conversation.New("sess-1", "Finish docs")

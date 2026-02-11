@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -20,9 +21,15 @@ import (
 
 const (
 	maxShowFilePaths     = 10
+	maxFullFileTags      = 3
+	maxFullFileBytes     = 128 * 1024
 	showFileSystemPrompt = "You detect whether a planner prompt is asking to show or display the full content of one or more specific repository files. Reply with ONLY valid JSON. If it is a request to show full file contents, reply as: {\"is_show_file_request\":true,\"filepaths\":[\"path/to/file\",\"another/file\"],\"reason\":\"short reason for the request\"}. The filepaths must be workspace-relative paths, with no more than 10 files. For a single file you may also include the legacy \"filepath\" field set to the same path. If not a show-file request, reply as: {\"is_show_file_request\":false}."
 	showFileQuestionTmpl = "Planner prompt:\n\n%s\n\nReturn the JSON now."
 )
+
+const maxFullFileRangeEnd = int(^uint(0) >> 1)
+
+var fullFileTagRe = regexp.MustCompile(`<full_file\s+path="([^"]+)"\s*/>`)
 
 type ShowFileDetection struct {
 	IsShowFileRequest bool     `json:"is_show_file_request"`
@@ -240,12 +247,26 @@ func FetchFileSnippets(ctx context.Context, detection ShowFileDetection, repoRoo
 	if len(rawPaths) == 0 && strings.TrimSpace(detection.Filepath) != "" {
 		rawPaths = []string{detection.Filepath}
 	}
+	fullTagPaths := parseFullFileTags(selectShowFileQuestion(detection))
+	fullPaths, fullFallback := preflightFullFileTags(fullTagPaths, repoRoot)
+	fullSet := map[string]struct{}{}
+	for _, path := range fullPaths {
+		fullSet[path] = struct{}{}
+	}
 	filepaths := rawPaths
 	invalidPaths := map[string]string(nil)
 	if !detection.Preflighted {
 		filepaths, invalidPaths = preflightShowFilePaths(rawPaths, repoRoot)
 	}
-	if len(filepaths) == 0 {
+	snippetPaths := mergeSnippetPaths(filepaths, fullFallback, fullSet)
+	if len(snippetPaths) == 0 {
+		if len(fullPaths) > 0 {
+			fullSnippets := buildFullFileSnippets(fullPaths)
+			if len(invalidPaths) > 0 {
+				return fullSnippets, &SnippetDiscoveryPartialError{Invalid: invalidPaths}
+			}
+			return fullSnippets, nil
+		}
 		if len(invalidPaths) > 0 {
 			return nil, &SnippetDiscoveryPartialError{Invalid: invalidPaths}
 		}
@@ -253,9 +274,9 @@ func FetchFileSnippets(ctx context.Context, detection ShowFileDetection, repoRoo
 	}
 	reason := detection.VerbatimQuestion
 	if strings.TrimSpace(reason) == "" {
-		reason = normalizeSnippetReason(detection.Reason, filepaths)
+		reason = normalizeSnippetReason(detection.Reason, snippetPaths)
 	}
-	cleaned, partialErr, err := runSnippetDiscoveryWithRetry(ctx, repoRoot, reason, filepaths, modelAlias, apiKeyOverrides, verbose)
+	cleaned, partialErr, err := runSnippetDiscoveryWithRetry(ctx, repoRoot, reason, snippetPaths, modelAlias, apiKeyOverrides, verbose)
 	if err != nil {
 		return nil, err
 	}
@@ -263,10 +284,22 @@ func FetchFileSnippets(ctx context.Context, detection ShowFileDetection, repoRoo
 		partialErr = mergeSnippetDiscoveryPartialErrors(partialErr, &SnippetDiscoveryPartialError{Invalid: invalidPaths})
 	}
 	if len(cleaned) == 0 {
+		if len(fullPaths) > 0 {
+			fullSnippets := buildFullFileSnippets(fullPaths)
+			if partialErr != nil {
+				return fullSnippets, partialErr
+			}
+			return fullSnippets, nil
+		}
 		if partialErr != nil {
 			return nil, partialErr
 		}
 		return nil, errors.New("snippet-discovery returned no snippets")
+	}
+	if len(fullPaths) > 0 {
+		for path, ranges := range buildFullFileSnippets(fullPaths) {
+			cleaned[path] = ranges
+		}
 	}
 	if partialErr != nil {
 		return cleaned, partialErr
@@ -561,6 +594,123 @@ func normalizeShowFilePaths(paths []string) []string {
 		}
 	}
 	return cleaned
+}
+
+func selectShowFileQuestion(detection ShowFileDetection) string {
+	question := strings.TrimSpace(detection.VerbatimQuestion)
+	if question == "" {
+		question = strings.TrimSpace(detection.Reason)
+	}
+	return question
+}
+
+func parseFullFileTags(question string) []string {
+	trimmed := strings.TrimSpace(question)
+	if trimmed == "" || !strings.Contains(trimmed, "<full_file") {
+		return nil
+	}
+	matches := fullFileTagRe.FindAllStringSubmatch(trimmed, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	paths := []string{}
+	for _, match := range matches {
+		if len(match) < 2 {
+			continue
+		}
+		raw := strings.TrimSpace(match[1])
+		if raw == "" {
+			continue
+		}
+		normalized, reason := normalizeShowFilePathWithRoot(raw, "")
+		if reason != "" {
+			continue
+		}
+		if _, ok := seen[normalized]; ok {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		paths = append(paths, normalized)
+		if len(paths) >= maxFullFileTags {
+			break
+		}
+	}
+	return paths
+}
+
+func preflightFullFileTags(paths []string, repoRoot string) ([]string, []string) {
+	if len(paths) == 0 {
+		return nil, nil
+	}
+	cleaned, _ := preflightShowFilePaths(paths, repoRoot)
+	if len(cleaned) == 0 {
+		return nil, nil
+	}
+	full := make([]string, 0, len(cleaned))
+	fallback := []string{}
+	for _, path := range cleaned {
+		resolved, err := resolveReferencePath(path, repoRoot)
+		if err != nil {
+			continue
+		}
+		info, err := os.Stat(resolved)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		if maxFullFileBytes > 0 && info.Size() > int64(maxFullFileBytes) {
+			fallback = append(fallback, path)
+			continue
+		}
+		full = append(full, path)
+	}
+	return full, fallback
+}
+
+func mergeSnippetPaths(paths []string, fallback []string, exclude map[string]struct{}) []string {
+	if len(paths) == 0 && len(fallback) == 0 {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	merged := []string{}
+	add := func(path string) {
+		if len(merged) >= maxShowFilePaths {
+			return
+		}
+		trimmed := strings.TrimSpace(path)
+		if trimmed == "" {
+			return
+		}
+		if _, ok := exclude[trimmed]; ok {
+			return
+		}
+		if _, ok := seen[trimmed]; ok {
+			return
+		}
+		seen[trimmed] = struct{}{}
+		merged = append(merged, trimmed)
+		if len(merged) >= maxShowFilePaths {
+			return
+		}
+	}
+	for _, path := range paths {
+		add(path)
+	}
+	for _, path := range fallback {
+		add(path)
+	}
+	return merged
+}
+
+func buildFullFileSnippets(paths []string) map[string][]LineRange {
+	if len(paths) == 0 {
+		return map[string][]LineRange{}
+	}
+	snippets := make(map[string][]LineRange, len(paths))
+	for _, path := range paths {
+		snippets[path] = []LineRange{{Start: 1, End: maxFullFileRangeEnd}}
+	}
+	return snippets
 }
 
 func normalizeShowFilePath(path string) string {
