@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -53,14 +54,14 @@ var (
 )
 
 type plannerProgressTracker struct {
-	successSet       map[string]struct{}
-	successFiles     []string
-	applied          int
-	forceRepatchHint bool
-	fileDedupSet     map[string]string
-	pendingReview    *planner.PendingReview
-	lastPatchedFile  string
-	patchPlanPending bool
+	successSet              map[string]struct{}
+	successFiles            []string
+	applied                 int
+	forceRepatchHint        bool
+	fileDedupSet            map[string]string
+	pendingReview           *planner.PendingReview
+	lastPatchedFile         string
+	patchPlanPending        bool
 }
 
 type patchPlanUpdater interface {
@@ -104,8 +105,16 @@ func newPlannerProgressTracker(existing *PlannerProgressState) *plannerProgressT
 	return tracker
 }
 
-func normalizePlannerPath(path string) string {
-	return filepath.ToSlash(strings.TrimSpace(path))
+func normalizePlannerPath(rawPath string) string {
+	trimmed := strings.TrimSpace(rawPath)
+	if trimmed == "" {
+		return ""
+	}
+	cleaned := pathpkg.Clean(filepath.ToSlash(trimmed))
+	if cleaned == "." {
+		return ""
+	}
+	return cleaned
 }
 
 func showFilePathMentioned(question string, paths []string) bool {
@@ -163,7 +172,7 @@ func (p *plannerProgressTracker) needsPatchPlanUpdate() bool {
 	return p.patchPlanPending
 }
 
-func (p *plannerProgressTracker) markPatchPlanUpdated() {
+func (p *plannerProgressTracker) clearPatchPlanPending() {
 	if p == nil {
 		return
 	}
@@ -364,6 +373,9 @@ func invokePatchPlanUpdateHook(ctx context.Context, pl patchPlanUpdater, tr *tra
 		total, complete := updated.Progress()
 		status := strings.ToLower(action)
 		notifier.Notify(fmt.Sprintf("Patch plan %s (%d/%d complete)", status, complete, total))
+		if rendered := formatPatchPlanForDisplay(updated); strings.TrimSpace(rendered) != "" {
+			notifier.Notify(rendered)
+		}
 	}
 	return updated, nil
 }
@@ -376,9 +388,7 @@ func updatePatchPlanIfNeeded(ctx context.Context, pl patchPlanUpdater, tr *trans
 	if err != nil {
 		return nil, err
 	}
-	if updated != nil {
-		progress.markPatchPlanUpdated()
-	}
+	progress.clearPatchPlanPending()
 	return updated, nil
 }
 
@@ -470,7 +480,17 @@ func (p *plannerProgressTracker) commitPendingReview() *planner.PendingReview {
 	}
 	reviewCopy := p.pendingReview.Clone()
 	p.recordSuccess(p.pendingReview.Files)
-	p.patchPlanPending = true
+	patchedFile := ""
+	if len(p.pendingReview.Files) > 0 {
+		patchedFile = normalizePlannerPath(p.pendingReview.Files[0])
+	}
+	previousFile := normalizePlannerPath(p.lastPatchedFile)
+	if patchedFile != "" {
+		if previousFile != "" && patchedFile != previousFile {
+			p.patchPlanPending = true
+		}
+		p.lastPatchedFile = patchedFile
+	}
 	p.pendingReview = nil
 	return reviewCopy
 }
@@ -1502,12 +1522,6 @@ func Run(ctx context.Context, opts Options) Result {
 		planCtx = attachTrajectory(planCtx, trajectoryWriter, parentSpanID)
 		patchPlanComplete := false
 		if cfg.patch {
-			monitoredPlan, err := updatePatchPlanIfNeeded(planCtx, pl, tr, sessionID, goal, trFull, plannerProgress.getLastPatchedFile(), display, plannerProgress)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: patch plan monitor failed: %v\n", err)
-			} else if monitoredPlan != nil {
-				patchPlan = monitoredPlan
-			}
 			if patchPlan == nil {
 				if loadedPlan, err := LoadPatchPlan(sessionID); err != nil {
 					fmt.Fprintf(os.Stderr, "Warning: failed to load patch plan: %v\n", err)
@@ -1520,14 +1534,56 @@ func Run(ctx context.Context, opts Options) Result {
 				patchPlanComplete = patchPlan.AllComplete()
 				turnInfo["patch_plan_items"] = totalItems
 				turnInfo["patch_plan_complete_items"] = completedItems
-				if display != nil {
-					display.Notify(formatPatchPlanForDisplay(patchPlan))
-				}
 			}
 		}
 		decision, question, perr = pl.Plan(planCtx, conv, goal, trFull, step, cfg.maxSteps, patchPlan)
 		if trimmedResumePrompt != "" {
 			resumePrompt = ""
+		}
+		if cfg.patch && perr == nil {
+			for decision == planner.DecisionFinalize {
+				if patchPlan == nil {
+					if loadedPlan, err := LoadPatchPlan(sessionID); err != nil {
+						fmt.Fprintf(os.Stderr, "Warning: failed to load patch plan: %v\n", err)
+					} else {
+						patchPlan = loadedPlan
+					}
+				}
+				if patchPlan == nil {
+					break
+				}
+				totalItems, completedItems := patchPlan.Progress()
+				patchPlanComplete = patchPlan.AllComplete()
+				turnInfo["patch_plan_items"] = totalItems
+				turnInfo["patch_plan_complete_items"] = completedItems
+				if patchPlanComplete {
+					break
+				}
+				lastPatched := plannerProgress.getLastPatchedFile()
+				refreshedPlan, err := invokePatchPlanUpdateHook(planCtx, pl, tr, sessionID, goal, trFull, lastPatched, display, false)
+				if err != nil {
+					perr = err
+					break
+				}
+				if refreshedPlan != nil {
+					patchPlan = refreshedPlan
+				}
+				plannerProgress.clearPatchPlanPending()
+				if patchPlan == nil {
+					break
+				}
+				totalItems, completedItems = patchPlan.Progress()
+				patchPlanComplete = patchPlan.AllComplete()
+				turnInfo["patch_plan_items"] = totalItems
+				turnInfo["patch_plan_complete_items"] = completedItems
+				if patchPlanComplete {
+					break
+				}
+				decision, question, perr = pl.Plan(planCtx, conv, goal, trFull, step, cfg.maxSteps, patchPlan)
+				if perr != nil {
+					break
+				}
+			}
 		}
 		var planCtxErr error
 		if planCtx != nil {
@@ -1634,29 +1690,6 @@ func Run(ctx context.Context, opts Options) Result {
 			finishTurn(sessTelemetry, turn, "planner", "error", turnInfo, perr)
 			turnsCompleted = userTurnCounter
 			return Result{ExitCode: 1, Err: perr}
-		}
-
-		if cfg.patch && decision == planner.DecisionFinalize {
-			if patchPlan == nil {
-				if loadedPlan, err := LoadPatchPlan(sessionID); err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: failed to load patch plan: %v\n", err)
-				} else {
-					patchPlan = loadedPlan
-					patchPlanComplete = patchPlan.AllComplete()
-					totalItems, completedItems := patchPlan.Progress()
-					turnInfo["patch_plan_items"] = totalItems
-					turnInfo["patch_plan_complete_items"] = completedItems
-				}
-			}
-			if patchPlan != nil && !patchPlanComplete {
-				decision = planner.DecisionAsk
-				question = "Instruction: Patch plan incomplete—continue patching until all plan items are complete."
-				turnInfo["planner_decision_override"] = "finalize_blocked_incomplete_patch_plan"
-				if display != nil {
-					display.Notify(formatPatchPlanForDisplay(patchPlan))
-					display.Notify("Finalize blocked: patch plan incomplete")
-				}
-			}
 		}
 
 		if cfg.verbose {
@@ -2057,79 +2090,79 @@ func Run(ctx context.Context, opts Options) Result {
 									addReason(reason)
 								}
 							}
-								for path, ranges := range snippets {
-									if len(ranges) == 0 {
-										emptySnippetFiles = append(emptySnippetFiles, path)
-										continue
-									}
-									snippetFiles[path] = ranges
+							for path, ranges := range snippets {
+								if len(ranges) == 0 {
+									emptySnippetFiles = append(emptySnippetFiles, path)
+									continue
 								}
-								if len(emptySnippetFiles) > 0 {
-									sort.Strings(emptySnippetFiles)
-									for _, path := range emptySnippetFiles {
-										addFallback(path)
-									}
-									warnings = append(warnings, fmt.Sprintf("snippet-discovery returned empty snippets for: %s", strings.Join(emptySnippetFiles, ", ")))
-									addReason("empty_snippets")
+								snippetFiles[path] = ranges
+							}
+							if len(emptySnippetFiles) > 0 {
+								sort.Strings(emptySnippetFiles)
+								for _, path := range emptySnippetFiles {
+									addFallback(path)
 								}
+								warnings = append(warnings, fmt.Sprintf("snippet-discovery returned empty snippets for: %s", strings.Join(emptySnippetFiles, ", ")))
+								addReason("empty_snippets")
+							}
 
-								var snippetBanner string
-								var snippetRetrieved []string
-								if len(snippetFiles) > 0 {
-									var snippetWarnings []string
-									snippetReason := detection.VerbatimQuestion
-									if strings.TrimSpace(snippetReason) == "" {
-										snippetReason = detection.Reason
-									}
-									snippetBanner, snippetRetrieved, snippetWarnings = promptsvc.FormatSnippetsResponse(snippetFiles, snippetReason, repoRoot)
-									warnings = append(warnings, snippetWarnings...)
-									turnInfo["show_file_snippet_count"] = countSnippetRanges(snippetFiles)
+							var snippetBanner string
+							var snippetRetrieved []string
+							if len(snippetFiles) > 0 {
+								var snippetWarnings []string
+								snippetReason := detection.VerbatimQuestion
+								if strings.TrimSpace(snippetReason) == "" {
+									snippetReason = detection.Reason
 								}
-								var fallbackBanner string
-								var fallbackRetrieved []string
-								if len(fallbackFiles) > 0 {
-									var fallbackWarnings []string
-									fallbackBanner, fallbackRetrieved, fallbackWarnings = promptsvc.FormatFullFileFallback(fallbackFiles, repoRoot, serr)
-									warnings = append(warnings, fallbackWarnings...)
-									turnInfo["show_file_fallback"] = true
+								snippetBanner, snippetRetrieved, snippetWarnings = promptsvc.FormatSnippetsResponse(snippetFiles, snippetReason, repoRoot)
+								warnings = append(warnings, snippetWarnings...)
+								turnInfo["show_file_snippet_count"] = countSnippetRanges(snippetFiles)
+							}
+							var fallbackBanner string
+							var fallbackRetrieved []string
+							if len(fallbackFiles) > 0 {
+								var fallbackWarnings []string
+								fallbackBanner, fallbackRetrieved, fallbackWarnings = promptsvc.FormatFullFileFallback(fallbackFiles, repoRoot, serr)
+								warnings = append(warnings, fallbackWarnings...)
+								turnInfo["show_file_fallback"] = true
+							}
+							if snippetBanner != "" && fallbackBanner != "" {
+								showFileBanner = snippetBanner + "\n\n" + fallbackBanner
+							} else {
+								showFileBanner = snippetBanner + fallbackBanner
+							}
+							showFileRetrieved = append(showFileRetrieved, snippetRetrieved...)
+							showFileRetrieved = append(showFileRetrieved, fallbackRetrieved...)
+							showFileBanner = appendShowFileWarnings(showFileBanner, warnings)
+							if strings.TrimSpace(showFileBanner) != "" {
+								showFileHandled = true
+								turnInfo["show_file_appended"] = true
+							}
+							if len(fallbackFiles) > 0 {
+								payload := map[string]any{"files": append([]string(nil), fallbackFiles...)}
+								if len(reasons) > 0 {
+									payload["reasons"] = append([]string(nil), reasons...)
 								}
-								if snippetBanner != "" && fallbackBanner != "" {
-									showFileBanner = snippetBanner + "\n\n" + fallbackBanner
-								} else {
-									showFileBanner = snippetBanner + fallbackBanner
+								evt := trajectory.Event{Kind: "snippet_fallback", Payload: payload}
+								if parentID, ok := trajectory.ParentSpanID(ctxSnippet); ok {
+									evt.ParentSpanID = parentID
 								}
-								showFileRetrieved = append(showFileRetrieved, snippetRetrieved...)
-								showFileRetrieved = append(showFileRetrieved, fallbackRetrieved...)
-								showFileBanner = appendShowFileWarnings(showFileBanner, warnings)
-								if strings.TrimSpace(showFileBanner) != "" {
-									showFileHandled = true
-									turnInfo["show_file_appended"] = true
+								if err := trajectory.EmitFromContext(ctxSnippet, evt); err != nil && cfg.verbose {
+									fmt.Fprintf(os.Stderr, "[trajectory] snippet fallback emit error: %v\n", err)
 								}
-								if len(fallbackFiles) > 0 {
-									payload := map[string]any{"files": append([]string(nil), fallbackFiles...)}
-									if len(reasons) > 0 {
-										payload["reasons"] = append([]string(nil), reasons...)
-									}
-									evt := trajectory.Event{Kind: "snippet_fallback", Payload: payload}
-									if parentID, ok := trajectory.ParentSpanID(ctxSnippet); ok {
-										evt.ParentSpanID = parentID
-									}
-									if err := trajectory.EmitFromContext(ctxSnippet, evt); err != nil && cfg.verbose {
-										fmt.Fprintf(os.Stderr, "[trajectory] snippet fallback emit error: %v\n", err)
-									}
-								}
-								if cancelSnippet != nil {
-									cancelSnippet()
-								}
-								if showFileHandled {
-									turnInfo["show_file_files"] = append([]string(nil), showFileRetrieved...)
-									turnInfo["show_file_paths"] = append([]string(nil), requested...)
-								}
+							}
+							if cancelSnippet != nil {
+								cancelSnippet()
+							}
+							if showFileHandled {
+								turnInfo["show_file_files"] = append([]string(nil), showFileRetrieved...)
+								turnInfo["show_file_paths"] = append([]string(nil), requested...)
 							}
 						}
 					}
 				}
-				useShellAgent = cfg.shellAgent
+			}
+			useShellAgent = cfg.shellAgent
 			preflightNote := ""
 			var preflightErr error
 			preflightReply := ""
@@ -2353,13 +2386,24 @@ func Run(ctx context.Context, opts Options) Result {
 					finishTurn(sessTelemetry, turn, string(decision), "error", turnInfo, err)
 					return Result{ExitCode: 1, Err: err}
 				}
+				if plannerProgress.needsPatchPlanUpdate() {
+					hookCtx, hookCancel := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
+					hookCtx = attachTrajectory(hookCtx, trajectoryWriter, parentSpanID)
+					refreshedPlan, hookErr := invokePatchPlanUpdateHook(hookCtx, pl, tr, sessionID, goal, tr.Content(), plannerProgress.getLastPatchedFile(), display, false)
+					if hookCancel != nil {
+						hookCancel()
+					}
+					if hookErr != nil {
+						fmt.Fprintf(os.Stderr, "Warning: patch plan update failed before patching: %v\n", hookErr)
+					} else if refreshedPlan != nil {
+						patchPlan = refreshedPlan
+					}
+					plannerProgress.clearPatchPlanPending()
+				}
 				if patchPlan != nil {
 					totalItems, completedItems := patchPlan.Progress()
 					turnInfo["patch_plan_items"] = totalItems
 					turnInfo["patch_plan_complete_items"] = completedItems
-					if display != nil {
-						display.Notify(formatPatchPlanForDisplay(patchPlan))
-					}
 				}
 			}
 			if cfg.verbose {
@@ -2764,9 +2808,6 @@ func Run(ctx context.Context, opts Options) Result {
 				Deletions:        result.Deletions,
 			}
 			if len(result.FilesModified) > 0 {
-				plannerProgress.setLastPatchedFile(result.FilesModified[0])
-			}
-			if len(result.FilesModified) > 0 {
 				recordDiscoveryPending(sessionID, result.FilesModified, cfg.verbose)
 				// Also refresh the persistent discovery workspace immediately so
 				// consecutive patch decisions see updated files without waiting for
@@ -2916,19 +2957,6 @@ Finalize:
 	}
 	var finalizePatchPlan *PatchPlan
 	if cfg.patch {
-		if plannerProgress.needsPatchPlanUpdate() {
-			hookCtx, hookCancel := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
-			hookCtx = attachTrajectory(hookCtx, trajectoryWriter, parentSpanID)
-			monitoredPlan, err := updatePatchPlanIfNeeded(hookCtx, pl, tr, sessionID, goal, tr.Content(), plannerProgress.getLastPatchedFile(), display, plannerProgress)
-			if hookCancel != nil {
-				hookCancel()
-			}
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: patch plan monitor failed before finalizing: %v\n", err)
-			} else if monitoredPlan != nil {
-				finalizePatchPlan = monitoredPlan
-			}
-		}
 		if finalizePatchPlan == nil {
 			if loadedPlan, err := LoadPatchPlan(sessionID); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to load patch plan: %v\n", err)
@@ -2937,9 +2965,6 @@ Finalize:
 			}
 		}
 		if finalizePatchPlan != nil {
-			if display != nil {
-				display.Notify(formatPatchPlanForDisplay(finalizePatchPlan))
-			}
 			if !finalizePatchPlan.AllComplete() {
 				fmt.Fprintf(os.Stderr, "Warning: finalizing with incomplete patch plan\n")
 			}

@@ -459,7 +459,64 @@ func TestUpdatePatchPlanIfNeededSkipsWithoutPending(t *testing.T) {
 	}
 }
 
-func TestUpdatePatchPlanIfNeededRunsAfterCommit(t *testing.T) {
+func TestUpdatePatchPlanIfNeededRunsAfterFileSwitch(t *testing.T) {
+	tempDir := t.TempDir()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(tempDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(cwd)
+	})
+	cmd := exec.Command("git", "init")
+	cmd.Dir = tempDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init failed: %v (%s)", err, strings.TrimSpace(string(out)))
+	}
+
+	sessionID := "session-update-same-file"
+	plan := &PatchPlan{Items: []PatchPlanItem{{Description: "task"}}}
+	if err := SavePatchPlan(sessionID, plan); err != nil {
+		t.Fatalf("save patch plan: %v", err)
+	}
+
+	tr, err := transcript.NewWithPath(filepath.Join(tempDir, "agent-transcript.adoc"), sessionID)
+	if err != nil {
+		t.Fatalf("transcript init: %v", err)
+	}
+	t.Cleanup(func() {
+		tr.Close()
+	})
+
+	updatedPlan := &PatchPlan{Items: []PatchPlanItem{{Description: "task", Complete: true}}}
+	client := &stubPatchPlanClient{updatedPlan: updatedPlan}
+	progress := newPlannerProgressTracker(nil)
+	progress.setLastPatchedFile("old.go")
+	progress.beginPendingReview(&planner.PendingReview{Files: []string{"new.go"}})
+	progress.commitPendingReview()
+
+	updated, err := updatePatchPlanIfNeeded(context.Background(), client, tr, sessionID, "goal", "transcript", progress.getLastPatchedFile(), nil, progress)
+	if err != nil {
+		t.Fatalf("updatePatchPlanIfNeeded error: %v", err)
+	}
+	if updated == nil {
+		t.Fatalf("expected patch plan update")
+	}
+	if client.updateCalls != 1 {
+		t.Fatalf("expected update hook called once, got %d", client.updateCalls)
+	}
+	if client.lastPatched != "new.go" {
+		t.Fatalf("expected last patched file recorded, got %q", client.lastPatched)
+	}
+	if progress.needsPatchPlanUpdate() {
+		t.Fatalf("expected patch plan update cleared")
+	}
+}
+
+func TestUpdatePatchPlanIfNeededSkipsSameFileCommit(t *testing.T) {
 	tempDir := t.TempDir()
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -502,14 +559,11 @@ func TestUpdatePatchPlanIfNeededRunsAfterCommit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("updatePatchPlanIfNeeded error: %v", err)
 	}
-	if updated == nil {
-		t.Fatalf("expected patch plan update")
+	if updated != nil {
+		t.Fatalf("expected no patch plan update on same-file commit, got %+v", updated)
 	}
-	if client.updateCalls != 1 {
-		t.Fatalf("expected update hook called once, got %d", client.updateCalls)
-	}
-	if client.lastPatched != "file.go" {
-		t.Fatalf("expected last patched file recorded, got %q", client.lastPatched)
+	if client.updateCalls != 0 {
+		t.Fatalf("expected update hook not called, got %d", client.updateCalls)
 	}
 	if progress.needsPatchPlanUpdate() {
 		t.Fatalf("expected patch plan update cleared")
