@@ -835,8 +835,18 @@ run_show_live_case() {
   local case_id="routing-show-live"
 
   run_happy_case "$case_id" 2 \
-    "Show the full contents of README.md." \
-    "(?s)(?=.*\\[mct:show\\])" \
+    "Show the full contents of agent/internal/workspace/repo_snapshot.go. <full_file path=\"agent/internal/workspace/repo_snapshot.go\" />" \
+    "(?ms)^(?=.*\\[mct:show\\])(?!.*\\[mct:(file|shell|both)\\])(?!.*\\bNo-shell:)(?!.*\\bShell:)(?!.*^Lines \\d+-\\d+:)(?!.*^\\d+: ).*$" \
+    1 \
+    "${DEFAULT_MODEL_ARGS[@]}"
+}
+
+run_show_range_live_case() {
+  local case_id="routing-show-range-live"
+
+  run_happy_case "$case_id" 2 \
+    "Show lines 10-20 of agent/internal/workspace/repo_snapshot.go." \
+    "(?ms)^(?=.*\\[mct:show\\])(?!.*\\[mct:(file|shell|both)\\])(?!.*\\bNo-shell:)(?!.*\\bShell:)(?=.*^Lines 10-20:$)(?!.*^Lines (?!10-20:$).*$)(?=.*^10: )(?=.*^20: )(?!.*^0: )(?!.*^(?:[1-9]|2[1-9]|[3-9]\\d|\\d{3,}): ).*$" \
     1 \
     "${DEFAULT_MODEL_ARGS[@]}"
 }
@@ -960,6 +970,7 @@ else
   run_menu_flow_live_case
   run_file_discovery_live_case
   run_show_live_case
+  run_show_range_live_case
   if shell_agent_available; then
     run_shell_live_case
   else
