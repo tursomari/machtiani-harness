@@ -625,15 +625,24 @@ func seedOneSubmodule(repoRoot, snapshotRoot, snapshotGitDir, subPath string, cf
 		return fmt.Errorf("refusing to overwrite host submodule gitdir: %s", hostModule)
 	}
 
-	if info, err := os.Stat(hostModule); err == nil && info.IsDir() {
-		_ = os.RemoveAll(snapModule)
-		if err := copyDir(hostModule, snapModule); err != nil {
-			return fmt.Errorf("copy submodule gitdir %s: %w", subPath, err)
+	info, err := os.Stat(hostModule)
+	if err != nil || !info.IsDir() {
+		if verbose {
+			fmt.Fprintf(os.Stderr, "[workspace] submodule path=%s host_gitdir_missing\n", filepath.ToSlash(subPath))
 		}
+		return nil
+	}
+
+	_ = os.RemoveAll(snapModule)
+	if err := copyDir(hostModule, snapModule); err != nil {
+		return fmt.Errorf("copy submodule gitdir %s: %w", subPath, err)
 	}
 
 	srcWT := filepath.Join(repoRoot, filepath.FromSlash(subPath))
 	dstWT := filepath.Join(snapshotRoot, filepath.FromSlash(subPath))
+	if err := os.MkdirAll(dstWT, 0o755); err != nil {
+		return err
+	}
 
 	// Ensure the snapshot submodule has a gitfile pointing at snapshot-local modules.
 	gitfile := filepath.Join(dstWT, ".git")
@@ -647,6 +656,9 @@ func seedOneSubmodule(repoRoot, snapshotRoot, snapshotGitDir, subPath string, cf
 	gitdirRel = filepath.ToSlash(gitdirRel)
 	content := []byte("gitdir: " + gitdirRel + "\n")
 	if err := os.WriteFile(gitfile, content, 0o644); err != nil {
+		return err
+	}
+	if err := rewriteSubmoduleWorktreeConfig(snapModule, dstWT); err != nil {
 		return err
 	}
 
@@ -691,6 +703,71 @@ func seedOneSubmodule(repoRoot, snapshotRoot, snapshotGitDir, subPath string, cf
 		}
 	}
 
+	return nil
+}
+
+func rewriteSubmoduleWorktreeConfig(gitDir, worktree string) error {
+	configPath := filepath.Join(gitDir, "config")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read submodule config: %w", err)
+	}
+
+	rel, relErr := filepath.Rel(gitDir, worktree)
+	worktreeVal := worktree
+	if relErr == nil {
+		worktreeVal = filepath.ToSlash(rel)
+	} else {
+		worktreeVal = filepath.ToSlash(filepath.Clean(worktree))
+	}
+
+	lines := strings.Split(string(data), "\n")
+	updated := make([]string, 0, len(lines)+2)
+	inCore := false
+	replaced := false
+	inserted := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+			if inCore && !replaced && !inserted {
+				updated = append(updated, "\tworktree = "+worktreeVal)
+				inserted = true
+			}
+			inCore = strings.EqualFold(trimmed, "[core]")
+			updated = append(updated, line)
+			continue
+		}
+		if inCore && strings.HasPrefix(strings.TrimSpace(line), "worktree =") {
+			if !replaced {
+				updated = append(updated, "\tworktree = "+worktreeVal)
+				replaced = true
+			}
+			continue
+		}
+		updated = append(updated, line)
+	}
+	if !replaced && !inserted {
+		if inCore {
+			updated = append(updated, "\tworktree = "+worktreeVal)
+		} else {
+			updated = append(updated, "[core]", "\tworktree = "+worktreeVal)
+		}
+	}
+
+	content := strings.Join(updated, "\n")
+	if !strings.HasSuffix(content, "\n") {
+		content += "\n"
+	}
+	mode := os.FileMode(0o600)
+	if info, err := os.Stat(configPath); err == nil {
+		mode = info.Mode().Perm()
+	}
+	if err := os.WriteFile(configPath, []byte(content), mode); err != nil {
+		return fmt.Errorf("write submodule config: %w", err)
+	}
 	return nil
 }
 
