@@ -716,13 +716,13 @@ func rewriteSubmoduleWorktreeConfig(gitDir, worktree string) error {
 		return fmt.Errorf("read submodule config: %w", err)
 	}
 
-	rel, relErr := filepath.Rel(gitDir, worktree)
-	worktreeVal := worktree
-	if relErr == nil {
-		worktreeVal = filepath.ToSlash(rel)
-	} else {
-		worktreeVal = filepath.ToSlash(filepath.Clean(worktree))
+	absWorktree := worktree
+	if !filepath.IsAbs(absWorktree) {
+		if resolved, err := filepath.Abs(absWorktree); err == nil {
+			absWorktree = resolved
+		}
 	}
+	worktreeVal := filepath.ToSlash(filepath.Clean(absWorktree))
 
 	lines := strings.Split(string(data), "\n")
 	updated := make([]string, 0, len(lines)+2)

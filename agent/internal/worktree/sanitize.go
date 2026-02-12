@@ -132,6 +132,52 @@ func SanitizeSubmoduleURLsForContainer(worktreePath, originalRepoRoot string) er
 	return nil
 }
 
+func SanitizeSubmoduleWorktreeConfigsForContainer(snapshotRoot, containerRoot string) error {
+	if containerRoot == "" {
+		containerRoot = strings.TrimSpace(os.Getenv("MACHTIANI_DOCKER_WORKTREE_ROOT"))
+	}
+	if containerRoot == "" {
+		return nil
+	}
+
+	modulesRoot := filepath.Join(snapshotRoot, ".git", "modules")
+	if _, err := os.Stat(modulesRoot); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("stat submodule gitdir: %w", err)
+	}
+
+	if err := filepath.WalkDir(modulesRoot, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			if os.IsNotExist(walkErr) {
+				return nil
+			}
+			return walkErr
+		}
+		if d.IsDir() || filepath.Base(path) != "config" {
+			return nil
+		}
+		relDir, err := filepath.Rel(modulesRoot, filepath.Dir(path))
+		if err != nil {
+			return err
+		}
+		relDir = filepath.Clean(relDir)
+		if relDir == "." || relDir == ".." || strings.HasPrefix(relDir, ".."+string(os.PathSeparator)) {
+			return nil
+		}
+		subWorktree := filepath.Join(containerRoot, filepath.FromSlash(filepath.ToSlash(relDir)))
+		if err := rewriteCoreWorktreeConfig(path, subWorktree); err != nil {
+			return err
+		}
+		return nil
+	}); err != nil {
+		return fmt.Errorf("sanitize submodule worktree configs: %w", err)
+	}
+
+	return nil
+}
+
 func SanitizeGitdirPointerForContainer(worktreePath string) error {
 	gitPath := filepath.Join(worktreePath, ".git")
 	info, err := os.Lstat(gitPath)
@@ -256,6 +302,74 @@ func locateWorktreeGitDir(worktreePath string) (string, error) {
 		gitdirPath = filepath.Join(worktreePath, filepath.FromSlash(gitdirPath))
 	}
 	return gitdirPath, nil
+}
+
+func rewriteCoreWorktreeConfig(configPath, worktree string) error {
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read config: %w", err)
+	}
+
+	absWorktree := worktree
+	if !filepath.IsAbs(absWorktree) {
+		if resolved, err := filepath.Abs(absWorktree); err == nil {
+			absWorktree = resolved
+		}
+	}
+	worktreeVal := filepath.ToSlash(filepath.Clean(absWorktree))
+
+	lines := strings.Split(string(data), "\n")
+	updated := make([]string, 0, len(lines)+2)
+	inCore := false
+	replaced := false
+	inserted := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+			if inCore && !replaced && !inserted {
+				updated = append(updated, "\tworktree = "+worktreeVal)
+				inserted = true
+			}
+			inCore = strings.EqualFold(trimmed, "[core]")
+			updated = append(updated, line)
+			continue
+		}
+		if inCore && strings.HasPrefix(strings.TrimSpace(line), "worktree =") {
+			if !replaced {
+				updated = append(updated, "\tworktree = "+worktreeVal)
+				replaced = true
+			}
+			continue
+		}
+		updated = append(updated, line)
+	}
+	if !replaced && !inserted {
+		if inCore {
+			updated = append(updated, "\tworktree = "+worktreeVal)
+		} else {
+			updated = append(updated, "[core]", "\tworktree = "+worktreeVal)
+		}
+	}
+
+	content := strings.Join(updated, "\n")
+	if !strings.HasSuffix(content, "\n") {
+		content += "\n"
+	}
+	if content == string(data) {
+		return nil
+	}
+
+	mode := os.FileMode(0o600)
+	if info, err := os.Stat(configPath); err == nil {
+		mode = info.Mode().Perm()
+	}
+	if err := os.WriteFile(configPath, []byte(content), mode); err != nil {
+		return fmt.Errorf("write config: %w", err)
+	}
+	return nil
 }
 
 func sharedGitLinkTarget(repoGitDir string) string {
