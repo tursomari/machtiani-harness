@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,19 +24,26 @@ const (
 	maxShowFilePaths     = 10
 	maxFullFileTags      = 3
 	maxFullFileBytes     = 128 * 1024
-	showFileSystemPrompt = "You detect whether a planner prompt is asking to show or display the full content of one or more specific repository files. Reply with ONLY valid JSON. If it is a request to show full file contents, reply as: {\"is_show_file_request\":true,\"filepaths\":[\"path/to/file\",\"another/file\"],\"reason\":\"short reason for the request\"}. The filepaths must be workspace-relative paths, with no more than 10 files. For a single file you may also include the legacy \"filepath\" field set to the same path. If not a show-file request, reply as: {\"is_show_file_request\":false}."
+	showFileSystemPrompt = "You detect whether a planner prompt is asking to show or display the full content of one or more specific repository files. Reply with ONLY valid JSON. If it is a request to show full file contents, reply as: {\"is_show_file_request\":true,\"filepaths\":[\"path/to/file\",\"another/file\"],\"reason\":\"short reason for the request\",\"include_explain\":true|false,\"explain_prompt\":\"restated explanation-only request if include_explain is true\"}. The filepaths must be workspace-relative paths, with no more than 10 files. For a single file you may also include the legacy \"filepath\" field set to the same path. If the prompt also asks to explain/analyze/summarize the file(s), set include_explain=true and provide explain_prompt that removes the show request while preserving the explanation instructions. If not a show-file request, reply as: {\"is_show_file_request\":false}."
 	showFileQuestionTmpl = "Planner prompt:\n\n%s\n\nReturn the JSON now."
 )
 
 const maxFullFileRangeEnd = int(^uint(0) >> 1)
 
 var fullFileTagRe = regexp.MustCompile(`<full_file\s+path="([^"]+)"\s*/>`)
+var showFileVerbRe = regexp.MustCompile(`\b(show|display|read|print|view|open)\b`)
+var showFileNounRe = regexp.MustCompile(`\b(file|files|contents|content|full|entire)\b`)
+var showFilePathRe = regexp.MustCompile(`\b[\w./-]+\.[a-z0-9]{1,8}\b`)
+var showFileFullCueRe = regexp.MustCompile(`\b(full|entire|complete|verbatim|raw)\b`)
+var showFileContextRe = regexp.MustCompile(`\b(context|snippet|snippets)\b`)
 
 type ShowFileDetection struct {
 	IsShowFileRequest bool     `json:"is_show_file_request"`
 	Filepath          string   `json:"filepath"`
 	Filepaths         []string `json:"filepaths"`
 	Reason            string   `json:"reason,omitempty"`
+	IncludeExplain    bool     `json:"include_explain,omitempty"`
+	ExplainPrompt     string   `json:"explain_prompt,omitempty"`
 	VerbatimQuestion  string   `json:"-"`
 	Preflighted       bool     `json:"-"`
 }
@@ -45,6 +53,8 @@ func (s ShowFileDetection) normalize() ShowFileDetection {
 		s.Filepath = ""
 		s.Filepaths = nil
 		s.Reason = ""
+		s.IncludeExplain = false
+		s.ExplainPrompt = ""
 		return s
 	}
 	paths := append([]string(nil), s.Filepaths...)
@@ -60,6 +70,10 @@ func (s ShowFileDetection) normalize() ShowFileDetection {
 	}
 	s.Filepath = s.Filepaths[0]
 	s.Reason = strings.TrimSpace(s.Reason)
+	s.ExplainPrompt = strings.TrimSpace(s.ExplainPrompt)
+	if !s.IncludeExplain {
+		s.ExplainPrompt = ""
+	}
 	return s
 }
 
@@ -70,6 +84,9 @@ func DetectShowFileRequest(ctx context.Context, runtime ModelRuntime, plannerPro
 	verbatimPrompt := plannerPrompt
 	trimmedPrompt := strings.TrimSpace(plannerPrompt)
 	if trimmedPrompt == "" {
+		return ShowFileDetection{IsShowFileRequest: false}, "", nil
+	}
+	if !shouldDetectShowFile(trimmedPrompt) {
 		return ShowFileDetection{IsShowFileRequest: false}, "", nil
 	}
 
@@ -114,6 +131,23 @@ func DetectShowFileRequest(ctx context.Context, runtime ModelRuntime, plannerPro
 	}
 	det.VerbatimQuestion = verbatimPrompt
 	return det.normalize(), raw, nil
+}
+
+func shouldDetectShowFile(prompt string) bool {
+	if fullFileTagRe.MatchString(prompt) {
+		return true
+	}
+	lower := strings.ToLower(prompt)
+	if !showFileVerbRe.MatchString(lower) {
+		return false
+	}
+	if showFileContextRe.MatchString(lower) && !showFileFullCueRe.MatchString(lower) && !showFilePathRe.MatchString(lower) {
+		return false
+	}
+	if showFileNounRe.MatchString(lower) || showFilePathRe.MatchString(lower) {
+		return true
+	}
+	return false
 }
 
 type LineRange struct {
@@ -447,6 +481,28 @@ func FormatFullFileFallback(filepaths []string, repoRoot string, err error) (str
 	return formatFullFileFallbackWithRoot(filepaths, repoRoot, err)
 }
 
+func shouldRenderFullFile(start, end int, lines []string) bool {
+	total := len(lines)
+	if total == 0 || start != 1 || end <= 0 {
+		return false
+	}
+	if end >= total {
+		return true
+	}
+	allBlank := true
+	for i := end; i < total; i++ {
+		if strings.TrimSpace(lines[i]) != "" {
+			allBlank = false
+			break
+		}
+	}
+	if allBlank {
+		return true
+	}
+	threshold := int(math.Ceil(float64(total) * 0.9))
+	return end >= threshold
+}
+
 func formatSnippetsResponseWithRoot(snippets map[string][]LineRange, reason, repoRoot string) (string, []string, []string) {
 	var b strings.Builder
 	paths := make([]string, 0, len(snippets))
@@ -488,6 +544,28 @@ func formatSnippetsResponseWithRoot(snippets map[string][]LineRange, reason, rep
 			continue
 		}
 		lang := contextbuilder.DetectFenceLanguage(path)
+		if len(ranges) == 1 {
+			start := ranges[0].Start
+			end := ranges[0].End
+			if start > 0 && end > 0 && end >= start && start <= len(lines) {
+				if end > len(lines) {
+					end = len(lines)
+				}
+				if shouldRenderFullFile(start, end, lines) {
+					b.WriteString("```")
+					if lang != "" {
+						b.WriteString(lang)
+					}
+					b.WriteString("\n")
+					for _, line := range lines {
+						b.WriteString(line)
+						b.WriteString("\n")
+					}
+					b.WriteString("```\n\n")
+					continue
+				}
+			}
+		}
 		for i, r := range ranges {
 			start := r.Start
 			end := r.End

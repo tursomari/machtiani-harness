@@ -1,5 +1,3 @@
-Create concise and informative report build and tests results. Highlight any failing test cases. Describe the issue causing the error, if any (don't solve it).
-
 Out-of-scope: any environment setup (like missing git repos) or connectivity issues.
 
 ## Run available validations
@@ -10,6 +8,8 @@ Format.
 gofmt -w path/to/file
 ```
 
+Note, if gofmt doesn't return any stdout, that means it succeded.
+
 Test.
 
 ```
@@ -18,8 +18,17 @@ cd agent && GOCACHE=$(pwd)/.gocache go test ./...
 
 Do not run any `run-live` or `undici` related tests that require network access. Don't go off on a tangent. Run builds and tests as instructed and don't set any timeouts. To run a formatter, run `gofmt -w /path/to/file`.
 
-## Do not fix any issues
+Run run `gofmt` and the test separately.
 
-- Do not fix any issue that surface from your validations.
 
-- Do not worry about any failures from environment setup or connectivity.
+## Fix any issues
+
+Fix any issue that surface from your validations. Don't not stop trying until format, build, and tests are complete successfully without error.
+
+## Note
+
+- You don't have internet access, so follow the build and test instructions otherwise it won't run.
+
+- Do not worry about any failures from environment setup or connectivity. Focus only only on correcting the implementation issues that may arise from `gofmt` or test failures.
+
+- If `gofmt` returns no stdout, it means there were no formatting issues and it was a sucess.

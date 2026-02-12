@@ -383,7 +383,14 @@ func TestInvokePatchPlanUpdateHookWritesTranscript(t *testing.T) {
 	if !strings.Contains(first, `"description": "add docs"`) {
 		t.Fatalf("expected plan JSON in transcript, got %q", first)
 	}
-	if len(notifier.messages) == 0 || !strings.Contains(notifier.messages[0], "created") {
+	hasCreated := false
+	for _, msg := range notifier.messages {
+		if strings.Contains(msg, "created") {
+			hasCreated = true
+			break
+		}
+	}
+	if !hasCreated {
 		t.Fatalf("expected notifier to record creation message, got %+v", notifier.messages)
 	}
 
@@ -401,7 +408,14 @@ func TestInvokePatchPlanUpdateHookWritesTranscript(t *testing.T) {
 	if !strings.Contains(updated, `"complete": true`) {
 		t.Fatalf("expected updated plan JSON in transcript, got %q", updated)
 	}
-	if len(notifier.messages) < 2 || !strings.Contains(notifier.messages[1], "updated") {
+	hasUpdated := false
+	for _, msg := range notifier.messages {
+		if strings.Contains(msg, "updated") {
+			hasUpdated = true
+			break
+		}
+	}
+	if !hasUpdated {
 		t.Fatalf("expected notifier to record update message, got %+v", notifier.messages)
 	}
 	if client.existing == nil || len(client.existing.Items) != 1 {

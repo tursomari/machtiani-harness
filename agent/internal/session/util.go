@@ -29,6 +29,44 @@ func trimTo(s string, n int) string {
 	return s[:n-3] + "..."
 }
 
+func splitAskLines(question string) (string, string, bool) {
+	var noShell string
+	var shell string
+	for _, raw := range strings.Split(question, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		if noShell == "" {
+			if val, ok := splitAskLabel(line, "no-shell:", "no shell:", "noshell:", "content:"); ok {
+				noShell = strings.TrimSpace(val)
+				continue
+			}
+		}
+		if shell == "" {
+			if val, ok := splitAskLabel(line, "shell:", "command:", "commands:"); ok {
+				shell = strings.TrimSpace(val)
+				continue
+			}
+		}
+	}
+	if noShell == "" || shell == "" {
+		return "", "", false
+	}
+	return noShell, shell, true
+}
+
+func splitAskLabel(line string, labels ...string) (string, bool) {
+	trimmed := strings.TrimSpace(line)
+	lower := strings.ToLower(trimmed)
+	for _, label := range labels {
+		if strings.HasPrefix(lower, label) {
+			return strings.TrimSpace(trimmed[len(label):]), true
+		}
+	}
+	return "", false
+}
+
 func countTurns(doc string) int {
 	lines := strings.Split(doc, "\n")
 	count := 0

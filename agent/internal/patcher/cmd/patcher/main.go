@@ -22,7 +22,6 @@ var (
 	BuiltAt = "unknown"
 	Dirty   = "unknown"
 )
-
 // Exit codes
 const (
 	exitOK             = 0

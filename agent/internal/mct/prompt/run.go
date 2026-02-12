@@ -162,6 +162,7 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 		}
 		var cleanedDiscoveryPaths []string
 		invalidDiscoveryPaths := map[string]string(nil)
+		var showFileQuestion string
 		if len(filtered) > 0 {
 			cleanedDiscoveryPaths, invalidDiscoveryPaths = preflightShowFilePaths(filtered, repoRoot)
 			if len(invalidDiscoveryPaths) == 0 {
@@ -178,6 +179,7 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 				fmt.Fprintf(os.Stderr, "[show-file] detection error: %v\n", err)
 			}
 			if detection.IsShowFileRequest {
+				showFileQuestion = detection.VerbatimQuestion
 				requested := append([]string(nil), detection.Filepaths...)
 				if len(requested) == 0 && strings.TrimSpace(detection.Filepath) != "" {
 					requested = []string{strings.TrimSpace(detection.Filepath)}
@@ -228,7 +230,7 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 		if buildErr != nil {
 			return res, buildErr
 		}
-		detection := ShowFileDetection{IsShowFileRequest: true, Filepaths: filtered, Reason: opts.Prompt}
+		detection := ShowFileDetection{IsShowFileRequest: true, Filepaths: filtered, Reason: opts.Prompt, VerbatimQuestion: showFileQuestion}
 		snippetRuntime := opts.FileDiscoveryRuntime
 		if strings.TrimSpace(snippetRuntime.Resolved.Model) == "" {
 			snippetRuntime = opts.Runtime

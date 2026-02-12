@@ -54,14 +54,14 @@ var (
 )
 
 type plannerProgressTracker struct {
-	successSet              map[string]struct{}
-	successFiles            []string
-	applied                 int
-	forceRepatchHint        bool
-	fileDedupSet            map[string]string
-	pendingReview           *planner.PendingReview
-	lastPatchedFile         string
-	patchPlanPending        bool
+	successSet       map[string]struct{}
+	successFiles     []string
+	applied          int
+	forceRepatchHint bool
+	fileDedupSet     map[string]string
+	pendingReview    *planner.PendingReview
+	lastPatchedFile  string
+	patchPlanPending bool
 }
 
 type patchPlanUpdater interface {
@@ -1455,10 +1455,12 @@ func Run(ctx context.Context, opts Options) Result {
 
 	parentSpanID := ""
 	useShellAgent := false
+	shellAgentUsedThisTurn := false
 	for {
 		if err := rootCtx.Err(); err != nil {
 			return interruptedResult(err)
 		}
+		shellAgentUsedThisTurn = false
 		step := userTurnCounter + 1
 		var turn *turnTelemetry
 		if sessTelemetry != nil {
@@ -1919,18 +1921,66 @@ func Run(ctx context.Context, opts Options) Result {
 			if cfg.verbose {
 				fmt.Fprintln(os.Stderr, "Question:", question)
 			}
+			noShellAsk, shellAsk, hasSplitAsk := splitAskLines(question)
+			showFileQuestion := question
+			preflightQuestion := question
+			if hasSplitAsk {
+				showFileQuestion = noShellAsk
+				preflightQuestion = noShellAsk
+			}
+			useShellAgent = cfg.shellAgent
+			preflightNote := ""
+			var preflightErr error
+			preflightReply := ""
+			runSplitShell := hasSplitAsk
+			if hasSplitAsk {
+				useShellAgent = false
+				if cfg.shellAgent {
+					preflightNote = "routing: both (config override — running split ask)"
+				} else {
+					preflightNote = "routing: both (split ask — run no-shell + shell agent)"
+				}
+			} else if cfg.shellAgent {
+				preflightNote = "routing: shell (config override — run commands via shell agent)"
+			} else {
+				ctxPre, cancelPre := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
+				ctxPre = attachTrajectory(ctxPre, trajectoryWriter, parentSpanID)
+				useShellAgent, preflightReply, preflightErr = promptsvc.PreflightShellRouting(ctxPre, mctRunner.Runtime, preflightQuestion)
+				cancelPre()
+				if preflightErr != nil && cfg.verbose {
+					fmt.Fprintln(os.Stderr, "Preflight routing error:", preflightErr)
+				}
+				routeLabel := "shell"
+				routeExplanation := "shell reply — run commands in the shell"
+				if !useShellAgent {
+					routeLabel = "file"
+					routeExplanation = "retrieving relevant files and context"
+				}
+				switch {
+				case strings.TrimSpace(preflightReply) != "":
+					preflightNote = fmt.Sprintf("preflight routing: %s (reply: %s) — %s", routeLabel, trimTo(preflightReply, 120), routeExplanation)
+				case preflightErr != nil:
+					preflightNote = fmt.Sprintf("preflight routing: %s (error fallback: %s) — %s", routeLabel, trimTo(preflightErr.Error(), 120), routeExplanation)
+				default:
+					preflightNote = fmt.Sprintf("preflight routing: %s (empty reply) — %s", routeLabel, routeExplanation)
+				}
+			}
+			shellAgentUsedThisTurn = useShellAgent || runSplitShell
+			runShowFileDetection := !useShellAgent || hasSplitAsk
 			var showFileBanner string
 			showFileRetrieved := []string(nil)
 			showFileHandled := false
 			showFileInvalidAsk := false
-			if !cfg.dryRun {
+			showFileExplain := false
+			showFileExplainPrompt := ""
+			if !cfg.dryRun && runShowFileDetection {
 				ctxDetect, cancelDetect := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
 				ctxDetect = attachTrajectory(ctxDetect, trajectoryWriter, parentSpanID)
 				showFileRuntime := mctRunner.FileDiscoveryRuntime
 				if strings.TrimSpace(showFileRuntime.Resolved.Model) == "" {
 					showFileRuntime = mctRunner.Runtime
 				}
-				detection, raw, err := promptsvc.DetectShowFileRequest(ctxDetect, showFileRuntime, question)
+				detection, raw, err := promptsvc.DetectShowFileRequest(ctxDetect, showFileRuntime, showFileQuestion)
 				cancelDetect()
 				if err != nil {
 					if cfg.verbose {
@@ -1946,6 +1996,11 @@ func Run(ctx context.Context, opts Options) Result {
 						turnInfo["show_file_detection_raw"] = trimTo(raw, 200)
 					}
 					if detection.IsShowFileRequest {
+						showFileExplain = detection.IncludeExplain
+						showFileExplainPrompt = strings.TrimSpace(detection.ExplainPrompt)
+						if showFileExplain {
+							turnInfo["show_file_explain"] = true
+						}
 						requested := append([]string(nil), detection.Filepaths...)
 						if len(requested) == 0 && strings.TrimSpace(detection.Filepath) != "" {
 							requested = []string{strings.TrimSpace(detection.Filepath)}
@@ -1960,7 +2015,7 @@ func Run(ctx context.Context, opts Options) Result {
 						ctxDiscovery = attachTrajectory(ctxDiscovery, trajectoryWriter, parentSpanID)
 						result, err := promptsvc.RunFileDiscovery(
 							ctxDiscovery,
-							question,
+							showFileQuestion,
 							mctRunner.FileDiscoveryRuntime,
 							mctRunner.Runtime,
 							mctRunner.FileDiscoveryTrajectory,
@@ -2015,7 +2070,7 @@ func Run(ctx context.Context, opts Options) Result {
 							if strings.TrimSpace(detection.Reason) != "" {
 								turnInfo["show_file_reason"] = trimTo(detection.Reason, 200)
 							}
-							detection.VerbatimQuestion = question
+							detection.VerbatimQuestion = showFileQuestion
 							detection.Filepaths = append([]string(nil), requested...)
 							detection.Filepath = requested[0]
 							detection.Preflighted = true
@@ -2162,40 +2217,11 @@ func Run(ctx context.Context, opts Options) Result {
 					}
 				}
 			}
-			useShellAgent = cfg.shellAgent
-			preflightNote := ""
-			var preflightErr error
-			preflightReply := ""
-			if cfg.shellAgent {
-				preflightNote = "routing: shell (config override — run commands via shell agent)"
-			} else {
-				ctxPre, cancelPre := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
-				ctxPre = attachTrajectory(ctxPre, trajectoryWriter, parentSpanID)
-				useShellAgent, preflightReply, preflightErr = promptsvc.PreflightShellRouting(ctxPre, mctRunner.Runtime, question)
-				cancelPre()
-				if preflightErr != nil && cfg.verbose {
-					fmt.Fprintln(os.Stderr, "Preflight routing error:", preflightErr)
-				}
-				routeLabel := "shell"
-				routeExplanation := "shell reply — run commands in the shell"
-				if !useShellAgent {
-					routeLabel = "file"
-					routeExplanation = "retrieving relevant files and context"
-				}
-				switch {
-				case strings.TrimSpace(preflightReply) != "":
-					preflightNote = fmt.Sprintf("preflight routing: %s (reply: %s) — %s", routeLabel, trimTo(preflightReply, 120), routeExplanation)
-				case preflightErr != nil:
-					preflightNote = fmt.Sprintf("preflight routing: %s (error fallback: %s) — %s", routeLabel, trimTo(preflightErr.Error(), 120), routeExplanation)
-				default:
-					preflightNote = fmt.Sprintf("preflight routing: %s (empty reply) — %s", routeLabel, routeExplanation)
-				}
-			}
 			// Preflight sync: refresh the snapshot from the host repo.
 			// Only needed when the shell-agent is selected (it may execute commands
 			// that depend on the latest host workspace state). File-discovery reads
 			// context only and should use the session snapshot as-is.
-			if useShellAgent {
+			if useShellAgent || runSplitShell {
 				if root := strings.TrimSpace(tempdir.SessionRoot()); root != "" {
 					if _, _, err := workspace.EnsureRepoSnapshot(repoRoot, root); err != nil {
 						fmt.Fprintln(os.Stderr, "Error: host->snapshot refresh failed:", err)
@@ -2205,7 +2231,9 @@ func Run(ctx context.Context, opts Options) Result {
 			}
 			mctRunner.ShellAgent = useShellAgent
 			indicator := "shell"
-			if showFileHandled {
+			if runSplitShell {
+				indicator = "both"
+			} else if showFileHandled {
 				if showFileInvalidAsk {
 					indicator = "file"
 				} else {
@@ -2219,7 +2247,10 @@ func Run(ctx context.Context, opts Options) Result {
 				metadata = append(metadata, preflightNote)
 			}
 			orchPromptOpts = &ui.PromptOptions{ModeIndicator: indicator, Metadata: metadata}
-			turnInfo["mct_shell_agent"] = useShellAgent
+			turnInfo["mct_shell_agent"] = useShellAgent || runSplitShell
+			if runSplitShell {
+				turnInfo["mct_shell_agent_split"] = true
+			}
 			if !cfg.shellAgent {
 				if strings.TrimSpace(preflightReply) != "" {
 					turnInfo["mct_preflight_reply"] = trimTo(preflightReply, 200)
@@ -2231,8 +2262,11 @@ func Run(ctx context.Context, opts Options) Result {
 			stream := display.BeginPrompt(question, orchPromptOpts)
 			if strings.TrimSpace(showFileBanner) != "" {
 				stream.OnChunk(showFileBanner)
+				if showFileExplain && !showFileInvalidAsk {
+					stream.OnChunk("\n\n")
+				}
 			}
-			if showFileHandled {
+			if showFileHandled && (!showFileExplain || showFileInvalidAsk) && !runSplitShell {
 				fullAns := strings.TrimSpace(showFileBanner)
 				if fullAns == "" {
 					fullAns = "[show-file]"
@@ -2253,8 +2287,248 @@ func Run(ctx context.Context, opts Options) Result {
 				}
 				goto TurnDone
 			}
+			if runSplitShell {
+				runNoShell := true
+				if showFileHandled && (!showFileExplain || showFileInvalidAsk) {
+					runNoShell = false
+				}
+				questionForExplain := question
+				if showFileExplain && strings.TrimSpace(showFileExplainPrompt) != "" {
+					questionForExplain = showFileExplainPrompt
+				} else if showFileExplain {
+					questionForExplain = question + "\n\nNote: File contents are already displayed above; focus on explaining and summarizing."
+				}
+
+				var (
+					shellResult promptsvc.ShellAgentOnlyResult
+					shellErr    error
+					shellDone   chan struct{}
+					shellCancel context.CancelFunc
+				)
+				shellDone = make(chan struct{})
+				shellAskTrimmed := strings.TrimSpace(shellAsk)
+				if shellAskTrimmed == "" {
+					close(shellDone)
+				} else {
+					ctxShell, cancelShell := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
+					ctxShell = attachTrajectory(ctxShell, trajectoryWriter, parentSpanID)
+					shellCancel = cancelShell
+					shellOpts := promptsvc.RunOptions{
+						Prompt:               shellAskTrimmed,
+						Mode:                 "answer-only",
+						IncludeHistory:       true,
+						SessionID:            sessionID,
+						Runtime:              mctRunner.Runtime,
+						AnswerRuntime:        mctRunner.AnswerRuntime,
+						FileDiscoveryRuntime: mctRunner.FileDiscoveryRuntime,
+						Verbose:              cfg.verbose,
+						MaxInputTokens:       cfg.maxInputTokens,
+						ShellAgent:           true,
+						ShellAgentModel:      strings.TrimSpace(mctRunner.ShellAgentModel),
+						GlobalConfigPath:     mctRunner.GlobalConfigPath,
+						PersistTmpData:       mctRunner.PersistTmpData,
+						SessionTempRoot:      mctRunner.SessionTempRoot,
+						ResponseDirectives:   append([]string(nil), mctResponseDirectives...),
+					}
+					if mctRunner.Prompts != nil {
+						shellOpts.Prompts = mctRunner.Prompts.MCT
+					}
+					go func() {
+						defer close(shellDone)
+						if shellCancel != nil {
+							defer shellCancel()
+						}
+						shellResult, shellErr = promptsvc.RunShellAgentOnly(ctxShell, shellOpts)
+					}()
+				}
+
+				var (
+					result  promptsvc.Result
+					merr    error
+					ctx2Err error
+				)
+				if runNoShell {
+					input := runner.PromptInput{
+						Prompt:             questionForExplain,
+						Mode:               "default",
+						IncludeHistory:     true,
+						OnStreamHeader:     stream.OnChunk,
+						OnStreamToken:      stream.OnChunk,
+						MaxInputTokens:     cfg.maxInputTokens,
+						ResponseDirectives: append([]string(nil), mctResponseDirectives...),
+					}
+					ctx2, cancel2 := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
+					ctx2 = attachTrajectory(ctx2, trajectoryWriter, parentSpanID)
+					result, merr = mctRunner.RunPrompt(ctx2, sessionID, input)
+					if ctx2 != nil {
+						ctx2Err = ctx2.Err()
+					}
+					if cancel2 != nil {
+						cancel2()
+					}
+					if merr != nil {
+						if shellCancel != nil {
+							shellCancel()
+						}
+						if shellDone != nil {
+							<-shellDone
+						}
+						if isContextCancelled(merr) || isContextCancelled(ctx2Err) {
+							stream.Abort("interrupted")
+							return interruptedResult(merr)
+						}
+						msg := merr.Error()
+						if errors.Is(ctx2Err, context.DeadlineExceeded) || strings.Contains(strings.ToLower(merr.Error()), "signal: killed") {
+							msg = fmt.Sprintf("timed out after %ds", cfg.timeoutPerTurn)
+							fmt.Fprintf(os.Stderr, "mct prompt error: %s. Try increasing --timeout-per-turn or set 0 for unlimited.\n", msg)
+						} else {
+							fmt.Fprintln(os.Stderr, "mct prompt error:", merr)
+						}
+						stream.Abort(msg)
+						sessionErr = merr
+						finishTurn(sessTelemetry, turn, turnDecision, "error", turnInfo, merr)
+						turnsCompleted = userTurnCounter
+						return Result{ExitCode: 1, Err: merr}
+					}
+				}
+
+				if shellDone != nil {
+					<-shellDone
+				}
+				if shellErr != nil {
+					turnInfo["shell_agent_error"] = trimTo(shellErr.Error(), 200)
+				}
+				if strings.TrimSpace(shellResult.TrajectoryPath) != "" {
+					turnInfo["shell_agent_trajectory"] = trimTo(shellResult.TrajectoryPath, 200)
+				}
+
+				savedPath := ""
+				if cfg.dryRun {
+					lastAnswer = "[dry-run] mct would have produced a chat response here."
+					retrieved = nil
+				} else if runNoShell {
+					if result.SaveError != nil {
+						fmt.Fprintln(os.Stderr, "Warning: failed to save chat transcript:", result.SaveError)
+					}
+					savedPath = strings.TrimSpace(result.SavedPath)
+					if savedPath == "" {
+						chatDir, err := artifacts.SessionChatDirectory(sessionID)
+						if err != nil {
+							fmt.Fprintln(os.Stderr, "Failed to resolve chat directory:", err)
+							stream.Abort("failed to save chat transcript")
+							return Result{ExitCode: 1, Err: err}
+						}
+						savedPath = filepath.Join(chatDir, "machtiani-response.md")
+					}
+					lastAnswer = result.FullText
+					retrieved = append([]string(nil), result.RetrievedFiles...)
+					if showFileHandled && len(showFileRetrieved) > 0 {
+						merged := make([]string, 0, len(showFileRetrieved)+len(retrieved))
+						seen := map[string]struct{}{}
+						for _, path := range showFileRetrieved {
+							trimmed := strings.TrimSpace(path)
+							if trimmed == "" {
+								continue
+							}
+							if _, ok := seen[trimmed]; ok {
+								continue
+							}
+							seen[trimmed] = struct{}{}
+							merged = append(merged, trimmed)
+						}
+						for _, path := range retrieved {
+							trimmed := strings.TrimSpace(path)
+							if trimmed == "" {
+								continue
+							}
+							if _, ok := seen[trimmed]; ok {
+								continue
+							}
+							seen[trimmed] = struct{}{}
+							merged = append(merged, trimmed)
+						}
+						retrieved = merged
+					}
+				} else if showFileHandled {
+					retrieved = append([]string(nil), showFileRetrieved...)
+				}
+
+				fullAns := ""
+				if runNoShell {
+					fullAns = result.Assistant
+					if cfg.dryRun || strings.TrimSpace(fullAns) == "" {
+						fullAns = lastAnswer
+					}
+				} else if showFileHandled {
+					fullAns = strings.TrimSpace(showFileBanner)
+				}
+				if showFileHandled && !showFileInvalidAsk && runNoShell {
+					combined := strings.TrimSpace(showFileBanner)
+					if combined != "" {
+						combined = combined + "\n\n" + strings.TrimSpace(fullAns)
+					} else {
+						combined = strings.TrimSpace(fullAns)
+					}
+					if combined != "" {
+						fullAns = combined
+					}
+				}
+
+				shellSection := strings.TrimSpace(shellResult.Summary)
+				if shellSection == "" && shellErr != nil {
+					shellSection = "Shell agent error: " + trimTo(shellErr.Error(), 400)
+				}
+				if shellSection != "" {
+					shellSection = "Shell summary:\n" + shellSection
+				}
+				if shellSection != "" {
+					if strings.TrimSpace(fullAns) == "" {
+						fullAns = shellSection
+					} else {
+						fullAns = strings.TrimSpace(fullAns) + "\n\n" + shellSection
+					}
+				}
+				if strings.TrimSpace(fullAns) == "" {
+					fullAns = "[split-ask]"
+				}
+
+				if cfg.enableTagFormat {
+					stats, warnings := analyzeTagFormat(fullAns, retrieved)
+					for k, v := range stats {
+						turnInfo[k] = v
+					}
+					for _, warn := range warnings {
+						fmt.Fprintf(os.Stderr, "[tag-format] %s\n", warn)
+					}
+				}
+				stream.Complete(fullAns)
+				transcriptQuestion := question
+				if block := strings.TrimSpace(result.DirectiveBlock); block != "" && runNoShell {
+					transcriptQuestion = transcriptQuestion + "\n\n" + block
+				}
+				if err := writeTurn(step, transcriptQuestion, savedPath, retrieved, fullAns, "ask"); err != nil {
+					fmt.Fprintln(os.Stderr, "Transcript write error:", err)
+					sessionErr = err
+					finishTurn(sessTelemetry, turn, turnDecision, "error", turnInfo, err)
+					return Result{ExitCode: 1, Err: err}
+				}
+				turnInfo["retrieved_count"] = len(retrieved)
+				userTurnCounter++
+				turnsCompleted = userTurnCounter
+				finishTurn(sessTelemetry, turn, turnDecision, "success", turnInfo, nil)
+				if userTurnCounter == cfg.maxSteps {
+					goto Finalize
+				}
+				goto TurnDone
+			}
+			questionForExplain := question
+			if showFileExplain && strings.TrimSpace(showFileExplainPrompt) != "" {
+				questionForExplain = showFileExplainPrompt
+			} else if showFileExplain {
+				questionForExplain = question + "\n\nNote: File contents are already displayed above; focus on explaining and summarizing."
+			}
 			input := runner.PromptInput{
-				Prompt:             question,
+				Prompt:             questionForExplain,
 				Mode:               "default",
 				IncludeHistory:     true,
 				OnStreamHeader:     stream.OnChunk,
@@ -2309,10 +2583,48 @@ func Run(ctx context.Context, opts Options) Result {
 				}
 				lastAnswer = result.FullText
 				retrieved = append([]string(nil), result.RetrievedFiles...)
+				if showFileHandled && len(showFileRetrieved) > 0 {
+					merged := make([]string, 0, len(showFileRetrieved)+len(retrieved))
+					seen := map[string]struct{}{}
+					for _, path := range showFileRetrieved {
+						trimmed := strings.TrimSpace(path)
+						if trimmed == "" {
+							continue
+						}
+						if _, ok := seen[trimmed]; ok {
+							continue
+						}
+						seen[trimmed] = struct{}{}
+						merged = append(merged, trimmed)
+					}
+					for _, path := range retrieved {
+						trimmed := strings.TrimSpace(path)
+						if trimmed == "" {
+							continue
+						}
+						if _, ok := seen[trimmed]; ok {
+							continue
+						}
+						seen[trimmed] = struct{}{}
+						merged = append(merged, trimmed)
+					}
+					retrieved = merged
+				}
 			}
 			fullAns := result.Assistant
 			if cfg.dryRun || strings.TrimSpace(fullAns) == "" {
 				fullAns = lastAnswer
+			}
+			if showFileHandled && !showFileInvalidAsk {
+				combined := strings.TrimSpace(showFileBanner)
+				if combined != "" {
+					combined = combined + "\n\n" + strings.TrimSpace(fullAns)
+				} else {
+					combined = strings.TrimSpace(fullAns)
+				}
+				if combined != "" {
+					fullAns = combined
+				}
 			}
 			if cfg.enableTagFormat {
 				stats, warnings := analyzeTagFormat(fullAns, retrieved)
@@ -2925,7 +3237,7 @@ func Run(ctx context.Context, opts Options) Result {
 		case planner.DecisionAsk:
 			// For DecisionAsk, only sync if shell-agent was used (executed commands may have modified files)
 			// File-discovery mode makes no modifications, so no sync needed
-			if useShellAgent {
+			if shellAgentUsedThisTurn {
 				shouldSync = true
 			}
 		case planner.DecisionPatch:

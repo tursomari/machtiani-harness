@@ -2,6 +2,7 @@ package planner
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -92,6 +93,21 @@ func TestParseDecisionFinalize(t *testing.T) {
 	}
 }
 
+func TestParseDecisionFinalizeImplicit(t *testing.T) {
+	resp := "Finalize: HTML converted; verified with git diff."
+	dec, remainder, preamble := parseDecision(resp, true)
+
+	if dec != DecisionFinalize {
+		t.Fatalf("expected DecisionFinalize, got %q", dec)
+	}
+	if !strings.Contains(remainder, "HTML converted") {
+		t.Fatalf("expected remainder to include message, got %q", remainder)
+	}
+	if preamble != "" {
+		t.Fatalf("expected empty preamble, got %q", preamble)
+	}
+}
+
 func TestPlanRequiresConversation(t *testing.T) {
 	client := NewClient(ClientConfig{PatchEnabled: true})
 	_, _, err := client.Plan(context.Background(), nil, "goal", "transcript", 1, 3, nil)
@@ -111,6 +127,7 @@ func TestParseDecisionVariants(t *testing.T) {
 		{name: "InstructionInline", resp: "Decision: Instruction: Examine the database schema.", want: DecisionAsk, wantSubstr: "database schema"},
 		{name: "QuestionVariant", resp: "Decision: question\nQuestion: What modules exist?", want: DecisionAsk, wantSubstr: "What modules"},
 		{name: "MessageVariant", resp: "Decision: message\nMessage: Review the API endpoints.", want: DecisionAsk, wantSubstr: "API endpoints"},
+		{name: "AskImplicit", resp: "Ask: Summarize the config loading flow.", want: DecisionAsk, wantSubstr: "config loading"},
 	}
 
 	for _, tt := range tests {
@@ -403,6 +420,345 @@ func TestParseDecisionRejectsTooManyPreambleLines(t *testing.T) {
 	}
 }
 
+func TestParseAskMenuRealisticNoShell(t *testing.T) {
+	resp := strings.TrimSpace(`
+Ask Mode: no-shell
+Ask: How does mct-agent manage context across its orchestrated tools (file-discovery, snippet-discovery, shell-agent, patcher) and the planner, particularly in terms of session state, workspace snapshots, and LLM prompting?
+`)
+	mode, ask, err := parseAskMenu(resp)
+	if err != nil {
+		t.Fatalf("parseAskMenu error: %v", err)
+	}
+	if mode != AskModeNoShell {
+		t.Fatalf("expected no-shell mode, got %q", mode)
+	}
+	if !strings.Contains(ask, "manage context across its orchestrated tools") {
+		t.Fatalf("unexpected ask content: %q", ask)
+	}
+}
+
+func TestParseAskMenuRealisticShell(t *testing.T) {
+	resp := strings.TrimSpace(`
+Ask Mode: shell
+Ask: Run ` + "`" + `grep -n "Decision:" agent/internal/planner/planner.go` + "`" + ` and report the matching sections.
+`)
+	mode, ask, err := parseAskMenu(resp)
+	if err != nil {
+		t.Fatalf("parseAskMenu error: %v", err)
+	}
+	if mode != AskModeShell {
+		t.Fatalf("expected shell mode, got %q", mode)
+	}
+	if !strings.Contains(ask, "grep -n \"Decision:\"") {
+		t.Fatalf("unexpected ask content: %q", ask)
+	}
+}
+
+func TestParseAskSplitRealistic(t *testing.T) {
+	resp := strings.TrimSpace(`
+No-shell: Explain how session history is loaded and used during planning.
+Shell: Run ` + "`" + `grep -n "Decision:" agent/internal/planner/planner.go` + "`" + ` and summarize the matching sections.
+`)
+	noShell, shell, err := parseAskSplit(resp)
+	if err != nil {
+		t.Fatalf("parseAskSplit error: %v", err)
+	}
+	if !strings.Contains(noShell, "session history") {
+		t.Fatalf("unexpected no-shell ask: %q", noShell)
+	}
+	if !strings.Contains(shell, "grep -n \"Decision:\"") {
+		t.Fatalf("unexpected shell ask: %q", shell)
+	}
+}
+
+func TestParseAskMonitorResponseJSON(t *testing.T) {
+	resp := "```json\n{\"has_patch_intent\":false,\"reason\":\"analysis-only\"}\n```"
+	monitor, err := parseAskMonitorResponse(resp)
+	if err != nil {
+		t.Fatalf("parseAskMonitorResponse error: %v", err)
+	}
+	if monitor.HasPatchIntent {
+		t.Fatalf("expected no patch intent, got true")
+	}
+	if monitor.Reason != "analysis-only" {
+		t.Fatalf("unexpected reason: %q", monitor.Reason)
+	}
+}
+
+func TestGenerateAskRetriesOnPatchIntent(t *testing.T) {
+	client := NewClient(ClientConfig{})
+	conv := conversation.New("sess-ask", "Investigate planner flow")
+	transcript := "Planner decision: background\n\n== TURN 1\nQuestion: How does mct-agent manage context across its orchestrated tools?"
+
+	var askCalls int
+	var monitorCalls int
+	client.chatFn = func(_ context.Context, messages []llm.Message) (string, error) {
+		content := messages[len(messages)-1].Content
+		if strings.Contains(content, "You are a guard that checks whether an ask mixes no-shell and shell actions.") {
+			return `{"is_mixed":false,"reason":"single ask","rewrite":""}`, nil
+		}
+		if strings.Contains(content, "You are a guard that checks whether an ask is requesting file changes or patches.") {
+			monitorCalls++
+			if monitorCalls == 1 {
+				return `{"has_patch_intent":true,"reason":"requests updating a template"}`, nil
+			}
+			return `{"has_patch_intent":false,"reason":"analysis-only"}`, nil
+		}
+		if strings.Contains(content, "Ask Mode:") && strings.Contains(content, "Ask request:") {
+			askCalls++
+			if askCalls == 1 {
+				return "Ask Mode: no-shell\nAsk: Update planner prompts in agent/internal/templates/templates/planner/plan_prompt.tpl.", nil
+			}
+			return "Ask Mode: no-shell\nAsk: How does mct-agent manage context across its orchestrated tools (file-discovery, snippet-discovery, shell-agent, patcher) and the planner, particularly in terms of session state, workspace snapshots, and LLM prompting?", nil
+		}
+		return "", nil
+	}
+
+	ask, err := client.generateAsk(context.Background(), conv, conv.CurrentGoal(), transcript, 1, 3)
+	if err != nil {
+		t.Fatalf("generateAsk error: %v", err)
+	}
+	if strings.Contains(ask, "Update planner prompts") {
+		t.Fatalf("expected patch-intent ask to be rejected, got %q", ask)
+	}
+	if !strings.Contains(ask, "manage context across its orchestrated tools") {
+		t.Fatalf("unexpected ask result: %q", ask)
+	}
+}
+
+func TestGenerateAskSplitsBothModes(t *testing.T) {
+	client := NewClient(ClientConfig{})
+	conv := conversation.New("sess-ask-split", "Investigate snippet discovery")
+	transcript := "== TURN 1\nQuestion: Describe snippet-discovery prompts and tooling."
+
+	client.chatFn = func(_ context.Context, messages []llm.Message) (string, error) {
+		content := messages[len(messages)-1].Content
+		switch {
+		case strings.Contains(content, "You are a guard that checks whether an ask mixes no-shell and shell actions."):
+			return `{"is_mixed":false,"reason":"already split","rewrite":""}`, nil
+		case strings.Contains(content, "You are a guard that checks whether an ask is requesting file changes or patches."):
+			return `{"has_patch_intent":false,"reason":"analysis-only"}`, nil
+		case strings.Contains(content, "Ask Mode:") && strings.Contains(content, "Ask request:"):
+			return strings.TrimSpace(`
+Ask Mode: both
+No-shell: Explain the snippet-discovery system prompt and output requirements.
+Shell: Run ` + "`" + `git diff --stat` + "`" + ` and report recent changes.
+`), nil
+		default:
+			return "", nil
+		}
+	}
+
+	ask, err := client.generateAsk(context.Background(), conv, conv.CurrentGoal(), transcript, 2, 4)
+	if err != nil {
+		t.Fatalf("generateAsk error: %v", err)
+	}
+	if !strings.Contains(ask, "No-shell:") || !strings.Contains(ask, "Shell:") {
+		t.Fatalf("expected split ask output, got %q", ask)
+	}
+	if !strings.Contains(ask, "snippet-discovery system prompt") {
+		t.Fatalf("unexpected no-shell content: %q", ask)
+	}
+	if !strings.Contains(ask, "git diff --stat") {
+		t.Fatalf("unexpected shell content: %q", ask)
+	}
+}
+
+func TestGenerateAskRetriesOnMixedAsk(t *testing.T) {
+	client := NewClient(ClientConfig{})
+	conv := conversation.New("sess-ask-mixed", "Investigate mixed ask guardrail")
+	transcript := "== TURN 1\nQuestion: Explain config loading."
+
+	const mixedReason = "combines no-shell and shell actions"
+	rewrite := strings.TrimSpace(`
+Ask Mode: both
+No-shell: Explain config loading.
+Shell: Run git diff --stat to review recent changes.
+`)
+
+	var (
+		askCalls      int
+		mixedCalls    int
+		patchCalls    int
+		guardrailSeen bool
+	)
+	client.chatFn = func(_ context.Context, messages []llm.Message) (string, error) {
+		content := messages[len(messages)-1].Content
+		switch {
+		case strings.Contains(content, "You are a guard that checks whether an ask mixes no-shell and shell actions."):
+			mixedCalls++
+			if mixedCalls == 1 {
+				return fmt.Sprintf(`{"is_mixed":true,"reason":"%s","rewrite":%q}`, mixedReason, rewrite), nil
+			}
+			return `{"is_mixed":false,"reason":"already split","rewrite":""}`, nil
+		case strings.Contains(content, "You are a guard that checks whether an ask is requesting file changes or patches."):
+			patchCalls++
+			return `{"has_patch_intent":false,"reason":"analysis-only"}`, nil
+		case strings.Contains(content, "Ask Mode:") && strings.Contains(content, "Ask request:"):
+			askCalls++
+			if askCalls == 1 {
+				return "Ask Mode: no-shell\nAsk: Explain config loading and run git diff --stat to review recent changes.", nil
+			}
+			if strings.Contains(content, "Suggested split:") && strings.Contains(content, "No-shell: Explain config loading.") {
+				guardrailSeen = true
+			}
+			return strings.TrimSpace(`
+Ask Mode: both
+No-shell: Explain config loading.
+Shell: Run ` + "`" + `git diff --stat` + "`" + ` to review recent changes.
+`), nil
+		default:
+			return "", nil
+		}
+	}
+
+	ask, err := client.generateAsk(context.Background(), conv, conv.CurrentGoal(), transcript, 1, 3)
+	if err != nil {
+		t.Fatalf("generateAsk error: %v", err)
+	}
+	if !guardrailSeen {
+		t.Fatalf("expected mixed guardrail with suggested split to be included")
+	}
+	if !strings.Contains(ask, "No-shell:") || !strings.Contains(ask, "Shell:") {
+		t.Fatalf("expected split ask output, got %q", ask)
+	}
+	if strings.Contains(ask, "Ask Mode:") {
+		t.Fatalf("expected Ask Mode line to be stripped, got %q", ask)
+	}
+	if strings.Contains(ask, "Explain config loading and run git diff") {
+		t.Fatalf("expected mixed ask to be retried, got %q", ask)
+	}
+	if askCalls != 2 || mixedCalls != 2 || patchCalls != 1 {
+		t.Fatalf("unexpected call counts ask=%d mixed=%d patch=%d", askCalls, mixedCalls, patchCalls)
+	}
+}
+
+func TestPlanAskLoopIntegration(t *testing.T) {
+	client := NewClient(ClientConfig{})
+	conv := conversation.New("sess-plan-ask-loop", "Investigate ask monitor flow")
+	transcript := "== TURN 0\nQuestion: Summarize ask monitor guardrails."
+
+	var (
+		planCalls    int
+		askCalls     int
+		monitorCalls int
+	)
+	client.chatFn = func(_ context.Context, messages []llm.Message) (string, error) {
+		if len(messages) > 0 && strings.Contains(messages[0].Content, "Decision menu") {
+			planCalls++
+			return "Decision: ask", nil
+		}
+		content := messages[len(messages)-1].Content
+		switch {
+		case strings.Contains(content, "You are a guard that checks whether an ask mixes no-shell and shell actions."):
+			return `{"is_mixed":false,"reason":"single ask","rewrite":""}`, nil
+		case strings.Contains(content, "You are a guard that checks whether an ask is requesting file changes or patches."):
+			monitorCalls++
+			return `{"has_patch_intent":false,"reason":"analysis-only"}`, nil
+		case strings.Contains(content, "Ask Mode:") && strings.Contains(content, "Ask request:"):
+			askCalls++
+			return "Ask Mode: no-shell\nAsk: Explain the ask monitor guardrail and retry behavior.", nil
+		}
+		return "", nil
+	}
+
+	dec, ask, err := client.Plan(context.Background(), conv, conv.CurrentGoal(), transcript, 1, 3, nil)
+	if err != nil {
+		t.Fatalf("Plan returned error: %v", err)
+	}
+	if dec != DecisionAsk {
+		t.Fatalf("expected DecisionAsk, got %q", dec)
+	}
+	if !strings.Contains(ask, "ask monitor guardrail") {
+		t.Fatalf("unexpected ask output: %q", ask)
+	}
+	if planCalls != 1 || askCalls != 1 || monitorCalls != 1 {
+		t.Fatalf("unexpected call counts plan=%d ask=%d monitor=%d", planCalls, askCalls, monitorCalls)
+	}
+}
+
+func TestGenerateAskMonitorResponseErrorsDoNotBlockAsk(t *testing.T) {
+	cases := []struct {
+		name       string
+		monitorRes string
+	}{
+		{name: "malformed", monitorRes: "not-json"},
+		{name: "empty", monitorRes: "   "},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client := NewClient(ClientConfig{})
+			conv := conversation.New("sess-ask-monitor-"+tc.name, "Investigate ask monitor failures")
+			transcript := "== TURN 0\nQuestion: Explain the planner ask guardrail."
+
+			var monitorCalls int
+			client.chatFn = func(_ context.Context, messages []llm.Message) (string, error) {
+				content := messages[len(messages)-1].Content
+				switch {
+				case strings.Contains(content, "You are a guard that checks whether an ask mixes no-shell and shell actions."):
+					return `{"is_mixed":false,"reason":"single ask","rewrite":""}`, nil
+				case strings.Contains(content, "You are a guard that checks whether an ask is requesting file changes or patches."):
+					monitorCalls++
+					return tc.monitorRes, nil
+				case strings.Contains(content, "Ask Mode:") && strings.Contains(content, "Ask request:"):
+					return "Ask Mode: no-shell\nAsk: Explain the ask monitor guardrail and retry behavior.", nil
+				}
+				return "", nil
+			}
+
+			ask, err := client.generateAsk(context.Background(), conv, conv.CurrentGoal(), transcript, 1, 3)
+			if err != nil {
+				t.Fatalf("generateAsk error: %v", err)
+			}
+			if !strings.Contains(ask, "ask monitor guardrail") {
+				t.Fatalf("unexpected ask output: %q", ask)
+			}
+			if monitorCalls != 1 {
+				t.Fatalf("expected monitor to run once, got %d", monitorCalls)
+			}
+		})
+	}
+}
+
+func TestGenerateAskRetryExhaustionReturnsLastAsk(t *testing.T) {
+	client := NewClient(ClientConfig{})
+	conv := conversation.New("sess-ask-retry", "Investigate retry behavior")
+	transcript := "== TURN 0\nQuestion: Outline retry behavior."
+
+	var askCalls int
+	var monitorCalls int
+	client.chatFn = func(_ context.Context, messages []llm.Message) (string, error) {
+		content := messages[len(messages)-1].Content
+		switch {
+		case strings.Contains(content, "You are a guard that checks whether an ask mixes no-shell and shell actions."):
+			return `{"is_mixed":false,"reason":"single ask","rewrite":""}`, nil
+		case strings.Contains(content, "You are a guard that checks whether an ask is requesting file changes or patches."):
+			monitorCalls++
+			return `{"has_patch_intent":true,"reason":"requests updating a file"}`, nil
+		case strings.Contains(content, "Ask Mode:") && strings.Contains(content, "Ask request:"):
+			askCalls++
+			if askCalls == 1 {
+				return "Ask Mode: no-shell\nAsk: Update docs in path/to/file.md.", nil
+			}
+			return "Ask Mode: no-shell\nAsk: Update docs in path/to/other.md.", nil
+		}
+		return "", nil
+	}
+
+	ask, err := client.generateAsk(context.Background(), conv, conv.CurrentGoal(), transcript, 1, 3)
+	if err != nil {
+		t.Fatalf("generateAsk error: %v", err)
+	}
+	if ask != "Update docs in path/to/other.md." {
+		t.Fatalf("expected last ask after retries, got %q", ask)
+	}
+	expectedCalls := askGuardMaxRetries + 1
+	if askCalls != expectedCalls || monitorCalls != expectedCalls {
+		t.Fatalf("expected %d ask/monitor calls, got ask=%d monitor=%d", expectedCalls, askCalls, monitorCalls)
+	}
+}
+
 func TestParseDecisionPatchDisabled(t *testing.T) {
 	resp := "Decision: patch\n{ }"
 	dec, remainder, preamble := parseDecision(resp, false)
@@ -589,12 +945,15 @@ func TestPlanSystemPromptOmitsTranscript(t *testing.T) {
 	}
 }
 
-func TestPlanSystemPromptIncludesFullFileTagGuidance(t *testing.T) {
+func TestPlanSystemPromptOmitsFullFileTagGuidance(t *testing.T) {
 	client := NewClient(ClientConfig{})
 	conv := conversation.New("sess-system", "Finish docs")
 	prompt := client.planSystemPrompt(conv, "Finish docs", 1, 3, nil)
-	if !strings.Contains(prompt, `<full_file path="path/to/file.go" />`) {
-		t.Fatalf("expected full_file tag guidance in system prompt, got %q", prompt)
+	if strings.Contains(prompt, "<full_file") {
+		t.Fatalf("expected system prompt to omit full_file tag guidance, got %q", prompt)
+	}
+	if !strings.Contains(prompt, "Decision menu") {
+		t.Fatalf("expected system prompt to include decision menu, got %q", prompt)
 	}
 }
 

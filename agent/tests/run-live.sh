@@ -94,6 +94,163 @@ sys.exit(1)
 PY
 }
 
+shell_agent_available() {
+  command -v shell-agent >/dev/null 2>&1
+}
+
+start_llm_stub_server() {
+  local state_file="$1"
+  local port_file="$2"
+
+  "$PYTHON_BIN" - "$state_file" "$port_file" <<'PY' &
+import json
+import sys
+import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+state_path = sys.argv[1]
+port_path = sys.argv[2]
+
+counts = {
+    "plan": 0,
+    "ask": 0,
+    "monitor": 0,
+    "mixed_monitor": 0,
+    "preflight": 0,
+    "other": 0,
+}
+
+def write_state():
+    try:
+        with open(state_path, "w", encoding="utf-8") as fh:
+            json.dump(counts, fh)
+    except OSError:
+        pass
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, format, *args):
+        return
+
+    def do_POST(self):
+        length = int(self.headers.get("content-length", "0"))
+        raw = self.rfile.read(length)
+        try:
+            data = json.loads(raw.decode("utf-8"))
+        except Exception:
+            self.send_response(400)
+            self.end_headers()
+            return
+        messages = data.get("messages", [])
+        content = "\n".join(m.get("content", "") for m in messages if isinstance(m, dict))
+
+        reply = "Stub response."
+        if "Decision menu (choose exactly one)" in content:
+            counts["plan"] += 1
+            reply = "Decision: ask"
+        elif "You are generating the next Ask for mct." in content:
+            counts["ask"] += 1
+            if "Guardrail:" in content:
+                reply = "Ask Mode: no-shell\nAsk: Summarize the staged planner menu flow."
+            else:
+                reply = "Ask Mode: both\nNo-shell: Summarize the staged planner menu flow.\nShell: Run `git diff --stat` and report the output."
+        elif "You are a guard that checks whether an ask mixes no-shell and shell actions." in content:
+            counts["mixed_monitor"] += 1
+            reply = "{\"is_mixed\":false,\"reason\":\"already split\",\"rewrite\":\"\"}"
+        elif "You are a guard that checks whether an ask is requesting file changes or patches." in content:
+            counts["monitor"] += 1
+            if counts["monitor"] == 1:
+                reply = "{\"has_patch_intent\":true,\"reason\":\"mentions running git diff and could lead to patches\"}"
+            else:
+                reply = "{\"has_patch_intent\":false,\"reason\":\"no patch intent\"}"
+        elif "You classify user requests for a developer assistant" in content:
+            counts["preflight"] += 1
+            reply = "content"
+        else:
+            counts["other"] += 1
+
+        write_state()
+        payload = {
+            "id": "stub-1",
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": data.get("model", "stub-model"),
+            "choices": [
+                {"index": 0, "message": {"role": "assistant", "content": reply}, "finish_reason": "stop"}
+            ],
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        }
+        encoded = json.dumps(payload).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(encoded)))
+        self.end_headers()
+        self.wfile.write(encoded)
+
+server = HTTPServer(("127.0.0.1", 0), Handler)
+with open(port_path, "w", encoding="utf-8") as fh:
+    fh.write(str(server.server_address[1]))
+    fh.flush()
+write_state()
+server.serve_forever()
+PY
+  STUB_SERVER_PID=$!
+
+  local waited=0
+  while [[ ! -s "$port_file" && $waited -lt 50 ]]; do
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  if [[ ! -s "$port_file" ]]; then
+    echo "ERROR: stub server failed to write port file" >&2
+    return 1
+  fi
+}
+
+stop_llm_stub_server() {
+  if [[ -n "${STUB_SERVER_PID:-}" ]]; then
+    kill "$STUB_SERVER_PID" 2>/dev/null || true
+    wait "$STUB_SERVER_PID" 2>/dev/null || true
+    STUB_SERVER_PID=""
+  fi
+}
+
+assert_stub_counts() {
+  local state_file="$1"
+  local min_plan="$2"
+  local min_ask="$3"
+  local min_monitor="$4"
+  local min_diff="$5"
+  "$PYTHON_BIN" - "$state_file" "$min_plan" "$min_ask" "$min_monitor" "$min_diff" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+min_plan = int(sys.argv[2])
+min_ask = int(sys.argv[3])
+min_monitor = int(sys.argv[4])
+min_diff = int(sys.argv[5])
+
+try:
+    with open(path, "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+except Exception:
+    print("ERROR: failed to read stub state", file=sys.stderr)
+    sys.exit(1)
+
+def get(key):
+    return int(data.get(key, 0))
+
+plan = get("plan")
+ask = get("ask")
+monitor = get("monitor")
+mixed = get("mixed_monitor")
+
+if plan < min_plan or ask < min_ask or monitor < min_monitor or mixed < min_diff:
+    print(f"ERROR: stub counts too low (plan={plan}, ask={ask}, monitor={monitor}, mixed_monitor={mixed})", file=sys.stderr)
+    sys.exit(1)
+PY
+}
+
 regex_escape() {
   local text="$1"
   "$PYTHON_BIN" - "$text" <<'PY'
@@ -370,6 +527,63 @@ EOF
   echo "$config_file"
 }
 
+generate_stub_config() {
+  local base_url="$1"
+  local alias="$2"
+  local config_root
+  config_root="$(mktemp -d "$TMP_ROOT/config-stub.XXXXXX")"
+  local config_dir="$config_root/.machtiani"
+  local config_file="$config_dir/config.toml"
+  mkdir -p "$config_dir"
+
+  local repo_config="$REPO_ROOT/.machtiani/config.toml"
+  if [[ ! -f "$repo_config" ]]; then
+    echo "Missing repository config: $repo_config" >&2
+    exit 1
+  fi
+
+  cp "$repo_config" "$config_file"
+
+  "$PYTHON_BIN" - "$config_file" "$alias" <<'PY'
+import pathlib
+import re
+import sys
+
+path = pathlib.Path(sys.argv[1])
+alias = sys.argv[2]
+lines = path.read_text(encoding="utf-8").splitlines()
+replaced = False
+for idx, line in enumerate(lines):
+    if re.match(r"^\s*default_model\s*=", line):
+        lines[idx] = f"default_model = \"{alias}\""
+        replaced = True
+        break
+if not replaced:
+    insert_idx = 0
+    while insert_idx < len(lines):
+        stripped = lines[insert_idx].strip()
+        if stripped and not stripped.startswith("#"):
+            break
+        insert_idx += 1
+    lines.insert(insert_idx, f"default_model = \"{alias}\"")
+path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+PY
+
+  cat >> "$config_file" <<EOF
+
+[providers.run_live_stub]
+base_url = "${base_url}"
+api_key = "stub-key"
+endpoint = "/chat/completions"
+
+[models."${alias}"]
+provider = "run_live_stub"
+model = "${alias}"
+EOF
+
+  echo "$config_file"
+}
+
 cleanup_config() {
   if [[ "${KEEP_TEST_CONFIG:-}" == "true" ]]; then
     return
@@ -409,6 +623,14 @@ run_happy_case() {
     shift
   fi
   local -a runtime_args=("$@")
+  local has_timeout=false
+  for arg in "${runtime_args[@]}"; do
+    case "$arg" in
+      --timeout-per-turn|--timeout-per-turn=*)
+        has_timeout=true
+        ;;
+    esac
+  done
   local session_id="test-${case_id}-$(date +%s)"
   local out_dir="$(pwd)/test-out-${session_id}"
   mkdir -p "$out_dir"
@@ -419,10 +641,12 @@ run_happy_case() {
   local -a cmd=(
     timeout $((max_steps * 180)) "$MCT_AGENT" run
     --max-steps "$max_steps"
-    --timeout-per-turn 300
     --verbose
     --patch-no-apply
   )
+  if [[ "$has_timeout" == false ]]; then
+    cmd+=(--timeout-per-turn 300)
+  fi
   if ((${#COMMON_AGENT_ARGS[@]})); then
     cmd+=("${COMMON_AGENT_ARGS[@]}")
   fi
@@ -541,6 +765,92 @@ run_happy_case() {
   echo "Passed: $case_id ($turns turns)" >&2
 }
 
+run_menu_flow_case() {
+  local case_id="planner-menu-flow"
+  local stub_dir="$TMP_ROOT/stub-${case_id}-$(date +%s)"
+  mkdir -p "$stub_dir"
+  local state_file="$stub_dir/state.json"
+  local port_file="$stub_dir/port.txt"
+  start_llm_stub_server "$state_file" "$port_file"
+  local stub_port
+  stub_port="$(cat "$port_file")"
+  local base_url="http://127.0.0.1:${stub_port}/v1"
+  local stub_alias="stub-model"
+  local stub_config
+  stub_config="$(generate_stub_config "$base_url" "$stub_alias")"
+
+  local rc=0
+  set +e
+  (
+    export MACHTIANI_CONFIG="$stub_config"
+    COMMON_AGENT_ARGS=()
+    run_happy_case "$case_id" 1 \
+      "Explain the planner menu flow and what happens after an ask is selected." \
+      "(?s)(?=.*Planner decision: ask)(?=.*No-shell:)(?=.*Shell:)" \
+      1 \
+      --model "$stub_alias" \
+      --mode answer-only \
+      --orch-model "$stub_alias" \
+      --patcher-model "$stub_alias" \
+      --file-discovery-model "$stub_alias"
+  )
+  rc=$?
+  set -e
+
+  stop_llm_stub_server
+  if [[ $rc -ne 0 ]]; then
+    return "$rc"
+  fi
+
+  assert_stub_counts "$state_file" 1 2 2 1
+
+  if [[ "${KEEP_TEST_CONFIG:-}" != "true" ]]; then
+    rm -rf "$stub_dir"
+    rm -rf "$(dirname "$stub_config")"
+  fi
+}
+
+run_menu_flow_live_case() {
+  local case_id="planner-menu-flow-live"
+
+  run_happy_case "$case_id" 2 \
+    "Explain the planner menu flow and what happens after an ask is selected. Also run \`git diff --stat\` and report the output." \
+    "(?s)(?=.*No-shell:)(?=.*Shell:)(?=.*(Planner decision: ask|Step 1 decision: ask))" \
+    1 \
+    "${DEFAULT_MODEL_ARGS[@]}"
+}
+
+run_file_discovery_live_case() {
+  local case_id="routing-file-discovery-live"
+
+  run_happy_case "$case_id" 2 \
+    "Explain how the planner chooses ask vs patch vs finalize." \
+    "(?s)(?=.*\\[mct:file\\])" \
+    1 \
+    --timeout-per-turn 600 \
+    "${DEFAULT_MODEL_ARGS[@]}"
+}
+
+run_show_live_case() {
+  local case_id="routing-show-live"
+
+  run_happy_case "$case_id" 2 \
+    "Show the full contents of README.md." \
+    "(?s)(?=.*\\[mct:show\\])" \
+    1 \
+    "${DEFAULT_MODEL_ARGS[@]}"
+}
+
+run_shell_live_case() {
+  local case_id="routing-shell-live"
+
+  run_happy_case "$case_id" 2 \
+    "Run `git status -sb` and report the output." \
+    "(?s)(?=.*\\[mct:shell\\])" \
+    1 \
+    "${DEFAULT_MODEL_ARGS[@]}"
+}
+
 run_error_case() {
   local case_id="$1"
   local args="$2"
@@ -644,6 +954,19 @@ INVALID_ALIAS="does-not-exist-alias"
 INVALID_ALIAS_REGEX="$(regex_escape "$INVALID_ALIAS")"
 MODEL_ALIAS_NOT_FOUND_PATTERN="model alias \"${INVALID_ALIAS_REGEX}\" not found"
 
+if [[ "$LIVE_MODE" != true ]]; then
+  run_menu_flow_case
+else
+  run_menu_flow_live_case
+  run_file_discovery_live_case
+  run_show_live_case
+  if shell_agent_available; then
+    run_shell_live_case
+  else
+    echo "Skipping shell-only live case: shell-agent not found on PATH." >&2
+  fi
+fi
+
 # Per-component flag coverage.
 run_happy_case "models-per-component" 3 \
   "Outline how the orchestrator, patcher, and file discovery collaborators interact." \
@@ -685,6 +1008,12 @@ run_happy_case "issue-b-1turn" 1 \
 run_happy_case "issue-b-3turn" 3 \
   "Describe the full multi-turn flow in mct-agent, including planning and context retention." \
   "multi-turn|conversation|context|planner|ask" \
+  1 \
+  "${DEFAULT_MODEL_ARGS[@]}"
+
+run_happy_case "planner-ask-monitor" 2 \
+  "Explain the planner ask monitor guardrail flow and when it retries. If you need repository context, ask for it." \
+  "(?s)(?=.*ask)(?=.*monitor)" \
   1 \
   "${DEFAULT_MODEL_ARGS[@]}"
 

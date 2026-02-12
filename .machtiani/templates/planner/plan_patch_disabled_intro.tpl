@@ -1,1 +1,1 @@
-Decide either to: (a) produce one single, high-signal repository-focused prompt, or (b) finalize if enough information is gathered.
+Patch requests are disabled for this run. Choose Ask to gather information or Finalize when the goal is complete.

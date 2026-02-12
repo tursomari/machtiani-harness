@@ -29,6 +29,14 @@ const (
 	DecisionReject   Decision = "reject"
 )
 
+type AskMode string
+
+const (
+	AskModeNoShell AskMode = "no-shell"
+	AskModeShell   AskMode = "shell"
+	AskModeBoth    AskMode = "both"
+)
+
 const (
 	successFilesPromptLimit = 12
 	progressMaxTrackedFiles = 100
@@ -36,8 +44,13 @@ const (
 )
 
 const (
-	defaultPlanPatchDisabledIntro = "Patch requests are disabled for this run. Decide either to: (a) produce one single, high-signal repository-focused prompt, or (b) finalize if enough information is gathered."
-	defaultPlanPatchEnabledIntro  = "Decide either to: (a) produce one single, high-signal repository-focused prompt, (b) request a patch, or (c) finalize if enough information is gathered.\nAlternatively, to request a patch with minimal syntax:\nPatch: <repo-relative filepath>\nExample: Patch: src/main.go"
+	askGuardMaxRetries = 1
+	defaultAskFallback = "Considering the current transcript, produce the single next high-signal repository-focused prompt for mct."
+)
+
+const (
+	defaultPlanPatchDisabledIntro = "Patch requests are disabled for this run. Choose Ask to gather information or Finalize when the goal is complete."
+	defaultPlanPatchEnabledIntro  = "Patch requests are enabled. Choose Ask to gather information, Patch to change files, or Finalize when the goal is complete.\nOptional patch shorthand:\nPatch: <repo-relative filepath>\nExample: Patch: src/main.go"
 	defaultPlanPatchRules         = "If patch, return only the JSON payload—no commentary or fences. The patch schema will be provided after you choose Decision: patch."
 	defaultPlanPatchStrictRules   = defaultPlanPatchRules
 )
@@ -151,6 +164,25 @@ type finalizeTemplateData struct {
 	Goal          string
 	HasTranscript bool
 	Transcript    string
+}
+
+type askTemplateData struct {
+	AskRequest string
+	Guardrail  string
+}
+
+type askMixedMonitorData struct {
+	Ask string
+}
+
+type askMonitorData struct {
+	Ask string
+}
+
+type askMixedMonitorResult struct {
+	IsMixed bool   `json:"is_mixed"`
+	Reason  string `json:"reason"`
+	Rewrite string `json:"rewrite"`
 }
 
 // PendingReview captures metadata about the most recent patch awaiting
@@ -394,6 +426,75 @@ func (c *Client) Plan(ctx context.Context, conv *conversation.Conversation, goal
 			reportTrajectoryError(emitErr)
 		}
 	}
+	if dec == "" && !reviewMode {
+		formatPrompt := strings.TrimSpace(c.planFormatErrorTemplate())
+		if formatPrompt != "" {
+			retryMessages := append([]llm.Message(nil), messages...)
+			retryMessages = append(retryMessages, messageWithEstimatedTokens("user", formatPrompt))
+			retryPromptLog := renderMessagesForLogging(retryMessages)
+			if hasWriter {
+				payload := map[string]any{
+					"event_version": 1,
+					"model_alias":   c.cfg.Alias,
+					"model_name":    c.cfg.Model.Model,
+					"step":          step,
+					"max_steps":     maxSteps,
+					"format_retry":  true,
+				}
+				payload = trajectory.MergeExcerptWithPrefix(payload, trajectory.MakeTextExcerpt(retryPromptLog, w.ExcerptLen()), "prompt")
+				if err := w.Emit(ctx, trajectory.Event{Kind: "planner.request", SpanID: span.ID, ParentSpanID: parentSpan, Payload: payload}); err != nil {
+					reportTrajectoryError(err)
+				}
+			}
+			retryStart := time.Now()
+			retryResp, retryErr := c.chatMessages(chatCtx, retryMessages)
+			retryDuration := time.Since(retryStart)
+			if retryErr == nil {
+				dec, q, preamble = parseDecision(retryResp, c.cfg.PatchEnabled)
+			}
+			if hasWriter {
+				payload := map[string]any{
+					"event_version": 1,
+					"model_alias":   c.cfg.Alias,
+					"model_name":    c.cfg.Model.Model,
+					"step":          step,
+					"max_steps":     maxSteps,
+					"duration_ms":   retryDuration.Milliseconds(),
+					"parse_ok":      dec != "",
+					"format_retry":  true,
+				}
+				payload = trajectory.MergeExcerptWithPrefix(payload, trajectory.MakeTextExcerpt(retryPromptLog, w.ExcerptLen()), "prompt")
+				payload = trajectory.MergeExcerptWithPrefix(payload, trajectory.MakeTextExcerpt(retryResp, w.ExcerptLen()), "response")
+				if dec != "" {
+					payload["parse"] = map[string]any{"decision": string(dec)}
+				}
+				if preamble != "" {
+					payload["ignored_preamble"] = trajectory.MakeTextExcerpt(preamble, w.ExcerptLen())
+				}
+				level := "info"
+				var errInfo *trajectory.ErrorInfo
+				if retryErr != nil {
+					level = "error"
+					category, code := llm.ClassifyError(retryErr)
+					errInfo = &trajectory.ErrorInfo{Message: retryErr.Error(), Category: category, Code: code}
+				} else if dec == "" {
+					level = "warn"
+					errInfo = &trajectory.ErrorInfo{Message: "unable to parse decision from model output", Category: "parse"}
+				}
+				evt := trajectory.Event{
+					Level:        level,
+					Kind:         "planner.response",
+					SpanID:       span.ID,
+					ParentSpanID: parentSpan,
+					Payload:      payload,
+					Err:          errInfo,
+				}
+				if emitErr := w.Emit(ctx, evt); emitErr != nil {
+					reportTrajectoryError(emitErr)
+				}
+			}
+		}
+	}
 	if dec == "" {
 		return "", "", errors.New("planner: unable to parse decision from model output")
 	}
@@ -402,6 +503,16 @@ func (c *Client) Plan(ctx context.Context, conv *conversation.Conversation, goal
 			return "", "", errors.New("planner: expected accept or reject decision for pending patch review")
 		}
 		return dec, q, nil
+	}
+	if dec == DecisionAsk {
+		ask, err := c.generateAsk(ctx, conv, goal, transcript, step, maxSteps)
+		if err != nil {
+			return "", "", err
+		}
+		if strings.TrimSpace(ask) == "" {
+			ask = defaultAskFallback
+		}
+		return DecisionAsk, ask, nil
 	}
 	if dec == DecisionPatch && strings.TrimSpace(q) != "" {
 		trimmed := strings.TrimSpace(q)
@@ -493,6 +604,77 @@ func (c *Client) Plan(ctx context.Context, conv *conversation.Conversation, goal
 		}
 	}
 	return dec, q, nil
+}
+
+func (c *Client) generateAsk(ctx context.Context, conv *conversation.Conversation, goal string, transcript string, step, maxSteps int) (string, error) {
+	askRequest := c.buildAskRequest(conv, goal, transcript, step, maxSteps)
+	guardrail := ""
+	lastAsk := ""
+	for attempt := 0; attempt <= askGuardMaxRetries; attempt++ {
+		prompt := c.askPrompt(askRequest, guardrail)
+		if strings.TrimSpace(prompt) == "" {
+			return "", errors.New("planner: ask prompt template missing")
+		}
+		resp, err := c.chat(ctx, prompt)
+		if err != nil {
+			return "", err
+		}
+		_, ask, parseErr := parseAskMenu(resp)
+		if parseErr != nil {
+			ask = strings.TrimSpace(resp)
+			if ask == "" {
+				guardrail = "The previous ask was empty. Provide a concrete ask."
+				continue
+			}
+		}
+		ask = strings.TrimSpace(ask)
+		if ask == "" {
+			guardrail = "The previous ask was empty. Provide a concrete ask."
+			continue
+		}
+		lastAsk = ask
+		mixed, err := c.monitorAskMixed(ctx, ask)
+		if err == nil && mixed.IsMixed {
+			guardrail = buildAskMixedGuardrail(mixed.Reason, mixed.Rewrite)
+			continue
+		}
+		monitor, err := c.monitorAsk(ctx, ask)
+		if err != nil {
+			return ask, nil
+		}
+		if !monitor.HasPatchIntent {
+			return ask, nil
+		}
+		guardrail = buildAskGuardrail(monitor.Reason)
+	}
+	if strings.TrimSpace(lastAsk) != "" {
+		return lastAsk, nil
+	}
+	return defaultAskFallback, nil
+}
+
+func (c *Client) monitorAsk(ctx context.Context, ask string) (askMonitorResult, error) {
+	prompt := c.askMonitorPrompt(ask)
+	if strings.TrimSpace(prompt) == "" {
+		return askMonitorResult{}, errors.New("planner: ask monitor template missing")
+	}
+	resp, err := c.chat(ctx, prompt)
+	if err != nil {
+		return askMonitorResult{}, err
+	}
+	return parseAskMonitorResponse(resp)
+}
+
+func (c *Client) monitorAskMixed(ctx context.Context, ask string) (askMixedMonitorResult, error) {
+	prompt := c.askMixedMonitorPrompt(ask)
+	if strings.TrimSpace(prompt) == "" {
+		return askMixedMonitorResult{}, errors.New("planner: ask mixed monitor template missing")
+	}
+	resp, err := c.chat(ctx, prompt)
+	if err != nil {
+		return askMixedMonitorResult{}, err
+	}
+	return parseAskMixedMonitorResponse(resp)
 }
 
 func (c *Client) buildPlanMessages(conv *conversation.Conversation, goal string, step, maxSteps int, patchPlan *PatchPlan) []llm.Message {
@@ -1046,6 +1228,87 @@ func (c *Client) planPrompt(conv *conversation.Conversation, goal string, transc
 	return rendered
 }
 
+func (c *Client) askPrompt(askRequest, guardrail string) string {
+	tpl := c.askPromptTemplate()
+	if tpl == "" {
+		fmt.Fprintln(os.Stderr, "[planner] ask prompt template missing")
+		return ""
+	}
+	data := askTemplateData{
+		AskRequest: strings.TrimSpace(askRequest),
+		Guardrail:  strings.TrimSpace(guardrail),
+	}
+	rendered, err := prompts.Render("planner_ask_prompt", tpl, data, nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[planner] ask prompt template error: %v\n", err)
+		return ""
+	}
+	return rendered
+}
+
+func (c *Client) askPromptTemplate() string {
+	if embedded, err := templates.GetEmbeddedTemplate("planner.ask_prompt"); err == nil {
+		return embedded
+	}
+	return ""
+}
+
+func (c *Client) planFormatErrorTemplate() string {
+	if c.cfg.Prompts != nil {
+		if trimmed := strings.TrimSpace(c.cfg.Prompts.FormatErrorTemplate); trimmed != "" {
+			return trimmed
+		}
+	}
+	if embedded, err := templates.GetEmbeddedTemplate("planner.format_error_template"); err == nil {
+		return embedded
+	}
+	return ""
+}
+
+func (c *Client) askMixedMonitorPrompt(ask string) string {
+	tpl := c.askMixedMonitorTemplate()
+	if tpl == "" {
+		fmt.Fprintln(os.Stderr, "[planner] ask mixed monitor template missing")
+		return ""
+	}
+	data := askMixedMonitorData{Ask: strings.TrimSpace(ask)}
+	rendered, err := prompts.Render("planner_ask_mixed_monitor", tpl, data, nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[planner] ask mixed monitor template error: %v\n", err)
+		return ""
+	}
+	return rendered
+}
+
+func (c *Client) askMixedMonitorTemplate() string {
+	if embedded, err := templates.GetEmbeddedTemplate("planner.ask_mixed_monitor"); err == nil {
+		return embedded
+	}
+	return ""
+}
+
+func (c *Client) askMonitorPrompt(ask string) string {
+	tpl := c.askMonitorTemplate()
+	if tpl == "" {
+		fmt.Fprintln(os.Stderr, "[planner] ask monitor template missing")
+		return ""
+	}
+	data := askMonitorData{Ask: strings.TrimSpace(ask)}
+	rendered, err := prompts.Render("planner_ask_monitor", tpl, data, nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[planner] ask monitor template error: %v\n", err)
+		return ""
+	}
+	return rendered
+}
+
+func (c *Client) askMonitorTemplate() string {
+	if embedded, err := templates.GetEmbeddedTemplate("planner.ask_monitor"); err == nil {
+		return embedded
+	}
+	return ""
+}
+
 func (c *Client) planTemplate() string {
 	if c.cfg.Prompts != nil {
 		if trimmed := strings.TrimSpace(c.cfg.Prompts.PlanPrompt); trimmed != "" {
@@ -1099,6 +1362,39 @@ func (c *Client) buildPlanTemplateData(conv *conversation.Conversation, goal str
 	}
 	data.PatchRules = c.planPatchRulesText(c.cfg.StrictPatchMode)
 	return data
+}
+
+func (c *Client) buildAskRequest(conv *conversation.Conversation, goal string, transcript string, step, maxSteps int) string {
+	goalForPrompt := strings.TrimSpace(goal)
+	if conv != nil {
+		if current := strings.TrimSpace(conv.CurrentGoal()); current != "" {
+			goalForPrompt = current
+		}
+	}
+	goalUpdate := ""
+	if conv != nil {
+		if update, ok := conv.LatestGoalUpdate(); ok {
+			goalUpdate = strings.TrimSpace(update)
+		}
+	}
+	transcriptTrim := strings.TrimSpace(transcript)
+
+	var b strings.Builder
+	if goalForPrompt != "" {
+		fmt.Fprintf(&b, "Goal:\n%s\n\n", goalForPrompt)
+	}
+	if goalUpdate != "" {
+		fmt.Fprintf(&b, "Latest Goal (takes precedence):\n%s\n\n", goalUpdate)
+	}
+	if transcriptTrim != "" {
+		b.WriteString("Transcript:\n")
+		b.WriteString(transcriptTrim)
+		b.WriteString("\n\n")
+	}
+	if step > 0 && maxSteps > 0 {
+		fmt.Fprintf(&b, "Step %d of %d.", step, maxSteps)
+	}
+	return strings.TrimSpace(b.String())
 }
 
 func (c *Client) planPatchIntroText() string {
@@ -1554,8 +1850,52 @@ func parseDecision(resp string, patchEnabled bool) (Decision, string, string) {
 	}
 
 	if decisionIdx == -1 {
+		preambleLines = nil
+		preambleChars = 0
+		for i, raw := range lines {
+			line := strings.TrimSpace(raw)
+			if line == "" {
+				continue
+			}
+			lower := strings.ToLower(line)
+			switch {
+			case strings.HasPrefix(lower, "finalize:"):
+				parts := strings.SplitN(line, ":", 2)
+				remainder := ""
+				if len(parts) == 2 {
+					remainder = strings.TrimSpace(parts[1])
+				}
+				tail := strings.TrimSpace(strings.Join(lines[i+1:], "\n"))
+				if tail != "" {
+					if remainder != "" {
+						remainder = remainder + "\n" + tail
+					} else {
+						remainder = tail
+					}
+				}
+				return DecisionFinalize, remainder, strings.Join(preambleLines, "\n")
+			case strings.HasPrefix(lower, "ask:"),
+				strings.HasPrefix(lower, "question:"),
+				strings.HasPrefix(lower, "instruction:"),
+				strings.HasPrefix(lower, "message:"):
+				parts := strings.SplitN(line, ":", 2)
+				remainder := ""
+				if len(parts) == 2 {
+					remainder = strings.TrimSpace(parts[1])
+				}
+				tail := strings.TrimSpace(strings.Join(lines[i+1:], "\n"))
+				if tail != "" {
+					if remainder != "" {
+						remainder = remainder + "\n" + tail
+					} else {
+						remainder = tail
+					}
+				}
+				return DecisionAsk, remainder, strings.Join(preambleLines, "\n")
+			}
+		}
 		return "", "", ""
-	}
+	 }
 
 	line := strings.TrimSpace(lines[decisionIdx])
 	parts := strings.SplitN(line, ":", 2)
@@ -1597,6 +1937,216 @@ func parseDecision(resp string, patchEnabled bool) (Decision, string, string) {
 		remainder = decisionTail
 	}
 	return decision, remainder, strings.Join(preambleLines, "\n")
+}
+
+type askMonitorResult struct {
+	HasPatchIntent bool   `json:"has_patch_intent"`
+	Reason         string `json:"reason"`
+}
+
+func parseAskMenu(resp string) (AskMode, string, error) {
+	trimmed := strings.TrimSpace(resp)
+	if trimmed == "" {
+		return "", "", errors.New("empty ask response")
+	}
+	lines := strings.Split(trimmed, "\n")
+	var (
+		mode   AskMode
+		ask    string
+		askIdx = -1
+	)
+	for i, raw := range lines {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		if mode == "" {
+			if val, ok := splitLabel(line, "ask mode:", "mode:"); ok {
+				mode = normalizeAskMode(val)
+				continue
+			}
+		}
+		if askIdx == -1 {
+			if val, ok := splitLabel(line, "ask:", "question:", "instruction:", "message:"); ok {
+				askIdx = i
+				ask = strings.TrimSpace(val)
+			}
+		}
+	}
+	if askIdx != -1 {
+		tail := strings.TrimSpace(strings.Join(lines[askIdx+1:], "\n"))
+		if tail != "" {
+			if ask != "" {
+				ask = strings.TrimSpace(ask + "\n" + tail)
+			} else {
+				ask = tail
+			}
+		}
+	} else {
+		ask = strings.TrimSpace(removeLinesWithPrefixes(trimmed, "ask mode:", "mode:"))
+	}
+	if mode == "" {
+		mode = AskModeNoShell
+	}
+	if strings.TrimSpace(ask) == "" {
+		return mode, "", errors.New("empty ask content")
+	}
+	return mode, ask, nil
+}
+
+func normalizeAskMode(raw string) AskMode {
+	normalized := strings.ToLower(strings.TrimSpace(raw))
+	normalized = strings.ReplaceAll(normalized, "-", "")
+	normalized = strings.ReplaceAll(normalized, " ", "")
+	switch normalized {
+	case "noshell", "content", "file":
+		return AskModeNoShell
+	case "shell", "command", "commands":
+		return AskModeShell
+	case "both", "mixed":
+		return AskModeBoth
+	default:
+		return ""
+	}
+}
+
+func parseAskSplit(resp string) (string, string, error) {
+	trimmed := strings.TrimSpace(resp)
+	if trimmed == "" {
+		return "", "", errors.New("empty ask split response")
+	}
+	var noShell string
+	var shell string
+	for _, raw := range strings.Split(trimmed, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		if noShell == "" {
+			if val, ok := splitLabel(line, "no-shell:", "no shell:", "noshell:", "content:"); ok {
+				noShell = strings.TrimSpace(val)
+				continue
+			}
+		}
+		if shell == "" {
+			if val, ok := splitLabel(line, "shell:", "command:", "commands:"); ok {
+				shell = strings.TrimSpace(val)
+				continue
+			}
+		}
+	}
+	if noShell == "" || shell == "" {
+		return "", "", errors.New("missing no-shell or shell ask")
+	}
+	return noShell, shell, nil
+}
+
+func formatAskSplit(noShell, shell string) string {
+	return strings.TrimSpace(fmt.Sprintf("No-shell: %s\nShell: %s", strings.TrimSpace(noShell), strings.TrimSpace(shell)))
+}
+
+func parseAskMonitorResponse(resp string) (askMonitorResult, error) {
+	raw := strings.TrimSpace(resp)
+	if raw == "" {
+		return askMonitorResult{}, errors.New("empty ask monitor response")
+	}
+	if strings.HasPrefix(raw, "```") {
+		trimmed := strings.TrimSpace(raw)
+		trimmed = strings.TrimPrefix(trimmed, "```json")
+		trimmed = strings.TrimPrefix(trimmed, "```JSON")
+		trimmed = strings.TrimPrefix(trimmed, "```")
+		trimmed = strings.TrimSuffix(trimmed, "```")
+		raw = strings.TrimSpace(trimmed)
+	}
+	if i := strings.Index(raw, "{"); i >= 0 {
+		if j := strings.LastIndex(raw, "}"); j > i {
+			raw = raw[i : j+1]
+		}
+	}
+	var result askMonitorResult
+	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+		return askMonitorResult{}, err
+	}
+	result.Reason = strings.TrimSpace(result.Reason)
+	return result, nil
+}
+
+func parseAskMixedMonitorResponse(resp string) (askMixedMonitorResult, error) {
+	raw := strings.TrimSpace(resp)
+	if raw == "" {
+		return askMixedMonitorResult{}, errors.New("empty ask mixed monitor response")
+	}
+	if strings.HasPrefix(raw, "```") {
+		trimmed := strings.TrimSpace(raw)
+		trimmed = strings.TrimPrefix(trimmed, "```json")
+		trimmed = strings.TrimPrefix(trimmed, "```JSON")
+		trimmed = strings.TrimPrefix(trimmed, "```")
+		trimmed = strings.TrimSuffix(trimmed, "```")
+		raw = strings.TrimSpace(trimmed)
+	}
+	if i := strings.Index(raw, "{"); i >= 0 {
+		if j := strings.LastIndex(raw, "}"); j > i {
+			raw = raw[i : j+1]
+		}
+	}
+	var result askMixedMonitorResult
+	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+		return askMixedMonitorResult{}, err
+	}
+	result.Reason = strings.TrimSpace(result.Reason)
+	result.Rewrite = strings.TrimSpace(result.Rewrite)
+	return result, nil
+}
+
+func buildAskGuardrail(reason string) string {
+	trimmed := strings.TrimSpace(reason)
+	if trimmed == "" {
+		return "The previous ask included patch intent. Ask is not for changing, updating, deleting, or patching files. Patch must be chosen separately, and you will have another chance to choose Patch after this ask."
+	}
+	return fmt.Sprintf("The previous ask included patch intent (%s). Ask is not for changing, updating, deleting, or patching files. Patch must be chosen separately, and you will have another chance to choose Patch after this ask.", trimmed)
+}
+
+func buildAskMixedGuardrail(reason, rewrite string) string {
+	trimmed := strings.TrimSpace(reason)
+	rewriteTrim := strings.TrimSpace(rewrite)
+	if trimmed == "" {
+		trimmed = "mixed no-shell and shell requests"
+	}
+	if rewriteTrim == "" {
+		return fmt.Sprintf("The previous ask was mixed (%s). Restate it as either a single no-shell ask, a single shell ask, or Ask Mode: both with explicit No-shell: and Shell: lines.", trimmed)
+	}
+	return fmt.Sprintf("The previous ask was mixed (%s). Restate it as either a single no-shell ask, a single shell ask, or Ask Mode: both with explicit No-shell: and Shell: lines. Suggested split:\n%s", trimmed, rewriteTrim)
+}
+
+func splitLabel(line string, labels ...string) (string, bool) {
+	trimmed := strings.TrimSpace(line)
+	lower := strings.ToLower(trimmed)
+	for _, label := range labels {
+		if strings.HasPrefix(lower, label) {
+			return strings.TrimSpace(trimmed[len(label):]), true
+		}
+	}
+	return "", false
+}
+
+func removeLinesWithPrefixes(text string, labels ...string) string {
+	lines := strings.Split(text, "\n")
+	filtered := make([]string, 0, len(lines))
+	for _, raw := range lines {
+		trimmed := strings.TrimSpace(raw)
+		lower := strings.ToLower(trimmed)
+		matched := false
+		for _, label := range labels {
+			if strings.HasPrefix(lower, label) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			filtered = append(filtered, raw)
+		}
+	}
+	return strings.TrimSpace(strings.Join(filtered, "\n"))
 }
 
 func reportTrajectoryError(err error) {

@@ -75,6 +75,27 @@ func TestDetectShowFileRequestParsesMultipleFiles(t *testing.T) {
 	}
 }
 
+func TestDetectShowFileRequestParsesExplainPrompt(t *testing.T) {
+	t.Cleanup(func() { chatWithResolvedFallback = llm.ChatWithResolvedFallback })
+	chatWithResolvedFallback = func(ctx context.Context, resolved llm.ResolvedModel, fallbackAliases []string, fallbackResolved []llm.ResolvedModel, extras map[string]any, messages []llm.Message) (string, error) {
+		return `{"is_show_file_request":true,"filepaths":["README.md"],"reason":"review readme","include_explain":true,"explain_prompt":"Explain the architecture section."}`, nil
+	}
+
+	det, _, err := DetectShowFileRequest(context.Background(), ModelRuntime{}, "Show README.md and explain the architecture section.")
+	if err != nil {
+		t.Fatalf("DetectShowFileRequest error: %v", err)
+	}
+	if !det.IsShowFileRequest {
+		t.Fatalf("expected is_show_file_request=true")
+	}
+	if !det.IncludeExplain {
+		t.Fatalf("expected include_explain=true")
+	}
+	if det.ExplainPrompt != "Explain the architecture section." {
+		t.Fatalf("unexpected explain_prompt: %q", det.ExplainPrompt)
+	}
+}
+
 func TestDetectShowFileRequestParsesFalse(t *testing.T) {
 	t.Cleanup(func() { chatWithResolvedFallback = llm.ChatWithResolvedFallback })
 	chatWithResolvedFallback = func(ctx context.Context, resolved llm.ResolvedModel, fallbackAliases []string, fallbackResolved []llm.ResolvedModel, extras map[string]any, messages []llm.Message) (string, error) {
@@ -84,6 +105,44 @@ func TestDetectShowFileRequestParsesFalse(t *testing.T) {
 	det, _, err := DetectShowFileRequest(context.Background(), ModelRuntime{}, "What should I do next?")
 	if err != nil {
 		t.Fatalf("DetectShowFileRequest error: %v", err)
+	}
+	if det.IsShowFileRequest {
+		t.Fatalf("expected is_show_file_request=false")
+	}
+}
+
+func TestDetectShowFileRequestSkipsWithoutShowCue(t *testing.T) {
+	t.Cleanup(func() { chatWithResolvedFallback = llm.ChatWithResolvedFallback })
+	chatWithResolvedFallback = func(ctx context.Context, resolved llm.ResolvedModel, fallbackAliases []string, fallbackResolved []llm.ResolvedModel, extras map[string]any, messages []llm.Message) (string, error) {
+		t.Fatalf("expected show-file detection to short-circuit before LLM call")
+		return "", nil
+	}
+
+	det, raw, err := DetectShowFileRequest(context.Background(), ModelRuntime{}, "Explain the planning architecture and agentic loop in Codex.")
+	if err != nil {
+		t.Fatalf("DetectShowFileRequest error: %v", err)
+	}
+	if strings.TrimSpace(raw) != "" {
+		t.Fatalf("expected empty raw response, got %q", raw)
+	}
+	if det.IsShowFileRequest {
+		t.Fatalf("expected is_show_file_request=false")
+	}
+}
+
+func TestDetectShowFileRequestSkipsShowContextCue(t *testing.T) {
+	t.Cleanup(func() { chatWithResolvedFallback = llm.ChatWithResolvedFallback })
+	chatWithResolvedFallback = func(ctx context.Context, resolved llm.ResolvedModel, fallbackAliases []string, fallbackResolved []llm.ResolvedModel, extras map[string]any, messages []llm.Message) (string, error) {
+		t.Fatalf("expected show-file detection to short-circuit before LLM call")
+		return "", nil
+	}
+
+	det, raw, err := DetectShowFileRequest(context.Background(), ModelRuntime{}, "Show relevant context for requested files, then explain the planning loop.")
+	if err != nil {
+		t.Fatalf("DetectShowFileRequest error: %v", err)
+	}
+	if strings.TrimSpace(raw) != "" {
+		t.Fatalf("expected empty raw response, got %q", raw)
 	}
 	if det.IsShowFileRequest {
 		t.Fatalf("expected is_show_file_request=false")
@@ -461,5 +520,22 @@ func TestFetchFileSnippetsError(t *testing.T) {
 	det := ShowFileDetection{IsShowFileRequest: true, Filepaths: []string{"a.go"}, Reason: "check"}
 	if _, err := FetchFileSnippets(context.Background(), det, repoRoot, "", nil, false); err == nil {
 		t.Fatalf("expected error")
+	}
+}
+
+func TestFormatSnippetsResponseFullFileNoLineNumbers(t *testing.T) {
+	repoRoot := writeTestRepo(t, map[string]string{"a.go": "alpha\nbeta\n"})
+	snippets := map[string][]LineRange{
+		"a.go": {{Start: 1, End: maxFullFileRangeEnd}},
+	}
+	text, _, _ := FormatSnippetsResponse(snippets, "check", repoRoot)
+	if strings.Contains(text, "Lines 1-") {
+		t.Fatalf("expected no line range header, got: %s", text)
+	}
+	if strings.Contains(text, "1: alpha") || strings.Contains(text, "2: beta") {
+		t.Fatalf("expected no line numbering, got: %s", text)
+	}
+	if !strings.Contains(text, "alpha\nbeta") {
+		t.Fatalf("expected file contents, got: %s", text)
 	}
 }
