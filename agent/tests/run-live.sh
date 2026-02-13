@@ -611,6 +611,63 @@ PER_COMPONENT_MODEL_ARGS=(
 
 MCT_AGENT="$MCT_AGENT_BIN"
 
+assert_fd_single_file() {
+  local fd_path="$1"
+  local expected_path="$2"
+  "$PYTHON_BIN" - "$fd_path" "$expected_path" <<'PY'
+import json
+import sys
+
+fd_path = sys.argv[1]
+expected = sys.argv[2]
+final_block = None
+
+try:
+    with open(fd_path, "r", encoding="utf-8") as fh:
+        for line in fh:
+            try:
+                obj = json.loads(line)
+            except Exception:
+                continue
+            if obj.get("type") == "final_block_valid":
+                final_block = obj.get("normalized_block")
+except OSError as exc:
+    print(f"ERROR: unable to read file-discovery trajectory: {exc}", file=sys.stderr)
+    sys.exit(1)
+
+if not final_block:
+    print("ERROR: missing final_block_valid in file-discovery trajectory", file=sys.stderr)
+    sys.exit(1)
+
+lines = [ln for ln in final_block.splitlines() if ln.strip()]
+if len(lines) != 3:
+    print(f"ERROR: expected single-file block, got {len(lines)} lines", file=sys.stderr)
+    print(final_block, file=sys.stderr)
+    sys.exit(1)
+
+if not lines[0].startswith("BEGIN_RELEVANT_FILES["):
+    print("ERROR: missing BEGIN_RELEVANT_FILES marker", file=sys.stderr)
+    sys.exit(1)
+if not lines[2].startswith("END_RELEVANT_FILES["):
+    print("ERROR: missing END_RELEVANT_FILES marker", file=sys.stderr)
+    sys.exit(1)
+
+if lines[1] != expected:
+    print(f"ERROR: expected single file {expected}, got {lines[1]}", file=sys.stderr)
+    sys.exit(1)
+PY
+}
+
+run_happy_case_expect_fd_single() {
+  local expected_path="$1"
+  shift
+  EXPECTED_FD_SINGLE_PATH="$expected_path"
+  run_happy_case "$@"
+  local rc=$?
+  EXPECTED_FD_SINGLE_PATH=""
+  return "$rc"
+}
+
 run_happy_case() {
   local case_id="$1"
   local max_steps="$2"
@@ -715,6 +772,7 @@ run_happy_case() {
   local -a keyword_files=("$stdout_file" "$transcript_path")
 
   local final_path=""
+  local fd_path=""
   if [[ "$LIVE_MODE" == true ]]; then
     final_path="$chat_dir/agent-final-answer.md"
     if [[ ! -s "$final_path" ]]; then
@@ -724,7 +782,7 @@ run_happy_case() {
     cp -f "$final_path" "$out_dir/final-${session_id}.md"
     keyword_files+=("$final_path")
 
-    local fd_path="$session_dir/artifacts/file-discovery.jsonl"
+    fd_path="$session_dir/artifacts/file-discovery.jsonl"
     if [[ "$show_file_used" != true ]] && grep -qE '^Step [0-9]+ decision: ask' "$stderr_file" 2>/dev/null; then
       if [[ ! -f "$fd_path" ]]; then
         echo "Missing file-discovery trajectory: $fd_path" >&2
@@ -760,6 +818,20 @@ run_happy_case() {
   if grep -qE "(Finalizer|Transcript write|Final file write) error:" "$stderr_file"; then
     echo "Finalize error detected: $case_id" >&2
     return 1
+  fi
+  if [[ -n "${EXPECTED_FD_SINGLE_PATH:-}" ]]; then
+    if [[ "$LIVE_MODE" != true ]]; then
+      echo "Expected file-discovery output in dry-run mode: $case_id" >&2
+      return 1
+    fi
+    if [[ -z "$fd_path" || ! -f "$fd_path" ]]; then
+      echo "Missing file-discovery trajectory for tightness check: $case_id" >&2
+      return 1
+    fi
+    if ! assert_fd_single_file "$fd_path" "$EXPECTED_FD_SINGLE_PATH"; then
+      echo "File-discovery tightness check failed: $case_id" >&2
+      return 1
+    fi
   fi
 
   echo "Passed: $case_id ($turns turns)" >&2
@@ -828,6 +900,16 @@ run_file_discovery_live_case() {
     "(?s)(?=.*\\[mct:file\\])" \
     1 \
     --timeout-per-turn 600 \
+    "${DEFAULT_MODEL_ARGS[@]}"
+}
+
+run_file_discovery_tightness_live_case() {
+  local case_id="file-discovery-tight-readme"
+
+  run_happy_case_expect_fd_single "README.md" "$case_id" 3 \
+    "Review the top-level README.md (repo root) and list any HTML tags that need conversion to markdown. Do not guess; ask for repository context if needed." \
+    "README\\.md" \
+    1 \
     "${DEFAULT_MODEL_ARGS[@]}"
 }
 
@@ -967,6 +1049,7 @@ MODEL_ALIAS_NOT_FOUND_PATTERN="model alias \"${INVALID_ALIAS_REGEX}\" not found"
 if [[ "$LIVE_MODE" != true ]]; then
   run_menu_flow_case
 else
+  run_file_discovery_tightness_live_case
   run_menu_flow_live_case
   run_file_discovery_live_case
   run_show_live_case
