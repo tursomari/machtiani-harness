@@ -179,6 +179,12 @@ func hardExcluded(rel string) bool {
 	if clean == "agent/.tmp" || strings.HasPrefix(clean, "agent/.tmp/") {
 		return true
 	}
+	if strings.HasPrefix(clean, "partial-trajectory-") && strings.HasSuffix(clean, ".json") {
+		return true
+	}
+	if strings.HasPrefix(clean, "trajectory-") && strings.HasSuffix(clean, ".json") {
+		return true
+	}
 	return false
 }
 

@@ -63,6 +63,13 @@ func EnsureRepoSnapshot(workingDir, dstRoot string) (string, func(), error) {
 	if err != nil {
 		return "", nil, fmt.Errorf("load sync manifest: %w", err)
 	}
+	if m.CreatedPaths != nil {
+		for rel := range m.CreatedPaths {
+			if hardExcluded(rel) {
+				delete(m.CreatedPaths, rel)
+			}
+		}
+	}
 	ignoreCfg, _ := loadIgnoreConfigBestEffort()
 	cfg, configPath, cfgErr := llm.LoadGlobalConfig()
 	hydrationCfg := (*llm.WorkspaceConfig)(nil)
