@@ -43,13 +43,26 @@ func Inject(step int, repoRoot string, filesModified []string, tr Transcript, tr
 	}
 
 	if opts.Baseline == nil {
-		logf("[full-diff] Missing baseline state; skipping unified diff\n")
+		logf("[full-diff] Missing baseline state; skipping full diff\n")
 		return
+	}
+
+	hasLineNumberedMarker := func(line, marker string) bool {
+		idx := strings.Index(line, marker)
+		if idx == -1 {
+			return false
+		}
+		for _, r := range line[:idx] {
+			if r != ' ' && (r < '0' || r > '9') {
+				return false
+			}
+		}
+		return true
 	}
 
 	containsChangeMarkers := func(section string) bool {
 		// We accept baseline diff sections as "changed" if they include any added or
-		// removed lines in the unified diff rendering.
+		// removed lines in either the line-numbered full diff or the unified diff rendering.
 		scanner := bufio.NewScanner(strings.NewReader(section))
 		for scanner.Scan() {
 			line := scanner.Text()
@@ -66,6 +79,10 @@ func Inject(step int, repoRoot string, filesModified []string, tr Transcript, tr
 				return true
 			case strings.HasPrefix(line, "-"):
 				return true
+			case hasLineNumberedMarker(line, "  + "):
+				return true
+			case hasLineNumberedMarker(line, "  - "):
+				return true
 			}
 		}
 		return false
@@ -74,7 +91,7 @@ func Inject(step int, repoRoot string, filesModified []string, tr Transcript, tr
 	writeStep := step
 	wroteAny := false
 	for _, file := range filesModified {
-		section, included, err := patchersvc.BuildBaselineDiffSection(opts.Baseline, repoRoot, file)
+		section, included, err := patchersvc.BuildBaselineFullDiffSection(opts.Baseline, repoRoot, file)
 		if err != nil {
 			logf("[full-diff] Baseline diff failed for %s: %v\n", file, err)
 			return
@@ -86,10 +103,15 @@ func Inject(step int, repoRoot string, filesModified []string, tr Transcript, tr
 			continue
 		}
 
-		question := fmt.Sprintf("Automatic unified diff post-patch for: %s", file)
-		header := fmt.Sprintf("\n=== UNIFIED DIFF OF PATCHED FILE: %s ===\n", file)
+		question := fmt.Sprintf("Automatic full diff post-patch for: %s", file)
+		header := fmt.Sprintf("\n=== FULL DIFF OF PATCHED FILE: %s ===\n", file)
 		footer := "\n===\n"
-		fullDiffContent := header + section + footer
+		instruction := "How to read this diff:\n" +
+			"This diff is presented as the current file with reliable line numbers. " +
+			"Line numbers are computed against the current workspace version, so they're safe to use. " +
+			"The only extra annotations are the line-number column and the +/- markers; " +
+			"otherwise the content reflects the current file state.\n\n"
+		fullDiffContent := instruction + header + section + footer
 		contentHash := fmt.Sprintf("%x", sha256.Sum256([]byte(fullDiffContent)))
 
 		// Always dedupe the transcript first to preserve the "single per file"
