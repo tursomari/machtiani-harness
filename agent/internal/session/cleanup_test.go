@@ -75,6 +75,58 @@ func TestCleanupSkipsRecentDir(t *testing.T) {
 	}
 }
 
+func TestCleanupRemovesStaleShellAgentMarker(t *testing.T) {
+	root := t.TempDir()
+	now := time.Now()
+
+	markerDir := filepath.Join(root, "shell-agent", "markers")
+	if err := os.MkdirAll(markerDir, 0o755); err != nil {
+		t.Fatalf("mkdir marker dir: %v", err)
+	}
+	markerPath := filepath.Join(markerDir, "mct-swe-agent-finale-abc123.txt")
+	if err := os.WriteFile(markerPath, []byte("done"), 0o644); err != nil {
+		t.Fatalf("write marker: %v", err)
+	}
+	old := now.Add(-2 * time.Hour)
+	if err := os.Chtimes(markerPath, old, old); err != nil {
+		t.Fatalf("chtimes marker: %v", err)
+	}
+
+	if err := cleanupStaleShellAgentMarkersAt(root, now, time.Hour, false); err != nil {
+		t.Fatalf("cleanup markers: %v", err)
+	}
+
+	if _, err := os.Stat(markerPath); !os.IsNotExist(err) {
+		t.Fatalf("expected marker removed, got err=%v", err)
+	}
+}
+
+func TestCleanupSkipsRecentShellAgentMarker(t *testing.T) {
+	root := t.TempDir()
+	now := time.Now()
+
+	markerDir := filepath.Join(root, "shell-agent", "markers")
+	if err := os.MkdirAll(markerDir, 0o755); err != nil {
+		t.Fatalf("mkdir marker dir: %v", err)
+	}
+	markerPath := filepath.Join(markerDir, "mct-swe-agent-finale-recent.txt")
+	if err := os.WriteFile(markerPath, []byte("done"), 0o644); err != nil {
+		t.Fatalf("write marker: %v", err)
+	}
+	recent := now.Add(-30 * time.Minute)
+	if err := os.Chtimes(markerPath, recent, recent); err != nil {
+		t.Fatalf("chtimes marker: %v", err)
+	}
+
+	if err := cleanupStaleShellAgentMarkersAt(root, now, time.Hour, false); err != nil {
+		t.Fatalf("cleanup markers: %v", err)
+	}
+
+	if _, err := os.Stat(markerPath); err != nil {
+		t.Fatalf("expected marker to remain, got err=%v", err)
+	}
+}
+
 func TestCleanupSkipsLockProtectedDir(t *testing.T) {
 	tempDir := t.TempDir()
 	now := time.Now()

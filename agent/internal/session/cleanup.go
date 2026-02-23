@@ -15,6 +15,10 @@ const (
 	defaultCleanupAge        = 24 * time.Hour
 	sessionLockFileName      = "session.lock"
 	sessionLockStaleDuration = 3 * time.Second
+	defaultShellAgentMarkerMaxAge = time.Hour
+	shellAgentMarkerMaxAgeEnv      = "MACHTIANI_SHELL_AGENT_MARKER_MAX_AGE"
+	shellAgentMarkerPrefix   = "mct-swe-agent-finale"
+	shellAgentMarkerSuffix   = ".txt"
 )
 
 var cleanupPrefixes = []string{
@@ -56,6 +60,82 @@ func cleanupOrphanedTempDirs(verbose bool) error {
 	if err := cleanupOrphanedTempDirsInternal(os.TempDir(), now, defaultCleanupAge, verbose); err != nil {
 		errs = append(errs, err)
 	}
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
+	return nil
+}
+
+func cleanupStaleShellAgentMarkers(root string, maxAge time.Duration, verbose bool) error {
+	return cleanupStaleShellAgentMarkersAt(root, time.Now(), maxAge, verbose)
+}
+
+func shellAgentMarkerMaxAge() (time.Duration, error) {
+	raw := strings.TrimSpace(os.Getenv(shellAgentMarkerMaxAgeEnv))
+	if raw == "" {
+		return defaultShellAgentMarkerMaxAge, nil
+	}
+	parsed, err := time.ParseDuration(raw)
+	if err != nil {
+		return defaultShellAgentMarkerMaxAge, fmt.Errorf("parse %s=%q: %w", shellAgentMarkerMaxAgeEnv, raw, err)
+	}
+	if parsed <= 0 {
+		return defaultShellAgentMarkerMaxAge, fmt.Errorf("%s must be > 0 (got %q)", shellAgentMarkerMaxAgeEnv, raw)
+	}
+	return parsed, nil
+}
+
+func cleanupStaleShellAgentMarkersAt(root string, now time.Time, maxAge time.Duration, verbose bool) error {
+	if strings.TrimSpace(root) == "" {
+		return nil
+	}
+	markerDir := filepath.Join(root, "shell-agent", "markers")
+	entries, err := os.ReadDir(markerDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read marker dir %s: %w", markerDir, err)
+	}
+
+	cutoff := now.Add(-maxAge)
+	var errs []error
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !isShellAgentMarkerFile(name) {
+			continue
+		}
+		info, infoErr := entry.Info()
+		if infoErr != nil {
+			warnCleanupError(filepath.Join(markerDir, name), infoErr)
+			errs = append(errs, fmt.Errorf("stat %s: %w", filepath.Join(markerDir, name), infoErr))
+			continue
+		}
+		if !info.ModTime().Before(cutoff) {
+			continue
+		}
+		path := filepath.Join(markerDir, name)
+		if removeErr := os.Remove(path); removeErr != nil {
+			warnCleanupError(path, removeErr)
+			errs = append(errs, fmt.Errorf("remove %s: %w", path, removeErr))
+			continue
+		}
+		if verbose {
+			fmt.Fprintf(os.Stderr, "[cleanup] removed stale marker file: %s\n", path)
+		}
+	}
+
+	if entries, dirErr := os.ReadDir(markerDir); dirErr == nil && len(entries) == 0 {
+		if removeErr := os.Remove(markerDir); removeErr != nil && !os.IsNotExist(removeErr) {
+			warnCleanupError(markerDir, removeErr)
+			errs = append(errs, fmt.Errorf("remove marker dir %s: %w", markerDir, removeErr))
+		}
+	}
+
 	if len(errs) > 0 {
 		return errors.Join(errs...)
 	}
@@ -181,6 +261,20 @@ func hasCleanupPrefix(name string) bool {
 		}
 	}
 	return false
+}
+
+func isShellAgentMarkerFile(name string) bool {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return false
+	}
+	if !strings.HasPrefix(trimmed, shellAgentMarkerPrefix) {
+		return false
+	}
+	if !strings.HasSuffix(trimmed, shellAgentMarkerSuffix) {
+		return false
+	}
+	return true
 }
 
 func shouldRemoveCandidate(path string) (bool, error) {

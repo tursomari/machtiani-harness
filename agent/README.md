@@ -132,6 +132,7 @@ mct-agent run "triage regression" \
   - Legacy envs `AGENT_MODEL_*` accepted as fallback with a deprecation warning
 - The orchestrator and discovery paths resolve their effective model; the patcher flag is a placeholder today and falls back to the orchestrator configuration.
 - `MACHTIANI_SESSION_ID` is generated per run and passed into the discovery service for correlation across artifacts.
+- `MACHTIANI_SHELL_AGENT_MARKER_MAX_AGE` overrides the startup cleanup threshold for shell-agent marker files (Go duration like `30m`, `2h`; default `1h`).
 - `--timeout-per-turn` applies to both the discovery steps and the planner/finalizer LLM calls. Set to `0` to disable the deadline for all per-turn operations.
 
 ## Troubleshooting
@@ -173,6 +174,8 @@ What the script does:
 - Performs a preflight that resolves `mct-agent` on PATH, prints `--version`/`go version -m` metadata, and fails if the commit/time does not match the current sources.
 - Generates a temporary `.machtiani/config.toml` under `agent/tests/tmp/` and exports `MACHTIANI_CONFIG` for the duration of the run. The file uses your `OPENAI_*` values in live mode and stub credentials in dry-run.
 - Runs Issue A/B/C happy-path scenarios (1-turn and 3-turn variants) plus deterministic error cases (empty input, missing config when in live mode). Artifacts land under `test-out-*` directories in the repo root.
+- Seeds shell-agent marker files under a per-run temp root and validates that stale markers are removed at startup while recent markers remain; override the threshold via `MACHTIANI_SHELL_AGENT_MARKER_MAX_AGE` or disable checks with `CHECK_SHELL_AGENT_MARKERS=false`.
+  - Cleanup is explicit (no `RETURN` trap). If you later parallelize cases, run each case in a subshell and add a per-subshell `trap cleanup EXIT` to keep marker cleanup isolated.
 
 Run from the repo root:
 

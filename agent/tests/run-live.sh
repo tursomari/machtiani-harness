@@ -23,6 +23,107 @@ stat_mtime() {
   fi
 }
 
+SHELL_AGENT_MARKER_PREFIX="mct-swe-agent-finale"
+SHELL_AGENT_MARKER_SUFFIX=".txt"
+
+# Marker cleanup runs per case; we avoid traps so the harness stays safe if
+# cases are later executed concurrently in subshells.
+shell_marker_checks_enabled() {
+  case "${CHECK_SHELL_AGENT_MARKERS:-true}" in
+    1|true|TRUE|yes|YES|on|ON) return 0 ;;
+    0|false|FALSE|no|NO|off|OFF) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+duration_to_seconds() {
+  local duration="$1"
+  "$PYTHON_BIN" - "$duration" <<'PY'
+import re
+import sys
+
+duration = sys.argv[1]
+total = 0.0
+pattern = re.compile(r'(\d+(?:\.\d+)?)([hms])')
+matches = pattern.findall(duration)
+if not matches:
+    print(0)
+    sys.exit(0)
+
+for value, unit in matches:
+    value = float(value)
+    if unit == "h":
+        total += value * 3600
+    elif unit == "m":
+        total += value * 60
+    elif unit == "s":
+        total += value
+
+print(int(total))
+PY
+}
+
+seed_marker_with_age() {
+  local marker_dir="$1"
+  local marker_name="$2"
+  local age_seconds="$3"
+
+  mkdir -p "$marker_dir"
+  local marker_path="$marker_dir/$marker_name"
+  printf 'stale' > "$marker_path"
+  "$PYTHON_BIN" - "$marker_path" "$age_seconds" <<'PY'
+import os
+import sys
+import time
+
+path = sys.argv[1]
+age = int(sys.argv[2])
+old = time.time() - age
+os.utime(path, (old, old))
+PY
+  echo "$marker_path"
+}
+
+assert_shell_agent_marker_cleanup() {
+  local marker_dir="$1"
+  local stale_marker="$2"
+  local recent_marker="$3"
+  local case_id="$4"
+
+  if [[ -e "$stale_marker" ]]; then
+    echo "Stale shell-agent marker not removed: $stale_marker ($case_id)" >&2
+    if [[ -d "$marker_dir" ]]; then
+      ls -al "$marker_dir" >&2 || true
+    fi
+    return 1
+  fi
+
+  if [[ -n "$recent_marker" && ! -e "$recent_marker" ]]; then
+    echo "Recent shell-agent marker unexpectedly removed: $recent_marker ($case_id)" >&2
+    if [[ -d "$marker_dir" ]]; then
+      ls -al "$marker_dir" >&2 || true
+    fi
+    return 1
+  fi
+
+  if [[ -d "$marker_dir" ]]; then
+    local -a leftover=()
+    while IFS= read -r -d '' path; do
+      if [[ -n "$recent_marker" && "$path" == "$recent_marker" ]]; then
+        continue
+      fi
+      leftover+=("$path")
+    done < <(find "$marker_dir" -maxdepth 1 -type f -name "${SHELL_AGENT_MARKER_PREFIX}*${SHELL_AGENT_MARKER_SUFFIX}" -print0)
+    if (( ${#leftover[@]} )); then
+      echo "Shell-agent markers still present after run: $marker_dir ($case_id)" >&2
+      ls -al "$marker_dir" >&2 || true
+      return 1
+    fi
+  fi
+
+  return 0
+}
+
 git_head() {
   local dir="$1"
   git -C "$dir" rev-parse --short=12 HEAD 2>/dev/null || echo ""
@@ -693,6 +794,52 @@ run_happy_case() {
   mkdir -p "$out_dir"
   local stdout_file="$out_dir/stdout-${session_id}.txt"
   local stderr_file="$out_dir/stderr-${session_id}.txt"
+  local marker_checks=false
+  local session_temp_root=""
+  local marker_dir=""
+  local stale_marker=""
+  local recent_marker=""
+  local marker_max_age=""
+  local marker_max_age_seconds=0
+
+  cleanup_marker_root() {
+    if [[ "$marker_checks" == true && -n "${session_temp_root:-}" && -d "$session_temp_root" ]]; then
+      rm -rf "$session_temp_root"
+    fi
+  }
+  return_with_cleanup() {
+    local rc="${1:-0}"
+    cleanup_marker_root
+    return "$rc"
+  }
+
+  if shell_marker_checks_enabled; then
+    marker_checks=true
+    marker_max_age="${MACHTIANI_SHELL_AGENT_MARKER_MAX_AGE:-1h}"
+    marker_max_age_seconds="$(duration_to_seconds "$marker_max_age")"
+    if [[ "$marker_max_age_seconds" -le 0 ]]; then
+      marker_max_age="1h"
+      marker_max_age_seconds=3600
+    fi
+    session_temp_root="$(mktemp -d "$TMP_ROOT/session-temp-${session_id}.XXXXXX")"
+    marker_dir="$session_temp_root/shell-agent/markers"
+    local stale_age=$((marker_max_age_seconds + 3600))
+    local recent_age=$((marker_max_age_seconds / 2))
+    if (( recent_age < 60 )); then
+      recent_age=60
+    fi
+    if (( recent_age >= marker_max_age_seconds )); then
+      if (( marker_max_age_seconds > 1 )); then
+        recent_age=$((marker_max_age_seconds - 1))
+      else
+        recent_age=1
+      fi
+    fi
+    local stale_name="${SHELL_AGENT_MARKER_PREFIX}-stale-${session_id}${SHELL_AGENT_MARKER_SUFFIX}"
+    local recent_name="${SHELL_AGENT_MARKER_PREFIX}-recent-${session_id}${SHELL_AGENT_MARKER_SUFFIX}"
+    stale_marker="$(seed_marker_with_age "$marker_dir" "$stale_name" "$stale_age")"
+    recent_marker="$(seed_marker_with_age "$marker_dir" "$recent_name" "$recent_age")"
+  fi
 
   echo "Running happy case: $case_id (max $max_steps turns)..." >&2
   local -a cmd=(
@@ -714,39 +861,45 @@ run_happy_case() {
 
   pushd "$REPO_ROOT" >/dev/null
   set +e
-  "${cmd[@]}" > "$stdout_file" 2> "$stderr_file"
+  if [[ "$marker_checks" == true ]]; then
+    MACHTIANI_SESSION_TEMP_ROOT="$session_temp_root" \
+      MACHTIANI_SHELL_AGENT_MARKER_MAX_AGE="$marker_max_age" \
+      "${cmd[@]}" > "$stdout_file" 2> "$stderr_file"
+  else
+    "${cmd[@]}" > "$stdout_file" 2> "$stderr_file"
+  fi
   local rc=$?
   set -e
   popd >/dev/null
   if [[ $rc -ne 0 ]]; then
     echo "Failed (rc=$rc): $case_id" >&2
-    return 1
+    return_with_cleanup 1
   fi
 
   local agent_session
   agent_session=$(grep -m1 '^Session:' "$stderr_file" | awk '{print $2}')
   if [[ -z "$agent_session" ]]; then
     echo "Failed to parse session ID from stderr for $case_id" >&2
-    return 1
+    return_with_cleanup 1
   fi
 
   local sessions_root="$REPO_ROOT/.machtiani/sessions"
   local session_dir="$sessions_root/$agent_session"
   if [[ ! -d "$session_dir" ]]; then
     echo "Session directory missing: $session_dir" >&2
-    return 1
+    return_with_cleanup 1
   fi
 
   local chat_dir="$session_dir/chat"
   if [[ ! -d "$chat_dir" ]]; then
     echo "Chat directory missing: $chat_dir" >&2
-    return 1
+    return_with_cleanup 1
   fi
 
   local transcript_path="$chat_dir/agent-transcript.adoc"
   if [[ ! -s "$transcript_path" ]]; then
     echo "Transcript missing or empty: $transcript_path" >&2
-    return 1
+    return_with_cleanup 1
   fi
 
   local show_file_used=false
@@ -767,7 +920,7 @@ run_happy_case() {
   fi
   if [[ $turns -gt $max_steps || $turns -lt $min_turns ]]; then
     echo "Invalid turns ($turns): $case_id" >&2
-    return 1
+    return_with_cleanup 1
   fi
   local -a keyword_files=("$stdout_file" "$transcript_path")
 
@@ -777,7 +930,7 @@ run_happy_case() {
     final_path="$chat_dir/agent-final-answer.md"
     if [[ ! -s "$final_path" ]]; then
       echo "Missing final artifact in session directory: $final_path" >&2
-      return 1
+      return_with_cleanup 1
     fi
     cp -f "$final_path" "$out_dir/final-${session_id}.md"
     keyword_files+=("$final_path")
@@ -786,7 +939,7 @@ run_happy_case() {
     if [[ "$show_file_used" != true ]] && grep -qE '^Step [0-9]+ decision: ask' "$stderr_file" 2>/dev/null; then
       if [[ ! -f "$fd_path" ]]; then
         echo "Missing file-discovery trajectory: $fd_path" >&2
-        return 1
+        return_with_cleanup 1
       fi
       keyword_files+=("$fd_path")
     fi
@@ -797,7 +950,7 @@ run_happy_case() {
   local patches_dir="$session_dir/artifacts/patches"
   if [[ -e "$patches_dir" && ! -d "$patches_dir" ]]; then
     echo "Patches path exists but is not a directory: $patches_dir" >&2
-    return 1
+    return_with_cleanup 1
   fi
 
   if [[ "$LIVE_MODE" == true ]]; then
@@ -805,36 +958,43 @@ run_happy_case() {
   fi
   if ! contains_keywords "$expected_keywords" "${keyword_files[@]}"; then
     echo "Missing keywords: $case_id" >&2
-    return 1
+    return_with_cleanup 1
   fi
   if [[ ! -s "$out_dir/transcript-${session_id}.adoc" ]]; then
     echo "Missing transcript: $case_id" >&2
-    return 1
+    return_with_cleanup 1
   fi
   if [[ "$LIVE_MODE" == true && ! -s "$out_dir/final-${session_id}.md" ]]; then
     echo "Missing final artifact: $case_id" >&2
-    return 1
+    return_with_cleanup 1
   fi
   if grep -qE "(Finalizer|Transcript write|Final file write) error:" "$stderr_file"; then
     echo "Finalize error detected: $case_id" >&2
-    return 1
+    return_with_cleanup 1
   fi
   if [[ -n "${EXPECTED_FD_SINGLE_PATH:-}" ]]; then
     if [[ "$LIVE_MODE" != true ]]; then
       echo "Expected file-discovery output in dry-run mode: $case_id" >&2
-      return 1
+      return_with_cleanup 1
     fi
     if [[ -z "$fd_path" || ! -f "$fd_path" ]]; then
       echo "Missing file-discovery trajectory for tightness check: $case_id" >&2
-      return 1
+      return_with_cleanup 1
     fi
     if ! assert_fd_single_file "$fd_path" "$EXPECTED_FD_SINGLE_PATH"; then
       echo "File-discovery tightness check failed: $case_id" >&2
-      return 1
+      return_with_cleanup 1
+    fi
+  fi
+
+  if [[ "$marker_checks" == true ]]; then
+    if ! assert_shell_agent_marker_cleanup "$marker_dir" "$stale_marker" "$recent_marker" "$case_id"; then
+      return_with_cleanup 1
     fi
   fi
 
   echo "Passed: $case_id ($turns turns)" >&2
+  return_with_cleanup 0
 }
 
 run_menu_flow_case() {

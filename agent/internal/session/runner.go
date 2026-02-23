@@ -738,6 +738,13 @@ func Run(ctx context.Context, opts Options) Result {
 	if err := os.Setenv("MACHTIANI_SESSION_TEMP_ROOT", sessionTempRoot); err != nil {
 		fmt.Fprintln(os.Stderr, "Warning: unable to export session temp root:", err)
 	}
+	markerMaxAge, markerMaxAgeErr := shellAgentMarkerMaxAge()
+	if markerMaxAgeErr != nil {
+		fmt.Fprintf(os.Stderr, "Warning: %v; using default %s\n", markerMaxAgeErr, defaultShellAgentMarkerMaxAge)
+	}
+	if err := cleanupStaleShellAgentMarkers(sessionTempRoot, markerMaxAge, cfg.verbose); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to cleanup shell-agent markers: %v\n", err)
+	}
 	var sessLock *sessionLock
 	cleanupSessionRoot := origSessionTempRoot == ""
 	defer func() {
