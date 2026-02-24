@@ -78,6 +78,7 @@ func RunShellAgentOnly(ctx context.Context, opts RunOptions) (ShellAgentOnlyResu
 		return res, err
 	}
 
+	combined = AppendShellAgentPromptNotice(combined, opts.Prompts)
 	directiveBlock := formatResponseDirectives(opts.ResponseDirectives)
 	if directiveBlock != "" {
 		if strings.TrimSpace(combined) != "" {

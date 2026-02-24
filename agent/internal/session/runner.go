@@ -1973,6 +1973,17 @@ func Run(ctx context.Context, opts Options) Result {
 				}
 			}
 			shellAgentUsedThisTurn = useShellAgent || runSplitShell
+			var shellNoticePrompts *llm.MCTPromptsConfig
+			if mctRunner.Prompts != nil {
+				shellNoticePrompts = mctRunner.Prompts.MCT
+			}
+			if runSplitShell {
+				if strings.TrimSpace(shellAsk) != "" {
+					shellAsk = promptsvc.AppendShellAgentPromptNotice(shellAsk, shellNoticePrompts)
+				}
+			} else if useShellAgent {
+				question = promptsvc.AppendShellAgentPromptNotice(question, shellNoticePrompts)
+			}
 			runShowFileDetection := !useShellAgent || hasSplitAsk
 			var showFileBanner string
 			showFileRetrieved := []string(nil)

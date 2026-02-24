@@ -160,6 +160,7 @@ type FileDiscoveryPromptsConfig struct {
 // MCTPromptsConfig contains prompt templates for the mct agent wrapper.
 type MCTPromptsConfig struct {
 	ShellAgentContextPrefix     string `toml:"shell_agent_context_prefix"`
+	ShellAgentPromptNotice      string `toml:"shell_agent_prompt_notice"`
 	HeaderUserTemplate          string `toml:"header_user_template"`
 	HeaderExistingTemplate      string `toml:"header_existing_template"`
 	ConversationHistoryTemplate string `toml:"conversation_history_template"`
@@ -167,6 +168,7 @@ type MCTPromptsConfig struct {
 	ShellAgentContextTemplate   string `toml:"shell_agent_context_template"`
 
 	shellAgentContextPrefixSet     bool `toml:"-"`
+	shellAgentPromptNoticeSet      bool `toml:"-"`
 	headerUserTemplateSet          bool `toml:"-"`
 	headerExistingTemplateSet      bool `toml:"-"`
 	conversationHistoryTemplateSet bool `toml:"-"`
@@ -1075,6 +1077,14 @@ func parsePromptsSection(path string, data map[string]any) (*PromptsConfig, erro
 			cfg.ShellAgentContextPrefix = val
 			cfg.shellAgentContextPrefixSet = true
 		}
+		if tplRaw, ok := mctRaw["shell_agent_prompt_notice"]; ok {
+			val, err := templateStringFromRaw(path, "prompts.mct", "shell_agent_prompt_notice", tplRaw)
+			if err != nil {
+				return nil, err
+			}
+			cfg.ShellAgentPromptNotice = val
+			cfg.shellAgentPromptNoticeSet = true
+		}
 		if tplRaw, ok := mctRaw["header_user_template"]; ok {
 			val, err := templateStringFromRaw(path, "prompts.mct", "header_user_template", tplRaw)
 			if err != nil {
@@ -1115,7 +1125,7 @@ func parsePromptsSection(path string, data map[string]any) (*PromptsConfig, erro
 			cfg.ShellAgentContextTemplate = val
 			cfg.shellAgentContextTemplateSet = true
 		}
-		if cfg.shellAgentContextPrefixSet || cfg.headerUserTemplateSet || cfg.headerExistingTemplateSet || cfg.conversationHistoryTemplateSet || cfg.readmeSystemTemplateSet || cfg.shellAgentContextTemplateSet {
+		if cfg.shellAgentContextPrefixSet || cfg.shellAgentPromptNoticeSet || cfg.headerUserTemplateSet || cfg.headerExistingTemplateSet || cfg.conversationHistoryTemplateSet || cfg.readmeSystemTemplateSet || cfg.shellAgentContextTemplateSet {
 			prompts.MCT = cfg
 		}
 	}

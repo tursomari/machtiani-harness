@@ -567,6 +567,7 @@ func TestLoadGlobalConfigSupportsTemplateFiles(t *testing.T) {
 	mustWriteFile(t, filepath.Join(root, "templates", "file-discovery", "system.tpl"), "file discovery system")
 	mustWriteFile(t, filepath.Join(root, "templates", "mct", "context_prefix.tpl"), "context prefix")
 	mustWriteFile(t, filepath.Join(root, "templates", "mct", "context_block.tpl"), "context block {{.Stdout}}")
+	mustWriteFile(t, filepath.Join(root, "templates", "mct", "shell_agent_prompt_notice.tpl"), "shell agent prompt notice")
 	mustWriteFile(t, filepath.Join(root, "templates", "mct", "header_user.tpl"), "header user")
 	mustWriteFile(t, filepath.Join(root, "templates", "mct", "header_existing.tpl"), "header existing")
 	mustWriteFile(t, filepath.Join(root, "templates", "mct", "conversation_history.tpl"), "history {{len .History}}")
@@ -599,6 +600,7 @@ system_prompt_template = { file = "templates/file-discovery/system.tpl" }
 [prompts.mct]
 shell_agent_context_prefix = { file = "templates/mct/context_prefix.tpl" }
 shell_agent_context_template = { file = "templates/mct/context_block.tpl" }
+shell_agent_prompt_notice = { file = "templates/mct/shell_agent_prompt_notice.tpl" }
 header_user_template = { file = "templates/mct/header_user.tpl" }
 header_existing_template = { file = "templates/mct/header_existing.tpl" }
 conversation_history_template = { file = "templates/mct/conversation_history.tpl" }
@@ -676,6 +678,9 @@ readme_system_template = { file = "templates/mct/readme_system.tpl" }
 	}
 	if cfg.Prompts.MCT.ShellAgentContextTemplate != "context block {{.Stdout}}" {
 		t.Fatalf("expected mct context template from file, got %q", cfg.Prompts.MCT.ShellAgentContextTemplate)
+	}
+	if cfg.Prompts.MCT.ShellAgentPromptNotice != "shell agent prompt notice" {
+		t.Fatalf("expected mct shell agent prompt notice from file, got %q", cfg.Prompts.MCT.ShellAgentPromptNotice)
 	}
 	if cfg.Prompts.MCT.HeaderUserTemplate != "header user" {
 		t.Fatalf("expected mct header user template from file, got %q", cfg.Prompts.MCT.HeaderUserTemplate)

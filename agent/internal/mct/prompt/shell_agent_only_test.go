@@ -77,8 +77,11 @@ func TestRunShellAgentOnlySkipsChatAndHistory(t *testing.T) {
 		t.Fatalf("read shell-agent log: %v", err)
 	}
 	logLine := strings.TrimSpace(string(data))
-	if !strings.HasSuffix(logLine, "Collect deployment diagnostics") {
+	if !strings.Contains(logLine, "Collect deployment diagnostics") {
 		t.Fatalf("shell-agent invocation missing prompt: %q", logLine)
+	}
+	if !strings.Contains(logLine, shellAgentPromptNoticeText(opts.Prompts)) {
+		t.Fatalf("shell-agent invocation missing notice: %q", logLine)
 	}
 
 	if _, err := os.Stat(sessionPath); !os.IsNotExist(err) {

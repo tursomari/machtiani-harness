@@ -45,6 +45,7 @@ var templateMap = map[string]string{
 	"mct.header_existing":               "templates/mct/header_existing_template.tpl",
 	"mct.shell_agent_context_prefix":    "templates/mct/shell_agent_context_prefix.tpl",
 	"mct.shell_agent_context_template":  "templates/mct/shell_agent_context_template.tpl",
+	"mct.shell_agent_prompt_notice":     "templates/mct/shell_agent_prompt_notice.tpl",
 	"mct.conversation_history_template": "templates/mct/conversation_history_template.tpl",
 	"mct.readme_system_template":        "templates/mct/readme_system_template.tpl",
 

@@ -44,6 +44,7 @@ var (
 )
 
 const shellAgentContextPrefix = "Here is possibly relevant information from the shell agent."
+const defaultShellAgentPromptNotice = "I understand that I don't have access to a shell directly. The `shell-agent` will carry out my request and report back with explanation of the results and not necessarily the full output of commands it executes."
 
 // Run executes the core prompt flow used by the mct CLI and mct-agent.
 // It handles context building, file discovery, streaming, transcript
@@ -103,6 +104,7 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 			historyNote, opts.Prompt)
 	}
 	combined := opts.Prompt
+	promptForHistory := opts.Prompt
 	included := []string(nil)
 	fileDiscoveryRan := false
 	var filtered []string
@@ -369,6 +371,10 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 		}
 	}
 
+	if opts.ShellAgent {
+		combined = AppendShellAgentPromptNotice(combined, opts.Prompts)
+		promptForHistory = AppendShellAgentPromptNotice(promptForHistory, opts.Prompts)
+	}
 	directiveBlock := formatResponseDirectives(opts.ResponseDirectives)
 	if directiveBlock != "" {
 		if strings.TrimSpace(combined) != "" {
@@ -474,7 +480,7 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 	res.FileDiscoveryRan = fileDiscoveryRan
 	res.ShellAgentUsed = shellAgentUsed
 
-	_ = session.AddMessage("user", opts.Prompt, nil)
+	_ = session.AddMessage("user", promptForHistory, nil)
 	_ = session.AddMessage("assistant", res.Assistant, included)
 
 	if err := runReadmeManager(ctx, opts, isAnswerOnly); err != nil {
@@ -1164,6 +1170,11 @@ func validateMCTPromptsConfig(cfg *llm.MCTPromptsConfig) error {
 			cfg.ShellAgentContextPrefix = embedded
 		}
 	}
+	if strings.TrimSpace(cfg.ShellAgentPromptNotice) == "" {
+		if embedded, err := templates.GetEmbeddedTemplate("mct.shell_agent_prompt_notice"); err == nil {
+			cfg.ShellAgentPromptNotice = embedded
+		}
+	}
 	if strings.TrimSpace(cfg.ConversationHistoryTemplate) == "" {
 		return fmt.Errorf("conversation history template is required")
 	}
@@ -1502,6 +1513,35 @@ func formatResponseDirectives(directives []string) string {
 	}
 
 	return strings.TrimSpace(b.String())
+}
+
+func shellAgentPromptNoticeText(cfg *llm.MCTPromptsConfig) string {
+	if cfg != nil {
+		if trimmed := strings.TrimSpace(cfg.ShellAgentPromptNotice); trimmed != "" {
+			return trimmed
+		}
+	}
+	if embedded, err := templates.GetEmbeddedTemplate("mct.shell_agent_prompt_notice"); err == nil {
+		if trimmed := strings.TrimSpace(embedded); trimmed != "" {
+			return trimmed
+		}
+	}
+	return defaultShellAgentPromptNotice
+}
+
+// AppendShellAgentPromptNotice adds the shell-agent notice to a prompt if missing.
+func AppendShellAgentPromptNotice(prompt string, cfg *llm.MCTPromptsConfig) string {
+	notice := shellAgentPromptNoticeText(cfg)
+	if strings.TrimSpace(notice) == "" {
+		return prompt
+	}
+	if strings.TrimSpace(prompt) == "" {
+		return notice
+	}
+	if strings.Contains(prompt, notice) {
+		return prompt
+	}
+	return strings.TrimRight(prompt, "\n") + "\n\n" + notice
 }
 
 func FormatShowFileDiscoveryAsk(invalid map[string]string) string {
