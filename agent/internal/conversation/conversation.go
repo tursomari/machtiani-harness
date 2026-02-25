@@ -352,9 +352,11 @@ func renderTurn(step int, question, savedPath string, retrieved []string, summar
 		b.WriteString(summary)
 		b.WriteString("\n\n")
 	}
-	b.WriteString("Planner decision: ")
-	b.WriteString(decision)
-	b.WriteString("\n")
+	if strings.TrimSpace(decision) != "" {
+		b.WriteString("Planner decision: ")
+		b.WriteString(decision)
+		b.WriteString("\n")
+	}
 	return sanitize(b.String())
 }
 

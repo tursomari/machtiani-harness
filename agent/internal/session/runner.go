@@ -913,6 +913,10 @@ func Run(ctx context.Context, opts Options) Result {
 			}
 		}
 	}
+	var notePrompts *llm.MCTPromptsConfig
+	if opts.GlobalConfig.Prompts != nil {
+		notePrompts = opts.GlobalConfig.Prompts.MCT
+	}
 	writePendingPatchTranscript := func(status string, decision string, note string, undo bool) error {
 		if pendingPatchDraft == nil {
 			return nil
@@ -935,6 +939,13 @@ func Run(ctx context.Context, opts Options) Result {
 		summary := pendingPatchDraft.Answer
 		if strings.ToLower(status) == "rejected" || strings.ToLower(status) == "reject" {
 			summary = ""
+		}
+		if strings.ToLower(status) == "success" {
+			question = desc
+			if noteText := transcript.PatchSuccessNoteText(notePrompts); noteText != "" {
+				question = desc + "\n\n" + noteText
+			}
+			decision = ""
 		}
 		additional := []string{}
 		if trimmedNote := strings.TrimSpace(note); trimmedNote != "" {
@@ -965,7 +976,24 @@ func Run(ctx context.Context, opts Options) Result {
 				if len(files) == 0 {
 					files = append(files, plannerProgress.successList()...)
 				}
-				fulldiff.Inject(pendingPatchDraft.Step, repoRoot, files, tr, plannerProgress, fulldiff.Options{Verbose: cfg.verbose, Baseline: baseline})
+				recordFullDiff := func(step int, file, diff, note string) error {
+					if conv == nil {
+						return nil
+					}
+					conv.AddMessage("assistant", note, map[string]any{
+						"type": "full_diff",
+						"turn": step,
+						"file": strings.TrimSpace(file),
+						"diff": diff,
+					})
+					return saveConversation()
+				}
+				fulldiff.Inject(pendingPatchDraft.Step, repoRoot, files, tr, plannerProgress, fulldiff.Options{
+					Verbose:        cfg.verbose,
+					Baseline:       baseline,
+					FullDiffNote:   transcript.FullDiffNoteText(notePrompts),
+					RecordFullDiff: recordFullDiff,
+				})
 				// Synthetic turn: keep transcript step count in sync.
 				// full-diff injection now emits 0..N transcript turns (one per file).
 				if trajectoryWriter != nil {
@@ -3854,31 +3882,31 @@ func loadFullDiffsForSession(sessionID string, verbose bool) (string, error) {
 	if sessionID == "" {
 		return "", nil
 	}
-	chatDir, err := artifacts.SessionChatDirectory(sessionID)
+	conversationPath, err := artifacts.SessionConversationFile(sessionID)
 	if err != nil {
 		return "", err
 	}
-	transcriptPath := filepath.Join(chatDir, "agent-transcript.adoc")
-	data, err := os.ReadFile(transcriptPath)
+	data, err := os.ReadFile(conversationPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			if verbose {
-				fmt.Fprintf(os.Stderr, "[full-diff] transcript not found at %s\n", transcriptPath)
+				fmt.Fprintf(os.Stderr, "[full-diff] conversation not found at %s\n", conversationPath)
 			}
 			return "", nil
 		}
 		if verbose {
-			fmt.Fprintf(os.Stderr, "[full-diff] read transcript failed: %v\n", err)
+			fmt.Fprintf(os.Stderr, "[full-diff] read conversation failed: %v\n", err)
 		}
 		return "", err
 	}
-	fullDiffs, err := transcript.ExtractFullDiffsFromContent(string(data))
+	conv, err := conversation.Unmarshal(data)
 	if err != nil {
 		if verbose {
-			fmt.Fprintf(os.Stderr, "[full-diff] extract failed: %v\n", err)
+			fmt.Fprintf(os.Stderr, "[full-diff] parse conversation failed: %v\n", err)
 		}
 		return "", err
 	}
+	fullDiffs := conversation.ExtractFullDiffs(conv)
 	if verbose && strings.TrimSpace(fullDiffs) == "" {
 		fmt.Fprintln(os.Stderr, "[full-diff] no full diffs found")
 	}

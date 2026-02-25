@@ -77,8 +77,8 @@ type ShellAgentConfig struct {
 	CostLimit              float64 `toml:"cost_limit"`
 	FinalizeRemainingSteps int     `toml:"finalize_remaining_steps"`
 
-	stepLimitSet bool `toml:"-"`
-	costLimitSet bool `toml:"-"`
+	stepLimitSet              bool `toml:"-"`
+	costLimitSet              bool `toml:"-"`
 	finalizeRemainingStepsSet bool `toml:"-"`
 }
 
@@ -166,6 +166,8 @@ type MCTPromptsConfig struct {
 	ConversationHistoryTemplate string `toml:"conversation_history_template"`
 	ReadmeSystemTemplate        string `toml:"readme_system_template"`
 	ShellAgentContextTemplate   string `toml:"shell_agent_context_template"`
+	PatchSuccessNote            string `toml:"patch_success_note"`
+	FullDiffNote                string `toml:"full_diff_note"`
 
 	shellAgentContextPrefixSet     bool `toml:"-"`
 	shellAgentPromptNoticeSet      bool `toml:"-"`
@@ -174,6 +176,8 @@ type MCTPromptsConfig struct {
 	conversationHistoryTemplateSet bool `toml:"-"`
 	readmeSystemTemplateSet        bool `toml:"-"`
 	shellAgentContextTemplateSet   bool `toml:"-"`
+	patchSuccessNoteSet            bool `toml:"-"`
+	fullDiffNoteSet                bool `toml:"-"`
 }
 
 // ModelConfig captures direct model overrides under the top-level [model]
@@ -1125,7 +1129,23 @@ func parsePromptsSection(path string, data map[string]any) (*PromptsConfig, erro
 			cfg.ShellAgentContextTemplate = val
 			cfg.shellAgentContextTemplateSet = true
 		}
-		if cfg.shellAgentContextPrefixSet || cfg.shellAgentPromptNoticeSet || cfg.headerUserTemplateSet || cfg.headerExistingTemplateSet || cfg.conversationHistoryTemplateSet || cfg.readmeSystemTemplateSet || cfg.shellAgentContextTemplateSet {
+		if tplRaw, ok := mctRaw["patch_success_note"]; ok {
+			val, err := templateStringFromRaw(path, "prompts.mct", "patch_success_note", tplRaw)
+			if err != nil {
+				return nil, err
+			}
+			cfg.PatchSuccessNote = val
+			cfg.patchSuccessNoteSet = true
+		}
+		if tplRaw, ok := mctRaw["full_diff_note"]; ok {
+			val, err := templateStringFromRaw(path, "prompts.mct", "full_diff_note", tplRaw)
+			if err != nil {
+				return nil, err
+			}
+			cfg.FullDiffNote = val
+			cfg.fullDiffNoteSet = true
+		}
+		if cfg.shellAgentContextPrefixSet || cfg.shellAgentPromptNoticeSet || cfg.headerUserTemplateSet || cfg.headerExistingTemplateSet || cfg.conversationHistoryTemplateSet || cfg.readmeSystemTemplateSet || cfg.shellAgentContextTemplateSet || cfg.patchSuccessNoteSet || cfg.fullDiffNoteSet {
 			prompts.MCT = cfg
 		}
 	}

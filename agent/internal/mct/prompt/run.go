@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tursomari/machtiani/agent/internal/conversation"
 	"github.com/tursomari/machtiani/agent/internal/git"
 	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
@@ -32,7 +33,6 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/shellbridge"
 	"github.com/tursomari/machtiani/agent/internal/templates"
 	"github.com/tursomari/machtiani/agent/internal/trajectory"
-	"github.com/tursomari/machtiani/agent/internal/transcript"
 )
 
 var (
@@ -605,31 +605,31 @@ func loadFullDiffsForSession(sessionID string, verbose bool) (string, error) {
 	if sessionID == "" {
 		return "", nil
 	}
-	chatDir, err := artifacts.SessionChatDirectory(sessionID)
+	conversationPath, err := artifacts.SessionConversationFile(sessionID)
 	if err != nil {
 		return "", err
 	}
-	transcriptPath := filepath.Join(chatDir, "agent-transcript.adoc")
-	data, err := os.ReadFile(transcriptPath)
+	data, err := os.ReadFile(conversationPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			if verbose {
-				fmt.Fprintf(os.Stderr, "[full-diff] transcript not found at %s\n", transcriptPath)
+				fmt.Fprintf(os.Stderr, "[full-diff] conversation not found at %s\n", conversationPath)
 			}
 			return "", nil
 		}
 		if verbose {
-			fmt.Fprintf(os.Stderr, "[full-diff] read transcript failed: %v\n", err)
+			fmt.Fprintf(os.Stderr, "[full-diff] read conversation failed: %v\n", err)
 		}
 		return "", err
 	}
-	fullDiffs, err := transcript.ExtractFullDiffsFromContent(string(data))
+	conv, err := conversation.Unmarshal(data)
 	if err != nil {
 		if verbose {
-			fmt.Fprintf(os.Stderr, "[full-diff] extract failed: %v\n", err)
+			fmt.Fprintf(os.Stderr, "[full-diff] parse conversation failed: %v\n", err)
 		}
 		return "", err
 	}
+	fullDiffs := conversation.ExtractFullDiffs(conv)
 	if verbose && strings.TrimSpace(fullDiffs) == "" {
 		fmt.Fprintln(os.Stderr, "[full-diff] no full diffs found")
 	}
@@ -1173,6 +1173,16 @@ func validateMCTPromptsConfig(cfg *llm.MCTPromptsConfig) error {
 	if strings.TrimSpace(cfg.ShellAgentPromptNotice) == "" {
 		if embedded, err := templates.GetEmbeddedTemplate("mct.shell_agent_prompt_notice"); err == nil {
 			cfg.ShellAgentPromptNotice = embedded
+		}
+	}
+	if strings.TrimSpace(cfg.PatchSuccessNote) == "" {
+		if embedded, err := templates.GetEmbeddedTemplate("mct.patch_success_note"); err == nil {
+			cfg.PatchSuccessNote = embedded
+		}
+	}
+	if strings.TrimSpace(cfg.FullDiffNote) == "" {
+		if embedded, err := templates.GetEmbeddedTemplate("mct.full_diff_note"); err == nil {
+			cfg.FullDiffNote = embedded
 		}
 	}
 	if strings.TrimSpace(cfg.ConversationHistoryTemplate) == "" {

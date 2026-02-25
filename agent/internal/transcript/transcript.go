@@ -232,9 +232,11 @@ func (t *Transcript) WriteTurn(step int, question, savedPath string, retrieved [
 		b.WriteString("=== ANSWER\n\n")
 		b.WriteString(summary + "\n\n")
 	}
-	b.WriteString("Planner decision: ")
-	b.WriteString(decision)
-	b.WriteString("\n")
+	if strings.TrimSpace(decision) != "" {
+		b.WriteString("Planner decision: ")
+		b.WriteString(decision)
+		b.WriteString("\n")
+	}
 	s := sanitizeTranscriptText(b.String())
 	if s == "" {
 		return nil
@@ -413,8 +415,25 @@ func ExtractFullDiffsFromContent(content string) (string, error) {
 		return "", nil
 	}
 
-	normalize := func(p string) string {
+	stripSuffixes := func(p string) string {
 		trimmed := strings.TrimSpace(p)
+		if trimmed == "" {
+			return ""
+		}
+		for {
+			switch {
+			case strings.HasSuffix(trimmed, " (deleted in workspace)"):
+				trimmed = strings.TrimSpace(strings.TrimSuffix(trimmed, " (deleted in workspace)"))
+			case strings.HasSuffix(trimmed, " (symlink)"):
+				trimmed = strings.TrimSpace(strings.TrimSuffix(trimmed, " (symlink)"))
+			default:
+				return trimmed
+			}
+		}
+	}
+
+	normalize := func(p string) string {
+		trimmed := stripSuffixes(p)
 		if trimmed == "" {
 			return ""
 		}
@@ -423,33 +442,6 @@ func ExtractFullDiffsFromContent(content string) (string, error) {
 			return ""
 		}
 		return cleaned
-	}
-
-	extractFile := func(line string) string {
-		trimmed := strings.TrimSpace(line)
-		upper := strings.ToUpper(trimmed)
-		lower := strings.ToLower(trimmed)
-		const unifiedPrefix = "automatic unified diff post-patch for:"
-		const fullPrefix = "automatic full diff post-patch for:"
-		switch {
-		case strings.HasPrefix(lower, unifiedPrefix):
-			return normalize(strings.TrimSpace(trimmed[len(unifiedPrefix):]))
-		case strings.HasPrefix(lower, fullPrefix):
-			return normalize(strings.TrimSpace(trimmed[len(fullPrefix):]))
-		}
-		const unifiedHeaderPrefix = "=== UNIFIED DIFF OF PATCHED FILE:"
-		const fullHeaderPrefix = "=== FULL DIFF OF PATCHED FILE:"
-		switch {
-		case strings.HasPrefix(upper, unifiedHeaderPrefix):
-			rest := strings.TrimSpace(trimmed[len(unifiedHeaderPrefix):])
-			rest = strings.TrimSpace(strings.TrimSuffix(rest, "==="))
-			return normalize(rest)
-		case strings.HasPrefix(upper, fullHeaderPrefix):
-			rest := strings.TrimSpace(trimmed[len(fullHeaderPrefix):])
-			rest = strings.TrimSpace(strings.TrimSuffix(rest, "==="))
-			return normalize(rest)
-		}
-		return ""
 	}
 
 	trimAnswer := func(lines []string) string {
@@ -477,29 +469,31 @@ func ExtractFullDiffsFromContent(content string) (string, error) {
 	order := 0
 
 	var (
-		inTurn      bool
-		inAnswer    bool
-		inRetrieved bool
-		decision    string
-		answerLines []string
-		turnFile    string
+		inTurn       bool
+		inAnswer     bool
+		answerLines  []string
+		turnFile     string
+		sawFileLine  bool
+		sawFullLabel bool
+		sawDiffFence bool
 	)
 
 	resetTurn := func() {
 		inTurn = false
 		inAnswer = false
-		inRetrieved = false
-		decision = ""
 		answerLines = nil
 		turnFile = ""
+		sawFileLine = false
+		sawFullLabel = false
+		sawDiffFence = false
 	}
 
 	flushTurn := func() {
 		if !inTurn {
 			return
 		}
-		decisionValue := strings.ToLower(strings.TrimSpace(decision))
-		if decisionValue == "full_diff" {
+		isFullDiff := sawFileLine && sawFullLabel && sawDiffFence
+		if isFullDiff {
 			summary := trimAnswer(answerLines)
 			if summary != "" {
 				order++
@@ -541,39 +535,31 @@ func ExtractFullDiffsFromContent(content string) (string, error) {
 			continue
 		}
 		trimmed := strings.TrimSpace(line)
+		lowerTrimmed := strings.ToLower(trimmed)
 		if strings.EqualFold(trimmed, "=== ANSWER") {
 			inAnswer = true
 			continue
 		}
-		if strings.HasPrefix(strings.ToLower(trimmed), "planner decision:") {
-			decision = strings.TrimSpace(trimmed[len("planner decision:"):])
+		if strings.HasPrefix(lowerTrimmed, "planner decision:") {
 			inAnswer = false
 			continue
 		}
-		if strings.EqualFold(trimmed, "Retrieved File Paths:") {
-			inRetrieved = true
+		if !inAnswer {
 			continue
 		}
-		if inRetrieved {
-			if strings.HasPrefix(strings.TrimSpace(trimmed), "*") {
-				file := strings.TrimSpace(strings.TrimPrefix(trimmed, "*"))
-				if normalized := normalize(file); normalized != "" && turnFile == "" {
-					turnFile = normalized
-				}
-				continue
+		if strings.HasPrefix(lowerTrimmed, "file:") {
+			sawFileLine = true
+			if turnFile == "" {
+				turnFile = normalize(strings.TrimSpace(trimmed[len("File:"):]))
 			}
-			if trimmed == "" {
-				inRetrieved = false
-				continue
-			}
-			inRetrieved = false
 		}
-		if candidate := extractFile(line); candidate != "" {
-			turnFile = candidate
+		if lowerTrimmed == "full diff:" {
+			sawFullLabel = true
 		}
-		if inAnswer {
-			answerLines = append(answerLines, line)
+		if strings.HasPrefix(lowerTrimmed, "```diff") {
+			sawDiffFence = true
 		}
+		answerLines = append(answerLines, line)
 	}
 	flushTurn()
 
@@ -652,8 +638,25 @@ func (t *Transcript) DeduplicateFullDiffByFile(filePath string) error {
 		return nil
 	}
 
+	stripSuffixes := func(p string) string {
+		trimmed := strings.TrimSpace(p)
+		if trimmed == "" {
+			return ""
+		}
+		for {
+			switch {
+			case strings.HasSuffix(trimmed, " (deleted in workspace)"):
+				trimmed = strings.TrimSpace(strings.TrimSuffix(trimmed, " (deleted in workspace)"))
+			case strings.HasSuffix(trimmed, " (symlink)"):
+				trimmed = strings.TrimSpace(strings.TrimSuffix(trimmed, " (symlink)"))
+			default:
+				return trimmed
+			}
+		}
+	}
+
 	normalize := func(p string) string {
-		rel := filepath.ToSlash(strings.TrimSpace(p))
+		rel := filepath.ToSlash(stripSuffixes(p))
 		if rel == "" {
 			return ""
 		}
@@ -681,39 +684,43 @@ func (t *Transcript) DeduplicateFullDiffByFile(filePath string) error {
 	}
 
 	inTurn := false
-	inRetrieved := false
+	inAnswer := false
 	currentLines := []string{}
 	currentFiles := map[string]struct{}{}
-	currentIsFullDiff := false
+	sawFileLine := false
+	sawFullLabel := false
+	sawDiffFence := false
 
 	flushTurn := func() {
 		if !inTurn {
 			return
 		}
+		isFullDiff := sawFileLine && sawFullLabel && sawDiffFence
 		turns = append(turns, struct {
 			lines      []string
 			isFullDiff bool
 			files      map[string]struct{}
 		}{
 			lines:      append([]string{}, currentLines...),
-			isFullDiff: currentIsFullDiff,
+			isFullDiff: isFullDiff,
 			files:      currentFiles,
 		})
 		currentLines = []string{}
 		currentFiles = map[string]struct{}{}
-		currentIsFullDiff = false
+		sawFileLine = false
+		sawFullLabel = false
+		sawDiffFence = false
 		inTurn = false
-		inRetrieved = false
+		inAnswer = false
 	}
 
 	for _, line := range lines {
 		if strings.HasPrefix(line, "== TURN ") {
 			flushTurn()
 			inTurn = true
-			inRetrieved = false
+			inAnswer = false
 			currentLines = []string{line}
 			currentFiles = map[string]struct{}{}
-			currentIsFullDiff = false
 			continue
 		}
 		if !inTurn {
@@ -722,21 +729,21 @@ func (t *Transcript) DeduplicateFullDiffByFile(filePath string) error {
 		}
 		currentLines = append(currentLines, line)
 		trimmed := strings.TrimSpace(line)
+		lowerTrimmed := strings.ToLower(trimmed)
 		switch {
-		case strings.HasPrefix(trimmed, "Planner decision:"):
-			currentIsFullDiff = strings.TrimSpace(strings.TrimPrefix(trimmed, "Planner decision:")) == "full_diff"
-		case trimmed == "Retrieved File Paths:":
-			inRetrieved = true
-		case inRetrieved && strings.HasPrefix(trimmed, "* "):
-			currentFiles = addFile(currentFiles, normalize(strings.TrimPrefix(trimmed, "* ")))
-		case inRetrieved && trimmed == "":
-			inRetrieved = false
-		case inRetrieved:
-			inRetrieved = false
-		case strings.HasPrefix(trimmed, "Automatic unified diff post-patch for:"):
-			currentFiles = addFile(currentFiles, normalize(strings.TrimPrefix(trimmed, "Automatic unified diff post-patch for:")))
-		case strings.HasPrefix(trimmed, "Automatic full diff post-patch for:"):
-			currentFiles = addFile(currentFiles, normalize(strings.TrimPrefix(trimmed, "Automatic full diff post-patch for:")))
+		case strings.EqualFold(trimmed, "=== ANSWER"):
+			inAnswer = true
+		case strings.HasPrefix(lowerTrimmed, "planner decision:"):
+			inAnswer = false
+		case !inAnswer:
+			continue
+		case strings.HasPrefix(lowerTrimmed, "file:"):
+			sawFileLine = true
+			currentFiles = addFile(currentFiles, normalize(strings.TrimSpace(trimmed[len("File:"):])))
+		case lowerTrimmed == "full diff:":
+			sawFullLabel = true
+		case strings.HasPrefix(lowerTrimmed, "```diff"):
+			sawDiffFence = true
 		}
 	}
 	flushTurn()

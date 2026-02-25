@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	patchersvc "github.com/tursomari/machtiani/agent/internal/patcher"
+	"github.com/tursomari/machtiani/agent/internal/transcript"
 )
 
 type Transcript interface {
@@ -25,9 +26,11 @@ type Logger interface {
 }
 
 type Options struct {
-	Verbose  bool
-	Log      Logger
-	Baseline *patchersvc.BaselineState
+	Verbose        bool
+	Log            Logger
+	Baseline       *patchersvc.BaselineState
+	FullDiffNote   string
+	RecordFullDiff func(step int, file, diff, note string) error
 }
 
 func Inject(step int, repoRoot string, filesModified []string, tr Transcript, tracker ProgressTracker, opts Options) {
@@ -88,6 +91,11 @@ func Inject(step int, repoRoot string, filesModified []string, tr Transcript, tr
 		return false
 	}
 
+	fullDiffNote := strings.TrimSpace(opts.FullDiffNote)
+	if fullDiffNote == "" {
+		fullDiffNote = strings.TrimSpace(transcript.FullDiffNoteText(nil))
+	}
+
 	writeStep := step
 	wroteAny := false
 	for _, file := range filesModified {
@@ -103,15 +111,8 @@ func Inject(step int, repoRoot string, filesModified []string, tr Transcript, tr
 			continue
 		}
 
-		question := fmt.Sprintf("Automatic full diff post-patch for: %s", file)
-		header := fmt.Sprintf("\n=== FULL DIFF OF PATCHED FILE: %s ===\n", file)
-		footer := "\n===\n"
-		instruction := "How to read this diff:\n" +
-			"This diff is presented as the current file with reliable line numbers. " +
-			"Line numbers are computed against the current workspace version, so they're safe to use. " +
-			"The only extra annotations are the line-number column and the +/- markers; " +
-			"otherwise the content reflects the current file state.\n\n"
-		fullDiffContent := instruction + header + section + footer
+		question := fullDiffNote
+		fullDiffContent := section
 		contentHash := fmt.Sprintf("%x", sha256.Sum256([]byte(fullDiffContent)))
 
 		// Always dedupe the transcript first to preserve the "single per file"
@@ -128,7 +129,13 @@ func Inject(step int, repoRoot string, filesModified []string, tr Transcript, tr
 		}
 
 		writeStep++
-		if err := tr.WriteTurn(writeStep, question, "", []string{file}, fullDiffContent, "full_diff"); err != nil {
+		if opts.RecordFullDiff != nil {
+			if err := opts.RecordFullDiff(writeStep, file, fullDiffContent, question); err != nil {
+				logf("[full-diff] Conversation record failed for %s: %v\n", file, err)
+				return
+			}
+		}
+		if err := tr.WriteTurn(writeStep, question, "", nil, fullDiffContent, ""); err != nil {
 			logf("[full-diff] Transcript write failed: %v\n", err)
 			return
 		}

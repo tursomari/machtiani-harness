@@ -245,3 +245,34 @@ func TestToChatMessagesIncludesCacheAnchor(t *testing.T) {
 		t.Fatalf("unexpected cache anchor content: %q", messages[1].Content)
 	}
 }
+
+func TestExtractFullDiffsDedupesByFile(t *testing.T) {
+	conv := New("sess-full-diff", "Goal")
+	diffA1 := "File: a.txt\n\nFull diff:\n```diff\n+ a1\n```"
+	diffB1 := "File: b.txt\n\nFull diff:\n```diff\n+ b1\n```"
+	diffA2 := "File: a.txt\n\nFull diff:\n```diff\n+ a2\n```"
+
+	conv.AddMessage("assistant", "note", map[string]any{"type": "full_diff", "turn": 1, "file": "a.txt", "diff": diffA1})
+	conv.AddMessage("assistant", "note", map[string]any{"type": "full_diff", "turn": 2, "file": "b.txt", "diff": diffB1})
+	conv.AddMessage("assistant", "note", map[string]any{"type": "full_diff", "turn": 3, "file": "a.txt", "diff": diffA2})
+
+	got := ExtractFullDiffs(conv)
+	want := diffB1 + "\n\n" + diffA2
+	if got != want {
+		t.Fatalf("unexpected full diffs:\nwant:\n%s\n----\n got:\n%s", want, got)
+	}
+}
+
+func TestExtractFullDiffsNormalizesFileSuffixes(t *testing.T) {
+	conv := New("sess-full-diff-normalize", "Goal")
+	diffOld := "File: README.md (deleted in workspace)\n\nFull diff:\n```diff\n- old\n```"
+	diffNew := "File: README.md\n\nFull diff:\n```diff\n+ new\n```"
+
+	conv.AddMessage("assistant", "note", map[string]any{"type": "full_diff", "turn": 1, "file": "README.md (deleted in workspace)", "diff": diffOld})
+	conv.AddMessage("assistant", "note", map[string]any{"type": "full_diff", "turn": 2, "file": "README.md", "diff": diffNew})
+
+	got := ExtractFullDiffs(conv)
+	if got != diffNew {
+		t.Fatalf("unexpected full diffs:\nwant:\n%s\n----\n got:\n%s", diffNew, got)
+	}
+}

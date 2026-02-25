@@ -108,19 +108,35 @@ func TestInjectRemovesPriorFullDiffsForSameFile(t *testing.T) {
 	}
 	defer tr.Close()
 
+	fullDiffNote := transcript.FullDiffNoteText(nil)
 	if err := os.WriteFile(workspaceFile, []byte("first change\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	Inject(4, repo, []string{"README.md"}, tr, nil, Options{Baseline: baseline})
+	Inject(4, repo, []string{"README.md"}, tr, nil, Options{Baseline: baseline, FullDiffNote: fullDiffNote})
 
 	if err := os.WriteFile(workspaceFile, []byte("second change\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	Inject(6, repo, []string{"README.md"}, tr, nil, Options{Baseline: baseline})
+	Inject(6, repo, []string{"README.md"}, tr, nil, Options{Baseline: baseline, FullDiffNote: fullDiffNote})
 
 	content := tr.Content()
-	if count := strings.Count(content, "=== FULL DIFF OF PATCHED FILE: README.md ==="); count != 1 {
+	if count := strings.Count(content, "File: README.md"); count != 1 {
 		t.Fatalf("expected single full diff, got %d:\n%s", count, content)
+	}
+	if !strings.Contains(content, "Full diff:") {
+		t.Fatalf("expected full diff label to remain:\n%s", content)
+	}
+	if fullDiffNote == "" {
+		t.Fatalf("expected default full diff note to be set")
+	}
+	if !strings.Contains(content, strings.SplitN(fullDiffNote, "\n", 2)[0]) {
+		t.Fatalf("expected full diff note to be present:\n%s", content)
+	}
+	if strings.Contains(content, "Retrieved File Paths:") {
+		t.Fatalf("did not expect retrieved file paths in full diff turn:\n%s", content)
+	}
+	if strings.Contains(content, "Planner decision: full_diff") {
+		t.Fatalf("did not expect planner decision tag in full diff turn:\n%s", content)
 	}
 	if !strings.Contains(content, "second change") {
 		t.Fatalf("expected latest diff content to remain:\n%s", content)

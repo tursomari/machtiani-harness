@@ -48,6 +48,8 @@ var templateMap = map[string]string{
 	"mct.shell_agent_prompt_notice":     "templates/mct/shell_agent_prompt_notice.tpl",
 	"mct.conversation_history_template": "templates/mct/conversation_history_template.tpl",
 	"mct.readme_system_template":        "templates/mct/readme_system_template.tpl",
+	"mct.patch_success_note":            "templates/mct/patch_success_note.tpl",
+	"mct.full_diff_note":                "templates/mct/full_diff_note.tpl",
 
 	// File discovery
 	"file_discovery.system_prompt_template": "templates/file-discovery/system_prompt_template.tpl",

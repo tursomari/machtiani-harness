@@ -163,7 +163,7 @@ func BuildBaselineFullDiffSection(state *BaselineState, workspaceRoot, relPath s
 		b.WriteString(" (symlink)")
 	}
 	b.WriteString("\n\n")
-	b.WriteString("Full diff (post-patch above):\n")
+	b.WriteString("Full diff:\n")
 	b.WriteString("```diff\n")
 	b.WriteString(strings.TrimRight(diffBody, "\n"))
 	b.WriteString("\n```")

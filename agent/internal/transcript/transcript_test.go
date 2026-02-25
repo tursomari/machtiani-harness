@@ -6,6 +6,10 @@ import (
 	"testing"
 )
 
+func fullDiffAnswer(path string, body string) string {
+	return "File: " + path + "\n\nFull diff:\n```diff\n" + body + "\n```"
+}
+
 func TestWriteTurn_Patcher(t *testing.T) {
 	// Ensure chat dir exists in temp working dir
 	cwd, _ := os.Getwd()
@@ -39,6 +43,32 @@ func TestWriteTurn_Patcher(t *testing.T) {
 	}
 	if strings.Contains(content, "mct chat:") {
 		t.Fatalf("should not include mct chat path for patch turn: %s", content)
+	}
+}
+
+func TestWriteTurn_OmitsPlannerDecisionWhenEmpty(t *testing.T) {
+	cwd, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	tmp := t.TempDir()
+	_ = os.Chdir(tmp)
+	t.Setenv("HOME", tmp)
+
+	tr, err := New("decision-empty")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tr.Close()
+
+	if err := tr.WriteHeader("goal", "", "decision-empty", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := tr.WriteTurn(1, "Question", "", nil, "Answer", ""); err != nil {
+		t.Fatal(err)
+	}
+	content := tr.Content()
+	if strings.Contains(content, "Planner decision:") {
+		t.Fatalf("did not expect planner decision line when decision is empty:\n%s", content)
 	}
 }
 
@@ -258,11 +288,10 @@ func TestDeduplicateFullDiffByFile_RemovesPriorTurns(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	files := []string{"a.txt", "b.txt"}
-	if err := tr.WriteTurn(1, "Automatic unified diff post-patch for: a.txt", "", files, "diff1", "full_diff"); err != nil {
+	if err := tr.WriteTurn(1, "Full diff output", "", nil, fullDiffAnswer("a.txt", "+ diff1"), ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := tr.WriteTurn(2, "Automatic unified diff post-patch for: a.txt", "", files, "diff2", "full_diff"); err != nil {
+	if err := tr.WriteTurn(2, "Full diff output", "", nil, fullDiffAnswer("a.txt", "+ diff2"), ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := tr.WriteTurn(3, "Something else", "", nil, "", "ask"); err != nil {
@@ -302,10 +331,10 @@ func TestDeduplicateFullDiffByFile_PrefersLastTurnOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := tr.WriteTurn(5, "Automatic unified diff post-patch for: a.txt", "", []string{"a.txt"}, "diff-old", "full_diff"); err != nil {
+	if err := tr.WriteTurn(5, "Full diff output", "", nil, fullDiffAnswer("a.txt", "+ diff-old"), ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := tr.WriteTurn(4, "Automatic unified diff post-patch for: a.txt", "", []string{"a.txt"}, "diff-new", "full_diff"); err != nil {
+	if err := tr.WriteTurn(4, "Full diff output", "", nil, fullDiffAnswer("a.txt", "+ diff-new"), ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -322,7 +351,7 @@ func TestDeduplicateFullDiffByFile_PrefersLastTurnOrder(t *testing.T) {
 	}
 }
 
-func TestDeduplicateFullDiffByFile_UsesRetrievedPaths(t *testing.T) {
+func TestDeduplicateFullDiffByFile_NormalizesFileLine(t *testing.T) {
 	cwd, _ := os.Getwd()
 	t.Cleanup(func() { _ = os.Chdir(cwd) })
 	tmp := t.TempDir()
@@ -339,12 +368,10 @@ func TestDeduplicateFullDiffByFile_UsesRetrievedPaths(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The question references a different file name, but the retrieved path
-	// points to the target file with a leading ./.
-	if err := tr.WriteTurn(1, "Automatic unified diff post-patch for: other.md", "", []string{"./README.md"}, "diff-old", "full_diff"); err != nil {
+	if err := tr.WriteTurn(1, "Full diff output", "", nil, fullDiffAnswer("./README.md", "+ diff-old"), ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := tr.WriteTurn(2, "Automatic unified diff post-patch for: README.md", "", []string{"README.md"}, "diff-new", "full_diff"); err != nil {
+	if err := tr.WriteTurn(2, "Full diff output", "", nil, fullDiffAnswer("README.md", "+ diff-new"), ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -354,7 +381,7 @@ func TestDeduplicateFullDiffByFile_UsesRetrievedPaths(t *testing.T) {
 
 	content := tr.Content()
 	if strings.Contains(content, "diff-old") {
-		t.Fatalf("expected dedupe to key off retrieved paths:\n%s", content)
+		t.Fatalf("expected dedupe to key off file line:\n%s", content)
 	}
 	if !strings.Contains(content, "diff-new") {
 		t.Fatalf("expected latest README.md diff to remain:\n%s", content)
@@ -377,7 +404,7 @@ func TestDeduplicateFullDiffByFile_RetainsSingleFullDiff(t *testing.T) {
 	if err := tr.WriteHeader("goal", "", "full-diff-single", nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := tr.WriteTurn(1, "Automatic unified diff post-patch for: a.txt", "", []string{"a.txt"}, "diff-only", "full_diff"); err != nil {
+	if err := tr.WriteTurn(1, "Full diff output", "", nil, fullDiffAnswer("a.txt", "+ diff-only"), ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -408,13 +435,13 @@ func TestDeduplicateFullDiffByFile_DoesNotDeleteOtherFileFullDiff(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	if err := tr.WriteTurn(1, "Automatic unified diff post-patch for: a.txt", "", []string{"a.txt"}, "diff-a-1", "full_diff"); err != nil {
+	if err := tr.WriteTurn(1, "Full diff output", "", nil, fullDiffAnswer("a.txt", "+ diff-a-1"), ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := tr.WriteTurn(2, "Automatic unified diff post-patch for: b.txt", "", []string{"b.txt"}, "diff-b-1", "full_diff"); err != nil {
+	if err := tr.WriteTurn(2, "Full diff output", "", nil, fullDiffAnswer("b.txt", "+ diff-b-1"), ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := tr.WriteTurn(3, "Automatic unified diff post-patch for: a.txt", "", []string{"a.txt"}, "diff-a-2", "full_diff"); err != nil {
+	if err := tr.WriteTurn(3, "Full diff output", "", nil, fullDiffAnswer("a.txt", "+ diff-a-2"), ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -479,7 +506,7 @@ func TestDeduplicateFullDiffByFile_StripsNULBytes(t *testing.T) {
 	if err := tr.WriteHeader("goal", "", "full-diff-sess-nul", nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := tr.WriteTurn(1, "Automatic unified diff post-patch for: a.txt", "", []string{"a.txt"}, "diff1", "full_diff"); err != nil {
+	if err := tr.WriteTurn(1, "Full diff output", "", nil, fullDiffAnswer("a.txt", "+ diff1"), ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -515,10 +542,10 @@ func TestDeduplicateFullDiffByFile_DoesNotIntroduceNULBytes(t *testing.T) {
 	if err := tr.WriteHeader("goal", "", "full-diff-sess-rewrite", nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := tr.WriteTurn(1, "Automatic unified diff post-patch for: a.txt", "", []string{"a.txt"}, "diff-a-1", "full_diff"); err != nil {
+	if err := tr.WriteTurn(1, "Full diff output", "", nil, fullDiffAnswer("a.txt", "+ diff-a-1"), ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := tr.WriteTurn(2, "Automatic unified diff post-patch for: a.txt", "", []string{"a.txt"}, "diff-a-2", "full_diff"); err != nil {
+	if err := tr.WriteTurn(2, "Full diff output", "", nil, fullDiffAnswer("a.txt", "+ diff-a-2"), ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -534,33 +561,118 @@ func TestDeduplicateFullDiffByFile_DoesNotIntroduceNULBytes(t *testing.T) {
 	}
 }
 
+func TestDeduplicateFullDiffByFile_UsesFileLineWithoutDecision(t *testing.T) {
+	cwd, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	tmp := t.TempDir()
+	_ = os.Chdir(tmp)
+	t.Setenv("HOME", tmp)
+
+	tr, err := New("full-diff-fileline")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tr.Close()
+
+	if err := tr.WriteHeader("goal", "", "full-diff-fileline", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	note := FullDiffNoteText(nil)
+	if note == "" {
+		t.Fatalf("expected default full diff note to be set")
+	}
+
+	answerOld := "File: README.md\n\nFull diff:\n```diff\n- old\n+ old change\n```"
+	answerNew := "File: README.md\n\nFull diff:\n```diff\n- old\n+ new change\n```"
+
+	if err := tr.WriteTurn(1, note, "", nil, answerOld, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := tr.WriteTurn(2, note, "", nil, answerNew, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := tr.DeduplicateFullDiffByFile("README.md"); err != nil {
+		t.Fatal(err)
+	}
+
+	content := tr.Content()
+	if strings.Contains(content, "old change") {
+		t.Fatalf("expected older diff to be removed:\n%s", content)
+	}
+	if !strings.Contains(content, "new change") {
+		t.Fatalf("expected latest diff to remain:\n%s", content)
+	}
+}
+
+func TestDeduplicateFullDiffByFile_StripsFileSuffixes(t *testing.T) {
+	cwd, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	tmp := t.TempDir()
+	_ = os.Chdir(tmp)
+	t.Setenv("HOME", tmp)
+
+	tr, err := New("full-diff-suffixes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tr.Close()
+
+	if err := tr.WriteHeader("goal", "", "full-diff-suffixes", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	note := FullDiffNoteText(nil)
+	if note == "" {
+		t.Fatalf("expected default full diff note to be set")
+	}
+
+	answerOld := "File: README.md (deleted in workspace)\n\nFull diff:\n```diff\n- old\n```"
+	answerNew := "File: README.md\n\nFull diff:\n```diff\n+ new\n```"
+
+	if err := tr.WriteTurn(1, note, "", nil, answerOld, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := tr.WriteTurn(2, note, "", nil, answerNew, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := tr.DeduplicateFullDiffByFile("README.md"); err != nil {
+		t.Fatal(err)
+	}
+
+	content := tr.Content()
+	if strings.Contains(content, "- old") {
+		t.Fatalf("expected older diff to be removed:\n%s", content)
+	}
+	if !strings.Contains(content, "+ new") {
+		t.Fatalf("expected latest diff to remain:\n%s", content)
+	}
+}
+
 func TestExtractFullDiffsFromContent_DeduplicatesByFile(t *testing.T) {
 	content := strings.Join([]string{
 		"== TURN 1",
 		"",
-		"Automatic unified diff post-patch for: file.txt",
-		"",
-		"Retrieved File Paths:",
-		"* file.txt",
-		"",
 		"=== ANSWER",
 		"",
-		"=== UNIFIED DIFF OF PATCHED FILE: file.txt ===",
-		"diff one",
-		"===",
+		"File: file.txt",
 		"",
-		"Planner decision: FULL_DIFF",
+		"Full diff:",
+		"```diff",
+		"- diff one",
+		"```",
 		"== TURN 2",
 		"",
-		"Automatic unified diff post-patch for: file.txt",
-		"",
 		"=== ANSWER",
 		"",
-		"=== UNIFIED DIFF OF PATCHED FILE: file.txt ===",
-		"diff two",
-		"===",
+		"File: file.txt",
 		"",
-		"Planner decision: full_diff",
+		"Full diff:",
+		"```diff",
+		"+ diff two",
+		"```",
 	}, "\n")
 
 	fullDiffs, err := ExtractFullDiffsFromContent(content)
@@ -569,12 +681,118 @@ func TestExtractFullDiffsFromContent_DeduplicatesByFile(t *testing.T) {
 	}
 
 	want := strings.Join([]string{
-		"=== UNIFIED DIFF OF PATCHED FILE: file.txt ===",
-		"diff two",
-		"===",
+		"File: file.txt",
+		"",
+		"Full diff:",
+		"```diff",
+		"+ diff two",
+		"```",
 	}, "\n")
 	if fullDiffs != want {
 		t.Fatalf("unexpected full diffs:\n%s", fullDiffs)
+	}
+}
+
+func TestExtractFullDiffsFromContent_IgnoresMissingDiffFence(t *testing.T) {
+	content := strings.Join([]string{
+		"== TURN 1",
+		"",
+		"Question about a file",
+		"",
+		"=== ANSWER",
+		"",
+		"File: README.md",
+		"",
+		"Full diff:",
+		"1 | +example",
+	}, "\n")
+
+	fullDiffs, err := ExtractFullDiffsFromContent(content)
+	if err != nil {
+		t.Fatalf("ExtractFullDiffsFromContent error: %v", err)
+	}
+	if strings.TrimSpace(fullDiffs) != "" {
+		t.Fatalf("expected no full diffs, got:\n%s", fullDiffs)
+	}
+}
+
+func TestExtractFullDiffsFromContent_NewFormat(t *testing.T) {
+	note := FullDiffNoteText(nil)
+	if note == "" {
+		t.Fatalf("expected default full diff note to be set")
+	}
+	content := strings.Join([]string{
+		"== TURN 1",
+		"",
+		note,
+		"",
+		"=== ANSWER",
+		"",
+		"File: README.md",
+		"",
+		"Full diff:",
+		"```diff",
+		"1 | +example",
+		"```",
+	}, "\n")
+
+	fullDiffs, err := ExtractFullDiffsFromContent(content)
+	if err != nil {
+		t.Fatalf("ExtractFullDiffsFromContent error: %v", err)
+	}
+
+	want := strings.Join([]string{
+		"File: README.md",
+		"",
+		"Full diff:",
+		"```diff",
+		"1 | +example",
+		"```",
+	}, "\n")
+	if fullDiffs != want {
+		t.Fatalf("unexpected full diffs:\n%s", fullDiffs)
+	}
+}
+
+func TestExtractFullDiffsFromContent_StripsFileSuffixes(t *testing.T) {
+	note := FullDiffNoteText(nil)
+	if note == "" {
+		t.Fatalf("expected default full diff note to be set")
+	}
+	content := strings.Join([]string{
+		"== TURN 1",
+		"",
+		note,
+		"",
+		"=== ANSWER",
+		"",
+		"File: README.md (symlink)",
+		"",
+		"Full diff:",
+		"```diff",
+		"1 | +old",
+		"```",
+		"== TURN 2",
+		"",
+		note,
+		"",
+		"=== ANSWER",
+		"",
+		"File: README.md",
+		"",
+		"Full diff:",
+		"```diff",
+		"1 | +new",
+		"```",
+	}, "\n")
+
+	fullDiffs, err := ExtractFullDiffsFromContent(content)
+	if err != nil {
+		t.Fatalf("ExtractFullDiffsFromContent error: %v", err)
+	}
+
+	if strings.Contains(fullDiffs, "+old") || !strings.Contains(fullDiffs, "+new") {
+		t.Fatalf("expected latest diff to remain:\n%s", fullDiffs)
 	}
 }
 

@@ -572,6 +572,8 @@ func TestLoadGlobalConfigSupportsTemplateFiles(t *testing.T) {
 	mustWriteFile(t, filepath.Join(root, "templates", "mct", "header_existing.tpl"), "header existing")
 	mustWriteFile(t, filepath.Join(root, "templates", "mct", "conversation_history.tpl"), "history {{len .History}}")
 	mustWriteFile(t, filepath.Join(root, "templates", "mct", "readme_system.tpl"), "readme system")
+	mustWriteFile(t, filepath.Join(root, "templates", "mct", "patch_success_note.tpl"), "patch success note")
+	mustWriteFile(t, filepath.Join(root, "templates", "mct", "full_diff_note.tpl"), "full diff note")
 
 	content := `listen = "127.0.0.1:0"
 
@@ -605,6 +607,8 @@ header_user_template = { file = "templates/mct/header_user.tpl" }
 header_existing_template = { file = "templates/mct/header_existing.tpl" }
 conversation_history_template = { file = "templates/mct/conversation_history.tpl" }
 readme_system_template = { file = "templates/mct/readme_system.tpl" }
+patch_success_note = { file = "templates/mct/patch_success_note.tpl" }
+full_diff_note = { file = "templates/mct/full_diff_note.tpl" }
 `
 
 	configPath := filepath.Join(root, "config.toml")
@@ -693,6 +697,12 @@ readme_system_template = { file = "templates/mct/readme_system.tpl" }
 	}
 	if cfg.Prompts.MCT.ReadmeSystemTemplate != "readme system" {
 		t.Fatalf("expected readme system template from file, got %q", cfg.Prompts.MCT.ReadmeSystemTemplate)
+	}
+	if cfg.Prompts.MCT.PatchSuccessNote != "patch success note" {
+		t.Fatalf("expected patch success note from file, got %q", cfg.Prompts.MCT.PatchSuccessNote)
+	}
+	if cfg.Prompts.MCT.FullDiffNote != "full diff note" {
+		t.Fatalf("expected full diff note from file, got %q", cfg.Prompts.MCT.FullDiffNote)
 	}
 }
 
