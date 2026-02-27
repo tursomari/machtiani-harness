@@ -2017,8 +2017,6 @@ func Run(ctx context.Context, opts Options) Result {
 			showFileRetrieved := []string(nil)
 			showFileHandled := false
 			showFileInvalidAsk := false
-			showFileExplain := false
-			showFileExplainPrompt := ""
 			if !cfg.dryRun && runShowFileDetection {
 				ctxDetect, cancelDetect := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
 				ctxDetect = attachTrajectory(ctxDetect, trajectoryWriter, parentSpanID)
@@ -2042,9 +2040,7 @@ func Run(ctx context.Context, opts Options) Result {
 						turnInfo["show_file_detection_raw"] = trimTo(raw, 200)
 					}
 					if detection.IsShowFileRequest {
-						showFileExplain = detection.IncludeExplain
-						showFileExplainPrompt = strings.TrimSpace(detection.ExplainPrompt)
-						if showFileExplain {
+						if detection.IncludeExplain {
 							turnInfo["show_file_explain"] = true
 						}
 						requested := append([]string(nil), detection.Filepaths...)
@@ -2308,11 +2304,8 @@ func Run(ctx context.Context, opts Options) Result {
 			stream := display.BeginPrompt(question, orchPromptOpts)
 			if strings.TrimSpace(showFileBanner) != "" {
 				stream.OnChunk(showFileBanner)
-				if showFileExplain && !showFileInvalidAsk {
-					stream.OnChunk("\n\n")
-				}
 			}
-			if showFileHandled && (!showFileExplain || showFileInvalidAsk) && !runSplitShell {
+			if showFileHandled && !runSplitShell {
 				fullAns := strings.TrimSpace(showFileBanner)
 				if fullAns == "" {
 					fullAns = "[show-file]"
@@ -2335,14 +2328,8 @@ func Run(ctx context.Context, opts Options) Result {
 			}
 			if runSplitShell {
 				runNoShell := true
-				if showFileHandled && (!showFileExplain || showFileInvalidAsk) {
+				if showFileHandled {
 					runNoShell = false
-				}
-				questionForExplain := question
-				if showFileExplain && strings.TrimSpace(showFileExplainPrompt) != "" {
-					questionForExplain = showFileExplainPrompt
-				} else if showFileExplain {
-					questionForExplain = question + "\n\nNote: File contents are already displayed above; focus on explaining and summarizing."
 				}
 
 				var (
@@ -2395,7 +2382,7 @@ func Run(ctx context.Context, opts Options) Result {
 				)
 				if runNoShell {
 					input := runner.PromptInput{
-						Prompt:             questionForExplain,
+						Prompt:             question,
 						Mode:               "default",
 						IncludeHistory:     true,
 						OnStreamHeader:     stream.OnChunk,
@@ -2567,14 +2554,8 @@ func Run(ctx context.Context, opts Options) Result {
 				}
 				goto TurnDone
 			}
-			questionForExplain := question
-			if showFileExplain && strings.TrimSpace(showFileExplainPrompt) != "" {
-				questionForExplain = showFileExplainPrompt
-			} else if showFileExplain {
-				questionForExplain = question + "\n\nNote: File contents are already displayed above; focus on explaining and summarizing."
-			}
 			input := runner.PromptInput{
-				Prompt:             questionForExplain,
+				Prompt:             question,
 				Mode:               "default",
 				IncludeHistory:     true,
 				OnStreamHeader:     stream.OnChunk,

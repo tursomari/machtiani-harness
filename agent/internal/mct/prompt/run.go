@@ -164,58 +164,62 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 		}
 		var cleanedDiscoveryPaths []string
 		invalidDiscoveryPaths := map[string]string(nil)
-		var showFileQuestion string
+		showFileQuestion := ""
+		explicitShowRequest := false
 		if len(filtered) > 0 {
 			cleanedDiscoveryPaths, invalidDiscoveryPaths = preflightShowFilePaths(filtered, repoRoot)
 			if len(invalidDiscoveryPaths) == 0 {
 				invalidDiscoveryPaths = nil
 			}
 		}
-		if len(filtered) == 0 || len(invalidDiscoveryPaths) > 0 {
-			showFileRuntime := opts.FileDiscoveryRuntime
-			if strings.TrimSpace(showFileRuntime.Resolved.Model) == "" {
-				showFileRuntime = opts.Runtime
+		showFileRuntime := opts.FileDiscoveryRuntime
+		if strings.TrimSpace(showFileRuntime.Resolved.Model) == "" {
+			showFileRuntime = opts.Runtime
+		}
+		detection, _, err := detectShowFileRequest(ctx, showFileRuntime, opts.Prompt)
+		if err != nil && opts.Verbose {
+			fmt.Fprintf(os.Stderr, "[show-file] detection error: %v\n", err)
+		}
+		if detection.IsShowFileRequest {
+			explicitShowRequest = true
+			showFileQuestion = detection.VerbatimQuestion
+			requested := append([]string(nil), detection.Filepaths...)
+			if len(requested) == 0 && strings.TrimSpace(detection.Filepath) != "" {
+				requested = []string{strings.TrimSpace(detection.Filepath)}
 			}
-			detection, _, err := detectShowFileRequest(ctx, showFileRuntime, opts.Prompt)
-			if err != nil && opts.Verbose {
-				fmt.Fprintf(os.Stderr, "[show-file] detection error: %v\n", err)
+			merged := append([]string(nil), requested...)
+			if len(cleanedDiscoveryPaths) > 0 {
+				merged = append(merged, cleanedDiscoveryPaths...)
 			}
-			if detection.IsShowFileRequest {
-				showFileQuestion = detection.VerbatimQuestion
-				requested := append([]string(nil), detection.Filepaths...)
-				if len(requested) == 0 && strings.TrimSpace(detection.Filepath) != "" {
-					requested = []string{strings.TrimSpace(detection.Filepath)}
-				}
-				cleaned, invalid := preflightShowFilePaths(requested, repoRoot)
-				if len(cleaned) == 0 {
-					if len(invalidDiscoveryPaths) > 0 {
-						if invalid == nil {
-							invalid = map[string]string{}
-						}
-						for path, reason := range invalidDiscoveryPaths {
-							if _, ok := invalid[path]; ok {
-								continue
-							}
-							invalid[path] = reason
-						}
+			cleaned, invalid := preflightShowFilePaths(merged, repoRoot)
+			if len(cleaned) == 0 {
+				if len(invalidDiscoveryPaths) > 0 {
+					if invalid == nil {
+						invalid = map[string]string{}
 					}
-					assistantOverride = FormatShowFileDiscoveryAsk(invalid)
-					var buildErr error
-					combined, included, buildErr = contextbuilder.Build(opts.Prompt, nil, hist, options)
-					if buildErr != nil {
-						return res, buildErr
+					for path, reason := range invalidDiscoveryPaths {
+						if _, ok := invalid[path]; ok {
+							continue
+						}
+						invalid[path] = reason
 					}
-					break
 				}
-				filtered = cleaned
-			} else if len(filtered) == 0 {
+				assistantOverride = FormatShowFileDiscoveryAsk(invalid)
 				var buildErr error
-				combined, included, buildErr = contextbuilder.Build(opts.Prompt, filtered, hist, options)
+				combined, included, buildErr = contextbuilder.Build(opts.Prompt, nil, hist, options)
 				if buildErr != nil {
 					return res, buildErr
 				}
 				break
 			}
+			filtered = cleaned
+		} else if len(filtered) == 0 {
+			var buildErr error
+			combined, included, buildErr = contextbuilder.Build(opts.Prompt, filtered, hist, options)
+			if buildErr != nil {
+				return res, buildErr
+			}
+			break
 		}
 		if len(filtered) == 0 {
 			var buildErr error
@@ -225,20 +229,20 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 			}
 			break
 		}
-		if len(cleanedDiscoveryPaths) > 0 && len(invalidDiscoveryPaths) == 0 {
+		if !explicitShowRequest && len(cleanedDiscoveryPaths) > 0 && len(invalidDiscoveryPaths) == 0 {
 			filtered = cleanedDiscoveryPaths
 		}
 		prelude, _, buildErr := contextbuilder.Build(opts.Prompt, nil, hist, options)
 		if buildErr != nil {
 			return res, buildErr
 		}
-		detection := ShowFileDetection{IsShowFileRequest: true, Filepaths: filtered, Reason: opts.Prompt, VerbatimQuestion: showFileQuestion}
+		showSnippetDetection := ShowFileDetection{IsShowFileRequest: true, Filepaths: filtered, Reason: opts.Prompt, VerbatimQuestion: showFileQuestion}
 		snippetRuntime := opts.FileDiscoveryRuntime
 		if strings.TrimSpace(snippetRuntime.Resolved.Model) == "" {
 			snippetRuntime = opts.Runtime
 		}
 		snippetModelAlias := strings.TrimSpace(snippetRuntime.Alias)
-		snippets, snippetErr := FetchFileSnippets(ctx, detection, repoRoot, snippetModelAlias, snippetRuntime.APIKeyOverrides, opts.Verbose)
+		snippets, snippetErr := FetchFileSnippets(ctx, showSnippetDetection, repoRoot, snippetModelAlias, snippetRuntime.APIKeyOverrides, opts.Verbose)
 		fallbackSet := map[string]struct{}{}
 		fallbackFiles := []string{}
 		addFallback := func(path string) {
@@ -336,17 +340,32 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 			fullText, fullPaths, fallbackWarnings = FormatFullFileFallback(fallbackFiles, repoRoot, snippetErr)
 			warnings = append(warnings, fallbackWarnings...)
 		}
-		sections := []string{}
-		if strings.TrimSpace(prelude) != "" {
-			sections = append(sections, strings.TrimRight(prelude, "\n"))
+		if explicitShowRequest {
+			sections := []string{}
+			if strings.TrimSpace(snippetText) != "" {
+				sections = append(sections, snippetText)
+			}
+			if strings.TrimSpace(fullText) != "" {
+				sections = append(sections, fullText)
+			}
+			assistantOverride = strings.TrimSpace(strings.Join(sections, "\n\n"))
+			if assistantOverride == "" {
+				assistantOverride = "[show-file]"
+			}
+			combined = strings.TrimRight(prelude, "\n")
+		} else {
+			sections := []string{}
+			if strings.TrimSpace(prelude) != "" {
+				sections = append(sections, strings.TrimRight(prelude, "\n"))
+			}
+			if strings.TrimSpace(snippetText) != "" {
+				sections = append(sections, snippetText)
+			}
+			if strings.TrimSpace(fullText) != "" {
+				sections = append(sections, fullText)
+			}
+			combined = strings.Join(sections, "\n\n")
 		}
-		if strings.TrimSpace(snippetText) != "" {
-			sections = append(sections, snippetText)
-		}
-		if strings.TrimSpace(fullText) != "" {
-			sections = append(sections, fullText)
-		}
-		combined = strings.Join(sections, "\n\n")
 		included = append(included, snippetPaths...)
 		included = append(included, fullPaths...)
 		if len(fallbackFiles) > 0 {

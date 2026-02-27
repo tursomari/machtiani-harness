@@ -344,3 +344,69 @@ func TestRunShowFileInvalidPathsFromDiscoveryAsksForFilepaths(t *testing.T) {
 		t.Fatalf("expected request for valid file paths, got %q", res.Assistant)
 	}
 }
+
+func TestRunShowFileSkipsAnswerGenerationEvenWhenExplainRequested(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	sessionID := "test-show-file-terminal"
+	t.Setenv("MACHTIANI_SESSION_ID", sessionID)
+
+	workDir := t.TempDir()
+	prevWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	if err := os.Chdir(workDir); err != nil {
+		t.Fatalf("chdir temp: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(prevWD)
+	})
+
+	if err := os.WriteFile("a.go", []byte("package demo\n\nfunc A() {}\n"), 0o644); err != nil {
+		t.Fatalf("write a.go: %v", err)
+	}
+
+	origDisco := discoveryRunnerRun
+	discoveryRunnerRun = func(ctx context.Context, prompt string, model discoveryrunner.ModelSettings, sessionID string, verbose bool) (discoveryrunner.Result, error) {
+		return discoveryrunner.Result{Paths: []string{"a.go"}}, nil
+	}
+	t.Cleanup(func() { discoveryRunnerRun = origDisco })
+
+	origDetect := detectShowFileRequest
+	detectShowFileRequest = func(ctx context.Context, runtime ModelRuntime, plannerPrompt string) (ShowFileDetection, string, error) {
+		return ShowFileDetection{
+			IsShowFileRequest: true,
+			Filepaths:         []string{"a.go"},
+			IncludeExplain:    true,
+			ExplainPrompt:     "Explain this file.",
+			VerbatimQuestion:  `Show a.go. <full_file path="a.go" />`,
+		}, "", nil
+	}
+	t.Cleanup(func() { detectShowFileRequest = origDetect })
+
+	origChat := chatStreamWithRuntime
+	chatStreamWithRuntime = func(ctx context.Context, model llm.ResolvedModel, fallbackAliases []string, fallbackModels []llm.ResolvedModel, extra map[string]any, messages []llm.Message, onToken func(string)) (string, error) {
+		t.Fatalf("chat stream should be skipped for show-file terminal output")
+		return "", nil
+	}
+	t.Cleanup(func() { chatStreamWithRuntime = origChat })
+
+	res, err := Run(context.Background(), RunOptions{
+		Prompt: "Show a.go and explain it.",
+		Mode:   "default",
+		Runtime: ModelRuntime{
+			Resolved: llm.CloneResolvedModel(llm.ResolvedModel{Model: "planner-model"}),
+		},
+		SessionID: sessionID,
+		Prompts:   testPromptsConfig(),
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !strings.Contains(res.Assistant, "## File Context") {
+		t.Fatalf("expected show-file content block, got %q", res.Assistant)
+	}
+	if !strings.Contains(res.Assistant, "func A() {}") {
+		t.Fatalf("expected file contents in assistant output, got %q", res.Assistant)
+	}
+}
