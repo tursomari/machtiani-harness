@@ -2000,19 +2000,7 @@ func Run(ctx context.Context, opts Options) Result {
 					preflightNote = fmt.Sprintf("preflight routing: %s (empty reply) — %s", routeLabel, routeExplanation)
 				}
 			}
-			shellAgentUsedThisTurn = useShellAgent || runSplitShell
-			var shellNoticePrompts *llm.MCTPromptsConfig
-			if mctRunner.Prompts != nil {
-				shellNoticePrompts = mctRunner.Prompts.MCT
-			}
-			if runSplitShell {
-				if strings.TrimSpace(shellAsk) != "" {
-					shellAsk = promptsvc.AppendShellAgentPromptNotice(shellAsk, shellNoticePrompts)
-				}
-			} else if useShellAgent {
-				question = promptsvc.AppendShellAgentPromptNotice(question, shellNoticePrompts)
-			}
-			runShowFileDetection := !useShellAgent || hasSplitAsk
+			runShowFileDetection := true
 			var showFileBanner string
 			showFileRetrieved := []string(nil)
 			showFileHandled := false
@@ -2258,6 +2246,27 @@ func Run(ctx context.Context, opts Options) Result {
 						}
 					}
 				}
+			}
+			useShellAgent, forcedSingleShellRoute := applySingleAskRoutingPolicy(hasSplitAsk, showFileHandled, useShellAgent)
+			if forcedSingleShellRoute {
+				turnInfo["mct_single_ask_shell_forced"] = true
+				if preflightNote == "" {
+					preflightNote = "routing policy: non-show single ask -> shell agent"
+				} else {
+					preflightNote = preflightNote + " | routing policy: non-show single ask -> shell agent"
+				}
+			}
+			shellAgentUsedThisTurn = useShellAgent || runSplitShell
+			var shellNoticePrompts *llm.MCTPromptsConfig
+			if mctRunner.Prompts != nil {
+				shellNoticePrompts = mctRunner.Prompts.MCT
+			}
+			if runSplitShell {
+				if strings.TrimSpace(shellAsk) != "" {
+					shellAsk = promptsvc.AppendShellAgentPromptNotice(shellAsk, shellNoticePrompts)
+				}
+			} else if useShellAgent {
+				question = promptsvc.AppendShellAgentPromptNotice(question, shellNoticePrompts)
 			}
 			// Preflight sync: refresh the snapshot from the host repo.
 			// Only needed when the shell-agent is selected (it may execute commands

@@ -907,6 +907,9 @@ run_happy_case() {
     show_file_used=true
   fi
 
+  local mode_file_oriented=false
+  local mode_shell=false
+
   cp -f "$transcript_path" "$out_dir/transcript-${session_id}.adoc"
 
   local turns
@@ -935,8 +938,22 @@ run_happy_case() {
     cp -f "$final_path" "$out_dir/final-${session_id}.md"
     keyword_files+=("$final_path")
 
+    local -a mode_indicator_files=("$stdout_file" "$transcript_path" "$final_path")
+    if grep -qE '\[mct:(file|both)\]' "${mode_indicator_files[@]}" 2>/dev/null; then
+      mode_file_oriented=true
+    fi
+    if grep -qE '\[mct:shell\]' "${mode_indicator_files[@]}" 2>/dev/null; then
+      mode_shell=true
+    fi
+
     fd_path="$session_dir/artifacts/file-discovery.jsonl"
-    if [[ "$show_file_used" != true ]] && grep -qE '^Step [0-9]+ decision: ask' "$stderr_file" 2>/dev/null; then
+    local require_fd_artifact=false
+    if [[ -n "${EXPECTED_FD_SINGLE_PATH:-}" ]]; then
+      require_fd_artifact=true
+    elif [[ "$mode_file_oriented" == true && "$mode_shell" != true ]]; then
+      require_fd_artifact=true
+    fi
+    if [[ "$require_fd_artifact" == true && "$show_file_used" != true ]] && grep -qE '^Step [0-9]+ decision: ask' "$stderr_file" 2>/dev/null; then
       if [[ ! -f "$fd_path" ]]; then
         echo "Missing file-discovery trajectory: $fd_path" >&2
         return_with_cleanup 1
@@ -1057,7 +1074,7 @@ run_file_discovery_live_case() {
 
   run_happy_case "$case_id" 2 \
     "Explain how the planner chooses ask vs patch vs finalize." \
-    "(?s)(?=.*\\[mct:file\\])" \
+    "(?s)(?=.*\\[mct:shell\\])" \
     1 \
     --timeout-per-turn 600 \
     "${DEFAULT_MODEL_ARGS[@]}"
@@ -1067,7 +1084,7 @@ run_file_discovery_tightness_live_case() {
   local case_id="file-discovery-tight-readme"
 
   run_happy_case_expect_fd_single "README.md" "$case_id" 3 \
-    "Review the top-level README.md (repo root) and list any HTML tags that need conversion to markdown. Do not guess; ask for repository context if needed." \
+    "Show full README.md from the repository root. <full_file path=\"README.md\" /> Then list any HTML tags that need conversion to markdown." \
     "README\\.md" \
     1 \
     "${DEFAULT_MODEL_ARGS[@]}"

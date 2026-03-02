@@ -56,6 +56,19 @@ func splitAskLines(question string) (string, string, bool) {
 	return noShell, shell, true
 }
 
+func applySingleAskRoutingPolicy(hasSplitAsk bool, showFileHandled bool, useShellAgent bool) (bool, bool) {
+	if hasSplitAsk {
+		return useShellAgent, false
+	}
+	if showFileHandled {
+		return false, false
+	}
+	if useShellAgent {
+		return true, false
+	}
+	return true, true
+}
+
 func splitAskLabel(line string, labels ...string) (string, bool) {
 	trimmed := strings.TrimSpace(line)
 	lower := strings.ToLower(trimmed)

@@ -45,3 +45,33 @@ func TestPatchDiffForTranscript_HonorsPositiveLimit(t *testing.T) {
 		t.Fatalf("expected truncation marker, got: %q", got)
 	}
 }
+
+func TestApplySingleAskRoutingPolicy_ShowSingleAskStaysNonShell(t *testing.T) {
+	useShell, forced := applySingleAskRoutingPolicy(false, true, true)
+	if useShell {
+		t.Fatalf("expected show single ask to stay non-shell")
+	}
+	if forced {
+		t.Fatalf("did not expect forced routing for show single ask")
+	}
+}
+
+func TestApplySingleAskRoutingPolicy_NonShowSingleAskForcesShell(t *testing.T) {
+	useShell, forced := applySingleAskRoutingPolicy(false, false, false)
+	if !useShell {
+		t.Fatalf("expected non-show single ask to route to shell")
+	}
+	if !forced {
+		t.Fatalf("expected non-show single ask route to be marked forced")
+	}
+}
+
+func TestApplySingleAskRoutingPolicy_SplitAskUnchanged(t *testing.T) {
+	useShell, forced := applySingleAskRoutingPolicy(true, false, false)
+	if useShell {
+		t.Fatalf("expected split ask routing decision to remain unchanged")
+	}
+	if forced {
+		t.Fatalf("did not expect forced routing for split ask")
+	}
+}
