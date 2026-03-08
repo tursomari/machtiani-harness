@@ -549,6 +549,13 @@ generate_test_config() {
   fi
 
   cp "$repo_config" "$config_file"
+  if [[ -d "$REPO_ROOT/.machtiani/templates" ]]; then
+    cp -R "$REPO_ROOT/.machtiani/templates" "$config_dir/"
+  fi
+  if [[ -d "$REPO_ROOT/.machtiani/meta-orchestrator/custom-instructions" ]]; then
+    mkdir -p "$config_dir/meta-orchestrator"
+    cp -R "$REPO_ROOT/.machtiani/meta-orchestrator/custom-instructions" "$config_dir/meta-orchestrator/"
+  fi
 
   "$PYTHON_BIN" - "$config_file" "$TEST_MODEL_ALIAS" <<'PY'
 import pathlib
@@ -600,7 +607,7 @@ EOF
     if [[ "$already" == true ]]; then
       return
     fi
-    if grep -Fq "[models.\"${alias}\"]" "$config_file"; then
+    if grep -Fq "[models.\"${alias}\"]" "$config_file" || grep -Fq "[models.${alias}]" "$config_file"; then
       return
     fi
     cat >> "$config_file" <<EOF
@@ -644,6 +651,13 @@ generate_stub_config() {
   fi
 
   cp "$repo_config" "$config_file"
+  if [[ -d "$REPO_ROOT/.machtiani/templates" ]]; then
+    cp -R "$REPO_ROOT/.machtiani/templates" "$config_dir/"
+  fi
+  if [[ -d "$REPO_ROOT/.machtiani/meta-orchestrator/custom-instructions" ]]; then
+    mkdir -p "$config_dir/meta-orchestrator"
+    cp -R "$REPO_ROOT/.machtiani/meta-orchestrator/custom-instructions" "$config_dir/meta-orchestrator/"
+  fi
 
   "$PYTHON_BIN" - "$config_file" "$alias" <<'PY'
 import pathlib
@@ -1038,7 +1052,6 @@ run_menu_flow_case() {
       "(?s)(?=.*Planner decision: ask)(?=.*No-shell:)(?=.*Shell:)" \
       1 \
       --model "$stub_alias" \
-      --mode answer-only \
       --orch-model "$stub_alias" \
       --patcher-model "$stub_alias" \
       --file-discovery-model "$stub_alias"
