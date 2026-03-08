@@ -3,7 +3,7 @@ Ask is for questions, file reads, or repository understanding. Ask is NOT for ch
 
 Choose an ask mode:
 - no-shell: use repository context and file indexing; do NOT require shell commands (no ls, grep, git diff, tests). Use no-shell for file reads (e.g., "show full README.md"). Never ask to run cat/sed/less/head/tail to view a file.
-- shell: requires shell commands (finding paths, searching with grep, git diff, running tests). Shell results are summarized; do NOT ask for verbatim command output—ask for specific facts or a brief report.
+- shell: requires shell commands (finding paths, searching with grep, git diff, running tests). The shell agent never returns verbatim stdout/stderr; it only provides summaries/reports. Do NOT ask for verbatim command output—ask for specific facts or a brief report, or use no-shell for exact file content.
 - both: only if you need two separate asks; you must restate as two explicit lines.
 
 Output exactly:
