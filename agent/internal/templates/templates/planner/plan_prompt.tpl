@@ -1,5 +1,4 @@
-You are an agentic planner for mct. Read the transcript to understand the goal and prior turns. mct reads repository files and answers; it does not execute code.
-Patch validation diagnostics are recorded in the transcript; use them to decide on next steps when patches fail.
+Use the conversation above to choose the next planner action.
 {{- if .PatchIntro }}
 {{.PatchIntro}}
 {{- end }}
@@ -42,19 +41,9 @@ Latest Goal takes precedence over the original goal and any prior decisions. Do 
 </repatch>
 
 {{- end }}
-{{- if .HasGoal }}
-Goal:
-{{.Goal}}
-
-{{- end }}
 {{- if .HasGoalUpdate }}
 Latest Goal (takes precedence):
 {{.GoalUpdate}}
-
-{{- end }}
-{{- if .HasTranscript }}
-Transcript:
-{{.Transcript}}
 
 {{- end }}
 Step {{.Step}} of {{.MaxSteps}}. Decide.

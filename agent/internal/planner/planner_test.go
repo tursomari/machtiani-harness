@@ -644,11 +644,11 @@ func TestPlanAskLoopIntegration(t *testing.T) {
 		monitorCalls int
 	)
 	client.chatFn = func(_ context.Context, messages []llm.Message) (string, error) {
-		if len(messages) > 0 && strings.Contains(messages[0].Content, "Decision menu") {
+		content := messages[len(messages)-1].Content
+		if strings.Contains(content, "Decision menu") && strings.Contains(content, "This step is decision-only") {
 			planCalls++
 			return "Decision: ask", nil
 		}
-		content := messages[len(messages)-1].Content
 		switch {
 		case strings.Contains(content, "You are a guard that checks whether an ask mixes no-shell and shell actions."):
 			return `{"is_mixed":false,"reason":"single ask","rewrite":""}`, nil
@@ -793,11 +793,14 @@ func TestPlannerRejectsInvalidPatchJSON(t *testing.T) {
 func TestPlanPromptIncludesMetadata(t *testing.T) {
 	c := NewClient(ClientConfig{DryRun: true, PatchEnabled: true})
 	prompt := c.planPrompt(nil, "goal text", "transcript text", 1, 4, nil)
-	want := []string{"Decision: ask|patch", "Goal:", "Transcript:", "Step 1 of 4"}
+	want := []string{"Decision: ask|patch", "Use the conversation above", "Step 1 of 4"}
 	for _, w := range want {
 		if !contains(prompt, w) {
 			t.Fatalf("plan prompt missing %q:\n%s", w, prompt)
 		}
+	}
+	if contains(prompt, "Transcript:") || contains(prompt, "transcript text") {
+		t.Fatalf("plan prompt should rely on conversation projection instead of transcript text:\n%s", prompt)
 	}
 }
 
@@ -952,8 +955,54 @@ func TestPlanSystemPromptOmitsFullFileTagGuidance(t *testing.T) {
 	if strings.Contains(prompt, "<full_file") {
 		t.Fatalf("expected system prompt to omit full_file tag guidance, got %q", prompt)
 	}
-	if !strings.Contains(prompt, "Decision menu") {
-		t.Fatalf("expected system prompt to include decision menu, got %q", prompt)
+	if strings.Contains(prompt, "Decision menu") {
+		t.Fatalf("expected stable system prompt to omit decision menu, got %q", prompt)
+	}
+	if !strings.Contains(prompt, "Always obey the exact output format requested by the latest user message.") {
+		t.Fatalf("expected stable planner identity guidance, got %q", prompt)
+	}
+}
+
+func TestBuildAskRequestOmitsTranscript(t *testing.T) {
+	client := NewClient(ClientConfig{})
+	conv := conversation.New("sess-ask-request", "Investigate planner flow")
+	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask"})
+	request := client.buildAskRequest(conv, conv.CurrentGoal(), 2, 4)
+	if strings.Contains(request, "Transcript:") {
+		t.Fatalf("ask request should omit transcript label, got %q", request)
+	}
+	if !strings.Contains(request, "Use the prior planner conversation for context") {
+		t.Fatalf("ask request should point the model to the shared conversation, got %q", request)
+	}
+}
+
+func TestPlannerHelperMessagesSharePlanPrefix(t *testing.T) {
+	client := NewClient(ClientConfig{PatchEnabled: true})
+	conv := conversation.New("sess-prefix", "Finish docs")
+	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask"})
+	conv.AddMessage("assistant", "Answer: done", map[string]any{"type": "answer", "turn": 1})
+
+	planMessages := client.buildPlanMessages(conv, conv.CurrentGoal(), 2, 4, nil)
+	askMessages := client.buildPlannerTaskMessages(conv, conv.CurrentGoal(), 2, 4, nil, client.askPrompt(client.buildAskRequest(conv, conv.CurrentGoal(), 2, 4), ""))
+	monitorMessages := client.buildPlannerTaskMessages(conv, conv.CurrentGoal(), 2, 4, nil, client.askMonitorPrompt("Explain config loading."))
+	mixedMessages := client.buildPlannerTaskMessages(conv, conv.CurrentGoal(), 2, 4, nil, client.askMixedMonitorPrompt("Explain config loading and run git diff --stat."))
+
+	messageSets := [][]llm.Message{askMessages, monitorMessages, mixedMessages}
+	for _, messages := range messageSets {
+		if len(messages) != len(planMessages) {
+			t.Fatalf("expected matching message counts, got plan=%d other=%d", len(planMessages), len(messages))
+		}
+		for i := 0; i < len(planMessages)-1; i++ {
+			if planMessages[i].Role != messages[i].Role {
+				t.Fatalf("message %d role mismatch: %q vs %q", i, planMessages[i].Role, messages[i].Role)
+			}
+			if planMessages[i].Content != messages[i].Content {
+				t.Fatalf("message %d content mismatch: %q vs %q", i, planMessages[i].Content, messages[i].Content)
+			}
+		}
+		if planMessages[len(planMessages)-1].Content == messages[len(messages)-1].Content {
+			t.Fatalf("expected final user prompt to differ across planner tasks")
+		}
 	}
 }
 
@@ -973,8 +1022,8 @@ func TestBuildPlanMessagesNoGoalUpdate(t *testing.T) {
 			t.Fatalf("message %d role = %q, want %q", i, messages[i].Role, role)
 		}
 	}
-	if !strings.Contains(messages[0].Content, "Decision: ask|patch") {
-		t.Fatalf("system prompt missing decision line: %q", messages[0].Content)
+	if !strings.Contains(messages[0].Content, "Always obey the exact output format requested by the latest user message.") {
+		t.Fatalf("system prompt missing stable planner guidance: %q", messages[0].Content)
 	}
 	if messages[1].Content != "Finish docs" {
 		t.Fatalf("unexpected goal message: %q", messages[1].Content)
@@ -987,6 +1036,9 @@ func TestBuildPlanMessagesNoGoalUpdate(t *testing.T) {
 	}
 	if !strings.Contains(messages[4].Content, "Step 2 of 4") {
 		t.Fatalf("step message missing progress: %q", messages[4].Content)
+	}
+	if !strings.Contains(messages[4].Content, "Decision: ask|patch") {
+		t.Fatalf("final planner message missing decision schema: %q", messages[4].Content)
 	}
 }
 

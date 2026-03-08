@@ -36,12 +36,19 @@ func buildBinary(t *testing.T, tags ...string) string {
 	cmd := exec.Command("go", args...)
 	cwd, _ := os.Getwd()
 	cmd.Dir = filepath.Dir(cwd)
-	cmd.Env = append(os.Environ(), "GOCACHE="+filepath.Join(tmpDir, ".gocache"))
+	cmd.Env = append(os.Environ(), "GOCACHE="+goCacheDir(tmpDir))
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("build failed: %v\n%s", err, out)
 	}
 	return bin
+}
+
+func goCacheDir(fallbackRoot string) string {
+	if inherited := strings.TrimSpace(os.Getenv("GOCACHE")); inherited != "" {
+		return inherited
+	}
+	return filepath.Join(fallbackRoot, ".gocache")
 }
 
 func runBin(t *testing.T, bin, cwd string, args []string, env []string) runResult {

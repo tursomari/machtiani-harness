@@ -607,7 +607,8 @@ func (c *Client) Plan(ctx context.Context, conv *conversation.Conversation, goal
 }
 
 func (c *Client) generateAsk(ctx context.Context, conv *conversation.Conversation, goal string, transcript string, step, maxSteps int) (string, error) {
-	askRequest := c.buildAskRequest(conv, goal, transcript, step, maxSteps)
+	_ = transcript
+	askRequest := c.buildAskRequest(conv, goal, step, maxSteps)
 	guardrail := ""
 	lastAsk := ""
 	for attempt := 0; attempt <= askGuardMaxRetries; attempt++ {
@@ -615,7 +616,7 @@ func (c *Client) generateAsk(ctx context.Context, conv *conversation.Conversatio
 		if strings.TrimSpace(prompt) == "" {
 			return "", errors.New("planner: ask prompt template missing")
 		}
-		resp, err := c.chat(ctx, prompt)
+		resp, err := c.chatPlannerTask(ctx, conv, goal, step, maxSteps, nil, prompt)
 		if err != nil {
 			return "", err
 		}
@@ -633,12 +634,12 @@ func (c *Client) generateAsk(ctx context.Context, conv *conversation.Conversatio
 			continue
 		}
 		lastAsk = ask
-		mixed, err := c.monitorAskMixed(ctx, ask)
+		mixed, err := c.monitorAskMixedWithPlanner(ctx, conv, goal, ask, step, maxSteps)
 		if err == nil && mixed.IsMixed {
 			guardrail = buildAskMixedGuardrail(mixed.Reason, mixed.Rewrite)
 			continue
 		}
-		monitor, err := c.monitorAsk(ctx, ask)
+		monitor, err := c.monitorAskWithPlanner(ctx, conv, goal, ask, step, maxSteps)
 		if err != nil {
 			return ask, nil
 		}
@@ -654,23 +655,31 @@ func (c *Client) generateAsk(ctx context.Context, conv *conversation.Conversatio
 }
 
 func (c *Client) monitorAsk(ctx context.Context, ask string) (askMonitorResult, error) {
+	return c.monitorAskWithPlanner(ctx, nil, "", ask, 0, 0)
+}
+
+func (c *Client) monitorAskMixed(ctx context.Context, ask string) (askMixedMonitorResult, error) {
+	return c.monitorAskMixedWithPlanner(ctx, nil, "", ask, 0, 0)
+}
+
+func (c *Client) monitorAskWithPlanner(ctx context.Context, conv *conversation.Conversation, goal string, ask string, step, maxSteps int) (askMonitorResult, error) {
 	prompt := c.askMonitorPrompt(ask)
 	if strings.TrimSpace(prompt) == "" {
 		return askMonitorResult{}, errors.New("planner: ask monitor template missing")
 	}
-	resp, err := c.chat(ctx, prompt)
+	resp, err := c.chatPlannerTask(ctx, conv, goal, step, maxSteps, nil, prompt)
 	if err != nil {
 		return askMonitorResult{}, err
 	}
 	return parseAskMonitorResponse(resp)
 }
 
-func (c *Client) monitorAskMixed(ctx context.Context, ask string) (askMixedMonitorResult, error) {
+func (c *Client) monitorAskMixedWithPlanner(ctx context.Context, conv *conversation.Conversation, goal string, ask string, step, maxSteps int) (askMixedMonitorResult, error) {
 	prompt := c.askMixedMonitorPrompt(ask)
 	if strings.TrimSpace(prompt) == "" {
 		return askMixedMonitorResult{}, errors.New("planner: ask mixed monitor template missing")
 	}
-	resp, err := c.chat(ctx, prompt)
+	resp, err := c.chatPlannerTask(ctx, conv, goal, step, maxSteps, nil, prompt)
 	if err != nil {
 		return askMixedMonitorResult{}, err
 	}
@@ -679,15 +688,49 @@ func (c *Client) monitorAskMixed(ctx context.Context, ask string) (askMixedMonit
 
 func (c *Client) buildPlanMessages(conv *conversation.Conversation, goal string, step, maxSteps int, patchPlan *PatchPlan) []llm.Message {
 	goalForPrompt := strings.TrimSpace(goal)
-	if current := strings.TrimSpace(conv.CurrentGoal()); current != "" {
-		goalForPrompt = current
+	if conv != nil {
+		if current := strings.TrimSpace(conv.CurrentGoal()); current != "" {
+			goalForPrompt = current
+		}
+	}
+	finalUserPrompt := c.planPrompt(conv, goalForPrompt, "", step, maxSteps, patchPlan)
+	return c.buildPlannerTaskMessages(conv, goalForPrompt, step, maxSteps, patchPlan, finalUserPrompt)
+}
+
+func (c *Client) buildPlannerTaskMessages(conv *conversation.Conversation, goal string, step, maxSteps int, patchPlan *PatchPlan, finalUserPrompt string) []llm.Message {
+	goalForPrompt := strings.TrimSpace(goal)
+	if conv != nil {
+		if current := strings.TrimSpace(conv.CurrentGoal()); current != "" {
+			goalForPrompt = current
+		}
 	}
 	systemPrompt := strings.TrimSpace(c.planSystemPrompt(conv, goalForPrompt, step, maxSteps, patchPlan))
 	messages := conv.ToChatMessages(systemPrompt)
-	stepMsg := fmt.Sprintf("Step %d of %d. Decide.", step, maxSteps)
-	stepMessage := messageWithEstimatedTokens("user", stepMsg)
-	messages = append(messages, stepMessage)
-	return c.ensurePlanCacheAnchor(conv, systemPrompt, stepMessage, messages, step)
+	finalMessage := messageWithEstimatedTokens("user", strings.TrimSpace(finalUserPrompt))
+	messages = append(messages, finalMessage)
+	return c.ensurePlanCacheAnchor(conv, systemPrompt, finalMessage, messages, step)
+}
+
+func (c *Client) chatPlannerTask(ctx context.Context, conv *conversation.Conversation, goal string, step, maxSteps int, patchPlan *PatchPlan, finalUserPrompt string) (string, error) {
+	if conv == nil {
+		return c.chat(ctx, finalUserPrompt)
+	}
+	messages := c.buildPlannerTaskMessages(conv, goal, step, maxSteps, patchPlan, finalUserPrompt)
+	c.logTokenEstimate(messages)
+	chatCtx := ctx
+	var usageTracker *cacheUsageTracker
+	if cacheControlEnabled(c.cfg.Model) {
+		usageTracker = &cacheUsageTracker{}
+		chatCtx = llm.WithCacheUsageObserver(chatCtx, usageTracker.Observe)
+	}
+	resp, err := c.chatMessages(chatCtx, messages)
+	if err != nil {
+		return "", err
+	}
+	if usageTracker != nil {
+		usageTracker.UpdateConversation(conv)
+	}
+	return resp, nil
 }
 
 func (c *Client) ensurePlanCacheAnchor(conv *conversation.Conversation, systemPrompt string, stepMessage llm.Message, messages []llm.Message, step int) []llm.Message {
@@ -1364,7 +1407,7 @@ func (c *Client) buildPlanTemplateData(conv *conversation.Conversation, goal str
 	return data
 }
 
-func (c *Client) buildAskRequest(conv *conversation.Conversation, goal string, transcript string, step, maxSteps int) string {
+func (c *Client) buildAskRequest(conv *conversation.Conversation, goal string, step, maxSteps int) string {
 	goalForPrompt := strings.TrimSpace(goal)
 	if conv != nil {
 		if current := strings.TrimSpace(conv.CurrentGoal()); current != "" {
@@ -1377,22 +1420,16 @@ func (c *Client) buildAskRequest(conv *conversation.Conversation, goal string, t
 			goalUpdate = strings.TrimSpace(update)
 		}
 	}
-	transcriptTrim := strings.TrimSpace(transcript)
-
 	var b strings.Builder
+	b.WriteString("Use the prior planner conversation for context. Produce the single next high-signal ask for mct.\n\n")
 	if goalForPrompt != "" {
-		fmt.Fprintf(&b, "Goal:\n%s\n\n", goalForPrompt)
+		fmt.Fprintf(&b, "Current Goal:\n%s\n\n", goalForPrompt)
 	}
 	if goalUpdate != "" {
 		fmt.Fprintf(&b, "Latest Goal (takes precedence):\n%s\n\n", goalUpdate)
 	}
-	if transcriptTrim != "" {
-		b.WriteString("Transcript:\n")
-		b.WriteString(transcriptTrim)
-		b.WriteString("\n\n")
-	}
 	if step > 0 && maxSteps > 0 {
-		fmt.Fprintf(&b, "Step %d of %d.", step, maxSteps)
+		fmt.Fprintf(&b, "Planner step: %d of %d.", step, maxSteps)
 	}
 	return strings.TrimSpace(b.String())
 }
@@ -1895,7 +1932,7 @@ func parseDecision(resp string, patchEnabled bool) (Decision, string, string) {
 			}
 		}
 		return "", "", ""
-	 }
+	}
 
 	line := strings.TrimSpace(lines[decisionIdx])
 	parts := strings.SplitN(line, ":", 2)
