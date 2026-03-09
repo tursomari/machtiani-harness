@@ -726,61 +726,40 @@ PER_COMPONENT_MODEL_ARGS=(
 
 MCT_AGENT="$MCT_AGENT_BIN"
 
-assert_fd_single_file() {
-  local fd_path="$1"
+assert_snippet_single_file() {
+  local traj_path="$1"
   local expected_path="$2"
-  "$PYTHON_BIN" - "$fd_path" "$expected_path" <<'PY'
+  "$PYTHON_BIN" - "$traj_path" "$expected_path" <<'PY'
 import json
 import sys
 
-fd_path = sys.argv[1]
+traj_path = sys.argv[1]
 expected = sys.argv[2]
-final_block = None
+paths = None
 
 try:
-    with open(fd_path, "r", encoding="utf-8") as fh:
+    with open(traj_path, "r", encoding="utf-8") as fh:
         for line in fh:
             try:
                 obj = json.loads(line)
             except Exception:
                 continue
-            if obj.get("type") == "final_block_valid":
-                final_block = obj.get("normalized_block")
+            if obj.get("type") == "final_output":
+                candidate = obj.get("paths")
+                if isinstance(candidate, list):
+                    paths = candidate
 except OSError as exc:
-    print(f"ERROR: unable to read file-discovery trajectory: {exc}", file=sys.stderr)
+    print(f"ERROR: unable to read snippet-discovery trajectory: {exc}", file=sys.stderr)
     sys.exit(1)
 
-if not final_block:
-    print("ERROR: missing final_block_valid in file-discovery trajectory", file=sys.stderr)
+if not isinstance(paths, list) or not paths:
+    print("ERROR: missing final_output paths in snippet-discovery trajectory", file=sys.stderr)
     sys.exit(1)
 
-lines = [ln for ln in final_block.splitlines() if ln.strip()]
-if len(lines) != 3:
-    print(f"ERROR: expected single-file block, got {len(lines)} lines", file=sys.stderr)
-    print(final_block, file=sys.stderr)
-    sys.exit(1)
-
-if not lines[0].startswith("BEGIN_RELEVANT_FILES["):
-    print("ERROR: missing BEGIN_RELEVANT_FILES marker", file=sys.stderr)
-    sys.exit(1)
-if not lines[2].startswith("END_RELEVANT_FILES["):
-    print("ERROR: missing END_RELEVANT_FILES marker", file=sys.stderr)
-    sys.exit(1)
-
-if lines[1] != expected:
-    print(f"ERROR: expected single file {expected}, got {lines[1]}", file=sys.stderr)
+if paths != [expected]:
+    print(f"ERROR: expected snippet tightness [{expected}], got {paths}", file=sys.stderr)
     sys.exit(1)
 PY
-}
-
-run_happy_case_expect_fd_single() {
-  local expected_path="$1"
-  shift
-  EXPECTED_FD_SINGLE_PATH="$expected_path"
-  run_happy_case "$@"
-  local rc=$?
-  EXPECTED_FD_SINGLE_PATH=""
-  return "$rc"
 }
 
 run_happy_case() {
@@ -916,11 +895,6 @@ run_happy_case() {
     return_with_cleanup 1
   fi
 
-  local show_file_used=false
-  if grep -qE '^## File Context' "$transcript_path" 2>/dev/null; then
-    show_file_used=true
-  fi
-
   local mode_file_oriented=false
   local mode_shell=false
 
@@ -962,12 +936,10 @@ run_happy_case() {
 
     fd_path="$session_dir/artifacts/file-discovery.jsonl"
     local require_fd_artifact=false
-    if [[ -n "${EXPECTED_FD_SINGLE_PATH:-}" ]]; then
-      require_fd_artifact=true
-    elif [[ "$mode_file_oriented" == true && "$mode_shell" != true ]]; then
+    if [[ "$mode_file_oriented" == true && "$mode_shell" != true ]]; then
       require_fd_artifact=true
     fi
-    if [[ "$require_fd_artifact" == true && "$show_file_used" != true ]] && grep -qE '^Step [0-9]+ decision: ask' "$stderr_file" 2>/dev/null; then
+    if [[ "$require_fd_artifact" == true ]] && grep -qE '^Step [0-9]+ decision: ask' "$stderr_file" 2>/dev/null; then
       if [[ ! -f "$fd_path" ]]; then
         echo "Missing file-discovery trajectory: $fd_path" >&2
         return_with_cleanup 1
@@ -1003,21 +975,6 @@ run_happy_case() {
     echo "Finalize error detected: $case_id" >&2
     return_with_cleanup 1
   fi
-  if [[ -n "${EXPECTED_FD_SINGLE_PATH:-}" ]]; then
-    if [[ "$LIVE_MODE" != true ]]; then
-      echo "Expected file-discovery output in dry-run mode: $case_id" >&2
-      return_with_cleanup 1
-    fi
-    if [[ -z "$fd_path" || ! -f "$fd_path" ]]; then
-      echo "Missing file-discovery trajectory for tightness check: $case_id" >&2
-      return_with_cleanup 1
-    fi
-    if ! assert_fd_single_file "$fd_path" "$EXPECTED_FD_SINGLE_PATH"; then
-      echo "File-discovery tightness check failed: $case_id" >&2
-      return_with_cleanup 1
-    fi
-  fi
-
   if [[ "$marker_checks" == true ]]; then
     if ! assert_shell_agent_marker_cleanup "$marker_dir" "$stale_marker" "$recent_marker" "$case_id"; then
       return_with_cleanup 1
@@ -1093,22 +1050,64 @@ run_file_discovery_live_case() {
     "${DEFAULT_MODEL_ARGS[@]}"
 }
 
-run_file_discovery_tightness_live_case() {
-  local case_id="file-discovery-tight-readme"
+run_snippet_discovery_tightness_live_case() {
+  local case_id="snippet-discovery-tight-readme"
+  local out_dir="$(pwd)/test-out-${case_id}-$(date +%s)"
+  mkdir -p "$out_dir"
+  local stdout_file="$out_dir/stdout.txt"
+  local stderr_file="$out_dir/stderr.txt"
+  local traj_file="$out_dir/snippet-trajectory.jsonl"
+  local snippet_bin="$out_dir/snippet-discovery-bin"
 
-  run_happy_case_expect_fd_single "README.md" "$case_id" 3 \
-    "Show full README.md from the repository root. <full_file path=\"README.md\" /> Then list any HTML tags that need conversion to markdown." \
-    "README\\.md" \
-    1 \
-    "${DEFAULT_MODEL_ARGS[@]}"
+  echo "Running snippet tightness case: $case_id..." >&2
+
+  pushd "$REPO_ROOT/agent" >/dev/null
+  if ! GOCACHE="$(pwd)/.gocache" go build -o "$snippet_bin" ./internal/snippet-discovery/cmd/snippet-discovery >/dev/null 2>> "$stderr_file"; then
+    popd >/dev/null
+    echo "Failed to build snippet-discovery binary: $case_id" >&2
+    cat "$stderr_file" >&2 || true
+    return 1
+  fi
+  popd >/dev/null
+
+  pushd "$REPO_ROOT" >/dev/null
+  set +e
+  timeout 180 "$snippet_bin" \
+    --model "$TEST_MODEL_ALIAS" \
+    --trajectory "$traj_file" \
+    -timeout 120 \
+    -max-rounds 8 \
+    -r "Find the line ranges in the repository-root README.md that contain HTML tags needing conversion to Markdown. Only return ranges for the relevant file." \
+    -f README.md \
+    -f agent/README.md \
+    < /dev/null > "$stdout_file" 2>> "$stderr_file"
+  local rc=$?
+  set -e
+  popd >/dev/null
+
+  if [[ $rc -ne 0 ]]; then
+    echo "Failed (rc=$rc): $case_id" >&2
+    cat "$stderr_file" >&2 || true
+    return 1
+  fi
+  if [[ ! -s "$traj_file" ]]; then
+    echo "Missing snippet-discovery trajectory: $traj_file" >&2
+    return 1
+  fi
+  if ! assert_snippet_single_file "$traj_file" "README.md"; then
+    echo "Snippet-discovery tightness check failed: $case_id" >&2
+    return 1
+  fi
+
+  echo "Passed: $case_id" >&2
 }
 
 run_show_live_case() {
   local case_id="routing-show-live"
 
   run_happy_case "$case_id" 2 \
-    "Show the full contents of agent/internal/workspace/repo_snapshot.go. <full_file path=\"agent/internal/workspace/repo_snapshot.go\" />" \
-    "(?ms)^(?=.*\\[mct:show\\])(?!.*\\[mct:(file|shell|both)\\])(?!.*\\bNo-shell:)(?!.*\\bShell:)(?!.*^Lines \\d+-\\d+:)(?!.*^\\d+: ).*$" \
+    "Explain the purpose and structure of agent/internal/workspace/repo_snapshot.go." \
+    "(?s)(?=.*\\[mct:shell\\])(?!.*\\[mct:show\\])" \
     1 \
     "${DEFAULT_MODEL_ARGS[@]}"
 }
@@ -1117,8 +1116,8 @@ run_show_range_live_case() {
   local case_id="routing-show-range-live"
 
   run_happy_case "$case_id" 2 \
-    "Show lines 10-20 of agent/internal/workspace/repo_snapshot.go." \
-    "(?ms)^(?=.*\\[mct:show\\])(?!.*\\[mct:(file|shell|both)\\])(?!.*\\bNo-shell:)(?!.*\\bShell:)(?=.*^Lines 10-20:$)(?!.*^Lines (?!10-20:$).*$)(?=.*^10: )(?=.*^20: )(?!.*^0: )(?!.*^(?:[1-9]|2[1-9]|[3-9]\\d|\\d{3,}): ).*$" \
+    "Explain what agent/internal/workspace/repo_snapshot.go is doing around lines 10-20." \
+    "(?s)(?=.*\\[mct:shell\\])(?!.*\\[mct:show\\])" \
     1 \
     "${DEFAULT_MODEL_ARGS[@]}"
 }
@@ -1239,7 +1238,7 @@ MODEL_ALIAS_NOT_FOUND_PATTERN="model alias \"${INVALID_ALIAS_REGEX}\" not found"
 if [[ "$LIVE_MODE" != true ]]; then
   run_menu_flow_case
 else
-  run_file_discovery_tightness_live_case
+  run_snippet_discovery_tightness_live_case
   run_menu_flow_live_case
   run_file_discovery_live_case
   run_show_live_case

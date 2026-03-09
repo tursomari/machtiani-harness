@@ -22,8 +22,8 @@ Ask: Explain the auth flow and run `git diff --stat`.
 Output: {"is_mixed":true,"reason":"combines explanation with a shell command","rewrite":"No-shell: Explain the auth flow.\nShell: Run `git diff --stat` and summarize the output."}
 
 Example 4 (mixed)
-Ask: Show the full file src/app.js and run `grep -n "TODO" -r .`.
-Output: {"is_mixed":true,"reason":"asks for full file content plus a shell search","rewrite":"No-shell: Show the full file src/app.js.\nShell: Run `grep -n \"TODO\" -r .` and summarize the matches."}
+Ask: Explain the purpose and structure of src/app.js and run `grep -n "TODO" -r .`.
+Output: {"is_mixed":true,"reason":"asks for an explanation plus a shell search","rewrite":"No-shell: Explain the purpose and structure of src/app.js.\nShell: Run `grep -n \"TODO\" -r .` and summarize the matches."}
 
 Example 5 (not mixed, already split)
 Ask: No-shell: Explain the auth flow.\nShell: Run `find . -name \"*.go\"`.
@@ -34,8 +34,8 @@ Ask: Summarize how caching works and list files in config/ with `ls`.
 Output: {"is_mixed":true,"reason":"mixes explanation with a shell listing","rewrite":"No-shell: Summarize how caching works.\nShell: Run `ls config/` and report the files."}
 
 Example 7 (not mixed, no-shell)
-Ask: Show the full file docs/README.md.
-Output: {"is_mixed":false,"reason":"single no-shell full-file request","rewrite":""}
+Ask: Explain the main sections of docs/README.md.
+Output: {"is_mixed":false,"reason":"single no-shell explanation request","rewrite":""}
 
 Example 8 (not mixed, shell)
 Ask: Run `find . -maxdepth 2 -type f` and list the results.
@@ -46,8 +46,8 @@ Ask: Explain the build pipeline and also run `grep -n "Build" -r .`.
 Output: {"is_mixed":true,"reason":"explanation plus shell search","rewrite":"No-shell: Explain the build pipeline.\nShell: Run `grep -n \"Build\" -r .` and summarize the matches."}
 
 Example 10 (mixed)
-Ask: Show the full file src/config.yml, then run `git diff`.
-Output: {"is_mixed":true,"reason":"full-file request plus shell command","rewrite":"No-shell: Show the full file src/config.yml.\nShell: Run `git diff` and summarize the output."}
+Ask: Explain how src/config.yml is structured, then run `git diff`.
+Output: {"is_mixed":true,"reason":"explanation plus shell command","rewrite":"No-shell: Explain how src/config.yml is structured.\nShell: Run `git diff` and summarize the output."}
 
 Ask:
 {{.Ask}}

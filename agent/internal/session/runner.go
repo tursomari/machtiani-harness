@@ -117,40 +117,6 @@ func normalizePlannerPath(rawPath string) string {
 	return cleaned
 }
 
-func showFilePathMentioned(question string, paths []string) bool {
-	trimmedQuestion := strings.TrimSpace(question)
-	if trimmedQuestion == "" {
-		return false
-	}
-	questionLower := strings.ToLower(trimmedQuestion)
-	for _, raw := range paths {
-		trimmedPath := strings.TrimSpace(raw)
-		if trimmedPath == "" {
-			continue
-		}
-		cleanedPath := strings.ToLower(filepath.ToSlash(trimmedPath))
-		if cleanedPath == "" {
-			continue
-		}
-		if strings.Contains(questionLower, cleanedPath) {
-			return true
-		}
-		base := strings.ToLower(filepath.Base(cleanedPath))
-		if base != "" && strings.Contains(questionLower, base) {
-			return true
-		}
-		ext := filepath.Ext(base)
-		if ext == "" {
-			continue
-		}
-		stem := strings.TrimSuffix(base, ext)
-		if stem != "" && strings.Contains(questionLower, "`"+stem+"`") {
-			return true
-		}
-	}
-	return false
-}
-
 func (p *plannerProgressTracker) setLastPatchedFile(path string) {
 	if p == nil {
 		return
@@ -1957,10 +1923,8 @@ func Run(ctx context.Context, opts Options) Result {
 				fmt.Fprintln(os.Stderr, "Question:", question)
 			}
 			noShellAsk, shellAsk, hasSplitAsk := splitAskLines(question)
-			showFileQuestion := question
 			preflightQuestion := question
 			if hasSplitAsk {
-				showFileQuestion = noShellAsk
 				preflightQuestion = noShellAsk
 			}
 			useShellAgent = cfg.shellAgent
@@ -2000,260 +1964,13 @@ func Run(ctx context.Context, opts Options) Result {
 					preflightNote = fmt.Sprintf("preflight routing: %s (empty reply) — %s", routeLabel, routeExplanation)
 				}
 			}
-			runShowFileDetection := true
-			var showFileBanner string
-			showFileRetrieved := []string(nil)
-			showFileHandled := false
-			showFileInvalidAsk := false
-			if !cfg.dryRun && runShowFileDetection {
-				ctxDetect, cancelDetect := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
-				ctxDetect = attachTrajectory(ctxDetect, trajectoryWriter, parentSpanID)
-				showFileRuntime := mctRunner.FileDiscoveryRuntime
-				if strings.TrimSpace(showFileRuntime.Resolved.Model) == "" {
-					showFileRuntime = mctRunner.Runtime
-				}
-				detection, raw, err := promptsvc.DetectShowFileRequest(ctxDetect, showFileRuntime, showFileQuestion)
-				cancelDetect()
-				if err != nil {
-					if cfg.verbose {
-						fmt.Fprintln(os.Stderr, "Show-file detection error:", err)
-					}
-					turnInfo["show_file_detection_error"] = trimTo(err.Error(), 200)
-					if strings.TrimSpace(raw) != "" {
-						turnInfo["show_file_detection_raw"] = trimTo(raw, 200)
-					}
-				} else {
-					turnInfo["show_file_request"] = detection.IsShowFileRequest
-					if strings.TrimSpace(raw) != "" {
-						turnInfo["show_file_detection_raw"] = trimTo(raw, 200)
-					}
-					if detection.IsShowFileRequest {
-						if detection.IncludeExplain {
-							turnInfo["show_file_explain"] = true
-						}
-						requested := append([]string(nil), detection.Filepaths...)
-						if len(requested) == 0 && strings.TrimSpace(detection.Filepath) != "" {
-							requested = []string{strings.TrimSpace(detection.Filepath)}
-						}
-						mentioned := showFilePathMentioned(question, requested)
-						if len(requested) > 0 && !mentioned {
-							turnInfo["show_file_inferred_path"] = true
-						}
-						discovered := []string(nil)
-						var discoveryErr error
-						ctxDiscovery, cancelDiscovery := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
-						ctxDiscovery = attachTrajectory(ctxDiscovery, trajectoryWriter, parentSpanID)
-						result, err := promptsvc.RunFileDiscovery(
-							ctxDiscovery,
-							showFileQuestion,
-							mctRunner.FileDiscoveryRuntime,
-							mctRunner.Runtime,
-							mctRunner.FileDiscoveryTrajectory,
-							sessionID,
-							cfg.verbose,
-						)
-						if err != nil {
-							if cfg.verbose {
-								fmt.Fprintln(os.Stderr, "Show-file discovery error:", err)
-							}
-							turnInfo["show_file_discovery_error"] = trimTo(err.Error(), 200)
-							discoveryErr = err
-						} else {
-							discovered = result
-						}
-						merged := mergeShowFilePaths(requested, discovered)
-						payload := map[string]any{
-							"explicit_paths_count":   len(requested),
-							"discovered_paths_count": len(discovered),
-							"merged_paths_count":     len(merged),
-							"timeout_per_turn_sec":   cfg.timeoutPerTurn,
-						}
-						if discoveryErr != nil {
-							payload["error"] = trimTo(discoveryErr.Error(), 200)
-						}
-						evt := trajectory.Event{Kind: "show_file_discovery", Payload: payload}
-						if parentID, ok := trajectory.ParentSpanID(ctxDiscovery); ok {
-							evt.ParentSpanID = parentID
-						}
-						if err := trajectory.EmitFromContext(ctxDiscovery, evt); err != nil && cfg.verbose {
-							fmt.Fprintf(os.Stderr, "[trajectory] show-file discovery emit error: %v\n", err)
-						}
-						cancelDiscovery()
-
-						cleaned, invalid := promptsvc.PreflightShowFilePaths(merged, repoRoot)
-						if len(cleaned) == 0 {
-							turnInfo["show_file_invalid_path"] = true
-							if len(merged) > 0 {
-								turnInfo["show_file_paths"] = append([]string(nil), merged...)
-								turnInfo["show_file_path"] = merged[0]
-							}
-							showFileBanner = promptsvc.FormatShowFileDiscoveryAsk(invalid)
-							if strings.TrimSpace(showFileBanner) != "" {
-								showFileHandled = true
-								showFileInvalidAsk = true
-								turnInfo["show_file_appended"] = true
-							}
-						} else {
-							requested = cleaned
-							turnInfo["show_file_paths"] = append([]string(nil), requested...)
-							turnInfo["show_file_path"] = requested[0]
-							if strings.TrimSpace(detection.Reason) != "" {
-								turnInfo["show_file_reason"] = trimTo(detection.Reason, 200)
-							}
-							detection.VerbatimQuestion = showFileQuestion
-							detection.Filepaths = append([]string(nil), requested...)
-							detection.Filepath = requested[0]
-							detection.Preflighted = true
-							ctxSnippet, cancelSnippet := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
-							ctxSnippet = attachTrajectory(ctxSnippet, trajectoryWriter, parentSpanID)
-							snippetRuntime := mctRunner.FileDiscoveryRuntime
-							if strings.TrimSpace(snippetRuntime.Resolved.Model) == "" {
-								snippetRuntime = mctRunner.Runtime
-							}
-							snippetModelAlias := strings.TrimSpace(snippetRuntime.Alias)
-							snippets, serr := promptsvc.FetchFileSnippets(ctxSnippet, detection, repoRoot, snippetModelAlias, snippetRuntime.APIKeyOverrides, cfg.verbose)
-							if serr != nil {
-								if cfg.verbose {
-									fmt.Fprintln(os.Stderr, "Show-file snippet discovery error:", serr)
-								}
-								turnInfo["show_file_snippet_error"] = trimTo(serr.Error(), 200)
-							}
-							fallbackSet := map[string]struct{}{}
-							fallbackFiles := []string{}
-							addFallback := func(path string) {
-								if strings.TrimSpace(path) == "" {
-									return
-								}
-								if _, ok := fallbackSet[path]; ok {
-									return
-								}
-								fallbackSet[path] = struct{}{}
-								fallbackFiles = append(fallbackFiles, path)
-							}
-							snippetFiles := map[string][]promptsvc.LineRange{}
-							emptySnippetFiles := []string{}
-							warnings := []string{}
-							reasons := []string{}
-							reasonSet := map[string]struct{}{}
-							addReason := func(reason string) {
-								trimmed := strings.TrimSpace(reason)
-								if trimmed == "" {
-									return
-								}
-								if _, ok := reasonSet[trimmed]; ok {
-									return
-								}
-								reasonSet[trimmed] = struct{}{}
-								reasons = append(reasons, trimmed)
-							}
-							var partialErr *promptsvc.SnippetDiscoveryPartialError
-							if serr != nil {
-								if errors.As(serr, &partialErr) {
-									for _, path := range partialErr.Missing {
-										addFallback(path)
-									}
-									invalidPaths := make([]string, 0, len(partialErr.Invalid))
-									for path := range partialErr.Invalid {
-										invalidPaths = append(invalidPaths, path)
-									}
-									sort.Strings(invalidPaths)
-									for _, path := range invalidPaths {
-										addFallback(path)
-									}
-									warnings = append(warnings, showFilePartialWarnings(partialErr)...)
-									for _, kind := range promptsvc.SnippetDiscoveryReasonKinds(partialErr) {
-										addReason(kind)
-									}
-								} else {
-									for _, path := range requested {
-										addFallback(path)
-									}
-									reason := promptsvc.SnippetDiscoveryErrorKind(serr)
-									if reason == "" {
-										reason = "snippet_error"
-									}
-									addReason(reason)
-								}
-							}
-							for path, ranges := range snippets {
-								if len(ranges) == 0 {
-									emptySnippetFiles = append(emptySnippetFiles, path)
-									continue
-								}
-								snippetFiles[path] = ranges
-							}
-							if len(emptySnippetFiles) > 0 {
-								sort.Strings(emptySnippetFiles)
-								for _, path := range emptySnippetFiles {
-									addFallback(path)
-								}
-								warnings = append(warnings, fmt.Sprintf("snippet-discovery returned empty snippets for: %s", strings.Join(emptySnippetFiles, ", ")))
-								addReason("empty_snippets")
-							}
-
-							var snippetBanner string
-							var snippetRetrieved []string
-							if len(snippetFiles) > 0 {
-								var snippetWarnings []string
-								snippetReason := detection.VerbatimQuestion
-								if strings.TrimSpace(snippetReason) == "" {
-									snippetReason = detection.Reason
-								}
-								snippetBanner, snippetRetrieved, snippetWarnings = promptsvc.FormatSnippetsResponse(snippetFiles, snippetReason, repoRoot)
-								warnings = append(warnings, snippetWarnings...)
-								turnInfo["show_file_snippet_count"] = countSnippetRanges(snippetFiles)
-							}
-							var fallbackBanner string
-							var fallbackRetrieved []string
-							if len(fallbackFiles) > 0 {
-								var fallbackWarnings []string
-								fallbackBanner, fallbackRetrieved, fallbackWarnings = promptsvc.FormatFullFileFallback(fallbackFiles, repoRoot, serr)
-								warnings = append(warnings, fallbackWarnings...)
-								turnInfo["show_file_fallback"] = true
-							}
-							if snippetBanner != "" && fallbackBanner != "" {
-								showFileBanner = snippetBanner + "\n\n" + fallbackBanner
-							} else {
-								showFileBanner = snippetBanner + fallbackBanner
-							}
-							showFileRetrieved = append(showFileRetrieved, snippetRetrieved...)
-							showFileRetrieved = append(showFileRetrieved, fallbackRetrieved...)
-							showFileBanner = appendShowFileWarnings(showFileBanner, warnings)
-							if strings.TrimSpace(showFileBanner) != "" {
-								showFileHandled = true
-								turnInfo["show_file_appended"] = true
-							}
-							if len(fallbackFiles) > 0 {
-								payload := map[string]any{"files": append([]string(nil), fallbackFiles...)}
-								if len(reasons) > 0 {
-									payload["reasons"] = append([]string(nil), reasons...)
-								}
-								evt := trajectory.Event{Kind: "snippet_fallback", Payload: payload}
-								if parentID, ok := trajectory.ParentSpanID(ctxSnippet); ok {
-									evt.ParentSpanID = parentID
-								}
-								if err := trajectory.EmitFromContext(ctxSnippet, evt); err != nil && cfg.verbose {
-									fmt.Fprintf(os.Stderr, "[trajectory] snippet fallback emit error: %v\n", err)
-								}
-							}
-							if cancelSnippet != nil {
-								cancelSnippet()
-							}
-							if showFileHandled {
-								turnInfo["show_file_files"] = append([]string(nil), showFileRetrieved...)
-								turnInfo["show_file_paths"] = append([]string(nil), requested...)
-							}
-						}
-					}
-				}
-			}
-			useShellAgent, forcedSingleShellRoute := applySingleAskRoutingPolicy(hasSplitAsk, showFileHandled, useShellAgent)
+			useShellAgent, forcedSingleShellRoute := applySingleAskRoutingPolicy(hasSplitAsk, useShellAgent)
 			if forcedSingleShellRoute {
 				turnInfo["mct_single_ask_shell_forced"] = true
 				if preflightNote == "" {
-					preflightNote = "routing policy: non-show single ask -> shell agent"
+					preflightNote = "routing policy: single ask -> shell agent"
 				} else {
-					preflightNote = preflightNote + " | routing policy: non-show single ask -> shell agent"
+					preflightNote = preflightNote + " | routing policy: single ask -> shell agent"
 				}
 			}
 			shellAgentUsedThisTurn = useShellAgent || runSplitShell
@@ -2284,12 +2001,6 @@ func Run(ctx context.Context, opts Options) Result {
 			indicator := "shell"
 			if runSplitShell {
 				indicator = "both"
-			} else if showFileHandled {
-				if showFileInvalidAsk {
-					indicator = "file"
-				} else {
-					indicator = "show"
-				}
 			} else if !useShellAgent {
 				indicator = "file"
 			}
@@ -2311,35 +2022,8 @@ func Run(ctx context.Context, opts Options) Result {
 				}
 			}
 			stream := display.BeginPrompt(question, orchPromptOpts)
-			if strings.TrimSpace(showFileBanner) != "" {
-				stream.OnChunk(showFileBanner)
-			}
-			if showFileHandled && !runSplitShell {
-				fullAns := strings.TrimSpace(showFileBanner)
-				if fullAns == "" {
-					fullAns = "[show-file]"
-				}
-				stream.Complete(fullAns)
-				if err := writeTurn(step, question, "", showFileRetrieved, fullAns, "ask"); err != nil {
-					fmt.Fprintln(os.Stderr, "Transcript write error:", err)
-					sessionErr = err
-					finishTurn(sessTelemetry, turn, turnDecision, "error", turnInfo, err)
-					return Result{ExitCode: 1, Err: err}
-				}
-				turnInfo["retrieved_count"] = len(showFileRetrieved)
-				userTurnCounter++
-				turnsCompleted = userTurnCounter
-				finishTurn(sessTelemetry, turn, turnDecision, "success", turnInfo, nil)
-				if userTurnCounter == cfg.maxSteps {
-					goto Finalize
-				}
-				goto TurnDone
-			}
 			if runSplitShell {
 				runNoShell := true
-				if showFileHandled {
-					runNoShell = false
-				}
 
 				var (
 					shellResult promptsvc.ShellAgentOnlyResult
@@ -2464,76 +2148,11 @@ func Run(ctx context.Context, opts Options) Result {
 					}
 					lastAnswer = result.FullText
 					retrieved = append([]string(nil), result.RetrievedFiles...)
-					if showFileHandled && len(showFileRetrieved) > 0 {
-						merged := make([]string, 0, len(showFileRetrieved)+len(retrieved))
-						seen := map[string]struct{}{}
-						for _, path := range showFileRetrieved {
-							trimmed := strings.TrimSpace(path)
-							if trimmed == "" {
-								continue
-							}
-							if _, ok := seen[trimmed]; ok {
-								continue
-							}
-							seen[trimmed] = struct{}{}
-							merged = append(merged, trimmed)
-						}
-						for _, path := range retrieved {
-							trimmed := strings.TrimSpace(path)
-							if trimmed == "" {
-								continue
-							}
-							if _, ok := seen[trimmed]; ok {
-								continue
-							}
-							seen[trimmed] = struct{}{}
-							merged = append(merged, trimmed)
-						}
-						retrieved = merged
-					}
-				} else if showFileHandled {
-					retrieved = append([]string(nil), showFileRetrieved...)
 				}
-
-				fullAns := ""
-				if runNoShell {
-					fullAns = result.Assistant
-					if cfg.dryRun || strings.TrimSpace(fullAns) == "" {
-						fullAns = lastAnswer
-					}
-				} else if showFileHandled {
-					fullAns = strings.TrimSpace(showFileBanner)
+				fullAns := result.Assistant
+				if cfg.dryRun || strings.TrimSpace(fullAns) == "" {
+					fullAns = lastAnswer
 				}
-				if showFileHandled && !showFileInvalidAsk && runNoShell {
-					combined := strings.TrimSpace(showFileBanner)
-					if combined != "" {
-						combined = combined + "\n\n" + strings.TrimSpace(fullAns)
-					} else {
-						combined = strings.TrimSpace(fullAns)
-					}
-					if combined != "" {
-						fullAns = combined
-					}
-				}
-
-				shellSection := strings.TrimSpace(shellResult.Summary)
-				if shellSection == "" && shellErr != nil {
-					shellSection = "Shell agent error: " + trimTo(shellErr.Error(), 400)
-				}
-				if shellSection != "" {
-					shellSection = "Shell summary:\n" + shellSection
-				}
-				if shellSection != "" {
-					if strings.TrimSpace(fullAns) == "" {
-						fullAns = shellSection
-					} else {
-						fullAns = strings.TrimSpace(fullAns) + "\n\n" + shellSection
-					}
-				}
-				if strings.TrimSpace(fullAns) == "" {
-					fullAns = "[split-ask]"
-				}
-
 				if cfg.enableTagFormat {
 					stats, warnings := analyzeTagFormat(fullAns, retrieved)
 					for k, v := range stats {
@@ -2619,48 +2238,10 @@ func Run(ctx context.Context, opts Options) Result {
 				}
 				lastAnswer = result.FullText
 				retrieved = append([]string(nil), result.RetrievedFiles...)
-				if showFileHandled && len(showFileRetrieved) > 0 {
-					merged := make([]string, 0, len(showFileRetrieved)+len(retrieved))
-					seen := map[string]struct{}{}
-					for _, path := range showFileRetrieved {
-						trimmed := strings.TrimSpace(path)
-						if trimmed == "" {
-							continue
-						}
-						if _, ok := seen[trimmed]; ok {
-							continue
-						}
-						seen[trimmed] = struct{}{}
-						merged = append(merged, trimmed)
-					}
-					for _, path := range retrieved {
-						trimmed := strings.TrimSpace(path)
-						if trimmed == "" {
-							continue
-						}
-						if _, ok := seen[trimmed]; ok {
-							continue
-						}
-						seen[trimmed] = struct{}{}
-						merged = append(merged, trimmed)
-					}
-					retrieved = merged
-				}
 			}
 			fullAns := result.Assistant
 			if cfg.dryRun || strings.TrimSpace(fullAns) == "" {
 				fullAns = lastAnswer
-			}
-			if showFileHandled && !showFileInvalidAsk {
-				combined := strings.TrimSpace(showFileBanner)
-				if combined != "" {
-					combined = combined + "\n\n" + strings.TrimSpace(fullAns)
-				} else {
-					combined = strings.TrimSpace(fullAns)
-				}
-				if combined != "" {
-					fullAns = combined
-				}
 			}
 			if cfg.enableTagFormat {
 				stats, warnings := analyzeTagFormat(fullAns, retrieved)

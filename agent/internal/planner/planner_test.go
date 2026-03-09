@@ -976,6 +976,21 @@ func TestBuildAskRequestOmitsTranscript(t *testing.T) {
 	}
 }
 
+func TestAskPromptPrefersExplanationsOverFullFiles(t *testing.T) {
+	client := NewClient(ClientConfig{})
+	prompt := client.askPrompt("Explain the repo structure.", "")
+	checks := []string{
+		"do not ask for full files or large verbatim code snippets",
+		"The `shell-agent` must spend output tokens to answer",
+		"Explain what sections the README.md contains and which contain HTML.",
+	}
+	for _, want := range checks {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("ask prompt missing %q in %q", want, prompt)
+		}
+	}
+}
+
 func TestPlannerHelperMessagesSharePlanPrefix(t *testing.T) {
 	client := NewClient(ClientConfig{PatchEnabled: true})
 	conv := conversation.New("sess-prefix", "Finish docs")

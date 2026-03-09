@@ -222,132 +222,9 @@ func TestRunInjectsTagSnippets(t *testing.T) {
 	}
 }
 
-func TestRunShowFileInvalidPathsAsksForFilepaths(t *testing.T) {
+func TestRunFullFilePromptStillGeneratesAnswer(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	sessionID := "test-show-file-invalid"
-	t.Setenv("MACHTIANI_SESSION_ID", sessionID)
-
-	workDir := t.TempDir()
-	prevWD, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("get wd: %v", err)
-	}
-	if err := os.Chdir(workDir); err != nil {
-		t.Fatalf("chdir temp: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = os.Chdir(prevWD)
-	})
-
-	origDisco := discoveryRunnerRun
-	discoveryRunnerRun = func(ctx context.Context, prompt string, model discoveryrunner.ModelSettings, sessionID string, verbose bool) (discoveryrunner.Result, error) {
-		return discoveryrunner.Result{}, nil
-	}
-	t.Cleanup(func() { discoveryRunnerRun = origDisco })
-
-	origDetect := detectShowFileRequest
-	detectShowFileRequest = func(ctx context.Context, runtime ModelRuntime, plannerPrompt string) (ShowFileDetection, string, error) {
-		return ShowFileDetection{IsShowFileRequest: true, Filepaths: []string{"missing.go"}}, "", nil
-	}
-	t.Cleanup(func() { detectShowFileRequest = origDetect })
-
-	origChat := chatStreamWithRuntime
-	chatStreamWithRuntime = func(ctx context.Context, model llm.ResolvedModel, fallbackAliases []string, fallbackModels []llm.ResolvedModel, extra map[string]any, messages []llm.Message, onToken func(string)) (string, error) {
-		t.Fatalf("chat stream should be skipped when asking for file paths")
-		return "", nil
-	}
-	t.Cleanup(func() { chatStreamWithRuntime = origChat })
-
-	res, err := Run(context.Background(), RunOptions{
-		Prompt: "Show me missing.go",
-		Mode:   "default",
-		Runtime: ModelRuntime{
-			Resolved: llm.CloneResolvedModel(llm.ResolvedModel{Model: "planner-model"}),
-		},
-		SessionID: sessionID,
-		Prompts:   testPromptsConfig(),
-	})
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if !strings.Contains(res.Assistant, "missing.go") {
-		t.Fatalf("expected invalid path in assistant message, got %q", res.Assistant)
-	}
-	if !strings.Contains(res.Assistant, "repository-relative") {
-		t.Fatalf("expected request for valid file paths, got %q", res.Assistant)
-	}
-}
-
-func TestRunShowFileInvalidPathsFromDiscoveryAsksForFilepaths(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	sessionID := "test-show-file-invalid-discovery"
-	t.Setenv("MACHTIANI_SESSION_ID", sessionID)
-
-	workDir := t.TempDir()
-	prevWD, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("get wd: %v", err)
-	}
-	if err := os.Chdir(workDir); err != nil {
-		t.Fatalf("chdir temp: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = os.Chdir(prevWD)
-	})
-
-	origDisco := discoveryRunnerRun
-	discoveryRunnerRun = func(ctx context.Context, prompt string, model discoveryrunner.ModelSettings, sessionID string, verbose bool) (discoveryrunner.Result, error) {
-		return discoveryrunner.Result{Paths: []string{"missing.go"}}, nil
-	}
-	t.Cleanup(func() { discoveryRunnerRun = origDisco })
-
-	origDetect := detectShowFileRequest
-	detectCalled := false
-	detectShowFileRequest = func(ctx context.Context, runtime ModelRuntime, plannerPrompt string) (ShowFileDetection, string, error) {
-		detectCalled = true
-		if got := runtime.Resolved.Model; got != "file-model" {
-			t.Fatalf("expected file discovery model, got %q", got)
-		}
-		return ShowFileDetection{IsShowFileRequest: true}, "", nil
-	}
-	t.Cleanup(func() { detectShowFileRequest = origDetect })
-
-	origChat := chatStreamWithRuntime
-	chatStreamWithRuntime = func(ctx context.Context, model llm.ResolvedModel, fallbackAliases []string, fallbackModels []llm.ResolvedModel, extra map[string]any, messages []llm.Message, onToken func(string)) (string, error) {
-		t.Fatalf("chat stream should be skipped when asking for file paths")
-		return "", nil
-	}
-	t.Cleanup(func() { chatStreamWithRuntime = origChat })
-
-	res, err := Run(context.Background(), RunOptions{
-		Prompt: "Show me missing.go",
-		Mode:   "default",
-		Runtime: ModelRuntime{
-			Resolved: llm.CloneResolvedModel(llm.ResolvedModel{Model: "planner-model"}),
-		},
-		FileDiscoveryRuntime: ModelRuntime{
-			Resolved: llm.CloneResolvedModel(llm.ResolvedModel{Model: "file-model"}),
-		},
-		SessionID: sessionID,
-		Prompts:   testPromptsConfig(),
-	})
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if !detectCalled {
-		t.Fatalf("expected show-file detection to run")
-	}
-	if !strings.Contains(res.Assistant, "missing.go") {
-		t.Fatalf("expected invalid path in assistant message, got %q", res.Assistant)
-	}
-	if !strings.Contains(res.Assistant, "repository-relative") {
-		t.Fatalf("expected request for valid file paths, got %q", res.Assistant)
-	}
-}
-
-func TestRunShowFileSkipsAnswerGenerationEvenWhenExplainRequested(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	sessionID := "test-show-file-terminal"
+	sessionID := "test-full-file-prompt-answers"
 	t.Setenv("MACHTIANI_SESSION_ID", sessionID)
 
 	workDir := t.TempDir()
@@ -372,22 +249,14 @@ func TestRunShowFileSkipsAnswerGenerationEvenWhenExplainRequested(t *testing.T) 
 	}
 	t.Cleanup(func() { discoveryRunnerRun = origDisco })
 
-	origDetect := detectShowFileRequest
-	detectShowFileRequest = func(ctx context.Context, runtime ModelRuntime, plannerPrompt string) (ShowFileDetection, string, error) {
-		return ShowFileDetection{
-			IsShowFileRequest: true,
-			Filepaths:         []string{"a.go"},
-			IncludeExplain:    true,
-			ExplainPrompt:     "Explain this file.",
-			VerbatimQuestion:  `Show a.go. <full_file path="a.go" />`,
-		}, "", nil
-	}
-	t.Cleanup(func() { detectShowFileRequest = origDetect })
-
 	origChat := chatStreamWithRuntime
+	var capturedPrompt string
 	chatStreamWithRuntime = func(ctx context.Context, model llm.ResolvedModel, fallbackAliases []string, fallbackModels []llm.ResolvedModel, extra map[string]any, messages []llm.Message, onToken func(string)) (string, error) {
-		t.Fatalf("chat stream should be skipped for show-file terminal output")
-		return "", nil
+		if len(messages) != 1 {
+			t.Fatalf("expected single message, got %d", len(messages))
+		}
+		capturedPrompt = messages[0].Content
+		return "Explained a.go", nil
 	}
 	t.Cleanup(func() { chatStreamWithRuntime = origChat })
 
@@ -403,10 +272,16 @@ func TestRunShowFileSkipsAnswerGenerationEvenWhenExplainRequested(t *testing.T) 
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if !strings.Contains(res.Assistant, "## File Context") {
-		t.Fatalf("expected show-file content block, got %q", res.Assistant)
+	if res.Assistant != "Explained a.go" {
+		t.Fatalf("unexpected assistant output: %q", res.Assistant)
 	}
-	if !strings.Contains(res.Assistant, "func A() {}") {
-		t.Fatalf("expected file contents in assistant output, got %q", res.Assistant)
+	if !strings.Contains(capturedPrompt, "Here are possible relevant files:") {
+		t.Fatalf("expected discovered file context in prompt, got %q", capturedPrompt)
+	}
+	if !strings.Contains(capturedPrompt, "func A() {}") {
+		t.Fatalf("expected file contents in prompt, got %q", capturedPrompt)
+	}
+	if strings.Contains(capturedPrompt, "## File Context") {
+		t.Fatalf("did not expect show-file formatting in prompt, got %q", capturedPrompt)
 	}
 }
