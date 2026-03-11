@@ -12,5 +12,5 @@ Follow these rules:
 - If the command must run in a different directory, you MUST chain it using `cd <dir> && <command>` because each invocation starts in the workspace root.
 - Prefer read-only commands. When the instruction explicitly requests a write, touch only the files mentioned.
 Commands run with set -euo pipefail in the provided working directory.
-If asked to submit the final answer, respond with the final answer directly starting with "## Answer" (no command) and present it as claim-by-claim findings where each substantive claim begins with "Confidence: <0-100>% - "; do not use a single overall confidence score.
+If asked to submit the final answer, output only the final answer (no command). The first non-whitespace characters of your response must be exactly "## Answer". Do not include any rationale, transition sentence, analysis, or preamble before it. Unless you are concluding, do not begin your response with "## Answer". After "## Answer", present the answer as claim-by-claim findings where each substantive claim begins with "Confidence: <0-100>% - "; do not use a single overall confidence score.
 Do not include commentary outside the fenced block.

@@ -622,15 +622,16 @@ func (c *Client) generateAsk(ctx context.Context, conv *conversation.Conversatio
 		}
 		_, ask, parseErr := parseAskMenu(resp)
 		if parseErr != nil {
-			ask = strings.TrimSpace(resp)
-			if ask == "" {
-				guardrail = "The previous ask was empty. Provide a concrete ask."
-				continue
-			}
+			guardrail = "The previous response did not follow the required ask format. Return exactly `Ask Mode:` and `Ask:` (or `No-shell:` / `Shell:` for `both`), with no answer content."
+			continue
 		}
 		ask = strings.TrimSpace(ask)
 		if ask == "" {
 			guardrail = "The previous ask was empty. Provide a concrete ask."
+			continue
+		}
+		if looksLikeAnswerInsteadOfAsk(ask) {
+			guardrail = "The previous response answered the goal instead of proposing the next ask. Return only the next ask prompt in the required format."
 			continue
 		}
 		lastAsk = ask
@@ -2019,8 +2020,15 @@ func parseAskMenu(resp string) (AskMode, string, error) {
 				ask = tail
 			}
 		}
+	} else if mode == AskModeBoth {
+		body := strings.TrimSpace(removeLinesWithPrefixes(trimmed, "ask mode:", "mode:"))
+		noShell, shell, err := parseAskSplit(body)
+		if err != nil {
+			return mode, "", errors.New("missing split ask content")
+		}
+		ask = strings.TrimSpace("No-shell: " + noShell + "\nShell: " + shell)
 	} else {
-		ask = strings.TrimSpace(removeLinesWithPrefixes(trimmed, "ask mode:", "mode:"))
+		return mode, "", errors.New("missing ask label")
 	}
 	if mode == "" {
 		mode = AskModeNoShell
@@ -2029,6 +2037,21 @@ func parseAskMenu(resp string) (AskMode, string, error) {
 		return mode, "", errors.New("empty ask content")
 	}
 	return mode, ask, nil
+}
+
+func looksLikeAnswerInsteadOfAsk(ask string) bool {
+	trimmed := strings.TrimSpace(strings.ToLower(ask))
+	if trimmed == "" {
+		return false
+	}
+	switch {
+	case strings.HasPrefix(trimmed, "## answer"),
+		strings.HasPrefix(trimmed, "answer:"),
+		strings.HasPrefix(trimmed, "final answer"),
+		strings.HasPrefix(trimmed, "== conclusion"):
+		return true
+	}
+	return strings.Count(ask, "Confidence:") >= 2
 }
 
 func normalizeAskMode(raw string) AskMode {

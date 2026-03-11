@@ -1214,6 +1214,31 @@ func Run(ctx context.Context, opts Options) Result {
 		return saveConversation()
 	}
 
+	appendConversationFinal := func(answer string, step int, capped bool) error {
+		if conv == nil || tr == nil {
+			if tr == nil {
+				return nil
+			}
+			return tr.WriteFinal(answer, step, capped)
+		}
+		conv.AddMessage("assistant", answer, map[string]any{
+			"type":   "final",
+			"turns":  step,
+			"capped": capped,
+		})
+		rendered, delta, err := renderConversationDelta()
+		if err != nil {
+			return err
+		}
+		if delta != "" {
+			if err := tr.AppendBlock(delta); err != nil {
+				return err
+			}
+		}
+		conversationRendered = rendered
+		return saveConversation()
+	}
+
 	if err := loadConversation(); err != nil {
 		fmt.Fprintln(os.Stderr, "Error loading conversation:", err)
 		return Result{ExitCode: 1, Err: err}
@@ -1642,7 +1667,7 @@ func Run(ctx context.Context, opts Options) Result {
 					turnsCompleted = userTurnCounter
 					return Result{ExitCode: 1, Err: ferr}
 				}
-				if err := tr.WriteFinal(answer, step, true); err != nil {
+				if err := appendConversationFinal(answer, step, true); err != nil {
 					fmt.Fprintln(os.Stderr, "Transcript write error:", err)
 					sessionErr = err
 					finishTurn(sessTelemetry, turn, "finalize", "error", turnInfo, err)
@@ -1747,7 +1772,7 @@ func Run(ctx context.Context, opts Options) Result {
 				turnsCompleted = userTurnCounter
 				return Result{ExitCode: 1, Err: ferr}
 			}
-			if err := tr.WriteFinal(answer, step, step == cfg.maxSteps && decision != planner.DecisionFinalize); err != nil {
+			if err := appendConversationFinal(answer, step, step == cfg.maxSteps && decision != planner.DecisionFinalize); err != nil {
 				fmt.Fprintln(os.Stderr, "Transcript write error:", err)
 				sessionErr = err
 				finishTurn(sessTelemetry, turn, "finalize", "error", turnInfo, err)
@@ -3069,7 +3094,7 @@ Finalize:
 		turnsCompleted = turns
 		return Result{ExitCode: 1, Err: ferr}
 	}
-	if err := tr.WriteFinal(answer, turns, turns >= cfg.maxSteps); err != nil {
+	if err := appendConversationFinal(answer, turns, turns >= cfg.maxSteps); err != nil {
 		fmt.Fprintln(os.Stderr, "Transcript write error:", err)
 		sessionErr = err
 		turnsCompleted = turns

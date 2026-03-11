@@ -752,3 +752,46 @@ func TestRestoreTranscriptFromConversationRewritesStaleContent(t *testing.T) {
 		t.Fatalf("on-disk transcript not rewritten; got:\n%s", string(data))
 	}
 }
+
+func TestRestoreTranscriptFromConversationIncludesFinalConclusion(t *testing.T) {
+	cwd, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	tmp := t.TempDir()
+	_ = os.Chdir(tmp)
+	t.Setenv("HOME", tmp)
+
+	sessionID := "final-restore"
+	goal := "Keep transcripts consistent"
+	formattedGoal := formatGoalText(goal, "")
+
+	conv := conversation.New(sessionID, formattedGoal)
+	conv.AddMessage("assistant", "Final answer", map[string]any{"type": "final", "turns": 2, "capped": false})
+	convRendered, err := conv.ToTranscript()
+	if err != nil {
+		t.Fatalf("ToTranscript: %v", err)
+	}
+
+	tr, err := transcript.New(sessionID)
+	if err != nil {
+		t.Fatalf("transcript init: %v", err)
+	}
+	defer tr.Close()
+
+	if err := tr.Restore("stale transcript\n"); err != nil {
+		t.Fatalf("seed stale transcript: %v", err)
+	}
+
+	if err := restoreTranscriptFromConversation(tr, convRendered, true); err != nil {
+		t.Fatalf("restoreTranscriptFromConversation: %v", err)
+	}
+
+	if !strings.Contains(tr.Content(), "== CONCLUSION") {
+		t.Fatalf("restored transcript missing conclusion:\n%s", tr.Content())
+	}
+	if !strings.Contains(tr.Content(), "Final answer") {
+		t.Fatalf("restored transcript missing final answer:\n%s", tr.Content())
+	}
+	if tr.Content() != convRendered {
+		t.Fatalf("transcript not rewritten from conversation:\nwant:\n%s\n----\n got:\n%s", convRendered, tr.Content())
+	}
+}

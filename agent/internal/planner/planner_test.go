@@ -454,6 +454,20 @@ Ask: Run ` + "`" + `grep -n "Decision:" agent/internal/planner/planner.go` + "`"
 	}
 }
 
+func TestParseAskMenuRejectsFreeformAnswer(t *testing.T) {
+	resp := strings.TrimSpace(`
+## Answer
+
+Confidence: 100% - The planner chose ask.
+
+Confidence: 100% - The model then answered instead of asking.
+`)
+	_, _, err := parseAskMenu(resp)
+	if err == nil {
+		t.Fatalf("expected parseAskMenu to reject freeform answer")
+	}
+}
+
 func TestParseAskSplitRealistic(t *testing.T) {
 	resp := strings.TrimSpace(`
 No-shell: Explain how session history is loaded and used during planning.
@@ -523,6 +537,44 @@ func TestGenerateAskRetriesOnPatchIntent(t *testing.T) {
 	}
 	if !strings.Contains(ask, "manage context across its orchestrated tools") {
 		t.Fatalf("unexpected ask result: %q", ask)
+	}
+}
+
+func TestGenerateAskRetriesWhenModelReturnsAnswerInsteadOfAsk(t *testing.T) {
+	client := NewClient(ClientConfig{})
+	conv := conversation.New("sess-ask-answer-retry", "Investigate provider flow")
+	transcript := "== TURN 0\nQuestion: Trace provider flow."
+
+	var askCalls int
+	client.chatFn = func(_ context.Context, messages []llm.Message) (string, error) {
+		content := messages[len(messages)-1].Content
+		switch {
+		case strings.Contains(content, "You are a guard that checks whether an ask mixes no-shell and shell actions."):
+			return `{"is_mixed":false,"reason":"single ask","rewrite":""}`, nil
+		case strings.Contains(content, "You are a guard that checks whether an ask is requesting file changes or patches."):
+			return `{"has_patch_intent":false,"reason":"analysis-only"}`, nil
+		case strings.Contains(content, "Ask Mode:") && strings.Contains(content, "Ask request:"):
+			askCalls++
+			if askCalls == 1 {
+				return "## Answer\n\nConfidence: 100% - Here is the final explanation.\n\nConfidence: 100% - It is complete.", nil
+			}
+			return "Ask Mode: no-shell\nAsk: Explain how provider events flow from CodexAppServerManager to the orchestration layer.", nil
+		}
+		return "", nil
+	}
+
+	ask, err := client.generateAsk(context.Background(), conv, conv.CurrentGoal(), transcript, 1, 3)
+	if err != nil {
+		t.Fatalf("generateAsk error: %v", err)
+	}
+	if strings.HasPrefix(strings.TrimSpace(ask), "## Answer") {
+		t.Fatalf("expected answer-like output to be rejected, got %q", ask)
+	}
+	if !strings.Contains(ask, "provider events flow") {
+		t.Fatalf("unexpected ask output: %q", ask)
+	}
+	if askCalls != 2 {
+		t.Fatalf("expected ask generation retry, got %d ask calls", askCalls)
 	}
 }
 

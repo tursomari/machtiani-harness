@@ -152,6 +152,40 @@ func TestToTranscriptRendersGoalUpdateBlock(t *testing.T) {
 	}
 }
 
+func TestToTranscriptRendersFinalConclusionBlock(t *testing.T) {
+	cwd, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	tmp := t.TempDir()
+	_ = os.Chdir(tmp)
+	t.Setenv("HOME", tmp)
+
+	tr, err := transcript.New("sess-final")
+	if err != nil {
+		t.Fatalf("transcript.New error: %v", err)
+	}
+	defer tr.Close()
+
+	goal := "Finish docs"
+	if err := tr.WriteHeader(goal, "", "sess-final", nil); err != nil {
+		t.Fatalf("WriteHeader error: %v", err)
+	}
+	if err := tr.WriteFinal("Final answer", 2, true); err != nil {
+		t.Fatalf("WriteFinal error: %v", err)
+	}
+	expected := tr.Content()
+
+	conv := New("sess-final", goal)
+	conv.AddMessage("assistant", "Final answer", map[string]any{"type": "final", "turns": 2, "capped": true})
+
+	got, err := conv.ToTranscript()
+	if err != nil {
+		t.Fatalf("ToTranscript returned error: %v", err)
+	}
+	if got != expected {
+		t.Fatalf("final transcript mismatch:\nwant:\n%s\n----\n got:\n%s", expected, got)
+	}
+}
+
 func TestToChatMessagesEmptyConversation(t *testing.T) {
 	conv := &Conversation{}
 	messages := conv.ToChatMessages("System prompt")
@@ -243,6 +277,28 @@ func TestToChatMessagesIncludesCacheAnchor(t *testing.T) {
 	}
 	if messages[1].Content != "[cache anchor]" {
 		t.Fatalf("unexpected cache anchor content: %q", messages[1].Content)
+	}
+}
+
+func TestToChatMessagesIncludesFinalAnswer(t *testing.T) {
+	conv := New("sess-final-chat", "Goal")
+	conv.AddMessage("assistant", "Final answer", map[string]any{"type": "final", "turns": 3, "capped": false})
+
+	messages := conv.ToChatMessages("")
+	if len(messages) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(messages))
+	}
+	if messages[1].Role != "assistant" {
+		t.Fatalf("expected final answer role assistant, got %q", messages[1].Role)
+	}
+	if messages[1].Content != "Final answer" {
+		t.Fatalf("unexpected final answer content: %q", messages[1].Content)
+	}
+	if messages[1].Metadata["type"] != "final" {
+		t.Fatalf("unexpected final answer metadata: %v", messages[1].Metadata)
+	}
+	if messages[1].Metadata["turns"] != 3 {
+		t.Fatalf("unexpected final answer turn count: %v", messages[1].Metadata)
 	}
 }
 

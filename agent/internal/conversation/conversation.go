@@ -213,6 +213,11 @@ func (c *Conversation) ToTranscript() (string, error) {
 			if strings.TrimSpace(msg.Content) != "" {
 				addRawEvent(msg.Content)
 			}
+		case "final", "final_answer":
+			turns, _ := coerceInt(msg.Metadata["turns"])
+			capped, _ := coerceBool(msg.Metadata["capped"])
+			block := renderConclusion(msg.Content, turns, capped)
+			addRawEvent(block)
 		case "ask":
 			turn := coalesceTurn(msg)
 			td := addTurnEvent(turn)
@@ -288,7 +293,7 @@ func (c *Conversation) ToChatMessages(systemPrompt string) []llm.Message {
 		switch msgType {
 		case "original_goal", "goal_update", "user_feedback", "cache_anchor":
 			role = "user"
-		case "ask", "answer", "raw", "raw_block":
+		case "ask", "answer", "raw", "raw_block", "final", "final_answer":
 			role = "assistant"
 		default:
 			continue
@@ -363,6 +368,14 @@ func renderTurn(step int, question, savedPath string, retrieved []string, summar
 func renderGoalUpdate(content string) string {
 	body := strings.TrimRight(content, "\n")
 	return sanitize("\n=== GOAL UPDATE\n\n" + body + "\n")
+}
+
+func renderConclusion(answer string, step int, capped bool) string {
+	var note string
+	if capped {
+		note = " (reached max-steps cap)"
+	}
+	return sanitize(fmt.Sprintf("\n== CONCLUSION%s (after %d turn(s))\n\n%s\n", note, step, answer))
 }
 
 func sanitize(text string) string {
@@ -470,4 +483,20 @@ func coerceStringSlice(val any) []string {
 		return out
 	}
 	return nil
+}
+
+func coerceBool(val any) (bool, bool) {
+	switch v := val.(type) {
+	case bool:
+		return v, true
+	case string:
+		trimmed := strings.TrimSpace(strings.ToLower(v))
+		switch trimmed {
+		case "true":
+			return true, true
+		case "false":
+			return false, true
+		}
+	}
+	return false, false
 }
