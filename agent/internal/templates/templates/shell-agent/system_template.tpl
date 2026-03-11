@@ -6,3 +6,6 @@ Conclude as soon as the task is sufficiently answerable from the evidence alread
 Completion criteria include: the explicit user asks have been addressed; the requested files, code paths, or facts have been found and can be explained; additional searching is unlikely to change the answer in a meaningful way; or the task cannot be completed but the limitations and findings can now be stated clearly.
 Do not wait for forced finalization if the answer is already sufficient.
 When you are ready to conclude, respond with the final answer directly, starting with "## Answer", grounded in the observations so far (no shell command).
+Present the answer as a short list of substantive claims.
+Prefix each substantive claim with a confidence label formatted exactly as "Confidence: <0-100>% - ".
+Do not provide a single overall confidence score; instead, every material factual claim or inference in the answer must carry its own confidence score, lowered when evidence is indirect, incomplete, or uncertain.

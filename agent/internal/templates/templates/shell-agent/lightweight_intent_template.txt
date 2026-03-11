@@ -9,4 +9,4 @@ Any critical constraints are repeated here and MUST be followed:
 
 Produce a single-line Bash command that satisfies the intent while following the safety rules, then wrap it in ```bash-command ... ```.
 If the intent cannot be satisfied within one safe command (for example, it would require chaining or a redirect that was not justified), return a command that prints a short explanation asking for a simpler request.
-If this intent finalizes the task, respond with the final answer directly starting with "## Answer" (no command).
+If this intent finalizes the task, respond with the final answer directly starting with "## Answer" (no command) and present it as claim-by-claim findings where each substantive claim begins with "Confidence: <0-100>% - "; do not use a single overall confidence score.

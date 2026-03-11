@@ -15,6 +15,9 @@ func TestGetEmbeddedTemplate_KnownKeysLoad(t *testing.T) {
 		"planner.ask_mixed_monitor",
 		"planner.finalize_prompt",
 		"shell_agent.system_template",
+		"shell_agent.instance_template",
+		"shell_agent.lightweight_system_template",
+		"shell_agent.lightweight_intent_template",
 		"mct.header_user",
 		"mct.conversation_history_template",
 		"file_discovery.system_prompt_template",
@@ -48,6 +51,9 @@ func TestShellAgentSystemTemplateEncouragesProactiveFinalization(t *testing.T) {
 		"Before each step, explicitly assess what the task is asking for",
 		"additional searching is unlikely to change the answer in a meaningful way",
 		"Do not wait for forced finalization if the answer is already sufficient.",
+		"Present the answer as a short list of substantive claims.",
+		"Confidence: <0-100>% - ",
+		"Do not provide a single overall confidence score",
 	}
 	for _, check := range checks {
 		if !strings.Contains(got, check) {
@@ -65,6 +71,9 @@ func TestPlannerSystemTemplateEncouragesProactiveFinalization(t *testing.T) {
 		"Before each step, explicitly assess what the task is asking for",
 		"additional searching is unlikely to change the answer in a meaningful way",
 		"Do not wait for forced finalization if the answer is already sufficient.",
+		"Present the answer as a short list of substantive claims.",
+		"Confidence: <0-100>% - ",
+		"Do not provide a single overall confidence score",
 	}
 	for _, check := range checks {
 		if !strings.Contains(got, check) {
@@ -83,6 +92,8 @@ func TestPlannerInstanceTemplateEncouragesStopContinueDecision(t *testing.T) {
 		"Run one concrete command if that command is likely to materially reduce a specific uncertainty.",
 		"Conclude with partial findings if further commands are unlikely to add meaningful new evidence.",
 		"Avoid exploratory commands with no clear hypothesis",
+		"Confidence: <0-100>% - ",
+		"do not use a single overall confidence score",
 	}
 	for _, check := range checks {
 		if !strings.Contains(got, check) {
@@ -104,6 +115,23 @@ func TestShellAgentObservationTemplateMentionsDiminishingReturns(t *testing.T) {
 	for _, check := range checks {
 		if !strings.Contains(got, check) {
 			t.Fatalf("shell_agent.action_observation_template missing %q\n%s", check, got)
+		}
+	}
+}
+
+func TestShellAgentFinalAnswerTemplatesRequireConfidenceScore(t *testing.T) {
+	checks := map[string]string{
+		"shell_agent.instance_template":           "Confidence: <0-100>% - ",
+		"shell_agent.lightweight_system_template": "Confidence: <0-100>% - ",
+		"shell_agent.lightweight_intent_template": "Confidence: <0-100>% - ",
+	}
+	for key, check := range checks {
+		got, err := GetEmbeddedTemplate(key)
+		if err != nil {
+			t.Fatalf("GetEmbeddedTemplate(%s) error: %v", key, err)
+		}
+		if !strings.Contains(got, check) {
+			t.Fatalf("%s missing %q\n%s", key, check, got)
 		}
 	}
 }
