@@ -28,9 +28,9 @@ func startShellActionStreamer(display *ui.TerminalDisplay, path string) (context
 	go func() {
 		defer close(done)
 		err := sub.Subscribe(ctx, opts, func(ctx context.Context, evt listener.Event) error {
-			description := extractShellActionDescription(evt.Payload)
-			if description != "" {
-				display.StreamAction(description)
+			line := formatShellActionLine(evt.Payload)
+			if line != "" {
+				display.StreamAction(line)
 			}
 			return nil
 		})
@@ -41,15 +41,23 @@ func startShellActionStreamer(display *ui.TerminalDisplay, path string) (context
 	return cancel, done, nil
 }
 
-func extractShellActionDescription(payload map[string]any) string {
+func formatShellActionLine(payload map[string]any) string {
 	if payload == nil {
 		return ""
 	}
-	if desc := strings.TrimSpace(stringFromAny(payload["description"])); desc != "" {
-		return desc
+	description := strings.TrimSpace(stringFromAny(payload["description"]))
+	if description == "" {
+		description = strings.TrimSpace(stringFromAny(payload["command"]))
 	}
-	if cmd := strings.TrimSpace(stringFromAny(payload["command"])); cmd != "" {
-		return cmd
+	if description == "" {
+		return ""
 	}
-	return ""
+
+	modelCallsUsed, hasModelCallsUsed := intFromAny(payload["model_calls_used"])
+	stepLimit, hasStepLimit := intFromAny(payload["step_limit"])
+	commandsExecuted, hasCommandsExecuted := intFromAny(payload["commands_executed"])
+	if hasModelCallsUsed && hasStepLimit && hasCommandsExecuted && modelCallsUsed >= 0 && stepLimit > 0 && commandsExecuted >= 0 {
+		return fmt.Sprintf("[shell step %d/%d cmd %d] %s", modelCallsUsed, stepLimit, commandsExecuted, description)
+	}
+	return fmt.Sprintf("[shell] %s", description)
 }

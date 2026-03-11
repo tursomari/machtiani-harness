@@ -525,8 +525,8 @@ func invokeShellAgent(ctx context.Context, prompt string, opts RunOptions) (stri
 
 	trajWriter, _ := trajectory.FromContext(ctx)
 	parentSpan, _ := trajectory.ParentSpanID(ctx)
-	emitAction := func(desc, cmd string) {
-		emitShellActionEvent(ctx, trajWriter, parentSpan, desc, cmd)
+	emitAction := func(msg shellbridge.ActionMessage) {
+		emitShellActionEvent(ctx, trajWriter, parentSpan, msg)
 	}
 	if err := interceptShellAgentStdout(stdoutPipe, &stdoutBuf, opts.OnToken, emitAction); err != nil {
 		_ = cmd.Process.Kill()
@@ -674,7 +674,7 @@ func extractTrajectoryPath(outputs ...string) string {
 	return ""
 }
 
-func interceptShellAgentStdout(r io.Reader, buf *bytes.Buffer, onToken func(string), emitAction func(string, string)) error {
+func interceptShellAgentStdout(r io.Reader, buf *bytes.Buffer, onToken func(string), emitAction func(shellbridge.ActionMessage)) error {
 	if r == nil {
 		return nil
 	}
@@ -722,7 +722,7 @@ func interceptShellAgentStdout(r io.Reader, buf *bytes.Buffer, onToken func(stri
 	return nil
 }
 
-func handleShellActionLine(line []byte, emitAction func(string, string)) bool {
+func handleShellActionLine(line []byte, emitAction func(shellbridge.ActionMessage)) bool {
 	trimmed := bytes.TrimRight(line, "\r\n")
 	if !bytes.HasPrefix(trimmed, []byte(shellbridge.ActionPrefix)) {
 		return false
@@ -735,32 +735,44 @@ func handleShellActionLine(line []byte, emitAction func(string, string)) bool {
 	if err := json.Unmarshal(payload, &msg); err != nil {
 		return false
 	}
-	desc := strings.TrimSpace(msg.Description)
-	cmd := strings.TrimSpace(msg.Command)
-	if desc == "" && cmd == "" {
+	msg.Description = strings.TrimSpace(msg.Description)
+	msg.Command = strings.TrimSpace(msg.Command)
+	if msg.Description == "" && msg.Command == "" {
 		return true
 	}
 	if emitAction != nil {
-		emitAction(desc, cmd)
+		emitAction(msg)
 	}
 	return true
 }
 
-func emitShellActionEvent(ctx context.Context, writer *trajectory.Writer, parentSpan string, desc, cmd string) {
+func emitShellActionEvent(ctx context.Context, writer *trajectory.Writer, parentSpan string, msg shellbridge.ActionMessage) {
 	if writer == nil {
 		return
 	}
-	if desc == "" && cmd == "" {
+	if msg.Description == "" && msg.Command == "" {
 		return
 	}
 	payload := map[string]any{
 		"event_version": 1,
 	}
-	if desc != "" {
-		payload["description"] = desc
+	if msg.Description != "" {
+		payload["description"] = msg.Description
 	}
-	if cmd != "" {
-		payload["command"] = cmd
+	if msg.Command != "" {
+		payload["command"] = msg.Command
+	}
+	if msg.ModelCallsUsed > 0 {
+		payload["model_calls_used"] = msg.ModelCallsUsed
+	}
+	if msg.StepLimit > 0 {
+		payload["step_limit"] = msg.StepLimit
+	}
+	if msg.RemainingSteps > 0 {
+		payload["remaining_steps"] = msg.RemainingSteps
+	}
+	if msg.CommandsExecuted > 0 {
+		payload["commands_executed"] = msg.CommandsExecuted
 	}
 	evt := trajectory.Event{Kind: "shell-agent.action", ParentSpanID: strings.TrimSpace(parentSpan), Payload: payload}
 	if err := writer.Emit(ctx, evt); err != nil {

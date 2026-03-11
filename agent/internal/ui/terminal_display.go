@@ -24,7 +24,6 @@ const (
 	promptContentLines     = promptWindowLines - 1
 	promptFirstLinePrefix  = "`-- "
 	promptSpacerPrefix     = "    "
-	shellAgentActionPrefix = "[shell] "
 )
 
 // TerminalDisplay manages the structured streaming output for mct-agent.
@@ -305,20 +304,17 @@ func (s *PromptStream) Abort(message string) {
 	})
 }
 
-// OnActionChunk ingests a shell-agent action description chunk while streaming.
-// This is called when a shell-agent emits an action event (e.g., running a command).
-// Action descriptions are prefixed with a marker to distinguish from LLM tokens.
-func (s *PromptStream) OnActionChunk(description string) {
+// OnActionChunk ingests a fully formatted shell-agent action line while streaming.
+// This is called when a shell-agent action event should be surfaced in the TUI.
+func (s *PromptStream) OnActionChunk(line string) {
 	s.display.withLock(func() {
 		if s.done {
 			return
 		}
-		desc := strings.TrimSpace(description)
-		if desc == "" {
+		actionLine := strings.TrimSpace(line)
+		if actionLine == "" {
 			return
 		}
-		// Prefix the action with a clear marker
-		actionLine := shellAgentActionPrefix + desc
 		s.actionBuffer.WriteString(actionLine)
 		s.actionBuffer.WriteString("\n")
 		// Re-render with the new action included
@@ -326,11 +322,11 @@ func (s *PromptStream) OnActionChunk(description string) {
 	})
 }
 
-// StreamAction is a convenience method on TerminalDisplay to surface shell-agent
-// actions into the current PromptStream if one is active. If no stream is active,
-// it falls back to using Notify.
-func (t *TerminalDisplay) StreamAction(description string) {
-	clean := strings.TrimSpace(description)
+// StreamAction surfaces a fully formatted shell-agent action line into the current
+// PromptStream if one is active. If no stream is active, it falls back to a plain
+// notification line.
+func (t *TerminalDisplay) StreamAction(line string) {
+	clean := strings.TrimSpace(line)
 	if clean == "" {
 		return
 	}
@@ -346,7 +342,7 @@ func (t *TerminalDisplay) StreamAction(description string) {
 		return
 	}
 	// Fall back to notification if no active stream
-	t.printNotificationLineLocked(shellAgentActionPrefix + clean)
+	t.printNotificationLineLocked(clean)
 	t.mu.Unlock()
 }
 

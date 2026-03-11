@@ -143,6 +143,24 @@ func TestNotifyDuringStream(t *testing.T) {
 	}
 }
 
+func TestStreamActionUsesProvidedLineVerbatim(t *testing.T) {
+	var buf bytes.Buffer
+	display := newTestDisplay(&buf)
+	display.width = 120
+	stream := display.BeginPrompt("Prompt", nil)
+	stream.OnChunk("partial answer")
+	display.StreamAction("[shell step 3/20 cmd 3] sed -n '1,200p' file.ts")
+	stream.Complete("partial answer")
+
+	output := stripANSI(buf.String())
+	if !strings.Contains(output, "[shell step 3/20 cmd 3] sed -n '1,200p' file.ts") {
+		t.Fatalf("expected shell action line in output, got %q", output)
+	}
+	if strings.Contains(output, "[shell] [shell step 3/20 cmd 3]") {
+		t.Fatalf("expected no extra shell prefix, got %q", output)
+	}
+}
+
 var ansiCodes = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
 func stripANSI(s string) string {
