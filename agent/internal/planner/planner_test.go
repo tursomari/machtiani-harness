@@ -485,6 +485,26 @@ Shell: Run ` + "`" + `grep -n "Decision:" agent/internal/planner/planner.go` + "
 	}
 }
 
+func TestParseAskMenuBothAllowsSingleAsk(t *testing.T) {
+	resp := strings.TrimSpace(`
+Ask Mode: both
+Ask: Explain how session history is loaded, then run ` + "`" + `grep -n "Decision:" agent/internal/planner/planner.go` + "`" + ` and summarize the matching sections.
+`)
+	mode, ask, err := parseAskMenu(resp)
+	if err != nil {
+		t.Fatalf("parseAskMenu error: %v", err)
+	}
+	if mode != AskModeBoth {
+		t.Fatalf("expected both mode, got %q", mode)
+	}
+	if strings.Contains(ask, "No-shell:") || strings.Contains(ask, "Shell:") {
+		t.Fatalf("expected single ask output, got %q", ask)
+	}
+	if !strings.Contains(ask, "session history") || !strings.Contains(ask, "grep -n \"Decision:\"") {
+		t.Fatalf("unexpected ask content: %q", ask)
+	}
+}
+
 func TestParseAskMonitorResponseJSON(t *testing.T) {
 	resp := "```json\n{\"has_patch_intent\":false,\"reason\":\"analysis-only\"}\n```"
 	monitor, err := parseAskMonitorResponse(resp)
@@ -578,23 +598,24 @@ func TestGenerateAskRetriesWhenModelReturnsAnswerInsteadOfAsk(t *testing.T) {
 	}
 }
 
-func TestGenerateAskSplitsBothModes(t *testing.T) {
+func TestGenerateAskCollapsesBothModeToSingleAsk(t *testing.T) {
 	client := NewClient(ClientConfig{})
 	conv := conversation.New("sess-ask-split", "Investigate snippet discovery")
 	transcript := "== TURN 1\nQuestion: Describe snippet-discovery prompts and tooling."
 
+	var mixedCalls int
 	client.chatFn = func(_ context.Context, messages []llm.Message) (string, error) {
 		content := messages[len(messages)-1].Content
 		switch {
 		case strings.Contains(content, "You are a guard that checks whether an ask mixes no-shell and shell actions."):
+			mixedCalls++
 			return `{"is_mixed":false,"reason":"already split","rewrite":""}`, nil
 		case strings.Contains(content, "You are a guard that checks whether an ask is requesting file changes or patches."):
 			return `{"has_patch_intent":false,"reason":"analysis-only"}`, nil
 		case strings.Contains(content, "Ask Mode:") && strings.Contains(content, "Ask request:"):
 			return strings.TrimSpace(`
 Ask Mode: both
-No-shell: Explain the snippet-discovery system prompt and output requirements.
-Shell: Run ` + "`" + `git diff --stat` + "`" + ` and report recent changes.
+Ask: Explain the snippet-discovery system prompt and output requirements, then run ` + "`" + `git diff --stat` + "`" + ` and report recent changes.
 `), nil
 		default:
 			return "", nil
@@ -605,14 +626,57 @@ Shell: Run ` + "`" + `git diff --stat` + "`" + ` and report recent changes.
 	if err != nil {
 		t.Fatalf("generateAsk error: %v", err)
 	}
-	if !strings.Contains(ask, "No-shell:") || !strings.Contains(ask, "Shell:") {
-		t.Fatalf("expected split ask output, got %q", ask)
+	if strings.Contains(ask, "No-shell:") || strings.Contains(ask, "Shell:") {
+		t.Fatalf("expected single ask output, got %q", ask)
 	}
 	if !strings.Contains(ask, "snippet-discovery system prompt") {
-		t.Fatalf("unexpected no-shell content: %q", ask)
+		t.Fatalf("unexpected combined content: %q", ask)
 	}
 	if !strings.Contains(ask, "git diff --stat") {
-		t.Fatalf("unexpected shell content: %q", ask)
+		t.Fatalf("unexpected combined content: %q", ask)
+	}
+	if mixedCalls != 0 {
+		t.Fatalf("expected both mode to skip mixed guard, got %d calls", mixedCalls)
+	}
+}
+
+func TestGenerateAskBothModeSkipsMixedGuardEvenIfSplitReturned(t *testing.T) {
+	client := NewClient(ClientConfig{})
+	conv := conversation.New("sess-ask-both-skip-mixed", "Investigate split suppression")
+	transcript := "== TURN 1\nQuestion: Explain config loading and inspect recent changes."
+
+	var mixedCalls int
+	client.chatFn = func(_ context.Context, messages []llm.Message) (string, error) {
+		content := messages[len(messages)-1].Content
+		switch {
+		case strings.Contains(content, "You are a guard that checks whether an ask mixes no-shell and shell actions."):
+			mixedCalls++
+			return `{"is_mixed":true,"reason":"mixed","rewrite":""}`, nil
+		case strings.Contains(content, "You are a guard that checks whether an ask is requesting file changes or patches."):
+			return `{"has_patch_intent":false,"reason":"analysis-only"}`, nil
+		case strings.Contains(content, "Ask Mode:") && strings.Contains(content, "Ask request:"):
+			return strings.TrimSpace(`
+Ask Mode: both
+No-shell: Explain config loading.
+Shell: Run ` + "`" + `git diff --stat` + "`" + ` to review recent changes.
+`), nil
+		default:
+			return "", nil
+		}
+	}
+
+	ask, err := client.generateAsk(context.Background(), conv, conv.CurrentGoal(), transcript, 1, 3)
+	if err != nil {
+		t.Fatalf("generateAsk error: %v", err)
+	}
+	if mixedCalls != 0 {
+		t.Fatalf("expected both mode to skip mixed guard, got %d calls", mixedCalls)
+	}
+	if strings.Contains(ask, "No-shell:") || strings.Contains(ask, "Shell:") {
+		t.Fatalf("expected split ask to collapse, got %q", ask)
+	}
+	if !strings.Contains(ask, "Explain config loading.") || !strings.Contains(ask, "git diff --stat") {
+		t.Fatalf("unexpected combined ask: %q", ask)
 	}
 }
 
@@ -671,8 +735,8 @@ Shell: Run ` + "`" + `git diff --stat` + "`" + ` to review recent changes.
 	if !guardrailSeen {
 		t.Fatalf("expected mixed guardrail with suggested split to be included")
 	}
-	if !strings.Contains(ask, "No-shell:") || !strings.Contains(ask, "Shell:") {
-		t.Fatalf("expected split ask output, got %q", ask)
+	if strings.Contains(ask, "No-shell:") || strings.Contains(ask, "Shell:") {
+		t.Fatalf("expected collapsed ask output, got %q", ask)
 	}
 	if strings.Contains(ask, "Ask Mode:") {
 		t.Fatalf("expected Ask Mode line to be stripped, got %q", ask)
@@ -680,7 +744,10 @@ Shell: Run ` + "`" + `git diff --stat` + "`" + ` to review recent changes.
 	if strings.Contains(ask, "Explain config loading and run git diff") {
 		t.Fatalf("expected mixed ask to be retried, got %q", ask)
 	}
-	if askCalls != 2 || mixedCalls != 2 || patchCalls != 1 {
+	if !strings.Contains(ask, "Explain config loading.") || !strings.Contains(ask, "git diff --stat") {
+		t.Fatalf("unexpected collapsed ask content: %q", ask)
+	}
+	if askCalls != 2 || mixedCalls != 1 || patchCalls != 1 {
 		t.Fatalf("unexpected call counts ask=%d mixed=%d patch=%d", askCalls, mixedCalls, patchCalls)
 	}
 }

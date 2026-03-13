@@ -620,7 +620,7 @@ func (c *Client) generateAsk(ctx context.Context, conv *conversation.Conversatio
 		if err != nil {
 			return "", err
 		}
-		_, ask, parseErr := parseAskMenu(resp)
+		mode, ask, parseErr := parseAskMenu(resp)
 		if parseErr != nil {
 			guardrail = "The previous response did not follow the required ask format. Return exactly `Ask Mode:` and `Ask:` (or `No-shell:` / `Shell:` for `both`), with no answer content."
 			continue
@@ -635,10 +635,12 @@ func (c *Client) generateAsk(ctx context.Context, conv *conversation.Conversatio
 			continue
 		}
 		lastAsk = ask
-		mixed, err := c.monitorAskMixedWithPlanner(ctx, conv, goal, ask, step, maxSteps)
-		if err == nil && mixed.IsMixed {
-			guardrail = buildAskMixedGuardrail(mixed.Reason, mixed.Rewrite)
-			continue
+		if mode != AskModeBoth {
+			mixed, err := c.monitorAskMixedWithPlanner(ctx, conv, goal, ask, step, maxSteps)
+			if err == nil && mixed.IsMixed {
+				guardrail = buildAskMixedGuardrail(mixed.Reason, mixed.Rewrite)
+				continue
+			}
 		}
 		monitor, err := c.monitorAskWithPlanner(ctx, conv, goal, ask, step, maxSteps)
 		if err != nil {
@@ -1291,6 +1293,11 @@ func (c *Client) askPrompt(askRequest, guardrail string) string {
 }
 
 func (c *Client) askPromptTemplate() string {
+	if c.cfg.Prompts != nil {
+		if trimmed := strings.TrimSpace(c.cfg.Prompts.AskPrompt); trimmed != "" {
+			return trimmed
+		}
+	}
 	if embedded, err := templates.GetEmbeddedTemplate("planner.ask_prompt"); err == nil {
 		return embedded
 	}
@@ -2026,7 +2033,7 @@ func parseAskMenu(resp string) (AskMode, string, error) {
 		if err != nil {
 			return mode, "", errors.New("missing split ask content")
 		}
-		ask = strings.TrimSpace("No-shell: " + noShell + "\nShell: " + shell)
+		ask = strings.TrimSpace(collapseAskSplit(noShell, shell))
 	} else {
 		return mode, "", errors.New("missing ask label")
 	}
@@ -2103,6 +2110,17 @@ func parseAskSplit(resp string) (string, string, error) {
 
 func formatAskSplit(noShell, shell string) string {
 	return strings.TrimSpace(fmt.Sprintf("No-shell: %s\nShell: %s", strings.TrimSpace(noShell), strings.TrimSpace(shell)))
+}
+
+func collapseAskSplit(noShell, shell string) string {
+	parts := make([]string, 0, 2)
+	if trimmed := strings.TrimSpace(noShell); trimmed != "" {
+		parts = append(parts, trimmed)
+	}
+	if trimmed := strings.TrimSpace(shell); trimmed != "" {
+		parts = append(parts, trimmed)
+	}
+	return strings.TrimSpace(strings.Join(parts, "\n"))
 }
 
 func parseAskMonitorResponse(resp string) (askMonitorResult, error) {
