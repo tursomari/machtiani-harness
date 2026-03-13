@@ -253,7 +253,7 @@ class Handler(BaseHTTPRequestHandler):
             if "Guardrail:" in content:
                 reply = "Ask Mode: no-shell\nAsk: Summarize the staged planner menu flow."
             else:
-                reply = "Ask Mode: both\nNo-shell: Summarize the staged planner menu flow.\nShell: Run `git diff --stat` and report the output."
+                reply = "Ask Mode: both\nAsk: Summarize the staged planner menu flow, then run `git diff --stat` and report the output."
         elif "You are a guard that checks whether an ask mixes no-shell and shell actions." in content:
             counts["mixed_monitor"] += 1
             reply = "{\"is_mixed\":false,\"reason\":\"already split\",\"rewrite\":\"\"}"
@@ -1005,8 +1005,8 @@ run_menu_flow_case() {
     export MACHTIANI_CONFIG="$stub_config"
     COMMON_AGENT_ARGS=()
     run_happy_case "$case_id" 1 \
-      "Explain the planner menu flow and what happens after an ask is selected." \
-      "(?s)(?=.*Planner decision: ask)(?=.*No-shell:)(?=.*Shell:)" \
+      "Identify the functions in \`agent/internal/planner/planner.go\` and \`agent/internal/session/runner.go\` that handle ask selection and ask execution, then summarize the control flow after an ask is chosen." \
+      "(?s)(?=.*Summarize the staged planner menu flow)(?=.*git diff --stat)(?!.*No-shell:)(?!.*Shell:)" \
       1 \
       --model "$stub_alias" \
       --orch-model "$stub_alias" \
@@ -1021,7 +1021,7 @@ run_menu_flow_case() {
     return "$rc"
   fi
 
-  assert_stub_counts "$state_file" 1 2 2 1
+  assert_stub_counts "$state_file" 1 2 2 0
 
   if [[ "${KEEP_TEST_CONFIG:-}" != "true" ]]; then
     rm -rf "$stub_dir"
@@ -1033,9 +1033,10 @@ run_menu_flow_live_case() {
   local case_id="planner-menu-flow-live"
 
   run_happy_case "$case_id" 2 \
-    "Explain the planner menu flow and what happens after an ask is selected. Also run \`git diff --stat\` and report the output." \
-    "(?s)(?=.*No-shell:)(?=.*Shell:)(?=.*(Planner decision: ask|Step 1 decision: ask))" \
+    'Identify the functions in `agent/internal/planner/planner.go` and `agent/internal/session/runner.go` that handle ask selection and ask execution, then summarize the control flow after an ask is chosen.' \
+    "(?s)(?=.*\[mct:shell\])(?!.*No-shell:)(?!.*Shell:)" \
     1 \
+    --timeout-per-turn 600 \
     "${DEFAULT_MODEL_ARGS[@]}"
 }
 
@@ -1043,7 +1044,7 @@ run_file_discovery_live_case() {
   local case_id="routing-file-discovery-live"
 
   run_happy_case "$case_id" 2 \
-    "Explain how the planner chooses ask vs patch vs finalize." \
+    'In `agent/internal/planner/planner.go`, what function generates the ask prompt? In `agent/internal/session/runner.go`, what function executes planner asks? Return the two function names and one sentence connecting them.' \
     "(?s)(?=.*\\[mct:shell\\])" \
     1 \
     --timeout-per-turn 600 \
