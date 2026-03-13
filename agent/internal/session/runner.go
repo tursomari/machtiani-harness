@@ -719,6 +719,11 @@ func Run(ctx context.Context, opts Options) Result {
 				fmt.Fprintf(os.Stderr, "[session-lock] warning: failed to release lock: %v\n", err)
 			}
 		}
+		if strings.TrimSpace(workspaceRoot) != "" && !cfg.persistTmpData {
+			if err := os.RemoveAll(workspaceRoot); err != nil && cfg.verbose {
+				fmt.Fprintf(os.Stderr, "Warning: failed to cleanup workspace root %s: %v\n", workspaceRoot, err)
+			}
+		}
 		if cleanupSessionRoot && !cfg.persistTmpData {
 			if err := os.RemoveAll(sessionTempRoot); err != nil && cfg.verbose {
 				fmt.Fprintf(os.Stderr, "Warning: failed to cleanup session temp root %s: %v\n", sessionTempRoot, err)
@@ -746,7 +751,6 @@ func Run(ctx context.Context, opts Options) Result {
 		return Result{ExitCode: 1, Err: trajErr}
 	}
 	// Prepare the workspace repo snapshot using the resolved repo root.
-	workspaceRoot := filepath.Join(tmpRoot, "workspace-"+sessionID)
 	if _, _, err := workspace.EnsureRepoSnapshot(repoRoot, workspaceRoot); err != nil {
 		fmt.Fprintln(os.Stderr, "Warning: unable to prepare workspace repo snapshot:", err)
 	}

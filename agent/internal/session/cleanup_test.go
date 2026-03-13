@@ -75,6 +75,35 @@ func TestCleanupSkipsRecentDir(t *testing.T) {
 	}
 }
 
+func TestCleanupRemovesOldWorkspaceDir(t *testing.T) {
+	tempDir := t.TempDir()
+	now := time.Now()
+
+	target := filepath.Join(tempDir, "workspace-agent-20260313T201117-7837")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	marker := filepath.Join(target, "marker.txt")
+	if err := os.WriteFile(marker, []byte("ok"), 0o644); err != nil {
+		t.Fatalf("write marker: %v", err)
+	}
+	old := now.Add(-48 * time.Hour)
+	if err := os.Chtimes(target, old, old); err != nil {
+		t.Fatalf("chtimes target: %v", err)
+	}
+	if err := os.Chtimes(marker, old, old); err != nil {
+		t.Fatalf("chtimes marker: %v", err)
+	}
+
+	if err := cleanupOrphanedTempDirsInternal(tempDir, now, 24*time.Hour, false); err != nil {
+		t.Fatalf("cleanup: %v", err)
+	}
+
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("expected directory removed, got err=%v", err)
+	}
+}
+
 func TestCleanupRemovesStaleShellAgentMarker(t *testing.T) {
 	root := t.TempDir()
 	now := time.Now()

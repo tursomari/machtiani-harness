@@ -699,6 +699,171 @@ EOF
   echo "$config_file"
 }
 
+generate_container_test_config() {
+  local config_root
+  config_root="$(mktemp -d "$TMP_ROOT/config-container.XXXXXX")"
+  cp -R "$(dirname "$TEST_CONFIG_FILE")" "$config_root/"
+
+  local config_file="$config_root/.machtiani/config.toml"
+  "$PYTHON_BIN" - "$config_file" <<'PY'
+import pathlib
+import re
+import sys
+
+path = pathlib.Path(sys.argv[1])
+lines = path.read_text(encoding="utf-8").splitlines()
+
+hydration_block = [
+    "git_hydration = [",
+    '  { root = ".", branches = ["master"] },',
+    '  { root = "agent/internal/shell-agent/", branches = ["master"] },',
+    "]",
+]
+
+def replace_section_key(src_lines, section_name, key, value):
+    out = []
+    in_section = False
+    found_section = False
+    wrote_key = False
+    for line in src_lines:
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            if in_section and not wrote_key:
+                out.append(f"{key} = {value}")
+                wrote_key = True
+            in_section = stripped == f"[{section_name}]"
+            if in_section:
+                found_section = True
+            out.append(line)
+            continue
+        if in_section and re.match(rf"^\s*{re.escape(key)}\s*=", line):
+            out.append(f"{key} = {value}")
+            wrote_key = True
+            continue
+        out.append(line)
+    if in_section and not wrote_key:
+        out.append(f"{key} = {value}")
+    if not found_section:
+        if out and out[-1] != "":
+            out.append("")
+        out.extend([f"[{section_name}]", f"{key} = {value}"])
+    return out
+
+def replace_environment_type(src_lines):
+    out = []
+    in_environment = False
+    found_environment = False
+    wrote_type = False
+    for line in src_lines:
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            if in_environment and not wrote_type:
+                out.append('type = "docker"')
+                wrote_type = True
+            in_environment = stripped == "[environment]"
+            if in_environment:
+                found_environment = True
+            out.append(line)
+            continue
+        if in_environment and re.match(r"^\s*type\s*=", line):
+            out.append('type = "docker"')
+            wrote_type = True
+            continue
+        out.append(line)
+    if in_environment and not wrote_type:
+        out.append('type = "docker"')
+    if not found_environment:
+        if out and out[-1] != "":
+            out.append("")
+        out.extend(["[environment]", 'type = "docker"'])
+    return out
+
+def replace_workspace_hydration(src_lines):
+    out = []
+    in_workspace = False
+    found_workspace = False
+    inserted = False
+    skipping = False
+    bracket_balance = 0
+    for line in src_lines:
+        stripped = line.strip()
+        if skipping:
+            bracket_balance += line.count("[") - line.count("]")
+            if bracket_balance <= 0:
+                skipping = False
+            continue
+        if stripped.startswith("[") and stripped.endswith("]"):
+            if in_workspace and not inserted:
+                out.extend(hydration_block)
+                inserted = True
+            in_workspace = stripped == "[workspace]"
+            if in_workspace:
+                found_workspace = True
+            out.append(line)
+            continue
+        if in_workspace and re.match(r"^\s*git_hydration\s*=", line):
+            out.extend(hydration_block)
+            inserted = True
+            bracket_balance = line.count("[") - line.count("]")
+            if bracket_balance > 0:
+                skipping = True
+            continue
+        out.append(line)
+    if in_workspace and not inserted:
+        out.extend(hydration_block)
+        inserted = True
+    if not found_workspace:
+        if out and out[-1] != "":
+            out.append("")
+        out.append("[workspace]")
+        out.extend(hydration_block)
+    return out
+
+lines = replace_environment_type(lines)
+lines = replace_workspace_hydration(lines)
+lines = replace_section_key(lines, "environment", "timeout", "600")
+lines = replace_section_key(lines, "shell-agent", "step_limit", "2")
+path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+PY
+
+  echo "$config_file"
+}
+
+resolve_live_workspace_root() {
+  local config_file="$1"
+  local agent_session="$2"
+
+  "$PYTHON_BIN" - "$config_file" "$REPO_ROOT" "$agent_session" <<'PY'
+import pathlib
+import sys
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover
+    import tomli as tomllib
+
+config_path = pathlib.Path(sys.argv[1])
+repo_root = pathlib.Path(sys.argv[2]).resolve()
+session_id = sys.argv[3].strip()
+
+with config_path.open('rb') as fh:
+    data = tomllib.load(fh)
+
+environment = data.get('environment') or {}
+tmp_root = str(environment.get('tmp_root') or '').strip()
+if not tmp_root:
+    tmp_root = '.machtiani/tmp'
+
+tmp_path = pathlib.Path(tmp_root)
+if not tmp_path.is_absolute():
+    tmp_path = (repo_root / tmp_path).resolve()
+else:
+    tmp_path = tmp_path.resolve()
+
+print(tmp_path / f'workspace-{session_id}')
+PY
+}
+
 cleanup_config() {
   if [[ "${KEEP_TEST_CONFIG:-}" == "true" ]]; then
     return
@@ -1133,6 +1298,177 @@ run_shell_live_case() {
     "${DEFAULT_MODEL_ARGS[@]}"
 }
 
+run_shell_container_workspace_live_case() {
+  local case_id="shell-container-workspace-live"
+  local session_id="test-${case_id}-$(date +%s)"
+  local out_dir="$(pwd)/test-out-${session_id}"
+  mkdir -p "$out_dir"
+  local stdout_file="$out_dir/stdout-${session_id}.txt"
+  local stderr_file="$out_dir/stderr-${session_id}.txt"
+  local verify_file="$out_dir/verify-${session_id}.txt"
+  local session_temp_root
+  session_temp_root="$(mktemp -d "$TMP_ROOT/session-temp-${session_id}.XXXXXX")"
+  local live_workspace_root=""
+  local marker_checks=false
+  local marker_dir=""
+  local stale_marker=""
+  local recent_marker=""
+  local marker_max_age=""
+  local marker_max_age_seconds=0
+  local container_config=""
+
+  cleanup_case_root() {
+    if [[ -n "$container_config" && "${KEEP_TEST_CONFIG:-}" != "true" ]]; then
+      rm -rf "$(dirname "$(dirname "$container_config")")"
+    fi
+    if [[ -n "$live_workspace_root" && -d "$live_workspace_root" ]]; then
+      rm -rf "$live_workspace_root"
+    fi
+    if [[ -d "$session_temp_root" ]]; then
+      rm -rf "$session_temp_root"
+    fi
+  }
+  return_with_cleanup() {
+    local rc="${1:-0}"
+    cleanup_case_root
+    return "$rc"
+  }
+
+  if shell_marker_checks_enabled; then
+    marker_checks=true
+    marker_max_age="${MACHTIANI_SHELL_AGENT_MARKER_MAX_AGE:-1h}"
+    marker_max_age_seconds="$(duration_to_seconds "$marker_max_age")"
+    if [[ "$marker_max_age_seconds" -le 0 ]]; then
+      marker_max_age="1h"
+      marker_max_age_seconds=3600
+    fi
+    marker_dir="$session_temp_root/shell-agent/markers"
+    local stale_age=$((marker_max_age_seconds + 3600))
+    local recent_age=$((marker_max_age_seconds / 2))
+    if (( recent_age < 60 )); then
+      recent_age=60
+    fi
+    if (( recent_age >= marker_max_age_seconds )); then
+      if (( marker_max_age_seconds > 1 )); then
+        recent_age=$((marker_max_age_seconds - 1))
+      else
+        recent_age=1
+      fi
+    fi
+    local stale_name="${SHELL_AGENT_MARKER_PREFIX}-stale-${session_id}${SHELL_AGENT_MARKER_SUFFIX}"
+    local recent_name="${SHELL_AGENT_MARKER_PREFIX}-recent-${session_id}${SHELL_AGENT_MARKER_SUFFIX}"
+    stale_marker="$(seed_marker_with_age "$marker_dir" "$stale_name" "$stale_age")"
+    recent_marker="$(seed_marker_with_age "$marker_dir" "$recent_name" "$recent_age")"
+  fi
+
+  if ! command -v go >/dev/null 2>&1; then
+    echo "go binary not found; cannot run $case_id post-check" >&2
+    return_with_cleanup 1
+  fi
+
+  container_config="$(generate_container_test_config)"
+
+  echo "Running happy case: $case_id (real shell-agent + container verification)..." >&2
+  local -a cmd=(
+    timeout 900 "$MCT_AGENT" run
+    --max-steps 1
+    --timeout-per-turn 900
+    --verbose
+    --patch-no-apply
+    --persist-tmp-data
+    --shell-agent
+  )
+  if ((${#COMMON_AGENT_ARGS[@]})); then
+    cmd+=("${COMMON_AGENT_ARGS[@]}")
+  fi
+  cmd+=(
+    --shell-agent-model "$TEST_MODEL_ALIAS"
+    -t "List the 10 most recent commits and summarize them briefly."
+  )
+
+  pushd "$REPO_ROOT" >/dev/null
+  set +e
+  if [[ "$marker_checks" == true ]]; then
+    MACHTIANI_CONFIG="$container_config" \
+      MACHTIANI_SESSION_TEMP_ROOT="$session_temp_root" \
+      MACHTIANI_SHELL_AGENT_MARKER_MAX_AGE="$marker_max_age" \
+      "${cmd[@]}" > "$stdout_file" 2> "$stderr_file"
+  else
+    MACHTIANI_CONFIG="$container_config" \
+      MACHTIANI_SESSION_TEMP_ROOT="$session_temp_root" \
+      "${cmd[@]}" > "$stdout_file" 2> "$stderr_file"
+  fi
+  local rc=$?
+  set -e
+  popd >/dev/null
+  if [[ $rc -ne 0 ]]; then
+    local failed_agent_session
+    failed_agent_session="$(grep -m1 '^Session:' "$stderr_file" | awk '{print $2}')"
+    if [[ -n "$failed_agent_session" ]]; then
+      live_workspace_root="$(resolve_live_workspace_root "$container_config" "$failed_agent_session")"
+    fi
+    echo "Failed (rc=$rc): $case_id" >&2
+    return_with_cleanup 1
+  fi
+
+  local agent_session
+  agent_session=$(grep -m1 '^Session:' "$stderr_file" | awk '{print $2}')
+  if [[ -z "$agent_session" ]]; then
+    echo "Failed to parse session ID from stderr for $case_id" >&2
+    return_with_cleanup 1
+  fi
+
+  live_workspace_root="$(resolve_live_workspace_root "$container_config" "$agent_session")"
+  if [[ -z "$live_workspace_root" ]]; then
+    echo "Failed to resolve live workspace root for $case_id" >&2
+    return_with_cleanup 1
+  fi
+  if [[ ! -d "$live_workspace_root/repo" ]]; then
+    echo "Missing live workspace snapshot for $case_id: $live_workspace_root/repo" >&2
+    return_with_cleanup 1
+  fi
+
+  local session_dir="$REPO_ROOT/.machtiani/sessions/$agent_session"
+  local transcript_path="$session_dir/chat/agent-transcript.adoc"
+  local final_path="$session_dir/chat/agent-final-answer.md"
+  if [[ ! -s "$transcript_path" || ! -s "$final_path" ]]; then
+    echo "Missing live artifacts for $case_id" >&2
+    return_with_cleanup 1
+  fi
+  cp -f "$transcript_path" "$out_dir/transcript-${session_id}.adoc"
+  cp -f "$final_path" "$out_dir/final-${session_id}.md"
+
+  if ! contains_keywords "(?s)(?=.*\\[mct:shell\\])" "$stdout_file" "$transcript_path" "$final_path"; then
+    echo "Missing shell-agent keywords: $case_id" >&2
+    return_with_cleanup 1
+  fi
+
+  pushd "$REPO_ROOT/agent" >/dev/null
+  set +e
+  MACHTIANI_CONFIG="$container_config" \
+    MACHTIANI_TMP_ROOT="$live_workspace_root" \
+    MACHTIANI_SESSION_TEMP_ROOT="$session_temp_root" \
+    GOCACHE="$(pwd)/.gocache" \
+    go run ./internal/shell-agent/cmd/verify-shell-agent-workspace --repo-root "$REPO_ROOT" > "$verify_file" 2>&1
+  rc=$?
+  set -e
+  popd >/dev/null
+  if [[ $rc -ne 0 ]]; then
+    echo "Container workspace verification failed: $case_id" >&2
+    cat "$verify_file" >&2 || true
+    return_with_cleanup 1
+  fi
+
+  if [[ "$marker_checks" == true ]]; then
+    if ! assert_shell_agent_marker_cleanup "$marker_dir" "$stale_marker" "$recent_marker" "$case_id"; then
+      return_with_cleanup 1
+    fi
+  fi
+
+  echo "Passed: $case_id (shell-agent + container workspace verification)" >&2
+  return_with_cleanup 0
+}
+
 run_error_case() {
   local case_id="$1"
   local args="$2"
@@ -1239,6 +1575,11 @@ MODEL_ALIAS_NOT_FOUND_PATTERN="model alias \"${INVALID_ALIAS_REGEX}\" not found"
 if [[ "$LIVE_MODE" != true ]]; then
   run_menu_flow_case
 else
+  if shell_agent_available; then
+    run_shell_container_workspace_live_case
+  else
+    echo "Skipping shell container workspace live case: shell-agent not found on PATH." >&2
+  fi
   run_snippet_discovery_tightness_live_case
   run_menu_flow_live_case
   run_file_discovery_live_case

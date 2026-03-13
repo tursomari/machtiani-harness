@@ -12,13 +12,13 @@ import (
 )
 
 const (
-	defaultCleanupAge        = 24 * time.Hour
-	sessionLockFileName      = "session.lock"
-	sessionLockStaleDuration = 3 * time.Second
+	defaultCleanupAge             = 24 * time.Hour
+	sessionLockFileName           = "session.lock"
+	sessionLockStaleDuration      = 3 * time.Second
 	defaultShellAgentMarkerMaxAge = time.Hour
-	shellAgentMarkerMaxAgeEnv      = "MACHTIANI_SHELL_AGENT_MARKER_MAX_AGE"
-	shellAgentMarkerPrefix   = "mct-swe-agent-finale"
-	shellAgentMarkerSuffix   = ".txt"
+	shellAgentMarkerMaxAgeEnv     = "MACHTIANI_SHELL_AGENT_MARKER_MAX_AGE"
+	shellAgentMarkerPrefix        = "mct-swe-agent-finale"
+	shellAgentMarkerSuffix        = ".txt"
 )
 
 var cleanupPrefixes = []string{
@@ -26,6 +26,7 @@ var cleanupPrefixes = []string{
 	"shell-agent-worktree-",
 	"patcher-mirror-",
 	"patcher-workspace-",
+	"workspace-",
 	"session-",
 }
 

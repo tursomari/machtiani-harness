@@ -344,7 +344,10 @@ func hydrateRootGitMetadata(repoRoot, snapshotRoot string, cfg *llm.WorkspaceCon
 	if err := os.RemoveAll(commonDst); err != nil {
 		return err
 	}
-	if err := copyDir(commonGitDir, commonDst); err != nil {
+	if err := copyDirFiltered(commonGitDir, commonDst, func(rel string, d os.DirEntry) bool {
+		rel = filepath.ToSlash(filepath.Clean(rel))
+		return rel == "modules" || strings.HasPrefix(rel, "modules/") || rel == "worktrees" || strings.HasPrefix(rel, "worktrees/")
+	}); err != nil {
 		return fmt.Errorf("copy common gitdir %s: %w", commonGitDir, err)
 	}
 	if err := rewriteFileWithMode(filepath.Join(hydratedDir, "commondir"), "common"); err != nil {
@@ -602,7 +605,7 @@ func hydrateSubmodules(repoRoot, snapshotRoot string, cfg *llm.WorkspaceConfig, 
 		dstWT := filepath.Join(snapshotRoot, filepath.FromSlash(rel))
 		if info, err := os.Stat(srcWT); err == nil && info.IsDir() {
 			_ = os.RemoveAll(dstWT)
-			if err := copyDir(srcWT, dstWT); err != nil {
+			if err := copyDirExcludingGit(srcWT, dstWT); err != nil {
 				return fmt.Errorf("copy submodule worktree %s: %w", rel, err)
 			}
 		}
@@ -831,6 +834,10 @@ func pathWithinRoot(root, target string) bool {
 }
 
 func copyDir(src, dst string) error {
+	return copyDirFiltered(src, dst, nil)
+}
+
+func copyDirFiltered(src, dst string, skip func(rel string, d os.DirEntry) bool) error {
 	return filepath.WalkDir(src, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			if os.IsNotExist(walkErr) {
@@ -846,6 +853,12 @@ func copyDir(src, dst string) error {
 			return os.MkdirAll(dst, 0o755)
 		}
 		rel = filepath.Clean(rel)
+		if skip != nil && skip(rel, d) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
 		target := filepath.Join(dst, rel)
 		info, err := d.Info()
 		if err != nil {
