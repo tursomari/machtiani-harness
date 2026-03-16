@@ -490,7 +490,9 @@ echo "Preflight OK" >&2
 echo >&2
 
 LIVE_MODE=false
-if [[ -n "${OPENAI_API_KEY:-}" && -n "${OPENAI_BASE_URL:-}" && -n "${OPENAI_MODEL:-}" ]]; then
+if [[ -n "${TEST_API_KEY:-${OPENAI_API_KEY:-}}" && \
+      -n "${TEST_BASE_URL:-${OPENAI_BASE_URL:-}}" && \
+      -n "${TEST_MODEL:-${OPENAI_MODEL:-}}" ]]; then
   LIVE_MODE=true
 fi
 
@@ -525,11 +527,11 @@ generate_test_config() {
   local fd_remote_model="gpt-4o-mini"
 
   if [[ "$LIVE_MODE" == true ]]; then
-    provider_base_url="${OPENAI_BASE_URL}"
-    provider_api_key="${OPENAI_API_KEY}"
-    orch_remote_model="${OPENAI_ORCH_MODEL:-${OPENAI_MODEL}}"
-    patcher_remote_model="${OPENAI_PATCHER_MODEL:-${orch_remote_model}}"
-    fd_remote_model="${OPENAI_FILE_DISCOVERY_MODEL:-${patcher_remote_model}}"
+    provider_base_url="${TEST_BASE_URL:-${OPENAI_BASE_URL}}"
+    provider_api_key="${TEST_API_KEY:-${OPENAI_API_KEY}}"
+    orch_remote_model="${TEST_ORCH_MODEL:-${OPENAI_ORCH_MODEL:-${TEST_MODEL:-${OPENAI_MODEL}}}}"
+    patcher_remote_model="${TEST_PATCHER_MODEL:-${OPENAI_PATCHER_MODEL:-${orch_remote_model}}}"
+    fd_remote_model="${TEST_FILE_DISCOVERY_MODEL:-${OPENAI_FILE_DISCOVERY_MODEL:-${patcher_remote_model}}}"
   fi
 
   ORCH_MODEL_ALIAS="${OPENAI_ORCH_MODEL_ALIAS:-${orch_remote_model}}"
@@ -537,7 +539,7 @@ generate_test_config() {
   FILE_DISCOVERY_MODEL_ALIAS="${OPENAI_FILE_DISCOVERY_MODEL_ALIAS:-${fd_remote_model}}"
 
   if [[ "$LIVE_MODE" == true ]]; then
-    TEST_MODEL_ALIAS="${OPENAI_MODEL:-${ORCH_MODEL_ALIAS}}"
+    TEST_MODEL_ALIAS="${TEST_MODEL:-${OPENAI_MODEL:-${ORCH_MODEL_ALIAS}}}"
   else
     TEST_MODEL_ALIAS="test-model"
     ORCH_MODEL_ALIAS="${TEST_MODEL_ALIAS}"
@@ -1555,7 +1557,7 @@ run_error_case() {
 rm -rf test-out-*
 
 if [[ "$LIVE_MODE" == true ]]; then
-  echo "Live mode: using generated config.toml from OPENAI_* env." >&2
+  echo "Live mode: using generated config.toml from TEST_* / OPENAI_* env." >&2
 else
   echo "Dry-run mode: using generated config.toml with stubbed provider; --dry-run enabled." >&2
 fi

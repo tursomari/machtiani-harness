@@ -12,16 +12,33 @@ Agent Integration Tests (mct-agent)
 - Entry script: `agent/tests/run-live.sh`
 - Purpose: Exercise `mct-agent` end-to-end using the binaries already on PATH. Supports live LLM calls or deterministic dry-run.
 - Preflight: validates the `mct-agent` binary on PATH, prints `--version`/`go version -m` metadata, and fails if the commit/time is out of sync with the current repo. Optional CLIs are not required for this harness.
-- Config: produces a temporary `.machtiani/config.toml` under `agent/tests/tmp/`; exports `MACHTIANI_CONFIG` for the run. Live mode reuses your `OPENAI_*` values, dry-run mode writes stub credentials and forces `--dry-run`.
+- Config: produces a temporary `.machtiani/config.toml` under `agent/tests/tmp/`; exports `MACHTIANI_CONFIG` for the run. Live mode uses `TEST_API_KEY` / `TEST_BASE_URL` / `TEST_MODEL` when set, otherwise falls back to `OPENAI_*`; dry-run mode writes stub credentials and forces `--dry-run`.
 
 Scenarios covered
 - Issue A/B/C happy paths (1-turn and 3-turn max steps)
 - Error: empty prompt
-- Error: missing config (only when live env vars are present)
+- Error: missing config (only when live test/provider env vars are present)
 
 Modes
-- Live: export `OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_MODEL` before running.
+- Live: export `TEST_API_KEY`, `TEST_BASE_URL`, and `TEST_MODEL` before running, or omit `TEST_*` and let the harness fall back to `OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_MODEL`.
+- Optional live overrides: `TEST_ORCH_MODEL`, `TEST_PATCHER_MODEL`, and `TEST_FILE_DISCOVERY_MODEL` take precedence over the corresponding `OPENAI_*` component model vars.
 - Dry-run: omit the env vars; the script injects stub credentials and appends `--dry-run`.
+
+Running from Codex or other agents
+- Preferred live setup when the agent itself also uses `OPENAI_*` for its own auth/config:
+  ```bash
+  export TEST_MODEL=google/gemini-3-flash-preview
+  export TEST_BASE_URL="https://openrouter.ai/api/v1"
+  export TEST_API_KEY="..."
+  bash agent/tests/run-live.sh
+  ```
+- `TEST_*` takes precedence over `OPENAI_*` inside `agent/tests/run-live.sh`, so the harness can target a live provider without changing the agent's own environment.
+- Run from the repo root with `bash agent/tests/run-live.sh`. The path `agent/tests/run-live.sh` also works directly when the current working directory is already the repo root.
+- In sandboxed agent environments, live mode may need one-time network approval before the harness can reach the configured provider. A DNS/network failure before the first case completes is usually an environment restriction, not a bad `TEST_*` value.
+- Avoid printing secrets while debugging. It is fine to verify that `TEST_API_KEY` is set, but do not echo the full value into logs or transcripts.
+- Helpful debug toggles:
+  - `TRACE_TEST_CONFIG=true` prints the generated test config.
+  - `KEEP_TEST_CONFIG=true` preserves the generated `.machtiani` config tree under `agent/tests/tmp/`.
 
 Artifacts and validations
 - Each case writes `test-out-*` directories containing stdout/stderr, transcripts, and final artifacts when applicable.
@@ -37,6 +54,35 @@ Artifacts and validations
   - `jq 'select(.kind | startswith("llm.")) | {kind, level, payload, err: (.err.message // null)}' trajectory/agent.jsonl`
 - `jq 'select(.level != "info") | {ts, level, kind, err: (.err.message // null)}' trajectory/agent.jsonl` — quick sweep for LLM issues or other failures.
 - `jq 'select(.kind == "transcript.write") | {op: .payload.op, bytes: .payload.written_bytes, decision: (.payload.decision // null), path: .payload.path}' trajectory/agent.jsonl`
+
+Monitoring a live run
+- Watch the harness stderr in real time first; each case prints `Running ...`, `Passed: ...`, or `Failed (rc=...)`.
+- When a case starts, inspect the newest `test-out-*` directory:
+  ```bash
+  ls -dt test-out-* | head
+  ```
+- Tail the case logs while the harness is still running:
+  ```bash
+  tail -f test-out-*/stderr-*.txt
+  tail -f test-out-*/stdout-*.txt
+  ```
+- Parse the active session ID from stderr (`Session: <id>`), then inspect `.machtiani/sessions/<id>/trajectory/agent.jsonl` for ground truth.
+- To confirm that `TEST_*` wiring is actually in effect, look for all of these in stdout or trajectory:
+  - `provider":"run-live-provider"`
+  - `base_url":"https://openrouter.ai/api/v1"`
+  - `alias":"google/gemini-3-flash-preview"` or your configured `TEST_MODEL`
+- A quick provider-wiring check:
+  ```bash
+  rg 'run-live-provider|https://openrouter.ai/api/v1|google/gemini-3-flash-preview' \
+    .machtiani/sessions/<id>/trajectory/agent.jsonl
+  ```
+
+Interpreting failures
+- Immediate `dial tcp`, DNS, or `Temporary failure in name resolution` errors usually mean the agent sandbox still blocks outbound network access.
+- `llm http error 502` or similar upstream failures can be transient provider errors; the harness may retry and later succeed.
+- If live mode activates and the trajectory shows the expected provider/model values, the `TEST_*` env wiring is working even if a later case fails.
+- A later `shell-agent exited` or `timed out after 300s` failure points to the ask execution path or timeout budget, not to the initial provider config.
+- The harness stops at the first failing case, so the most recent `test-out-*` directory and matching session trajectory are the first places to inspect.
 
 Real-time tailing
 - The `internal/trajectory/listener` package can follow the JSONL file while a run is in-flight.
