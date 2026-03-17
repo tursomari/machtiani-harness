@@ -52,6 +52,15 @@ git_hydration = [
 	if _, err := os.Stat(filepath.Join(snapshotRoot, modulePath, ".git")); err != nil {
 		t.Fatalf("submodule .git metadata missing: %v", err)
 	}
+
+	cmd := exec.Command("git", "-C", snapshotRoot, "status", "-sb")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git status failed: %v\noutput: %s", err, string(output))
+	}
+	if !strings.Contains(string(output), "##") {
+		t.Fatalf("unexpected git status output: %s", string(output))
+	}
 }
 
 func TestEnsureRepoSnapshotSkipsNonAllowlistedCommonGitMetadata(t *testing.T) {

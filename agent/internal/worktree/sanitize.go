@@ -140,7 +140,40 @@ func SanitizeSubmoduleWorktreeConfigsForContainer(snapshotRoot, containerRoot st
 		return nil
 	}
 
-	modulesRoot := filepath.Join(snapshotRoot, ".git", "modules")
+	gitDir, err := locateWorktreeGitDir(snapshotRoot)
+	if err != nil {
+		return err
+	}
+	if gitDir == "" {
+		return nil
+	}
+
+	commonGitDir, err := resolveCommonGitDir(gitDir)
+	if err != nil {
+		return fmt.Errorf("resolve common git dir: %w", err)
+	}
+
+	moduleRoots := []string{filepath.Join(gitDir, "modules")}
+	if commonGitDir != "" && filepath.Clean(commonGitDir) != filepath.Clean(gitDir) {
+		moduleRoots = append(moduleRoots, filepath.Join(commonGitDir, "modules"))
+	}
+
+	seen := make(map[string]struct{}, len(moduleRoots))
+	for _, modulesRoot := range moduleRoots {
+		modulesRoot = filepath.Clean(modulesRoot)
+		if _, ok := seen[modulesRoot]; ok {
+			continue
+		}
+		seen[modulesRoot] = struct{}{}
+		if err := sanitizeSubmoduleWorktreeConfigsUnderModules(modulesRoot, containerRoot); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func sanitizeSubmoduleWorktreeConfigsUnderModules(modulesRoot, containerRoot string) error {
 	if _, err := os.Stat(modulesRoot); err != nil {
 		if os.IsNotExist(err) {
 			return nil

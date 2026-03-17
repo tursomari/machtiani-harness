@@ -384,6 +384,10 @@ func hydrateNestedReposGitMetadata(repoRoot, snapshotRoot string, cfg *llm.Works
 	if len(cfg.GitHydration) == 0 && len(cfg.GitHydrationRoots) == 0 {
 		return nil
 	}
+	submodulePaths, err := listSubmodulePaths(repoRoot)
+	if err != nil {
+		return err
+	}
 
 	return filepath.WalkDir(repoRoot, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -428,6 +432,9 @@ func hydrateNestedReposGitMetadata(repoRoot, snapshotRoot string, cfg *llm.Works
 		if nestedRel == "." || nestedRel == "" {
 			return nil
 		}
+		if _, isSubmodule := submodulePaths[filepath.ToSlash(nestedRel)]; isSubmodule {
+			return filepath.SkipDir
+		}
 		allowed := shouldHydrateGitForPath(nestedRel, cfg)
 		if verbose {
 			fmt.Fprintf(os.Stderr, "[workspace] nested-git path=%s hydrate_git=%v\n", filepath.ToSlash(nestedRel), allowed)
@@ -446,6 +453,33 @@ func hydrateNestedReposGitMetadata(repoRoot, snapshotRoot string, cfg *llm.Works
 		}
 		return filepath.SkipDir
 	})
+}
+
+func listSubmodulePaths(repoRoot string) (map[string]struct{}, error) {
+	paths := make(map[string]struct{})
+	modulesPath := filepath.Join(repoRoot, ".gitmodules")
+	if _, err := os.Stat(modulesPath); err != nil {
+		if os.IsNotExist(err) {
+			return paths, nil
+		}
+		return nil, err
+	}
+	stdout, _, err := execGit(repoRoot, nil, "config", "--file", ".gitmodules", "--get-regexp", "^submodule\\..*\\.path$")
+	if err != nil {
+		return paths, nil
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(stdout)), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		rel := strings.TrimSpace(strings.Join(fields[1:], " "))
+		if rel == "" {
+			continue
+		}
+		paths[filepath.ToSlash(filepath.Clean(rel))] = struct{}{}
+	}
+	return paths, nil
 }
 
 func hydrateOneNestedRepoGitMetadata(srcWT, dstWT string) error {
@@ -671,6 +705,9 @@ func seedOneSubmodule(repoRoot, snapshotRoot, snapshotGitDir, subPath string, cf
 	if err := rewriteSubmoduleWorktreeConfig(snapModule, dstWT); err != nil {
 		return err
 	}
+	if err := rewriteCommonSubmoduleWorktreeConfig(snapshotGitDir, subPath, dstWT); err != nil {
+		return err
+	}
 
 	// Ensure the seeded submodule repo can resolve HEAD without fetching.
 	if _, _, err := execGit(dstWT, nil, "rev-parse", "--verify", "HEAD"); err != nil {
@@ -781,6 +818,17 @@ func rewriteSubmoduleWorktreeConfig(gitDir, worktree string) error {
 	return nil
 }
 
+func rewriteCommonSubmoduleWorktreeConfig(snapshotGitDir, subPath, worktree string) error {
+	commonGitDir, err := resolveCommonGitDir(snapshotGitDir)
+	if err != nil {
+		return err
+	}
+	if commonGitDir == "" || filepath.Clean(commonGitDir) == filepath.Clean(snapshotGitDir) {
+		return nil
+	}
+	return rewriteSubmoduleWorktreeConfig(filepath.Join(commonGitDir, "modules", filepath.FromSlash(subPath)), worktree)
+}
+
 func resolveGitDir(repoRoot string) (string, error) {
 	stdout, stderr, err := execGit(repoRoot, nil, "rev-parse", "--git-dir")
 	if err != nil {
@@ -794,6 +842,29 @@ func resolveGitDir(repoRoot string) (string, error) {
 		return filepath.Clean(gitDir), nil
 	}
 	return filepath.Clean(filepath.Join(repoRoot, gitDir)), nil
+}
+
+func resolveCommonGitDir(gitDir string) (string, error) {
+	commondirPath := filepath.Join(gitDir, "commondir")
+	data, err := os.ReadFile(commondirPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return filepath.Dir(gitDir), nil
+		}
+		return "", fmt.Errorf("read commondir: %w", err)
+	}
+	content := strings.TrimSpace(string(data))
+	if content == "" {
+		return filepath.Dir(gitDir), nil
+	}
+	if !filepath.IsAbs(content) {
+		content = filepath.Join(gitDir, filepath.FromSlash(content))
+	}
+	absContent, err := filepath.Abs(content)
+	if err != nil {
+		return "", fmt.Errorf("resolve commondir path: %w", err)
+	}
+	return filepath.Clean(absContent), nil
 }
 
 func rewriteFileWithMode(path, content string) error {
