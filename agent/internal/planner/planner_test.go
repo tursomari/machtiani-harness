@@ -1086,8 +1086,8 @@ func TestPlanSystemPromptIncludesPlannerOverlay(t *testing.T) {
 	client := NewClient(ClientConfig{PlannerOverlay: "Focus on security review and threat modeling."})
 	conv := conversation.New("sess-system-overlay", "Finish docs")
 	prompt := client.planSystemPrompt(conv, "Finish docs", 1, 3, nil)
-	if !strings.Contains(prompt, "Additional task-specific planner guidance:") {
-		t.Fatalf("expected planner overlay heading, got %q", prompt)
+	if !strings.Contains(prompt, "Task-Specific Guidance") {
+		t.Fatalf("expected planner overlay section, got %q", prompt)
 	}
 	if !strings.Contains(prompt, "Focus on security review and threat modeling.") {
 		t.Fatalf("expected planner overlay body, got %q", prompt)
@@ -1323,6 +1323,72 @@ func TestBuildPlanMessagesRotatesCacheAnchor(t *testing.T) {
 	}
 }
 
+func TestFinalizeMessagesReusePlannerSystemPrompt(t *testing.T) {
+	client := NewClient(ClientConfig{PatchEnabled: true, PlannerOverlay: "Prioritize migration safety checks."})
+	conv := conversation.New("sess-finalize-prefix", "Initial goal")
+	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask"})
+	conv.AddMessage("user", "Updated goal", map[string]any{"type": "goal_update"})
+	conv.AddMessage("assistant", "Answer: done", map[string]any{"type": "answer", "turn": 1})
+
+	planMessages := client.buildPlanMessages(conv, "stale goal", 2, 4, nil)
+	finalizeMessages := client.buildFinalizeMessages(conv, "stale goal")
+	if len(finalizeMessages) != len(planMessages) {
+		t.Fatalf("expected matching message counts, got finalize=%d plan=%d", len(finalizeMessages), len(planMessages))
+	}
+	if finalizeMessages[0].Role != "system" {
+		t.Fatalf("expected finalize messages to start with system prompt, got %#v", finalizeMessages)
+	}
+	if finalizeMessages[0].Content != planMessages[0].Content {
+		t.Fatalf("expected finalize to reuse shared planner system prompt")
+	}
+	if !strings.Contains(finalizeMessages[0].Content, "Prioritize migration safety checks.") {
+		t.Fatalf("expected planner overlay in finalize system prompt, got %q", finalizeMessages[0].Content)
+	}
+	last := finalizeMessages[len(finalizeMessages)-1]
+	if last.Role != "user" {
+		t.Fatalf("expected finalize request to be a user message, got %q", last.Role)
+	}
+	if !strings.Contains(last.Content, "Goal:\nUpdated goal") {
+		t.Fatalf("expected finalize request to use updated goal, got %q", last.Content)
+	}
+	if strings.Contains(last.Content, "Prioritize migration safety checks.") {
+		t.Fatalf("planner overlay should stay out of finalize user prompt, got %q", last.Content)
+	}
+	if strings.Contains(finalizeMessages[0].Content, "You are the composer agent") {
+		t.Fatalf("finalize should not use the old composer system prompt, got %q", finalizeMessages[0].Content)
+	}
+}
+
+func TestFinalizeDoesNotPersistEphemeralRequest(t *testing.T) {
+	client := NewClient(ClientConfig{PlannerOverlay: "Focus on migration safety."})
+	conv := conversation.New("sess-finalize-ephemeral", "Initial goal")
+	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask"})
+	before := len(conv.Messages)
+	var captured []llm.Message
+	client.chatFn = func(_ context.Context, messages []llm.Message) (string, error) {
+		captured = append([]llm.Message(nil), messages...)
+		return "done", nil
+	}
+
+	resp, err := client.Finalize(context.Background(), conv, "Initial goal")
+	if err != nil {
+		t.Fatalf("Finalize error: %v", err)
+	}
+	if resp != "done" {
+		t.Fatalf("unexpected finalize response %q", resp)
+	}
+	if len(conv.Messages) != before {
+		t.Fatalf("expected finalize request to stay ephemeral, got %d messages want %d", len(conv.Messages), before)
+	}
+	if len(captured) == 0 {
+		t.Fatalf("expected finalize request to be sent to model")
+	}
+	last := captured[len(captured)-1]
+	if last.Role != "user" || !strings.Contains(last.Content, "Write the final answer to the original goal") {
+		t.Fatalf("unexpected finalize request %#v", last)
+	}
+}
+
 func TestFinalizePromptOmitsTranscript(t *testing.T) {
 	c := NewClient(ClientConfig{DryRun: true})
 	prompt := c.finalizePrompt("goal text", "transcript text")
@@ -1331,6 +1397,9 @@ func TestFinalizePromptOmitsTranscript(t *testing.T) {
 	}
 	if contains(prompt, "Transcript:") || contains(prompt, "transcript text") {
 		t.Fatalf("finalize prompt should omit transcript:\n%s", prompt)
+	}
+	if contains(prompt, "You are the composer agent") {
+		t.Fatalf("finalize prompt should now be a request prompt, got:\n%s", prompt)
 	}
 }
 

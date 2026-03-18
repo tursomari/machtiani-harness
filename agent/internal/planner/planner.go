@@ -703,6 +703,17 @@ func (c *Client) buildPlanMessages(conv *conversation.Conversation, goal string,
 	return c.buildPlannerTaskMessages(conv, goalForPrompt, step, maxSteps, patchPlan, finalUserPrompt)
 }
 
+func (c *Client) buildFinalizeMessages(conv *conversation.Conversation, goal string) []llm.Message {
+	goalForPrompt := strings.TrimSpace(goal)
+	if conv != nil {
+		if current := strings.TrimSpace(conv.CurrentGoal()); current != "" {
+			goalForPrompt = current
+		}
+	}
+	finalUserPrompt := c.finalizePrompt(goalForPrompt, "")
+	return c.buildPlannerTaskMessages(conv, goalForPrompt, 0, 0, nil, finalUserPrompt)
+}
+
 func (c *Client) buildPlannerTaskMessages(conv *conversation.Conversation, goal string, step, maxSteps int, patchPlan *PatchPlan, finalUserPrompt string) []llm.Message {
 	goalForPrompt := strings.TrimSpace(goal)
 	if conv != nil {
@@ -1108,7 +1119,7 @@ func shouldUseStrictPatchMode(payloadJSON string) bool {
 	return true
 }
 
-// Finalize composes the final answer using the structured conversation.
+// Finalize composes the final answer using the structured conversation on the shared planner thread.
 func (c *Client) Finalize(ctx context.Context, conv *conversation.Conversation, goal string) (string, error) {
 	if c.cfg.DryRun {
 		return "[dry-run] Final answer would be composed here based on accumulated evidence.", nil
@@ -1116,13 +1127,7 @@ func (c *Client) Finalize(ctx context.Context, conv *conversation.Conversation, 
 	if conv == nil {
 		return "", errors.New("planner: conversation is required")
 	}
-	goalForPrompt := strings.TrimSpace(goal)
-	if current := strings.TrimSpace(conv.CurrentGoal()); current != "" {
-		goalForPrompt = current
-	}
-	systemPrompt := strings.TrimSpace(c.finalizePrompt(goalForPrompt, ""))
-	messages := conv.ToChatMessages(systemPrompt)
-	messages = append(messages, messageWithEstimatedTokens("user", "Provide the final response."))
+	messages := c.buildFinalizeMessages(conv, goal)
 	promptLog := renderMessagesForLogging(messages)
 	c.logTokenEstimate(messages)
 	w, hasWriter := trajectory.FromContext(ctx)
@@ -1142,6 +1147,11 @@ func (c *Client) Finalize(ctx context.Context, conv *conversation.Conversation, 
 			reportTrajectoryError(err)
 		}
 		callCtx = trajectory.ContextWithParentSpan(ctx, span.ID)
+	}
+	var usageTracker *cacheUsageTracker
+	if cacheControlEnabled(c.cfg.Model) {
+		usageTracker = &cacheUsageTracker{}
+		callCtx = llm.WithCacheUsageObserver(callCtx, usageTracker.Observe)
 	}
 	start := time.Now()
 	resp, err := c.chatMessages(callCtx, messages)
@@ -1174,6 +1184,9 @@ func (c *Client) Finalize(ctx context.Context, conv *conversation.Conversation, 
 			}
 		}
 		return "", err
+	}
+	if usageTracker != nil {
+		usageTracker.UpdateConversation(conv)
 	}
 	trimmed := strings.TrimSpace(resp)
 	if hasWriter {
@@ -1646,12 +1659,12 @@ func (c *Client) finalizePrompt(goal string, transcript string) string {
 func (c *Client) finalizePromptFallback(goal string, transcript string) string {
 	_ = transcript
 	var b strings.Builder
-	b.WriteString("You are the composer agent. Read the conversation above (which contains the goal and mct turns) and write the final answer to the original goal.\n\n")
+	b.WriteString("Write the final answer to the original goal using the conversation above as the source of truth.\n\n")
 	if strings.TrimSpace(goal) != "" {
 		b.WriteString("Goal:\n")
 		b.WriteString(goal + "\n\n")
 	}
-	b.WriteString("Now produce a clear, self-contained final answer grounded in the evidence from prior turns. If there are gaps, call them out succinctly.")
+	b.WriteString("Produce a clear, self-contained final response grounded in the prior turns. If any important gaps or uncertainty remain, call them out briefly.")
 	return b.String()
 }
 
