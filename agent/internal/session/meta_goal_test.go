@@ -10,36 +10,36 @@ import (
 	"testing"
 )
 
-func TestIntegrateUserGuidance(t *testing.T) {
+func TestIntegrateTaskUserGuidance(t *testing.T) {
 	tests := []struct {
 		name     string
-		goal     string
+		existing string
 		guidance string
 		expected string
 	}{
 		{
-			name:     "appends guidance to existing goal",
-			goal:     "Update licensing across repository",
+			name:     "appends guidance to existing guidance",
+			existing: "Update licensing across repository",
 			guidance: "Focus on root LICENSE only",
-			expected: "Update licensing across repository\n\nUser guidance: Focus on root LICENSE only",
+			expected: "Update licensing across repository\n\nFocus on root LICENSE only",
 		},
 		{
-			name:     "goal empty picks guidance",
-			goal:     "",
+			name:     "empty existing picks guidance",
+			existing: "",
 			guidance: "Limit scope to package.json",
-			expected: "User guidance: Limit scope to package.json",
+			expected: "Limit scope to package.json",
 		},
 		{
 			name:     "guidance already present avoids duplication",
-			goal:     "Update licensing across repository\n\nUser guidance: Focus on root LICENSE only",
+			existing: "Update licensing across repository\n\nFocus on root LICENSE only",
 			guidance: "Focus on root LICENSE only",
-			expected: "Update licensing across repository\n\nUser guidance: Focus on root LICENSE only",
+			expected: "Update licensing across repository\n\nFocus on root LICENSE only",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := integrateUserGuidance(tt.goal, tt.guidance)
+			got := integrateTaskUserGuidance(tt.existing, tt.guidance)
 			if got != tt.expected {
 				t.Fatalf("expected %q, got %q", tt.expected, got)
 			}
@@ -88,7 +88,7 @@ func TestUpdateChildSessionGoalPersists(t *testing.T) {
 		t.Fatalf("save session state: %v", err)
 	}
 
-	revised := integrateUserGuidance(original.Goal, "Focus on root LICENSE")
+	revised := composeTaskPrompt("", metaTaskState{Instruction: original.Goal, UserGuidance: integrateTaskUserGuidance("", "Focus on root LICENSE")}, "", true)
 	if err := updateChildSessionGoal(sessionID, revised); err != nil {
 		t.Fatalf("update child session goal: %v", err)
 	}

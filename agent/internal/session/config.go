@@ -62,6 +62,7 @@ type Options struct {
 	Goal                string
 	OriginalPrompt      string
 	TaskDescription     string
+	PlannerOverlay      string
 	ParamPairs          []string
 	ParamJSON           []string
 	Build               BuildInfo

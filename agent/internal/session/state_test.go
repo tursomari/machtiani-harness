@@ -18,6 +18,7 @@ func TestSaveLoadSessionStateRoundTrip(t *testing.T) {
 		Goal:             "Review database migrations",
 		OriginalPrompt:   "Review database migrations in detail",
 		TaskDescription:  "Validate migration ordering",
+		PlannerOverlay:   "Prefer migration safety over speed",
 		TurnsCompleted:   3,
 		TranscriptPath:   "/tmp/mct/transcript.md",
 		Transcript:       "# existing transcript\n\ncontent here\n",
@@ -70,6 +71,9 @@ func TestSaveLoadSessionStateRoundTrip(t *testing.T) {
 	}
 	if loaded.TaskDescription != state.TaskDescription {
 		t.Fatalf("unexpected task description: got %q want %q", loaded.TaskDescription, state.TaskDescription)
+	}
+	if loaded.PlannerOverlay != state.PlannerOverlay {
+		t.Fatalf("unexpected planner overlay: got %q want %q", loaded.PlannerOverlay, state.PlannerOverlay)
 	}
 	if loaded.TurnsCompleted != state.TurnsCompleted {
 		t.Fatalf("unexpected turns completed: got %d want %d", loaded.TurnsCompleted, state.TurnsCompleted)

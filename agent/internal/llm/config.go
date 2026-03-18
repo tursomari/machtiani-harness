@@ -225,11 +225,12 @@ const (
 // MetaInstructionTask represents a single task entry parsed from a TOML-based
 // meta instruction file.
 type MetaInstructionTask struct {
-	Step        int    `toml:"step"`
-	Title       string `toml:"title"`
-	Description string `toml:"description"`
-	ShellAgent  *bool  `toml:"shell_agent"`
-	PatchMode   *bool  `toml:"patch_mode"`
+	Step         int    `toml:"step"`
+	Title        string `toml:"title"`
+	Description  string `toml:"description"`
+	SystemPrompt string `toml:"system_prompt"`
+	ShellAgent   *bool  `toml:"shell_agent"`
+	PatchMode    *bool  `toml:"patch_mode"`
 }
 
 // MetaInstructions captures the resolved instruction payload, preserving both
@@ -1867,18 +1868,20 @@ func parseMetaInstructionTOML(data []byte, tomlFilePath string) ([]MetaInstructi
 		return nil, fmt.Errorf("no tasks defined")
 	}
 	tasks := make([]MetaInstructionTask, 0, len(parsed.Tasks))
+	baseDir := filepath.Dir(tomlFilePath)
 	for idx, task := range parsed.Tasks {
 		normalized := task
 		normalized.Title = strings.TrimSpace(normalized.Title)
-		normalized.Description = strings.TrimSpace(normalized.Description)
-		if isFileReference(normalized.Description) {
-			filePath := filepath.Join(filepath.Dir(tomlFilePath), normalized.Description)
-			content, err := os.ReadFile(filePath)
-			if err != nil {
-				return nil, fmt.Errorf("failed to load description file %q for task %d: %w", filePath, idx, err)
-			}
-			normalized.Description = strings.TrimSpace(string(content))
+		description, err := resolveTaskTextField(baseDir, normalized.Description)
+		if err != nil {
+			return nil, fmt.Errorf("resolve tasks[%d].description: %w", idx, err)
 		}
+		normalized.Description = description
+		systemPrompt, err := resolveTaskTextField(baseDir, normalized.SystemPrompt)
+		if err != nil {
+			return nil, fmt.Errorf("resolve tasks[%d].system_prompt: %w", idx, err)
+		}
+		normalized.SystemPrompt = systemPrompt
 		if normalized.Title == "" {
 			return nil, fmt.Errorf("tasks[%d].title is required", idx)
 		}
@@ -1888,6 +1891,19 @@ func parseMetaInstructionTOML(data []byte, tomlFilePath string) ([]MetaInstructi
 		tasks = append(tasks, normalized)
 	}
 	return tasks, nil
+}
+
+func resolveTaskTextField(baseDir, raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if !isFileReference(trimmed) {
+		return trimmed, nil
+	}
+	filePath := filepath.Join(baseDir, trimmed)
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return "", fmt.Errorf("load %q: %w", filePath, err)
+	}
+	return strings.TrimSpace(string(content)), nil
 }
 
 func isFileReference(s string) bool {

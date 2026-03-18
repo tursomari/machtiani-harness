@@ -67,6 +67,7 @@ type ClientConfig struct {
 	PatchFull         bool
 	RepoRoot          string
 	SessionID         string
+	PlannerOverlay    string
 	Prompts           *llm.PlannerPromptsConfig
 }
 

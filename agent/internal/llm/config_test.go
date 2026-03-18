@@ -439,6 +439,33 @@ func TestParseMetaInstructionTOMLLoadsDescriptionFromExternalFile(t *testing.T) 
 	}
 }
 
+func TestParseMetaInstructionTOMLLoadsSystemPromptFromExternalFile(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteFile(t, filepath.Join(dir, "description.md"), "Investigate schema drift")
+	mustWriteFile(t, filepath.Join(dir, "overlay.md"), "Prioritize backward-compatible changes")
+	tomlPath := filepath.Join(dir, "tasks.toml")
+	mustWriteFile(t, tomlPath, `[[tasks]]
+title = "Review"
+description = "description.md"
+system_prompt = "overlay.md"
+`)
+
+	data, err := os.ReadFile(tomlPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	tasks, err := parseMetaInstructionTOML(data, tomlPath)
+	if err != nil {
+		t.Fatalf("parseMetaInstructionTOML: %v", err)
+	}
+	if len(tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d", len(tasks))
+	}
+	if tasks[0].SystemPrompt != "Prioritize backward-compatible changes" {
+		t.Fatalf("unexpected system prompt: %q", tasks[0].SystemPrompt)
+	}
+}
+
 func TestParseMetaInstructionTOMLFailsWhenExternalDescriptionMissing(t *testing.T) {
 	dir := t.TempDir()
 	tomlPath := filepath.Join(dir, "tasks.toml")

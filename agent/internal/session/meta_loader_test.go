@@ -1,7 +1,6 @@
 package session
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/tursomari/machtiani/agent/internal/llm"
@@ -31,8 +30,11 @@ func TestInstructionsToTasksFromTomlDocument(t *testing.T) {
 	if tasks[1].PatchMode == nil || !*tasks[1].PatchMode {
 		t.Fatalf("expected second task to enable patch mode")
 	}
-	if !containsSubstr(t, tasks[0].Goal, "First desc") {
-		t.Fatalf("expected goal to include description, got %q", tasks[0].Goal)
+	if tasks[0].Instruction != "First desc" {
+		t.Fatalf("expected instruction to mirror description, got %q", tasks[0].Instruction)
+	}
+	if tasks[0].PlannerOverlay != "" {
+		t.Fatalf("expected planner overlay to be empty when omitted")
 	}
 }
 
@@ -106,7 +108,7 @@ func TestUpdateMetaPlanProgress(t *testing.T) {
 	plan := metaPlanState{
 		Goal:  "goal",
 		Mode:  "coding",
-		Tasks: []metaTaskState{{Title: "Task", Goal: "Task goal", Mode: "coding", Status: "pending"}},
+		Tasks: []metaTaskState{{Title: "Task", Instruction: "Task goal", Mode: "coding", Status: "pending"}},
 	}
 	if err := persistMetaPlan(sessionID, plan); err != nil {
 		t.Fatalf("persistMetaPlan error: %v", err)
@@ -140,11 +142,6 @@ func TestUpdateMetaPlanProgress(t *testing.T) {
 	if loaded.PlannerProgress.PendingReview == nil || loaded.PlannerProgress.PendingReview.PatchPath != "patch.diff" {
 		t.Fatalf("expected pending review to persist")
 	}
-}
-
-func containsSubstr(t *testing.T, s, sub string) bool {
-	t.Helper()
-	return strings.Contains(s, sub)
 }
 
 func boolPtr(v bool) *bool {

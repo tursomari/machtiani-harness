@@ -520,6 +520,7 @@ func Run(ctx context.Context, opts Options) Result {
 		originalPrompt = opts.Goal
 	}
 	taskDescription := opts.TaskDescription
+	plannerOverlay := opts.PlannerOverlay
 	goal := inputPrompt
 
 	cfgInput := opts.Config
@@ -556,6 +557,10 @@ func Run(ctx context.Context, opts Options) Result {
 		if storedTask != "" {
 			taskDescription = state.TaskDescription
 		}
+		storedPlannerOverlay := strings.TrimSpace(state.PlannerOverlay)
+		if storedPlannerOverlay != "" {
+			plannerOverlay = state.PlannerOverlay
+		}
 		if goal == "" {
 			goal = resumePrompt
 		}
@@ -585,6 +590,7 @@ func Run(ctx context.Context, opts Options) Result {
 	}
 	opts.OriginalPrompt = originalPrompt
 	opts.TaskDescription = taskDescription
+	opts.PlannerOverlay = plannerOverlay
 	conversationGoal := formatGoalText(originalPrompt, taskDescription)
 
 	if sessionID == "" {
@@ -1000,6 +1006,7 @@ func Run(ctx context.Context, opts Options) Result {
 				Goal:            goal,
 				OriginalPrompt:  originalPrompt,
 				TaskDescription: taskDescription,
+				PlannerOverlay:  plannerOverlay,
 				TurnsCompleted:  turnsCompleted,
 			}
 			if tr != nil {
@@ -1042,6 +1049,7 @@ func Run(ctx context.Context, opts Options) Result {
 				Goal:            goal,
 				OriginalPrompt:  originalPrompt,
 				TaskDescription: taskDescription,
+				PlannerOverlay:  plannerOverlay,
 				TurnsCompleted:  turnsCompleted,
 			}
 			if pendingState != nil {
@@ -1385,6 +1393,7 @@ func Run(ctx context.Context, opts Options) Result {
 		StrictPatchMode:   effectiveStrict,
 		RepoRoot:          repoRoot,
 		SessionID:         sessionID,
+		PlannerOverlay:    plannerOverlay,
 		Prompts:           plannerPrompts,
 	})
 
@@ -1436,6 +1445,7 @@ func Run(ctx context.Context, opts Options) Result {
 					Goal:               goal,
 					OriginalPrompt:     originalPrompt,
 					TaskDescription:    taskDescription,
+					PlannerOverlay:     plannerOverlay,
 					TurnsCompleted:     turnsCompleted,
 					TranscriptPath:     tr.Path(),
 					Transcript:         tr.Content(),
@@ -1700,6 +1710,7 @@ func Run(ctx context.Context, opts Options) Result {
 					Goal:            goal,
 					OriginalPrompt:  originalPrompt,
 					TaskDescription: taskDescription,
+					PlannerOverlay:  plannerOverlay,
 					TurnsCompleted:  turnsCompleted,
 				}
 				if tr != nil {
@@ -1805,6 +1816,7 @@ func Run(ctx context.Context, opts Options) Result {
 				Goal:            goal,
 				OriginalPrompt:  originalPrompt,
 				TaskDescription: taskDescription,
+				PlannerOverlay:  plannerOverlay,
 				TurnsCompleted:  turnsCompleted,
 			}
 			if tr != nil {
@@ -3122,6 +3134,7 @@ Finalize:
 		Goal:            goal,
 		OriginalPrompt:  originalPrompt,
 		TaskDescription: taskDescription,
+		PlannerOverlay:  plannerOverlay,
 		TurnsCompleted:  turnsCompleted,
 	}
 	if tr != nil {

@@ -35,19 +35,21 @@ type metaPlanState struct {
 
 // metaTaskState tracks execution state for an individual task.
 type metaTaskState struct {
-	Step        int    `json:"step,omitempty"`
-	Title       string `json:"title"`
-	Description string `json:"description,omitempty"`
-	Goal        string `json:"goal"`
-	Mode        string `json:"mode"`
-	Status      string `json:"status"`
-	ShellAgent  *bool  `json:"shell_agent,omitempty"`
-	PatchMode   *bool  `json:"patch_mode,omitempty"`
-	SessionID   string `json:"session_id,omitempty"`
-	Attempts    int    `json:"attempts"`
-	Summary     string `json:"summary,omitempty"`
-	Transcript  string `json:"transcript_path,omitempty"`
-	FinalAnswer string `json:"final_answer_path,omitempty"`
+	Step           int    `json:"step,omitempty"`
+	Title          string `json:"title"`
+	Description    string `json:"description,omitempty"`
+	Instruction    string `json:"goal,omitempty"`
+	PlannerOverlay string `json:"planner_overlay,omitempty"`
+	UserGuidance   string `json:"user_guidance,omitempty"`
+	Mode           string `json:"mode"`
+	Status         string `json:"status"`
+	ShellAgent     *bool  `json:"shell_agent,omitempty"`
+	PatchMode      *bool  `json:"patch_mode,omitempty"`
+	SessionID      string `json:"session_id,omitempty"`
+	Attempts       int    `json:"attempts"`
+	Summary        string `json:"summary,omitempty"`
+	Transcript     string `json:"transcript_path,omitempty"`
+	FinalAnswer    string `json:"final_answer_path,omitempty"`
 }
 
 type metaContext struct {
@@ -169,14 +171,13 @@ func tasksFromText(goal, mode, instructions string) []metaTaskState {
 		if trimmed == "" {
 			continue
 		}
-		taskGoal := composeTaskGoal(strings.TrimSpace(goal), trimmed, "")
 		step := len(tasks) + 1
 		tasks = append(tasks, metaTaskState{
-			Step:   step,
-			Title:  trimmed,
-			Goal:   taskGoal,
-			Mode:   mode,
-			Status: "pending",
+			Step:        step,
+			Title:       trimmed,
+			Instruction: trimmed,
+			Mode:        mode,
+			Status:      "pending",
 		})
 		if len(tasks) == 5 {
 			break
@@ -200,7 +201,6 @@ func tasksFromTOML(goal, mode string, instructions llm.MetaInstructions) []metaT
 		return items[i].Step < items[j].Step
 	})
 	tasks := make([]metaTaskState, 0, len(items))
-	baseGoal := strings.TrimSpace(goal)
 	for idx, item := range items {
 		title := strings.TrimSpace(item.Title)
 		if title == "" {
@@ -211,16 +211,16 @@ func tasksFromTOML(goal, mode string, instructions llm.MetaInstructions) []metaT
 		if step <= 0 {
 			step = idx + 1
 		}
-		goalText := composeTaskGoal(baseGoal, title, description)
 		tasks = append(tasks, metaTaskState{
-			Step:        step,
-			Title:       title,
-			Description: description,
-			Goal:        goalText,
-			Mode:        mode,
-			Status:      "pending",
-			ShellAgent:  item.ShellAgent,
-			PatchMode:   item.PatchMode,
+			Step:           step,
+			Title:          title,
+			Description:    description,
+			Instruction:    taskInstructionText(title, description),
+			PlannerOverlay: strings.TrimSpace(item.SystemPrompt),
+			Mode:           mode,
+			Status:         "pending",
+			ShellAgent:     item.ShellAgent,
+			PatchMode:      item.PatchMode,
 		})
 	}
 	if len(tasks) == 0 {
@@ -229,26 +229,12 @@ func tasksFromTOML(goal, mode string, instructions llm.MetaInstructions) []metaT
 	return tasks
 }
 
-func composeTaskGoal(sessionGoal, title, description string) string {
-	sessionGoal = strings.TrimSpace(sessionGoal)
-	title = strings.TrimSpace(title)
+func taskInstructionText(title, description string) string {
 	description = strings.TrimSpace(description)
-	var sections []string
-	if sessionGoal != "" {
-		sections = append(sections, sessionGoal)
-	}
-	focus := title
-	if focus == "" {
-		focus = description
-	}
-	focus = strings.TrimSpace(focus)
-	if focus != "" {
-		sections = append(sections, fmt.Sprintf("Focus: %s", focus))
-	}
 	if description != "" {
-		sections = append(sections, fmt.Sprintf("Task details: %s", description))
+		return description
 	}
-	return strings.Join(sections, "\n\n")
+	return strings.TrimSpace(title)
 }
 
 func defaultTasksForMode(goal, mode string) []metaTaskState {
@@ -256,52 +242,52 @@ func defaultTasksForMode(goal, mode string) []metaTaskState {
 	case "coding":
 		return []metaTaskState{
 			{
-				Title:  "Review existing context",
-				Goal:   fmt.Sprintf("Assess current state relevant to: %s", goal),
-				Mode:   "coding",
-				Status: "pending",
+				Title:       "Review existing context",
+				Instruction: fmt.Sprintf("Assess current state relevant to: %s", goal),
+				Mode:        "coding",
+				Status:      "pending",
 			},
 			{
-				Title:  "Implement solution",
-				Goal:   fmt.Sprintf("Implement changes to address: %s", goal),
-				Mode:   "coding",
-				Status: "pending",
+				Title:       "Implement solution",
+				Instruction: fmt.Sprintf("Implement changes to address: %s", goal),
+				Mode:        "coding",
+				Status:      "pending",
 			},
 			{
-				Title:  "Validate and summarize",
-				Goal:   fmt.Sprintf("Validate updates and summarize results for: %s", goal),
-				Mode:   "coding",
-				Status: "pending",
+				Title:       "Validate and summarize",
+				Instruction: fmt.Sprintf("Validate updates and summarize results for: %s", goal),
+				Mode:        "coding",
+				Status:      "pending",
 			},
 		}
 	case "research":
 		return []metaTaskState{
 			{
-				Title:  "Collect background",
-				Goal:   fmt.Sprintf("Collect background information for: %s", goal),
-				Mode:   "research",
-				Status: "pending",
+				Title:       "Collect background",
+				Instruction: fmt.Sprintf("Collect background information for: %s", goal),
+				Mode:        "research",
+				Status:      "pending",
 			},
 			{
-				Title:  "Synthesize findings",
-				Goal:   fmt.Sprintf("Synthesize findings addressing: %s", goal),
-				Mode:   "research",
-				Status: "pending",
+				Title:       "Synthesize findings",
+				Instruction: fmt.Sprintf("Synthesize findings addressing: %s", goal),
+				Mode:        "research",
+				Status:      "pending",
 			},
 		}
 	default:
 		return []metaTaskState{
 			{
-				Title:  "Plan approach",
-				Goal:   fmt.Sprintf("Plan the steps required for: %s", goal),
-				Mode:   "other",
-				Status: "pending",
+				Title:       "Plan approach",
+				Instruction: fmt.Sprintf("Plan the steps required for: %s", goal),
+				Mode:        "other",
+				Status:      "pending",
 			},
 			{
-				Title:  "Execute plan",
-				Goal:   fmt.Sprintf("Execute and document progress for: %s", goal),
-				Mode:   "other",
-				Status: "pending",
+				Title:       "Execute plan",
+				Instruction: fmt.Sprintf("Execute and document progress for: %s", goal),
+				Mode:        "other",
+				Status:      "pending",
 			},
 		}
 	}
@@ -370,7 +356,7 @@ func executeMetaPlan(ctx metaContext, plan metaPlanState) (metaPlanState, error)
 		resumePrompt := ""
 		for {
 			priorAnswer := loadPreviousFinalAnswer(tasks[:idx])
-			basePrompt := composeTaskPrompt(ctx.Goal, task.Goal, task.Title, priorAnswer, idx == 0)
+			basePrompt := composeTaskPrompt(ctx.Goal, *task, priorAnswer, idx == 0)
 			headerPrompt := strings.TrimSpace(ctx.Options.OriginalPrompt)
 			if headerPrompt == "" {
 				headerPrompt = ctx.Goal
@@ -493,13 +479,13 @@ func executeMetaPlan(ctx metaContext, plan metaPlanState) (metaPlanState, error)
 
 				task.Status = "pending"
 				task.Summary = fmt.Sprintf("User guidance pending incorporation: %s", additionalInput)
-				task.Goal = integrateUserGuidance(task.Goal, additionalInput)
+				task.UserGuidance = integrateTaskUserGuidance(task.UserGuidance, additionalInput)
+				nextBasePrompt := composeTaskPrompt(ctx.Goal, *task, priorAnswer, idx == 0)
 				if sessionID := strings.TrimSpace(task.SessionID); sessionID != "" {
-					if err := updateChildSessionGoal(sessionID, task.Goal); err != nil {
+					if err := updateChildSessionGoal(sessionID, nextBasePrompt); err != nil {
 						fmt.Fprintf(os.Stderr, "Meta goal update warning for %s: %v\n", sessionID, err)
 					}
 				}
-				nextBasePrompt := composeTaskPrompt(ctx.Goal, task.Goal, task.Title, priorAnswer, idx == 0)
 				resumePrompt = composeRevisedGoalPrompt(nextBasePrompt, additionalInput)
 				endSummary := buildMetaEndSummary(*task)
 				writeMetaTurn(ctx, metaTurn+1, fmt.Sprintf("Meta task result: %s", task.Title), endSummary, "meta-end")
@@ -633,12 +619,23 @@ func buildMetaStartSummary(goal string, task metaTaskState, prior []metaTaskStat
 		b.WriteString(desc)
 		b.WriteString("\n")
 	}
-	goalText := strings.TrimSpace(task.Goal)
-	if goalText == "" {
-		goalText = "(no explicit goal)"
+	instruction := strings.TrimSpace(task.Instruction)
+	if instruction == "" {
+		instruction = "(no explicit task instruction)"
 	}
-	b.WriteString("- Goal:\n")
-	b.WriteString(goalText)
+	b.WriteString("- Instruction:\n")
+	b.WriteString(instruction)
+	b.WriteString("\n")
+	if guidance := strings.TrimSpace(task.UserGuidance); guidance != "" {
+		b.WriteString("- User Guidance:\n")
+		b.WriteString(guidance)
+		b.WriteString("\n")
+	}
+	if overlay := strings.TrimSpace(task.PlannerOverlay); overlay != "" {
+		b.WriteString("- Planner Overlay:\n")
+		b.WriteString(overlay)
+		b.WriteString("\n")
+	}
 	b.WriteString("\n\n")
 	b.WriteString(formatPriorOutcomes(prior))
 	return b.String()
@@ -688,6 +685,9 @@ func buildMetaEndSummary(task metaTaskState) string {
 	if desc := strings.TrimSpace(task.Description); desc != "" {
 		b.WriteString(fmt.Sprintf("- Description: %s\n", desc))
 	}
+	if guidance := strings.TrimSpace(task.UserGuidance); guidance != "" {
+		b.WriteString(fmt.Sprintf("- User Guidance: %s\n", strings.ReplaceAll(guidance, "\n", " ")))
+	}
 	if sessionID := strings.TrimSpace(task.SessionID); sessionID != "" {
 		b.WriteString(fmt.Sprintf("- Session: %s\n", sessionID))
 	}
@@ -727,25 +727,12 @@ func loadPreviousFinalAnswer(prior []metaTaskState) string {
 	return strings.TrimSpace(string(data))
 }
 
-func composeTaskPrompt(sessionGoal, taskGoal, taskTitle, priorFinalAnswer string, isFirstTask bool) string {
+func composeTaskPrompt(sessionGoal string, task metaTaskState, priorFinalAnswer string, isFirstTask bool) string {
 	sessionGoal = strings.TrimSpace(sessionGoal)
-	taskGoal = strings.TrimSpace(taskGoal)
-	taskTitle = strings.TrimSpace(taskTitle)
 	priorFinalAnswer = strings.TrimSpace(priorFinalAnswer)
 
-	detail := strings.TrimSpace(extractTaskDetail(taskGoal))
-	focus := strings.TrimSpace(extractTaskFocus(taskGoal))
-	primary := detail
-	if primary == "" {
-		primary = focus
-	}
-	if primary == "" {
-		primary = taskTitle
-	}
-	if primary == "" {
-		primary = taskGoal
-	}
-	primary = strings.TrimSpace(primary)
+	primary := strings.TrimSpace(taskPrimaryInstruction(task))
+	focus := strings.TrimSpace(taskFocus(task))
 
 	sections := make([]string, 0, 2)
 	if isFirstTask {
@@ -774,16 +761,22 @@ func composeTaskPrompt(sessionGoal, taskGoal, taskTitle, priorFinalAnswer string
 	return strings.Join(sections, "\n\n")
 }
 
-func extractTaskDetail(taskGoal string) string {
-	taskGoal = strings.TrimSpace(taskGoal)
-	if taskGoal == "" {
-		return ""
+func taskPrimaryInstruction(task metaTaskState) string {
+	primary := strings.TrimSpace(task.Instruction)
+	if primary == "" {
+		primary = taskInstructionText(task.Title, task.Description)
 	}
-	marker := "Task details:"
-	if idx := strings.Index(strings.ToLower(taskGoal), strings.ToLower(marker)); idx >= 0 {
-		return strings.TrimSpace(taskGoal[idx+len(marker):])
+	guidance := strings.TrimSpace(task.UserGuidance)
+	if guidance == "" {
+		return primary
 	}
-	return ""
+	if primary == "" {
+		return fmt.Sprintf("User guidance: %s", guidance)
+	}
+	if strings.Contains(strings.ToLower(primary), strings.ToLower(guidance)) {
+		return primary
+	}
+	return fmt.Sprintf("%s\n\nUser guidance: %s", primary, guidance)
 }
 
 func composeRevisedGoalPrompt(basePrompt, userInput string) string {
@@ -801,19 +794,29 @@ func composeRevisedGoalPrompt(basePrompt, userInput string) string {
 	return builder.String()
 }
 
-func integrateUserGuidance(goal, guidance string) string {
-	goal = strings.TrimSpace(goal)
+func taskFocus(task metaTaskState) string {
+	if strings.TrimSpace(task.Description) != "" {
+		return strings.TrimSpace(task.Title)
+	}
+	if strings.EqualFold(strings.TrimSpace(task.Instruction), strings.TrimSpace(task.Title)) {
+		return strings.TrimSpace(task.Title)
+	}
+	return ""
+}
+
+func integrateTaskUserGuidance(existing, guidance string) string {
+	existing = strings.TrimSpace(existing)
 	guidance = strings.TrimSpace(guidance)
 	if guidance == "" {
-		return goal
+		return existing
 	}
-	if goal == "" {
-		return fmt.Sprintf("User guidance: %s", guidance)
+	if existing == "" {
+		return guidance
 	}
-	if strings.Contains(strings.ToLower(goal), strings.ToLower(guidance)) {
-		return goal
+	if strings.Contains(strings.ToLower(existing), strings.ToLower(guidance)) {
+		return existing
 	}
-	return fmt.Sprintf("%s\n\nUser guidance: %s", goal, guidance)
+	return fmt.Sprintf("%s\n\n%s", existing, guidance)
 }
 
 func updateChildSessionGoal(sessionID, goal string) error {
@@ -827,21 +830,6 @@ func updateChildSessionGoal(sessionID, goal string) error {
 	}
 	state.Goal = goal
 	return SaveSessionState(*state)
-}
-
-func extractTaskFocus(taskGoal string) string {
-	if taskGoal == "" {
-		return ""
-	}
-	marker := "\n\nFocus:"
-	if idx := strings.Index(taskGoal, marker); idx >= 0 {
-		return strings.TrimSpace(taskGoal[idx+len(marker):])
-	}
-	marker = "Focus:"
-	if idx := strings.Index(taskGoal, marker); idx >= 0 {
-		return strings.TrimSpace(taskGoal[idx+len(marker):])
-	}
-	return ""
 }
 
 type metaTaskRunResult struct {
@@ -875,6 +863,7 @@ func runMetaTask(ctx metaContext, task metaTaskState, basePrompt string, headerP
 		childOptions.OriginalPrompt = childOptions.Goal
 	}
 	childOptions.TaskDescription = taskHeaderDescription(task)
+	childOptions.PlannerOverlay = strings.TrimSpace(task.PlannerOverlay)
 	statusNormalized := strings.ToLower(strings.TrimSpace(task.Status))
 	resumeSession := strings.TrimSpace(task.SessionID)
 	shouldResume := false
