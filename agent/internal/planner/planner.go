@@ -133,6 +133,8 @@ type planTemplateData struct {
 	MaxSteps          int
 	PatchIntro        string
 	PatchRules        string
+	HasPlannerOverlay bool
+	PlannerOverlay    string
 }
 
 type reviewTemplateData struct {
@@ -1404,6 +1406,10 @@ func (c *Client) buildPlanTemplateData(conv *conversation.Conversation, goal str
 		Step:            step,
 		MaxSteps:        maxSteps,
 		PatchIntro:      c.planPatchIntroText(),
+	}
+	if overlay := strings.TrimSpace(c.cfg.PlannerOverlay); overlay != "" {
+		data.HasPlannerOverlay = true
+		data.PlannerOverlay = overlay
 	}
 	if c.cfg.PatchEnabled {
 		data.HasPatchPlan = patchPlan != nil && len(patchPlan.Items) > 0

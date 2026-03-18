@@ -7,3 +7,8 @@ Use prior patch validation diagnostics from the conversation when deciding what 
 When a full-diff turn is present, treat it as authoritative and do not re-request `git diff` or the same full file.
 Patch and full-diff rules provided elsewhere in the conversation remain authoritative.
 Always obey the exact output format requested by the latest user message.
+{{- if .HasPlannerOverlay }}
+
+Additional task-specific planner guidance:
+{{ .PlannerOverlay }}
+{{- end }}

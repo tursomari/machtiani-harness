@@ -62,6 +62,24 @@ func TestComposeRevisedGoalPromptIncludesInstruction(t *testing.T) {
 	}
 }
 
+func TestComposeTaskPromptUsesTitleWhenDescriptionExists(t *testing.T) {
+	prompt := composeTaskPrompt("Fix the issue", metaTaskState{
+		Title:       "Create an issue for the engineering team",
+		Description: "Create an issue for the engineering team that solves the Goal. Do not make any code changes.",
+		Instruction: "Create an issue for the engineering team",
+	}, "", true)
+
+	if !strings.Contains(prompt, "***Create an issue for the engineering team***") {
+		t.Fatalf("expected prompt to include task title, got %q", prompt)
+	}
+	if strings.Contains(prompt, "Do not make any code changes") {
+		t.Fatalf("expected prompt to keep description out of composed goal, got %q", prompt)
+	}
+	if !strings.Contains(prompt, "Original prompt:\nFix the issue") {
+		t.Fatalf("expected prompt to include original prompt, got %q", prompt)
+	}
+}
+
 func TestUpdateChildSessionGoalPersists(t *testing.T) {
 	tmpDir := t.TempDir()
 	prevWD, err := os.Getwd()

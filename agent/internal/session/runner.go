@@ -206,11 +206,7 @@ func formatGoalText(originalPrompt, taskDescription string) string {
 	if originalPrompt == "" {
 		return ""
 	}
-	trimmedTask := strings.TrimSpace(taskDescription)
-	if trimmedTask == "" {
-		return originalPrompt
-	}
-	return fmt.Sprintf("%s\n\n---\n%s\n---", originalPrompt, trimmedTask)
+	return originalPrompt
 }
 
 func startTranscriptIfNeeded(tr *transcript.Transcript, originalPrompt, taskDescription, sessionID string, cfg legacyConfig, resumeMode bool) (bool, error) {

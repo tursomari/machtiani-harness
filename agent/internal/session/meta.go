@@ -211,12 +211,13 @@ func tasksFromTOML(goal, mode string, instructions llm.MetaInstructions) []metaT
 		if step <= 0 {
 			step = idx + 1
 		}
+		plannerOverlay := taskPlannerOverlayText(description, item.SystemPrompt)
 		tasks = append(tasks, metaTaskState{
 			Step:           step,
 			Title:          title,
 			Description:    description,
-			Instruction:    taskInstructionText(title, description),
-			PlannerOverlay: strings.TrimSpace(item.SystemPrompt),
+			Instruction:    strings.TrimSpace(title),
+			PlannerOverlay: plannerOverlay,
 			Mode:           mode,
 			Status:         "pending",
 			ShellAgent:     item.ShellAgent,
@@ -235,6 +236,21 @@ func taskInstructionText(title, description string) string {
 		return description
 	}
 	return strings.TrimSpace(title)
+}
+
+func taskPlannerOverlayText(description, systemPrompt string) string {
+	description = strings.TrimSpace(description)
+	systemPrompt = strings.TrimSpace(systemPrompt)
+	switch {
+	case description == "":
+		return systemPrompt
+	case systemPrompt == "":
+		return description
+	case strings.EqualFold(description, systemPrompt):
+		return description
+	default:
+		return description + "\n\n" + systemPrompt
+	}
 }
 
 func defaultTasksForMode(goal, mode string) []metaTaskState {
@@ -631,7 +647,7 @@ func buildMetaStartSummary(goal string, task metaTaskState, prior []metaTaskStat
 		b.WriteString(guidance)
 		b.WriteString("\n")
 	}
-	if overlay := strings.TrimSpace(task.PlannerOverlay); overlay != "" {
+	if overlay := strings.TrimSpace(task.PlannerOverlay); overlay != "" && !strings.EqualFold(strings.TrimSpace(task.Description), overlay) {
 		b.WriteString("- Planner Overlay:\n")
 		b.WriteString(overlay)
 		b.WriteString("\n")
@@ -764,7 +780,7 @@ func composeTaskPrompt(sessionGoal string, task metaTaskState, priorFinalAnswer 
 func taskPrimaryInstruction(task metaTaskState) string {
 	primary := strings.TrimSpace(task.Instruction)
 	if primary == "" {
-		primary = taskInstructionText(task.Title, task.Description)
+		primary = strings.TrimSpace(task.Title)
 	}
 	guidance := strings.TrimSpace(task.UserGuidance)
 	if guidance == "" {

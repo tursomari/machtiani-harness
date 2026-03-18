@@ -1082,6 +1082,18 @@ func TestPlanSystemPromptOmitsFullFileTagGuidance(t *testing.T) {
 	}
 }
 
+func TestPlanSystemPromptIncludesPlannerOverlay(t *testing.T) {
+	client := NewClient(ClientConfig{PlannerOverlay: "Focus on security review and threat modeling."})
+	conv := conversation.New("sess-system-overlay", "Finish docs")
+	prompt := client.planSystemPrompt(conv, "Finish docs", 1, 3, nil)
+	if !strings.Contains(prompt, "Additional task-specific planner guidance:") {
+		t.Fatalf("expected planner overlay heading, got %q", prompt)
+	}
+	if !strings.Contains(prompt, "Focus on security review and threat modeling.") {
+		t.Fatalf("expected planner overlay body, got %q", prompt)
+	}
+}
+
 func TestBuildAskRequestOmitsTranscript(t *testing.T) {
 	client := NewClient(ClientConfig{})
 	conv := conversation.New("sess-ask-request", "Investigate planner flow")
@@ -1136,6 +1148,39 @@ func TestPlannerHelperMessagesSharePlanPrefix(t *testing.T) {
 		}
 		if planMessages[len(planMessages)-1].Content == messages[len(messages)-1].Content {
 			t.Fatalf("expected final user prompt to differ across planner tasks")
+		}
+	}
+}
+
+func TestPlannerOverlayStaysInSharedSystemPrompt(t *testing.T) {
+	client := NewClient(ClientConfig{PatchEnabled: true, PlannerOverlay: "Prioritize migration safety checks."})
+	conv := conversation.New("sess-overlay-prefix", "Finish docs")
+	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask"})
+	conv.AddMessage("assistant", "Answer: done", map[string]any{"type": "answer", "turn": 1})
+
+	planMessages := client.buildPlanMessages(conv, conv.CurrentGoal(), 2, 4, nil)
+	taskMessages := [][]llm.Message{
+		client.buildPlannerTaskMessages(conv, conv.CurrentGoal(), 2, 4, nil, client.askPrompt(client.buildAskRequest(conv, conv.CurrentGoal(), 2, 4), "")),
+		client.buildPlannerTaskMessages(conv, conv.CurrentGoal(), 2, 4, nil, client.askMonitorPrompt("Explain config loading.")),
+		client.buildPlannerTaskMessages(conv, conv.CurrentGoal(), 2, 4, nil, client.askMixedMonitorPrompt("Explain config loading and run git diff --stat.")),
+	}
+
+	if len(planMessages) == 0 || planMessages[0].Role != "system" {
+		t.Fatalf("expected plan messages to start with system prompt, got %#v", planMessages)
+	}
+	if !strings.Contains(planMessages[0].Content, "Prioritize migration safety checks.") {
+		t.Fatalf("expected planner overlay in shared system prompt, got %q", planMessages[0].Content)
+	}
+	if strings.Contains(planMessages[len(planMessages)-1].Content, "Prioritize migration safety checks.") {
+		t.Fatalf("planner overlay should not appear in final user plan prompt, got %q", planMessages[len(planMessages)-1].Content)
+	}
+
+	for _, messages := range taskMessages {
+		if messages[0].Content != planMessages[0].Content {
+			t.Fatalf("expected shared system prompt prefix, got %q want %q", messages[0].Content, planMessages[0].Content)
+		}
+		if strings.Contains(messages[len(messages)-1].Content, "Prioritize migration safety checks.") {
+			t.Fatalf("planner overlay should stay out of final user task prompt, got %q", messages[len(messages)-1].Content)
 		}
 	}
 }

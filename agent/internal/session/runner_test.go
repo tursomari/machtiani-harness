@@ -652,6 +652,14 @@ func TestConversationDualWriteMatchesLegacyTranscript(t *testing.T) {
 	}
 }
 
+func TestFormatGoalTextOmitsTaskDescription(t *testing.T) {
+	goal := "Finish documentation"
+	formatted := formatGoalText(goal, "Task: focus on README links")
+	if formatted != goal {
+		t.Fatalf("expected clean goal %q, got %q", goal, formatted)
+	}
+}
+
 func TestConversationResumeRestoresTranscript(t *testing.T) {
 	cwd, _ := os.Getwd()
 	t.Cleanup(func() { _ = os.Chdir(cwd) })
