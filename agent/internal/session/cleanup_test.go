@@ -271,6 +271,35 @@ func TestCleanupSessionDirsSkipsFreshLock(t *testing.T) {
 	}
 }
 
+func TestCleanupSessionDirsSkipsWorkspaceForActiveSession(t *testing.T) {
+	tempDir := t.TempDir()
+	root := filepath.Join(tempDir, ".machtiani", "tmp")
+	sessionID := "agent-20260321T000716-9363"
+	sessionPath := filepath.Join(root, sessionID)
+	workspacePath := filepath.Join(root, "workspace-"+sessionID)
+	if err := os.MkdirAll(sessionPath, 0o755); err != nil {
+		t.Fatalf("mkdir session: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(workspacePath, "repo"), 0o755); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+	lockPath := filepath.Join(sessionPath, sessionLockFileName)
+	if err := os.WriteFile(lockPath, []byte("lock"), 0o644); err != nil {
+		t.Fatalf("write lock: %v", err)
+	}
+
+	if err := cleanupOrphanedSessionDirs(root, time.Now(), sessionLockStaleDuration, false); err != nil {
+		t.Fatalf("cleanup session dirs: %v", err)
+	}
+
+	if _, err := os.Stat(sessionPath); err != nil {
+		t.Fatalf("expected session directory to remain, got err=%v", err)
+	}
+	if _, err := os.Stat(workspacePath); err != nil {
+		t.Fatalf("expected active workspace directory to remain, got err=%v", err)
+	}
+}
+
 func TestCleanupOrphanedTempDirsTargetsScratchRoot(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

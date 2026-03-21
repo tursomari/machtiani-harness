@@ -30,6 +30,11 @@ var cleanupPrefixes = []string{
 	"session-",
 }
 
+var sessionDirPrefixes = []string{
+	"agent-",
+	"session-",
+}
+
 func cleanupOrphanedTempDirs(verbose bool) error {
 	now := time.Now()
 
@@ -213,6 +218,9 @@ func cleanupOrphanedSessionDirs(root string, now time.Time, staleThreshold time.
 		if !entry.IsDir() {
 			continue
 		}
+		if !hasSessionDirPrefix(entry.Name()) {
+			continue
+		}
 		sessionPath := filepath.Join(root, entry.Name())
 		lockPath := filepath.Join(sessionPath, sessionLockFileName)
 		lockInfo, statErr := os.Stat(lockPath)
@@ -343,6 +351,15 @@ func isLockFile(name string) bool {
 	}
 	if strings.Contains(name, "lock") {
 		return true
+	}
+	return false
+}
+
+func hasSessionDirPrefix(name string) bool {
+	for _, prefix := range sessionDirPrefixes {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
 	}
 	return false
 }

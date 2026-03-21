@@ -14,6 +14,17 @@ Agent Integration Tests (mct-agent)
 - Preflight: validates the `mct-agent` binary on PATH, prints `--version`/`go version -m` metadata, and fails if the commit/time is out of sync with the current repo. Optional CLIs are not required for this harness.
 - Config: produces a temporary `.machtiani/config.toml` under `agent/tests/tmp/`; exports `MACHTIANI_CONFIG` for the run. Live mode uses `TEST_API_KEY` / `TEST_BASE_URL` / `TEST_MODEL` when set, otherwise falls back to `OPENAI_*`; dry-run mode writes stub credentials and forces `--dry-run`.
 
+Targeted repros
+- Concurrent startup cleanup regression: `agent/tests/repro-concurrent-run-cleanup.sh`
+- Purpose: launches overlapping `mct-agent run` sessions to check that a second startup does not delete the first session's live `workspace-*` directory.
+- Modes:
+  - `EXPECT_REPRO=true bash agent/tests/repro-concurrent-run-cleanup.sh` confirms the old buggy behavior.
+  - `EXPECT_REPRO=false bash agent/tests/repro-concurrent-run-cleanup.sh` confirms the fix.
+- Helpful toggles:
+  - `KEEP_REPRO_ARTIFACTS=true` preserves logs and generated config under `agent/tests/tmp/`.
+  - `STUB_DELAY_SECONDS=...` widens or narrows the overlap window between the two sessions.
+- Like `agent/tests/run-live.sh`, this harness uses the `mct-agent` binary already on `PATH`.
+
 Scenarios covered
 - Issue A/B/C happy paths (1-turn and 3-turn max steps)
 - Error: empty prompt
