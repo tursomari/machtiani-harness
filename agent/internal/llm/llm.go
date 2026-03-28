@@ -34,12 +34,13 @@ type Message struct {
 var ErrNoChoices = errors.New("no choices returned")
 
 var (
-	streamingHTTPClient    = &http.Client{Timeout: 60 * time.Minute}
-	nonStreamRetryBackoffs = []time.Duration{1 * time.Second, 3 * time.Second, 5 * time.Second}
+	streamingHTTPClient = &http.Client{Timeout: 60 * time.Minute}
 )
 
 const (
 	testStubEnv                        = "MCT_LLM_TEST_STUB" // test-only knob to bypass network LLM calls
+	nonStreamRetryInitialBackoff       = 1 * time.Second
+	nonStreamRetryMaxBackoff           = 30 * time.Second
 	retryAfterCap                      = 15 * time.Second
 	llmInputLogEnv                     = "MCT_LLM_INPUT_LOG" // optional debug log file path for full LLM request inputs
 	llmStageEnv                        = "MCT_LLM_STAGE"     // optional stage label for LLM calls (planner/shell-agent/etc)
@@ -902,17 +903,19 @@ func emitStreamFallbackEvent(ctx context.Context, model ResolvedModel, err error
 	emitLLMEvent(ctx, "warn", "llm.stream.fallback", payload, err)
 }
 
-func emitRetryEvent(ctx context.Context, model ResolvedModel, attempt, maxAttempts int, wait time.Duration, err error, meta llmAttemptMeta) {
+func emitRetryEvent(ctx context.Context, model ResolvedModel, attempt int, wait time.Duration, err error, meta llmAttemptMeta) {
 	payload := map[string]any{
 		"model":        modelSummary(model),
 		"mode":         strings.TrimSpace(meta.Mode),
 		"attempt":      attempt,
 		"next_attempt": attempt + 1,
-		"max_attempts": maxAttempts,
 		"wait_ms":      wait.Milliseconds(),
 	}
 	if payload["mode"] == "" {
 		payload["mode"] = "non-stream"
+	}
+	if meta.MaxAttempts > 0 {
+		payload["max_attempts"] = meta.MaxAttempts
 	}
 	if alias := strings.TrimSpace(meta.Alias); alias != "" {
 		payload["alias"] = alias
@@ -1254,38 +1257,64 @@ func encodePayload(base map[string]any, stream bool) ([]byte, error) {
 func tryStreamThenFallback(ctx context.Context, model ResolvedModel, streamBody, nonStreamBody []byte, onToken func(string)) (string, error) {
 	var streamedPrefix strings.Builder
 	emitted := false
+	fallbackCtx := ctx
 	wrapped := func(tok string) {
 		streamedPrefix.WriteString(tok)
-		if onToken != nil {
+		if tok != "" {
 			emitted = true
+		}
+		if onToken != nil {
 			onToken(tok)
 		}
 	}
 
-	streamMeta := llmAttemptMeta{
-		Alias:       strings.TrimSpace(model.Alias),
-		Mode:        "stream",
-		Attempt:     1,
-		MaxAttempts: 1,
-		Source:      "primary",
-	}
-	streamAttempt, attemptCtx := startLLMAttempt(ctx, model, streamMeta)
-	if streamAttempt == nil {
-		attemptCtx = ctx
-	}
-	result, usage, err := executeStream(attemptCtx, model, streamBody, wrapped)
-	if streamAttempt != nil {
-		extra := map[string]any{
-			"partial_output":     emitted,
-			"partial_prefix_len": streamedPrefix.Len(),
+	var attemptErr error
+	for attempt := 1; ; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return "", err
 		}
-		streamAttempt.finish(err, extra)
+		streamMeta := llmAttemptMeta{
+			Alias:   strings.TrimSpace(model.Alias),
+			Mode:    "stream",
+			Attempt: attempt,
+			Source:  "primary",
+		}
+		streamAttempt, attemptCtx := startLLMAttempt(ctx, model, streamMeta)
+		if streamAttempt == nil {
+			attemptCtx = ctx
+		}
+		result, usage, err := executeStream(attemptCtx, model, streamBody, wrapped)
+		if streamAttempt != nil {
+			extra := map[string]any{
+				"partial_output":     emitted,
+				"partial_prefix_len": streamedPrefix.Len(),
+			}
+			streamAttempt.finish(err, extra)
+		}
+		if err == nil {
+			emitCacheUsage(attemptCtx, model, usage)
+			return result, nil
+		}
+		attemptErr = err
+		fallbackCtx = attemptCtx
+		if !emitted && shouldRetry(err) {
+			wait := retryDelay(err, nonStreamRetryBackoff(attempt))
+			emitRetryEvent(attemptCtx, model, attempt, wait, err, streamMeta)
+			if wait > 0 {
+				timer := time.NewTimer(wait)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return "", ctx.Err()
+				case <-timer.C:
+				}
+			}
+			continue
+		}
+		break
 	}
-	if err == nil {
-		emitCacheUsage(attemptCtx, model, usage)
-		return result, nil
-	}
-	emitStreamFallbackEvent(attemptCtx, model, err, emitted, streamedPrefix.Len())
+
+	emitStreamFallbackEvent(fallbackCtx, model, attemptErr, emitted, streamedPrefix.Len())
 	fallbackMeta := llmAttemptMeta{
 		Alias:    strings.TrimSpace(model.Alias),
 		Mode:     "non-stream",
@@ -1319,15 +1348,13 @@ func executeStream(ctx context.Context, model ResolvedModel, body []byte, onToke
 }
 
 func executeOnceWithRetries(ctx context.Context, model ResolvedModel, body []byte, meta llmAttemptMeta) (string, error) {
-	maxAttempts := len(nonStreamRetryBackoffs) + 1
 	var lastErr error
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
+	for attempt := 1; ; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}
 		attemptMeta := meta
 		attemptMeta.Attempt = attempt
-		attemptMeta.MaxAttempts = maxAttempts
 		attemptAttempt, attemptCtx := startLLMAttempt(ctx, model, attemptMeta)
 		if attemptAttempt == nil {
 			attemptCtx = ctx
@@ -1349,11 +1376,11 @@ func executeOnceWithRetries(ctx context.Context, model ResolvedModel, body []byt
 		}
 		lastErr = err
 		retryable := shouldRetry(err)
-		if !retryable || attempt == maxAttempts {
+		if !retryable {
 			break
 		}
-		wait := retryDelay(err, nonStreamRetryBackoffs[attempt-1])
-		emitRetryEvent(attemptCtx, model, attempt, maxAttempts, wait, err, attemptMeta)
+		wait := retryDelay(err, nonStreamRetryBackoff(attempt))
+		emitRetryEvent(attemptCtx, model, attempt, wait, err, attemptMeta)
 		if wait > 0 {
 			timer := time.NewTimer(wait)
 			select {
@@ -1367,7 +1394,24 @@ func executeOnceWithRetries(ctx context.Context, model ResolvedModel, body []byt
 	if lastErr != nil {
 		return "", lastErr
 	}
-	return "", errors.New("non-stream retries exhausted")
+	return "", errors.New("non-stream request failed without a retryable error")
+}
+
+func nonStreamRetryBackoff(attempt int) time.Duration {
+	if attempt <= 0 {
+		return 0
+	}
+	wait := nonStreamRetryInitialBackoff
+	for retry := 1; retry < attempt; retry++ {
+		if wait >= nonStreamRetryMaxBackoff {
+			return nonStreamRetryMaxBackoff
+		}
+		wait *= 2
+		if wait >= nonStreamRetryMaxBackoff {
+			return nonStreamRetryMaxBackoff
+		}
+	}
+	return wait
 }
 
 func performStream(req *http.Request, onToken func(string)) (string, *responseUsage, error) {

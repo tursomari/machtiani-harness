@@ -156,4 +156,5 @@ Binary resolution for `file-discovery`:
 - “Missing model configuration”
   - Set `OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_MODEL`.
 - Streaming fails or returns non‑OK
-  - The CLI falls back to a non‑streaming request once; verify your base URL and key.
+  - The CLI first keeps retrying retryable streaming failures that happen before any tokens arrive, using exponential backoff until the request succeeds or you cancel it.
+  - If streaming fails after partial output, or with a non-retryable error, the CLI falls back to non-streaming mode and continues retrying there. Retry progress is surfaced in the terminal.

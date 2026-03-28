@@ -767,6 +767,8 @@ func Run(ctx context.Context, opts Options) Result {
 	display := ui.NewTerminalDisplay(os.Stdout, timerMgr, sessionID, strings.TrimSpace(cfg.parentSessionID))
 	var failoverCancel context.CancelFunc
 	var failoverDone <-chan struct{}
+	var retryCancel context.CancelFunc
+	var retryDone <-chan struct{}
 	var cacheUsageCancel context.CancelFunc
 	var cacheUsageDone <-chan struct{}
 	var cacheDiagnosticsCancel context.CancelFunc
@@ -780,6 +782,13 @@ func Run(ctx context.Context, opts Options) Result {
 		} else {
 			failoverCancel = cancel
 			failoverDone = done
+		}
+		cancel, done, err = startLLMRetryLogger(display, trajectoryWriter.Config().Path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[trajectory] retry listener setup error: %v\n", err)
+		} else {
+			retryCancel = cancel
+			retryDone = done
 		}
 		cancel, done, err = startLLMCacheUsageLogger(display, trajectoryWriter.Config().Path)
 		if err != nil {
@@ -810,6 +819,12 @@ func Run(ctx context.Context, opts Options) Result {
 		}
 		if failoverDone != nil {
 			<-failoverDone
+		}
+		if retryCancel != nil {
+			retryCancel()
+		}
+		if retryDone != nil {
+			<-retryDone
 		}
 		if cacheUsageCancel != nil {
 			cacheUsageCancel()
