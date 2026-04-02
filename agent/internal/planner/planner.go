@@ -625,7 +625,7 @@ func (c *Client) generateAsk(ctx context.Context, conv *conversation.Conversatio
 		}
 		mode, ask, parseErr := parseAskMenu(resp)
 		if parseErr != nil {
-			guardrail = "The previous response did not follow the required ask format. Return exactly `Ask Mode:` and `Ask:` (or `No-shell:` / `Shell:` for `both`), with no answer content."
+			guardrail = "The previous response did not follow the required ask format. Return exactly `Ask Mode:` and `Ask:` with no answer content. Legacy `both` output may be accepted, but it is treated as `shell`."
 			continue
 		}
 		ask = strings.TrimSpace(ask)
@@ -638,7 +638,7 @@ func (c *Client) generateAsk(ctx context.Context, conv *conversation.Conversatio
 			continue
 		}
 		lastAsk = ask
-		if mode != AskModeBoth {
+		if mode == AskModeNoShell {
 			mixed, err := c.monitorAskMixedWithPlanner(ctx, conv, goal, ask, step, maxSteps)
 			if err == nil && mixed.IsMixed {
 				guardrail = buildAskMixedGuardrail(mixed.Reason, mixed.Rewrite)
@@ -2060,6 +2060,9 @@ func parseAskMenu(resp string) (AskMode, string, error) {
 	if mode == "" {
 		mode = AskModeNoShell
 	}
+	if mode == AskModeBoth {
+		mode = AskModeShell
+	}
 	if strings.TrimSpace(ask) == "" {
 		return mode, "", errors.New("empty ask content")
 	}
@@ -2210,10 +2213,19 @@ func buildAskMixedGuardrail(reason, rewrite string) string {
 	if trimmed == "" {
 		trimmed = "mixed no-shell and shell requests"
 	}
-	if rewriteTrim == "" {
-		return fmt.Sprintf("The previous ask was mixed (%s). Restate it as either a single no-shell ask, a single shell ask, or Ask Mode: both with explicit No-shell: and Shell: lines.", trimmed)
+	suggestedShell := ""
+	if rewriteTrim != "" {
+		if noShell, shell, err := parseAskSplit(rewriteTrim); err == nil {
+			suggestedShell = collapseAskSplit(noShell, shell)
+		}
 	}
-	return fmt.Sprintf("The previous ask was mixed (%s). Restate it as either a single no-shell ask, a single shell ask, or Ask Mode: both with explicit No-shell: and Shell: lines. Suggested split:\n%s", trimmed, rewriteTrim)
+	if rewriteTrim == "" {
+		return fmt.Sprintf("The previous ask was mixed (%s). Restate it as either a single no-shell ask or a single shell ask. If shell work is involved, use Ask Mode: shell and combine it into one ask.", trimmed)
+	}
+	if suggestedShell != "" {
+		return fmt.Sprintf("The previous ask was mixed (%s). Restate it as either a single no-shell ask or a single shell ask. If shell work is involved, use Ask Mode: shell and combine it into one ask. Suggested shell ask:\n%s", trimmed, suggestedShell)
+	}
+	return fmt.Sprintf("The previous ask was mixed (%s). Restate it as either a single no-shell ask or a single shell ask. If shell work is involved, use Ask Mode: shell and combine it into one ask.", trimmed)
 }
 
 func splitLabel(line string, labels ...string) (string, bool) {

@@ -56,6 +56,16 @@ func TestApplySingleAskRoutingPolicy_SingleAskForcesShell(t *testing.T) {
 	}
 }
 
+func TestCollapseSplitAskLines(t *testing.T) {
+	got := collapseSplitAskLines("Explain config loading.", "Run `git diff --stat` and summarize recent changes.")
+	if strings.Contains(got, "No-shell:") || strings.Contains(got, "Shell:") {
+		t.Fatalf("expected collapsed content, got %q", got)
+	}
+	if !strings.Contains(got, "Explain config loading.") || !strings.Contains(got, "git diff --stat") {
+		t.Fatalf("unexpected collapsed content: %q", got)
+	}
+}
+
 func TestApplySingleAskRoutingPolicy_SplitAskUnchanged(t *testing.T) {
 	useShell, forced := applySingleAskRoutingPolicy(true, false)
 	if useShell {

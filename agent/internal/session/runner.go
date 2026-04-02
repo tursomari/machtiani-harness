@@ -1975,10 +1975,13 @@ func Run(ctx context.Context, opts Options) Result {
 				fmt.Fprintln(os.Stderr, "Question:", question)
 			}
 			noShellAsk, shellAsk, hasSplitAsk := splitAskLines(question)
-			preflightQuestion := question
+			collapsedLegacyBothAsk := false
 			if hasSplitAsk {
-				preflightQuestion = noShellAsk
+				question = collapseSplitAskLines(noShellAsk, shellAsk)
+				hasSplitAsk = false
+				collapsedLegacyBothAsk = true
 			}
+			preflightQuestion := question
 			useShellAgent = cfg.shellAgent
 			preflightNote := ""
 			var preflightErr error
@@ -2017,6 +2020,14 @@ func Run(ctx context.Context, opts Options) Result {
 				}
 			}
 			useShellAgent, forcedSingleShellRoute := applySingleAskRoutingPolicy(hasSplitAsk, useShellAgent)
+			if collapsedLegacyBothAsk {
+				turnInfo["mct_legacy_both_collapsed"] = true
+				if preflightNote == "" {
+					preflightNote = "routing policy: legacy both ask -> shell agent"
+				} else {
+					preflightNote = preflightNote + " | routing policy: legacy both ask -> shell agent"
+				}
+			}
 			if forcedSingleShellRoute {
 				turnInfo["mct_single_ask_shell_forced"] = true
 				if preflightNote == "" {

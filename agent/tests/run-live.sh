@@ -1294,7 +1294,7 @@ run_shell_live_case() {
   local case_id="routing-shell-live"
 
   run_happy_case "$case_id" 2 \
-    "Run `git status -sb` and report the output." \
+    'Run `git status -sb` and report the output.' \
     "(?s)(?=.*\\[mct:shell\\])" \
     1 \
     "${DEFAULT_MODEL_ARGS[@]}"
@@ -1575,7 +1575,9 @@ INVALID_ALIAS_REGEX="$(regex_escape "$INVALID_ALIAS")"
 MODEL_ALIAS_NOT_FOUND_PATTERN="model alias \"${INVALID_ALIAS_REGEX}\" not found"
 
 if [[ "$LIVE_MODE" != true ]]; then
-  run_menu_flow_case
+  # Temporarily disable the legacy `both` routing dry-run case while
+  # `Ask Mode: both` is treated as a single shell ask.
+  :
 else
   if shell_agent_available; then
     run_shell_container_workspace_live_case

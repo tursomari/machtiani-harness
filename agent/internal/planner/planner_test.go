@@ -485,7 +485,7 @@ Shell: Run ` + "`" + `grep -n "Decision:" agent/internal/planner/planner.go` + "
 	}
 }
 
-func TestParseAskMenuBothAllowsSingleAsk(t *testing.T) {
+func TestParseAskMenuBothNormalizesToShell(t *testing.T) {
 	resp := strings.TrimSpace(`
 Ask Mode: both
 Ask: Explain how session history is loaded, then run ` + "`" + `grep -n "Decision:" agent/internal/planner/planner.go` + "`" + ` and summarize the matching sections.
@@ -494,8 +494,8 @@ Ask: Explain how session history is loaded, then run ` + "`" + `grep -n "Decisio
 	if err != nil {
 		t.Fatalf("parseAskMenu error: %v", err)
 	}
-	if mode != AskModeBoth {
-		t.Fatalf("expected both mode, got %q", mode)
+	if mode != AskModeShell {
+		t.Fatalf("expected legacy both mode to normalize to shell, got %q", mode)
 	}
 	if strings.Contains(ask, "No-shell:") || strings.Contains(ask, "Shell:") {
 		t.Fatalf("expected single ask output, got %q", ask)
@@ -715,7 +715,7 @@ Shell: Run git diff --stat to review recent changes.
 			if askCalls == 1 {
 				return "Ask Mode: no-shell\nAsk: Explain config loading and run git diff --stat to review recent changes.", nil
 			}
-			if strings.Contains(content, "Suggested split:") && strings.Contains(content, "No-shell: Explain config loading.") {
+			if strings.Contains(content, "Suggested shell ask:") && strings.Contains(content, "Explain config loading.") && strings.Contains(content, "git diff --stat") {
 				guardrailSeen = true
 			}
 			return strings.TrimSpace(`

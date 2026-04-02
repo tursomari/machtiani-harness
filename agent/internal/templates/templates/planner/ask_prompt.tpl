@@ -3,18 +3,13 @@ Ask is for questions, file reads, or repository understanding. Ask is NOT for ch
 
 Choose an ask mode:
 - no-shell: use repository context and file indexing; do NOT require shell commands (no ls, grep, git diff, tests). Use no-shell for repository understanding, explanations, summaries, and targeted questions about files. Never ask to run cat/sed/less/head/tail to view a file, and do not ask for full files or large verbatim code snippets.
-- shell: requires shell commands (finding paths, searching with grep, git diff, running tests). The shell agent never returns verbatim stdout/stderr; it only provides summaries/reports. Do NOT ask for verbatim command output—ask for specific facts or a brief report, or use no-shell for exact file content.
-- both: use when the task conceptually needs both repository understanding and shell work, but restate it as one combined ask.
+- shell: requires shell commands (finding paths, searching with grep, git diff, running tests). The shell agent never returns verbatim stdout/stderr; it only provides summaries/reports. Do NOT ask for verbatim command output—ask for specific facts or a brief report, or use no-shell for exact file content. If a request would previously have needed both repository understanding and shell work, choose shell and restate it as one combined ask.
 
 When constructing the ask, prefer explanations and targeted questions over requesting complete file contents. The `shell-agent` must spend output tokens to answer, so avoid asking for full files or large verbatim snippets; request only minimal snippets when truly necessary.
 
 Output exactly:
-- If Ask Mode is no-shell or shell:
-  Ask Mode: no-shell|shell
-  Ask: <single prompt to mct>
-- If Ask Mode is both:
-  Ask Mode: both
-  Ask: <prompt to mct that requires no shell and shell commands>
+- Ask Mode: no-shell|shell
+- Ask: <single prompt to mct>
 
 Examples (illustrative only; not specific to this repository):
 Ask Mode: no-shell
@@ -23,7 +18,7 @@ Ask Mode: no-shell
 Ask: Example only — Explain what sections the README.md contains and which contain HTML.
 Ask Mode: shell
 Ask: Example only — Run `grep -n "TODO" -r .` and summarize the matching files.
-Ask Mode: both
+Ask Mode: shell
 Ask: Example only — Explain the auth flow and which modules own it, then run `git diff --stat` to see recent changes.
 
 {{- if .Guardrail }}

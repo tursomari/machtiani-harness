@@ -56,6 +56,17 @@ func splitAskLines(question string) (string, string, bool) {
 	return noShell, shell, true
 }
 
+func collapseSplitAskLines(noShell, shell string) string {
+	parts := make([]string, 0, 2)
+	if trimmed := strings.TrimSpace(noShell); trimmed != "" {
+		parts = append(parts, trimmed)
+	}
+	if trimmed := strings.TrimSpace(shell); trimmed != "" {
+		parts = append(parts, trimmed)
+	}
+	return strings.TrimSpace(strings.Join(parts, "\n"))
+}
+
 func applySingleAskRoutingPolicy(hasSplitAsk bool, useShellAgent bool) (bool, bool) {
 	if hasSplitAsk {
 		return useShellAgent, false
