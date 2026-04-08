@@ -135,3 +135,19 @@ func TestShellAgentFinalAnswerTemplatesRequireConfidenceScore(t *testing.T) {
 		}
 	}
 }
+
+func TestTemplatesDoNotHardcodeReadOnlyPolicy(t *testing.T) {
+	banned := map[string]string{
+		"planner.system_template":                 "Assume read-only intent unless the task clearly authorises a write, and keep writes minimal.",
+		"shell_agent.lightweight_system_template": "Prefer read-only commands. When the instruction explicitly requests a write, touch only the files mentioned.",
+	}
+	for key, text := range banned {
+		got, err := GetEmbeddedTemplate(key)
+		if err != nil {
+			t.Fatalf("GetEmbeddedTemplate(%s) error: %v", key, err)
+		}
+		if strings.Contains(got, text) {
+			t.Fatalf("%s still contains retired hardcoded write policy %q\n%s", key, text, got)
+		}
+	}
+}

@@ -701,6 +701,88 @@ EOF
   echo "$config_file"
 }
 
+
+generate_local_test_config() {
+  local config_root
+  config_root="$(mktemp -d "$TMP_ROOT/config-local.XXXXXX")"
+  cp -R "$(dirname "$TEST_CONFIG_FILE")" "$config_root/"
+
+  local config_file="$config_root/.machtiani/config.toml"
+  "$PYTHON_BIN" - "$config_file" <<'PY'
+import pathlib
+import re
+import sys
+
+path = pathlib.Path(sys.argv[1])
+lines = path.read_text(encoding="utf-8").splitlines()
+
+def replace_section_key(src_lines, section_name, key, value):
+    out = []
+    in_section = False
+    found_section = False
+    wrote_key = False
+    for line in src_lines:
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            if in_section and not wrote_key:
+                out.append(f"{key} = {value}")
+                wrote_key = True
+            in_section = stripped == f"[{section_name}]"
+            if in_section:
+                found_section = True
+            out.append(line)
+            continue
+        if in_section and re.match(rf"^\s*{re.escape(key)}\s*=", line):
+            out.append(f"{key} = {value}")
+            wrote_key = True
+            continue
+        out.append(line)
+    if in_section and not wrote_key:
+        out.append(f"{key} = {value}")
+    if not found_section:
+        if out and out[-1] != "":
+            out.append("")
+        out.extend([f"[{section_name}]", f"{key} = {value}"])
+    return out
+
+def replace_environment_type(src_lines):
+    out = []
+    in_environment = False
+    found_environment = False
+    wrote_type = False
+    for line in src_lines:
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            if in_environment and not wrote_type:
+                out.append('type = "local"')
+                wrote_type = True
+            in_environment = stripped == "[environment]"
+            if in_environment:
+                found_environment = True
+            out.append(line)
+            continue
+        if in_environment and re.match(r"^\s*type\s*=", line):
+            out.append('type = "local"')
+            wrote_type = True
+            continue
+        out.append(line)
+    if in_environment and not wrote_type:
+        out.append('type = "local"')
+    if not found_environment:
+        if out and out[-1] != "":
+            out.append("")
+        out.extend(["[environment]", 'type = "local"'])
+    return out
+
+lines = replace_environment_type(lines)
+lines = replace_section_key(lines, "environment", "timeout", "600")
+lines = replace_section_key(lines, "shell-agent", "step_limit", "2")
+path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+PY
+
+  echo "$config_file"
+}
+
 generate_container_test_config() {
   local config_root
   config_root="$(mktemp -d "$TMP_ROOT/config-container.XXXXXX")"
@@ -1300,6 +1382,148 @@ run_shell_live_case() {
     "${DEFAULT_MODEL_ARGS[@]}"
 }
 
+run_local_tmp_root_unset_live_case() {
+  local case_id="local-tmp-root-unset-live"
+  local session_id="test-${case_id}-$(date +%s)"
+  local out_dir="$(pwd)/test-out-${session_id}"
+  mkdir -p "$out_dir"
+  local stdout_file="$out_dir/stdout-${session_id}.txt"
+  local stderr_file="$out_dir/stderr-${session_id}.txt"
+  local session_temp_root=""
+  local marker_checks=false
+  local marker_dir=""
+  local stale_marker=""
+  local recent_marker=""
+  local marker_max_age=""
+  local marker_max_age_seconds=0
+  local local_config=""
+  local prompt
+  prompt=$(cat <<'EOF'
+Run this exact command and report the exact output token only: `python3 -c 'import os; print("MCT_LOCAL_TMP_ROOT=" + (os.environ.get("MACHTIANI_TMP_ROOT") or "UNSET"))'`
+EOF
+)
+
+  cleanup_case_root() {
+    if [[ -n "$local_config" && "${KEEP_TEST_CONFIG:-}" != "true" ]]; then
+      rm -rf "$(dirname "$(dirname "$local_config")")"
+    fi
+    if [[ -n "$session_temp_root" && -d "$session_temp_root" ]]; then
+      rm -rf "$session_temp_root"
+    fi
+  }
+  return_with_cleanup() {
+    local rc="${1:-0}"
+    cleanup_case_root
+    return "$rc"
+  }
+
+  if shell_marker_checks_enabled; then
+    marker_checks=true
+    marker_max_age="${MACHTIANI_SHELL_AGENT_MARKER_MAX_AGE:-1h}"
+    marker_max_age_seconds="$(duration_to_seconds "$marker_max_age")"
+    if [[ "$marker_max_age_seconds" -le 0 ]]; then
+      marker_max_age="1h"
+      marker_max_age_seconds=3600
+    fi
+    session_temp_root="$(mktemp -d "$TMP_ROOT/session-temp-${session_id}.XXXXXX")"
+    marker_dir="$session_temp_root/shell-agent/markers"
+    local stale_age=$((marker_max_age_seconds + 3600))
+    local recent_age=$((marker_max_age_seconds / 2))
+    if (( recent_age < 60 )); then
+      recent_age=60
+    fi
+    if (( recent_age >= marker_max_age_seconds )); then
+      if (( marker_max_age_seconds > 1 )); then
+        recent_age=$((marker_max_age_seconds - 1))
+      else
+        recent_age=1
+      fi
+    fi
+    local stale_name="${SHELL_AGENT_MARKER_PREFIX}-stale-${session_id}${SHELL_AGENT_MARKER_SUFFIX}"
+    local recent_name="${SHELL_AGENT_MARKER_PREFIX}-recent-${session_id}${SHELL_AGENT_MARKER_SUFFIX}"
+    stale_marker="$(seed_marker_with_age "$marker_dir" "$stale_name" "$stale_age")"
+    recent_marker="$(seed_marker_with_age "$marker_dir" "$recent_name" "$recent_age")"
+  fi
+
+  local_config="$(generate_local_test_config)"
+
+  echo "Running happy case: $case_id (local env tmp-root regression)..." >&2
+  local -a cmd=(
+    timeout 240 "$MCT_AGENT" run
+    --max-steps 2
+    --verbose
+    --patch-no-apply
+    --timeout-per-turn 300
+  )
+  if ((${#COMMON_AGENT_ARGS[@]})); then
+    cmd+=("${COMMON_AGENT_ARGS[@]}")
+  fi
+  cmd+=(
+    --model "$TEST_MODEL_ALIAS"
+    -t "$prompt"
+  )
+
+  pushd "$REPO_ROOT" >/dev/null
+  set +e
+  if [[ "$marker_checks" == true ]]; then
+    MACHTIANI_CONFIG="$local_config" \
+      MACHTIANI_SESSION_TEMP_ROOT="$session_temp_root" \
+      MACHTIANI_SHELL_AGENT_MARKER_MAX_AGE="$marker_max_age" \
+      "${cmd[@]}" > "$stdout_file" 2> "$stderr_file"
+  else
+    MACHTIANI_CONFIG="$local_config" \
+      "${cmd[@]}" > "$stdout_file" 2> "$stderr_file"
+  fi
+  local rc=$?
+  set -e
+  popd >/dev/null
+  if [[ $rc -ne 0 ]]; then
+    echo "Failed (rc=$rc): $case_id" >&2
+    return_with_cleanup 1
+  fi
+
+  local agent_session
+  agent_session=$(grep -m1 '^Session:' "$stderr_file" | awk '{print $2}')
+  if [[ -z "$agent_session" ]]; then
+    echo "Failed to parse session ID from stderr for $case_id" >&2
+    return_with_cleanup 1
+  fi
+
+  local session_dir="$REPO_ROOT/.machtiani/sessions/$agent_session"
+  local transcript_path="$session_dir/chat/agent-transcript.adoc"
+  local final_path="$session_dir/chat/agent-final-answer.md"
+  if [[ ! -s "$transcript_path" || ! -s "$final_path" ]]; then
+    echo "Missing live artifacts for $case_id" >&2
+    return_with_cleanup 1
+  fi
+  cp -f "$transcript_path" "$out_dir/transcript-${session_id}.adoc"
+  cp -f "$final_path" "$out_dir/final-${session_id}.md"
+
+  if ! contains_keywords "(?s)(?=.*\[mct:shell\])(?=.*MCT_LOCAL_TMP_ROOT=UNSET)" \
+      "$stdout_file" "$transcript_path" "$final_path"; then
+    echo "Missing local tmp-root unset proof: $case_id" >&2
+    return_with_cleanup 1
+  fi
+
+  local live_workspace_root
+  live_workspace_root="$(resolve_live_workspace_root "$local_config" "$agent_session")"
+  if [[ -e "$live_workspace_root" ]]; then
+    echo "Unexpected snapshot workspace created for local env: $live_workspace_root ($case_id)" >&2
+    find "$live_workspace_root" -maxdepth 2 -mindepth 0 2>/dev/null | sort >&2 || true
+    return_with_cleanup 1
+  fi
+
+  if [[ "$marker_checks" == true ]]; then
+    if ! assert_shell_agent_marker_cleanup "$marker_dir" "$stale_marker" "$recent_marker" "$case_id"; then
+      return_with_cleanup 1
+    fi
+  fi
+
+  echo "Passed: $case_id (local env leaves MACHTIANI_TMP_ROOT unset)" >&2
+  return_with_cleanup 0
+}
+
+
 run_shell_container_workspace_live_case() {
   local case_id="shell-container-workspace-live"
   local session_id="test-${case_id}-$(date +%s)"
@@ -1580,8 +1804,10 @@ if [[ "$LIVE_MODE" != true ]]; then
   :
 else
   if shell_agent_available; then
+    run_local_tmp_root_unset_live_case
     run_shell_container_workspace_live_case
   else
+    echo "Skipping local tmp-root live case: shell-agent not found on PATH." >&2
     echo "Skipping shell container workspace live case: shell-agent not found on PATH." >&2
   fi
   run_snippet_discovery_tightness_live_case

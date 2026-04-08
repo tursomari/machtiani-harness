@@ -53,6 +53,14 @@ var (
 	workspaceRoot               string
 )
 
+func isLocalSessionEnvironment(cfg *llm.Config) bool {
+	if cfg == nil || cfg.Environment == nil {
+		return true
+	}
+	envType := strings.ToLower(strings.TrimSpace(cfg.Environment.Type))
+	return envType == "" || envType == "local"
+}
+
 type plannerProgressTracker struct {
 	successSet       map[string]struct{}
 	successFiles     []string
@@ -667,6 +675,7 @@ func Run(ctx context.Context, opts Options) Result {
 	}
 	origSessionTempRootRaw := os.Getenv("MACHTIANI_SESSION_TEMP_ROOT")
 	origSessionTempRoot := strings.TrimSpace(origSessionTempRootRaw)
+	origTmpRootRaw := os.Getenv("MACHTIANI_TMP_ROOT")
 	sessionTempRoot := origSessionTempRoot
 	if sessionTempRoot == "" {
 		var err error
@@ -688,6 +697,7 @@ func Run(ctx context.Context, opts Options) Result {
 		tmpRoot = abs
 	}
 	workspaceRoot = filepath.Join(tmpRoot, "workspace-"+sessionID)
+	useSnapshotWorkspace := !isLocalSessionEnvironment(&globalConfig)
 	// NOTE: workspace snapshot initialization happens after we resolve `repoRoot`
 	// via `newTrajectoryWriter` (see below).
 	patchStrategy := ""
@@ -700,8 +710,12 @@ func Run(ctx context.Context, opts Options) Result {
 	if err := os.Setenv("MACHTIANI_PATCH_STRATEGY", patchStrategy); err != nil {
 		fmt.Fprintln(os.Stderr, "Warning: unable to export patch strategy:", err)
 	}
-	if err := os.Setenv("MACHTIANI_TMP_ROOT", workspaceRoot); err != nil {
-		fmt.Fprintln(os.Stderr, "Warning: unable to export tmp root:", err)
+	if useSnapshotWorkspace {
+		if err := os.Setenv("MACHTIANI_TMP_ROOT", workspaceRoot); err != nil {
+			fmt.Fprintln(os.Stderr, "Warning: unable to export tmp root:", err)
+		}
+	} else if err := os.Unsetenv("MACHTIANI_TMP_ROOT"); err != nil {
+		fmt.Fprintln(os.Stderr, "Warning: unable to clear tmp root:", err)
 	}
 	if err := os.Setenv("MACHTIANI_SESSION_TEMP_ROOT", sessionTempRoot); err != nil {
 		fmt.Fprintln(os.Stderr, "Warning: unable to export session temp root:", err)
@@ -732,7 +746,11 @@ func Run(ctx context.Context, opts Options) Result {
 			}
 		}
 		tempdir.ClearSessionRoot()
-		_ = os.Unsetenv("MACHTIANI_TMP_ROOT")
+		if strings.TrimSpace(origTmpRootRaw) == "" {
+			_ = os.Unsetenv("MACHTIANI_TMP_ROOT")
+		} else {
+			_ = os.Setenv("MACHTIANI_TMP_ROOT", origTmpRootRaw)
+		}
 		_ = os.Unsetenv("MACHTIANI_PATCH_STRATEGY")
 		if strings.TrimSpace(origSessionTempRootRaw) == "" {
 			_ = os.Unsetenv("MACHTIANI_SESSION_TEMP_ROOT")
@@ -752,13 +770,15 @@ func Run(ctx context.Context, opts Options) Result {
 		fmt.Fprintln(os.Stderr, "Trajectory setup error:", trajErr)
 		return Result{ExitCode: 1, Err: trajErr}
 	}
-	// Prepare the workspace repo snapshot using the resolved repo root.
-	if _, _, err := workspace.EnsureRepoSnapshot(repoRoot, workspaceRoot); err != nil {
-		fmt.Fprintln(os.Stderr, "Warning: unable to prepare workspace repo snapshot:", err)
-	}
-	if err := tempdir.SetSessionRoot(workspaceRoot); err != nil {
-		fmt.Fprintln(os.Stderr, "Error preparing session temp root:", err)
-		return Result{ExitCode: 1, Err: err}
+	if useSnapshotWorkspace {
+		// Prepare the workspace repo snapshot using the resolved repo root.
+		if _, _, err := workspace.EnsureRepoSnapshot(repoRoot, workspaceRoot); err != nil {
+			fmt.Fprintln(os.Stderr, "Warning: unable to prepare workspace repo snapshot:", err)
+		}
+		if err := tempdir.SetSessionRoot(workspaceRoot); err != nil {
+			fmt.Fprintln(os.Stderr, "Error preparing session temp root:", err)
+			return Result{ExitCode: 1, Err: err}
+		}
 	}
 	if trajectoryWriter != nil {
 		fmt.Fprintln(os.Stderr, "[trajectory] unified stream:", trajectoryWriter.Config().Path)

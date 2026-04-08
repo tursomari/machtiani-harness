@@ -10,9 +10,33 @@ import (
 	"testing"
 
 	"github.com/tursomari/machtiani/agent/internal/conversation"
+	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/planner"
 	"github.com/tursomari/machtiani/agent/internal/transcript"
 )
+
+func TestIsLocalSessionEnvironment(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  *llm.Config
+		want bool
+	}{
+		{name: "nil config defaults local", cfg: nil, want: true},
+		{name: "nil environment defaults local", cfg: &llm.Config{}, want: true},
+		{name: "empty environment type defaults local", cfg: &llm.Config{Environment: &llm.EnvironmentConfig{}}, want: true},
+		{name: "local environment", cfg: &llm.Config{Environment: &llm.EnvironmentConfig{Type: "local"}}, want: true},
+		{name: "case insensitive local environment", cfg: &llm.Config{Environment: &llm.EnvironmentConfig{Type: " LoCaL "}}, want: true},
+		{name: "docker environment", cfg: &llm.Config{Environment: &llm.EnvironmentConfig{Type: "docker"}}, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isLocalSessionEnvironment(tt.cfg); got != tt.want {
+				t.Fatalf("isLocalSessionEnvironment() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
 
 func withReadmeFunctionStubs(t *testing.T, head func() (string, error), commit func(string) (string, error), checkout func(string) error) {
 	t.Helper()

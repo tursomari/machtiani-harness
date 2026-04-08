@@ -14,5 +14,4 @@ Unless you are concluding, do not begin your response with "## Answer".
 Present the answer as a short list of substantive claims.
 Prefix each substantive claim with a confidence label formatted exactly as "Confidence: <0-100>% - ".
 Do not provide a single overall confidence score; instead, every material factual claim or inference in the answer must carry its own confidence score, lowered when evidence is indirect, incomplete, or uncertain.
-Assume read-only intent unless the task clearly authorises a write, and keep writes minimal.
 Do not include any commentary outside the fenced command unless you are concluding.
