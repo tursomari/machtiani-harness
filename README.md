@@ -7,15 +7,22 @@ This repository now houses the full Machtiani toolchain inside a single Go modul
 
 Most users only need the `mct-agent` binary. The install script builds `mct-agent` by default and exposes an opt-in flag when you want the standalone `mct`, `file-discovery`, `shell-agent`, and `patcher` binaries. All of these tools now share one configuration source (`.machtiani/config.toml` or `MACHTIANI_CONFIG`).
 
+## Repo-local `mct-agent` workflow
+
+If you are using `mct-agent` inside this repository, start with `docs/mct-agent-runbook.md`.
+
+- That runbook is the durable repo-specific guide for how to operate `mct-agent` in this repository.
+- Keep repo-specific operational guidance there; keep this README as the top-level discovery hook.
+
 ## Meta-Orchestrator
 The agent now ships with a meta-orchestrator that supervises multi-step work. When you enable it, a top-level session decomposes the goal into a series of child sessions, runs each one with the appropriate mode presets, and finally emits a summary artifact that stitches the results together.
 
-- **Enable it per run** with `mct-agent run --mode coding "<goal>"`. The `coding` mode ships with `.machtiani/meta-orchestrator/custom-instructions/coding.txt`, which is tracked in the repository. Each non-empty bullet (or line)—up to five entries—in that file becomes a meta task.
+- **Enable it per run** with `mct-agent run --mode <mode> "<goal>"`. For repo-local usage in this repository, follow `docs/mct-agent-runbook.md`. Each configured mode resolves its instructions from `.machtiani/meta-orchestrator/custom-instructions/<mode>/` (or configured overrides), and each non-empty bullet / line or declared task becomes a meta task.
 - **What happens during a run:** the terminal prints `[meta]` updates as the orchestrator works through the plan. For every task it spawns a child session (e.g., "Review existing context", "Implement the Issue"), captures the transcript/final answers, and records progress to `.machtiani/sessions/<parent-session-id>/meta-plan.json`.
 - **Outputs:** the parent transcript gains a “Meta-Orchestrator Summary” turn, and every child session keeps its own transcript/final-answer under `.machtiani/sessions/<child-session-id>/`. The summary lists the tasks, their status, and where to find the detailed artifacts.
 - **Resume support:** progress is stored in `.machtiani/sessions/<parent-session-id>/meta-plan.json`, so resuming the parent session continues with the remaining tasks instead of replaying everything from scratch.
-- **Customize instructions** by editing the shipped file or pointing elsewhere with `--meta-instruction-dir <dir>`. The tracked `coding.txt` nudges a four-step loop (log the issue → implement → validate → summarize), but you can replace those bullets with anything that fits your workflow. You can also configure search paths in `[meta-orchestrator]` within `.machtiani/config.toml` (set `instruction_dir` or per-mode `instruction_file`). The agent looks in the override directory first, then the config entries, and finally falls back to `.machtiani/meta-orchestrator/custom-instructions/<mode>.txt` relative to the repo/config.
-- **Optional defaults:** when fewer than two tasks are defined for a mode, the orchestrator falls back to mode-specific defaults (e.g., review → implement → validate for `coding`). Set different bullet points if you want a custom workflow.
+- **Customize instructions** by editing the shipped mode files or pointing elsewhere with `--meta-instruction-dir <dir>`. You can also configure search paths in `[meta-orchestrator]` within `.machtiani/config.toml` (set `instruction_dir` or per-mode `instruction_file`). The agent looks in the override directory first, then the config entries, and finally falls back to repo-local custom instructions relative to the repo/config.
+- **Optional defaults:** when fewer than two tasks are defined for a mode, the orchestrator falls back to mode-specific defaults. Set different task files or bullet points if you want a custom workflow.
 
 ## Prerequisites
 - Go: install Go 1.23+ (to satisfy all internal packages; `mct` builds with 1.22+, `file-discovery` with 1.23).
