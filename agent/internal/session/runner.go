@@ -26,13 +26,11 @@ import (
 	patchersvc "github.com/tursomari/machtiani/agent/internal/patcher"
 	"github.com/tursomari/machtiani/agent/internal/planner"
 	"github.com/tursomari/machtiani/agent/internal/runner"
-	"github.com/tursomari/machtiani/agent/internal/session/fulldiff"
 	"github.com/tursomari/machtiani/agent/internal/tempdir"
 	"github.com/tursomari/machtiani/agent/internal/trajectory"
 	"github.com/tursomari/machtiani/agent/internal/transcript"
 	"github.com/tursomari/machtiani/agent/internal/ui"
 	"github.com/tursomari/machtiani/agent/internal/workspace"
-	"time"
 )
 
 const (
@@ -627,18 +625,12 @@ func Run(ctx context.Context, opts Options) Result {
 		metaInstructionPath = doc.Path
 	}
 
-	sessionStatus := "error"
-	var sessionErr error
 	turnsCompleted := 0
 	if resumeMode && loadedState != nil && loadedState.TurnsCompleted > 0 {
 		turnsCompleted = loadedState.TurnsCompleted
 	}
-	interrupted := false
-	keepSessionState := false
-	var pendingState *SessionState
 	lastAnswer := ""
 	retrieved := []string{}
-	userTurnCounter := turnsCompleted
 	var pendingPatchDraft *patchTranscriptDraft
 	plannerProgress := newPlannerProgressTracker(nil)
 	if loadedState != nil {
@@ -651,28 +643,27 @@ func Run(ctx context.Context, opts Options) Result {
 			}
 		}
 	}
-	interruptedResult := func(err error) Result {
-		interrupted = true
-		if err == nil {
-			err = context.Canceled
-		}
-		sessionErr = err
-		sessionStatus = "interrupted"
-		turnsCompleted = userTurnCounter
-		return Result{ExitCode: 130, Status: sessionStatus, Turns: turnsCompleted, SessionID: sessionID, Err: err}
+	runState := &runLifecycleState{
+		rootCtx:             rootCtx,
+		cfg:                 cfg,
+		sessionID:           sessionID,
+		goal:                goal,
+		originalPrompt:      originalPrompt,
+		taskDescription:     taskDescription,
+		plannerOverlay:      plannerOverlay,
+		metaInstructionPath: metaInstructionPath,
+		plannerProgress:     plannerProgress,
+		pendingPatchDraft:   pendingPatchDraft,
+		sessionStatus:       "error",
+		turnsCompleted:      turnsCompleted,
+		userTurnCounter:     turnsCompleted,
 	}
-	isContextCancelled := func(err error) bool {
-		if err == nil {
-			return false
-		}
-		if errors.Is(err, context.Canceled) {
-			return true
-		}
-		if rootCtxErr := rootCtx.Err(); rootCtxErr != nil && errors.Is(rootCtxErr, context.Canceled) {
-			return true
-		}
-		return false
-	}
+	sessionStatus := runState.sessionStatus
+	var sessionErr error
+	interrupted := false
+	keepSessionState := false
+	var pendingState *SessionState
+	userTurnCounter := runState.userTurnCounter
 	origSessionTempRootRaw := os.Getenv("MACHTIANI_SESSION_TEMP_ROOT")
 	origSessionTempRoot := strings.TrimSpace(origSessionTempRootRaw)
 	origTmpRootRaw := os.Getenv("MACHTIANI_TMP_ROOT")
@@ -869,7 +860,7 @@ func Run(ctx context.Context, opts Options) Result {
 	sessTelemetry := newSessionTelemetry(trajectoryWriter, sessionID, goal, cfg, repoRoot, opts.Build)
 	defer func() {
 		if sessTelemetry != nil {
-			sessTelemetry.Finish(sessionStatus, turnsCompleted, sessionErr)
+			sessTelemetry.Finish(runState.sessionStatus, runState.turnsCompleted, runState.sessionErr)
 		} else if trajectoryWriter != nil {
 			_ = trajectoryWriter.Close()
 		}
@@ -877,11 +868,6 @@ func Run(ctx context.Context, opts Options) Result {
 
 	var tr *transcript.Transcript
 	resumeTranscript := ""
-	var conv *conversation.Conversation
-	conversationRendered := ""
-	conversationJSON := ""
-	var saveConversation func() error
-	var writeTurn func(step int, question, savedPath string, retrieved []string, summary string, decision string) error
 	if resumeMode && loadedState != nil {
 		resumeTranscript = loadedState.Transcript
 		if strings.TrimSpace(resumeTranscript) == "" && strings.TrimSpace(loadedState.TranscriptPath) != "" {
@@ -892,136 +878,11 @@ func Run(ctx context.Context, opts Options) Result {
 			}
 		}
 	}
-	printResumeHint := func(header string, turns int) {
-		fmt.Fprintf(os.Stdout, "%s\nSession ID: %s\nTurns completed: %d\nGoal so far: %q\n\n", header, sessionID, turns, goal)
-		fmt.Fprintf(os.Stdout, "To continue, provide your next instruction, for example:\n  mct-agent run \"<next instruction>\" --session-id %s\n", sessionID)
-		if parentID := strings.TrimSpace(cfg.parentSessionID); parentID != "" {
-			fmt.Fprintf(os.Stdout, "\nParent session detected (%s). To resume that session, rerun your original command with the parent session ID, for example:\n  mct-agent run \"<original prompt>\" --session-id %s\n", parentID, parentID)
-		}
-		fmt.Fprintln(os.Stdout)
-	}
-	applyPlannerProgress := func(state *SessionState) {
-		if state == nil {
-			return
-		}
-		state.PlannerProgress = plannerProgress.toState()
-		if pendingPatchDraft != nil {
-			state.PendingPatchTurn = &PendingPatchTurnState{
-				Step:        pendingPatchDraft.Step,
-				Description: pendingPatchDraft.Description,
-				Answer:      pendingPatchDraft.Answer,
-			}
-		} else {
-			state.PendingPatchTurn = nil
-		}
-		if state.PlannerProgress != nil {
-			if err := UpdateMetaPlanProgress(sessionID, state.PlannerProgress); err != nil && cfg.verbose {
-				fmt.Fprintf(os.Stderr, "Warning: failed to update meta plan progress for %s: %v\n", sessionID, err)
-			}
-		}
-	}
 	var notePrompts *llm.MCTPromptsConfig
 	if opts.GlobalConfig.Prompts != nil {
 		notePrompts = opts.GlobalConfig.Prompts.MCT
 	}
-	writePendingPatchTranscript := func(status string, decision string, note string, undo bool) error {
-		if pendingPatchDraft == nil {
-			return nil
-		}
-		desc := strings.TrimSpace(pendingPatchDraft.Description)
-		if desc == "" {
-			desc = "Patch applied"
-		}
-		// Use a simple, final status label per request: "success" or "reject".
-		// Avoid emitting separate "apply" turns.
-		normalized := strings.ToLower(strings.TrimSpace(status))
-		if normalized != "success" && normalized != "reject" {
-			normalized = status
-		}
-		suffix := desc
-		if strings.TrimSpace(suffix) != "" {
-			suffix = " - " + strings.TrimSpace(suffix)
-		}
-		question := fmt.Sprintf("Patcher: %s%s", normalized, suffix)
-		summary := pendingPatchDraft.Answer
-		if strings.ToLower(status) == "rejected" || strings.ToLower(status) == "reject" {
-			summary = ""
-		}
-		if strings.ToLower(status) == "success" {
-			question = desc
-			if noteText := transcript.PatchSuccessNoteText(notePrompts); noteText != "" {
-				question = desc + "\n\n" + noteText
-			}
-			decision = ""
-		}
-		additional := []string{}
-		if trimmedNote := strings.TrimSpace(note); trimmedNote != "" {
-			additional = append(additional, "Planner review note: "+trimmedNote)
-		}
-		if undo {
-			additional = append(additional, "Planner applied reverse patch to undo the changes.")
-		}
-		if len(additional) > 0 {
-			summary = strings.TrimRight(summary, "\n")
-			if summary != "" {
-				summary += "\n\n"
-			}
-			summary += strings.Join(additional, "\n")
-		}
-		if err := writeTurn(pendingPatchDraft.Step, question, "", nil, summary, decision); err != nil {
-			return err
-		}
-		if strings.ToLower(status) == "success" {
-			baseline, err := patchersvc.EnsureBaseline(sessionID, repoRoot, time.Now())
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "[full-diff] Failed to ensure baseline: %v\n", err)
-			} else {
-				files := []string(nil)
-				if review := plannerProgress.pendingReviewInfo(); review != nil {
-					files = append(files, review.Files...)
-				}
-				if len(files) == 0 {
-					files = append(files, plannerProgress.successList()...)
-				}
-				recordFullDiff := func(step int, file, diff, note string) error {
-					if conv == nil {
-						return nil
-					}
-					conv.AddMessage("assistant", note, map[string]any{
-						"type": "full_diff",
-						"turn": step,
-						"file": strings.TrimSpace(file),
-						"diff": diff,
-					})
-					return saveConversation()
-				}
-				fulldiff.Inject(pendingPatchDraft.Step, repoRoot, files, tr, plannerProgress, fulldiff.Options{
-					Verbose:        cfg.verbose,
-					Baseline:       baseline,
-					FullDiffNote:   transcript.FullDiffNoteText(notePrompts),
-					RecordFullDiff: recordFullDiff,
-				})
-				// Synthetic turn: keep transcript step count in sync.
-				// full-diff injection now emits 0..N transcript turns (one per file).
-				if trajectoryWriter != nil {
-					trajectoryWriter.Emit(rootCtx, trajectory.Event{
-						Kind: "transcript_synthetic_full_diff",
-						Payload: map[string]any{
-							"op":    "full_diff",
-							"step":  pendingPatchDraft.Step + 1,
-							"files": files,
-						},
-					})
-				}
-				userTurnCounter += len(files)
-			}
-		}
-		pendingPatchDraft = nil
-		if pendingState != nil {
-			pendingState.PendingPatchTurn = nil
-		}
-		return nil
-	}
+	runState.notePrompts = notePrompts
 
 	tr, err := transcript.NewWithPath(cfg.transcriptFile, sessionID)
 	if err != nil {
@@ -1030,102 +891,34 @@ func Run(ctx context.Context, opts Options) Result {
 	}
 	defer tr.Close()
 	tr.SetTrajectory(trajectoryWriter)
+	runState.tr = tr
+	runState.repoRoot = repoRoot
+	runState.trajectoryWriter = trajectoryWriter
+	recorder := newConversationRecorder(tr, sessionID, conversationGoal, conversationPath, resumeMode, loadedState)
+	runState.recorder = recorder
+	syncRunState := func() {
+		runState.sessionStatus = sessionStatus
+		runState.sessionErr = sessionErr
+		runState.turnsCompleted = turnsCompleted
+		runState.userTurnCounter = userTurnCounter
+		runState.interrupted = interrupted
+		runState.keepSessionState = keepSessionState
+		runState.pendingState = pendingState
+		runState.pendingPatchDraft = pendingPatchDraft
+	}
+	syncFromRunState := func() {
+		sessionStatus = runState.sessionStatus
+		sessionErr = runState.sessionErr
+		turnsCompleted = runState.turnsCompleted
+		userTurnCounter = runState.userTurnCounter
+		interrupted = runState.interrupted
+		keepSessionState = runState.keepSessionState
+		pendingState = runState.pendingState
+		pendingPatchDraft = runState.pendingPatchDraft
+	}
 	defer func() {
-		if interrupted {
-			state := SessionState{
-				SessionID:       sessionID,
-				Goal:            goal,
-				OriginalPrompt:  originalPrompt,
-				TaskDescription: taskDescription,
-				PlannerOverlay:  plannerOverlay,
-				TurnsCompleted:  turnsCompleted,
-			}
-			if tr != nil {
-				state.TranscriptPath = tr.Path()
-				state.Transcript = tr.Content()
-			}
-			if conv != nil {
-				if conversationJSON == "" {
-					_ = saveConversation()
-				}
-				state.ConversationPath = conversationPath
-				state.ConversationJSON = conversationJSON
-			}
-			state.ParentSessionID = strings.TrimSpace(cfg.parentSessionID)
-			if strings.TrimSpace(state.MetaInstructionDir) == "" {
-				dir := strings.TrimSpace(cfg.metaInstructionDir)
-				if dir == "" && strings.TrimSpace(metaInstructionPath) != "" {
-					dir = filepath.Dir(metaInstructionPath)
-				}
-				state.MetaInstructionDir = dir
-			}
-			if len(state.MetaModes) == 0 && strings.TrimSpace(cfg.mode) != "" {
-				state.MetaModes = []string{strings.ToLower(strings.TrimSpace(cfg.mode))}
-			}
-			applyPlannerProgress(&state)
-			if err := SaveSessionState(state); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to save session state for %s: %v\n", sessionID, err)
-			} else {
-				printResumeHint("=== SESSION INTERRUPTED ===", turnsCompleted)
-			}
-			return
-		}
-		sid := strings.TrimSpace(sessionID)
-		if sid == "" {
-			return
-		}
-		if keepSessionState {
-			state := SessionState{
-				SessionID:       sid,
-				Goal:            goal,
-				OriginalPrompt:  originalPrompt,
-				TaskDescription: taskDescription,
-				PlannerOverlay:  plannerOverlay,
-				TurnsCompleted:  turnsCompleted,
-			}
-			if pendingState != nil {
-				state = *pendingState
-			} else if tr != nil {
-				state.TranscriptPath = tr.Path()
-				state.Transcript = tr.Content()
-			}
-			if conv != nil {
-				if conversationJSON == "" {
-					_ = saveConversation()
-				}
-				if state.ConversationPath == "" {
-					state.ConversationPath = conversationPath
-				}
-				if state.ConversationJSON == "" {
-					state.ConversationJSON = conversationJSON
-				}
-			}
-			if state.TranscriptPath == "" && tr != nil {
-				state.TranscriptPath = tr.Path()
-			}
-			if state.Transcript == "" && tr != nil {
-				state.Transcript = tr.Content()
-			}
-			if strings.TrimSpace(state.MetaInstructionDir) == "" {
-				dir := strings.TrimSpace(cfg.metaInstructionDir)
-				if dir == "" && strings.TrimSpace(metaInstructionPath) != "" {
-					dir = filepath.Dir(metaInstructionPath)
-				}
-				state.MetaInstructionDir = dir
-			}
-			if len(state.MetaModes) == 0 && strings.TrimSpace(cfg.mode) != "" {
-				state.MetaModes = []string{strings.ToLower(strings.TrimSpace(cfg.mode))}
-			}
-			state.ParentSessionID = strings.TrimSpace(cfg.parentSessionID)
-			applyPlannerProgress(&state)
-			if err := SaveSessionState(state); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to save session state for %s: %v\n", sid, err)
-			}
-			return
-		}
-		if err := RemoveSessionState(sid); err != nil && cfg.verbose {
-			fmt.Fprintf(os.Stderr, "Warning: failed to remove session state for %s: %v\n", sid, err)
-		}
+		syncRunState()
+		runState.persistSessionState()
 	}()
 
 	if strings.TrimSpace(resumeTranscript) != "" {
@@ -1135,166 +928,47 @@ func Run(ctx context.Context, opts Options) Result {
 		}
 	}
 
-	loadConversation := func() error {
-		if resumeMode {
-			if data, err := os.ReadFile(conversationPath); err == nil {
-				conv, err = conversation.Unmarshal(data)
-				if err != nil {
-					return err
-				}
-				conversationJSON = string(data)
-			} else if loadedState != nil && strings.TrimSpace(loadedState.ConversationJSON) != "" {
-				conv, err = conversation.Unmarshal([]byte(loadedState.ConversationJSON))
-				if err != nil {
-					return err
-				}
-				conversationJSON = loadedState.ConversationJSON
-			} else {
-				return fmt.Errorf("conversation json missing for resume")
-			}
-		}
-		if conv == nil {
-			conv = conversation.New(sessionID, conversationGoal)
-		}
-		if strings.TrimSpace(conv.OriginalGoal) == "" {
-			conv.OriginalGoal = conversationGoal
-		}
-		rendered, err := conv.ToTranscript()
-		if err != nil {
-			return err
-		}
-		conversationRendered = rendered
-		return nil
-	}
-
-	saveConversation = func() error {
-		if conv == nil {
-			return nil
-		}
-		data, err := conv.Marshal()
-		if err != nil {
-			return err
-		}
-		conversationJSON = string(data)
-		if strings.TrimSpace(conversationPath) == "" {
-			return nil
-		}
-		if err := os.MkdirAll(filepath.Dir(conversationPath), 0o755); err != nil {
-			return err
-		}
-		return os.WriteFile(conversationPath, data, 0o644)
-	}
-
-	renderConversationDelta := func() (string, string, error) {
-		if conv == nil {
-			return "", "", nil
-		}
-		rendered, err := conv.ToTranscript()
-		if err != nil {
-			return "", "", err
-		}
-		if conversationRendered != "" && !strings.HasPrefix(rendered, conversationRendered) {
-			return rendered, "", fmt.Errorf("conversation transcript desync")
-		}
-		delta := rendered[len(conversationRendered):]
-		return rendered, delta, nil
-	}
-
-	appendConversationTurn := func(step int, question, savedPath string, retrieved []string, summary string, decision string) error {
-		if conv == nil || tr == nil {
-			if tr == nil {
-				return nil
-			}
-			return tr.WriteTurn(step, question, savedPath, retrieved, summary, decision)
-		}
-		conv.AddMessage("assistant", question, map[string]any{
-			"type":     "ask",
-			"turn":     step,
-			"decision": decision,
-		})
-		conv.AddMessage("assistant", summary, map[string]any{
-			"type":            "answer",
-			"turn":            step,
-			"retrieved_files": retrieved,
-			"chat_path":       savedPath,
-		})
-		rendered, delta, err := renderConversationDelta()
-		if err != nil {
-			return err
-		}
-		if delta != "" {
-			if err := tr.AppendBlock(delta); err != nil {
-				return err
-			}
-		}
-		conversationRendered = rendered
-		return saveConversation()
-	}
-
-	appendConversationRaw := func(role, content, metaType string) error {
-		if conv == nil || tr == nil {
-			if tr == nil {
-				return nil
-			}
-			switch strings.ToLower(strings.TrimSpace(metaType)) {
-			case "goal_update", "user_feedback":
-				return tr.AppendRaw(fmt.Sprintf("\n=== GOAL UPDATE\n\n%s\n", content))
-			default:
-				return tr.AppendRaw(content)
-			}
-		}
-		conv.AddMessage(role, content, map[string]any{"type": metaType})
-		rendered, delta, err := renderConversationDelta()
-		if err != nil {
-			return err
-		}
-		if delta != "" {
-			if err := tr.AppendBlock(delta); err != nil {
-				return err
-			}
-		}
-		conversationRendered = rendered
-		return saveConversation()
-	}
-
-	appendConversationFinal := func(answer string, step int, capped bool) error {
-		if conv == nil || tr == nil {
-			if tr == nil {
-				return nil
-			}
-			return tr.WriteFinal(answer, step, capped)
-		}
-		conv.AddMessage("assistant", answer, map[string]any{
-			"type":   "final",
-			"turns":  step,
-			"capped": capped,
-		})
-		rendered, delta, err := renderConversationDelta()
-		if err != nil {
-			return err
-		}
-		if delta != "" {
-			if err := tr.AppendBlock(delta); err != nil {
-				return err
-			}
-		}
-		conversationRendered = rendered
-		return saveConversation()
-	}
-
-	if err := loadConversation(); err != nil {
+	if err := recorder.Load(); err != nil {
 		fmt.Fprintln(os.Stderr, "Error loading conversation:", err)
 		return Result{ExitCode: 1, Err: err}
 	}
-	if err := restoreTranscriptFromConversation(tr, conversationRendered, resumeMode); err != nil {
+	if err := restoreTranscriptFromConversation(tr, recorder.Rendered(), resumeMode); err != nil {
 		fmt.Fprintln(os.Stderr, "Error restoring transcript from conversation:", err)
 		return Result{ExitCode: 1, Err: err}
 	}
-	if err := saveConversation(); err != nil {
+	if err := recorder.Save(); err != nil {
 		fmt.Fprintln(os.Stderr, "Error saving conversation:", err)
 		return Result{ExitCode: 1, Err: err}
 	}
-	writeTurn = appendConversationTurn
+	writeTurn := recorder.WriteTurn
+	conversationJSON := recorder.JSON()
+	saveConversation := func() error {
+		err := recorder.Save()
+		conversationJSON = recorder.JSON()
+		return err
+	}
+	appendConversationRaw := recorder.AppendRaw
+	appendConversationFinal := recorder.WriteFinal
+	conv := recorder.Conversation()
+	interruptedResult := func(err error) Result {
+		syncRunState()
+		result := runState.interruptedResult(err)
+		syncFromRunState()
+		return result
+	}
+	isContextCancelled := runState.isContextCancelled
+	applyPlannerProgress := func(state *SessionState) {
+		syncRunState()
+		runState.applyPlannerProgress(state)
+		syncFromRunState()
+	}
+	printResumeHint := runState.printResumeHint
+	writePendingPatchTranscript := func(status string, decision string, note string, undo bool) error {
+		syncRunState()
+		err := runState.writePendingPatchTranscript(status, decision, note, undo)
+		syncFromRunState()
+		return err
+	}
 
 	if cfg.verbose {
 		fmt.Fprintln(os.Stderr, "mct-agent starting; transcript:", tr.Path())
@@ -1435,7 +1109,7 @@ func Run(ctx context.Context, opts Options) Result {
 		return Result{ExitCode: 1, Err: headerErr}
 	}
 
-	if err := writeInitialBackgroundIfNeeded(tr, repoRoot, cfg, isChildSession, startingTranscript, appendConversationTurn); err != nil {
+	if err := writeInitialBackgroundIfNeeded(tr, repoRoot, cfg, isChildSession, startingTranscript, writeTurn); err != nil {
 		fmt.Fprintln(os.Stderr, "Transcript write error:", err)
 		sessionErr = err
 		return Result{ExitCode: 1, Err: err}
@@ -1460,42 +1134,42 @@ func Run(ctx context.Context, opts Options) Result {
 		}
 		outcome, handled := metaOrchestrate(metaCtx)
 		if handled {
-			turnsCompleted = len(outcome.Plan.Tasks)
+			runState.turnsCompleted = len(outcome.Plan.Tasks)
 			if outcome.Err != nil {
-				sessionErr = outcome.Err
-				sessionStatus = "error"
-				keepSessionState = true
+				runState.sessionErr = outcome.Err
+				runState.sessionStatus = "error"
+				runState.keepSessionState = true
 				instructionDir := strings.TrimSpace(cfg.metaInstructionDir)
 				if instructionDir == "" {
 					if strings.TrimSpace(metaInstructionPath) != "" {
 						instructionDir = filepath.Dir(metaInstructionPath)
 					}
 				}
-				pendingState = &SessionState{
+				runState.pendingState = &SessionState{
 					SessionID:          sessionID,
 					Goal:               goal,
 					OriginalPrompt:     originalPrompt,
 					TaskDescription:    taskDescription,
 					PlannerOverlay:     plannerOverlay,
-					TurnsCompleted:     turnsCompleted,
+					TurnsCompleted:     runState.turnsCompleted,
 					TranscriptPath:     tr.Path(),
 					Transcript:         tr.Content(),
-					ConversationPath:   conversationPath,
-					ConversationJSON:   conversationJSON,
+					ConversationPath:   recorder.Path(),
+					ConversationJSON:   recorder.JSON(),
 					ParentSessionID:    strings.TrimSpace(cfg.parentSessionID),
 					MetaModes:          metaModesFromPlan(outcome.Plan),
 					MetaInstructionDir: instructionDir,
 				}
-				applyPlannerProgress(pendingState)
+				runState.applyPlannerProgress(runState.pendingState)
 				display.EndSession()
-				return Result{ExitCode: outcome.ExitCode, Status: sessionStatus, Turns: turnsCompleted, SessionID: sessionID, Err: outcome.Err}
+				return Result{ExitCode: outcome.ExitCode, Status: runState.sessionStatus, Turns: runState.turnsCompleted, SessionID: sessionID, Err: outcome.Err}
 			}
-			sessionStatus = "success"
-			sessionErr = nil
+			runState.sessionStatus = "success"
+			runState.sessionErr = nil
 			if strings.TrimSpace(outcome.FinalAnswer) != "" {
 				if err := writeTurn(1, "Meta-Orchestrator Summary", "", nil, outcome.FinalAnswer, "meta-summary"); err != nil {
 					fmt.Fprintln(os.Stderr, "Transcript write error:", err)
-					sessionErr = err
+					runState.sessionErr = err
 					display.EndSession()
 					return Result{ExitCode: 1, Err: err}
 				}
@@ -1503,19 +1177,19 @@ func Run(ctx context.Context, opts Options) Result {
 			finalAnswer := appendFinalAnswerExtras(outcome.FinalAnswer, sessionID, cfg.verbose)
 			if err := writeFinalAnswer(sessionID, finalAnswer, cfg.finalFile, cfg.verbose, cfg.dryRun); err != nil {
 				fmt.Fprintln(os.Stderr, "Final file write error:", err)
-				sessionErr = err
+				runState.sessionErr = err
 				display.EndSession()
 				return Result{ExitCode: 1, Err: err}
 			}
 			presentFinalAnswer(display, finalAnswer)
 			display.EndSession()
-			return Result{ExitCode: 0, Status: sessionStatus, Turns: turnsCompleted, SessionID: sessionID}
+			return Result{ExitCode: 0, Status: runState.sessionStatus, Turns: runState.turnsCompleted, SessionID: sessionID}
 		}
 	}
 
 	display.StartSession(goal)
 	if resumeMode {
-		fmt.Fprintf(os.Stdout, "Resuming session %s (completed %d of %d turns)\n", sessionID, turnsCompleted, cfg.maxSteps)
+		fmt.Fprintf(os.Stdout, "Resuming session %s (completed %d of %d turns)\n", sessionID, runState.turnsCompleted, cfg.maxSteps)
 	}
 	sessionClosed := false
 	defer func() {
@@ -1529,10 +1203,10 @@ func Run(ctx context.Context, opts Options) Result {
 	shellAgentUsedThisTurn := false
 	for {
 		if err := rootCtx.Err(); err != nil {
-			return interruptedResult(err)
+			return runState.interruptedResult(err)
 		}
 		shellAgentUsedThisTurn = false
-		step := userTurnCounter + 1
+		step := runState.userTurnCounter + 1
 		var turn *turnTelemetry
 		if sessTelemetry != nil {
 			turn = sessTelemetry.StartTurn(step, cfg.maxSteps)
@@ -1559,16 +1233,16 @@ func Run(ctx context.Context, opts Options) Result {
 		// If there is a pending patch diff awaiting review, append it to
 		// the planning context so the planner can decide accept/reject
 		// without adding an extra transcript turn.
-		if pendingPatchDraft != nil {
+		if runState.pendingPatchDraft != nil {
 			var b strings.Builder
 			b.WriteString(trFull)
 			b.WriteString("\n## Pending Patch Review\n\n")
 			// Mirror transcript structure tersely so the planner has
 			// consistent context shape.
-			line := "Patcher: apply - " + strings.TrimSpace(pendingPatchDraft.Description)
+			line := "Patcher: apply - " + strings.TrimSpace(runState.pendingPatchDraft.Description)
 			b.WriteString(line)
 			b.WriteString("\n\n=== Answer\n\n")
-			b.WriteString(strings.TrimSpace(pendingPatchDraft.Answer))
+			b.WriteString(strings.TrimSpace(runState.pendingPatchDraft.Answer))
 			b.WriteString("\n\n")
 			b.WriteString("Planner decision: patch\n")
 			trFull = b.String()
@@ -1579,9 +1253,9 @@ func Run(ctx context.Context, opts Options) Result {
 			resumePrompt = feedback
 			if err := appendConversationRaw("user", feedback, "goal_update"); err != nil {
 				fmt.Fprintln(os.Stderr, "Transcript write error:", err)
-				sessionErr = err
+				runState.sessionErr = err
 				finishTurn(sessTelemetry, turn, "user-feedback", "error", turnInfo, err)
-				turnsCompleted = userTurnCounter
+				runState.turnsCompleted = runState.userTurnCounter
 				return Result{ExitCode: 1, Err: err}
 			}
 			trFull = appendResumePromptContext(trFull, feedback)
