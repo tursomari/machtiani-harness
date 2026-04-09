@@ -47,6 +47,25 @@ Useful artifacts under `.machtiani/sessions/<session-id>/`:
 - For parent sessions, that summary is the best indication the orchestrated run actually wrapped up.
 - For child sessions, this file is also the most reliable summary artifact.
 
+## Sync after new commits
+
+- After landing new commits in this repo, run `mct-agent sync` so the internal README state is updated to the current project `HEAD`.
+- If more than one commit has landed since the last sync, that's fine; `sync` compares the current `HEAD` against the last processed commit and catches up in one run.
+- In this repo, use the same OpenRouter credential source as the normal `run` workflow, passed as an `openrouter:` override on `--api-key`.
+
+Repo-local sync command:
+
+```bash
+MACHTIANI_CONFIG=.machtiani/config.toml \
+mct-agent sync \
+  --api-key "openrouter:$TEST_API_KEY" \
+  --model glm-5-high \
+  --max-input-tokens 180000
+```
+
+- A successful sync prints `Readme synced for commit <hash>`.
+- If the new commits do not materially change the internal README, `sync` may report that there were no significant changes and simply move the sync marker forward to the current `HEAD`.
+
 ## Follow-up workflow
 
 To continue a child session directly:
