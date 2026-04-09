@@ -91,3 +91,62 @@ mct-agent run --model glm-5-high \
 - Tight prompt contracts help: explicitly say what to return, what not to do, and whether file edits are allowed.
 - Trust on-disk artifacts more than intermediate console chatter; `chat/agent-final-answer.md` is the strongest completion signal.
 - Follow-ups on an existing child session rewrite that child's `chat/agent-final-answer.md`, so copy it elsewhere first if you want to preserve an earlier summary.
+
+## Example prompts
+
+These are adapted from actual local sessions under `.machtiani/sessions/`.
+
+### Starter: draft a commit subject from staged changes
+
+Adapted from `agent-20260409T170609-4898`.
+
+```bash
+OPENROUTER_API_KEY="$TEST_API_KEY" \
+MACHTIANI_CONFIG=.machtiani/config.toml \
+mct-agent run --model glm-5-high \
+  --max-steps 100 --timeout-per-turn 0 --verbose \
+  -t 'Inspect the recent git commit subject style in this repository and inspect the currently staged changes. Then draft exactly one conventional commit subject line that matches the existing style. Return only the commit subject line, with no quotes, no bullets, and no explanation. Do not modify files.'
+```
+
+### Medium: explain behavior and report repo state
+
+Adapted from `agent-20260302T212840-6500`.
+
+```bash
+OPENROUTER_API_KEY="$TEST_API_KEY" \
+MACHTIANI_CONFIG=.machtiani/config.toml \
+mct-agent run --mode code --model glm-5-high \
+  --max-steps 100 --timeout-per-turn 0 --verbose \
+  -t 'Explain the planner menu flow and what happens after an ask is selected. Also run `git diff --stat` and report the output. Do not modify files.'
+```
+
+### Complex: investigate a behavior and draft an engineering issue
+
+Adapted from `agent-20260212T184335-8455`.
+
+```bash
+PROMPT=$(cat <<'EOF'
+Create an issue for the engineering team.
+
+Problem:
+`file-discovery` is too lax when determining relevant files. In `.machtiani/sessions/agent-20260212T125514-5835/chat/agent-transcript.adoc`, planner messages focused exclusively on `README.md`, but `file-discovery` still returned clearly unrelated files.
+
+Investigate at minimum:
+- the `file-discovery` system prompt and instructions
+- any tpl overrides that could confound `file-discovery` LLM calls
+- missing guards or filters that should prevent unrelated files from being returned when the planner message is narrowly scoped
+
+Deliverable:
+- Draft an issue for the engineering team
+- Recommend a live test similar to `agent/tests/run-live.sh` that demonstrates a `README.md`-only prompt returns only that file, while broader prompts can still return multiple related files appropriately
+- Do not create hardcoded semantic checks; rely on LLM inference
+- Do not modify files unless I explicitly ask in a follow-up
+EOF
+)
+
+OPENROUTER_API_KEY="$TEST_API_KEY" \
+MACHTIANI_CONFIG=.machtiani/config.toml \
+mct-agent run --mode code --model glm-5-high \
+  --max-steps 100 --timeout-per-turn 0 --verbose \
+  -t "$PROMPT"
+```
