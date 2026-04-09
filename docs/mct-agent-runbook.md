@@ -13,8 +13,13 @@ Preferred live invocation:
 ```bash
 OPENROUTER_API_KEY="$TEST_API_KEY" \
 MACHTIANI_CONFIG=.machtiani/config.toml \
-mct-agent run --mode code --model glm-5-high --verbose -t "<goal>"
+mct-agent run --mode code --model glm-5-high \
+  --max-steps 100 --timeout-per-turn 0 --verbose \
+  -t "<goal>"
 ```
+
+- Use `--max-steps 100` as the practical default ceiling in this repo.
+- Use `--timeout-per-turn 0` to disable per-turn timeouts; runs may take from a minute to an hour or more depending on the prompt.
 
 ## Why `--mode code`
 
@@ -49,7 +54,9 @@ To continue a child session directly:
 ```bash
 OPENROUTER_API_KEY="$TEST_API_KEY" \
 MACHTIANI_CONFIG=.machtiani/config.toml \
-mct-agent run --model glm-5-high --session-id <child-session-id> -t "<follow-up>"
+mct-agent run --model glm-5-high \
+  --max-steps 100 --timeout-per-turn 0 \
+  --session-id <child-session-id> -t "<follow-up>"
 ```
 
 To resume or continue the parent session:
@@ -57,7 +64,9 @@ To resume or continue the parent session:
 ```bash
 OPENROUTER_API_KEY="$TEST_API_KEY" \
 MACHTIANI_CONFIG=.machtiani/config.toml \
-mct-agent run --model glm-5-high --session-id <parent-session-id> -t "<next instruction or original goal>"
+mct-agent run --model glm-5-high \
+  --max-steps 100 --timeout-per-turn 0 \
+  --session-id <parent-session-id> -t "<next instruction or original goal>"
 ```
 
 - A follow-up run with `--session-id <child-session-id>` rewrites that child session's `chat/agent-final-answer.md`.
@@ -75,3 +84,10 @@ mct-agent run --model glm-5-high --session-id <parent-session-id> -t "<next inst
 - The local workflow relies on `--mode` to create the parent orchestration session.
 - A good workflow checks or updates `chat/agent-final-answer.md` in the relevant session directory to confirm the run finished.
 - Follow-ups are typically done by passing a new prompt together with `--session-id`.
+
+## Operator tips
+
+- `mct-agent` often delegates repo inspection to `shell-agent`, so expect synthesized answers rather than raw shell output.
+- Tight prompt contracts help: explicitly say what to return, what not to do, and whether file edits are allowed.
+- Trust on-disk artifacts more than intermediate console chatter; `chat/agent-final-answer.md` is the strongest completion signal.
+- Follow-ups on an existing child session rewrite that child's `chat/agent-final-answer.md`, so copy it elsewhere first if you want to preserve an earlier summary.
