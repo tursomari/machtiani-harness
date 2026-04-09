@@ -941,14 +941,7 @@ func Run(ctx context.Context, opts Options) Result {
 		return Result{ExitCode: 1, Err: err}
 	}
 	writeTurn := recorder.WriteTurn
-	conversationJSON := recorder.JSON()
-	saveConversation := func() error {
-		err := recorder.Save()
-		conversationJSON = recorder.JSON()
-		return err
-	}
 	appendConversationRaw := recorder.AppendRaw
-	appendConversationFinal := recorder.WriteFinal
 	conv := recorder.Conversation()
 	interruptedResult := func(err error) Result {
 		syncRunState()
@@ -957,12 +950,6 @@ func Run(ctx context.Context, opts Options) Result {
 		return result
 	}
 	isContextCancelled := runState.isContextCancelled
-	applyPlannerProgress := func(state *SessionState) {
-		syncRunState()
-		runState.applyPlannerProgress(state)
-		syncFromRunState()
-	}
-	printResumeHint := runState.printResumeHint
 	writePendingPatchTranscript := func(status string, decision string, note string, undo bool) error {
 		syncRunState()
 		err := runState.writePendingPatchTranscript(status, decision, note, undo)
@@ -1386,51 +1373,18 @@ func Run(ctx context.Context, opts Options) Result {
 					turnsCompleted = userTurnCounter
 					return Result{ExitCode: 1, Err: ferr}
 				}
-				if err := appendConversationFinal(answer, step, true); err != nil {
-					fmt.Fprintln(os.Stderr, "Transcript write error:", err)
-					sessionErr = err
-					finishTurn(sessTelemetry, turn, "finalize", "error", turnInfo, err)
-					turnsCompleted = userTurnCounter
-					return Result{ExitCode: 1, Err: err}
-				}
-				finalAnswer := appendFinalAnswerExtras(answer, sessionID, cfg.verbose)
-				if err := writeFinalAnswer(sessionID, finalAnswer, cfg.finalFile, cfg.verbose, cfg.dryRun); err != nil {
+				if err := runState.completeSession(display, answer, step, userTurnCounter, true); err != nil {
+					syncFromRunState()
 					fmt.Fprintln(os.Stderr, "Final file write error:", err)
-					sessionErr = err
 					finishTurn(sessTelemetry, turn, "finalize", "error", turnInfo, err)
 					turnsCompleted = userTurnCounter
 					return Result{ExitCode: 1, Err: err}
 				}
-				presentFinalAnswer(display, finalAnswer)
-				display.EndSession()
+				syncFromRunState()
 				sessionClosed = true
 				turnDecision = "finalize"
 				turnInfo["finalized"] = true
 				finishTurn(sessTelemetry, turn, turnDecision, "success", turnInfo, nil)
-				turnsCompleted = userTurnCounter
-				sessionStatus = "success"
-				keepSessionState = true
-				pendingState = &SessionState{
-					SessionID:       sessionID,
-					Goal:            goal,
-					OriginalPrompt:  originalPrompt,
-					TaskDescription: taskDescription,
-					PlannerOverlay:  plannerOverlay,
-					TurnsCompleted:  turnsCompleted,
-				}
-				if tr != nil {
-					pendingState.TranscriptPath = tr.Path()
-					pendingState.Transcript = tr.Content()
-				}
-				if conv != nil {
-					if conversationJSON == "" {
-						_ = saveConversation()
-					}
-					pendingState.ConversationPath = conversationPath
-					pendingState.ConversationJSON = conversationJSON
-				}
-				applyPlannerProgress(pendingState)
-				printResumeHint("=== SESSION COMPLETE ===", turnsCompleted)
 				return Result{ExitCode: 0, Status: sessionStatus, Turns: userTurnCounter, SessionID: sessionID}
 			}
 			fmt.Fprintln(os.Stderr, "Planner error:", perr)
@@ -1492,51 +1446,18 @@ func Run(ctx context.Context, opts Options) Result {
 				turnsCompleted = userTurnCounter
 				return Result{ExitCode: 1, Err: ferr}
 			}
-			if err := appendConversationFinal(answer, step, step == cfg.maxSteps && decision != planner.DecisionFinalize); err != nil {
-				fmt.Fprintln(os.Stderr, "Transcript write error:", err)
-				sessionErr = err
-				finishTurn(sessTelemetry, turn, "finalize", "error", turnInfo, err)
-				turnsCompleted = userTurnCounter
-				return Result{ExitCode: 1, Err: err}
-			}
-			finalAnswer := appendFinalAnswerExtras(answer, sessionID, cfg.verbose)
-			if err := writeFinalAnswer(sessionID, finalAnswer, cfg.finalFile, cfg.verbose, cfg.dryRun); err != nil {
+			if err := runState.completeSession(display, answer, step, userTurnCounter, false); err != nil {
+				syncFromRunState()
 				fmt.Fprintln(os.Stderr, "Final file write error:", err)
-				sessionErr = err
 				finishTurn(sessTelemetry, turn, "finalize", "error", turnInfo, err)
 				turnsCompleted = userTurnCounter
 				return Result{ExitCode: 1, Err: err}
 			}
-			presentFinalAnswer(display, finalAnswer)
-			display.EndSession()
+			syncFromRunState()
 			sessionClosed = true
 			turnDecision = "finalize"
 			turnInfo["finalized"] = true
 			finishTurn(sessTelemetry, turn, turnDecision, "success", turnInfo, nil)
-			turnsCompleted = userTurnCounter
-			sessionStatus = "success"
-			keepSessionState = true
-			pendingState = &SessionState{
-				SessionID:       sessionID,
-				Goal:            goal,
-				OriginalPrompt:  originalPrompt,
-				TaskDescription: taskDescription,
-				PlannerOverlay:  plannerOverlay,
-				TurnsCompleted:  turnsCompleted,
-			}
-			if tr != nil {
-				pendingState.TranscriptPath = tr.Path()
-				pendingState.Transcript = tr.Content()
-			}
-			if conv != nil {
-				if conversationJSON == "" {
-					_ = saveConversation()
-				}
-				pendingState.ConversationPath = conversationPath
-				pendingState.ConversationJSON = conversationJSON
-			}
-			applyPlannerProgress(pendingState)
-			printResumeHint("=== SESSION COMPLETE ===", turnsCompleted)
 			return Result{ExitCode: 0, Status: sessionStatus, Turns: userTurnCounter, SessionID: sessionID}
 		}
 
@@ -2641,168 +2562,9 @@ Finalize:
 		userTurnCounter = turnsCompleted
 		return interruptedResult(err)
 	}
-	var finalizePatchPlan *PatchPlan
-	if cfg.patch {
-		if finalizePatchPlan == nil {
-			if loadedPlan, err := LoadPatchPlan(sessionID); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to load patch plan: %v\n", err)
-			} else {
-				finalizePatchPlan = loadedPlan
-			}
-		}
-		if finalizePatchPlan != nil {
-			if !finalizePatchPlan.AllComplete() {
-				fmt.Fprintf(os.Stderr, "Warning: finalizing with incomplete patch plan\n")
-			}
-		}
-	}
-	// One last planning opportunity before finalizing: if planner returns patch, run exactly one patch turn.
-	{
-		step := countTurns(tr.Content()) + 1
-		parentSpanID := ""
-		if sessTelemetry != nil {
-			parentSpanID = sessTelemetry.span.ID
-		}
-		ctx, cancel := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
-		trFull := tr.Content()
-		ctx = attachTrajectory(ctx, trajectoryWriter, parentSpanID)
-		pl.UpdateProgress(plannerProgress.snapshot())
-		lastDec, lastBody, err := pl.Plan(ctx, conv, goal, trFull, step, cfg.maxSteps, finalizePatchPlan)
-		cancel()
-		if err == nil && lastDec == planner.DecisionPatch {
-			if pRunner == nil {
-				if cfg.verbose {
-					fmt.Fprintln(os.Stderr, "[patcher] skipping pre-finalize patch: patch runner disabled")
-				}
-			} else {
-				stream := display.BeginPrompt("Patcher: pre-finalize patch", patcherPromptOpts)
-				if cfg.verbose {
-					fmt.Fprintln(os.Stderr, "[patcher] pre-finalize planner payload (raw):", trimTo(strings.TrimSpace(lastBody), 1200))
-				}
-				jsonBytes, jerr := parser.ExtractPatchJSONPayload(lastBody)
-				handled := false
-				if jerr != nil {
-					stream.Abort("invalid patch payload")
-					stream = nil
-					_ = writeTurn(step, "Patcher: pre-finalize (invalid JSON)", "", nil, jerr.Error(), "patch-error")
-					handled = true
-				}
-				if !handled {
-					if cfg.verbose {
-						fmt.Fprintln(os.Stderr, "[patcher] pre-finalize extracted JSON:", trimTo(string(jsonBytes), 1200))
-					}
-					var instr mctpatcher.Instructions
-					dec := json.NewDecoder(bytes.NewReader(jsonBytes))
-					dec.DisallowUnknownFields()
-					if derr := dec.Decode(&instr); derr != nil {
-						stream.Abort("invalid patch payload")
-						stream = nil
-						_ = writeTurn(step, "Patcher: pre-finalize (decode error)", "", nil, derr.Error(), "patch-error")
-						handled = true
-					} else if err := pRunner.Resolve(); err != nil {
-						stream.Abort("patcher resolve failed")
-						stream = nil
-						_ = writeTurn(step, "Patcher: pre-finalize (resolve failed)", "", nil, err.Error(), "patch-error")
-						handled = true
-					} else {
-						ctxP, cancelP := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
-						ctxP = attachTrajectory(ctxP, trajectoryWriter, parentSpanID)
-						result, applyErr := pRunner.Apply(ctxP, instr, cfg.verbose)
-						var ctxPErr error
-						if ctxP != nil {
-							ctxPErr = ctxP.Err()
-						}
-						if cancelP != nil {
-							cancelP()
-						}
-						if applyErr != nil {
-							if isContextCancelled(applyErr) || isContextCancelled(ctxPErr) {
-								if stream != nil {
-									stream.Abort("interrupted")
-									stream = nil
-								}
-								return interruptedResult(applyErr)
-							}
-							var cleanErr *mctpatcher.PatchNotCleanError
-							if errors.As(applyErr, &cleanErr) {
-								if stream != nil {
-									stream.Abort("patch validation failed")
-									stream = nil
-								}
-								rec := transcript.PatchValidationRecord{
-									Operation:  cleanErr.Diagnostics.Operation,
-									Status:     "failed",
-									PatchInput: trimTo(string(jsonBytes), 1000),
-									Stderr:     trimTo(cleanErr.Diagnostics.Stderr, 800),
-									Error:      strings.TrimSpace(cleanErr.Error()),
-									Messages:   convertPatchMessages(cleanErr.Diagnostics.Messages),
-									Conflicts:  formatContentConflicts(cleanErr.Diagnostics.ContentConflicts),
-								}
-								_ = tr.WritePatchValidation(step, rec)
-							} else {
-								if stream != nil {
-									stream.Abort("patcher execution error")
-									stream = nil
-								}
-								_ = writeTurn(step, "Patcher: pre-finalize (error)", "", nil, trimTo(applyErr.Error(), 800), "patch-error")
-							}
-							handled = true
-						} else if result == nil {
-							if stream != nil {
-								stream.Abort("patcher returned no result")
-								stream = nil
-							}
-							_ = writeTurn(step, "Patcher: pre-finalize (empty result)", "", nil, "patcher returned empty result", "patch-error")
-							handled = true
-						} else {
-							qline := "Patcher: pre-finalize"
-							if result.Description != "" {
-								qline = "Patcher: pre-finalize - " + strings.TrimSpace(result.Description)
-							}
-							workspaceStatus := "workspace_applied: no"
-							if result.AppliedInWorkspace {
-								workspaceStatus = "workspace_applied: yes"
-							} else if cfg.dryRun {
-								workspaceStatus = "workspace_applied: (dry-run)"
-							}
-							finalizeStatus := "finalize: pending"
-							switch {
-							case cfg.dryRun:
-								finalizeStatus = "finalize: (dry-run)"
-							case cfg.patchNoApply:
-								finalizeStatus = "finalize: skipped (--patch-no-apply)"
-							}
-							diffText, diffErr := patchDiffForTranscript(result.PatchPath, patchTranscriptDiffLimit)
-							if diffErr != nil {
-								filesSummary := "(none)"
-								if len(result.FilesModified) > 0 {
-									filesSummary = strings.Join(result.FilesModified, ", ")
-								}
-								diffText = fmt.Sprintf(
-									"Patch diff unavailable (%v)\nPatch path: %s\nSequence: %d\nFiles modified: %s\ninsertions: %d\ndeletions: %d\n%s\n%s",
-									diffErr,
-									strings.TrimSpace(result.PatchPath),
-									result.Sequence,
-									filesSummary,
-									result.Insertions,
-									result.Deletions,
-									workspaceStatus,
-									finalizeStatus,
-								)
-							}
-							_ = writeTurn(step, qline, "", nil, diffText, "patch")
-							if stream != nil {
-								stream.Complete(diffText)
-							}
-							handled = true
-						}
-					}
-				}
-				if !handled && stream != nil {
-					stream.Abort("no patch output")
-				}
-			}
-		}
+	if result := runState.maybeRunPreFinalizePatch(display, patcherPromptOpts, pl, conv, pRunner, parentSpanID); result != nil {
+		syncFromRunState()
+		return *result
 	}
 	turns := countTurns(tr.Content())
 	ctx, cancelF := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
@@ -2826,46 +2588,14 @@ Finalize:
 		turnsCompleted = turns
 		return Result{ExitCode: 1, Err: ferr}
 	}
-	if err := appendConversationFinal(answer, turns, turns >= cfg.maxSteps); err != nil {
-		fmt.Fprintln(os.Stderr, "Transcript write error:", err)
-		sessionErr = err
-		turnsCompleted = turns
-		return Result{ExitCode: 1, Err: err}
-	}
-	finalAnswer := appendFinalAnswerExtras(answer, sessionID, cfg.verbose)
-	if err := writeFinalAnswer(sessionID, finalAnswer, cfg.finalFile, cfg.verbose, cfg.dryRun); err != nil {
+	if err := runState.completeSession(display, answer, turns, turns, turns >= cfg.maxSteps); err != nil {
+		syncFromRunState()
 		fmt.Fprintln(os.Stderr, "Final file write error:", err)
-		sessionErr = err
 		turnsCompleted = turns
 		return Result{ExitCode: 1, Err: err}
 	}
-	presentFinalAnswer(display, finalAnswer)
-	display.EndSession()
+	syncFromRunState()
 	sessionClosed = true
-	sessionStatus = "success"
-	turnsCompleted = turns
-	keepSessionState = true
-	pendingState = &SessionState{
-		SessionID:       sessionID,
-		Goal:            goal,
-		OriginalPrompt:  originalPrompt,
-		TaskDescription: taskDescription,
-		PlannerOverlay:  plannerOverlay,
-		TurnsCompleted:  turnsCompleted,
-	}
-	if tr != nil {
-		pendingState.TranscriptPath = tr.Path()
-		pendingState.Transcript = tr.Content()
-	}
-	if conv != nil {
-		if conversationJSON == "" {
-			_ = saveConversation()
-		}
-		pendingState.ConversationPath = conversationPath
-		pendingState.ConversationJSON = conversationJSON
-	}
-	applyPlannerProgress(pendingState)
-	printResumeHint("=== SESSION COMPLETE ===", turnsCompleted)
 	return Result{ExitCode: 0, Status: sessionStatus, Turns: turns, SessionID: sessionID}
 }
 
