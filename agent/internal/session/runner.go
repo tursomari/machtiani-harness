@@ -1,7 +1,6 @@
 package session
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -17,12 +16,9 @@ import (
 
 	"github.com/tursomari/machtiani/agent/internal/conversation"
 	"github.com/tursomari/machtiani/agent/internal/llm"
-	mctsync "github.com/tursomari/machtiani/agent/internal/mct"
 	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
 	mctpatcher "github.com/tursomari/machtiani/agent/internal/mct/patcher"
-	promptsvc "github.com/tursomari/machtiani/agent/internal/mct/prompt"
 	"github.com/tursomari/machtiani/agent/internal/mct/readmesync"
-	"github.com/tursomari/machtiani/agent/internal/parser"
 	patchersvc "github.com/tursomari/machtiani/agent/internal/patcher"
 	"github.com/tursomari/machtiani/agent/internal/planner"
 	"github.com/tursomari/machtiani/agent/internal/runner"
@@ -504,6 +500,10 @@ func (p *plannerProgressTracker) snapshot() planner.Progress {
 }
 
 func Run(ctx context.Context, opts Options) Result {
+	return runSession(ctx, opts)
+}
+
+func runSession(ctx context.Context, opts Options) Result {
 	if opts.Context != nil {
 		ctx = opts.Context
 	}
@@ -629,8 +629,6 @@ func Run(ctx context.Context, opts Options) Result {
 	if resumeMode && loadedState != nil && loadedState.TurnsCompleted > 0 {
 		turnsCompleted = loadedState.TurnsCompleted
 	}
-	lastAnswer := ""
-	retrieved := []string{}
 	var pendingPatchDraft *patchTranscriptDraft
 	plannerProgress := newPlannerProgressTracker(nil)
 	if loadedState != nil {
@@ -1186,7 +1184,6 @@ func Run(ctx context.Context, opts Options) Result {
 	}()
 
 	parentSpanID := ""
-	useShellAgent := false
 	shellAgentUsedThisTurn := false
 	for {
 		if err := rootCtx.Err(); err != nil {
@@ -1461,1058 +1458,78 @@ func Run(ctx context.Context, opts Options) Result {
 			return Result{ExitCode: 0, Status: sessionStatus, Turns: userTurnCounter, SessionID: sessionID}
 		}
 
+		turnEnv := &runTurnEnv{
+			rootCtx:                     rootCtx,
+			cfg:                         cfg,
+			sessionID:                   sessionID,
+			goal:                        goal,
+			repoRoot:                    repoRoot,
+			step:                        step,
+			sessionErr:                  &sessionErr,
+			turnsCompleted:              &turnsCompleted,
+			userTurnCounter:             &userTurnCounter,
+			pendingPatchDraft:           &pendingPatchDraft,
+			plannerProgress:             plannerProgress,
+			display:                     display,
+			sessTelemetry:               sessTelemetry,
+			turn:                        turn,
+			turnDecision:                turnDecision,
+			turnInfo:                    turnInfo,
+			parentSpanID:                parentSpanID,
+			trajectoryWriter:            trajectoryWriter,
+			writeTurn:                   writeTurn,
+			interruptedResult:           interruptedResult,
+			isContextCancelled:          isContextCancelled,
+			writePendingPatchTranscript: writePendingPatchTranscript,
+			mctRunner:                   &mctRunner,
+			pRunner:                     pRunner,
+			pl:                          pl,
+			tr:                          tr,
+			orchPromptOpts:              &orchPromptOpts,
+			baseOrchMetadata:            baseOrchMetadata,
+			patcherPromptOpts:           patcherPromptOpts,
+			mctResponseDirectives:       mctResponseDirectives,
+		}
+
 		switch decision {
-		case planner.DecisionAccept:
-			review := pendingReview
-			if review == nil {
-				errUnexpected := errors.New("no pending patch review to accept")
-				fmt.Fprintln(os.Stderr, "Planner error:", errUnexpected)
-				sessionErr = errUnexpected
-				finishTurn(sessTelemetry, turn, turnDecision, "error", turnInfo, errUnexpected)
-				turnsCompleted = userTurnCounter
-				return Result{ExitCode: 1, Err: errUnexpected}
-			}
-			note := strings.TrimSpace(question)
-			if err := writePendingPatchTranscript("SUCCESS", "patch", note, false); err != nil {
-				fmt.Fprintln(os.Stderr, "Transcript write error:", err)
-				sessionErr = err
-				finishTurn(sessTelemetry, turn, turnDecision, "error", turnInfo, err)
-				turnsCompleted = userTurnCounter
-				return Result{ExitCode: 1, Err: err}
-			}
-			accepted := plannerProgress.commitPendingReview()
-			userTurnCounter++
-			turnsCompleted = userTurnCounter
-			turnInfo["planner_pending_review"] = false
-			turnInfo["patch_review_pending"] = false
-			turnInfo["planner_applied_patches"] = plannerProgress.appliedCount()
-			turnInfo["planner_success_file_count"] = len(plannerProgress.successList())
-			turnInfo["planner_review_action"] = "accept"
-			turnInfo["patch_finalize_pending"] = false
-			if accepted != nil {
-				turnInfo["patch_review_sequence"] = accepted.Sequence
-				if accepted.Description != "" {
-					turnInfo["patch_review_description"] = accepted.Description
-				}
-				if len(accepted.Files) > 0 {
-					turnInfo["patch_review_files"] = append([]string(nil), accepted.Files...)
-				}
-			}
-			if note != "" {
-				turnInfo["planner_review_note"] = note
-			}
-			if accepted != nil {
-				display.Notify(fmt.Sprintf("Patch %d accepted%s", accepted.Sequence, formatOptionalSuffix(accepted.Description)))
-			}
-			finishTurn(sessTelemetry, turn, turnDecision, "success", turnInfo, nil)
-			if userTurnCounter >= cfg.maxSteps {
+		case planner.DecisionAccept, planner.DecisionReject:
+			outcome := executeReviewDecision(turnEnv, decision, question, pendingReview)
+			shellAgentUsedThisTurn = outcome.shellAgentUsed
+			syncRunState()
+			switch outcome.action {
+			case turnLoopReturn:
+				return outcome.result
+			case turnLoopFinalize:
 				goto Finalize
-			}
-			goto TurnDone
-
-		case planner.DecisionReject:
-			review := pendingReview
-			if review == nil {
-				errUnexpected := errors.New("no pending patch review to reject")
-				fmt.Fprintln(os.Stderr, "Planner error:", errUnexpected)
-				sessionErr = errUnexpected
-				finishTurn(sessTelemetry, turn, turnDecision, "error", turnInfo, errUnexpected)
-				turnsCompleted = userTurnCounter
-				return Result{ExitCode: 1, Err: errUnexpected}
-			}
-			note := strings.TrimSpace(question)
-			undoRequired := !cfg.dryRun && strings.TrimSpace(review.ReversePatchPath) != ""
-			if undoRequired && pRunner == nil {
-				err := errors.New("patch runner unavailable for undo")
-				fmt.Fprintln(os.Stderr, "Patch undo error:", err)
-				sessionErr = err
-				finishTurn(sessTelemetry, turn, turnDecision, "error", turnInfo, err)
-				turnsCompleted = userTurnCounter
-				return Result{ExitCode: 1, Err: err}
-			}
-			if undoRequired {
-				if err := pRunner.Undo(review.ReversePatchPath); err != nil {
-					fmt.Fprintln(os.Stderr, "Patch undo error:", err)
-					sessionErr = err
-					finishTurn(sessTelemetry, turn, turnDecision, "error", turnInfo, err)
-					turnsCompleted = userTurnCounter
-					return Result{ExitCode: 1, Err: err}
-				}
-			}
-			if err := writePendingPatchTranscript("REJECTED", "patch", note, undoRequired); err != nil {
-				fmt.Fprintln(os.Stderr, "Transcript write error:", err)
-				sessionErr = err
-				finishTurn(sessTelemetry, turn, turnDecision, "error", turnInfo, err)
-				turnsCompleted = userTurnCounter
-				return Result{ExitCode: 1, Err: err}
-			}
-			discarded := plannerProgress.discardPendingReview()
-			userTurnCounter++
-			turnsCompleted = userTurnCounter
-			turnInfo["planner_pending_review"] = false
-			turnInfo["planner_review_action"] = "reject"
-			turnInfo["planner_applied_patches"] = plannerProgress.appliedCount()
-			turnInfo["planner_success_file_count"] = len(plannerProgress.successList())
-			turnInfo["patch_finalize_pending"] = false
-			turnInfo["patch_review_pending"] = false
-			if undoRequired {
-				turnInfo["patch_undo_applied"] = true
-				turnInfo["patch_reverse_path"] = review.ReversePatchPath
-			}
-			if discarded != nil {
-				turnInfo["patch_review_sequence"] = discarded.Sequence
-				if discarded.Description != "" {
-					turnInfo["patch_review_description"] = discarded.Description
-				}
-				if len(discarded.Files) > 0 {
-					turnInfo["patch_review_files"] = append([]string(nil), discarded.Files...)
-				}
-			}
-			if note != "" {
-				turnInfo["planner_review_note"] = note
-			}
-			if discarded != nil {
-				display.Notify(fmt.Sprintf("Patch %d rejected%s", discarded.Sequence, formatOptionalSuffix(discarded.Description)))
-			}
-			finishTurn(sessTelemetry, turn, turnDecision, "success", turnInfo, nil)
-			goto TurnDone
-
-		case planner.DecisionAsk:
-			if question == "" {
-				errEmpty := errors.New("planner returned empty question")
-				fmt.Fprintln(os.Stderr, "Planner returned empty question for 'ask' decision")
-				sessionErr = errEmpty
-				finishTurn(sessTelemetry, turn, turnDecision, "error", turnInfo, errEmpty)
-				turnsCompleted = userTurnCounter
-				return Result{ExitCode: 1, Err: errEmpty}
-			}
-			if cfg.verbose {
-				fmt.Fprintln(os.Stderr, "Question:", question)
-			}
-			noShellAsk, shellAsk, hasSplitAsk := splitAskLines(question)
-			collapsedLegacyBothAsk := false
-			if hasSplitAsk {
-				question = collapseSplitAskLines(noShellAsk, shellAsk)
-				hasSplitAsk = false
-				collapsedLegacyBothAsk = true
-			}
-			preflightQuestion := question
-			useShellAgent = cfg.shellAgent
-			preflightNote := ""
-			var preflightErr error
-			preflightReply := ""
-			runSplitShell := hasSplitAsk
-			if hasSplitAsk {
-				useShellAgent = false
-				if cfg.shellAgent {
-					preflightNote = "routing: both (config override — running split ask)"
-				} else {
-					preflightNote = "routing: both (split ask — run no-shell + shell agent)"
-				}
-			} else if cfg.shellAgent {
-				preflightNote = "routing: shell (config override — run commands via shell agent)"
-			} else {
-				ctxPre, cancelPre := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
-				ctxPre = attachTrajectory(ctxPre, trajectoryWriter, parentSpanID)
-				useShellAgent, preflightReply, preflightErr = promptsvc.PreflightShellRouting(ctxPre, mctRunner.Runtime, preflightQuestion)
-				cancelPre()
-				if preflightErr != nil && cfg.verbose {
-					fmt.Fprintln(os.Stderr, "Preflight routing error:", preflightErr)
-				}
-				routeLabel := "shell"
-				routeExplanation := "shell reply — run commands in the shell"
-				if !useShellAgent {
-					routeLabel = "file"
-					routeExplanation = "retrieving relevant files and context"
-				}
-				switch {
-				case strings.TrimSpace(preflightReply) != "":
-					preflightNote = fmt.Sprintf("preflight routing: %s (reply: %s) — %s", routeLabel, trimTo(preflightReply, 120), routeExplanation)
-				case preflightErr != nil:
-					preflightNote = fmt.Sprintf("preflight routing: %s (error fallback: %s) — %s", routeLabel, trimTo(preflightErr.Error(), 120), routeExplanation)
-				default:
-					preflightNote = fmt.Sprintf("preflight routing: %s (empty reply) — %s", routeLabel, routeExplanation)
-				}
-			}
-			useShellAgent, forcedSingleShellRoute := applySingleAskRoutingPolicy(hasSplitAsk, useShellAgent)
-			if collapsedLegacyBothAsk {
-				turnInfo["mct_legacy_both_collapsed"] = true
-				if preflightNote == "" {
-					preflightNote = "routing policy: legacy both ask -> shell agent"
-				} else {
-					preflightNote = preflightNote + " | routing policy: legacy both ask -> shell agent"
-				}
-			}
-			if forcedSingleShellRoute {
-				turnInfo["mct_single_ask_shell_forced"] = true
-				if preflightNote == "" {
-					preflightNote = "routing policy: single ask -> shell agent"
-				} else {
-					preflightNote = preflightNote + " | routing policy: single ask -> shell agent"
-				}
-			}
-			shellAgentUsedThisTurn = useShellAgent || runSplitShell
-			var shellNoticePrompts *llm.MCTPromptsConfig
-			if mctRunner.Prompts != nil {
-				shellNoticePrompts = mctRunner.Prompts.MCT
-			}
-			if runSplitShell {
-				if strings.TrimSpace(shellAsk) != "" {
-					shellAsk = promptsvc.AppendShellAgentPromptNotice(shellAsk, shellNoticePrompts)
-				}
-			} else if useShellAgent {
-				question = promptsvc.AppendShellAgentPromptNotice(question, shellNoticePrompts)
-			}
-			// Preflight sync: refresh the snapshot from the host repo.
-			// Only needed when the shell-agent is selected (it may execute commands
-			// that depend on the latest host workspace state). File-discovery reads
-			// context only and should use the session snapshot as-is.
-			if useShellAgent || runSplitShell {
-				if root := strings.TrimSpace(tempdir.SessionRoot()); root != "" {
-					if _, _, err := workspace.EnsureRepoSnapshot(repoRoot, root); err != nil {
-						fmt.Fprintln(os.Stderr, "Error: host->snapshot refresh failed:", err)
-						return Result{ExitCode: 1, Err: err}
-					}
-				}
-			}
-			mctRunner.ShellAgent = useShellAgent
-			indicator := "shell"
-			if runSplitShell {
-				indicator = "both"
-			} else if !useShellAgent {
-				indicator = "file"
-			}
-			metadata := append([]string(nil), baseOrchMetadata...)
-			if preflightNote != "" {
-				metadata = append(metadata, preflightNote)
-			}
-			orchPromptOpts = &ui.PromptOptions{ModeIndicator: indicator, Metadata: metadata}
-			turnInfo["mct_shell_agent"] = useShellAgent || runSplitShell
-			if runSplitShell {
-				turnInfo["mct_shell_agent_split"] = true
-			}
-			if !cfg.shellAgent {
-				if strings.TrimSpace(preflightReply) != "" {
-					turnInfo["mct_preflight_reply"] = trimTo(preflightReply, 200)
-				}
-				if preflightErr != nil {
-					turnInfo["mct_preflight_error"] = trimTo(preflightErr.Error(), 200)
-				}
-			}
-			stream := display.BeginPrompt(question, orchPromptOpts)
-			if runSplitShell {
-				runNoShell := true
-
-				var (
-					shellResult promptsvc.ShellAgentOnlyResult
-					shellErr    error
-					shellDone   chan struct{}
-					shellCancel context.CancelFunc
-				)
-				shellDone = make(chan struct{})
-				shellAskTrimmed := strings.TrimSpace(shellAsk)
-				if shellAskTrimmed == "" {
-					close(shellDone)
-				} else {
-					ctxShell, cancelShell := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
-					ctxShell = attachTrajectory(ctxShell, trajectoryWriter, parentSpanID)
-					shellCancel = cancelShell
-					shellOpts := promptsvc.RunOptions{
-						Prompt:               shellAskTrimmed,
-						Mode:                 "answer-only",
-						IncludeHistory:       true,
-						SessionID:            sessionID,
-						Runtime:              mctRunner.Runtime,
-						AnswerRuntime:        mctRunner.AnswerRuntime,
-						FileDiscoveryRuntime: mctRunner.FileDiscoveryRuntime,
-						Verbose:              cfg.verbose,
-						MaxInputTokens:       cfg.maxInputTokens,
-						ShellAgent:           true,
-						ShellAgentModel:      strings.TrimSpace(mctRunner.ShellAgentModel),
-						GlobalConfigPath:     mctRunner.GlobalConfigPath,
-						PersistTmpData:       mctRunner.PersistTmpData,
-						SessionTempRoot:      mctRunner.SessionTempRoot,
-						ResponseDirectives:   append([]string(nil), mctResponseDirectives...),
-					}
-					if mctRunner.Prompts != nil {
-						shellOpts.Prompts = mctRunner.Prompts.MCT
-					}
-					go func() {
-						defer close(shellDone)
-						if shellCancel != nil {
-							defer shellCancel()
-						}
-						shellResult, shellErr = promptsvc.RunShellAgentOnly(ctxShell, shellOpts)
-					}()
-				}
-
-				var (
-					result  promptsvc.Result
-					merr    error
-					ctx2Err error
-				)
-				if runNoShell {
-					input := runner.PromptInput{
-						Prompt:             question,
-						Mode:               "default",
-						IncludeHistory:     true,
-						OnStreamHeader:     stream.OnChunk,
-						OnStreamToken:      stream.OnChunk,
-						MaxInputTokens:     cfg.maxInputTokens,
-						ResponseDirectives: append([]string(nil), mctResponseDirectives...),
-					}
-					ctx2, cancel2 := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
-					ctx2 = attachTrajectory(ctx2, trajectoryWriter, parentSpanID)
-					result, merr = mctRunner.RunPrompt(ctx2, sessionID, input)
-					if ctx2 != nil {
-						ctx2Err = ctx2.Err()
-					}
-					if cancel2 != nil {
-						cancel2()
-					}
-					if merr != nil {
-						if shellCancel != nil {
-							shellCancel()
-						}
-						if shellDone != nil {
-							<-shellDone
-						}
-						if isContextCancelled(merr) || isContextCancelled(ctx2Err) {
-							stream.Abort("interrupted")
-							return interruptedResult(merr)
-						}
-						msg := merr.Error()
-						if errors.Is(ctx2Err, context.DeadlineExceeded) || strings.Contains(strings.ToLower(merr.Error()), "signal: killed") {
-							msg = fmt.Sprintf("timed out after %ds", cfg.timeoutPerTurn)
-							fmt.Fprintf(os.Stderr, "mct prompt error: %s. Try increasing --timeout-per-turn or set 0 for unlimited.\n", msg)
-						} else {
-							fmt.Fprintln(os.Stderr, "mct prompt error:", merr)
-						}
-						stream.Abort(msg)
-						sessionErr = merr
-						finishTurn(sessTelemetry, turn, turnDecision, "error", turnInfo, merr)
-						turnsCompleted = userTurnCounter
-						return Result{ExitCode: 1, Err: merr}
-					}
-				}
-
-				if shellDone != nil {
-					<-shellDone
-				}
-				if shellErr != nil {
-					turnInfo["shell_agent_error"] = trimTo(shellErr.Error(), 200)
-				}
-				if strings.TrimSpace(shellResult.TrajectoryPath) != "" {
-					turnInfo["shell_agent_trajectory"] = trimTo(shellResult.TrajectoryPath, 200)
-				}
-
-				savedPath := ""
-				if cfg.dryRun {
-					lastAnswer = "[dry-run] mct would have produced a chat response here."
-					retrieved = nil
-				} else if runNoShell {
-					if result.SaveError != nil {
-						fmt.Fprintln(os.Stderr, "Warning: failed to save chat transcript:", result.SaveError)
-					}
-					savedPath = strings.TrimSpace(result.SavedPath)
-					if savedPath == "" {
-						chatDir, err := artifacts.SessionChatDirectory(sessionID)
-						if err != nil {
-							fmt.Fprintln(os.Stderr, "Failed to resolve chat directory:", err)
-							stream.Abort("failed to save chat transcript")
-							return Result{ExitCode: 1, Err: err}
-						}
-						savedPath = filepath.Join(chatDir, "machtiani-response.md")
-					}
-					lastAnswer = result.FullText
-					retrieved = append([]string(nil), result.RetrievedFiles...)
-				}
-				fullAns := result.Assistant
-				if cfg.dryRun || strings.TrimSpace(fullAns) == "" {
-					fullAns = lastAnswer
-				}
-				if cfg.enableTagFormat {
-					stats, warnings := analyzeTagFormat(fullAns, retrieved)
-					for k, v := range stats {
-						turnInfo[k] = v
-					}
-					for _, warn := range warnings {
-						fmt.Fprintf(os.Stderr, "[tag-format] %s\n", warn)
-					}
-				}
-				stream.Complete(fullAns)
-				transcriptQuestion := question
-				if block := strings.TrimSpace(result.DirectiveBlock); block != "" && runNoShell {
-					transcriptQuestion = transcriptQuestion + "\n\n" + block
-				}
-				if err := writeTurn(step, transcriptQuestion, savedPath, retrieved, fullAns, "ask"); err != nil {
-					fmt.Fprintln(os.Stderr, "Transcript write error:", err)
-					sessionErr = err
-					finishTurn(sessTelemetry, turn, turnDecision, "error", turnInfo, err)
-					return Result{ExitCode: 1, Err: err}
-				}
-				turnInfo["retrieved_count"] = len(retrieved)
-				userTurnCounter++
-				turnsCompleted = userTurnCounter
-				finishTurn(sessTelemetry, turn, turnDecision, "success", turnInfo, nil)
-				if userTurnCounter == cfg.maxSteps {
-					goto Finalize
-				}
+			default:
 				goto TurnDone
 			}
-			input := runner.PromptInput{
-				Prompt:             question,
-				Mode:               "default",
-				IncludeHistory:     true,
-				OnStreamHeader:     stream.OnChunk,
-				OnStreamToken:      stream.OnChunk,
-				MaxInputTokens:     cfg.maxInputTokens,
-				ResponseDirectives: append([]string(nil), mctResponseDirectives...),
-			}
-			ctx2, cancel2 := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
-			ctx2 = attachTrajectory(ctx2, trajectoryWriter, parentSpanID)
-			result, merr := mctRunner.RunPrompt(ctx2, sessionID, input)
-			var ctx2Err error
-			if ctx2 != nil {
-				ctx2Err = ctx2.Err()
-			}
-			if cancel2 != nil {
-				cancel2()
-			}
-			if merr != nil {
-				if isContextCancelled(merr) || isContextCancelled(ctx2Err) {
-					stream.Abort("interrupted")
-					return interruptedResult(merr)
-				}
-				msg := merr.Error()
-				if errors.Is(ctx2Err, context.DeadlineExceeded) || strings.Contains(strings.ToLower(merr.Error()), "signal: killed") {
-					msg = fmt.Sprintf("timed out after %ds", cfg.timeoutPerTurn)
-					fmt.Fprintf(os.Stderr, "mct prompt error: %s. Try increasing --timeout-per-turn or set 0 for unlimited.\n", msg)
-				} else {
-					fmt.Fprintln(os.Stderr, "mct prompt error:", merr)
-				}
-				stream.Abort(msg)
-				sessionErr = merr
-				finishTurn(sessTelemetry, turn, turnDecision, "error", turnInfo, merr)
-				turnsCompleted = userTurnCounter
-				return Result{ExitCode: 1, Err: merr}
-			}
-			savedPath := strings.TrimSpace(result.SavedPath)
-			if cfg.dryRun {
-				lastAnswer = "[dry-run] mct would have produced a chat response here."
-				retrieved = nil
-			} else {
-				if result.SaveError != nil {
-					fmt.Fprintln(os.Stderr, "Warning: failed to save chat transcript:", result.SaveError)
-				}
-				if savedPath == "" {
-					chatDir, err := artifacts.SessionChatDirectory(sessionID)
-					if err != nil {
-						fmt.Fprintln(os.Stderr, "Failed to resolve chat directory:", err)
-						stream.Abort("failed to save chat transcript")
-						return Result{ExitCode: 1, Err: err}
-					}
-					savedPath = filepath.Join(chatDir, "machtiani-response.md")
-				}
-				lastAnswer = result.FullText
-				retrieved = append([]string(nil), result.RetrievedFiles...)
-			}
-			fullAns := result.Assistant
-			if cfg.dryRun || strings.TrimSpace(fullAns) == "" {
-				fullAns = lastAnswer
-			}
-			if cfg.enableTagFormat {
-				stats, warnings := analyzeTagFormat(fullAns, retrieved)
-				for k, v := range stats {
-					turnInfo[k] = v
-				}
-				for _, warn := range warnings {
-					fmt.Fprintf(os.Stderr, "[tag-format] %s\n", warn)
-				}
-			}
-			stream.Complete(fullAns)
-			transcriptQuestion := question
-			if block := strings.TrimSpace(result.DirectiveBlock); block != "" {
-				transcriptQuestion = transcriptQuestion + "\n\n" + block
-			}
-			if err := writeTurn(step, transcriptQuestion, savedPath, retrieved, fullAns, "ask"); err != nil {
-				fmt.Fprintln(os.Stderr, "Transcript write error:", err)
-				sessionErr = err
-				finishTurn(sessTelemetry, turn, turnDecision, "error", turnInfo, err)
-				return Result{ExitCode: 1, Err: err}
-			}
-			askInfo := map[string]any{
-				"retrieved_count": len(retrieved),
-			}
-			if savedPath != "" {
-				askInfo["saved_chat_path"] = savedPath
-			}
-			if trajectoryWriter != nil && strings.TrimSpace(fullAns) != "" {
-				excerpt := trajectory.MakeTextExcerpt(fullAns, trajectoryWriter.ExcerptLen())
-				askInfo = trajectory.MergeExcerptWithPrefix(askInfo, excerpt, "answer")
-			}
-			for k, v := range askInfo {
-				turnInfo[k] = v
-			}
-			userTurnCounter++
-			turnsCompleted = userTurnCounter
-			finishTurn(sessTelemetry, turn, turnDecision, "success", turnInfo, nil)
-			if userTurnCounter == cfg.maxSteps {
+
+		case planner.DecisionAsk:
+			outcome := executeAskDecision(turnEnv, question)
+			shellAgentUsedThisTurn = outcome.shellAgentUsed
+			syncRunState()
+			switch outcome.action {
+			case turnLoopReturn:
+				return outcome.result
+			case turnLoopFinalize:
 				goto Finalize
+			default:
+				goto TurnDone
 			}
-			goto TurnDone
 
 		case planner.DecisionPatch:
-			if cfg.patch {
-				if patchPlan == nil {
-					if existingPlan, err := LoadPatchPlan(sessionID); err != nil {
-						fmt.Fprintf(os.Stderr, "Warning: failed to load patch plan before patching: %v\n", err)
-					} else {
-						patchPlan = existingPlan
-					}
-				}
-				if patchPlan == nil {
-					hookCtx, hookCancel := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
-					hookCtx = attachTrajectory(hookCtx, trajectoryWriter, parentSpanID)
-					generatedPlan, hookErr := invokePatchPlanUpdateHook(hookCtx, pl, tr, sessionID, goal, tr.Content(), plannerProgress.getLastPatchedFile(), display, true)
-					if hookCancel != nil {
-						hookCancel()
-					}
-					if hookErr != nil {
-						fmt.Fprintln(os.Stderr, "Patch plan creation error:", hookErr)
-						sessionErr = hookErr
-						finishTurn(sessTelemetry, turn, string(decision), "error", turnInfo, hookErr)
-						return Result{ExitCode: 1, Err: hookErr}
-					}
-					patchPlan = generatedPlan
-				}
-				if patchPlan == nil {
-					err := errors.New("patch plan missing; cannot apply patch")
-					fmt.Fprintln(os.Stderr, "Patch plan error:", err)
-					sessionErr = err
-					finishTurn(sessTelemetry, turn, string(decision), "error", turnInfo, err)
-					return Result{ExitCode: 1, Err: err}
-				}
-				if plannerProgress.needsPatchPlanUpdate() {
-					hookCtx, hookCancel := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
-					hookCtx = attachTrajectory(hookCtx, trajectoryWriter, parentSpanID)
-					refreshedPlan, hookErr := invokePatchPlanUpdateHook(hookCtx, pl, tr, sessionID, goal, tr.Content(), plannerProgress.getLastPatchedFile(), display, false)
-					if hookCancel != nil {
-						hookCancel()
-					}
-					if hookErr != nil {
-						fmt.Fprintf(os.Stderr, "Warning: patch plan update failed before patching: %v\n", hookErr)
-					} else if refreshedPlan != nil {
-						patchPlan = refreshedPlan
-					}
-					plannerProgress.clearPatchPlanPending()
-				}
-				if patchPlan != nil {
-					totalItems, completedItems := patchPlan.Progress()
-					turnInfo["patch_plan_items"] = totalItems
-					turnInfo["patch_plan_complete_items"] = completedItems
-				}
-			}
-			if cfg.verbose {
-				fmt.Fprintln(os.Stderr, "[patcher] planner payload (raw):", trimTo(strings.TrimSpace(question), 1200))
-			}
-			stream := display.BeginPrompt("Patcher: create patch", patcherPromptOpts)
-			patchTurnLabel := "Patcher: create patch"
-			shouldFinalizeAfterPatch := false
-			turnCounted := false
-			markTurnCounted := func() {
-				if turnCounted {
-					return
-				}
-				userTurnCounter++
-				turnCounted = true
-				if userTurnCounter == cfg.maxSteps {
-					shouldFinalizeAfterPatch = true
-				}
-			}
-			patchOutcome := func(status string, err error, extra map[string]any) {
-				if status == "success" {
-					markTurnCounted()
-				}
-				if extra == nil {
-					extra = map[string]any{}
-				}
-				if patchTurnLabel != "" {
-					extra["patch_turn_label"] = patchTurnLabel
-				}
-				for k, v := range extra {
-					turnInfo[k] = v
-				}
-				turnsCompleted = userTurnCounter
-				finishTurn(sessTelemetry, turn, turnDecision, status, turnInfo, err)
-			}
-			recordPatchError := func(kind string, err error, extra map[string]any) {
-				if extra == nil {
-					extra = map[string]any{}
-				}
-				extra["patch_error_kind"] = kind
-				if err != nil {
-					extra["patch_error"] = err.Error()
-				}
-				extra["is_retry"] = !turnCounted
-				extra["retry_reason"] = kind
-				patchOutcome("error", err, extra)
-			}
-			jsonBytes, jerr := parser.ExtractPatchJSONPayload(question)
-			if jerr != nil {
-				stream.Abort("invalid patch payload")
-				_ = writeTurn(step, "Patcher: invalid input JSON", "", nil, "Error extracting JSON: "+jerr.Error(), "patch-error")
-				recordPatchError("invalid_patch_payload", jerr, nil)
-				if shouldFinalizeAfterPatch {
-					goto Finalize
-				}
-				continue
-			}
-			if cfg.verbose {
-				fmt.Fprintln(os.Stderr, "[patcher] extracted JSON:", trimTo(string(jsonBytes), 1200))
-			}
-			if trajectoryWriter != nil {
-				excerpt := trajectory.MakeTextExcerpt(string(jsonBytes), trajectoryWriter.ExcerptLen())
-				turnInfo = trajectory.MergeExcerptWithPrefix(turnInfo, excerpt, "patch_instructions")
-			}
-			var instr mctpatcher.Instructions
-			dec := json.NewDecoder(bytes.NewReader(jsonBytes))
-			dec.DisallowUnknownFields()
-			if derr := dec.Decode(&instr); derr != nil {
-				stream.Abort("invalid patch payload")
-				_ = writeTurn(step, "Patcher: invalid instructions", "", nil, "Error decoding JSON: "+derr.Error(), "patch-error")
-				recordPatchError("invalid_patch_instructions", derr, nil)
-				if shouldFinalizeAfterPatch {
-					goto Finalize
-				}
-				continue
-			}
-			skipAllSuccess := false
-			skipPaths := []string{}
-			forceRepatch := instr.Metadata != nil && instr.Metadata.ForceRepatch
-			if len(instr.Edits) > 0 {
-				skipAllSuccess = true
-				seenSkip := make(map[string]struct{})
-				for i := range instr.Edits {
-					edit := &instr.Edits[i]
-					nPath := ""
-					if norm, err := edit.NormalizedPath(repoRoot); err == nil {
-						nPath = normalizePlannerPath(norm)
-					} else {
-						nPath = normalizePlannerPath(edit.Path)
-					}
-					if nPath == "" {
-						skipAllSuccess = false
-						continue
-					}
-					if !plannerProgress.hasSuccess(nPath) {
-						skipAllSuccess = false
-						continue
-					}
-					if _, exists := seenSkip[nPath]; !exists {
-						seenSkip[nPath] = struct{}{}
-						skipPaths = append(skipPaths, nPath)
-					}
-				}
-			}
-			// Guard disabled to allow repatching files multiple times in a session.
-			if skipAllSuccess && len(skipPaths) > 0 && !forceRepatch && false {
-				skipMsg := fmt.Sprintf("Skipping patch because all target files were already updated earlier this session: %s. Reload the latest file contents before generating another patch.", strings.Join(skipPaths, ", "))
-				stream.Abort("patch skipped (already updated)")
-				_ = writeTurn(step, "Patcher: skip (already updated)", "", nil, skipMsg, "patch-error")
-				turnInfo["patch_skip_already_updated"] = skipPaths
-				extra := map[string]any{"skip_files": skipPaths}
-				recordPatchError("patch_skipped_already_success", fmt.Errorf("patch targeted previously updated files"), extra)
-				plannerProgress.noteForceRepatchHint()
-				if shouldFinalizeAfterPatch {
-					goto Finalize
-				}
-				continue
-			}
-			if forceRepatch {
-				turnInfo["patch_force_repatch"] = true
-			}
-			if instr.Metadata != nil {
-				if desc := strings.TrimSpace(instr.Metadata.Description); desc != "" {
-					patchTurnLabel = "Patcher: " + desc
-				}
-			}
-			preparedInstr, modeAdjustments, precheckErr := preprocessPatchInstructions(repoRoot, instr)
-			if len(modeAdjustments) > 0 {
-				turnInfo["patch_precheck_adjustments"] = len(modeAdjustments)
-				if cfg.verbose {
-					for _, adj := range modeAdjustments {
-						fmt.Fprintln(os.Stderr, "[patcher] pre-check:", adj.String())
-					}
-				}
-			}
-			if precheckErr != nil {
-				summary := precheckErr.Summary()
-				if summary == "" {
-					summary = precheckErr.Error()
-				}
-				stream.Abort("patch instructions invalid")
-				if err := writeTurn(step, patchTurnLabel, "", nil, summary, "patch-error"); err != nil {
-					fmt.Fprintln(os.Stderr, "Transcript write error:", err)
-					sessionErr = err
-					recordPatchError("transcript_write_error", err, map[string]any{"patch_error_context": "precheck_summary"})
-					return Result{ExitCode: 1, Err: err}
-				}
-				extra := map[string]any{"patch_precheck_conflicts": precheckErr.Count()}
-				recordPatchError("patch_instruction_precheck", precheckErr, extra)
-				if shouldFinalizeAfterPatch {
-					goto Finalize
-				}
-				if !turnCounted {
-					markTurnCounted()
-					if shouldFinalizeAfterPatch {
-						goto Finalize
-					}
-				}
-				turnsCompleted = userTurnCounter
-				continue
-			}
-			instr = preparedInstr
-			if pRunner == nil {
-				errDisabled := errors.New("patch runner disabled")
-				stream.Abort("patch runner unavailable")
-				_ = writeTurn(step, patchTurnLabel, "", nil, "Error: patch runner disabled", "patch-error")
-				recordPatchError("patch_runner_unavailable", errDisabled, nil)
-				if shouldFinalizeAfterPatch {
-					goto Finalize
-				}
-				continue
-			}
-			if err := pRunner.Resolve(); err != nil {
-				stream.Abort("patcher resolve failed")
-				_ = writeTurn(step, patchTurnLabel, "", nil, "Error: "+err.Error(), "patch-error")
-				recordPatchError("patch_runner_resolve", err, nil)
-				if shouldFinalizeAfterPatch {
-					goto Finalize
-				}
-				continue
-			}
-			autoFixApplied := false
-			autoFixEdits := []int(nil)
-			var result *mctpatcher.PatchResult
-			var applyErr error
-			var ctxPErr error
-			for attempt := 0; attempt < 2; attempt++ {
-				ctxP, cancelP := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
-				ctxP = attachTrajectory(ctxP, trajectoryWriter, parentSpanID)
-				result, applyErr = pRunner.Apply(ctxP, instr, cfg.verbose)
-				if ctxP != nil {
-					ctxPErr = ctxP.Err()
-				}
-				if cancelP != nil {
-					cancelP()
-				}
-				if applyErr == nil {
-					break
-				}
-				if isContextCancelled(applyErr) || isContextCancelled(ctxPErr) {
-					stream.Abort("interrupted")
-					return interruptedResult(applyErr)
-				}
-				var valErrFix *mctpatcher.ValidationError
-				if !autoFixApplied && errors.As(applyErr, &valErrFix) {
-					rewritten, edits := convertRewriteMissingToCreate(instr, valErrFix, cfg.verbose)
-					if len(edits) > 0 {
-						autoFixApplied = true
-						autoFixEdits = edits
-						instr = rewritten
-						applyErr = nil
-						continue
-					}
-				}
-				break
-			}
-			if applyErr != nil {
-				var cleanErr *mctpatcher.PatchNotCleanError
-				var valErr *mctpatcher.ValidationError
-				var genErr *mctpatcher.PatchGenerationError
-				switch {
-				case errors.As(applyErr, &cleanErr):
-					stream.Abort("patch validation failed")
-					summary := "Patch validation failed. See diagnostics below."
-					if err := writeTurn(step, patchTurnLabel, "", nil, summary, "patch-error"); err != nil {
-						fmt.Fprintln(os.Stderr, "Transcript write error:", err)
-						sessionErr = err
-						recordPatchError("transcript_write_error", err, map[string]any{"patch_error_context": "validation_summary"})
-						return Result{ExitCode: 1, Err: err}
-					}
-					rec := transcript.PatchValidationRecord{
-						Operation:  cleanErr.Diagnostics.Operation,
-						Status:     "failed",
-						PatchInput: trimTo(string(jsonBytes), 1000),
-						Stderr:     trimTo(cleanErr.Diagnostics.Stderr, 800),
-						Error:      strings.TrimSpace(cleanErr.Error()),
-						Messages:   convertPatchMessages(cleanErr.Diagnostics.Messages),
-						Conflicts:  formatContentConflicts(cleanErr.Diagnostics.ContentConflicts),
-					}
-					_ = tr.WritePatchValidation(step, rec)
-					extra := map[string]any{
-						"patch_validation_operation": cleanErr.Diagnostics.Operation,
-						"patch_validation_status":    "failed",
-						"patch_validation_messages":  len(cleanErr.Diagnostics.Messages),
-						"conflicted_edits":           len(cleanErr.Diagnostics.ContentConflicts),
-					}
-					recordPatchError("patch_validation_failed", applyErr, extra)
-					if shouldFinalizeAfterPatch {
-						goto Finalize
-					}
-					// Allow session to progress past validation errors instead of retrying
-					// Mark turn as counted so planner can decide next action in subsequent turn
-					if !turnCounted {
-						markTurnCounted()
-						if shouldFinalizeAfterPatch {
-							goto Finalize
-						}
-					}
-					turnsCompleted = userTurnCounter
-					continue
-				case errors.As(applyErr, &valErr):
-					stream.Abort("patch validation error")
-					_ = writeTurn(step, patchTurnLabel, "", nil, valErr.Error(), "patch-error")
-					recordPatchError("patch_validation_error", valErr, nil)
-					if shouldFinalizeAfterPatch {
-						goto Finalize
-					}
-					// Allow session to progress past validation errors instead of retrying
-					// Mark turn as counted so planner can decide next action in subsequent turn
-					if !turnCounted {
-						markTurnCounted()
-						if shouldFinalizeAfterPatch {
-							goto Finalize
-						}
-					}
-					turnsCompleted = userTurnCounter
-					continue
-				case errors.As(applyErr, &genErr):
-					stream.Abort("patch generation error")
-					_ = writeTurn(step, patchTurnLabel, "", nil, genErr.Error(), "patch-error")
-					recordPatchError("patch_generation_error", genErr, nil)
-					if shouldFinalizeAfterPatch {
-						goto Finalize
-					}
-					// Allow session to progress past generation errors instead of retrying
-					// Mark turn as counted so planner can decide next action in subsequent turn
-					if !turnCounted {
-						markTurnCounted()
-						if shouldFinalizeAfterPatch {
-							goto Finalize
-						}
-					}
-					turnsCompleted = userTurnCounter
-					continue
-				default:
-					stream.Abort("patcher execution error")
-					_ = writeTurn(step, patchTurnLabel, "", nil, applyErr.Error(), "patch-error")
-					recordPatchError("patch_apply_error", applyErr, nil)
-					if shouldFinalizeAfterPatch {
-						goto Finalize
-					}
-					// Allow session to progress past patcher errors instead of retrying
-					// Mark turn as counted so planner can decide next action in subsequent turn
-					if !turnCounted {
-						markTurnCounted()
-						if shouldFinalizeAfterPatch {
-							goto Finalize
-						}
-					}
-					turnsCompleted = userTurnCounter
-					continue
-				}
-			}
-			// Snapshot refresh occurs at the end of every loop iteration.
-			if result == nil {
-				errEmpty := errors.New("patcher returned empty result")
-				stream.Abort("patcher returned no result")
-				_ = writeTurn(step, patchTurnLabel, "", nil, errEmpty.Error(), "patch-error")
-				recordPatchError("patch_empty_result", errEmpty, nil)
-				if shouldFinalizeAfterPatch {
-					goto Finalize
-				}
-				continue
-			}
-			if autoFixApplied {
-				turnInfo["patch_auto_fix_rewrite_missing"] = map[string]any{
-					"count": len(autoFixEdits),
-					"edits": autoFixEdits,
-				}
-			}
-			if desc := strings.TrimSpace(result.Description); desc != "" {
-				patchTurnLabel = "Patcher: " + desc
-			}
-			workspaceStatus := "workspace_applied: no"
-			if result.AppliedInWorkspace {
-				workspaceStatus = "workspace_applied: yes"
-			} else if cfg.dryRun {
-				workspaceStatus = "workspace_applied: (dry-run)"
-			}
-			finalizeStatus := "finalize: atomic (done)"
-			if cfg.dryRun {
-				finalizeStatus = "finalize: (dry-run)"
-			} else if cfg.patchNoApply {
-				finalizeStatus = "finalize: skipped (--patch-no-apply)"
-			}
-			successDesc := strings.TrimSpace(result.Description)
-			if successDesc == "" && instr.Metadata != nil {
-				successDesc = strings.TrimSpace(instr.Metadata.Description)
-			}
-			if successDesc == "" {
-				successDesc = strings.Join(result.FilesModified, ", ")
-			}
-			if successDesc == "" {
-				successDesc = "Patch applied"
-			}
-			descTrimmed := strings.TrimSpace(successDesc)
-			filesSummary := "(none)"
-			if len(result.FilesModified) > 0 {
-				filesSummary = strings.Join(result.FilesModified, ", ")
-			}
-			patchTurnLabel = "Patcher: [PATCH APPLIED] " + descTrimmed
-			diffText, diffErr := patchDiffForTranscript(result.PatchPath, patchTranscriptDiffLimit)
-			if diffErr != nil {
-				diffText = fmt.Sprintf(
-					"Patch diff unavailable (%v)\nPatch path: %s\nSequence: %d\nFiles modified: %s\ninsertions: %d\ndeletions: %d\n%s\n%s\nreverse_patch_path: %s",
-					diffErr,
-					strings.TrimSpace(result.PatchPath),
-					result.Sequence,
-					filesSummary,
-					result.Insertions,
-					result.Deletions,
-					workspaceStatus,
-					finalizeStatus,
-					strings.TrimSpace(result.ReversePatchPath),
-				)
-			}
-			ans := diffText
-
-			// --- BEGIN: Automatic DecisionFullDiff Injection (Post-Patch) ---
-			// NOTE: full diff is written after the patch turn so it appears immediately
-			// after the patch in the transcript.
-			// --- END: Automatic DecisionFullDiff Injection ---
-
-			// Defer transcript write until accept/reject so only one final
-			// patch turn is recorded (success or reject). Keep the diff in
-			// memory and surface it for the planner via augmented context.
-			pendingPatchDraft = &patchTranscriptDraft{
-				Step:        step,
-				Description: descTrimmed,
-				Answer:      ans,
-			}
-
-			stream.Complete(ans)
-			lastAnswer = ans
-			review := &planner.PendingReview{
-				PatchPath:        strings.TrimSpace(result.PatchPath),
-				ReversePatchPath: strings.TrimSpace(result.ReversePatchPath),
-				Description:      successDesc,
-				Files:            append([]string(nil), result.FilesModified...),
-				Sequence:         result.Sequence,
-				Insertions:       result.Insertions,
-				Deletions:        result.Deletions,
-			}
-			if len(result.FilesModified) > 0 {
-				recordDiscoveryPending(sessionID, result.FilesModified, cfg.verbose)
-				// Also refresh the persistent discovery workspace immediately so
-				// consecutive patch decisions see updated files without waiting for
-				// the next file-discovery invocation.
-				if err := mctsync.RefreshSyncedWorkspace(sessionID, result.FilesModified, cfg.verbose); err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: discovery workspace refresh failed: %v\n", err)
-				}
-			}
-			plannerProgress.beginPendingReview(review)
-			autoAcceptNote := ""
-			autoAccepted := false
-			var autoAcceptedReview *planner.PendingReview
-			if patchReviewDisabled {
-				autoAcceptNote = "Review disabled – patch auto-accepted."
-				if err := writePendingPatchTranscript("SUCCESS", "patch", autoAcceptNote, false); err != nil {
-					fmt.Fprintln(os.Stderr, "Transcript write error:", err)
-					sessionErr = err
-					patchOutcome("error", err, map[string]any{"planner_review_action": "auto-accept"})
-					turnsCompleted = userTurnCounter
-					return Result{ExitCode: 1, Err: err}
-				}
-				autoAcceptedReview = plannerProgress.commitPendingReview()
-				autoAccepted = true
-				if autoAcceptedReview != nil {
-					review = autoAcceptedReview
-				}
-			}
-			plannerSuccessFiles := plannerProgress.successList()
-			turnInfo["planner_applied_patches"] = plannerProgress.appliedCount()
-			turnInfo["planner_success_file_count"] = len(plannerSuccessFiles)
-			reviewPending := plannerProgress.hasPendingReview()
-			turnInfo["planner_pending_review"] = reviewPending
-			turnInfo["patch_review_pending"] = reviewPending
-			if autoAccepted {
-				turnInfo["planner_review_action"] = "auto-accept"
-				turnInfo["patch_finalize_pending"] = false
-				if autoAcceptNote != "" {
-					turnInfo["planner_review_note"] = autoAcceptNote
-				}
-				if autoAcceptedReview != nil {
-					turnInfo["patch_review_sequence"] = autoAcceptedReview.Sequence
-					if autoAcceptedReview.Description != "" {
-						turnInfo["patch_review_description"] = autoAcceptedReview.Description
-					}
-					if len(autoAcceptedReview.Files) > 0 {
-						turnInfo["patch_review_files"] = append([]string(nil), autoAcceptedReview.Files...)
-					}
-				}
-				if review != nil {
-					display.Notify(fmt.Sprintf("Patch %d auto-accepted (review disabled)%s", review.Sequence, formatOptionalSuffix(review.Description)))
-				} else {
-					display.Notify("Patch auto-accepted (review disabled)")
-				}
-			} else {
-				turnInfo["patch_finalize_pending"] = true
-				if review != nil && len(review.Files) > 0 {
-					turnInfo["planner_pending_review_files"] = append([]string(nil), review.Files...)
-				}
-			}
-			extra := map[string]any{}
-			if trajectoryWriter != nil {
-				extra = trajectory.MergeExcerptWithPrefix(extra, trajectory.MakeTextExcerpt(ans, trajectoryWriter.ExcerptLen()), "answer")
-			}
-			extra["patch_path"] = review.PatchPath
-			extra["patch_sequence"] = result.Sequence
-			extra["patch_insertions"] = result.Insertions
-			extra["patch_deletions"] = result.Deletions
-			extra["patch_files_modified"] = len(result.FilesModified)
-			if len(result.FilesModified) > 0 && len(result.FilesModified) <= 10 {
-				extra["patch_files"] = append([]string(nil), result.FilesModified...)
-			}
-			if len(result.FilesModified) > 0 {
-				extra["success_files"] = append([]string(nil), result.FilesModified...)
-			}
-			extra["planner_applied_patches"] = plannerProgress.appliedCount()
-			extra["planner_success_files_total"] = len(plannerSuccessFiles)
-			if len(plannerSuccessFiles) > 0 {
-				extra["planner_success_files"] = plannerSuccessFiles
-			}
-			extra["patch_workspace_applied"] = result.AppliedInWorkspace
-			extra["patch_applied"] = result.AppliedInWorkspace
-			extra["patch_review_pending"] = plannerProgress.hasPendingReview()
-			extra["patch_finalize_pending"] = plannerProgress.hasPendingReview()
-			if autoAccepted {
-				extra["patch_review_action"] = "auto-accept"
-				if autoAcceptNote != "" {
-					extra["patch_review_note"] = autoAcceptNote
-				}
-			}
-			if review.ReversePatchPath != "" {
-				extra["patch_reverse_path"] = review.ReversePatchPath
-			}
-			extra["patch_review_sequence"] = result.Sequence
-			patchOutcome("success", nil, extra)
-			if shouldFinalizeAfterPatch && !plannerProgress.hasPendingReview() {
+			outcome := executePatchDecision(turnEnv, question, patchPlan)
+			shellAgentUsedThisTurn = outcome.shellAgentUsed
+			syncRunState()
+			switch outcome.action {
+			case turnLoopReturn:
+				return outcome.result
+			case turnLoopFinalize:
 				goto Finalize
+			default:
+				goto TurnDone
 			}
-			goto TurnDone
 
 		case planner.DecisionFinalize:
 			goto Finalize
@@ -2527,31 +1544,9 @@ func Run(ctx context.Context, opts Options) Result {
 		// - DecisionAccept: No sync (reviews don't modify snapshot)
 		// - DecisionReject: No sync (review discards don't modify snapshot)
 		// - DecisionAsk: Sync only for shell-agent mode (file-discovery doesn't modify snapshot)
-		shouldSync := false
-		switch decision {
-		case planner.DecisionAsk:
-			// For DecisionAsk, only sync if shell-agent was used (executed commands may have modified files)
-			// File-discovery mode makes no modifications, so no sync needed
-			if shellAgentUsedThisTurn {
-				shouldSync = true
-			}
-		case planner.DecisionPatch:
-			// Patcher applies changes directly to the host checkout.
-			// No snapshot->host sync needed.
-			shouldSync = false
-		case planner.DecisionAccept, planner.DecisionReject:
-			// Reviews don't modify the snapshot.
-			shouldSync = false
-		}
-		if shouldSync {
-			if root := strings.TrimSpace(tempdir.SessionRoot()); root != "" {
-				snapshotRepoRoot := filepath.Join(root, "repo")
-				patchDir := filepath.Join(root, "patches")
-				if err := workspace.SyncSnapshotToHost(snapshotRepoRoot, repoRoot, patchDir); err != nil {
-					fmt.Fprintln(os.Stderr, "Error: snapshot->host sync failed:", err)
-					return Result{ExitCode: 1, Err: err}
-				}
-			}
+		if err := syncTurnWorkspace(cfg, repoRoot, decision, shellAgentUsedThisTurn); err != nil {
+			fmt.Fprintln(os.Stderr, "Error: snapshot->host sync failed:", err)
+			return Result{ExitCode: 1, Err: err}
 		}
 		continue
 	}
