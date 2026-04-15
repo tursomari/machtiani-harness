@@ -72,6 +72,83 @@ func TestPreflightShellRoutingContentBeatsShell(t *testing.T) {
 	}
 }
 
+func TestPreflightShellRoutingHeuristicPrefersContentForCodeExplanation(t *testing.T) {
+	old := chatWithResolvedFallback
+	called := false
+	chatWithResolvedFallback = func(ctx context.Context, model llm.ResolvedModel, fallbackAliases []string, fallbackModels []llm.ResolvedModel, extraParams map[string]any, messages []llm.Message) (string, error) {
+		called = true
+		return "shell", nil
+	}
+	t.Cleanup(func() { chatWithResolvedFallback = old })
+
+	runtime := ModelRuntime{Resolved: llm.ResolvedModel{Model: "test-model"}}
+	prompt := "Summarize how the patcher falls back to the orchestrator model when unspecified."
+
+	shellAgent, reply, err := PreflightShellRouting(context.Background(), runtime, prompt)
+	if err != nil {
+		t.Fatalf("PreflightShellRouting error: %v", err)
+	}
+	if shellAgent {
+		t.Fatalf("expected default routing, got shell-agent")
+	}
+	if reply != "content" {
+		t.Fatalf("expected reply %q, got %q", "content", reply)
+	}
+	if called {
+		t.Fatalf("expected heuristic to bypass LLM preflight")
+	}
+}
+
+func TestPreflightShellRoutingHeuristicPrefersContentForFunctionLookup(t *testing.T) {
+	old := chatWithResolvedFallback
+	called := false
+	chatWithResolvedFallback = func(ctx context.Context, model llm.ResolvedModel, fallbackAliases []string, fallbackModels []llm.ResolvedModel, extraParams map[string]any, messages []llm.Message) (string, error) {
+		called = true
+		return "shell", nil
+	}
+	t.Cleanup(func() { chatWithResolvedFallback = old })
+
+	runtime := ModelRuntime{Resolved: llm.ResolvedModel{Model: "test-model"}}
+	prompt := "In `agent/internal/planner/planner.go`, what function generates the ask prompt?"
+
+	shellAgent, reply, err := PreflightShellRouting(context.Background(), runtime, prompt)
+	if err != nil {
+		t.Fatalf("PreflightShellRouting error: %v", err)
+	}
+	if shellAgent {
+		t.Fatalf("expected default routing, got shell-agent")
+	}
+	if reply != "content" {
+		t.Fatalf("expected reply %q, got %q", "content", reply)
+	}
+	if called {
+		t.Fatalf("expected heuristic to bypass LLM preflight")
+	}
+}
+
+func TestPreflightShellRoutingHeuristicDoesNotOverrideDirectoryListing(t *testing.T) {
+	stubReply := "shell"
+	old := chatWithResolvedFallback
+	chatWithResolvedFallback = func(ctx context.Context, model llm.ResolvedModel, fallbackAliases []string, fallbackModels []llm.ResolvedModel, extraParams map[string]any, messages []llm.Message) (string, error) {
+		return stubReply, nil
+	}
+	t.Cleanup(func() { chatWithResolvedFallback = old })
+
+	runtime := ModelRuntime{Resolved: llm.ResolvedModel{Model: "test-model"}}
+	prompt := "List files in the agent/internal/session directory."
+
+	shellAgent, reply, err := PreflightShellRouting(context.Background(), runtime, prompt)
+	if err != nil {
+		t.Fatalf("PreflightShellRouting error: %v", err)
+	}
+	if !shellAgent {
+		t.Fatalf("expected shell-agent routing, got default")
+	}
+	if reply != stubReply {
+		t.Fatalf("expected reply %q, got %q", stubReply, reply)
+	}
+}
+
 func TestPreflightShellRoutingFallbackToShellAgent(t *testing.T) {
 	stubReply := "shell"
 	old := chatWithResolvedFallback

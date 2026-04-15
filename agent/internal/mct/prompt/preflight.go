@@ -26,6 +26,9 @@ var (
 // shell-agent to preserve existing behaviour.
 func PreflightShellRouting(ctx context.Context, runtime ModelRuntime, prompt string) (bool, string, error) {
 	trimmedPrompt := strings.TrimSpace(prompt)
+	if shouldPreferContentRouting(trimmedPrompt) {
+		return false, "content", nil
+	}
 	messages := []llm.Message{{Role: "system", Content: preflightSystemPrompt}}
 	if trimmedPrompt != "" {
 		question := fmt.Sprintf(preflightQuestionTemplate, trimmedPrompt)
@@ -69,6 +72,38 @@ func PreflightShellRouting(ctx context.Context, runtime ModelRuntime, prompt str
 	}
 
 	return true, firstLine, nil
+}
+
+func shouldPreferContentRouting(prompt string) bool {
+	trimmed := strings.ToLower(strings.TrimSpace(prompt))
+	if trimmed == "" {
+		return false
+	}
+	if containsRoutingPhrase(trimmed, []string{
+		"run ", "execute ", "build ", "compile ", "start ", "restart ", "install ",
+		"list filepaths", "list files", "directory", "directories", "current directory", "cwd",
+		"shell command", "git status", "git diff", "grep ", "find ",
+	}) {
+		return false
+	}
+	hasExplainVerb := containsRoutingPhrase(trimmed, []string{
+		"explain", "summarize", "describe", "what does", "how does", "where does", "what function", "which function", "what method", "which method", "identify the function", "identify the method", "outline",
+	})
+	hasCodeSignal := strings.Contains(trimmed, "`") || containsRoutingPhrase(trimmed, []string{
+		".go", "function", "struct", "method", "symbol", "implementation", "logic", "code path",
+		"definition", "defined", "fallback", "falls back", "model", "file discovery", "orchestrator", "patcher",
+		"line ", "lines ", "source", "code",
+	})
+	return hasExplainVerb && hasCodeSignal
+}
+
+func containsRoutingPhrase(prompt string, phrases []string) bool {
+	for _, phrase := range phrases {
+		if strings.Contains(prompt, phrase) {
+			return true
+		}
+	}
+	return false
 }
 
 func tokenizeForRouting(s string) []string {
