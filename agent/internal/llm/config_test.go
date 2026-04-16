@@ -437,16 +437,24 @@ func TestParseMetaInstructionTOMLLoadsDescriptionFromExternalFile(t *testing.T) 
 	if tasks[1].Description != "Hello from file" {
 		t.Fatalf("unexpected file description: %q", tasks[1].Description)
 	}
+	if tasks[0].Instruction != "Do the inline task" {
+		t.Fatalf("unexpected inline instruction: %q", tasks[0].Instruction)
+	}
+	if tasks[1].Instruction != "Do the file-backed task" {
+		t.Fatalf("unexpected file-backed instruction: %q", tasks[1].Instruction)
+	}
 }
 
 func TestParseMetaInstructionTOMLLoadsSystemPromptFromExternalFile(t *testing.T) {
 	dir := t.TempDir()
 	mustWriteFile(t, filepath.Join(dir, "description.md"), "Investigate schema drift")
+	mustWriteFile(t, filepath.Join(dir, "instruction.md"), "Check backward compatibility")
 	mustWriteFile(t, filepath.Join(dir, "overlay.md"), "Prioritize backward-compatible changes")
 	tomlPath := filepath.Join(dir, "tasks.toml")
 	mustWriteFile(t, tomlPath, `[[tasks]]
 title = "Review"
 description = "description.md"
+instruction = "instruction.md"
 system_prompt = "overlay.md"
 `)
 
@@ -461,8 +469,30 @@ system_prompt = "overlay.md"
 	if len(tasks) != 1 {
 		t.Fatalf("expected 1 task, got %d", len(tasks))
 	}
+	if tasks[0].Instruction != "Check backward compatibility" {
+		t.Fatalf("unexpected instruction: %q", tasks[0].Instruction)
+	}
 	if tasks[0].SystemPrompt != "Prioritize backward-compatible changes" {
 		t.Fatalf("unexpected system prompt: %q", tasks[0].SystemPrompt)
+	}
+}
+
+func TestParseMetaInstructionTOMLFailsWhenExternalInstructionMissing(t *testing.T) {
+	dir := t.TempDir()
+	tomlPath := filepath.Join(dir, "tasks.toml")
+	mustWriteFile(t, tomlPath, `[[tasks]]
+title = "Review"
+instruction = "missing.txt"
+`)
+
+	data, err := os.ReadFile(tomlPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+
+	_, err = parseMetaInstructionTOML(data, tomlPath)
+	if err == nil || !strings.Contains(err.Error(), "resolve tasks[0].instruction") {
+		t.Fatalf("expected missing instruction error, got %v", err)
 	}
 }
 
@@ -747,28 +777,28 @@ func sampleCodingToml() string {
 	return `[[tasks]]
 step = 1
 title = "Create an issue for the engineering team"
-description = "Create an issue for the engineering team. Do not make any code changes or patches."
+instruction = "Create an issue for the engineering team. Do not make any code changes or patches."
 shell_agent = false
 patch_mode = false
 
 [[tasks]]
 step = 2
 title = "Implement the Issue"
-description = "Implement the Issue."
+instruction = "Implement the Issue."
 shell_agent = true
 patch_mode = true
 
 [[tasks]]
 step = 3
 title = "Run available validations"
-description = "Run available validations (tests, linters, or targeted reasoning) to confirm behavior and note any risks or follow-up work."
+instruction = "Run available validations (tests, linters, or targeted reasoning) to confirm behavior and note any risks or follow-up work."
 shell_agent = true
 patch_mode = false
 
 [[tasks]]
 step = 4
 title = "Summarize the results"
-description = "Summarize the results, highlighting modifications, verification status, and remaining next steps for the parent session."
+instruction = "Summarize the results, highlighting modifications, verification status, and remaining next steps for the parent session."
 shell_agent = false
 patch_mode = false
 `

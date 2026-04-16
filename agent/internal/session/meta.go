@@ -211,12 +211,13 @@ func tasksFromTOML(goal, mode string, instructions llm.MetaInstructions) []metaT
 		if step <= 0 {
 			step = idx + 1
 		}
-		plannerOverlay := taskPlannerOverlayText(description, item.SystemPrompt)
+		instruction := taskInstructionText(title, item.Instruction)
+		plannerOverlay := taskPlannerOverlayText(item.SystemPrompt)
 		tasks = append(tasks, metaTaskState{
 			Step:           step,
 			Title:          title,
 			Description:    description,
-			Instruction:    strings.TrimSpace(title),
+			Instruction:    instruction,
 			PlannerOverlay: plannerOverlay,
 			Mode:           mode,
 			Status:         "pending",
@@ -230,27 +231,16 @@ func tasksFromTOML(goal, mode string, instructions llm.MetaInstructions) []metaT
 	return tasks
 }
 
-func taskInstructionText(title, description string) string {
-	description = strings.TrimSpace(description)
-	if description != "" {
-		return description
+func taskInstructionText(title, instruction string) string {
+	instruction = strings.TrimSpace(instruction)
+	if instruction != "" {
+		return instruction
 	}
 	return strings.TrimSpace(title)
 }
 
-func taskPlannerOverlayText(description, systemPrompt string) string {
-	description = strings.TrimSpace(description)
-	systemPrompt = strings.TrimSpace(systemPrompt)
-	switch {
-	case description == "":
-		return systemPrompt
-	case systemPrompt == "":
-		return description
-	case strings.EqualFold(description, systemPrompt):
-		return description
-	default:
-		return description + "\n\n" + systemPrompt
-	}
+func taskPlannerOverlayText(systemPrompt string) string {
+	return strings.TrimSpace(systemPrompt)
 }
 
 func defaultTasksForMode(goal, mode string) []metaTaskState {
@@ -647,8 +637,8 @@ func buildMetaStartSummary(goal string, task metaTaskState, prior []metaTaskStat
 		b.WriteString(guidance)
 		b.WriteString("\n")
 	}
-	if overlay := strings.TrimSpace(task.PlannerOverlay); overlay != "" && !strings.EqualFold(strings.TrimSpace(task.Description), overlay) {
-		b.WriteString("- Planner Overlay:\n")
+	if overlay := strings.TrimSpace(task.PlannerOverlay); overlay != "" {
+		b.WriteString("- Repo / Mode Guidance:\n")
 		b.WriteString(overlay)
 		b.WriteString("\n")
 	}

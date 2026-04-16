@@ -21,7 +21,7 @@ The agent now ships with a meta-orchestrator that supervises multi-step work. Wh
 - **What happens during a run:** the terminal prints `[meta]` updates as the orchestrator works through the plan. For every task it spawns a child session (e.g., "Review existing context", "Implement the Issue"), captures the transcript/final answers, and records progress to `.machtiani/sessions/<parent-session-id>/meta-plan.json`.
 - **Outputs:** the parent transcript gains a “Meta-Orchestrator Summary” turn, and every child session keeps its own transcript/final-answer under `.machtiani/sessions/<child-session-id>/`. The summary lists the tasks, their status, and where to find the detailed artifacts.
 - **Resume support:** progress is stored in `.machtiani/sessions/<parent-session-id>/meta-plan.json`, so resuming the parent session continues with the remaining tasks instead of replaying everything from scratch.
-- **Customize instructions** by editing the shipped mode files or pointing elsewhere with `--meta-instruction-dir <dir>`. You can also configure search paths in `[meta-orchestrator]` within `.machtiani/config.toml` (set `instruction_dir` or per-mode `instruction_file`). The agent looks in the override directory first, then the config entries, and finally falls back to repo-local custom instructions relative to the repo/config.
+- **Customize instructions** by editing the shipped mode files or pointing elsewhere with `--meta-instruction-dir <dir>`. Use `instruction` for task-local objectives, `description` for metadata/display text, and `system_prompt` for repo/mode planner guidance. You can also configure search paths in `[meta-orchestrator]` within `.machtiani/config.toml` (set `instruction_dir` or per-mode `instruction_file`). The agent looks in the override directory first, then the config entries, and finally falls back to repo-local custom instructions relative to the repo/config.
 - **Optional defaults:** when fewer than two tasks are defined for a mode, the orchestrator falls back to mode-specific defaults. Set different task files or bullet points if you want a custom workflow.
 
 ## Prerequisites
@@ -57,7 +57,7 @@ export OPENAI_MODEL=gpt-4o-mini
 ./scripts/install.sh && bash agent/tests/run-live.sh
 ```
 
-- Installs `mct-agent` on PATH and exercises Issue A/B/C scenarios plus error paths.
+- Installs `mct-agent` on PATH and exercises Issue A/B/C scenarios, a meta-mode `--mode code` regression, and error paths.
 - Writes `test-out-*` directories containing logs, transcripts, and artifacts in the repo root.
 - When `OPENAI_*` variables are unset the script injects stub credentials and forces `--dry-run`.
 

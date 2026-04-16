@@ -8,12 +8,12 @@ import (
 )
 
 func TestInstructionsToTasksFromTomlDocument(t *testing.T) {
-	doc := llm.MetaInstructions{
+		doc := llm.MetaInstructions{
 		Format: llm.MetaInstructionsFormatTOML,
 		Path:   "coding.toml",
 		Tasks: []llm.MetaInstructionTask{
-			{Step: 2, Title: "Second", Description: "Second desc", ShellAgent: boolPtr(true), PatchMode: boolPtr(true)},
-			{Step: 1, Title: "First", Description: "First desc", SystemPrompt: "Extra planner note", ShellAgent: boolPtr(false), PatchMode: boolPtr(false)},
+			{Step: 2, Title: "Second", Description: "Second desc", Instruction: "Run the second task", ShellAgent: boolPtr(true), PatchMode: boolPtr(true)},
+			{Step: 1, Title: "First", Description: "First desc", Instruction: "Review the first task", SystemPrompt: "Extra planner note", ShellAgent: boolPtr(false), PatchMode: boolPtr(false)},
 		},
 	}
 
@@ -30,14 +30,35 @@ func TestInstructionsToTasksFromTomlDocument(t *testing.T) {
 	if tasks[1].PatchMode == nil || !*tasks[1].PatchMode {
 		t.Fatalf("expected second task to enable patch mode")
 	}
-	if tasks[0].Instruction != "First" {
-		t.Fatalf("expected instruction to use title, got %q", tasks[0].Instruction)
+	if tasks[0].Description != "First desc" {
+		t.Fatalf("expected description metadata to be preserved, got %q", tasks[0].Description)
 	}
-	if tasks[0].PlannerOverlay != "First desc\n\nExtra planner note" {
+	if tasks[0].Instruction != "Review the first task" {
+		t.Fatalf("expected instruction to use explicit instruction field, got %q", tasks[0].Instruction)
+	}
+	if tasks[0].PlannerOverlay != "Extra planner note" {
 		t.Fatalf("unexpected planner overlay: %q", tasks[0].PlannerOverlay)
 	}
-	if tasks[1].PlannerOverlay != "Second desc" {
-		t.Fatalf("expected description-only planner overlay, got %q", tasks[1].PlannerOverlay)
+	if tasks[1].PlannerOverlay != "" {
+		t.Fatalf("expected description metadata to stay out of planner overlay, got %q", tasks[1].PlannerOverlay)
+	}
+}
+
+func TestInstructionsToTasksTomlFallsBackToTitleWhenInstructionMissing(t *testing.T) {
+	doc := llm.MetaInstructions{
+		Format: llm.MetaInstructionsFormatTOML,
+		Tasks: []llm.MetaInstructionTask{{Title: "Validate", Description: "Metadata only"}},
+	}
+
+	tasks := instructionsToTasks("goal", "coding", doc)
+	if len(tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d", len(tasks))
+	}
+	if tasks[0].Instruction != "Validate" {
+		t.Fatalf("expected title fallback for instruction, got %q", tasks[0].Instruction)
+	}
+	if tasks[0].PlannerOverlay != "" {
+		t.Fatalf("expected no planner overlay without system_prompt, got %q", tasks[0].PlannerOverlay)
 	}
 }
 

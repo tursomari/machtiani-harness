@@ -87,6 +87,6 @@ bash agent/internal/mct/tests/run-undici-readme-integration.sh
 - Inspect `agent/TESTING.md` and `tests/TESTING.md` for deep-dive scenarios, debugging scripts, and additional `jq` helpers.
 
 ## Related Documentation
-- `agent/TESTING.md` — detailed walkthrough of `agent/tests/run-live.sh` scenarios and telemetry.
+- `agent/TESTING.md` — detailed walkthrough of `agent/tests/run-live.sh` scenarios, including the meta-mode `--mode code` regression coverage and telemetry.
 - `tests/TESTING.md` — advanced options for the undici harness.
 - `README.md` — quick-start install and environment setup guidance.

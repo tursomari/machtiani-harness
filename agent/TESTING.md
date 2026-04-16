@@ -27,6 +27,7 @@ Targeted repros
 
 Scenarios covered
 - Issue A/B/C happy paths (1-turn and 3-turn max steps)
+- Meta-orchestrator `--mode code` regression coverage in both stub-backed and live-provider paths
 - Error: empty prompt
 - Error: missing config (only when live test/provider env vars are present)
 

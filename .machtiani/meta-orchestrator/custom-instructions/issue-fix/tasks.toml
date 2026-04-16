@@ -1,27 +1,27 @@
 [[tasks]]
 step = 1
 title = "Understand the issue"
-description = "Understand the issue in detail. Identify the root cause with references to relevant code paths."
+instruction = "Understand the issue in detail. Identify the root cause with references to relevant code paths."
 shell_agent = false
 patch_mode = false
 
 [[tasks]]
 step = 2
 title = "Implement fix"
-description = "Implement a targeted fix for the issue, adding tests where appropriate."
+instruction = "Implement a targeted fix for the issue, adding tests where appropriate."
 shell_agent = true
 patch_mode = true
 
 [[tasks]]
 step = 3
 title = "Run validations"
-description = "Run relevant tests/build commands and report results."
+instruction = "Run relevant tests/build commands and report results."
 shell_agent = false
 patch_mode = true
 
 [[tasks]]
 step = 4
 title = "Summarize changes"
-description = "Summarize the fix, risks, and follow-ups."
+instruction = "Summarize the fix, risks, and follow-ups."
 shell_agent = false
 patch_mode = false

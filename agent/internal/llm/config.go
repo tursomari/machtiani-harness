@@ -228,6 +228,7 @@ type MetaInstructionTask struct {
 	Step         int    `toml:"step"`
 	Title        string `toml:"title"`
 	Description  string `toml:"description"`
+	Instruction  string `toml:"instruction"`
 	SystemPrompt string `toml:"system_prompt"`
 	ShellAgent   *bool  `toml:"shell_agent"`
 	PatchMode    *bool  `toml:"patch_mode"`
@@ -1877,6 +1878,11 @@ func parseMetaInstructionTOML(data []byte, tomlFilePath string) ([]MetaInstructi
 			return nil, fmt.Errorf("resolve tasks[%d].description: %w", idx, err)
 		}
 		normalized.Description = description
+		instruction, err := resolveTaskTextField(baseDir, normalized.Instruction)
+		if err != nil {
+			return nil, fmt.Errorf("resolve tasks[%d].instruction: %w", idx, err)
+		}
+		normalized.Instruction = instruction
 		systemPrompt, err := resolveTaskTextField(baseDir, normalized.SystemPrompt)
 		if err != nil {
 			return nil, fmt.Errorf("resolve tasks[%d].system_prompt: %w", idx, err)

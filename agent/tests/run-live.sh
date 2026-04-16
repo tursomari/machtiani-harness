@@ -219,6 +219,7 @@ counts = {
     "mixed_monitor": 0,
     "preflight": 0,
     "other": 0,
+    "last_plan_content": "",
 }
 
 def write_state():
@@ -247,6 +248,7 @@ class Handler(BaseHTTPRequestHandler):
         reply = "Stub response."
         if "Decision menu (choose exactly one)" in content:
             counts["plan"] += 1
+            counts["last_plan_content"] = content
             reply = "Decision: ask"
         elif "You are generating the next Ask for mct." in content:
             counts["ask"] += 1
@@ -305,6 +307,41 @@ PY
     echo "ERROR: stub server failed to write port file" >&2
     return 1
   fi
+}
+
+assert_stub_plan_prompt_layers() {
+  local state_file="$1"
+  "$PYTHON_BIN" - "$state_file" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+
+try:
+    with open(path, "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+except Exception:
+    print("ERROR: failed to read stub state", file=sys.stderr)
+    sys.exit(1)
+
+content = str(data.get("last_plan_content") or "")
+system_prompt = content.split("Explain how the planner prompt layers are organized for code mode.", 1)[0]
+required = [
+    "Core Safety Rules",
+    "Planner Operating Rules",
+    "Repo / Mode Guidance",
+    "Goal Adherence",
+]
+
+missing = [item for item in required if item not in system_prompt]
+if missing:
+    print(f"ERROR: stub planner prompt missing sections: {missing}", file=sys.stderr)
+    sys.exit(1)
+
+if "Task-Specific Guidance" in system_prompt:
+    print("ERROR: stub planner prompt still uses deprecated Task-Specific Guidance heading", file=sys.stderr)
+    sys.exit(1)
+PY
 }
 
 stop_llm_stub_server() {
@@ -1043,6 +1080,7 @@ run_happy_case() {
   local recent_marker=""
   local marker_max_age=""
   local marker_max_age_seconds=0
+  local harness_input="${HARNESS_STDIN_INPUT:-}"
 
   cleanup_marker_root() {
     if [[ "$marker_checks" == true && -n "${session_temp_root:-}" && -d "$session_temp_root" ]]; then
@@ -1104,11 +1142,21 @@ run_happy_case() {
   pushd "$REPO_ROOT" >/dev/null
   set +e
   if [[ "$marker_checks" == true ]]; then
-    MACHTIANI_SESSION_TEMP_ROOT="$session_temp_root" \
-      MACHTIANI_SHELL_AGENT_MARKER_MAX_AGE="$marker_max_age" \
-      "${cmd[@]}" > "$stdout_file" 2> "$stderr_file"
+    if [[ -n "$harness_input" ]]; then
+      MACHTIANI_SESSION_TEMP_ROOT="$session_temp_root" \
+        MACHTIANI_SHELL_AGENT_MARKER_MAX_AGE="$marker_max_age" \
+        "${cmd[@]}" < <(printf '%b' "$harness_input") > "$stdout_file" 2> "$stderr_file"
+    else
+      MACHTIANI_SESSION_TEMP_ROOT="$session_temp_root" \
+        MACHTIANI_SHELL_AGENT_MARKER_MAX_AGE="$marker_max_age" \
+        "${cmd[@]}" > "$stdout_file" 2> "$stderr_file"
+    fi
   else
-    "${cmd[@]}" > "$stdout_file" 2> "$stderr_file"
+    if [[ -n "$harness_input" ]]; then
+      "${cmd[@]}" < <(printf '%b' "$harness_input") > "$stdout_file" 2> "$stderr_file"
+    else
+      "${cmd[@]}" > "$stdout_file" 2> "$stderr_file"
+    fi
   fi
   local rc=$?
   set -e
@@ -1285,6 +1333,63 @@ run_menu_flow_live_case() {
     'Identify the functions in `agent/internal/planner/planner.go` and `agent/internal/session/runner.go` that handle ask selection and ask execution, then summarize the control flow after an ask is chosen.' \
     "(?s)(?=.*\[mct:shell\])(?!.*No-shell:)(?!.*Shell:)" \
     1 \
+    --timeout-per-turn 600 \
+    "${DEFAULT_MODEL_ARGS[@]}"
+}
+
+run_meta_mode_prompt_layers_case() {
+  local case_id="meta-mode-prompt-layers"
+  local stub_dir="$TMP_ROOT/stub-${case_id}-$(date +%s)"
+  mkdir -p "$stub_dir"
+  local state_file="$stub_dir/state.json"
+  local port_file="$stub_dir/port.txt"
+  start_llm_stub_server "$state_file" "$port_file"
+  local stub_port
+  stub_port="$(cat "$port_file")"
+  local base_url="http://127.0.0.1:${stub_port}/v1"
+  local stub_alias="stub-model"
+  local stub_config
+  stub_config="$(generate_stub_config "$base_url" "$stub_alias")"
+
+  local rc=0
+  set +e
+  (
+    export MACHTIANI_CONFIG="$stub_config"
+    COMMON_AGENT_ARGS=()
+    HARNESS_STDIN_INPUT=$'c\n' run_happy_case "$case_id" 1 \
+      "Explain how the planner prompt layers are organized for code mode." \
+      "." \
+      1 \
+      --mode code \
+      --model "$stub_alias" \
+      --orch-model "$stub_alias" \
+      --patcher-model "$stub_alias" \
+      --file-discovery-model "$stub_alias"
+  )
+  rc=$?
+  set -e
+
+  stop_llm_stub_server
+  if [[ $rc -ne 0 ]]; then
+    return "$rc"
+  fi
+
+  assert_stub_plan_prompt_layers "$state_file"
+
+  if [[ "${KEEP_TEST_CONFIG:-}" != "true" ]]; then
+    rm -rf "$stub_dir"
+    rm -rf "$(dirname "$stub_config")"
+  fi
+}
+
+run_meta_mode_live_case() {
+  local case_id="meta-mode-code-live"
+
+  HARNESS_STDIN_INPUT=$'c\n' run_happy_case "$case_id" 2 \
+    'Using only `docs/mct-agent-runbook.md`, summarize the recommended `--mode code` workflow in this repository and name the most useful artifacts written under `.machtiani/sessions/<session-id>/`.' \
+    'meta-plan.json|agent-transcript.adoc|agent-final-answer.md' \
+    1 \
+    --mode code \
     --timeout-per-turn 600 \
     "${DEFAULT_MODEL_ARGS[@]}"
 }
@@ -1812,6 +1917,7 @@ else
   fi
   run_snippet_discovery_tightness_live_case
   run_menu_flow_live_case
+  run_meta_mode_live_case
   run_file_discovery_live_case
   run_show_live_case
   run_show_range_live_case
@@ -1823,6 +1929,8 @@ else
 fi
 
 # Per-component flag coverage.
+run_meta_mode_prompt_layers_case
+
 run_happy_case "models-per-component" 3 \
   "Outline how the orchestrator, patcher, and file discovery collaborators interact." \
   "$PER_COMPONENT_LABEL_PATTERN" \

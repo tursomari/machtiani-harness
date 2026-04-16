@@ -30,17 +30,21 @@ mct-agent run --mode code --model glm-5-high \
 ## Planner system prompt shape
 
 - For `--mode code`, the meta task definition lives in `.machtiani/meta-orchestrator/custom-instructions/code/tasks.toml`.
-- That file currently points `description` at `.machtiani/meta-orchestrator/custom-instructions/code/code.txt`.
-- The contents of `code.txt` are loaded as task-specific planner guidance and injected into the planner system template under `## Task-Specific Guidance`.
-- So the planner system prompt is not just `code.txt`; it is the base planner system template plus the full text of `code.txt`.
+- That file points `system_prompt` at `.machtiani/meta-orchestrator/custom-instructions/code/code.txt`.
+- The contents of `code.txt` are loaded as repo/mode planner guidance and injected into the planner system template under `## Repo / Mode Guidance`.
+- `description` is metadata only, and `instruction` is the task-local objective that flows through the planner user-message path.
+- So the planner system prompt is not just `code.txt`; it is the base planner system template plus the full text of `code.txt` in the third system layer.
 
 Mental model:
 
 ```text
-base planner system template
-+
-+ Task-Specific Guidance
-  + contents of code.txt
+System message
+= Layer 1: Core Safety Rules
++ Layer 2: Planner Operating Rules
++ Layer 3: Repo / Mode Guidance
+
+User message(s)
+= goal / task objective / latest step instruction
 ```
 
 Approximate rendered shape:
@@ -48,22 +52,27 @@ Approximate rendered shape:
 ```text
 You are the planner for mct, orchestrating repository understanding and modification.
 
-## Your Role
+## Core Safety Rules
 ...
 
-## Ask Guidelines
+## Planner Operating Rules
+
+### Your Role
 ...
 
-## Shell agent
+### Ask Guidelines
 ...
 
-## Context Handling
+### Shell agent
 ...
 
-## Output Format
+### Context Handling
 ...
 
-## Task-Specific Guidance
+### Output Format
+...
+
+## Repo / Mode Guidance
 
 ## Goal Adherence
 ...
@@ -84,8 +93,9 @@ You are the planner for mct, orchestrating repository understanding and modifica
 ...
 ```
 
-- If a task also sets `system_prompt` in `tasks.toml`, that text is appended to the same task-specific guidance block.
-- The task `title` still matters separately for session/task metadata; it is not itself the full system prompt.
+- `system_prompt` is the only task-config field that contributes repo/mode planner guidance.
+- `instruction` is the explicit task objective for the child-session user-message path.
+- `title` still matters for session/task labeling and remains the final fallback when no explicit `instruction` is authored.
 
 ## Session behavior
 

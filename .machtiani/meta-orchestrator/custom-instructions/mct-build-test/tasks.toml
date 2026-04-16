@@ -1,13 +1,13 @@
 [[tasks]]
 step = 1
 title = "Build"
-description = "Build the project with the safest available build commands." 
+instruction = "Build the project with the safest available build commands."
 shell_agent = false
 patch_mode = true
 
 [[tasks]]
 step = 2
 title = "Test"
-description = "Run the relevant test suites and report failures precisely." 
+instruction = "Run the relevant test suites and report failures precisely."
 shell_agent = false
 patch_mode = true
