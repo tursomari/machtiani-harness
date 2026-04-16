@@ -1415,6 +1415,43 @@ func TestFinalizePromptOmitsTranscript(t *testing.T) {
 	}
 }
 
+func TestBuildFinalizeMessagesPreservesCleanConversationOrdering(t *testing.T) {
+	client := NewClient(ClientConfig{})
+	conv := conversation.New("sess-clean-order", "Determine if you are running in a docker or local environment. Provide evidence for or against.")
+	conv.AddMessage("assistant", "## Determination: Running inside a Docker container.", map[string]any{"type": "final", "turns": 1, "capped": false})
+	conv.AddMessage("user", "List the last 3 commit messages in the project root and also the gitsubmodule `agent/internal/shell-agent/`.", map[string]any{"type": "goal_update"})
+	conv.AddMessage("assistant", "Run `git -C /repo log --oneline -3` for the project root, then `git -C /repo/agent/internal/shell-agent log --oneline -3` for the submodule.", map[string]any{"type": "ask", "turn": 2, "decision": "ask"})
+	conv.AddMessage("assistant", "## Answer\n- Confidence: 100% - Retrieved the last 3 commits for both repositories.", map[string]any{"type": "answer", "turn": 2})
+	conv.AddMessage("assistant", "Revised Goal: List the last 3 commit messages for the project root and the `agent/internal/shell-agent/` submodule.", map[string]any{"type": "final", "turns": 2, "capped": false})
+	conv.AddMessage("user", "list any untracked files or modified tracked files in project root and in git submoodule", map[string]any{"type": "goal_update"})
+	conv.AddMessage("assistant", "Run `git -C /workspace status --short` for the project root, then `git -C /workspace/agent/internal/shell-agent status --short` for the submodule.", map[string]any{"type": "ask", "turn": 3, "decision": "ask"})
+	conv.AddMessage("assistant", "## Answer\n- Confidence: 100% - Reported modified and untracked files for the project root and submodule.", map[string]any{"type": "answer", "turn": 3})
+
+	messages := client.buildFinalizeMessages(conv, "stale goal")
+	if len(messages) != 11 {
+		t.Fatalf("expected 11 messages, got %d", len(messages))
+	}
+
+	wantRoles := []string{"system", "user", "assistant", "user", "assistant", "assistant", "assistant", "user", "assistant", "assistant", "user"}
+	for i, want := range wantRoles {
+		if messages[i].Role != want {
+			t.Fatalf("message %d role = %q, want %q", i, messages[i].Role, want)
+		}
+	}
+
+	if got := messages[3].Content; strings.Contains(got, "Reevaluate the task in light of this guidance") || strings.Contains(got, `"""`) {
+		t.Fatalf("expected cleaned first goal update, got %q", got)
+	}
+	if got := messages[7].Content; strings.Contains(got, "Reevaluate the task in light of this guidance") || strings.Contains(got, `"""`) {
+		t.Fatalf("expected cleaned latest goal update, got %q", got)
+	}
+	if got := messages[10].Content; !strings.Contains(got, "Goal:\nlist any untracked files or modified tracked files in project root and in git submoodule") {
+		t.Fatalf("expected finalize prompt to target latest cleaned goal, got %q", got)
+	} else if strings.Contains(got, "Reevaluate the task in light of this guidance") || strings.Contains(got, "Begin by writing a single line starting with \"Revised Goal:\"") {
+		t.Fatalf("expected finalize prompt to omit ephemeral revised-goal instructions, got %q", got)
+	}
+}
+
 func contains(s, sub string) bool {
 	return len(sub) == 0 || index(s, sub) >= 0
 }

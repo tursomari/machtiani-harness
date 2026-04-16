@@ -1341,13 +1341,25 @@ func extractUserFeedback(prompt string) string {
 	if prompt == "" {
 		return ""
 	}
-	if idx := strings.LastIndex(prompt, "\n\n\"\"\"\n"); idx != -1 {
-		candidate := prompt[idx+len("\n\n\"\"\"\n"):]
+
+	extractGuidanceBlock := func(marker string) string {
+		idx := strings.LastIndex(prompt, marker)
+		if idx == -1 {
+			return ""
+		}
+		candidate := prompt[idx+len(marker):]
 		if end := strings.Index(candidate, "\n\"\"\""); end != -1 {
 			candidate = candidate[:end]
 		}
-		candidate = strings.TrimSpace(candidate)
-		if candidate != "" {
+		return strings.TrimSpace(candidate)
+	}
+
+	for _, marker := range []string{
+		"The user provided additional guidance:\n\"\"\"\n",
+		"The user provided additional guidance:\n\n\"\"\"\n",
+		"\n\n\"\"\"\n",
+	} {
+		if candidate := extractGuidanceBlock(marker); candidate != "" {
 			return candidate
 		}
 	}

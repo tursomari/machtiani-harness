@@ -62,6 +62,24 @@ func TestComposeRevisedGoalPromptIncludesInstruction(t *testing.T) {
 	}
 }
 
+func TestExtractUserFeedbackStripsRevisedGoalWrapper(t *testing.T) {
+	base := "***Diagnose***\n\nUpdate licensing across repository"
+	guidance := "Only modify ./LICENSE\n\nLeave package metadata untouched."
+	prompt := composeRevisedGoalPrompt(base, guidance)
+
+	if got := extractUserFeedback(prompt); got != guidance {
+		t.Fatalf("expected extracted guidance %q, got %q", guidance, got)
+	}
+}
+
+func TestExtractUserFeedbackLeavesPlainPromptUntouched(t *testing.T) {
+	prompt := "List any untracked files or modified tracked files in project root and in git submodule"
+
+	if got := extractUserFeedback(prompt); got != prompt {
+		t.Fatalf("expected plain prompt %q, got %q", prompt, got)
+	}
+}
+
 func TestComposeTaskPromptUsesTitleWhenDescriptionExists(t *testing.T) {
 	prompt := composeTaskPrompt("Fix the issue", metaTaskState{
 		Title:       "Create an issue for the engineering team",
