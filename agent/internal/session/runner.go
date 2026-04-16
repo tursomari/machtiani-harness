@@ -511,240 +511,52 @@ func runSession(ctx context.Context, opts Options) Result {
 		ctx = context.Background()
 	}
 	rootCtx := ctx
-
-	inputPrompt := strings.TrimSpace(opts.Goal)
-	if inputPrompt == "" {
-		fmt.Fprintln(os.Stderr, "Error: empty issue/question provided")
-		return Result{ExitCode: 2, Err: errors.New("empty goal")}
-	}
-	originalPrompt := opts.OriginalPrompt
-	if strings.TrimSpace(originalPrompt) == "" {
-		originalPrompt = opts.Goal
-	}
-	taskDescription := opts.TaskDescription
-	plannerOverlay := opts.PlannerOverlay
-	goal := inputPrompt
-
-	cfgInput := opts.Config
 	timerMgr := opts.ProcessTimerManager
-	sessionID := strings.TrimSpace(cfgInput.SessionID)
-	resumeMode := false
-	var loadedState *SessionState
-	resumePrompt := ""
-
-	if sessionID != "" {
-		state, err := LoadSessionState(sessionID)
-		if err != nil {
-			if errors.Is(err, ErrSessionStateNotFound) {
-				fmt.Fprintf(os.Stderr, "Error: no saved session found for %s.\n", sessionID)
-				return Result{ExitCode: 2, Err: err}
-			}
-			fmt.Fprintln(os.Stderr, "Error loading session state:", err)
-			return Result{ExitCode: 1, Err: err}
-		}
-		resumeMode = true
-		loadedState = state
-		resumePrompt = strings.TrimSpace(inputPrompt)
-		turnsCompletedFromState := state.TurnsCompleted
-
-		storedGoal := strings.TrimSpace(state.Goal)
-		if storedGoal != "" {
-			goal = storedGoal
-		}
-		storedOriginal := strings.TrimSpace(state.OriginalPrompt)
-		if storedOriginal != "" {
-			originalPrompt = state.OriginalPrompt
-		}
-		storedTask := strings.TrimSpace(state.TaskDescription)
-		if storedTask != "" {
-			taskDescription = state.TaskDescription
-		}
-		storedPlannerOverlay := strings.TrimSpace(state.PlannerOverlay)
-		if storedPlannerOverlay != "" {
-			plannerOverlay = state.PlannerOverlay
-		}
-		if goal == "" {
-			goal = resumePrompt
-		}
-		_ = turnsCompletedFromState
-		if strings.TrimSpace(cfgInput.TranscriptFile) == "" && strings.TrimSpace(state.TranscriptPath) != "" {
-			cfgInput.TranscriptFile = state.TranscriptPath
-		}
-		if strings.TrimSpace(cfgInput.Mode) == "" && len(state.MetaModes) > 0 {
-			cfgInput.Mode = strings.TrimSpace(state.MetaModes[0])
-		}
-		if strings.TrimSpace(cfgInput.MetaInstructionDir) == "" && strings.TrimSpace(state.MetaInstructionDir) != "" {
-			cfgInput.MetaInstructionDir = strings.TrimSpace(state.MetaInstructionDir)
-		}
-		if strings.TrimSpace(cfgInput.ParentSessionID) == "" && strings.TrimSpace(state.ParentSessionID) != "" {
-			cfgInput.ParentSessionID = strings.TrimSpace(state.ParentSessionID)
-		}
+	bootstrap, earlyResult, ok := prepareRunBootstrap(rootCtx, opts)
+	if !ok {
+		return earlyResult
 	}
-	if goal == "" {
-		goal = resumePrompt
-	}
-	if goal == "" {
-		fmt.Fprintln(os.Stderr, "Error: unable to determine session goal")
-		return Result{ExitCode: 1, Err: errors.New("missing session goal")}
-	}
-	if strings.TrimSpace(originalPrompt) == "" {
-		originalPrompt = goal
-	}
-	opts.OriginalPrompt = originalPrompt
-	opts.TaskDescription = taskDescription
-	opts.PlannerOverlay = plannerOverlay
-	conversationGoal := formatGoalText(originalPrompt, taskDescription)
-
-	if sessionID == "" {
-		sessionID = runner.GenerateSessionID()
-	}
-	_ = os.Setenv("MACHTIANI_SESSION_ID", sessionID)
-	conversationPath, convPathErr := artifacts.SessionConversationFile(sessionID)
-	if convPathErr != nil {
-		fmt.Fprintln(os.Stderr, "Error resolving conversation path:", convPathErr)
-		return Result{ExitCode: 1, Err: convPathErr}
-	}
-
-	cfgInput.SessionID = sessionID
-
-	cfg := newLegacyConfig(cfgInput)
-	opts.Config = cfgInput
-	applyTrajectoryEnvOverrides(&cfg)
-	if err := cleanupOrphanedTempDirs(cfg.verbose); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to cleanup orphaned temp dirs: %v\n", err)
-	}
-	metaInstructions := llm.MetaInstructions{}
-	metaInstructionPath := ""
-	if strings.TrimSpace(cfg.mode) != "" && strings.TrimSpace(cfg.parentSessionID) == "" {
-		doc, err := llm.LoadMetaInstructions(cfg.mode, cfg.metaInstructionDir, opts.GlobalConfig, opts.GlobalConfigPath)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "Error loading meta instructions:", err)
-			return Result{ExitCode: 1, Err: err}
-		}
-		metaInstructions = doc
-		metaInstructionPath = doc.Path
-	}
-
-	turnsCompleted := 0
-	if resumeMode && loadedState != nil && loadedState.TurnsCompleted > 0 {
-		turnsCompleted = loadedState.TurnsCompleted
-	}
-	var pendingPatchDraft *patchTranscriptDraft
-	plannerProgress := newPlannerProgressTracker(nil)
-	if loadedState != nil {
-		plannerProgress = newPlannerProgressTracker(loadedState.PlannerProgress)
-		if loadedState.PendingPatchTurn != nil {
-			pendingPatchDraft = &patchTranscriptDraft{
-				Step:        loadedState.PendingPatchTurn.Step,
-				Description: strings.TrimSpace(loadedState.PendingPatchTurn.Description),
-				Answer:      loadedState.PendingPatchTurn.Answer,
-			}
-		}
-	}
-	runState := &runLifecycleState{
-		rootCtx:             rootCtx,
-		cfg:                 cfg,
-		sessionID:           sessionID,
-		goal:                goal,
-		originalPrompt:      originalPrompt,
-		taskDescription:     taskDescription,
-		plannerOverlay:      plannerOverlay,
-		metaInstructionPath: metaInstructionPath,
-		plannerProgress:     plannerProgress,
-		pendingPatchDraft:   pendingPatchDraft,
-		sessionStatus:       "error",
-		turnsCompleted:      turnsCompleted,
-		userTurnCounter:     turnsCompleted,
-	}
+	opts = bootstrap.opts
+	cfg := bootstrap.cfg
+	sessionID := bootstrap.sessionID
+	goal := bootstrap.goal
+	resumePrompt := bootstrap.resumePrompt
+	originalPrompt := bootstrap.originalPrompt
+	taskDescription := bootstrap.taskDescription
+	plannerOverlay := bootstrap.plannerOverlay
+	conversationGoal := bootstrap.conversationGoal
+	conversationPath := bootstrap.conversationPath
+	resumeMode := bootstrap.resumeMode
+	loadedState := bootstrap.loadedState
+	metaInstructions := bootstrap.metaInstructions
+	metaInstructionPath := bootstrap.metaInstructionPath
+	runState := bootstrap.runState
+	plannerProgress := runState.plannerProgress
+	pendingPatchDraft := runState.pendingPatchDraft
+	turnsCompleted := runState.turnsCompleted
 	sessionStatus := runState.sessionStatus
 	var sessionErr error
 	interrupted := false
 	keepSessionState := false
 	var pendingState *SessionState
 	userTurnCounter := runState.userTurnCounter
-	origSessionTempRootRaw := os.Getenv("MACHTIANI_SESSION_TEMP_ROOT")
-	origSessionTempRoot := strings.TrimSpace(origSessionTempRootRaw)
-	origTmpRootRaw := os.Getenv("MACHTIANI_TMP_ROOT")
-	sessionTempRoot := origSessionTempRoot
-	if sessionTempRoot == "" {
-		var err error
-		sessionTempRoot, err = artifacts.SessionScratchDirectory(sessionID)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "Error resolving session scratch directory:", err)
-			return Result{ExitCode: 1, Err: err}
-		}
+	envBootstrap, err := prepareSessionEnvironment(sessionID, cfg)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Error preparing session environment:", err)
+		return Result{ExitCode: 1, Err: err}
 	}
-	globalConfig, _, _ := llm.LoadGlobalConfig()
-	tmpRoot := ""
-	if globalConfig.Environment != nil {
-		tmpRoot = strings.TrimSpace(globalConfig.Environment.TmpRoot)
-	}
-	if tmpRoot == "" {
-		tmpRoot = ".machtiani/tmp"
-	}
-	if abs, err := filepath.Abs(tmpRoot); err == nil {
-		tmpRoot = abs
-	}
-	workspaceRoot = filepath.Join(tmpRoot, "workspace-"+sessionID)
-	useSnapshotWorkspace := !isLocalSessionEnvironment(&globalConfig)
-	// NOTE: workspace snapshot initialization happens after we resolve `repoRoot`
-	// via `newTrajectoryWriter` (see below).
-	patchStrategy := ""
-	if globalConfig.Patcher != nil {
-		patchStrategy = strings.TrimSpace(globalConfig.Patcher.Strategy)
-	}
-	if patchStrategy == "" {
-		patchStrategy = "export-only"
-	}
-	if err := os.Setenv("MACHTIANI_PATCH_STRATEGY", patchStrategy); err != nil {
-		fmt.Fprintln(os.Stderr, "Warning: unable to export patch strategy:", err)
-	}
-	if useSnapshotWorkspace {
-		if err := os.Setenv("MACHTIANI_TMP_ROOT", workspaceRoot); err != nil {
-			fmt.Fprintln(os.Stderr, "Warning: unable to export tmp root:", err)
-		}
-	} else if err := os.Unsetenv("MACHTIANI_TMP_ROOT"); err != nil {
-		fmt.Fprintln(os.Stderr, "Warning: unable to clear tmp root:", err)
-	}
-	if err := os.Setenv("MACHTIANI_SESSION_TEMP_ROOT", sessionTempRoot); err != nil {
-		fmt.Fprintln(os.Stderr, "Warning: unable to export session temp root:", err)
-	}
-	markerMaxAge, markerMaxAgeErr := shellAgentMarkerMaxAge()
-	if markerMaxAgeErr != nil {
-		fmt.Fprintf(os.Stderr, "Warning: %v; using default %s\n", markerMaxAgeErr, defaultShellAgentMarkerMaxAge)
-	}
-	if err := cleanupStaleShellAgentMarkers(sessionTempRoot, markerMaxAge, cfg.verbose); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to cleanup shell-agent markers: %v\n", err)
-	}
+	sessionTempRoot := envBootstrap.sessionTempRoot
+	workspaceRoot = envBootstrap.workspaceRoot
+	useSnapshotWorkspace := envBootstrap.useSnapshotWorkspace
 	var sessLock *sessionLock
-	cleanupSessionRoot := origSessionTempRoot == ""
 	defer func() {
 		if sessLock != nil {
 			if err := sessLock.Close(); err != nil {
 				fmt.Fprintf(os.Stderr, "[session-lock] warning: failed to release lock: %v\n", err)
 			}
 		}
-		if strings.TrimSpace(workspaceRoot) != "" && !cfg.persistTmpData {
-			if err := os.RemoveAll(workspaceRoot); err != nil && cfg.verbose {
-				fmt.Fprintf(os.Stderr, "Warning: failed to cleanup workspace root %s: %v\n", workspaceRoot, err)
-			}
-		}
-		if cleanupSessionRoot && !cfg.persistTmpData {
-			if err := os.RemoveAll(sessionTempRoot); err != nil && cfg.verbose {
-				fmt.Fprintf(os.Stderr, "Warning: failed to cleanup session temp root %s: %v\n", sessionTempRoot, err)
-			}
-		}
-		tempdir.ClearSessionRoot()
-		if strings.TrimSpace(origTmpRootRaw) == "" {
-			_ = os.Unsetenv("MACHTIANI_TMP_ROOT")
-		} else {
-			_ = os.Setenv("MACHTIANI_TMP_ROOT", origTmpRootRaw)
-		}
-		_ = os.Unsetenv("MACHTIANI_PATCH_STRATEGY")
-		if strings.TrimSpace(origSessionTempRootRaw) == "" {
-			_ = os.Unsetenv("MACHTIANI_SESSION_TEMP_ROOT")
-		} else {
-			_ = os.Setenv("MACHTIANI_SESSION_TEMP_ROOT", origSessionTempRootRaw)
+		if envBootstrap.restore != nil {
+			envBootstrap.restore()
 		}
 	}()
 	lock, lockErr := acquireSessionLock(sessionID, sessionTempRoot)
@@ -864,36 +676,18 @@ func runSession(ctx context.Context, opts Options) Result {
 		}
 	}()
 
-	var tr *transcript.Transcript
-	resumeTranscript := ""
-	if resumeMode && loadedState != nil {
-		resumeTranscript = loadedState.Transcript
-		if strings.TrimSpace(resumeTranscript) == "" && strings.TrimSpace(loadedState.TranscriptPath) != "" {
-			if data, readErr := os.ReadFile(loadedState.TranscriptPath); readErr == nil {
-				resumeTranscript = string(data)
-			} else if cfg.verbose {
-				fmt.Fprintf(os.Stderr, "Warning: failed to read transcript for resume (%s): %v\n", loadedState.TranscriptPath, readErr)
-			}
-		}
-	}
 	var notePrompts *llm.MCTPromptsConfig
 	if opts.GlobalConfig.Prompts != nil {
 		notePrompts = opts.GlobalConfig.Prompts.MCT
 	}
-	runState.notePrompts = notePrompts
-
-	tr, err := transcript.NewWithPath(cfg.transcriptFile, sessionID)
+	transcriptSetup, err := prepareTranscriptBootstrap(cfg, sessionID, conversationGoal, conversationPath, resumeMode, loadedState, trajectoryWriter, repoRoot, notePrompts, runState)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Error preparing transcript:", err)
 		return Result{ExitCode: 1, Err: err}
 	}
+	tr := transcriptSetup.transcript
 	defer tr.Close()
-	tr.SetTrajectory(trajectoryWriter)
-	runState.tr = tr
-	runState.repoRoot = repoRoot
-	runState.trajectoryWriter = trajectoryWriter
-	recorder := newConversationRecorder(tr, sessionID, conversationGoal, conversationPath, resumeMode, loadedState)
-	runState.recorder = recorder
+	recorder := transcriptSetup.recorder
 	syncRunState := func() {
 		runState.sessionStatus = sessionStatus
 		runState.sessionErr = sessionErr
@@ -918,29 +712,9 @@ func runSession(ctx context.Context, opts Options) Result {
 		syncRunState()
 		runState.persistSessionState()
 	}()
-
-	if strings.TrimSpace(resumeTranscript) != "" {
-		if err := tr.Restore(resumeTranscript); err != nil {
-			fmt.Fprintln(os.Stderr, "Error restoring transcript:", err)
-			return Result{ExitCode: 1, Err: err}
-		}
-	}
-
-	if err := recorder.Load(); err != nil {
-		fmt.Fprintln(os.Stderr, "Error loading conversation:", err)
-		return Result{ExitCode: 1, Err: err}
-	}
-	if err := restoreTranscriptFromConversation(tr, recorder.Rendered(), resumeMode); err != nil {
-		fmt.Fprintln(os.Stderr, "Error restoring transcript from conversation:", err)
-		return Result{ExitCode: 1, Err: err}
-	}
-	if err := recorder.Save(); err != nil {
-		fmt.Fprintln(os.Stderr, "Error saving conversation:", err)
-		return Result{ExitCode: 1, Err: err}
-	}
-	writeTurn := recorder.WriteTurn
-	appendConversationRaw := recorder.AppendRaw
-	conv := recorder.Conversation()
+	writeTurn := transcriptSetup.writeTurn
+	appendConversationRaw := transcriptSetup.appendConversationRaw
+	conv := transcriptSetup.conversation
 	interruptedResult := func(err error) Result {
 		syncRunState()
 		result := runState.interruptedResult(err)

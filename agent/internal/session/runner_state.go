@@ -11,11 +11,366 @@ import (
 
 	"github.com/tursomari/machtiani/agent/internal/conversation"
 	"github.com/tursomari/machtiani/agent/internal/llm"
+	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
 	patchersvc "github.com/tursomari/machtiani/agent/internal/patcher"
+	"github.com/tursomari/machtiani/agent/internal/runner"
 	"github.com/tursomari/machtiani/agent/internal/session/fulldiff"
+	"github.com/tursomari/machtiani/agent/internal/tempdir"
 	"github.com/tursomari/machtiani/agent/internal/trajectory"
 	"github.com/tursomari/machtiani/agent/internal/transcript"
 )
+
+type runBootstrap struct {
+	opts                Options
+	cfg                 legacyConfig
+	sessionID           string
+	goal                string
+	resumePrompt        string
+	originalPrompt      string
+	taskDescription     string
+	plannerOverlay      string
+	conversationGoal    string
+	conversationPath    string
+	resumeMode          bool
+	loadedState         *SessionState
+	metaInstructions    llm.MetaInstructions
+	metaInstructionPath string
+	runState            *runLifecycleState
+}
+
+type sessionEnvironmentBootstrap struct {
+	sessionTempRoot      string
+	workspaceRoot        string
+	useSnapshotWorkspace bool
+	restore              func()
+}
+
+type transcriptBootstrap struct {
+	transcript            *transcript.Transcript
+	recorder              *conversationRecorder
+	conversation          *conversation.Conversation
+	writeTurn             transcriptTurnWriter
+	appendConversationRaw func(role, content, metaType string) error
+}
+
+func prepareRunBootstrap(rootCtx context.Context, opts Options) (*runBootstrap, Result, bool) {
+	inputPrompt := strings.TrimSpace(opts.Goal)
+	if inputPrompt == "" {
+		fmt.Fprintln(os.Stderr, "Error: empty issue/question provided")
+		return nil, Result{ExitCode: 2, Err: errors.New("empty goal")}, false
+	}
+
+	originalPrompt := opts.OriginalPrompt
+	if strings.TrimSpace(originalPrompt) == "" {
+		originalPrompt = opts.Goal
+	}
+	taskDescription := opts.TaskDescription
+	plannerOverlay := opts.PlannerOverlay
+	goal := inputPrompt
+
+	cfgInput := opts.Config
+	sessionID := strings.TrimSpace(cfgInput.SessionID)
+	resumeMode := false
+	var loadedState *SessionState
+	resumePrompt := ""
+
+	if sessionID != "" {
+		state, err := LoadSessionState(sessionID)
+		if err != nil {
+			if errors.Is(err, ErrSessionStateNotFound) {
+				fmt.Fprintf(os.Stderr, "Error: no saved session found for %s.\n", sessionID)
+				return nil, Result{ExitCode: 2, Err: err}, false
+			}
+			fmt.Fprintln(os.Stderr, "Error loading session state:", err)
+			return nil, Result{ExitCode: 1, Err: err}, false
+		}
+		resumeMode = true
+		loadedState = state
+		resumePrompt = strings.TrimSpace(inputPrompt)
+
+		if storedGoal := strings.TrimSpace(state.Goal); storedGoal != "" {
+			goal = storedGoal
+		}
+		if storedOriginal := strings.TrimSpace(state.OriginalPrompt); storedOriginal != "" {
+			originalPrompt = state.OriginalPrompt
+		}
+		if storedTask := strings.TrimSpace(state.TaskDescription); storedTask != "" {
+			taskDescription = state.TaskDescription
+		}
+		if storedPlannerOverlay := strings.TrimSpace(state.PlannerOverlay); storedPlannerOverlay != "" {
+			plannerOverlay = state.PlannerOverlay
+		}
+		if goal == "" {
+			goal = resumePrompt
+		}
+		if strings.TrimSpace(cfgInput.TranscriptFile) == "" && strings.TrimSpace(state.TranscriptPath) != "" {
+			cfgInput.TranscriptFile = state.TranscriptPath
+		}
+		if strings.TrimSpace(cfgInput.Mode) == "" && len(state.MetaModes) > 0 {
+			cfgInput.Mode = strings.TrimSpace(state.MetaModes[0])
+		}
+		if strings.TrimSpace(cfgInput.MetaInstructionDir) == "" && strings.TrimSpace(state.MetaInstructionDir) != "" {
+			cfgInput.MetaInstructionDir = strings.TrimSpace(state.MetaInstructionDir)
+		}
+		if strings.TrimSpace(cfgInput.ParentSessionID) == "" && strings.TrimSpace(state.ParentSessionID) != "" {
+			cfgInput.ParentSessionID = strings.TrimSpace(state.ParentSessionID)
+		}
+	}
+
+	if goal == "" {
+		goal = resumePrompt
+	}
+	if goal == "" {
+		fmt.Fprintln(os.Stderr, "Error: unable to determine session goal")
+		return nil, Result{ExitCode: 1, Err: errors.New("missing session goal")}, false
+	}
+	if strings.TrimSpace(originalPrompt) == "" {
+		originalPrompt = goal
+	}
+
+	opts.OriginalPrompt = originalPrompt
+	opts.TaskDescription = taskDescription
+	opts.PlannerOverlay = plannerOverlay
+	conversationGoal := formatGoalText(originalPrompt, taskDescription)
+
+	if sessionID == "" {
+		sessionID = runner.GenerateSessionID()
+	}
+	_ = os.Setenv("MACHTIANI_SESSION_ID", sessionID)
+
+	conversationPath, err := artifacts.SessionConversationFile(sessionID)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Error resolving conversation path:", err)
+		return nil, Result{ExitCode: 1, Err: err}, false
+	}
+
+	cfgInput.SessionID = sessionID
+	cfg := newLegacyConfig(cfgInput)
+	opts.Config = cfgInput
+	applyTrajectoryEnvOverrides(&cfg)
+	if err := cleanupOrphanedTempDirs(cfg.verbose); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to cleanup orphaned temp dirs: %v\n", err)
+	}
+
+	metaInstructions := llm.MetaInstructions{}
+	metaInstructionPath := ""
+	if strings.TrimSpace(cfg.mode) != "" && strings.TrimSpace(cfg.parentSessionID) == "" {
+		doc, err := llm.LoadMetaInstructions(cfg.mode, cfg.metaInstructionDir, opts.GlobalConfig, opts.GlobalConfigPath)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Error loading meta instructions:", err)
+			return nil, Result{ExitCode: 1, Err: err}, false
+		}
+		metaInstructions = doc
+		metaInstructionPath = doc.Path
+	}
+
+	runState := newRunLifecycleState(rootCtx, cfg, sessionID, goal, originalPrompt, taskDescription, plannerOverlay, metaInstructionPath, loadedState)
+
+	return &runBootstrap{
+		opts:                opts,
+		cfg:                 cfg,
+		sessionID:           sessionID,
+		goal:                goal,
+		resumePrompt:        resumePrompt,
+		originalPrompt:      originalPrompt,
+		taskDescription:     taskDescription,
+		plannerOverlay:      plannerOverlay,
+		conversationGoal:    conversationGoal,
+		conversationPath:    conversationPath,
+		resumeMode:          resumeMode,
+		loadedState:         loadedState,
+		metaInstructions:    metaInstructions,
+		metaInstructionPath: metaInstructionPath,
+		runState:            runState,
+	}, Result{}, true
+}
+
+func prepareSessionEnvironment(sessionID string, cfg legacyConfig) (*sessionEnvironmentBootstrap, error) {
+	origSessionTempRootRaw := os.Getenv("MACHTIANI_SESSION_TEMP_ROOT")
+	origSessionTempRoot := strings.TrimSpace(origSessionTempRootRaw)
+	origTmpRootRaw := os.Getenv("MACHTIANI_TMP_ROOT")
+
+	sessionTempRoot := origSessionTempRoot
+	if sessionTempRoot == "" {
+		var err error
+		sessionTempRoot, err = artifacts.SessionScratchDirectory(sessionID)
+		if err != nil {
+			return nil, fmt.Errorf("resolve session scratch directory: %w", err)
+		}
+	}
+
+	globalConfig, _, _ := llm.LoadGlobalConfig()
+	tmpRoot := ""
+	if globalConfig.Environment != nil {
+		tmpRoot = strings.TrimSpace(globalConfig.Environment.TmpRoot)
+	}
+	if tmpRoot == "" {
+		tmpRoot = ".machtiani/tmp"
+	}
+	if abs, err := filepath.Abs(tmpRoot); err == nil {
+		tmpRoot = abs
+	}
+	workspaceRoot := filepath.Join(tmpRoot, "workspace-"+sessionID)
+	useSnapshotWorkspace := !isLocalSessionEnvironment(&globalConfig)
+
+	patchStrategy := ""
+	if globalConfig.Patcher != nil {
+		patchStrategy = strings.TrimSpace(globalConfig.Patcher.Strategy)
+	}
+	if patchStrategy == "" {
+		patchStrategy = "export-only"
+	}
+	if err := os.Setenv("MACHTIANI_PATCH_STRATEGY", patchStrategy); err != nil {
+		fmt.Fprintln(os.Stderr, "Warning: unable to export patch strategy:", err)
+	}
+	if useSnapshotWorkspace {
+		if err := os.Setenv("MACHTIANI_TMP_ROOT", workspaceRoot); err != nil {
+			fmt.Fprintln(os.Stderr, "Warning: unable to export tmp root:", err)
+		}
+	} else if err := os.Unsetenv("MACHTIANI_TMP_ROOT"); err != nil {
+		fmt.Fprintln(os.Stderr, "Warning: unable to clear tmp root:", err)
+	}
+	if err := os.Setenv("MACHTIANI_SESSION_TEMP_ROOT", sessionTempRoot); err != nil {
+		fmt.Fprintln(os.Stderr, "Warning: unable to export session temp root:", err)
+	}
+
+	markerMaxAge, markerMaxAgeErr := shellAgentMarkerMaxAge()
+	if markerMaxAgeErr != nil {
+		fmt.Fprintf(os.Stderr, "Warning: %v; using default %s\n", markerMaxAgeErr, defaultShellAgentMarkerMaxAge)
+	}
+	if err := cleanupStaleShellAgentMarkers(sessionTempRoot, markerMaxAge, cfg.verbose); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to cleanup shell-agent markers: %v\n", err)
+	}
+
+	cleanupSessionRoot := origSessionTempRoot == ""
+	restore := func() {
+		if strings.TrimSpace(workspaceRoot) != "" && !cfg.persistTmpData {
+			if err := os.RemoveAll(workspaceRoot); err != nil && cfg.verbose {
+				fmt.Fprintf(os.Stderr, "Warning: failed to cleanup workspace root %s: %v\n", workspaceRoot, err)
+			}
+		}
+		if cleanupSessionRoot && !cfg.persistTmpData {
+			if err := os.RemoveAll(sessionTempRoot); err != nil && cfg.verbose {
+				fmt.Fprintf(os.Stderr, "Warning: failed to cleanup session temp root %s: %v\n", sessionTempRoot, err)
+			}
+		}
+		tempdir.ClearSessionRoot()
+		if strings.TrimSpace(origTmpRootRaw) == "" {
+			_ = os.Unsetenv("MACHTIANI_TMP_ROOT")
+		} else {
+			_ = os.Setenv("MACHTIANI_TMP_ROOT", origTmpRootRaw)
+		}
+		_ = os.Unsetenv("MACHTIANI_PATCH_STRATEGY")
+		if strings.TrimSpace(origSessionTempRootRaw) == "" {
+			_ = os.Unsetenv("MACHTIANI_SESSION_TEMP_ROOT")
+		} else {
+			_ = os.Setenv("MACHTIANI_SESSION_TEMP_ROOT", origSessionTempRootRaw)
+		}
+	}
+
+	return &sessionEnvironmentBootstrap{
+		sessionTempRoot:      sessionTempRoot,
+		workspaceRoot:        workspaceRoot,
+		useSnapshotWorkspace: useSnapshotWorkspace,
+		restore:              restore,
+	}, nil
+}
+
+func prepareTranscriptBootstrap(cfg legacyConfig, sessionID, conversationGoal, conversationPath string, resumeMode bool, loadedState *SessionState, trajectoryWriter *trajectory.Writer, repoRoot string, notePrompts *llm.MCTPromptsConfig, runState *runLifecycleState) (*transcriptBootstrap, error) {
+	resumeTranscript := loadResumeTranscript(cfg, loadedState, resumeMode)
+	runState.notePrompts = notePrompts
+
+	tr, err := transcript.NewWithPath(cfg.transcriptFile, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	tr.SetTrajectory(trajectoryWriter)
+	runState.tr = tr
+	runState.repoRoot = repoRoot
+	runState.trajectoryWriter = trajectoryWriter
+
+	recorder := newConversationRecorder(tr, sessionID, conversationGoal, conversationPath, resumeMode, loadedState)
+	runState.recorder = recorder
+
+	if strings.TrimSpace(resumeTranscript) != "" {
+		if err := tr.Restore(resumeTranscript); err != nil {
+			_ = tr.Close()
+			return nil, err
+		}
+	}
+	if err := recorder.Load(); err != nil {
+		_ = tr.Close()
+		return nil, err
+	}
+	if err := restoreTranscriptFromConversation(tr, recorder.Rendered(), resumeMode); err != nil {
+		_ = tr.Close()
+		return nil, err
+	}
+	if err := recorder.Save(); err != nil {
+		_ = tr.Close()
+		return nil, err
+	}
+
+	return &transcriptBootstrap{
+		transcript:            tr,
+		recorder:              recorder,
+		conversation:          recorder.Conversation(),
+		writeTurn:             recorder.WriteTurn,
+		appendConversationRaw: recorder.AppendRaw,
+	}, nil
+}
+
+func loadResumeTranscript(cfg legacyConfig, loadedState *SessionState, resumeMode bool) string {
+	if !resumeMode || loadedState == nil {
+		return ""
+	}
+	resumeTranscript := loadedState.Transcript
+	if strings.TrimSpace(resumeTranscript) == "" && strings.TrimSpace(loadedState.TranscriptPath) != "" {
+		if data, err := os.ReadFile(loadedState.TranscriptPath); err == nil {
+			resumeTranscript = string(data)
+		} else if cfg.verbose {
+			fmt.Fprintf(os.Stderr, "Warning: failed to read transcript for resume (%s): %v\n", loadedState.TranscriptPath, err)
+		}
+	}
+	return resumeTranscript
+}
+
+func newRunLifecycleState(rootCtx context.Context, cfg legacyConfig, sessionID, goal, originalPrompt, taskDescription, plannerOverlay, metaInstructionPath string, loadedState *SessionState) *runLifecycleState {
+	turnsCompleted := 0
+	if loadedState != nil && loadedState.TurnsCompleted > 0 {
+		turnsCompleted = loadedState.TurnsCompleted
+	}
+	plannerProgress := newPlannerProgressTracker(nil)
+	if loadedState != nil {
+		plannerProgress = newPlannerProgressTracker(loadedState.PlannerProgress)
+	}
+	return &runLifecycleState{
+		rootCtx:             rootCtx,
+		cfg:                 cfg,
+		sessionID:           sessionID,
+		goal:                goal,
+		originalPrompt:      originalPrompt,
+		taskDescription:     taskDescription,
+		plannerOverlay:      plannerOverlay,
+		metaInstructionPath: metaInstructionPath,
+		plannerProgress:     plannerProgress,
+		pendingPatchDraft:   pendingPatchDraftFromState(loadedState),
+		sessionStatus:       "error",
+		turnsCompleted:      turnsCompleted,
+		userTurnCounter:     turnsCompleted,
+	}
+}
+
+func pendingPatchDraftFromState(loadedState *SessionState) *patchTranscriptDraft {
+	if loadedState == nil || loadedState.PendingPatchTurn == nil {
+		return nil
+	}
+	return &patchTranscriptDraft{
+		Step:        loadedState.PendingPatchTurn.Step,
+		Description: strings.TrimSpace(loadedState.PendingPatchTurn.Description),
+		Answer:      loadedState.PendingPatchTurn.Answer,
+	}
+}
 
 type conversationRecorder struct {
 	tr                   *transcript.Transcript
