@@ -1,4 +1,4 @@
-Write the final answer to the original goal using the conversation above as the source of truth.
+Write the final answer to the current goal using the conversation above as the source of truth.
 
 {{- if .HasGoal }}
 Goal:

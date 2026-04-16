@@ -80,6 +80,18 @@ func TestExtractUserFeedbackLeavesPlainPromptUntouched(t *testing.T) {
 	}
 }
 
+func TestExtractUserFeedbackStripsExactSessionWrapper(t *testing.T) {
+	raw := `list any untracked files or modified tracked files in project root and in git submoodule
+"""
+
+Reevaluate the task in light of this guidance. Begin by writing a single line starting with "Revised Goal:" that captures the updated objective, then continue execution anchored on that revised goal.`
+	want := "list any untracked files or modified tracked files in project root and in git submoodule"
+
+	if got := extractUserFeedback(raw); got != want {
+		t.Fatalf("expected extracted guidance %q, got %q", want, got)
+	}
+}
+
 func TestComposeTaskPromptUsesTitleWhenDescriptionExists(t *testing.T) {
 	prompt := composeTaskPrompt("Fix the issue", metaTaskState{
 		Title:       "Create an issue for the engineering team",

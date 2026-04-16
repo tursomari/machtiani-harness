@@ -1659,7 +1659,7 @@ func (c *Client) finalizePrompt(goal string, transcript string) string {
 func (c *Client) finalizePromptFallback(goal string, transcript string) string {
 	_ = transcript
 	var b strings.Builder
-	b.WriteString("Write the final answer to the original goal using the conversation above as the source of truth.\n\n")
+	b.WriteString("Write the final answer to the current goal using the conversation above as the source of truth.\n\n")
 	if strings.TrimSpace(goal) != "" {
 		b.WriteString("Goal:\n")
 		b.WriteString(goal + "\n\n")

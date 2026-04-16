@@ -1372,6 +1372,12 @@ func extractUserFeedback(prompt string) string {
 			return candidate
 		}
 	}
+	if end := strings.Index(prompt, "\n\"\"\"\n\nReevaluate the task in light of this guidance."); end != -1 {
+		candidate := strings.TrimSpace(prompt[:end])
+		if candidate != "" {
+			return candidate
+		}
+	}
 	return prompt
 }
 
