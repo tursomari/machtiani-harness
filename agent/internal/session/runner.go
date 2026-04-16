@@ -532,14 +532,6 @@ func runSession(ctx context.Context, opts Options) Result {
 	metaInstructionPath := bootstrap.metaInstructionPath
 	runState := bootstrap.runState
 	plannerProgress := runState.plannerProgress
-	pendingPatchDraft := runState.pendingPatchDraft
-	turnsCompleted := runState.turnsCompleted
-	sessionStatus := runState.sessionStatus
-	var sessionErr error
-	interrupted := false
-	keepSessionState := false
-	var pendingState *SessionState
-	userTurnCounter := runState.userTurnCounter
 	envBootstrap, err := prepareSessionEnvironment(sessionID, cfg)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Error preparing session environment:", err)
@@ -688,46 +680,15 @@ func runSession(ctx context.Context, opts Options) Result {
 	tr := transcriptSetup.transcript
 	defer tr.Close()
 	recorder := transcriptSetup.recorder
-	syncRunState := func() {
-		runState.sessionStatus = sessionStatus
-		runState.sessionErr = sessionErr
-		runState.turnsCompleted = turnsCompleted
-		runState.userTurnCounter = userTurnCounter
-		runState.interrupted = interrupted
-		runState.keepSessionState = keepSessionState
-		runState.pendingState = pendingState
-		runState.pendingPatchDraft = pendingPatchDraft
-	}
-	syncFromRunState := func() {
-		sessionStatus = runState.sessionStatus
-		sessionErr = runState.sessionErr
-		turnsCompleted = runState.turnsCompleted
-		userTurnCounter = runState.userTurnCounter
-		interrupted = runState.interrupted
-		keepSessionState = runState.keepSessionState
-		pendingState = runState.pendingState
-		pendingPatchDraft = runState.pendingPatchDraft
-	}
 	defer func() {
-		syncRunState()
 		runState.persistSessionState()
 	}()
 	writeTurn := transcriptSetup.writeTurn
 	appendConversationRaw := transcriptSetup.appendConversationRaw
 	conv := transcriptSetup.conversation
-	interruptedResult := func(err error) Result {
-		syncRunState()
-		result := runState.interruptedResult(err)
-		syncFromRunState()
-		return result
-	}
+	interruptedResult := runState.interruptedResult
 	isContextCancelled := runState.isContextCancelled
-	writePendingPatchTranscript := func(status string, decision string, note string, undo bool) error {
-		syncRunState()
-		err := runState.writePendingPatchTranscript(status, decision, note, undo)
-		syncFromRunState()
-		return err
-	}
+	writePendingPatchTranscript := runState.writePendingPatchTranscript
 
 	if cfg.verbose {
 		fmt.Fprintln(os.Stderr, "mct-agent starting; transcript:", tr.Path())
@@ -870,7 +831,7 @@ func runSession(ctx context.Context, opts Options) Result {
 
 	if err := writeInitialBackgroundIfNeeded(tr, repoRoot, cfg, isChildSession, startingTranscript, writeTurn); err != nil {
 		fmt.Fprintln(os.Stderr, "Transcript write error:", err)
-		sessionErr = err
+		runState.sessionErr = err
 		return Result{ExitCode: 1, Err: err}
 	}
 
@@ -1103,9 +1064,9 @@ func runSession(ctx context.Context, opts Options) Result {
 			}
 			if errors.Is(planCtxErr, context.DeadlineExceeded) {
 				fmt.Fprintf(os.Stderr, "Planner error: timed out after %ds. Increase --timeout-per-turn or set 0 for unlimited.\n", cfg.timeoutPerTurn)
-				sessionErr = perr
+				runState.sessionErr = perr
 				finishTurn(sessTelemetry, turn, "planner", "error", turnInfo, perr)
-				turnsCompleted = userTurnCounter
+				runState.turnsCompleted = runState.userTurnCounter
 				return Result{ExitCode: 1, Err: perr}
 			}
 			perrStr := strings.ToLower(perr.Error())
@@ -1139,29 +1100,27 @@ func runSession(ctx context.Context, opts Options) Result {
 					} else {
 						fmt.Fprintln(os.Stderr, "Finalizer error:", ferr)
 					}
-					sessionErr = ferr
+					runState.sessionErr = ferr
 					finishTurn(sessTelemetry, turn, "finalize", "error", turnInfo, ferr)
-					turnsCompleted = userTurnCounter
+					runState.turnsCompleted = runState.userTurnCounter
 					return Result{ExitCode: 1, Err: ferr}
 				}
-				if err := runState.completeSession(display, answer, step, userTurnCounter, true); err != nil {
-					syncFromRunState()
+				if err := runState.completeSession(display, answer, step, runState.userTurnCounter, true); err != nil {
 					fmt.Fprintln(os.Stderr, "Final file write error:", err)
 					finishTurn(sessTelemetry, turn, "finalize", "error", turnInfo, err)
-					turnsCompleted = userTurnCounter
+					runState.turnsCompleted = runState.userTurnCounter
 					return Result{ExitCode: 1, Err: err}
 				}
-				syncFromRunState()
 				sessionClosed = true
 				turnDecision = "finalize"
 				turnInfo["finalized"] = true
 				finishTurn(sessTelemetry, turn, turnDecision, "success", turnInfo, nil)
-				return Result{ExitCode: 0, Status: sessionStatus, Turns: userTurnCounter, SessionID: sessionID}
+				return Result{ExitCode: 0, Status: runState.sessionStatus, Turns: runState.userTurnCounter, SessionID: sessionID}
 			}
 			fmt.Fprintln(os.Stderr, "Planner error:", perr)
-			sessionErr = perr
+			runState.sessionErr = perr
 			finishTurn(sessTelemetry, turn, "planner", "error", turnInfo, perr)
-			turnsCompleted = userTurnCounter
+			runState.turnsCompleted = runState.userTurnCounter
 			return Result{ExitCode: 1, Err: perr}
 		}
 
@@ -1178,17 +1137,17 @@ func runSession(ctx context.Context, opts Options) Result {
 		if plannerProgress.hasPendingReview() && decision != planner.DecisionAccept && decision != planner.DecisionReject {
 			errUnexpected := fmt.Errorf("pending patch review requires accept or reject, got %s", decision)
 			fmt.Fprintln(os.Stderr, "Planner error:", errUnexpected)
-			sessionErr = errUnexpected
+			runState.sessionErr = errUnexpected
 			finishTurn(sessTelemetry, turn, turnDecision, "error", turnInfo, errUnexpected)
-			turnsCompleted = userTurnCounter
+			runState.turnsCompleted = runState.userTurnCounter
 			return Result{ExitCode: 1, Err: errUnexpected}
 		}
 		if !plannerProgress.hasPendingReview() && (decision == planner.DecisionAccept || decision == planner.DecisionReject) {
 			errUnexpected := errors.New("planner returned accept/reject without a pending patch review")
 			fmt.Fprintln(os.Stderr, "Planner error:", errUnexpected)
-			sessionErr = errUnexpected
+			runState.sessionErr = errUnexpected
 			finishTurn(sessTelemetry, turn, turnDecision, "error", turnInfo, errUnexpected)
-			turnsCompleted = userTurnCounter
+			runState.turnsCompleted = runState.userTurnCounter
 			return Result{ExitCode: 1, Err: errUnexpected}
 		}
 
@@ -1212,24 +1171,22 @@ func runSession(ctx context.Context, opts Options) Result {
 				} else {
 					fmt.Fprintln(os.Stderr, "Finalizer error:", ferr)
 				}
-				sessionErr = ferr
+				runState.sessionErr = ferr
 				finishTurn(sessTelemetry, turn, "finalize", "error", turnInfo, ferr)
-				turnsCompleted = userTurnCounter
+				runState.turnsCompleted = runState.userTurnCounter
 				return Result{ExitCode: 1, Err: ferr}
 			}
-			if err := runState.completeSession(display, answer, step, userTurnCounter, false); err != nil {
-				syncFromRunState()
+			if err := runState.completeSession(display, answer, step, runState.userTurnCounter, false); err != nil {
 				fmt.Fprintln(os.Stderr, "Final file write error:", err)
 				finishTurn(sessTelemetry, turn, "finalize", "error", turnInfo, err)
-				turnsCompleted = userTurnCounter
+				runState.turnsCompleted = runState.userTurnCounter
 				return Result{ExitCode: 1, Err: err}
 			}
-			syncFromRunState()
 			sessionClosed = true
 			turnDecision = "finalize"
 			turnInfo["finalized"] = true
 			finishTurn(sessTelemetry, turn, turnDecision, "success", turnInfo, nil)
-			return Result{ExitCode: 0, Status: sessionStatus, Turns: userTurnCounter, SessionID: sessionID}
+			return Result{ExitCode: 0, Status: runState.sessionStatus, Turns: runState.userTurnCounter, SessionID: sessionID}
 		}
 
 		turnEnv := &runTurnEnv{
@@ -1239,10 +1196,10 @@ func runSession(ctx context.Context, opts Options) Result {
 			goal:                        goal,
 			repoRoot:                    repoRoot,
 			step:                        step,
-			sessionErr:                  &sessionErr,
-			turnsCompleted:              &turnsCompleted,
-			userTurnCounter:             &userTurnCounter,
-			pendingPatchDraft:           &pendingPatchDraft,
+			sessionErr:                  &runState.sessionErr,
+			turnsCompleted:              &runState.turnsCompleted,
+			userTurnCounter:             &runState.userTurnCounter,
+			pendingPatchDraft:           &runState.pendingPatchDraft,
 			plannerProgress:             plannerProgress,
 			display:                     display,
 			sessTelemetry:               sessTelemetry,
@@ -1269,7 +1226,6 @@ func runSession(ctx context.Context, opts Options) Result {
 		case planner.DecisionAccept, planner.DecisionReject:
 			outcome := executeReviewDecision(turnEnv, decision, question, pendingReview)
 			shellAgentUsedThisTurn = outcome.shellAgentUsed
-			syncRunState()
 			switch outcome.action {
 			case turnLoopReturn:
 				return outcome.result
@@ -1282,7 +1238,6 @@ func runSession(ctx context.Context, opts Options) Result {
 		case planner.DecisionAsk:
 			outcome := executeAskDecision(turnEnv, question)
 			shellAgentUsedThisTurn = outcome.shellAgentUsed
-			syncRunState()
 			switch outcome.action {
 			case turnLoopReturn:
 				return outcome.result
@@ -1295,7 +1250,6 @@ func runSession(ctx context.Context, opts Options) Result {
 		case planner.DecisionPatch:
 			outcome := executePatchDecision(turnEnv, question, patchPlan)
 			shellAgentUsedThisTurn = outcome.shellAgentUsed
-			syncRunState()
 			switch outcome.action {
 			case turnLoopReturn:
 				return outcome.result
@@ -1327,12 +1281,11 @@ func runSession(ctx context.Context, opts Options) Result {
 
 Finalize:
 	if err := rootCtx.Err(); err != nil {
-		turnsCompleted = countTurns(tr.Content())
-		userTurnCounter = turnsCompleted
+		runState.turnsCompleted = countTurns(tr.Content())
+		runState.userTurnCounter = runState.turnsCompleted
 		return interruptedResult(err)
 	}
 	if result := runState.maybeRunPreFinalizePatch(display, patcherPromptOpts, pl, conv, pRunner, parentSpanID); result != nil {
-		syncFromRunState()
 		return *result
 	}
 	turns := countTurns(tr.Content())
@@ -1348,24 +1301,22 @@ Finalize:
 	}
 	if ferr != nil {
 		if isContextCancelled(ferr) || isContextCancelled(finalCtxErr) {
-			turnsCompleted = turns
-			userTurnCounter = turns
+			runState.turnsCompleted = turns
+			runState.userTurnCounter = turns
 			return interruptedResult(ferr)
 		}
 		fmt.Fprintln(os.Stderr, "Finalizer error:", ferr)
-		sessionErr = ferr
-		turnsCompleted = turns
+		runState.sessionErr = ferr
+		runState.turnsCompleted = turns
 		return Result{ExitCode: 1, Err: ferr}
 	}
 	if err := runState.completeSession(display, answer, turns, turns, turns >= cfg.maxSteps); err != nil {
-		syncFromRunState()
 		fmt.Fprintln(os.Stderr, "Final file write error:", err)
-		turnsCompleted = turns
+		runState.turnsCompleted = turns
 		return Result{ExitCode: 1, Err: err}
 	}
-	syncFromRunState()
 	sessionClosed = true
-	return Result{ExitCode: 0, Status: sessionStatus, Turns: turns, SessionID: sessionID}
+	return Result{ExitCode: 0, Status: runState.sessionStatus, Turns: turns, SessionID: sessionID}
 }
 
 func appendResumePromptContext(transcript, prompt string) string {
