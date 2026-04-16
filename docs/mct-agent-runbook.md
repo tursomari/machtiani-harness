@@ -27,6 +27,66 @@ mct-agent run --mode code --model glm-5-high \
 - That creates a parent session first, then spawns child task sessions under `.machtiani/sessions/`.
 - The repo-local mode files live under `.machtiani/meta-orchestrator/custom-instructions/code/`.
 
+## Planner system prompt shape
+
+- For `--mode code`, the meta task definition lives in `.machtiani/meta-orchestrator/custom-instructions/code/tasks.toml`.
+- That file currently points `description` at `.machtiani/meta-orchestrator/custom-instructions/code/code.txt`.
+- The contents of `code.txt` are loaded as task-specific planner guidance and injected into the planner system template under `## Task-Specific Guidance`.
+- So the planner system prompt is not just `code.txt`; it is the base planner system template plus the full text of `code.txt`.
+
+Mental model:
+
+```text
+base planner system template
++
++ Task-Specific Guidance
+  + contents of code.txt
+```
+
+Approximate rendered shape:
+
+```text
+You are the planner for mct, orchestrating repository understanding and modification.
+
+## Your Role
+...
+
+## Ask Guidelines
+...
+
+## Shell agent
+...
+
+## Context Handling
+...
+
+## Output Format
+...
+
+## Task-Specific Guidance
+
+## Goal Adherence
+...
+
+## Evidence Grounding
+...
+
+## Factual Accuracy
+...
+
+## Conclusions
+...
+
+## Gap Identification
+...
+
+## Verification
+...
+```
+
+- If a task also sets `system_prompt` in `tasks.toml`, that text is appended to the same task-specific guidance block.
+- The task `title` still matters separately for session/task metadata; it is not itself the full system prompt.
+
 ## Session behavior
 
 - A `--mode code` run typically creates a parent session plus one or more child sessions.
