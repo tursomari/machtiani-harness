@@ -324,17 +324,36 @@ jq 'select(.level == "error") | {kind, message: .err.message, span: .span_id}' \
 
 These events complement the transcript and final artifact, providing structured telemetry that is easy to diff or feed into downstream tooling.
 
-### Session Temporary Directories & Locks
+### Session Temporary Directories, Locks, and Snapshot Workspaces
 
-Each `mct-agent run` also provisions a dedicated temporary workspace at `<repo>/.machtiani/tmp/<session-id>/` (or `$HOME/.machtiani/tmp/<session-id>` when invoked outside a git repository). The directory contains ephemeral scratch data used by the agent and is guarded by a `session.lock` file that is:
+Each run uses up to three per-session locations: two scratch-root siblings plus one durable session record.
 
-- created as soon as the session temp root is set up
-- held with an exclusive flock for the duration of the run and refreshed every second
-- removed automatically when the session finishes (unless `--persist-tmp-data` is set)
+- **Session scratch root:** `<scratch-root>/<session-id>/`
+  - In a repo, `<scratch-root>` is usually `.machtiani/tmp/`. Outside a repo it is usually `$HOME/.machtiani/tmp/`.
+  - This is the host-local runtime directory that contains `session.lock`, shell-agent marker files, and other ephemeral session artifacts.
+  - `session.lock` is created when the run starts, held with an exclusive flock, refreshed every second, and removed when the run exits normally unless `--persist-tmp-data` is set.
+- **Snapshot workspace root:** `<workspace-base>/workspace-<session-id>/`
+  - This exists only for non-`local` environments such as `docker`.
+  - By default `<workspace-base>` is `.machtiani/tmp/`, but `[environment].tmp_root` can move it elsewhere.
+  - The mounted repository is a subdirectory at `<workspace-base>/workspace-<session-id>/repo/`; workspace-level metadata such as manifests can live alongside `repo/`.
+- **Persistent session record:** `.machtiani/sessions/<session-id>/`
+  - This durable root holds `session-state.json`, transcripts, trajectories, and other resumable artifacts.
 
-On startup, the agent prunes any prior session directory whose `session.lock` is missing or older than three seconds. This ensures crashed or abandoned sessions do not accumulate under `.machtiani/tmp`. If you need to inspect the scratch space after a run, re-run with `--persist-tmp-data=true` and copy the directory before starting another session (the next startup will remove stale locks).
+For debugging, the important distinction is that `docker` keeps the live lock in the host-local session scratch root while container work happens in the separate snapshot workspace. Normal edits inside the mounted snapshot repo do not, by themselves, delete `.machtiani/tmp/<session-id>/session.lock`.
 
-**Important:** Session state (`session-state.json`) is stored under `.machtiani/sessions/` and is **not** affected by temporary directory pruning. This allows you to safely resume interrupted sessions even if their temporary scratch space has been cleaned up.
+The environment variables also diverge during non-`local` runs:
+
+- `MACHTIANI_SESSION_TEMP_ROOT` points at the host-local session scratch root that owns `session.lock`.
+- `MACHTIANI_TMP_ROOT` normally acts as a scratch-root override, but during non-`local` runs it is intentionally repurposed to point at the snapshot workspace root so shell-agent and workspace helpers operate inside the snapshot instead of the lock directory.
+- In `local` mode there is no snapshot workspace, and the runtime uses `MACHTIANI_SESSION_TEMP_ROOT` / normal scratch-root resolution instead.
+
+Startup cleanup also treats these paths differently:
+
+- Session scratch directories are pruned when their `session.lock` is missing or older than three seconds.
+- Other stale temp directories under the scratch roots, including old `workspace-<session-id>` directories, are pruned after 24 hours.
+- The persistent session record under `.machtiani/sessions/<session-id>/` is not affected by temporary-directory pruning, so interrupted sessions remain resumable even after scratch cleanup.
+
+When investigating failures, treat `.machtiani/tmp/<session-id>/session.lock` and nearby runtime artifacts as protected evidence. Do not delete or mutate them unless you are intentionally testing cleanup or recovery behavior.
 
 ## Optional: Standalone CLIs
 If you installed the peripherals (`./scripts/install.sh --install-peripherals`), you can continue using the individual tools. Example `mct` flows:

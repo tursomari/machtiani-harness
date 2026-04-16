@@ -1333,6 +1333,9 @@ func parseEnvironmentSection(path string, data map[string]any) (*EnvironmentConf
 	if v, ok := data["trajectory_dir"].(string); ok {
 		env.TrajectoryDir = v
 	}
+	if v, ok := data["tmp_root"].(string); ok {
+		env.TmpRoot = v
+	}
 	return env, nil
 }
 

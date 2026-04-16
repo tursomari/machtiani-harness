@@ -223,6 +223,10 @@ func prepareSessionEnvironment(sessionID string, cfg legacyConfig) (*sessionEnvi
 	if err := os.Setenv("MACHTIANI_PATCH_STRATEGY", patchStrategy); err != nil {
 		fmt.Fprintln(os.Stderr, "Warning: unable to export patch strategy:", err)
 	}
+	// In non-local environments the child tools should create temp data inside
+	// the snapshot workspace, not beside the host-side session lock. During the
+	// run MACHTIANI_TMP_ROOT is therefore repurposed from "scratch root override"
+	// to "workspace root".
 	if useSnapshotWorkspace {
 		if err := os.Setenv("MACHTIANI_TMP_ROOT", workspaceRoot); err != nil {
 			fmt.Fprintln(os.Stderr, "Warning: unable to export tmp root:", err)
