@@ -327,9 +327,9 @@ except Exception:
 content = str(data.get("last_plan_content") or "")
 system_prompt = content.split("Explain how the planner prompt layers are organized for code mode.", 1)[0]
 required = [
-    "Core Safety Rules",
-    "Planner Operating Rules",
-    "Repo / Mode Guidance",
+    "<CORE_SAFETY_RULES>",
+    "<PLANNER_OPERATING_RULES>",
+    "<REPO_MODE_GUIDANCE>",
     "Goal Adherence",
 ]
 

@@ -1086,14 +1086,17 @@ func TestPlanSystemPromptIncludesPlannerOverlay(t *testing.T) {
 	client := NewClient(ClientConfig{PlannerOverlay: "Focus on security review and threat modeling."})
 	conv := conversation.New("sess-system-overlay", "Finish docs")
 	prompt := client.planSystemPrompt(conv, "Finish docs", 1, 3, nil)
-	if !strings.Contains(prompt, "Core Safety Rules") {
+	if !strings.Contains(prompt, "<CORE_SAFETY_RULES>") {
 		t.Fatalf("expected core safety rules section, got %q", prompt)
 	}
-	if !strings.Contains(prompt, "Planner Operating Rules") {
+	if !strings.Contains(prompt, "<PLANNER_OPERATING_RULES>") {
 		t.Fatalf("expected planner operating rules section, got %q", prompt)
 	}
-	if !strings.Contains(prompt, "Repo / Mode Guidance") {
+	if !strings.Contains(prompt, "<REPO_MODE_GUIDANCE>") {
 		t.Fatalf("expected planner overlay section, got %q", prompt)
+	}
+	if !strings.Contains(prompt, "</PLANNER_SYSTEM_PROMPT>") {
+		t.Fatalf("expected planner system prompt boundary, got %q", prompt)
 	}
 	if strings.Contains(prompt, "Task-Specific Guidance") {
 		t.Fatalf("expected old overlay heading to be removed, got %q", prompt)

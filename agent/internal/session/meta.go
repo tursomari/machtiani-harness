@@ -638,7 +638,7 @@ func buildMetaStartSummary(goal string, task metaTaskState, prior []metaTaskStat
 		b.WriteString("\n")
 	}
 	if overlay := strings.TrimSpace(task.PlannerOverlay); overlay != "" {
-		b.WriteString("- Repo / Mode Guidance:\n")
+		b.WriteString("- Planner Overlay:\n")
 		b.WriteString(overlay)
 		b.WriteString("\n")
 	}

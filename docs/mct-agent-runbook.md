@@ -31,7 +31,7 @@ mct-agent run --mode code --model glm-5-high \
 
 - For `--mode code`, the meta task definition lives in `.machtiani/meta-orchestrator/custom-instructions/code/tasks.toml`.
 - That file points `system_prompt` at `.machtiani/meta-orchestrator/custom-instructions/code/code.txt`.
-- The contents of `code.txt` are loaded as repo/mode planner guidance and injected into the planner system template under `## Repo / Mode Guidance`.
+- The contents of `code.txt` are loaded as repo/mode planner guidance and injected into the planner system template inside `<REPO_MODE_GUIDANCE> ... </REPO_MODE_GUIDANCE>`.
 - `description` is metadata only, and `instruction` is the task-local objective that flows through the planner user-message path.
 - So the planner system prompt is not just `code.txt`; it is the base planner system template plus the full text of `code.txt` in the third system layer.
 
@@ -39,9 +39,9 @@ Mental model:
 
 ```text
 System message
-= Layer 1: Core Safety Rules
-+ Layer 2: Planner Operating Rules
-+ Layer 3: Repo / Mode Guidance
+= <CORE_SAFETY_RULES>
++ <PLANNER_OPERATING_RULES>
++ <REPO_MODE_GUIDANCE> (optional)
 
 User message(s)
 = goal / task objective / latest step instruction
@@ -52,27 +52,35 @@ Approximate rendered shape:
 ```text
 You are the planner for mct, orchestrating repository understanding and modification.
 
-## Core Safety Rules
+<PLANNER_SYSTEM_PROMPT>
+<CORE_SAFETY_RULES>
 ...
+</CORE_SAFETY_RULES>
 
-## Planner Operating Rules
+<PLANNER_OPERATING_RULES>
 
-### Your Role
+<YOUR_ROLE>
 ...
+</YOUR_ROLE>
 
-### Ask Guidelines
+<ASK_GUIDELINES>
 ...
+</ASK_GUIDELINES>
 
-### Shell agent
+<SHELL_AGENT>
 ...
+</SHELL_AGENT>
 
-### Context Handling
+<CONTEXT_HANDLING>
 ...
+</CONTEXT_HANDLING>
 
-### Output Format
+<OUTPUT_FORMAT>
 ...
+</OUTPUT_FORMAT>
+</PLANNER_OPERATING_RULES>
 
-## Repo / Mode Guidance
+<REPO_MODE_GUIDANCE>
 
 ## Goal Adherence
 ...
@@ -91,6 +99,8 @@ You are the planner for mct, orchestrating repository understanding and modifica
 
 ## Verification
 ...
+</REPO_MODE_GUIDANCE>
+</PLANNER_SYSTEM_PROMPT>
 ```
 
 - `system_prompt` is the only task-config field that contributes repo/mode planner guidance.
