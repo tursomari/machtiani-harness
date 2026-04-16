@@ -126,6 +126,33 @@ func TestPreflightShellRoutingHeuristicPrefersContentForFunctionLookup(t *testin
 	}
 }
 
+func TestPreflightShellRoutingHeuristicPrefersContentForDirectoryScopedExplanation(t *testing.T) {
+	old := chatWithResolvedFallback
+	called := false
+	chatWithResolvedFallback = func(ctx context.Context, model llm.ResolvedModel, fallbackAliases []string, fallbackModels []llm.ResolvedModel, extraParams map[string]any, messages []llm.Message) (string, error) {
+		called = true
+		return "shell", nil
+	}
+	t.Cleanup(func() { chatWithResolvedFallback = old })
+
+	runtime := ModelRuntime{Resolved: llm.ResolvedModel{Model: "test-model"}}
+	prompt := "Explain the planner ask monitor guardrail flow in the agent/ directory and when it retries."
+
+	shellAgent, reply, err := PreflightShellRouting(context.Background(), runtime, prompt)
+	if err != nil {
+		t.Fatalf("PreflightShellRouting error: %v", err)
+	}
+	if shellAgent {
+		t.Fatalf("expected default routing, got shell-agent")
+	}
+	if reply != "content" {
+		t.Fatalf("expected reply %q, got %q", "content", reply)
+	}
+	if called {
+		t.Fatalf("expected heuristic to bypass LLM preflight")
+	}
+}
+
 func TestPreflightShellRoutingHeuristicDoesNotOverrideDirectoryListing(t *testing.T) {
 	stubReply := "shell"
 	old := chatWithResolvedFallback

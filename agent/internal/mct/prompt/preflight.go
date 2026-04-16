@@ -81,7 +81,7 @@ func shouldPreferContentRouting(prompt string) bool {
 	}
 	if containsRoutingPhrase(trimmed, []string{
 		"run ", "execute ", "build ", "compile ", "start ", "restart ", "install ",
-		"list filepaths", "list files", "directory", "directories", "current directory", "cwd",
+		"list filepaths", "list files", "current directory", "cwd",
 		"shell command", "git status", "git diff", "grep ", "find ",
 	}) {
 		return false
@@ -92,7 +92,7 @@ func shouldPreferContentRouting(prompt string) bool {
 	hasCodeSignal := strings.Contains(trimmed, "`") || containsRoutingPhrase(trimmed, []string{
 		".go", "function", "struct", "method", "symbol", "implementation", "logic", "code path",
 		"definition", "defined", "fallback", "falls back", "model", "file discovery", "orchestrator", "patcher",
-		"line ", "lines ", "source", "code",
+		"line ", "lines ", "source", "code", "guardrail", "retry", "retries", "planner ask monitor", "flow",
 	})
 	return hasExplainVerb && hasCodeSignal
 }
