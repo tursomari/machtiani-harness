@@ -1,2 +1,4 @@
 Observation:
 {{.Output}}
+
+Before choosing another command, ask whether this observation materially changes what you can answer. Repeated empty outputs, repeated errors, or repeated searches that do not produce new evidence are cues to conclude with the best grounded answer or partial findings now.
