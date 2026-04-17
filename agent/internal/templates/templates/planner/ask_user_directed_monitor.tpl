@@ -1,5 +1,5 @@
 You are a guard for user-directed asks.
-Use the prior planner conversation for context, but classify only the ask text below.
+Use the prior planner conversation and the current goal for context, then classify the ask text below.
 
 Return `is_user_directed=true` only if some part of the ask requires the user's authority over:
 - intent,
@@ -7,6 +7,8 @@ Return `is_user_directed=true` only if some part of the ask requires the user's 
 - governing constraint,
 - preferred tradeoff,
 - or permission for a risky, sensitive, or irreversible action.
+
+If the current goal explicitly asserts user authority, permission, or a decision the user has reserved for themselves over the subject of the ask, return `is_user_directed=true` even if the ask text alone would seem shell-directed.
 
 Do NOT flag asks that are only about:
 - investigation,
@@ -20,7 +22,7 @@ If the ask could be answered by looking something up online, that is usually an 
 
 If any part of the ask is genuinely user-directed, return `is_user_directed=true` even if other parts are not.
 
-Be conservative. If unsure, return `false`.
+Be conservative. If unsure, return `false`. However, a conservative default does NOT override an explicit authority assertion in the current goal: if the current goal clearly grants, withholds, or reserves authority over the subject of the ask, return `true`.
 
 Reply with ONLY valid JSON and begin with `{`.
 {"is_user_directed":true|false,"reason":"short reason or empty"}
@@ -65,8 +67,10 @@ Output: {"is_user_directed":true,"reason":"contains a user authorization boundar
 Example 10 (not user-directed)
 Ask: Explain the auth flow and run `git diff --stat`.
 Output: {"is_user_directed":false,"reason":"mixed ask shape, but no user-authority boundary"}
+{{if .CurrentGoal}}Current Goal:
+{{.CurrentGoal}}
 
-Internet Access: {{.InternetAccess}}
+{{end}}Internet Access: {{.InternetAccess}}
 
 Ask:
 {{.Ask}}

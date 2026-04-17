@@ -105,8 +105,8 @@ func (c *Conversation) InsertMessageAt(index int, role, content string, metadata
 	c.UpdatedAt = ts
 }
 
-// CurrentGoal returns the latest goal text from goal_update messages, falling
-// back to the original goal when none are present.
+// CurrentGoal returns the latest goal text from goal_update or user_input
+// messages, falling back to the original goal when none are present.
 func (c *Conversation) CurrentGoal() string {
 	if c == nil {
 		return ""
@@ -114,7 +114,8 @@ func (c *Conversation) CurrentGoal() string {
 	goal := strings.TrimSpace(c.OriginalGoal)
 	for i := len(c.Messages) - 1; i >= 0; i-- {
 		msg := c.Messages[i]
-		if !strings.EqualFold(getType(msg.Metadata), "goal_update") {
+		msgType := strings.ToLower(getType(msg.Metadata))
+		if msgType != "goal_update" && msgType != "user_input" {
 			continue
 		}
 		trimmed := strings.TrimSpace(msg.Content)

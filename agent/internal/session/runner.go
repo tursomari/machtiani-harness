@@ -1203,7 +1203,11 @@ func runSession(ctx context.Context, opts Options) Result {
 		if decision == planner.DecisionAsk {
 			ctxAsk, cancelAsk := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
 			ctxAsk = attachTrajectory(ctxAsk, trajectoryWriter, parentSpanID)
-			userDirected, uerr := pl.AnalyzeUserDirectedAsk(ctxAsk, conv, goal, question, step, cfg.maxSteps)
+			effectiveGoal := goal
+			if cg := strings.TrimSpace(conv.CurrentGoal()); cg != "" {
+				effectiveGoal = cg
+			}
+			userDirected, uerr := pl.AnalyzeUserDirectedAsk(ctxAsk, conv, effectiveGoal, question, step, cfg.maxSteps)
 			var ctxAskErr error
 			if ctxAsk != nil {
 				ctxAskErr = ctxAsk.Err()

@@ -187,11 +187,13 @@ type askMonitorData struct {
 type askUserDirectedMonitorData struct {
 	Ask            string
 	InternetAccess bool
+	CurrentGoal    string
 }
 
 type askUserDirectedPurifierData struct {
-	Ask    string
-	Reason string
+	Ask         string
+	Reason      string
+	CurrentGoal string
 }
 
 type askMixedMonitorResult struct {
@@ -753,7 +755,13 @@ func (c *Client) monitorAskMixedWithPlanner(ctx context.Context, conv *conversat
 }
 
 func (c *Client) monitorAskUserDirectedWithPlanner(ctx context.Context, conv *conversation.Conversation, goal string, ask string, step, maxSteps int) (askUserDirectedMonitorResult, error) {
-	prompt := c.askUserDirectedMonitorPrompt(ask)
+	currentGoal := strings.TrimSpace(goal)
+	if conv != nil {
+		if cg := strings.TrimSpace(conv.CurrentGoal()); cg != "" {
+			currentGoal = cg
+		}
+	}
+	prompt := c.askUserDirectedMonitorPrompt(ask, currentGoal)
 	if strings.TrimSpace(prompt) == "" {
 		return askUserDirectedMonitorResult{}, errors.New("planner: ask user-directed monitor template missing")
 	}
@@ -765,7 +773,13 @@ func (c *Client) monitorAskUserDirectedWithPlanner(ctx context.Context, conv *co
 }
 
 func (c *Client) purifyAskUserDirectedWithPlanner(ctx context.Context, conv *conversation.Conversation, goal, ask, reason string, step, maxSteps int) (askUserDirectedPurifierResult, error) {
-	prompt := c.askUserDirectedPurifierPrompt(ask, reason)
+	currentGoal := strings.TrimSpace(goal)
+	if conv != nil {
+		if cg := strings.TrimSpace(conv.CurrentGoal()); cg != "" {
+			currentGoal = cg
+		}
+	}
+	prompt := c.askUserDirectedPurifierPrompt(ask, reason, currentGoal)
 	if strings.TrimSpace(prompt) == "" {
 		return askUserDirectedPurifierResult{}, errors.New("planner: ask user-directed purifier template missing")
 	}
@@ -1453,13 +1467,13 @@ func (c *Client) askMonitorPrompt(ask string) string {
 	return rendered
 }
 
-func (c *Client) askUserDirectedMonitorPrompt(ask string) string {
+func (c *Client) askUserDirectedMonitorPrompt(ask, currentGoal string) string {
 	tpl := c.askUserDirectedMonitorTemplate()
 	if tpl == "" {
 		fmt.Fprintln(os.Stderr, "[planner] ask user-directed monitor template missing")
 		return ""
 	}
-	data := askUserDirectedMonitorData{Ask: strings.TrimSpace(ask), InternetAccess: c.cfg.InternetAccess}
+	data := askUserDirectedMonitorData{Ask: strings.TrimSpace(ask), InternetAccess: c.cfg.InternetAccess, CurrentGoal: strings.TrimSpace(currentGoal)}
 	rendered, err := prompts.Render("planner_ask_user_directed_monitor", tpl, data, nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[planner] ask user-directed monitor template error: %v\n", err)
@@ -1475,13 +1489,13 @@ func (c *Client) askUserDirectedMonitorTemplate() string {
 	return ""
 }
 
-func (c *Client) askUserDirectedPurifierPrompt(ask, reason string) string {
+func (c *Client) askUserDirectedPurifierPrompt(ask, reason, currentGoal string) string {
 	tpl := c.askUserDirectedPurifierTemplate()
 	if tpl == "" {
 		fmt.Fprintln(os.Stderr, "[planner] ask user-directed purifier template missing")
 		return ""
 	}
-	data := askUserDirectedPurifierData{Ask: strings.TrimSpace(ask), Reason: strings.TrimSpace(reason)}
+	data := askUserDirectedPurifierData{Ask: strings.TrimSpace(ask), Reason: strings.TrimSpace(reason), CurrentGoal: strings.TrimSpace(currentGoal)}
 	rendered, err := prompts.Render("planner_ask_user_directed_purifier", tpl, data, nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[planner] ask user-directed purifier template error: %v\n", err)
