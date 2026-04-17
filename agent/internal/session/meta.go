@@ -56,6 +56,7 @@ type metaContext struct {
 	RootCtx         context.Context
 	SessionID       string
 	Goal            string
+	ResumePrompt    string
 	Config          legacyConfig
 	Options         Options
 	Display         *ui.TerminalDisplay
@@ -65,10 +66,11 @@ type metaContext struct {
 }
 
 type metaOutcome struct {
-	Plan        metaPlanState
-	FinalAnswer string
-	ExitCode    int
-	Err         error
+	Plan           metaPlanState
+	FinalAnswer    string
+	ExitCode       int
+	Err            error
+	SuspendedInput *SuspendedUserInputState
 }
 
 func metaOrchestrate(ctx metaContext) (metaOutcome, bool) {
@@ -89,6 +91,9 @@ func metaOrchestrate(ctx metaContext) (metaOutcome, bool) {
 
 	updatedPlan, err := executeMetaPlan(ctx, plan)
 	if err != nil {
+		if suspended, ok := err.(*metaSuspendedError); ok {
+			return metaOutcome{Plan: updatedPlan, ExitCode: 0, SuspendedInput: suspended.input.Clone()}, true
+		}
 		outcome := metaOutcome{Plan: updatedPlan, Err: err, ExitCode: 1}
 		return outcome, true
 	}
@@ -353,6 +358,7 @@ func executeMetaPlan(ctx metaContext, plan metaPlanState) (metaPlanState, error)
 	tasks := append([]metaTaskState(nil), plan.Tasks...)
 	metaTurn := 1000
 	idx := 0
+	pendingResumePrompt := strings.TrimSpace(ctx.ResumePrompt)
 	for idx < len(tasks) {
 		task := &tasks[idx]
 		if task.Status == "complete" {
@@ -360,6 +366,11 @@ func executeMetaPlan(ctx metaContext, plan metaPlanState) (metaPlanState, error)
 			continue
 		}
 		resumePrompt := ""
+		if strings.EqualFold(strings.TrimSpace(task.Status), "suspended") && pendingResumePrompt != "" {
+			resumePrompt = pendingResumePrompt
+			pendingResumePrompt = ""
+			task.Status = "pending"
+		}
 		for {
 			priorAnswer := loadPreviousFinalAnswer(tasks[:idx])
 			basePrompt := composeTaskPrompt(ctx.Goal, *task, priorAnswer, idx == 0)
@@ -383,6 +394,27 @@ func executeMetaPlan(ctx metaContext, plan metaPlanState) (metaPlanState, error)
 			result, err := runMetaTask(ctx, *task, basePrompt, headerPrompt, resumePrompt, includeBackground)
 			task.Attempts++
 			resumePrompt = ""
+			if result.SuspendedInput != nil {
+				task.Status = "suspended"
+				task.Summary = fmt.Sprintf("Awaiting user input: %s", strings.TrimSpace(result.SuspendedInput.Question))
+				task.Transcript = result.TranscriptPath
+				task.FinalAnswer = result.FinalAnswerPath
+				if result.SessionID != "" {
+					task.SessionID = result.SessionID
+				}
+				endSummary := buildMetaEndSummary(*task)
+				writeMetaTurn(ctx, metaTurn+1, fmt.Sprintf("Meta task result: %s", task.Title), endSummary, "meta-end")
+				metaTurn += 2
+				updated := plan
+				updated.Tasks = tasks
+				if perr := persistMetaPlan(ctx.SessionID, updated); perr != nil {
+					return updated, perr
+				}
+				if ctx.Display != nil {
+					ctx.Display.UpdateMetaTaskStatus(idx, task.Title, "suspended", task.SessionID)
+				}
+				return updated, &metaSuspendedError{input: result.SuspendedInput.Clone()}
+			}
 			if err != nil {
 				status := "failed"
 				summary := err.Error()
@@ -844,6 +876,18 @@ type metaTaskRunResult struct {
 	TranscriptPath  string
 	FinalAnswerPath string
 	Interrupted     bool
+	SuspendedInput  *SuspendedUserInputState
+}
+
+type metaSuspendedError struct {
+	input *SuspendedUserInputState
+}
+
+func (e *metaSuspendedError) Error() string {
+	if e == nil || e.input == nil {
+		return "meta task suspended awaiting user input"
+	}
+	return fmt.Sprintf("meta task suspended awaiting user input: %s", strings.TrimSpace(e.input.Question))
 }
 
 func runMetaTask(ctx metaContext, task metaTaskState, basePrompt string, headerPrompt string, resumePrompt string, includeBackground bool) (metaTaskRunResult, error) {
@@ -924,6 +968,12 @@ func runMetaTask(ctx metaContext, task metaTaskState, basePrompt string, headerP
 			result.TranscriptPath = filepath.Join(chatDir, "agent-transcript.adoc")
 			result.FinalAnswerPath = filepath.Join(chatDir, "agent-final-answer.md")
 		}
+	}
+	if res.Status == "suspended_user_input" {
+		if savedState, err := LoadSessionState(res.SessionID); err == nil && savedState != nil {
+			result.SuspendedInput = savedState.SuspendedUserInput.Clone()
+		}
+		return result, nil
 	}
 	if res.Err != nil || res.ExitCode != 0 {
 		interrupted := res.ExitCode == 130 || errors.Is(res.Err, context.Canceled) || (shouldResume && res.ExitCode == 1 && errors.Is(res.Err, context.Canceled))

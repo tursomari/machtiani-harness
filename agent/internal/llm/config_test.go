@@ -91,6 +91,7 @@ base_url = "https://example.com/v1"
 type = "local"
 timeout = 45
 cwd = "."
+internet_access = true
 
 [environment.env_vars]
 FOO = "bar"
@@ -171,6 +172,9 @@ git_synced_only = true
 	}
 	if cfg.Environment == nil || cfg.Environment.Timeout != 45 {
 		t.Fatalf("expected environment timeout 45, got %+v", cfg.Environment)
+	}
+	if cfg.Environment == nil || !cfg.Environment.InternetAccess {
+		t.Fatalf("expected environment internet_access true, got %+v", cfg.Environment)
 	}
 	if cfg.Environment == nil || cfg.Environment.EnvVars["FOO"] != "bar" {
 		t.Fatalf("expected environment env_vars FOO=bar, got %+v", cfg.Environment)

@@ -18,24 +18,26 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/tempdir"
 	"github.com/tursomari/machtiani/agent/internal/trajectory"
 	"github.com/tursomari/machtiani/agent/internal/transcript"
+	"github.com/tursomari/machtiani/agent/internal/ui"
 )
 
 type runBootstrap struct {
-	opts                Options
-	cfg                 legacyConfig
-	sessionID           string
-	goal                string
-	resumePrompt        string
-	originalPrompt      string
-	taskDescription     string
-	plannerOverlay      string
-	conversationGoal    string
-	conversationPath    string
-	resumeMode          bool
-	loadedState         *SessionState
-	metaInstructions    llm.MetaInstructions
-	metaInstructionPath string
-	runState            *runLifecycleState
+	opts                 Options
+	cfg                  legacyConfig
+	sessionID            string
+	goal                 string
+	resumePrompt         string
+	originalPrompt       string
+	taskDescription      string
+	plannerOverlay       string
+	conversationGoal     string
+	conversationPath     string
+	resumeMode           bool
+	loadedState          *SessionState
+	resumeSuspendedInput *SuspendedUserInputState
+	metaInstructions     llm.MetaInstructions
+	metaInstructionPath  string
+	runState             *runLifecycleState
 }
 
 type sessionEnvironmentBootstrap struct {
@@ -167,22 +169,30 @@ func prepareRunBootstrap(rootCtx context.Context, opts Options) (*runBootstrap, 
 	runState := newRunLifecycleState(rootCtx, cfg, sessionID, goal, originalPrompt, taskDescription, plannerOverlay, metaInstructionPath, loadedState)
 
 	return &runBootstrap{
-		opts:                opts,
-		cfg:                 cfg,
-		sessionID:           sessionID,
-		goal:                goal,
-		resumePrompt:        resumePrompt,
-		originalPrompt:      originalPrompt,
-		taskDescription:     taskDescription,
-		plannerOverlay:      plannerOverlay,
-		conversationGoal:    conversationGoal,
-		conversationPath:    conversationPath,
-		resumeMode:          resumeMode,
-		loadedState:         loadedState,
-		metaInstructions:    metaInstructions,
-		metaInstructionPath: metaInstructionPath,
-		runState:            runState,
+		opts:                 opts,
+		cfg:                  cfg,
+		sessionID:            sessionID,
+		goal:                 goal,
+		resumePrompt:         resumePrompt,
+		originalPrompt:       originalPrompt,
+		taskDescription:      taskDescription,
+		plannerOverlay:       plannerOverlay,
+		conversationGoal:     conversationGoal,
+		conversationPath:     conversationPath,
+		resumeMode:           resumeMode,
+		loadedState:          loadedState,
+		resumeSuspendedInput: loadedStateSuspendedInput(loadedState),
+		metaInstructions:     metaInstructions,
+		metaInstructionPath:  metaInstructionPath,
+		runState:             runState,
 	}, Result{}, true
+}
+
+func loadedStateSuspendedInput(state *SessionState) *SuspendedUserInputState {
+	if state == nil || state.SuspendedUserInput == nil {
+		return nil
+	}
+	return state.SuspendedUserInput.Clone()
 }
 
 func prepareSessionEnvironment(sessionID string, cfg legacyConfig) (*sessionEnvironmentBootstrap, error) {
@@ -359,6 +369,7 @@ func newRunLifecycleState(rootCtx context.Context, cfg legacyConfig, sessionID, 
 		metaInstructionPath: metaInstructionPath,
 		plannerProgress:     plannerProgress,
 		pendingPatchDraft:   pendingPatchDraftFromState(loadedState),
+		suspendedUserInput:  loadedStateSuspendedInput(loadedState),
 		sessionStatus:       "error",
 		turnsCompleted:      turnsCompleted,
 		userTurnCounter:     turnsCompleted,
@@ -540,6 +551,10 @@ func (c *conversationRecorder) AppendRaw(role, content, metaType string) error {
 		switch strings.ToLower(strings.TrimSpace(metaType)) {
 		case "goal_update", "user_feedback":
 			return c.tr.AppendRaw(fmt.Sprintf("\n=== GOAL UPDATE\n\n%s\n", content))
+		case "user_input":
+			return c.tr.AppendRaw(fmt.Sprintf("\n=== USER INPUT\n\n%s\n", content))
+		case "user_input_request":
+			return c.tr.AppendRaw(fmt.Sprintf("\n=== USER INPUT NEEDED ===\n\n%s\n", content))
 		default:
 			return c.tr.AppendRaw(content)
 		}
@@ -617,6 +632,10 @@ func (c *conversationRecorder) appendRawToTranscript(content, metaType string) e
 	switch strings.ToLower(strings.TrimSpace(metaType)) {
 	case "goal_update", "user_feedback":
 		return c.tr.AppendRaw(fmt.Sprintf("\n=== GOAL UPDATE\n\n%s\n", content))
+	case "user_input":
+		return c.tr.AppendRaw(fmt.Sprintf("\n=== USER INPUT\n\n%s\n", content))
+	case "user_input_request":
+		return c.tr.AppendRaw(fmt.Sprintf("\n=== USER INPUT NEEDED ===\n\n%s\n", content))
 	default:
 		return c.tr.AppendRaw(content)
 	}
@@ -645,6 +664,17 @@ type runLifecycleState struct {
 	interrupted         bool
 	keepSessionState    bool
 	pendingState        *SessionState
+	suspendedUserInput  *SuspendedUserInputState
+}
+
+func (r *runLifecycleState) clearSuspendedUserInput() {
+	if r == nil {
+		return
+	}
+	r.suspendedUserInput = nil
+	if r.pendingState != nil {
+		r.pendingState.SuspendedUserInput = nil
+	}
 }
 
 func (r *runLifecycleState) interruptedResult(err error) Result {
@@ -676,6 +706,24 @@ func (r *runLifecycleState) printResumeHint(header string, turns int) {
 	fmt.Fprintf(os.Stdout, "To continue, provide your next instruction, for example:\n  mct-agent run \"<next instruction>\" --session-id %s\n", r.sessionID)
 	if parentID := strings.TrimSpace(r.cfg.parentSessionID); parentID != "" {
 		fmt.Fprintf(os.Stdout, "\nParent session detected (%s). To resume that session, rerun your original command with the parent session ID, for example:\n  mct-agent run \"<original prompt>\" --session-id %s\n", parentID, parentID)
+	}
+	fmt.Fprintln(os.Stdout)
+}
+
+func (r *runLifecycleState) printUserInputHint(question, context string) {
+	resumeSessionID := r.sessionID
+	if parentID := strings.TrimSpace(r.cfg.parentSessionID); parentID != "" {
+		resumeSessionID = parentID
+	}
+	fmt.Fprintln(os.Stdout, "=== USER INPUT NEEDED ===")
+	fmt.Fprintf(os.Stdout, "Session ID: %s\n", r.sessionID)
+	if strings.TrimSpace(context) != "" {
+		fmt.Fprintf(os.Stdout, "%s\n\n", strings.TrimSpace(context))
+	}
+	fmt.Fprintf(os.Stdout, "%s\n\n", strings.TrimSpace(question))
+	fmt.Fprintf(os.Stdout, "To continue, answer with:\n  mct-agent run \"<your answer>\" --session-id %s\n", resumeSessionID)
+	if parentID := strings.TrimSpace(r.cfg.parentSessionID); parentID != "" {
+		fmt.Fprintf(os.Stdout, "\nParent session detected (%s); resume that parent session rather than the child session above.\n", parentID)
 	}
 	fmt.Fprintln(os.Stdout)
 }
@@ -716,7 +764,11 @@ func (r *runLifecycleState) baseSessionState() SessionState {
 		OriginalPrompt:  r.originalPrompt,
 		TaskDescription: r.taskDescription,
 		PlannerOverlay:  r.plannerOverlay,
+		Status:          r.sessionStatus,
 		TurnsCompleted:  r.turnsCompleted,
+	}
+	if r.suspendedUserInput != nil {
+		state.SuspendedUserInput = r.suspendedUserInput.Clone()
 	}
 	if r.tr != nil {
 		state.TranscriptPath = r.tr.Path()
@@ -751,6 +803,12 @@ func (r *runLifecycleState) hydrateState(state *SessionState) {
 		state.MetaModes = []string{strings.ToLower(strings.TrimSpace(r.cfg.mode))}
 	}
 	state.ParentSessionID = strings.TrimSpace(r.cfg.parentSessionID)
+	if state.Status == "" {
+		state.Status = r.sessionStatus
+	}
+	if state.SuspendedUserInput == nil && r.suspendedUserInput != nil {
+		state.SuspendedUserInput = r.suspendedUserInput.Clone()
+	}
 	r.applyPlannerProgress(state)
 }
 
@@ -783,6 +841,45 @@ func (r *runLifecycleState) persistSessionState() {
 	if err := RemoveSessionState(sid); err != nil && r.cfg.verbose {
 		fmt.Fprintf(os.Stderr, "Warning: failed to remove session state for %s: %v\n", sid, err)
 	}
+}
+
+func formatUserInputRequestContent(question, context string) string {
+	question = strings.TrimSpace(question)
+	context = strings.TrimSpace(context)
+	if context == "" {
+		return question
+	}
+	return question + "\n\nContext:\n" + context
+}
+
+func (r *runLifecycleState) suspendForUserInput(display *ui.TerminalDisplay, question, context, reason, originalAsk string) (Result, error) {
+	question = strings.TrimSpace(question)
+	if question == "" {
+		return Result{}, errors.New("user input question required")
+	}
+	content := formatUserInputRequestContent(question, context)
+	if err := r.recorder.AppendRaw("assistant", content, "user_input_request"); err != nil {
+		return Result{}, err
+	}
+	if display != nil {
+		display.EndSession()
+	}
+	r.sessionErr = nil
+	r.turnsCompleted = r.userTurnCounter
+	r.sessionStatus = "suspended_user_input"
+	r.keepSessionState = true
+	r.suspendedUserInput = &SuspendedUserInputState{
+		Kind:        "user-directed-ask",
+		Question:    strings.TrimSpace(question),
+		Context:     strings.TrimSpace(context),
+		Reason:      strings.TrimSpace(reason),
+		OriginalAsk: strings.TrimSpace(originalAsk),
+	}
+	state := r.baseSessionState()
+	r.pendingState = &state
+	r.hydrateState(r.pendingState)
+	r.printUserInputHint(question, context)
+	return Result{ExitCode: 0, Status: r.sessionStatus, Turns: r.turnsCompleted, SessionID: r.sessionID}, nil
 }
 
 func (r *runLifecycleState) writePendingPatchTranscript(status string, decision string, note string, undo bool) error {

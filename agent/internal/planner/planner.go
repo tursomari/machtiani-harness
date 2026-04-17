@@ -13,6 +13,7 @@ import (
 
 	"github.com/tursomari/machtiani/agent/internal/conversation"
 	"github.com/tursomari/machtiani/agent/internal/llm"
+	"github.com/tursomari/machtiani/agent/internal/parser"
 	"github.com/tursomari/machtiani/agent/internal/patchlog"
 	"github.com/tursomari/machtiani/agent/internal/prompts"
 	"github.com/tursomari/machtiani/agent/internal/templates"
@@ -61,6 +62,7 @@ type ClientConfig struct {
 	Alias             string
 	Verbose           bool
 	DryRun            bool
+	InternetAccess    bool
 	RequestTimeoutSec int
 	PatchEnabled      bool
 	StrictPatchMode   bool
@@ -182,10 +184,40 @@ type askMonitorData struct {
 	Ask string
 }
 
+type askUserDirectedMonitorData struct {
+	Ask            string
+	InternetAccess bool
+}
+
+type askUserDirectedPurifierData struct {
+	Ask    string
+	Reason string
+}
+
 type askMixedMonitorResult struct {
 	IsMixed bool   `json:"is_mixed"`
 	Reason  string `json:"reason"`
 	Rewrite string `json:"rewrite"`
+}
+
+type askUserDirectedMonitorResult struct {
+	IsUserDirected bool   `json:"is_user_directed"`
+	Reason         string `json:"reason"`
+}
+
+type askUserDirectedPurifierResult struct {
+	ShouldSuspend    bool   `json:"should_suspend"`
+	PurifiedQuestion string `json:"purified_question"`
+	Context          string `json:"context"`
+	Reason           string `json:"reason"`
+}
+
+type UserDirectedAskOutcome struct {
+	ShouldSuspend bool
+	OriginalAsk   string
+	Question      string
+	Context       string
+	Reason        string
 }
 
 // PendingReview captures metadata about the most recent patch awaiting
@@ -668,6 +700,34 @@ func (c *Client) monitorAskMixed(ctx context.Context, ask string) (askMixedMonit
 	return c.monitorAskMixedWithPlanner(ctx, nil, "", ask, 0, 0)
 }
 
+func (c *Client) AnalyzeUserDirectedAsk(ctx context.Context, conv *conversation.Conversation, goal, ask string, step, maxSteps int) (UserDirectedAskOutcome, error) {
+	ask = strings.TrimSpace(ask)
+	if ask == "" {
+		return UserDirectedAskOutcome{}, nil
+	}
+	monitor, err := c.monitorAskUserDirectedWithPlanner(ctx, conv, goal, ask, step, maxSteps)
+	if err != nil {
+		return UserDirectedAskOutcome{}, err
+	}
+	if !monitor.IsUserDirected {
+		return UserDirectedAskOutcome{}, nil
+	}
+	purified, err := c.purifyAskUserDirectedWithPlanner(ctx, conv, goal, ask, monitor.Reason, step, maxSteps)
+	if err != nil {
+		return UserDirectedAskOutcome{}, err
+	}
+	if !purified.ShouldSuspend || strings.TrimSpace(purified.PurifiedQuestion) == "" {
+		return UserDirectedAskOutcome{}, nil
+	}
+	return UserDirectedAskOutcome{
+		ShouldSuspend: true,
+		OriginalAsk:   ask,
+		Question:      strings.TrimSpace(purified.PurifiedQuestion),
+		Context:       strings.TrimSpace(purified.Context),
+		Reason:        strings.TrimSpace(purified.Reason),
+	}, nil
+}
+
 func (c *Client) monitorAskWithPlanner(ctx context.Context, conv *conversation.Conversation, goal string, ask string, step, maxSteps int) (askMonitorResult, error) {
 	prompt := c.askMonitorPrompt(ask)
 	if strings.TrimSpace(prompt) == "" {
@@ -690,6 +750,30 @@ func (c *Client) monitorAskMixedWithPlanner(ctx context.Context, conv *conversat
 		return askMixedMonitorResult{}, err
 	}
 	return parseAskMixedMonitorResponse(resp)
+}
+
+func (c *Client) monitorAskUserDirectedWithPlanner(ctx context.Context, conv *conversation.Conversation, goal string, ask string, step, maxSteps int) (askUserDirectedMonitorResult, error) {
+	prompt := c.askUserDirectedMonitorPrompt(ask)
+	if strings.TrimSpace(prompt) == "" {
+		return askUserDirectedMonitorResult{}, errors.New("planner: ask user-directed monitor template missing")
+	}
+	resp, err := c.chatPlannerTask(ctx, conv, goal, step, maxSteps, nil, prompt)
+	if err != nil {
+		return askUserDirectedMonitorResult{}, err
+	}
+	return parseAskUserDirectedMonitorResponse(resp)
+}
+
+func (c *Client) purifyAskUserDirectedWithPlanner(ctx context.Context, conv *conversation.Conversation, goal, ask, reason string, step, maxSteps int) (askUserDirectedPurifierResult, error) {
+	prompt := c.askUserDirectedPurifierPrompt(ask, reason)
+	if strings.TrimSpace(prompt) == "" {
+		return askUserDirectedPurifierResult{}, errors.New("planner: ask user-directed purifier template missing")
+	}
+	resp, err := c.chatPlannerTask(ctx, conv, goal, step, maxSteps, nil, prompt)
+	if err != nil {
+		return askUserDirectedPurifierResult{}, err
+	}
+	return parseAskUserDirectedPurifierResponse(resp)
 }
 
 func (c *Client) buildPlanMessages(conv *conversation.Conversation, goal string, step, maxSteps int, patchPlan *PatchPlan) []llm.Message {
@@ -1367,6 +1451,50 @@ func (c *Client) askMonitorPrompt(ask string) string {
 		return ""
 	}
 	return rendered
+}
+
+func (c *Client) askUserDirectedMonitorPrompt(ask string) string {
+	tpl := c.askUserDirectedMonitorTemplate()
+	if tpl == "" {
+		fmt.Fprintln(os.Stderr, "[planner] ask user-directed monitor template missing")
+		return ""
+	}
+	data := askUserDirectedMonitorData{Ask: strings.TrimSpace(ask), InternetAccess: c.cfg.InternetAccess}
+	rendered, err := prompts.Render("planner_ask_user_directed_monitor", tpl, data, nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[planner] ask user-directed monitor template error: %v\n", err)
+		return ""
+	}
+	return rendered
+}
+
+func (c *Client) askUserDirectedMonitorTemplate() string {
+	if embedded, err := templates.GetEmbeddedTemplate("planner.ask_user_directed_monitor"); err == nil {
+		return embedded
+	}
+	return ""
+}
+
+func (c *Client) askUserDirectedPurifierPrompt(ask, reason string) string {
+	tpl := c.askUserDirectedPurifierTemplate()
+	if tpl == "" {
+		fmt.Fprintln(os.Stderr, "[planner] ask user-directed purifier template missing")
+		return ""
+	}
+	data := askUserDirectedPurifierData{Ask: strings.TrimSpace(ask), Reason: strings.TrimSpace(reason)}
+	rendered, err := prompts.Render("planner_ask_user_directed_purifier", tpl, data, nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[planner] ask user-directed purifier template error: %v\n", err)
+		return ""
+	}
+	return rendered
+}
+
+func (c *Client) askUserDirectedPurifierTemplate() string {
+	if embedded, err := templates.GetEmbeddedTemplate("planner.ask_user_directed_purifier"); err == nil {
+		return embedded
+	}
+	return ""
 }
 
 func (c *Client) askMonitorTemplate() string {
@@ -2147,25 +2275,15 @@ func collapseAskSplit(noShell, shell string) string {
 }
 
 func parseAskMonitorResponse(resp string) (askMonitorResult, error) {
-	raw := strings.TrimSpace(resp)
-	if raw == "" {
-		return askMonitorResult{}, errors.New("empty ask monitor response")
-	}
-	if strings.HasPrefix(raw, "```") {
-		trimmed := strings.TrimSpace(raw)
-		trimmed = strings.TrimPrefix(trimmed, "```json")
-		trimmed = strings.TrimPrefix(trimmed, "```JSON")
-		trimmed = strings.TrimPrefix(trimmed, "```")
-		trimmed = strings.TrimSuffix(trimmed, "```")
-		raw = strings.TrimSpace(trimmed)
-	}
-	if i := strings.Index(raw, "{"); i >= 0 {
-		if j := strings.LastIndex(raw, "}"); j > i {
-			raw = raw[i : j+1]
+	jsonBytes, err := parser.ExtractJSONObjectPayload(resp)
+	if err != nil {
+		if strings.TrimSpace(resp) == "" {
+			return askMonitorResult{}, errors.New("empty ask monitor response")
 		}
+		return askMonitorResult{}, err
 	}
 	var result askMonitorResult
-	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+	if err := json.Unmarshal(jsonBytes, &result); err != nil {
 		return askMonitorResult{}, err
 	}
 	result.Reason = strings.TrimSpace(result.Reason)
@@ -2173,29 +2291,53 @@ func parseAskMonitorResponse(resp string) (askMonitorResult, error) {
 }
 
 func parseAskMixedMonitorResponse(resp string) (askMixedMonitorResult, error) {
-	raw := strings.TrimSpace(resp)
-	if raw == "" {
-		return askMixedMonitorResult{}, errors.New("empty ask mixed monitor response")
-	}
-	if strings.HasPrefix(raw, "```") {
-		trimmed := strings.TrimSpace(raw)
-		trimmed = strings.TrimPrefix(trimmed, "```json")
-		trimmed = strings.TrimPrefix(trimmed, "```JSON")
-		trimmed = strings.TrimPrefix(trimmed, "```")
-		trimmed = strings.TrimSuffix(trimmed, "```")
-		raw = strings.TrimSpace(trimmed)
-	}
-	if i := strings.Index(raw, "{"); i >= 0 {
-		if j := strings.LastIndex(raw, "}"); j > i {
-			raw = raw[i : j+1]
+	jsonBytes, err := parser.ExtractJSONObjectPayload(resp)
+	if err != nil {
+		if strings.TrimSpace(resp) == "" {
+			return askMixedMonitorResult{}, errors.New("empty ask mixed monitor response")
 		}
+		return askMixedMonitorResult{}, err
 	}
 	var result askMixedMonitorResult
-	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+	if err := json.Unmarshal(jsonBytes, &result); err != nil {
 		return askMixedMonitorResult{}, err
 	}
 	result.Reason = strings.TrimSpace(result.Reason)
 	result.Rewrite = strings.TrimSpace(result.Rewrite)
+	return result, nil
+}
+
+func parseAskUserDirectedMonitorResponse(resp string) (askUserDirectedMonitorResult, error) {
+	jsonBytes, err := parser.ExtractJSONObjectPayload(resp)
+	if err != nil {
+		if strings.TrimSpace(resp) == "" {
+			return askUserDirectedMonitorResult{}, errors.New("empty ask user-directed monitor response")
+		}
+		return askUserDirectedMonitorResult{}, err
+	}
+	var result askUserDirectedMonitorResult
+	if err := json.Unmarshal(jsonBytes, &result); err != nil {
+		return askUserDirectedMonitorResult{}, err
+	}
+	result.Reason = strings.TrimSpace(result.Reason)
+	return result, nil
+}
+
+func parseAskUserDirectedPurifierResponse(resp string) (askUserDirectedPurifierResult, error) {
+	jsonBytes, err := parser.ExtractJSONObjectPayload(resp)
+	if err != nil {
+		if strings.TrimSpace(resp) == "" {
+			return askUserDirectedPurifierResult{}, errors.New("empty ask user-directed purifier response")
+		}
+		return askUserDirectedPurifierResult{}, err
+	}
+	var result askUserDirectedPurifierResult
+	if err := json.Unmarshal(jsonBytes, &result); err != nil {
+		return askUserDirectedPurifierResult{}, err
+	}
+	result.PurifiedQuestion = strings.TrimSpace(result.PurifiedQuestion)
+	result.Context = strings.TrimSpace(result.Context)
+	result.Reason = strings.TrimSpace(result.Reason)
 	return result, nil
 }
 

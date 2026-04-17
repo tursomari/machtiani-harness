@@ -21,22 +21,33 @@ type PatchPlanItem = planner.PatchPlanItem
 type PatchPlan = planner.PatchPlan
 
 type SessionState struct {
-	SessionID          string                 `json:"session_id"`
-	Goal               string                 `json:"goal"`
-	OriginalPrompt     string                 `json:"original_prompt,omitempty"`
-	TaskDescription    string                 `json:"task_description,omitempty"`
-	PlannerOverlay     string                 `json:"planner_overlay,omitempty"`
-	TurnsCompleted     int                    `json:"turns_completed"`
-	TranscriptPath     string                 `json:"transcript_path,omitempty"`
-	Transcript         string                 `json:"transcript"`
-	ConversationPath   string                 `json:"conversation_path,omitempty"`
-	ConversationJSON   string                 `json:"conversation_json,omitempty"`
-	UpdatedAt          time.Time              `json:"updated_at"`
-	ParentSessionID    string                 `json:"parent_session_id,omitempty"`
-	MetaModes          []string               `json:"meta_modes,omitempty"`
-	MetaInstructionDir string                 `json:"meta_instruction_dir,omitempty"`
-	PlannerProgress    *PlannerProgressState  `json:"planner_progress,omitempty"`
-	PendingPatchTurn   *PendingPatchTurnState `json:"pending_patch_turn,omitempty"`
+	SessionID          string                   `json:"session_id"`
+	Goal               string                   `json:"goal"`
+	OriginalPrompt     string                   `json:"original_prompt,omitempty"`
+	TaskDescription    string                   `json:"task_description,omitempty"`
+	PlannerOverlay     string                   `json:"planner_overlay,omitempty"`
+	Status             string                   `json:"status,omitempty"`
+	TurnsCompleted     int                      `json:"turns_completed"`
+	TranscriptPath     string                   `json:"transcript_path,omitempty"`
+	Transcript         string                   `json:"transcript"`
+	ConversationPath   string                   `json:"conversation_path,omitempty"`
+	ConversationJSON   string                   `json:"conversation_json,omitempty"`
+	UpdatedAt          time.Time                `json:"updated_at"`
+	ParentSessionID    string                   `json:"parent_session_id,omitempty"`
+	MetaModes          []string                 `json:"meta_modes,omitempty"`
+	MetaInstructionDir string                   `json:"meta_instruction_dir,omitempty"`
+	PlannerProgress    *PlannerProgressState    `json:"planner_progress,omitempty"`
+	PendingPatchTurn   *PendingPatchTurnState   `json:"pending_patch_turn,omitempty"`
+	SuspendedUserInput *SuspendedUserInputState `json:"suspended_user_input,omitempty"`
+}
+
+type SuspendedUserInputState struct {
+	Kind           string `json:"kind,omitempty"`
+	Question       string `json:"question,omitempty"`
+	Context        string `json:"context,omitempty"`
+	Reason         string `json:"reason,omitempty"`
+	OriginalAsk    string `json:"original_ask,omitempty"`
+	ChildSessionID string `json:"child_session_id,omitempty"`
 }
 
 // PlannerProgressState captures planner-visible progress across turns so
@@ -51,6 +62,14 @@ type PendingPatchTurnState struct {
 	Step        int    `json:"step,omitempty"`
 	Description string `json:"description,omitempty"`
 	Answer      string `json:"answer,omitempty"`
+}
+
+func (s *SuspendedUserInputState) Clone() *SuspendedUserInputState {
+	if s == nil {
+		return nil
+	}
+	clone := *s
+	return &clone
 }
 
 func (p *PlannerProgressState) Clone() *PlannerProgressState {

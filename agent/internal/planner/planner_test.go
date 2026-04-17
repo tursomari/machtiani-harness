@@ -840,6 +840,178 @@ func TestGenerateAskMonitorResponseErrorsDoNotBlockAsk(t *testing.T) {
 	}
 }
 
+func TestParseAskMonitorResponseUsesTolerantJSONExtraction(t *testing.T) {
+	t.Run("fenced leading trailing", func(t *testing.T) {
+		resp := "Monitor result:\n```json\n{\"has_patch_intent\": true, \"reason\": \" asks for file edits \"}\n```\nextra"
+		got, err := parseAskMonitorResponse(resp)
+		if err != nil {
+			t.Fatalf("parseAskMonitorResponse error: %v", err)
+		}
+		if !got.HasPatchIntent {
+			t.Fatalf("expected has_patch_intent=true")
+		}
+		if got.Reason != "asks for file edits" {
+			t.Fatalf("unexpected reason: %q", got.Reason)
+		}
+	})
+
+	t.Run("braces inside strings", func(t *testing.T) {
+		resp := `{"has_patch_intent":false,"reason":"mentions {README.md} but is still only a question"}`
+		got, err := parseAskMonitorResponse(resp)
+		if err != nil {
+			t.Fatalf("parseAskMonitorResponse error: %v", err)
+		}
+		if got.HasPatchIntent {
+			t.Fatalf("expected has_patch_intent=false")
+		}
+		if got.Reason == "" {
+			t.Fatalf("expected reason to be preserved")
+		}
+	})
+
+	t.Run("invalid json", func(t *testing.T) {
+		if _, err := parseAskMonitorResponse(`{"has_patch_intent":`); err == nil {
+			t.Fatalf("expected invalid JSON error")
+		}
+	})
+}
+
+func TestParseAskMixedMonitorResponseUsesTolerantJSONExtraction(t *testing.T) {
+	t.Run("fenced leading trailing", func(t *testing.T) {
+		resp := "Here you go\n```json\n{\"is_mixed\": true, \"reason\": \" combines explanation and commands \", \"rewrite\": \"No-shell: Explain it.\\nShell: Run git diff --stat.\"}\n```\nthanks"
+		got, err := parseAskMixedMonitorResponse(resp)
+		if err != nil {
+			t.Fatalf("parseAskMixedMonitorResponse error: %v", err)
+		}
+		if !got.IsMixed {
+			t.Fatalf("expected is_mixed=true")
+		}
+		if got.Reason != "combines explanation and commands" {
+			t.Fatalf("unexpected reason: %q", got.Reason)
+		}
+		if !strings.HasPrefix(got.Rewrite, "No-shell:") {
+			t.Fatalf("unexpected rewrite: %q", got.Rewrite)
+		}
+	})
+
+	t.Run("braces inside strings", func(t *testing.T) {
+		resp := `{"is_mixed":false,"reason":"already split with {labels}","rewrite":""}`
+		got, err := parseAskMixedMonitorResponse(resp)
+		if err != nil {
+			t.Fatalf("parseAskMixedMonitorResponse error: %v", err)
+		}
+		if got.IsMixed {
+			t.Fatalf("expected is_mixed=false")
+		}
+		if got.Reason != "already split with {labels}" {
+			t.Fatalf("unexpected reason: %q", got.Reason)
+		}
+	})
+
+	t.Run("invalid json", func(t *testing.T) {
+		if _, err := parseAskMixedMonitorResponse(`{"is_mixed":`); err == nil {
+			t.Fatalf("expected invalid JSON error")
+		}
+	})
+}
+
+func TestAnalyzeUserDirectedAsk(t *testing.T) {
+	t.Run("monitor false", func(t *testing.T) {
+		client := NewClient(ClientConfig{InternetAccess: true})
+		conv := conversation.New("sess-user-directed-false", "Investigate issue")
+		client.chatFn = func(_ context.Context, messages []llm.Message) (string, error) {
+			content := messages[len(messages)-1].Content
+			if strings.Contains(content, "You are a guard for user-directed asks.") {
+				if !strings.Contains(content, "Internet Access: true") {
+					t.Fatalf("expected Internet Access capability in monitor prompt, got %q", content)
+				}
+				return `{"is_user_directed":false,"reason":"implementation choice"}`, nil
+			}
+			t.Fatalf("unexpected prompt: %s", content)
+			return "", nil
+		}
+		got, err := client.AnalyzeUserDirectedAsk(context.Background(), conv, conv.CurrentGoal(), "Should I inspect logs first?", 1, 4)
+		if err != nil {
+			t.Fatalf("AnalyzeUserDirectedAsk error: %v", err)
+		}
+		if got.ShouldSuspend {
+			t.Fatalf("expected no suspension, got %+v", got)
+		}
+	})
+
+	t.Run("purifier success", func(t *testing.T) {
+		client := NewClient(ClientConfig{})
+		conv := conversation.New("sess-user-directed-true", "Investigate issue")
+		client.chatFn = func(_ context.Context, messages []llm.Message) (string, error) {
+			content := messages[len(messages)-1].Content
+			switch {
+			case strings.Contains(content, "You are a guard for user-directed asks."):
+				return "monitor result\n```json\n{\"is_user_directed\":true,\"reason\":\"asks for the preferred tradeoff\"}\n```", nil
+			case strings.Contains(content, "You are a purifier for flagged user-directed asks."):
+				return "```json\n{\"should_suspend\":true,\"purified_question\":\"Do you want the safer fix, or the faster fix?\",\"context\":\"\",\"reason\":\"extracted the tradeoff\"}\n```", nil
+			default:
+				t.Fatalf("unexpected prompt: %s", content)
+				return "", nil
+			}
+		}
+		got, err := client.AnalyzeUserDirectedAsk(context.Background(), conv, conv.CurrentGoal(), "Do you want the safer fix or the faster fix? I can inspect more logs too.", 1, 4)
+		if err != nil {
+			t.Fatalf("AnalyzeUserDirectedAsk error: %v", err)
+		}
+		if !got.ShouldSuspend {
+			t.Fatalf("expected suspension, got %+v", got)
+		}
+		if got.Question != "Do you want the safer fix, or the faster fix?" {
+			t.Fatalf("unexpected purified question: %q", got.Question)
+		}
+	})
+
+	t.Run("purifier decline with empty reason", func(t *testing.T) {
+		client := NewClient(ClientConfig{})
+		conv := conversation.New("sess-user-directed-decline", "Investigate issue")
+		client.chatFn = func(_ context.Context, messages []llm.Message) (string, error) {
+			content := messages[len(messages)-1].Content
+			switch {
+			case strings.Contains(content, "You are a guard for user-directed asks."):
+				return `{"is_user_directed":true,"reason":""}`, nil
+			case strings.Contains(content, "You are a purifier for flagged user-directed asks."):
+				if !strings.Contains(content, "Reason: ") {
+					t.Fatalf("expected purifier prompt to include empty reason field")
+				}
+				return `{"should_suspend":false,"purified_question":"","context":"","reason":"no clean user-owned question"}`, nil
+			default:
+				t.Fatalf("unexpected prompt: %s", content)
+				return "", nil
+			}
+		}
+		got, err := client.AnalyzeUserDirectedAsk(context.Background(), conv, conv.CurrentGoal(), "Explain the auth flow and run git diff --stat.", 1, 4)
+		if err != nil {
+			t.Fatalf("AnalyzeUserDirectedAsk error: %v", err)
+		}
+		if got.ShouldSuspend {
+			t.Fatalf("expected purifier decline, got %+v", got)
+		}
+	})
+}
+
+func TestParseAskUserDirectedResponsesUseTolerantJSONExtraction(t *testing.T) {
+	monitor, err := parseAskUserDirectedMonitorResponse("Monitor\n```json\n{\"is_user_directed\":true,\"reason\":\" user must choose goal \"}\n```\nextra")
+	if err != nil {
+		t.Fatalf("parseAskUserDirectedMonitorResponse error: %v", err)
+	}
+	if !monitor.IsUserDirected || monitor.Reason != "user must choose goal" {
+		t.Fatalf("unexpected monitor result: %+v", monitor)
+	}
+
+	purifier, err := parseAskUserDirectedPurifierResponse("```json\n{\"should_suspend\":true,\"purified_question\":\"Is your goal A or B?\",\"context\":\"\",\"reason\":\" extracted \"}\n``` trailing")
+	if err != nil {
+		t.Fatalf("parseAskUserDirectedPurifierResponse error: %v", err)
+	}
+	if !purifier.ShouldSuspend || purifier.PurifiedQuestion != "Is your goal A or B?" || purifier.Reason != "extracted" {
+		t.Fatalf("unexpected purifier result: %+v", purifier)
+	}
+}
+
 func TestGenerateAskRetryExhaustionReturnsLastAsk(t *testing.T) {
 	client := NewClient(ClientConfig{})
 	conv := conversation.New("sess-ask-retry", "Investigate retry behavior")

@@ -209,6 +209,10 @@ func (c *Conversation) ToTranscript() (string, error) {
 		case "goal_update", "user_feedback":
 			block := renderGoalUpdate(msg.Content)
 			addRawEvent(block)
+		case "user_input":
+			addRawEvent(renderUserInput(msg.Content))
+		case "user_input_request":
+			addRawEvent(renderUserInputRequest(msg.Content))
 		case "raw", "raw_block":
 			if strings.TrimSpace(msg.Content) != "" {
 				addRawEvent(msg.Content)
@@ -291,9 +295,9 @@ func (c *Conversation) ToChatMessages(systemPrompt string) []llm.Message {
 		msgType := getType(msg.Metadata)
 		role := ""
 		switch msgType {
-		case "original_goal", "goal_update", "user_feedback", "cache_anchor":
+		case "original_goal", "goal_update", "user_feedback", "user_input", "cache_anchor":
 			role = "user"
-		case "ask", "answer", "raw", "raw_block", "final", "final_answer":
+		case "ask", "answer", "raw", "raw_block", "final", "final_answer", "user_input_request":
 			role = "assistant"
 		default:
 			continue
@@ -368,6 +372,16 @@ func renderTurn(step int, question, savedPath string, retrieved []string, summar
 func renderGoalUpdate(content string) string {
 	body := strings.TrimRight(content, "\n")
 	return sanitize("\n=== GOAL UPDATE\n\n" + body + "\n")
+}
+
+func renderUserInput(content string) string {
+	body := strings.TrimRight(content, "\n")
+	return sanitize("\n=== USER INPUT\n\n" + body + "\n")
+}
+
+func renderUserInputRequest(content string) string {
+	body := strings.TrimRight(content, "\n")
+	return sanitize("\n=== USER INPUT NEEDED ===\n\n" + body + "\n")
 }
 
 func renderConclusion(answer string, step int, capped bool) string {

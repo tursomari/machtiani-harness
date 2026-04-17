@@ -19,6 +19,7 @@ func TestSaveLoadSessionStateRoundTrip(t *testing.T) {
 		OriginalPrompt:   "Review database migrations in detail",
 		TaskDescription:  "Validate migration ordering",
 		PlannerOverlay:   "Prefer migration safety over speed",
+		Status:           "suspended_user_input",
 		TurnsCompleted:   3,
 		TranscriptPath:   "/tmp/mct/transcript.md",
 		Transcript:       "# existing transcript\n\ncontent here\n",
@@ -39,6 +40,14 @@ func TestSaveLoadSessionStateRoundTrip(t *testing.T) {
 			Step:        4,
 			Description: "Update migration",
 			Answer:      "diff --git a/file b/file",
+		},
+		SuspendedUserInput: &SuspendedUserInputState{
+			Kind:           "user-directed-ask",
+			Question:       "Do you want the safer fix, or the faster fix?",
+			Context:        "The safer fix preserves behavior.",
+			Reason:         "asks for the preferred tradeoff",
+			OriginalAsk:    "Do you want the safer fix or the faster fix? I can inspect more logs too.",
+			ChildSessionID: "child-123",
 		},
 	}
 
@@ -74,6 +83,9 @@ func TestSaveLoadSessionStateRoundTrip(t *testing.T) {
 	}
 	if loaded.PlannerOverlay != state.PlannerOverlay {
 		t.Fatalf("unexpected planner overlay: got %q want %q", loaded.PlannerOverlay, state.PlannerOverlay)
+	}
+	if loaded.Status != state.Status {
+		t.Fatalf("unexpected status: got %q want %q", loaded.Status, state.Status)
 	}
 	if loaded.TurnsCompleted != state.TurnsCompleted {
 		t.Fatalf("unexpected turns completed: got %d want %d", loaded.TurnsCompleted, state.TurnsCompleted)
@@ -131,6 +143,15 @@ func TestSaveLoadSessionStateRoundTrip(t *testing.T) {
 	}
 	if loaded.PendingPatchTurn.Answer != state.PendingPatchTurn.Answer {
 		t.Fatalf("unexpected pending patch answer: got %q want %q", loaded.PendingPatchTurn.Answer, state.PendingPatchTurn.Answer)
+	}
+	if loaded.SuspendedUserInput == nil {
+		t.Fatalf("expected suspended user input to round-trip")
+	}
+	if loaded.SuspendedUserInput.Question != state.SuspendedUserInput.Question {
+		t.Fatalf("unexpected suspended question: got %q want %q", loaded.SuspendedUserInput.Question, state.SuspendedUserInput.Question)
+	}
+	if loaded.SuspendedUserInput.ChildSessionID != state.SuspendedUserInput.ChildSessionID {
+		t.Fatalf("unexpected child session id: got %q want %q", loaded.SuspendedUserInput.ChildSessionID, state.SuspendedUserInput.ChildSessionID)
 	}
 
 	path := filepath.Join(dir, sessionStateFile)

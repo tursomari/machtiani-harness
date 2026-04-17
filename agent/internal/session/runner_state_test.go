@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -121,6 +122,81 @@ func TestConversationRecorderAppendRawFallsBackOnDesync(t *testing.T) {
 	}
 	if !strings.Contains(recorder.JSON(), "Need a tighter scope") {
 		t.Fatalf("conversation json missing appended raw content after fallback: %s", recorder.JSON())
+	}
+}
+
+func TestConversationRecorderAppendRawUserInputRequestAndReply(t *testing.T) {
+	tr, err := transcript.New("conv-user-input")
+	if err != nil {
+		t.Fatalf("transcript init: %v", err)
+	}
+	t.Cleanup(func() { _ = tr.Close() })
+
+	recorder := newConversationRecorder(tr, "conv-user-input", "Goal", "", false, nil)
+	if err := recorder.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if err := recorder.AppendRaw("assistant", "Do you want the safer fix?", "user_input_request"); err != nil {
+		t.Fatalf("AppendRaw request: %v", err)
+	}
+	if err := recorder.AppendRaw("user", "Use the safer fix.", "user_input"); err != nil {
+		t.Fatalf("AppendRaw reply: %v", err)
+	}
+	content := tr.Content()
+	if !strings.Contains(content, "=== USER INPUT NEEDED ===") {
+		t.Fatalf("expected user input request block, got %q", content)
+	}
+	if !strings.Contains(content, "=== USER INPUT") {
+		t.Fatalf("expected user input reply block, got %q", content)
+	}
+	messages := recorder.Conversation().ToChatMessages("")
+	foundRequest := false
+	foundReply := false
+	for _, msg := range messages {
+		switch {
+		case msg.Role == "assistant" && strings.Contains(msg.Content, "Do you want the safer fix?"):
+			foundRequest = true
+		case msg.Role == "user" && strings.Contains(msg.Content, "Use the safer fix."):
+			foundReply = true
+		}
+	}
+	if !foundRequest || !foundReply {
+		t.Fatalf("expected request and reply in chat messages, got %+v", messages)
+	}
+}
+
+func TestRunLifecycleStateSuspendForUserInput(t *testing.T) {
+	tr, err := transcript.New("suspend-user-input")
+	if err != nil {
+		t.Fatalf("transcript init: %v", err)
+	}
+	t.Cleanup(func() { _ = tr.Close() })
+
+	recorder := newConversationRecorder(tr, "suspend-user-input", "Goal", "", false, nil)
+	if err := recorder.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	runState := newRunLifecycleState(context.Background(), legacyConfig{}, "suspend-user-input", "Goal", "Goal", "", "", "", nil)
+	runState.recorder = recorder
+	runState.tr = tr
+
+	result, err := runState.suspendForUserInput(nil, "Do you want the safer fix?", "The safer fix preserves behavior.", "tradeoff choice", "Original mixed ask")
+	if err != nil {
+		t.Fatalf("suspendForUserInput: %v", err)
+	}
+	if result.Status != "suspended_user_input" {
+		t.Fatalf("unexpected result status: %q", result.Status)
+	}
+	if runState.pendingState == nil || runState.pendingState.SuspendedUserInput == nil {
+		t.Fatalf("expected suspended user input in pending state")
+	}
+	if runState.pendingState.SuspendedUserInput.Question != "Do you want the safer fix?" {
+		t.Fatalf("unexpected question: %q", runState.pendingState.SuspendedUserInput.Question)
+	}
+	content := tr.Content()
+	if !strings.Contains(content, "=== USER INPUT NEEDED ===") || !strings.Contains(content, "Do you want the safer fix?") {
+		t.Fatalf("expected suspended question in transcript, got %q", content)
 	}
 }
 

@@ -197,6 +197,7 @@ type EnvironmentConfig struct {
 	Type             string            `toml:"type"`
 	Timeout          int               `toml:"timeout"`
 	CWD              string            `toml:"cwd"`
+	InternetAccess   bool              `toml:"internet_access"`
 	EnvVars          map[string]string `toml:"env_vars"`
 	DockerfilePath   string            `toml:"dockerfile_path"`
 	Runtime          string            `toml:"runtime"`
@@ -1313,6 +1314,9 @@ func parseEnvironmentSection(path string, data map[string]any) (*EnvironmentConf
 	}
 	if v, ok := data["cwd"].(string); ok {
 		env.CWD = v
+	}
+	if v, ok := data["internet_access"].(bool); ok {
+		env.InternetAccess = v
 	}
 	if vars, ok := toMap(data["env_vars"]); ok {
 		stringMap, err := mapStringString(vars)

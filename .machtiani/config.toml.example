@@ -30,6 +30,7 @@ header_existing_template = { file = "templates/mct/header_existing_template.tpl"
 # Shared temporary workspace root.
 [environment]
 tmp_root = ".machtiani/tmp"
+internet_access = true # capability hint only; not a trigger to ask the user
 
 # Optional ignore rules applied by file-discovery and shell-agent workspaces.
 [ignore]

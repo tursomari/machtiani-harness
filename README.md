@@ -162,6 +162,7 @@ api_key = ""              # omit to fall back to OPENROUTER_API_KEY / OPENAI_API
 type = "local"
 timeout = 30
 cwd = "."
+internet_access = true # capability hint for ask classification; not an escalation trigger
 
 [providers.openrouter]
 base_url = "https://openrouter.ai/api/v1"
@@ -172,7 +173,7 @@ provider = "openrouter"
 model    = "openai/gpt-5-nano"
 ```
 
-Keys inside `[planner]`, `[shell-agent]`, `[model]`, and `[environment]` are shared across Machtiani binaries; omit `model.api_key` to keep credentials out of the file. When you need an alternate model temporarily, pass `--shell-agent-model <alias>` to `mct-agent run --shell-agent` or to the standalone `shell-agent` binary.
+Keys inside `[planner]`, `[shell-agent]`, `[model]`, and `[environment]` are shared across Machtiani binaries; omit `model.api_key` to keep credentials out of the file. `[environment].internet_access` is only a capability hint for planner guardrails so the agent can distinguish information gaps from user-authority gaps; it does not itself force escalation to the user. When you need an alternate model temporarily, pass `--shell-agent-model <alias>` to `mct-agent run --shell-agent` or to the standalone `shell-agent` binary.
 
 ### Prompt Caching (per model)
 Prompt caching is configured per entry under `[models.<alias>]`. To enable it, set a cache key name, cache control payload, a token threshold, and (optionally) a lookback offset for the initial anchor placement:

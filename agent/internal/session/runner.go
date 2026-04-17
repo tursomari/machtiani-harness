@@ -521,6 +521,7 @@ func runSession(ctx context.Context, opts Options) Result {
 	sessionID := bootstrap.sessionID
 	goal := bootstrap.goal
 	resumePrompt := bootstrap.resumePrompt
+	resumeSuspendedInput := bootstrap.resumeSuspendedInput
 	originalPrompt := bootstrap.originalPrompt
 	taskDescription := bootstrap.taskDescription
 	plannerOverlay := bootstrap.plannerOverlay
@@ -813,6 +814,7 @@ func runSession(ctx context.Context, opts Options) Result {
 		Alias:             models.orchestrator.alias,
 		Verbose:           cfg.verbose,
 		DryRun:            cfg.dryRun,
+		InternetAccess:    opts.GlobalConfig.Environment != nil && opts.GlobalConfig.Environment.InternetAccess,
 		RequestTimeoutSec: cfg.timeoutPerTurn,
 		PatchEnabled:      cfg.patch,
 		StrictPatchMode:   effectiveStrict,
@@ -845,6 +847,7 @@ func runSession(ctx context.Context, opts Options) Result {
 			RootCtx:         rootCtx,
 			SessionID:       sessionID,
 			Goal:            goal,
+			ResumePrompt:    resumePrompt,
 			Config:          cfg,
 			Options:         opts,
 			Display:         display,
@@ -855,6 +858,39 @@ func runSession(ctx context.Context, opts Options) Result {
 		outcome, handled := metaOrchestrate(metaCtx)
 		if handled {
 			runState.turnsCompleted = len(outcome.Plan.Tasks)
+			if outcome.SuspendedInput != nil {
+				runState.sessionStatus = "suspended_user_input"
+				runState.sessionErr = nil
+				runState.keepSessionState = true
+				instructionDir := strings.TrimSpace(cfg.metaInstructionDir)
+				if instructionDir == "" {
+					if strings.TrimSpace(metaInstructionPath) != "" {
+						instructionDir = filepath.Dir(metaInstructionPath)
+					}
+				}
+				runState.suspendedUserInput = outcome.SuspendedInput.Clone()
+				runState.pendingState = &SessionState{
+					SessionID:          sessionID,
+					Goal:               goal,
+					OriginalPrompt:     originalPrompt,
+					TaskDescription:    taskDescription,
+					PlannerOverlay:     plannerOverlay,
+					Status:             runState.sessionStatus,
+					TurnsCompleted:     runState.turnsCompleted,
+					TranscriptPath:     tr.Path(),
+					Transcript:         tr.Content(),
+					ConversationPath:   recorder.Path(),
+					ConversationJSON:   recorder.JSON(),
+					ParentSessionID:    strings.TrimSpace(cfg.parentSessionID),
+					MetaModes:          metaModesFromPlan(outcome.Plan),
+					MetaInstructionDir: instructionDir,
+					SuspendedUserInput: outcome.SuspendedInput.Clone(),
+				}
+				runState.applyPlannerProgress(runState.pendingState)
+				display.EndSession()
+				runState.printUserInputHint(outcome.SuspendedInput.Question, outcome.SuspendedInput.Context)
+				return Result{ExitCode: 0, Status: runState.sessionStatus, Turns: runState.turnsCompleted, SessionID: sessionID}
+			}
 			if outcome.Err != nil {
 				runState.sessionErr = outcome.Err
 				runState.sessionStatus = "error"
@@ -968,16 +1004,29 @@ func runSession(ctx context.Context, opts Options) Result {
 		}
 		trimmedResumePrompt := strings.TrimSpace(resumePrompt)
 		if trimmedResumePrompt != "" {
-			feedback := extractUserFeedback(trimmedResumePrompt)
+			feedback := trimmedResumePrompt
+			metaType := "goal_update"
+			if resumeSuspendedInput == nil {
+				feedback = extractUserFeedback(trimmedResumePrompt)
+			} else {
+				metaType = "user_input"
+			}
 			resumePrompt = feedback
-			if err := appendConversationRaw("user", feedback, "goal_update"); err != nil {
+			if err := appendConversationRaw("user", feedback, metaType); err != nil {
 				fmt.Fprintln(os.Stderr, "Transcript write error:", err)
 				runState.sessionErr = err
 				finishTurn(sessTelemetry, turn, "user-feedback", "error", turnInfo, err)
 				runState.turnsCompleted = runState.userTurnCounter
 				return Result{ExitCode: 1, Err: err}
 			}
-			trFull = appendResumePromptContext(trFull, feedback)
+			if resumeSuspendedInput != nil {
+				trFull = appendUserInputContext(trFull, feedback)
+				runState.clearSuspendedUserInput()
+				resumeSuspendedInput = nil
+				turnInfo["resume_user_input"] = true
+			} else {
+				trFull = appendResumePromptContext(trFull, feedback)
+			}
 			turnInfo["resume_prompt"] = true
 			if cfg.patch {
 				if _, err := invokePatchPlanUpdateHook(planCtx, pl, tr, sessionID, goal, trFull, "", display, true); err != nil {
@@ -1149,6 +1198,44 @@ func runSession(ctx context.Context, opts Options) Result {
 			finishTurn(sessTelemetry, turn, turnDecision, "error", turnInfo, errUnexpected)
 			runState.turnsCompleted = runState.userTurnCounter
 			return Result{ExitCode: 1, Err: errUnexpected}
+		}
+
+		if decision == planner.DecisionAsk {
+			ctxAsk, cancelAsk := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
+			ctxAsk = attachTrajectory(ctxAsk, trajectoryWriter, parentSpanID)
+			userDirected, uerr := pl.AnalyzeUserDirectedAsk(ctxAsk, conv, goal, question, step, cfg.maxSteps)
+			var ctxAskErr error
+			if ctxAsk != nil {
+				ctxAskErr = ctxAsk.Err()
+			}
+			if cancelAsk != nil {
+				cancelAsk()
+			}
+			switch {
+			case uerr == nil && userDirected.ShouldSuspend:
+				turnInfo["ask_user_directed"] = true
+				turnInfo["suspended"] = true
+				turnInfo["suspension_kind"] = "user-directed-ask"
+				if strings.TrimSpace(userDirected.Reason) != "" {
+					turnInfo["suspension_reason"] = trimTo(userDirected.Reason, 200)
+				}
+				if trajectoryWriter != nil {
+					turnInfo = trajectory.MergeExcerptWithPrefix(turnInfo, trajectory.MakeTextExcerpt(userDirected.Question, trajectoryWriter.ExcerptLen()), "suspension_question")
+				}
+				result, suspendErr := runState.suspendForUserInput(display, userDirected.Question, userDirected.Context, userDirected.Reason, userDirected.OriginalAsk)
+				if suspendErr != nil {
+					runState.sessionErr = suspendErr
+					finishTurn(sessTelemetry, turn, turnDecision, "error", turnInfo, suspendErr)
+					runState.turnsCompleted = runState.userTurnCounter
+					return Result{ExitCode: 1, Err: suspendErr}
+				}
+				finishTurn(sessTelemetry, turn, turnDecision, "suspended", turnInfo, nil)
+				return result
+			case uerr != nil && (isContextCancelled(uerr) || isContextCancelled(ctxAskErr)):
+				return interruptedResult(uerr)
+			case uerr != nil && cfg.verbose:
+				fmt.Fprintf(os.Stderr, "Warning: user-directed ask analysis failed: %v\n", uerr)
+			}
 		}
 
 		if decision == planner.DecisionFinalize {
@@ -1331,6 +1418,23 @@ func appendResumePromptContext(transcript, prompt string) string {
 		b.WriteString("\n\n")
 	}
 	b.WriteString("== GOAL UPDATE\n\n")
+	b.WriteString(prompt)
+	b.WriteString("\n")
+	return b.String()
+}
+
+func appendUserInputContext(transcript, prompt string) string {
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		return transcript
+	}
+	trimmedTranscript := strings.TrimRight(transcript, "\n")
+	var b strings.Builder
+	if trimmedTranscript != "" {
+		b.WriteString(trimmedTranscript)
+		b.WriteString("\n\n")
+	}
+	b.WriteString("=== USER INPUT\n\n")
 	b.WriteString(prompt)
 	b.WriteString("\n")
 	return b.String()
