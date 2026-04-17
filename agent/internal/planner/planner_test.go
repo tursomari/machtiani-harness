@@ -992,6 +992,80 @@ func TestAnalyzeUserDirectedAsk(t *testing.T) {
 			t.Fatalf("expected purifier decline, got %+v", got)
 		}
 	})
+
+	t.Run("monitor format retry", func(t *testing.T) {
+		client := NewClient(ClientConfig{})
+		conv := conversation.New("sess-user-directed-retry-monitor", "Fix the flaky test without changing behavior")
+		callCount := 0
+		client.chatFn = func(_ context.Context, messages []llm.Message) (string, error) {
+			callCount++
+			switch callCount {
+			case 1:
+				return "I think this is user-directed because the user must choose a tradeoff.", nil
+			case 2:
+				if got := messages[len(messages)-1].Content; got != userDirectedJSONFormatRetryPrompt() {
+					t.Fatalf("expected retry prompt %q, got %q", userDirectedJSONFormatRetryPrompt(), got)
+				}
+				return `{"is_user_directed":true,"reason":"user must choose the tradeoff"}`, nil
+			case 3:
+				return `{"should_suspend":true,"purified_question":"Do you want the safer fix or the faster fix?","context":"","reason":"user must decide the tradeoff"}`, nil
+			default:
+				t.Fatalf("unexpected chat call %d", callCount)
+				return "", nil
+			}
+		}
+
+		got, err := client.AnalyzeUserDirectedAsk(context.Background(), conv, conv.CurrentGoal(), "Do you want the safer fix or the faster fix?", 1, 4)
+		if err != nil {
+			t.Fatalf("AnalyzeUserDirectedAsk error: %v", err)
+		}
+		if !got.ShouldSuspend {
+			t.Fatalf("expected suspension outcome, got %#v", got)
+		}
+		if got.Question != "Do you want the safer fix or the faster fix?" {
+			t.Fatalf("unexpected question %q", got.Question)
+		}
+		if callCount != 3 {
+			t.Fatalf("expected 3 chat calls, got %d", callCount)
+		}
+	})
+
+	t.Run("purifier format retry", func(t *testing.T) {
+		client := NewClient(ClientConfig{})
+		conv := conversation.New("sess-user-directed-retry-purifier", "Fix the flaky test without changing behavior")
+		callCount := 0
+		client.chatFn = func(_ context.Context, messages []llm.Message) (string, error) {
+			callCount++
+			switch callCount {
+			case 1:
+				return `{"is_user_directed":true,"reason":"user must choose the tradeoff"}`, nil
+			case 2:
+				return "The ask should suspend and be rewritten as a clean user question.", nil
+			case 3:
+				if got := messages[len(messages)-1].Content; got != userDirectedJSONFormatRetryPrompt() {
+					t.Fatalf("expected retry prompt %q, got %q", userDirectedJSONFormatRetryPrompt(), got)
+				}
+				return `{"should_suspend":true,"purified_question":"Do you want the safer fix or the faster fix?","context":"","reason":"user must decide the tradeoff"}`, nil
+			default:
+				t.Fatalf("unexpected chat call %d", callCount)
+				return "", nil
+			}
+		}
+
+		got, err := client.AnalyzeUserDirectedAsk(context.Background(), conv, conv.CurrentGoal(), "Do you want the safer fix or the faster fix?", 1, 4)
+		if err != nil {
+			t.Fatalf("AnalyzeUserDirectedAsk error: %v", err)
+		}
+		if !got.ShouldSuspend {
+			t.Fatalf("expected suspension outcome, got %#v", got)
+		}
+		if got.Question != "Do you want the safer fix or the faster fix?" {
+			t.Fatalf("unexpected question %q", got.Question)
+		}
+		if callCount != 3 {
+			t.Fatalf("expected 3 chat calls, got %d", callCount)
+		}
+	})
 }
 
 func TestParseAskUserDirectedResponsesUseTolerantJSONExtraction(t *testing.T) {

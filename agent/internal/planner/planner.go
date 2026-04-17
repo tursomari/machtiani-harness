@@ -765,11 +765,7 @@ func (c *Client) monitorAskUserDirectedWithPlanner(ctx context.Context, conv *co
 	if strings.TrimSpace(prompt) == "" {
 		return askUserDirectedMonitorResult{}, errors.New("planner: ask user-directed monitor template missing")
 	}
-	resp, err := c.chatPlannerTask(ctx, conv, goal, step, maxSteps, nil, prompt)
-	if err != nil {
-		return askUserDirectedMonitorResult{}, err
-	}
-	return parseAskUserDirectedMonitorResponse(resp)
+	return chatPlannerTaskJSONWithFormatRetry(c, ctx, conv, goal, step, maxSteps, prompt, parseAskUserDirectedMonitorResponse)
 }
 
 func (c *Client) purifyAskUserDirectedWithPlanner(ctx context.Context, conv *conversation.Conversation, goal, ask, reason string, step, maxSteps int) (askUserDirectedPurifierResult, error) {
@@ -783,11 +779,40 @@ func (c *Client) purifyAskUserDirectedWithPlanner(ctx context.Context, conv *con
 	if strings.TrimSpace(prompt) == "" {
 		return askUserDirectedPurifierResult{}, errors.New("planner: ask user-directed purifier template missing")
 	}
-	resp, err := c.chatPlannerTask(ctx, conv, goal, step, maxSteps, nil, prompt)
+	return chatPlannerTaskJSONWithFormatRetry(c, ctx, conv, goal, step, maxSteps, prompt, parseAskUserDirectedPurifierResponse)
+}
+
+func chatPlannerTaskJSONWithFormatRetry[T any](c *Client, ctx context.Context, conv *conversation.Conversation, goal string, step, maxSteps int, finalUserPrompt string, parse func(string) (T, error)) (T, error) {
+	var zero T
+	resp, err := c.chatPlannerTask(ctx, conv, goal, step, maxSteps, nil, finalUserPrompt)
 	if err != nil {
-		return askUserDirectedPurifierResult{}, err
+		return zero, err
 	}
-	return parseAskUserDirectedPurifierResponse(resp)
+	parsed, err := parse(resp)
+	if err == nil {
+		return parsed, nil
+	}
+	formatPrompt := strings.TrimSpace(userDirectedJSONFormatRetryPrompt())
+	if formatPrompt == "" {
+		return zero, err
+	}
+	retryMessages := c.buildPlannerTaskMessages(conv, goal, step, maxSteps, nil, finalUserPrompt)
+	retryMessages = append(retryMessages, messageWithEstimatedTokens("user", formatPrompt))
+	c.logTokenEstimate(retryMessages)
+	chatCtx := ctx
+	var usageTracker *cacheUsageTracker
+	if conv != nil && cacheControlEnabled(c.cfg.Model) {
+		usageTracker = &cacheUsageTracker{}
+		chatCtx = llm.WithCacheUsageObserver(chatCtx, usageTracker.Observe)
+	}
+	retryResp, retryErr := c.chatMessages(chatCtx, retryMessages)
+	if retryErr != nil {
+		return zero, retryErr
+	}
+	if usageTracker != nil {
+		usageTracker.UpdateConversation(conv)
+	}
+	return parse(retryResp)
 }
 
 func (c *Client) buildPlanMessages(conv *conversation.Conversation, goal string, step, maxSteps int, patchPlan *PatchPlan) []llm.Message {
@@ -1428,6 +1453,10 @@ func (c *Client) planFormatErrorTemplate() string {
 		return embedded
 	}
 	return ""
+}
+
+func userDirectedJSONFormatRetryPrompt() string {
+	return "Your previous reply did not follow the required output format. Reply with exactly one valid JSON object that matches the requested schema. Start with '{' and end with '}'. Do not include markdown fences, commentary, or any surrounding text."
 }
 
 func (c *Client) askMixedMonitorPrompt(ask string) string {
