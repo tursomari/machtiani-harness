@@ -131,7 +131,8 @@ Useful artifacts under `.machtiani/sessions/<session-id>/`:
 
 - After landing new commits in this repo, run `mct-agent sync` so the internal README state is updated to the current project `HEAD`.
 - If more than one commit has landed since the last sync, that's fine; `sync` compares the current `HEAD` against the last processed commit and catches up in one run.
-- In this repo, use the same OpenRouter credential source as the normal `run` workflow, passed as an `openrouter:` override on `--api-key`.
+- If `mct-agent run` or `bash agent/tests/run-live.sh` fails with `mct is not synced at current git state ... Run mct-agent sync before proceeding.`, this is the missing prerequisite. Re-run the sync command below, then retry the harness or agent run.
+- In this repo, developers and coding agents should use `TEST_*` for test and harness flows. For the repo-local sync command below, pass `TEST_API_KEY` through the same OpenRouter credential source as the normal `run` workflow via an `openrouter:` override on `--api-key`.
 
 Repo-local sync command:
 

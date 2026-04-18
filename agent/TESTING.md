@@ -12,7 +12,9 @@ Agent Integration Tests (mct-agent)
 - Entry script: `agent/tests/run-live.sh`
 - Purpose: Exercise `mct-agent` end-to-end using the binaries already on PATH. Supports live LLM calls or deterministic dry-run.
 - Preflight: validates the `mct-agent` binary on PATH, prints `--version`/`go version -m` metadata, and fails if the commit/time is out of sync with the current repo. Optional CLIs are not required for this harness.
+- Repo sync prerequisite: if `mct-agent run` exits with `mct is not synced at current git state ... Run mct-agent sync before proceeding.`, rebuild/install is not enough. Run the repo-local sync command from `docs/mct-agent-runbook.md` so the internal README state catches up to the current `HEAD`, then rerun the harness.
 - Config: produces a temporary `.machtiani/config.toml` under `agent/tests/tmp/`; exports `MACHTIANI_CONFIG` for the run. Live mode uses `TEST_API_KEY` / `TEST_BASE_URL` / `TEST_MODEL` when set, otherwise falls back to `OPENAI_*`; dry-run mode writes stub credentials and forces `--dry-run`.
+- Repo testing convention: when developers or coding agents are testing this repo, set `TEST_*` for `agent/tests/run-live.sh` and the related repo-local `mct-agent sync` step. Treat `OPENAI_*` as the general runtime/default fallback rather than the primary harness input.
 
 Targeted repros
 - Concurrent startup cleanup regression: `agent/tests/repro-concurrent-run-cleanup.sh`
@@ -140,10 +142,18 @@ Real-time tailing
 
 Run locally
 ```
+export TEST_API_KEY=sk_...
+export TEST_BASE_URL=https://api.openai.com/v1
+export TEST_MODEL=gpt-4o-mini
 ./scripts/install.sh
+MACHTIANI_CONFIG=.machtiani/config.toml \
+mct-agent sync \
+  --api-key "openrouter:$TEST_API_KEY" \
+  --model glm-5-high \
+  --max-input-tokens 180000
 bash agent/tests/run-live.sh
 ```
-Prefer to avoid the installer? Use the manual command block in the root `README.md` first, then run `bash agent/tests/run-live.sh`.
+Prefer to avoid the installer? Use the manual command block in the root `README.md` first, then run the same `mct-agent sync` command before `bash agent/tests/run-live.sh`.
 
 CI guidance
 ```

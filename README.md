@@ -46,20 +46,21 @@ cd ..
 These tests complete quickly and require no environment variables.
 
 ### Integration Tests
-The integration suites fall back to deterministic stub or dry-run behavior when the required environment variables are missing. Export the variables below to enable live LLM calls.
+The integration suites fall back to deterministic stub or dry-run behavior when the required environment variables are missing. For this repo's testing flows, prefer `TEST_API_KEY`, `TEST_BASE_URL`, and `TEST_MODEL`; `agent/tests/run-live.sh` uses `TEST_*` first and only falls back to `OPENAI_*` when the test-specific variables are unset.
 
 **Live Agent Integration Tests** (`agent/tests/run-live.sh`):
 
 ```bash
-export OPENAI_API_KEY=sk_...
-export OPENAI_BASE_URL=https://api.openai.com/v1
-export OPENAI_MODEL=gpt-4o-mini
+export TEST_API_KEY=sk_...
+export TEST_BASE_URL=https://api.openai.com/v1
+export TEST_MODEL=gpt-4o-mini
 ./scripts/install.sh && bash agent/tests/run-live.sh
 ```
 
 - Installs `mct-agent` on PATH and exercises Issue A/B/C scenarios, a meta-mode `--mode code` regression, and error paths.
 - Writes `test-out-*` directories containing logs, transcripts, and artifacts in the repo root.
-- When `OPENAI_*` variables are unset the script injects stub credentials and forces `--dry-run`.
+- If the harness fails with `mct is not synced at current git state ... Run mct-agent sync before proceeding.`, run the repo-local sync command from `docs/mct-agent-runbook.md` and rerun the harness.
+- When `TEST_*` and `OPENAI_*` are both unset the script injects stub credentials and forces `--dry-run`.
 
 **Undici Harness** (`tests/run-agent-undici.sh`):
 
