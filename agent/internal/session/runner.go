@@ -1005,11 +1005,11 @@ func runSession(ctx context.Context, opts Options) Result {
 		trimmedResumePrompt := strings.TrimSpace(resumePrompt)
 		if trimmedResumePrompt != "" {
 			feedback := trimmedResumePrompt
-			metaType := "goal_update"
+			metaType := ""
 			if resumeSuspendedInput == nil {
 				feedback = extractUserFeedback(trimmedResumePrompt)
 			} else {
-				metaType = "user_input"
+				metaType = "user_input_response"
 			}
 			resumePrompt = feedback
 			if err := appendConversationRaw("user", feedback, metaType); err != nil {
@@ -1203,11 +1203,7 @@ func runSession(ctx context.Context, opts Options) Result {
 		if decision == planner.DecisionAsk {
 			ctxAsk, cancelAsk := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
 			ctxAsk = attachTrajectory(ctxAsk, trajectoryWriter, parentSpanID)
-			effectiveGoal := goal
-			if cg := strings.TrimSpace(conv.CurrentGoal()); cg != "" {
-				effectiveGoal = cg
-			}
-			userDirected, uerr := pl.AnalyzeUserDirectedAsk(ctxAsk, conv, effectiveGoal, question, step, cfg.maxSteps)
+			userDirected, uerr := pl.AnalyzeUserDirectedAsk(ctxAsk, conv, goal, question, step, cfg.maxSteps)
 			var ctxAskErr error
 			if ctxAsk != nil {
 				ctxAskErr = ctxAsk.Err()
@@ -1421,7 +1417,7 @@ func appendResumePromptContext(transcript, prompt string) string {
 		b.WriteString(trimmedTranscript)
 		b.WriteString("\n\n")
 	}
-	b.WriteString("== GOAL UPDATE\n\n")
+	b.WriteString("=== USER MESSAGE\n\n")
 	b.WriteString(prompt)
 	b.WriteString("\n")
 	return b.String()
@@ -1438,7 +1434,7 @@ func appendUserInputContext(transcript, prompt string) string {
 		b.WriteString(trimmedTranscript)
 		b.WriteString("\n\n")
 	}
-	b.WriteString("=== USER INPUT\n\n")
+	b.WriteString("=== USER INPUT RESPONSE\n\n")
 	b.WriteString(prompt)
 	b.WriteString("\n")
 	return b.String()
@@ -1476,6 +1472,12 @@ func extractUserFeedback(prompt string) string {
 		candidate = strings.TrimSpace(candidate)
 		candidate = strings.Trim(candidate, "\"\n")
 		candidate = strings.TrimSpace(candidate)
+		if candidate != "" {
+			return candidate
+		}
+	}
+	if end := strings.Index(prompt, "\n\"\"\"\n\nContinue the task using the conversation and this additional guidance as the source of truth."); end != -1 {
+		candidate := strings.TrimSpace(prompt[:end])
 		if candidate != "" {
 			return candidate
 		}

@@ -25,6 +25,25 @@ type Conversation struct {
 	UpdatedAt    time.Time `json:"updated_at"`
 }
 
+const (
+	messageTypeAsk               = "ask"
+	messageTypeAnswer            = "answer"
+	messageTypeWorkRequest       = "work_request"
+	messageTypeWorkResult        = "work_result"
+	messageTypeUserInputRequest  = "user_input_request"
+	messageTypeUserInputResponse = "user_input_response"
+	messageTypeCacheAnchor       = "cache_anchor"
+	messageTypeRaw               = "raw"
+	messageTypeRawBlock          = "raw_block"
+	messageTypeFinal             = "final"
+	messageTypeFinalAnswer       = "final_answer"
+
+	legacyTypeOriginalGoal = "original_goal"
+	legacyTypeGoalUpdate   = "goal_update"
+	legacyTypeUserFeedback = "user_feedback"
+	legacyTypeUserInput    = "user_input"
+)
+
 // Message represents a single event in the conversation.
 // The Role field typically mirrors chat roles ("assistant", "user").
 // Metadata carries typed attributes used for rendering.
@@ -46,7 +65,7 @@ func New(sessionID, originalGoal string) *Conversation {
 		UpdatedAt:    now,
 	}
 	if conv.OriginalGoal != "" {
-		conv.AddMessage("user", conv.OriginalGoal, map[string]any{"type": "original_goal"})
+		conv.AddMessage("user", conv.OriginalGoal, nil)
 	}
 	return conv
 }
@@ -105,45 +124,6 @@ func (c *Conversation) InsertMessageAt(index int, role, content string, metadata
 	c.UpdatedAt = ts
 }
 
-// CurrentGoal returns the latest goal text from goal_update or user_input
-// messages, falling back to the original goal when none are present.
-func (c *Conversation) CurrentGoal() string {
-	if c == nil {
-		return ""
-	}
-	goal := strings.TrimSpace(c.OriginalGoal)
-	for i := len(c.Messages) - 1; i >= 0; i-- {
-		msg := c.Messages[i]
-		msgType := strings.ToLower(getType(msg.Metadata))
-		if msgType != "goal_update" && msgType != "user_input" {
-			continue
-		}
-		trimmed := strings.TrimSpace(msg.Content)
-		if trimmed != "" {
-			return trimmed
-		}
-	}
-	return goal
-}
-
-func (c *Conversation) LatestGoalUpdate() (string, bool) {
-	if c == nil {
-		return "", false
-	}
-	for i := len(c.Messages) - 1; i >= 0; i-- {
-		msg := c.Messages[i]
-		msgType := getType(msg.Metadata)
-		switch msgType {
-		case "goal_update", "user_feedback":
-			trimmed := strings.TrimSpace(msg.Content)
-			if trimmed != "" {
-				return trimmed, true
-			}
-		}
-	}
-	return "", false
-}
-
 // Marshal serializes the conversation to JSON with indentation.
 func (c *Conversation) Marshal() ([]byte, error) {
 	if c == nil {
@@ -161,7 +141,20 @@ func Unmarshal(data []byte) (*Conversation, error) {
 	if err := json.Unmarshal(data, &conv); err != nil {
 		return nil, fmt.Errorf("unmarshal conversation: %w", err)
 	}
+	if err := validateMessages(conv.Messages); err != nil {
+		return nil, err
+	}
 	return &conv, nil
+}
+
+func validateMessages(messages []Message) error {
+	for i, msg := range messages {
+		switch getType(msg.Metadata) {
+		case legacyTypeOriginalGoal, legacyTypeGoalUpdate, legacyTypeUserFeedback, legacyTypeUserInput:
+			return fmt.Errorf("unsupported legacy conversation message type %q in message %d after simplified visible tag cutover", getType(msg.Metadata), i)
+		}
+	}
+	return nil
 }
 
 // ToTranscript renders the full AsciiDoc transcript equivalent to the legacy
@@ -205,33 +198,48 @@ func (c *Conversation) ToTranscript() (string, error) {
 	}
 
 	for _, msg := range c.Messages {
+		if isHeaderGoalMessage(c, msg) {
+			continue
+		}
 		msgType := getType(msg.Metadata)
 		switch msgType {
-		case "goal_update", "user_feedback":
-			block := renderGoalUpdate(msg.Content)
-			addRawEvent(block)
-		case "user_input":
-			addRawEvent(renderUserInput(msg.Content))
-		case "user_input_request":
+		case "":
+			switch normalizeRole(msg.Role) {
+			case "user":
+				addRawEvent(renderUserMessage(msg.Content))
+			case "assistant":
+				addRawEvent(renderAssistantMessage(msg.Content))
+			}
+		case messageTypeCacheAnchor:
+			continue
+		case messageTypeUserInputResponse:
+			addRawEvent(renderUserInputResponse(msg.Content))
+		case messageTypeUserInputRequest:
 			addRawEvent(renderUserInputRequest(msg.Content))
-		case "raw", "raw_block":
+		case messageTypeRaw, messageTypeRawBlock:
 			if strings.TrimSpace(msg.Content) != "" {
 				addRawEvent(msg.Content)
 			}
-		case "final", "final_answer":
+		case messageTypeFinal, messageTypeFinalAnswer:
 			turns, _ := coerceInt(msg.Metadata["turns"])
 			capped, _ := coerceBool(msg.Metadata["capped"])
 			block := renderConclusion(msg.Content, turns, capped)
 			addRawEvent(block)
-		case "ask":
+		case messageTypeAsk, messageTypeWorkRequest:
 			turn := coalesceTurn(msg)
+			if turn < 0 {
+				continue
+			}
 			td := addTurnEvent(turn)
 			td.question = msg.Content
 			if decision, ok := coerceString(msg.Metadata["decision"]); ok {
 				td.decision = decision
 			}
-		case "answer":
+		case messageTypeAnswer, messageTypeWorkResult:
 			turn := coalesceTurn(msg)
+			if turn < 0 {
+				continue
+			}
 			td := addTurnEvent(turn)
 			td.answer = msg.Content
 			td.retrieved = coerceStringSlice(msg.Metadata["retrieved_files"])
@@ -294,16 +302,11 @@ func (c *Conversation) ToChatMessages(systemPrompt string) []llm.Message {
 	}
 	for _, msg := range c.Messages {
 		msgType := getType(msg.Metadata)
-		role := ""
-		switch msgType {
-		case "original_goal", "goal_update", "user_feedback", "user_input", "cache_anchor":
-			role = "user"
-		case "ask", "answer", "raw", "raw_block", "final", "final_answer", "user_input_request":
-			role = "assistant"
-		default:
+		role, content, ok := serializeChatMessage(msg.Role, msgType, msg.Content)
+		if !ok {
 			continue
 		}
-		if strings.TrimSpace(msg.Content) == "" {
+		if strings.TrimSpace(content) == "" {
 			continue
 		}
 		meta := cloneMetadata(msg.Metadata)
@@ -313,14 +316,61 @@ func (c *Conversation) ToChatMessages(systemPrompt string) []llm.Message {
 		if msg.Turn != nil {
 			meta["turn"] = *msg.Turn
 		}
-		meta["estimated_tokens"] = llm.EstimateMessageTokens(llm.Message{Content: msg.Content})
+		meta["estimated_tokens"] = llm.EstimateMessageTokens(llm.Message{Content: content})
 		output = append(output, llm.Message{
 			Role:     role,
-			Content:  msg.Content,
+			Content:  content,
 			Metadata: meta,
 		})
 	}
 	return output
+}
+
+func isHeaderGoalMessage(c *Conversation, msg Message) bool {
+	if c == nil || getType(msg.Metadata) != "" {
+		return false
+	}
+	if normalizeRole(msg.Role) != "user" {
+		return false
+	}
+	goal := strings.TrimSpace(c.OriginalGoal)
+	return goal != "" && strings.TrimSpace(msg.Content) == goal
+}
+
+func serializeChatMessage(role, msgType, content string) (string, string, bool) {
+	if strings.TrimSpace(content) == "" {
+		return "", "", false
+	}
+	switch msgType {
+	case "":
+		role = normalizeRole(role)
+		if role != "user" && role != "assistant" {
+			return "", "", false
+		}
+		return role, content, true
+	case messageTypeCacheAnchor:
+		return "user", content, true
+	case messageTypeUserInputRequest:
+		return "assistant", prefixVisibleTag(messageTypeUserInputRequest, content), true
+	case messageTypeUserInputResponse:
+		return "user", prefixVisibleTag(messageTypeUserInputResponse, content), true
+	case messageTypeAsk, messageTypeWorkRequest:
+		return "assistant", prefixVisibleTag(messageTypeWorkRequest, content), true
+	case messageTypeAnswer, messageTypeWorkResult:
+		return "assistant", prefixVisibleTag(messageTypeWorkResult, content), true
+	case messageTypeRaw, messageTypeRawBlock, messageTypeFinal, messageTypeFinalAnswer:
+		return "assistant", content, true
+	default:
+		return "", "", false
+	}
+}
+
+func normalizeRole(role string) string {
+	return strings.ToLower(strings.TrimSpace(role))
+}
+
+func prefixVisibleTag(tag, content string) string {
+	return fmt.Sprintf("[%s] %s", tag, content)
 }
 
 func renderHeader(goal string) string {
@@ -370,19 +420,24 @@ func renderTurn(step int, question, savedPath string, retrieved []string, summar
 	return sanitize(b.String())
 }
 
-func renderGoalUpdate(content string) string {
+func renderUserMessage(content string) string {
 	body := strings.TrimRight(content, "\n")
-	return sanitize("\n=== GOAL UPDATE\n\n" + body + "\n")
+	return sanitize("\n=== USER MESSAGE\n\n" + body + "\n")
 }
 
-func renderUserInput(content string) string {
+func renderAssistantMessage(content string) string {
 	body := strings.TrimRight(content, "\n")
-	return sanitize("\n=== USER INPUT\n\n" + body + "\n")
+	return sanitize("\n=== ASSISTANT MESSAGE\n\n" + body + "\n")
+}
+
+func renderUserInputResponse(content string) string {
+	body := strings.TrimRight(content, "\n")
+	return sanitize("\n=== USER INPUT RESPONSE\n\n" + body + "\n")
 }
 
 func renderUserInputRequest(content string) string {
 	body := strings.TrimRight(content, "\n")
-	return sanitize("\n=== USER INPUT NEEDED ===\n\n" + body + "\n")
+	return sanitize("\n=== USER INPUT REQUEST\n\n" + body + "\n")
 }
 
 func renderConclusion(answer string, step int, capped bool) string {

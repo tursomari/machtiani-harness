@@ -828,7 +828,7 @@ func composeRevisedGoalPrompt(basePrompt, userInput string) string {
 	builder.WriteString("The user provided additional guidance:\n\"\"\"\n")
 	builder.WriteString(userInput)
 	builder.WriteString("\n\"\"\"\n\n")
-	builder.WriteString("Reevaluate the task in light of this guidance. Begin by writing a single line starting with \"Revised Goal:\" that captures the updated objective, then continue execution anchored on that revised goal.")
+	builder.WriteString("Continue the task using the conversation and this additional guidance as the source of truth. Incorporate the guidance in context; do not restate it as a separate revised-goal header.")
 	return builder.String()
 }
 

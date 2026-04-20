@@ -125,10 +125,6 @@ type planTemplateData struct {
 	HasPatchPlan      bool
 	PatchPlanComplete bool
 	AllowFinalize     bool
-	HasGoal           bool
-	Goal              string
-	HasGoalUpdate     bool
-	GoalUpdate        string
 	HasTranscript     bool
 	Transcript        string
 	Step              int
@@ -165,8 +161,6 @@ type reviewPendingData struct {
 }
 
 type finalizeTemplateData struct {
-	HasGoal       bool
-	Goal          string
 	HasTranscript bool
 	Transcript    string
 }
@@ -187,13 +181,11 @@ type askMonitorData struct {
 type askUserDirectedMonitorData struct {
 	Ask            string
 	InternetAccess bool
-	CurrentGoal    string
 }
 
 type askUserDirectedPurifierData struct {
-	Ask         string
-	Reason      string
-	CurrentGoal string
+	Ask    string
+	Reason string
 }
 
 type askMixedMonitorResult struct {
@@ -755,13 +747,7 @@ func (c *Client) monitorAskMixedWithPlanner(ctx context.Context, conv *conversat
 }
 
 func (c *Client) monitorAskUserDirectedWithPlanner(ctx context.Context, conv *conversation.Conversation, goal string, ask string, step, maxSteps int) (askUserDirectedMonitorResult, error) {
-	currentGoal := strings.TrimSpace(goal)
-	if conv != nil {
-		if cg := strings.TrimSpace(conv.CurrentGoal()); cg != "" {
-			currentGoal = cg
-		}
-	}
-	prompt := c.askUserDirectedMonitorPrompt(ask, currentGoal)
+	prompt := c.askUserDirectedMonitorPrompt(ask)
 	if strings.TrimSpace(prompt) == "" {
 		return askUserDirectedMonitorResult{}, errors.New("planner: ask user-directed monitor template missing")
 	}
@@ -769,13 +755,7 @@ func (c *Client) monitorAskUserDirectedWithPlanner(ctx context.Context, conv *co
 }
 
 func (c *Client) purifyAskUserDirectedWithPlanner(ctx context.Context, conv *conversation.Conversation, goal, ask, reason string, step, maxSteps int) (askUserDirectedPurifierResult, error) {
-	currentGoal := strings.TrimSpace(goal)
-	if conv != nil {
-		if cg := strings.TrimSpace(conv.CurrentGoal()); cg != "" {
-			currentGoal = cg
-		}
-	}
-	prompt := c.askUserDirectedPurifierPrompt(ask, reason, currentGoal)
+	prompt := c.askUserDirectedPurifierPrompt(ask, reason)
 	if strings.TrimSpace(prompt) == "" {
 		return askUserDirectedPurifierResult{}, errors.New("planner: ask user-directed purifier template missing")
 	}
@@ -816,35 +796,17 @@ func chatPlannerTaskJSONWithFormatRetry[T any](c *Client, ctx context.Context, c
 }
 
 func (c *Client) buildPlanMessages(conv *conversation.Conversation, goal string, step, maxSteps int, patchPlan *PatchPlan) []llm.Message {
-	goalForPrompt := strings.TrimSpace(goal)
-	if conv != nil {
-		if current := strings.TrimSpace(conv.CurrentGoal()); current != "" {
-			goalForPrompt = current
-		}
-	}
-	finalUserPrompt := c.planPrompt(conv, goalForPrompt, "", step, maxSteps, patchPlan)
-	return c.buildPlannerTaskMessages(conv, goalForPrompt, step, maxSteps, patchPlan, finalUserPrompt)
+	finalUserPrompt := c.planPrompt(conv, strings.TrimSpace(goal), "", step, maxSteps, patchPlan)
+	return c.buildPlannerTaskMessages(conv, strings.TrimSpace(goal), step, maxSteps, patchPlan, finalUserPrompt)
 }
 
 func (c *Client) buildFinalizeMessages(conv *conversation.Conversation, goal string) []llm.Message {
-	goalForPrompt := strings.TrimSpace(goal)
-	if conv != nil {
-		if current := strings.TrimSpace(conv.CurrentGoal()); current != "" {
-			goalForPrompt = current
-		}
-	}
-	finalUserPrompt := c.finalizePrompt(goalForPrompt, "")
-	return c.buildPlannerTaskMessages(conv, goalForPrompt, 0, 0, nil, finalUserPrompt)
+	finalUserPrompt := c.finalizePrompt(strings.TrimSpace(goal), "")
+	return c.buildPlannerTaskMessages(conv, strings.TrimSpace(goal), 0, 0, nil, finalUserPrompt)
 }
 
 func (c *Client) buildPlannerTaskMessages(conv *conversation.Conversation, goal string, step, maxSteps int, patchPlan *PatchPlan, finalUserPrompt string) []llm.Message {
-	goalForPrompt := strings.TrimSpace(goal)
-	if conv != nil {
-		if current := strings.TrimSpace(conv.CurrentGoal()); current != "" {
-			goalForPrompt = current
-		}
-	}
-	systemPrompt := strings.TrimSpace(c.planSystemPrompt(conv, goalForPrompt, step, maxSteps, patchPlan))
+	systemPrompt := strings.TrimSpace(c.planSystemPrompt(conv, strings.TrimSpace(goal), step, maxSteps, patchPlan))
 	messages := conv.ToChatMessages(systemPrompt)
 	finalMessage := messageWithEstimatedTokens("user", strings.TrimSpace(finalUserPrompt))
 	messages = append(messages, finalMessage)
@@ -1496,13 +1458,13 @@ func (c *Client) askMonitorPrompt(ask string) string {
 	return rendered
 }
 
-func (c *Client) askUserDirectedMonitorPrompt(ask, currentGoal string) string {
+func (c *Client) askUserDirectedMonitorPrompt(ask string) string {
 	tpl := c.askUserDirectedMonitorTemplate()
 	if tpl == "" {
 		fmt.Fprintln(os.Stderr, "[planner] ask user-directed monitor template missing")
 		return ""
 	}
-	data := askUserDirectedMonitorData{Ask: strings.TrimSpace(ask), InternetAccess: c.cfg.InternetAccess, CurrentGoal: strings.TrimSpace(currentGoal)}
+	data := askUserDirectedMonitorData{Ask: strings.TrimSpace(ask), InternetAccess: c.cfg.InternetAccess}
 	rendered, err := prompts.Render("planner_ask_user_directed_monitor", tpl, data, nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[planner] ask user-directed monitor template error: %v\n", err)
@@ -1518,13 +1480,13 @@ func (c *Client) askUserDirectedMonitorTemplate() string {
 	return ""
 }
 
-func (c *Client) askUserDirectedPurifierPrompt(ask, reason, currentGoal string) string {
+func (c *Client) askUserDirectedPurifierPrompt(ask, reason string) string {
 	tpl := c.askUserDirectedPurifierTemplate()
 	if tpl == "" {
 		fmt.Fprintln(os.Stderr, "[planner] ask user-directed purifier template missing")
 		return ""
 	}
-	data := askUserDirectedPurifierData{Ask: strings.TrimSpace(ask), Reason: strings.TrimSpace(reason), CurrentGoal: strings.TrimSpace(currentGoal)}
+	data := askUserDirectedPurifierData{Ask: strings.TrimSpace(ask), Reason: strings.TrimSpace(reason)}
 	rendered, err := prompts.Render("planner_ask_user_directed_purifier", tpl, data, nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[planner] ask user-directed purifier template error: %v\n", err)
@@ -1561,15 +1523,7 @@ func (c *Client) planTemplate() string {
 
 func (c *Client) buildPlanTemplateData(conv *conversation.Conversation, goal string, transcript string, step, maxSteps int, patchPlan *PatchPlan) planTemplateData {
 	display, overflow := successFilesDisplay(c.progress.SuccessFiles, successFilesPromptLimit)
-	goalTrim := strings.TrimSpace(goal)
 	transcriptTrim := strings.TrimSpace(transcript)
-	goalUpdate := ""
-	if conv != nil {
-		if update, ok := conv.LatestGoalUpdate(); ok {
-			goalUpdate = update
-		}
-	}
-	hasGoalUpdate := strings.TrimSpace(goalUpdate) != ""
 	applied := c.progress.AppliedPatches
 	if applied < 0 {
 		applied = 0
@@ -1581,10 +1535,6 @@ func (c *Client) buildPlanTemplateData(conv *conversation.Conversation, goal str
 		SuccessFiles:    display,
 		SuccessOverflow: overflow,
 		AppliedPatches:  applied,
-		HasGoal:         goalTrim != "",
-		Goal:            goalTrim,
-		HasGoalUpdate:   hasGoalUpdate,
-		GoalUpdate:      goalUpdate,
 		HasTranscript:   transcriptTrim != "",
 		Transcript:      transcriptTrim,
 		Step:            step,
@@ -1607,26 +1557,8 @@ func (c *Client) buildPlanTemplateData(conv *conversation.Conversation, goal str
 }
 
 func (c *Client) buildAskRequest(conv *conversation.Conversation, goal string, step, maxSteps int) string {
-	goalForPrompt := strings.TrimSpace(goal)
-	if conv != nil {
-		if current := strings.TrimSpace(conv.CurrentGoal()); current != "" {
-			goalForPrompt = current
-		}
-	}
-	goalUpdate := ""
-	if conv != nil {
-		if update, ok := conv.LatestGoalUpdate(); ok {
-			goalUpdate = strings.TrimSpace(update)
-		}
-	}
 	var b strings.Builder
 	b.WriteString("Use the prior planner conversation for context. Produce the single next high-signal ask for mct.\n\n")
-	if goalForPrompt != "" {
-		fmt.Fprintf(&b, "Current Goal:\n%s\n\n", goalForPrompt)
-	}
-	if goalUpdate != "" {
-		fmt.Fprintf(&b, "Latest Goal (takes precedence):\n%s\n\n", goalUpdate)
-	}
 	if step > 0 && maxSteps > 0 {
 		fmt.Fprintf(&b, "Planner step: %d of %d.", step, maxSteps)
 	}
@@ -1828,13 +1760,10 @@ func (c *Client) finalizePrompt(goal string, transcript string) string {
 }
 
 func (c *Client) finalizePromptFallback(goal string, transcript string) string {
+	_ = goal
 	_ = transcript
 	var b strings.Builder
-	b.WriteString("Write the final answer to the current goal using the conversation above as the source of truth.\n\n")
-	if strings.TrimSpace(goal) != "" {
-		b.WriteString("Goal:\n")
-		b.WriteString(goal + "\n\n")
-	}
+	b.WriteString("Write the final answer using the conversation above as the source of truth.\n\n")
 	b.WriteString("Produce a clear, self-contained final response grounded in the prior turns. If any important gaps or uncertainty remain, call them out briefly.")
 	return b.String()
 }
@@ -1849,12 +1778,10 @@ func (c *Client) finalizeTemplate() string {
 }
 
 func (c *Client) buildFinalizeTemplateData(goal, transcript string) finalizeTemplateData {
+	_ = goal
 	_ = transcript
-	goalTrim := strings.TrimSpace(goal)
 	transcriptTrim := ""
 	return finalizeTemplateData{
-		HasGoal:       goalTrim != "",
-		Goal:          goalTrim,
 		HasTranscript: transcriptTrim != "",
 		Transcript:    transcriptTrim,
 	}

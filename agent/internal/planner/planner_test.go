@@ -548,7 +548,7 @@ func TestGenerateAskRetriesOnPatchIntent(t *testing.T) {
 		return "", nil
 	}
 
-	ask, err := client.generateAsk(context.Background(), conv, conv.CurrentGoal(), transcript, 1, 3)
+	ask, err := client.generateAsk(context.Background(), conv, conv.OriginalGoal, transcript, 1, 3)
 	if err != nil {
 		t.Fatalf("generateAsk error: %v", err)
 	}
@@ -583,7 +583,7 @@ func TestGenerateAskRetriesWhenModelReturnsAnswerInsteadOfAsk(t *testing.T) {
 		return "", nil
 	}
 
-	ask, err := client.generateAsk(context.Background(), conv, conv.CurrentGoal(), transcript, 1, 3)
+	ask, err := client.generateAsk(context.Background(), conv, conv.OriginalGoal, transcript, 1, 3)
 	if err != nil {
 		t.Fatalf("generateAsk error: %v", err)
 	}
@@ -622,7 +622,7 @@ Ask: Explain the snippet-discovery system prompt and output requirements, then r
 		}
 	}
 
-	ask, err := client.generateAsk(context.Background(), conv, conv.CurrentGoal(), transcript, 2, 4)
+	ask, err := client.generateAsk(context.Background(), conv, conv.OriginalGoal, transcript, 2, 4)
 	if err != nil {
 		t.Fatalf("generateAsk error: %v", err)
 	}
@@ -665,7 +665,7 @@ Shell: Run ` + "`" + `git diff --stat` + "`" + ` to review recent changes.
 		}
 	}
 
-	ask, err := client.generateAsk(context.Background(), conv, conv.CurrentGoal(), transcript, 1, 3)
+	ask, err := client.generateAsk(context.Background(), conv, conv.OriginalGoal, transcript, 1, 3)
 	if err != nil {
 		t.Fatalf("generateAsk error: %v", err)
 	}
@@ -728,7 +728,7 @@ Shell: Run ` + "`" + `git diff --stat` + "`" + ` to review recent changes.
 		}
 	}
 
-	ask, err := client.generateAsk(context.Background(), conv, conv.CurrentGoal(), transcript, 1, 3)
+	ask, err := client.generateAsk(context.Background(), conv, conv.OriginalGoal, transcript, 1, 3)
 	if err != nil {
 		t.Fatalf("generateAsk error: %v", err)
 	}
@@ -781,7 +781,7 @@ func TestPlanAskLoopIntegration(t *testing.T) {
 		return "", nil
 	}
 
-	dec, ask, err := client.Plan(context.Background(), conv, conv.CurrentGoal(), transcript, 1, 3, nil)
+	dec, ask, err := client.Plan(context.Background(), conv, conv.OriginalGoal, transcript, 1, 3, nil)
 	if err != nil {
 		t.Fatalf("Plan returned error: %v", err)
 	}
@@ -826,7 +826,7 @@ func TestGenerateAskMonitorResponseErrorsDoNotBlockAsk(t *testing.T) {
 				return "", nil
 			}
 
-			ask, err := client.generateAsk(context.Background(), conv, conv.CurrentGoal(), transcript, 1, 3)
+			ask, err := client.generateAsk(context.Background(), conv, conv.OriginalGoal, transcript, 1, 3)
 			if err != nil {
 				t.Fatalf("generateAsk error: %v", err)
 			}
@@ -930,7 +930,7 @@ func TestAnalyzeUserDirectedAsk(t *testing.T) {
 			t.Fatalf("unexpected prompt: %s", content)
 			return "", nil
 		}
-		got, err := client.AnalyzeUserDirectedAsk(context.Background(), conv, conv.CurrentGoal(), "Should I inspect logs first?", 1, 4)
+		got, err := client.AnalyzeUserDirectedAsk(context.Background(), conv, conv.OriginalGoal, "Should I inspect logs first?", 1, 4)
 		if err != nil {
 			t.Fatalf("AnalyzeUserDirectedAsk error: %v", err)
 		}
@@ -954,7 +954,7 @@ func TestAnalyzeUserDirectedAsk(t *testing.T) {
 				return "", nil
 			}
 		}
-		got, err := client.AnalyzeUserDirectedAsk(context.Background(), conv, conv.CurrentGoal(), "Do you want the safer fix or the faster fix? I can inspect more logs too.", 1, 4)
+		got, err := client.AnalyzeUserDirectedAsk(context.Background(), conv, conv.OriginalGoal, "Do you want the safer fix or the faster fix? I can inspect more logs too.", 1, 4)
 		if err != nil {
 			t.Fatalf("AnalyzeUserDirectedAsk error: %v", err)
 		}
@@ -984,7 +984,7 @@ func TestAnalyzeUserDirectedAsk(t *testing.T) {
 				return "", nil
 			}
 		}
-		got, err := client.AnalyzeUserDirectedAsk(context.Background(), conv, conv.CurrentGoal(), "Explain the auth flow and run git diff --stat.", 1, 4)
+		got, err := client.AnalyzeUserDirectedAsk(context.Background(), conv, conv.OriginalGoal, "Explain the auth flow and run git diff --stat.", 1, 4)
 		if err != nil {
 			t.Fatalf("AnalyzeUserDirectedAsk error: %v", err)
 		}
@@ -1015,7 +1015,7 @@ func TestAnalyzeUserDirectedAsk(t *testing.T) {
 			}
 		}
 
-		got, err := client.AnalyzeUserDirectedAsk(context.Background(), conv, conv.CurrentGoal(), "Do you want the safer fix or the faster fix?", 1, 4)
+		got, err := client.AnalyzeUserDirectedAsk(context.Background(), conv, conv.OriginalGoal, "Do you want the safer fix or the faster fix?", 1, 4)
 		if err != nil {
 			t.Fatalf("AnalyzeUserDirectedAsk error: %v", err)
 		}
@@ -1052,7 +1052,7 @@ func TestAnalyzeUserDirectedAsk(t *testing.T) {
 			}
 		}
 
-		got, err := client.AnalyzeUserDirectedAsk(context.Background(), conv, conv.CurrentGoal(), "Do you want the safer fix or the faster fix?", 1, 4)
+		got, err := client.AnalyzeUserDirectedAsk(context.Background(), conv, conv.OriginalGoal, "Do you want the safer fix or the faster fix?", 1, 4)
 		if err != nil {
 			t.Fatalf("AnalyzeUserDirectedAsk error: %v", err)
 		}
@@ -1111,7 +1111,7 @@ func TestGenerateAskRetryExhaustionReturnsLastAsk(t *testing.T) {
 		return "", nil
 	}
 
-	ask, err := client.generateAsk(context.Background(), conv, conv.CurrentGoal(), transcript, 1, 3)
+	ask, err := client.generateAsk(context.Background(), conv, conv.OriginalGoal, transcript, 1, 3)
 	if err != nil {
 		t.Fatalf("generateAsk error: %v", err)
 	}
@@ -1356,7 +1356,7 @@ func TestBuildAskRequestOmitsTranscript(t *testing.T) {
 	client := NewClient(ClientConfig{})
 	conv := conversation.New("sess-ask-request", "Investigate planner flow")
 	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask"})
-	request := client.buildAskRequest(conv, conv.CurrentGoal(), 2, 4)
+	request := client.buildAskRequest(conv, conv.OriginalGoal, 2, 4)
 	if strings.Contains(request, "Transcript:") {
 		t.Fatalf("ask request should omit transcript label, got %q", request)
 	}
@@ -1386,10 +1386,10 @@ func TestPlannerHelperMessagesSharePlanPrefix(t *testing.T) {
 	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask"})
 	conv.AddMessage("assistant", "Answer: done", map[string]any{"type": "answer", "turn": 1})
 
-	planMessages := client.buildPlanMessages(conv, conv.CurrentGoal(), 2, 4, nil)
-	askMessages := client.buildPlannerTaskMessages(conv, conv.CurrentGoal(), 2, 4, nil, client.askPrompt(client.buildAskRequest(conv, conv.CurrentGoal(), 2, 4), ""))
-	monitorMessages := client.buildPlannerTaskMessages(conv, conv.CurrentGoal(), 2, 4, nil, client.askMonitorPrompt("Explain config loading."))
-	mixedMessages := client.buildPlannerTaskMessages(conv, conv.CurrentGoal(), 2, 4, nil, client.askMixedMonitorPrompt("Explain config loading and run git diff --stat."))
+	planMessages := client.buildPlanMessages(conv, conv.OriginalGoal, 2, 4, nil)
+	askMessages := client.buildPlannerTaskMessages(conv, conv.OriginalGoal, 2, 4, nil, client.askPrompt(client.buildAskRequest(conv, conv.OriginalGoal, 2, 4), ""))
+	monitorMessages := client.buildPlannerTaskMessages(conv, conv.OriginalGoal, 2, 4, nil, client.askMonitorPrompt("Explain config loading."))
+	mixedMessages := client.buildPlannerTaskMessages(conv, conv.OriginalGoal, 2, 4, nil, client.askMixedMonitorPrompt("Explain config loading and run git diff --stat."))
 
 	messageSets := [][]llm.Message{askMessages, monitorMessages, mixedMessages}
 	for _, messages := range messageSets {
@@ -1416,11 +1416,11 @@ func TestPlannerOverlayStaysInSharedSystemPrompt(t *testing.T) {
 	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask"})
 	conv.AddMessage("assistant", "Answer: done", map[string]any{"type": "answer", "turn": 1})
 
-	planMessages := client.buildPlanMessages(conv, conv.CurrentGoal(), 2, 4, nil)
+	planMessages := client.buildPlanMessages(conv, conv.OriginalGoal, 2, 4, nil)
 	taskMessages := [][]llm.Message{
-		client.buildPlannerTaskMessages(conv, conv.CurrentGoal(), 2, 4, nil, client.askPrompt(client.buildAskRequest(conv, conv.CurrentGoal(), 2, 4), "")),
-		client.buildPlannerTaskMessages(conv, conv.CurrentGoal(), 2, 4, nil, client.askMonitorPrompt("Explain config loading.")),
-		client.buildPlannerTaskMessages(conv, conv.CurrentGoal(), 2, 4, nil, client.askMixedMonitorPrompt("Explain config loading and run git diff --stat.")),
+		client.buildPlannerTaskMessages(conv, conv.OriginalGoal, 2, 4, nil, client.askPrompt(client.buildAskRequest(conv, conv.OriginalGoal, 2, 4), "")),
+		client.buildPlannerTaskMessages(conv, conv.OriginalGoal, 2, 4, nil, client.askMonitorPrompt("Explain config loading.")),
+		client.buildPlannerTaskMessages(conv, conv.OriginalGoal, 2, 4, nil, client.askMixedMonitorPrompt("Explain config loading and run git diff --stat.")),
 	}
 
 	if len(planMessages) == 0 || planMessages[0].Role != "system" {
@@ -1465,10 +1465,10 @@ func TestBuildPlanMessagesNoGoalUpdate(t *testing.T) {
 	if messages[1].Content != "Finish docs" {
 		t.Fatalf("unexpected goal message: %q", messages[1].Content)
 	}
-	if messages[2].Content != "Question: start" {
+	if messages[2].Content != "[work_request] Question: start" {
 		t.Fatalf("unexpected ask message: %q", messages[2].Content)
 	}
-	if messages[3].Content != "Answer: done" {
+	if messages[3].Content != "[work_result] Answer: done" {
 		t.Fatalf("unexpected answer message: %q", messages[3].Content)
 	}
 	if !strings.Contains(messages[4].Content, "Step 2 of 4") {
@@ -1490,7 +1490,7 @@ func TestBuildPlanMessagesUsesConversation(t *testing.T) {
 	if messages[2].Role != "assistant" {
 		t.Fatalf("expected assistant transcript message, got %q", messages[2].Role)
 	}
-	if messages[2].Content != "Question: start" {
+	if messages[2].Content != "[work_request] Question: start" {
 		t.Fatalf("unexpected ask content: %q", messages[2].Content)
 	}
 }
@@ -1585,7 +1585,7 @@ func TestFinalizeMessagesReusePlannerSystemPrompt(t *testing.T) {
 	client := NewClient(ClientConfig{PatchEnabled: true, PlannerOverlay: "Prioritize migration safety checks."})
 	conv := conversation.New("sess-finalize-prefix", "Initial goal")
 	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask"})
-	conv.AddMessage("user", "Updated goal", map[string]any{"type": "goal_update"})
+	conv.AddMessage("user", "Updated goal", nil)
 	conv.AddMessage("assistant", "Answer: done", map[string]any{"type": "answer", "turn": 1})
 
 	planMessages := client.buildPlanMessages(conv, "stale goal", 2, 4, nil)
@@ -1606,8 +1606,8 @@ func TestFinalizeMessagesReusePlannerSystemPrompt(t *testing.T) {
 	if last.Role != "user" {
 		t.Fatalf("expected finalize request to be a user message, got %q", last.Role)
 	}
-	if !strings.Contains(last.Content, "Goal:\nUpdated goal") {
-		t.Fatalf("expected finalize request to use updated goal, got %q", last.Content)
+	if last.Content != "Write the final answer using the conversation above as the source of truth.\n\nProduce a clear, self-contained final response grounded in the prior turns. If any important gaps or uncertainty remain, call them out briefly." {
+		t.Fatalf("unexpected finalize request, got %q", last.Content)
 	}
 	if strings.Contains(last.Content, "Prioritize migration safety checks.") {
 		t.Fatalf("planner overlay should stay out of finalize user prompt, got %q", last.Content)
@@ -1642,7 +1642,7 @@ func TestFinalizeDoesNotPersistEphemeralRequest(t *testing.T) {
 		t.Fatalf("expected finalize request to be sent to model")
 	}
 	last := captured[len(captured)-1]
-	if last.Role != "user" || !strings.Contains(last.Content, "Write the final answer to the current goal") {
+	if last.Role != "user" || !strings.Contains(last.Content, "Write the final answer") {
 		t.Fatalf("unexpected finalize request %#v", last)
 	}
 }
@@ -1650,8 +1650,8 @@ func TestFinalizeDoesNotPersistEphemeralRequest(t *testing.T) {
 func TestFinalizePromptOmitsTranscript(t *testing.T) {
 	c := NewClient(ClientConfig{DryRun: true})
 	prompt := c.finalizePrompt("goal text", "transcript text")
-	if !contains(prompt, "Goal:") || !contains(prompt, "goal text") {
-		t.Fatalf("finalize prompt missing goal:\n%s", prompt)
+	if contains(prompt, "Goal:") || contains(prompt, "goal text") {
+		t.Fatalf("finalize prompt should not inject goal anchors:\n%s", prompt)
 	}
 	if contains(prompt, "Transcript:") || contains(prompt, "transcript text") {
 		t.Fatalf("finalize prompt should omit transcript:\n%s", prompt)
@@ -1665,11 +1665,11 @@ func TestBuildFinalizeMessagesPreservesCleanConversationOrdering(t *testing.T) {
 	client := NewClient(ClientConfig{})
 	conv := conversation.New("sess-clean-order", "Determine if you are running in a docker or local environment. Provide evidence for or against.")
 	conv.AddMessage("assistant", "## Determination: Running inside a Docker container.", map[string]any{"type": "final", "turns": 1, "capped": false})
-	conv.AddMessage("user", "List the last 3 commit messages in the project root and also the gitsubmodule `agent/internal/shell-agent/`.", map[string]any{"type": "goal_update"})
+	conv.AddMessage("user", "List the last 3 commit messages in the project root and also the gitsubmodule `agent/internal/shell-agent/`.", nil)
 	conv.AddMessage("assistant", "Run `git -C /repo log --oneline -3` for the project root, then `git -C /repo/agent/internal/shell-agent log --oneline -3` for the submodule.", map[string]any{"type": "ask", "turn": 2, "decision": "ask"})
 	conv.AddMessage("assistant", "## Answer\n- Confidence: 100% - Retrieved the last 3 commits for both repositories.", map[string]any{"type": "answer", "turn": 2})
 	conv.AddMessage("assistant", "Revised Goal: List the last 3 commit messages for the project root and the `agent/internal/shell-agent/` submodule.", map[string]any{"type": "final", "turns": 2, "capped": false})
-	conv.AddMessage("user", "list any untracked files or modified tracked files in project root and in git submoodule", map[string]any{"type": "goal_update"})
+	conv.AddMessage("user", "list any untracked files or modified tracked files in project root and in git submoodule", nil)
 	conv.AddMessage("assistant", "Run `git -C /workspace status --short` for the project root, then `git -C /workspace/agent/internal/shell-agent status --short` for the submodule.", map[string]any{"type": "ask", "turn": 3, "decision": "ask"})
 	conv.AddMessage("assistant", "## Answer\n- Confidence: 100% - Reported modified and untracked files for the project root and submodule.", map[string]any{"type": "answer", "turn": 3})
 
@@ -1691,8 +1691,8 @@ func TestBuildFinalizeMessagesPreservesCleanConversationOrdering(t *testing.T) {
 	if got := messages[7].Content; strings.Contains(got, "Reevaluate the task in light of this guidance") || strings.Contains(got, `"""`) {
 		t.Fatalf("expected cleaned latest goal update, got %q", got)
 	}
-	if got := messages[10].Content; !strings.Contains(got, "Goal:\nlist any untracked files or modified tracked files in project root and in git submoodule") {
-		t.Fatalf("expected finalize prompt to target latest cleaned goal, got %q", got)
+	if got := messages[10].Content; got != "Write the final answer using the conversation above as the source of truth.\n\nProduce a clear, self-contained final response grounded in the prior turns. If any important gaps or uncertainty remain, call them out briefly." {
+		t.Fatalf("unexpected finalize prompt, got %q", got)
 	} else if strings.Contains(got, "Reevaluate the task in light of this guidance") || strings.Contains(got, "Begin by writing a single line starting with \"Revised Goal:\"") {
 		t.Fatalf("expected finalize prompt to omit ephemeral revised-goal instructions, got %q", got)
 	}
@@ -1702,11 +1702,11 @@ func TestBuildFinalizeMessagesMatchesCleanedSessionWireTranscript(t *testing.T) 
 	client := NewClient(ClientConfig{})
 	conv := conversation.New("sess-clean-wire", "Determine if you are running in a docker or local environment. Provide evidence for or against.")
 	conv.AddMessage("assistant", "## Determination: Running Inside a Docker Container\n\nI am running inside a Docker container.", map[string]any{"type": "final", "turns": 1, "capped": false})
-	conv.AddMessage("user", "List the last 3 commit messages in the project root and also the gitsubmodule `agent/internal/shell-agent/`.", map[string]any{"type": "goal_update"})
+	conv.AddMessage("user", "List the last 3 commit messages in the project root and also the gitsubmodule `agent/internal/shell-agent/`.", nil)
 	conv.AddMessage("assistant", "Run `git -C /repo log --oneline -3` for the project root, then `git -C /repo/agent/internal/shell-agent log --oneline -3` for the submodule. Report the 3 commit messages from each location.\n\nI understand that I don't have access to a shell directly. The `shell-agent` will carry out my request and report back with explanation of the results and not necessarily the full output of commands it executes.", map[string]any{"type": "ask", "turn": 2, "decision": "ask"})
 	conv.AddMessage("assistant", "## Answer\n- Confidence: 100% - The project root (`/workspace`) shows these 3 most recent commits: (1) `c8c48c0 Refactor planner prompt layering`, (2) `c442854 chore: untrack a refactor todo.`, (3) `f808483 chore(templates): sync local overrides with embedded defaults`.\n- Confidence: 100% - The submodule (`/workspace/agent/internal/shell-agent`) shows these 3 most recent commits: (1) `1deb3e5 fix: tighten repo-root recursive grep validation`, (2) `2b1cfb9 fix: reject broad recursive grep from repo root`, (3) `0ff19c3 chore: add dockerfile for useful tools for handling documents.`", map[string]any{"type": "answer", "turn": 2})
 	conv.AddMessage("assistant", "Revised Goal: List the last 3 commit messages for the project root and the `agent/internal/shell-agent/` submodule.\n\n## Last 3 Commits — Project Root (`/workspace`)\n\n| # | Hash | Message |\n|---|---|---|\n| 1 | `c8c48c0` | Refactor planner prompt layering |\n| 2 | `c442854` | chore: untrack a refactor todo. |\n| 3 | `f808483` | chore(templates): sync local overrides with embedded defaults |\n\n## Last 3 Commits — Submodule (`agent/internal/shell-agent/`)\n\n| # | Hash | Message |\n|---|---|---|\n| 1 | `1deb3e5` | fix: tighten repo-root recursive grep validation |\n| 2 | `2b1cfb9` | fix: reject broad recursive grep from repo root |\n| 3 | `0ff19c3` | chore: add dockerfile for useful tools for handling documents. |\n\nNo gaps or uncertainty remain — both commit histories were retrieved directly from `git log` in the respective directories.", map[string]any{"type": "final", "turns": 2, "capped": false})
-	conv.AddMessage("user", "list any untracked files or modified tracked files in project root and in git submoodule", map[string]any{"type": "goal_update"})
+	conv.AddMessage("user", "list any untracked files or modified tracked files in project root and in git submoodule", nil)
 	conv.AddMessage("assistant", "Run `git -C /workspace status --short` for the project root, then `git -C /workspace/agent/internal/shell-agent status --short` for the submodule. Report any untracked or modified files found in each location.\n\nI understand that I don't have access to a shell directly. The `shell-agent` will carry out my request and report back with explanation of the results and not necessarily the full output of commands it executes.", map[string]any{"type": "ask", "turn": 3, "decision": "ask"})
 	conv.AddMessage("assistant", "## Answer\n- Confidence: 100% - The project root (`/workspace`) has the following modified/untracked files: `README.md` (staged modification), `agent/internal/llm/config.go` (unstaged modification), `agent/internal/session/runner_state.go` (unstaged modification), `agent/internal/session/runner_state_test.go` (unstaged modification), `agent/internal/shell-agent` (submodule pointer modified), and `.git.hydrated/` (untracked directory).\n- Confidence: 100% - The submodule (`/workspace/agent/internal/shell-agent`) has one modified file: `internal/environments/tempdir.go` (unstaged modification).", map[string]any{"type": "answer", "turn": 3})
 
@@ -1726,13 +1726,13 @@ func TestBuildFinalizeMessagesMatchesCleanedSessionWireTranscript(t *testing.T) 
 		{role: "user", content: "Determine if you are running in a docker or local environment. Provide evidence for or against."},
 		{role: "assistant", content: "## Determination: Running Inside a Docker Container\n\nI am running inside a Docker container."},
 		{role: "user", content: "List the last 3 commit messages in the project root and also the gitsubmodule `agent/internal/shell-agent/`."},
-		{role: "assistant", content: "Run `git -C /repo log --oneline -3` for the project root, then `git -C /repo/agent/internal/shell-agent log --oneline -3` for the submodule. Report the 3 commit messages from each location.\n\nI understand that I don't have access to a shell directly. The `shell-agent` will carry out my request and report back with explanation of the results and not necessarily the full output of commands it executes."},
-		{role: "assistant", content: "## Answer\n- Confidence: 100% - The project root (`/workspace`) shows these 3 most recent commits: (1) `c8c48c0 Refactor planner prompt layering`, (2) `c442854 chore: untrack a refactor todo.`, (3) `f808483 chore(templates): sync local overrides with embedded defaults`.\n- Confidence: 100% - The submodule (`/workspace/agent/internal/shell-agent`) shows these 3 most recent commits: (1) `1deb3e5 fix: tighten repo-root recursive grep validation`, (2) `2b1cfb9 fix: reject broad recursive grep from repo root`, (3) `0ff19c3 chore: add dockerfile for useful tools for handling documents.`"},
+		{role: "assistant", content: "[work_request] Run `git -C /repo log --oneline -3` for the project root, then `git -C /repo/agent/internal/shell-agent log --oneline -3` for the submodule. Report the 3 commit messages from each location.\n\nI understand that I don't have access to a shell directly. The `shell-agent` will carry out my request and report back with explanation of the results and not necessarily the full output of commands it executes."},
+		{role: "assistant", content: "[work_result] ## Answer\n- Confidence: 100% - The project root (`/workspace`) shows these 3 most recent commits: (1) `c8c48c0 Refactor planner prompt layering`, (2) `c442854 chore: untrack a refactor todo.`, (3) `f808483 chore(templates): sync local overrides with embedded defaults`.\n- Confidence: 100% - The submodule (`/workspace/agent/internal/shell-agent`) shows these 3 most recent commits: (1) `1deb3e5 fix: tighten repo-root recursive grep validation`, (2) `2b1cfb9 fix: reject broad recursive grep from repo root`, (3) `0ff19c3 chore: add dockerfile for useful tools for handling documents.`"},
 		{role: "assistant", content: "Revised Goal: List the last 3 commit messages for the project root and the `agent/internal/shell-agent/` submodule.\n\n## Last 3 Commits — Project Root (`/workspace`)\n\n| # | Hash | Message |\n|---|---|---|\n| 1 | `c8c48c0` | Refactor planner prompt layering |\n| 2 | `c442854` | chore: untrack a refactor todo. |\n| 3 | `f808483` | chore(templates): sync local overrides with embedded defaults |\n\n## Last 3 Commits — Submodule (`agent/internal/shell-agent/`)\n\n| # | Hash | Message |\n|---|---|---|\n| 1 | `1deb3e5` | fix: tighten repo-root recursive grep validation |\n| 2 | `2b1cfb9` | fix: reject broad recursive grep from repo root |\n| 3 | `0ff19c3` | chore: add dockerfile for useful tools for handling documents. |\n\nNo gaps or uncertainty remain — both commit histories were retrieved directly from `git log` in the respective directories."},
 		{role: "user", content: "list any untracked files or modified tracked files in project root and in git submoodule"},
-		{role: "assistant", content: "Run `git -C /workspace status --short` for the project root, then `git -C /workspace/agent/internal/shell-agent status --short` for the submodule. Report any untracked or modified files found in each location.\n\nI understand that I don't have access to a shell directly. The `shell-agent` will carry out my request and report back with explanation of the results and not necessarily the full output of commands it executes."},
-		{role: "assistant", content: "## Answer\n- Confidence: 100% - The project root (`/workspace`) has the following modified/untracked files: `README.md` (staged modification), `agent/internal/llm/config.go` (unstaged modification), `agent/internal/session/runner_state.go` (unstaged modification), `agent/internal/session/runner_state_test.go` (unstaged modification), `agent/internal/shell-agent` (submodule pointer modified), and `.git.hydrated/` (untracked directory).\n- Confidence: 100% - The submodule (`/workspace/agent/internal/shell-agent`) has one modified file: `internal/environments/tempdir.go` (unstaged modification)."},
-		{role: "user", content: "Write the final answer to the current goal using the conversation above as the source of truth.\n\nGoal:\nlist any untracked files or modified tracked files in project root and in git submoodule\n\nProduce a clear, self-contained final response grounded in the prior turns. If any important gaps or uncertainty remain, call them out briefly."},
+		{role: "assistant", content: "[work_request] Run `git -C /workspace status --short` for the project root, then `git -C /workspace/agent/internal/shell-agent status --short` for the submodule. Report any untracked or modified files found in each location.\n\nI understand that I don't have access to a shell directly. The `shell-agent` will carry out my request and report back with explanation of the results and not necessarily the full output of commands it executes."},
+		{role: "assistant", content: "[work_result] ## Answer\n- Confidence: 100% - The project root (`/workspace`) has the following modified/untracked files: `README.md` (staged modification), `agent/internal/llm/config.go` (unstaged modification), `agent/internal/session/runner_state.go` (unstaged modification), `agent/internal/session/runner_state_test.go` (unstaged modification), `agent/internal/shell-agent` (submodule pointer modified), and `.git.hydrated/` (untracked directory).\n- Confidence: 100% - The submodule (`/workspace/agent/internal/shell-agent`) has one modified file: `internal/environments/tempdir.go` (unstaged modification)."},
+		{role: "user", content: "Write the final answer using the conversation above as the source of truth.\n\nProduce a clear, self-contained final response grounded in the prior turns. If any important gaps or uncertainty remain, call them out briefly."},
 	}
 
 	for i, wantMsg := range want {

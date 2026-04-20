@@ -513,12 +513,12 @@ func (c *conversationRecorder) WriteTurn(step int, question, savedPath string, r
 		return c.tr.WriteTurn(step, question, savedPath, retrieved, summary, decision)
 	}
 	c.conversation.AddMessage("assistant", question, map[string]any{
-		"type":     "ask",
+		"type":     "work_request",
 		"turn":     step,
 		"decision": decision,
 	})
 	c.conversation.AddMessage("assistant", summary, map[string]any{
-		"type":            "answer",
+		"type":            "work_result",
 		"turn":            step,
 		"retrieved_files": retrieved,
 		"chat_path":       savedPath,
@@ -549,20 +549,30 @@ func (c *conversationRecorder) AppendRaw(role, content, metaType string) error {
 			return nil
 		}
 		switch strings.ToLower(strings.TrimSpace(metaType)) {
-		case "goal_update", "user_feedback":
-			return c.tr.AppendRaw(fmt.Sprintf("\n=== GOAL UPDATE\n\n%s\n", content))
-		case "user_input":
-			return c.tr.AppendRaw(fmt.Sprintf("\n=== USER INPUT\n\n%s\n", content))
 		case "user_input_request":
-			return c.tr.AppendRaw(fmt.Sprintf("\n=== USER INPUT NEEDED ===\n\n%s\n", content))
+			return c.tr.AppendRaw(fmt.Sprintf("\n=== USER INPUT REQUEST\n\n%s\n", content))
+		case "user_input_response":
+			return c.tr.AppendRaw(fmt.Sprintf("\n=== USER INPUT RESPONSE\n\n%s\n", content))
+		case "":
+			if strings.EqualFold(strings.TrimSpace(role), "user") {
+				return c.tr.AppendRaw(fmt.Sprintf("\n=== USER MESSAGE\n\n%s\n", content))
+			}
+			if strings.EqualFold(strings.TrimSpace(role), "assistant") {
+				return c.tr.AppendRaw(fmt.Sprintf("\n=== ASSISTANT MESSAGE\n\n%s\n", content))
+			}
+			return c.tr.AppendRaw(content)
 		default:
 			return c.tr.AppendRaw(content)
 		}
 	}
-	c.conversation.AddMessage(role, content, map[string]any{"type": metaType})
+	var metadata map[string]any
+	if strings.TrimSpace(metaType) != "" {
+		metadata = map[string]any{"type": metaType}
+	}
+	c.conversation.AddMessage(role, content, metadata)
 	rendered, delta, err := c.renderDelta()
 	if errors.Is(err, errConversationTranscriptDesync) {
-		if err := c.appendRawToTranscript(content, metaType); err != nil {
+		if err := c.appendRawToTranscript(role, content, metaType); err != nil {
 			return err
 		}
 		c.conversationRendered = rendered
@@ -625,17 +635,23 @@ func (c *conversationRecorder) RecordFullDiff(step int, file, diff, note string)
 	return c.Save()
 }
 
-func (c *conversationRecorder) appendRawToTranscript(content, metaType string) error {
+func (c *conversationRecorder) appendRawToTranscript(role, content, metaType string) error {
 	if c.tr == nil {
 		return nil
 	}
 	switch strings.ToLower(strings.TrimSpace(metaType)) {
-	case "goal_update", "user_feedback":
-		return c.tr.AppendRaw(fmt.Sprintf("\n=== GOAL UPDATE\n\n%s\n", content))
-	case "user_input":
-		return c.tr.AppendRaw(fmt.Sprintf("\n=== USER INPUT\n\n%s\n", content))
 	case "user_input_request":
-		return c.tr.AppendRaw(fmt.Sprintf("\n=== USER INPUT NEEDED ===\n\n%s\n", content))
+		return c.tr.AppendRaw(fmt.Sprintf("\n=== USER INPUT REQUEST\n\n%s\n", content))
+	case "user_input_response":
+		return c.tr.AppendRaw(fmt.Sprintf("\n=== USER INPUT RESPONSE\n\n%s\n", content))
+	case "":
+		if strings.EqualFold(strings.TrimSpace(role), "user") {
+			return c.tr.AppendRaw(fmt.Sprintf("\n=== USER MESSAGE\n\n%s\n", content))
+		}
+		if strings.EqualFold(strings.TrimSpace(role), "assistant") {
+			return c.tr.AppendRaw(fmt.Sprintf("\n=== ASSISTANT MESSAGE\n\n%s\n", content))
+		}
+		return c.tr.AppendRaw(content)
 	default:
 		return c.tr.AppendRaw(content)
 	}

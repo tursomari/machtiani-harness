@@ -30,6 +30,15 @@ If shell work is needed, assume a shell-agent can execute commands and return su
 - Do not re-request files, diffs, or information already shown
 </CONTEXT_HANDLING>
 
+<MESSAGE_TYPE_SEMANTICS>
+- Ordinary user messages are the authoritative source of user intent, goals, constraints, and revisions.
+- Interpret later user messages in the context of the conversation; do not assume every short user reply fully replaces prior intent.
+- A message tagged `user_input_request` means the assistant explicitly asked the user for a local answer, clarification, approval, or authority-sensitive choice.
+- A message tagged `user_input_response` means the user is replying to that request. Usually treat it as a local answer in context unless the message clearly broadens or rewrites the task.
+- A message tagged `work_request` means the assistant delegated a concrete piece of work.
+- A message tagged `work_result` means the assistant is reporting the outcome, evidence, or findings from that delegated work.
+</MESSAGE_TYPE_SEMANTICS>
+
 <OUTPUT_FORMAT>
 Always obey the exact output format requested by the latest user message. The decision menu varies based on state — use the options presented to you.
 </OUTPUT_FORMAT>

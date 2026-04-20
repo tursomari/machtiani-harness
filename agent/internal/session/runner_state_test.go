@@ -75,7 +75,7 @@ func TestConversationRecorderWriteTurnFallsBackOnDesync(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 
-	recorder.conversation.AddMessage("user", "external mutation", map[string]any{"type": "user_feedback"})
+	recorder.conversation.AddMessage("user", "external mutation", nil)
 
 	if err := recorder.WriteTurn(1, "Question", "", []string{"runner.go"}, "Answer", "ask"); err != nil {
 		t.Fatalf("WriteTurn: %v", err)
@@ -109,16 +109,16 @@ func TestConversationRecorderAppendRawFallsBackOnDesync(t *testing.T) {
 
 	recorder.conversation.AddMessage("assistant", "out-of-band", map[string]any{"type": "note"})
 
-	if err := recorder.AppendRaw("user", "Need a tighter scope", "goal_update"); err != nil {
+	if err := recorder.AppendRaw("user", "Need a tighter scope", ""); err != nil {
 		t.Fatalf("AppendRaw: %v", err)
 	}
 
 	content := tr.Content()
-	if !strings.Contains(content, "=== GOAL UPDATE") {
-		t.Fatalf("transcript missing goal-update block after fallback:\n%s", content)
+	if !strings.Contains(content, "=== USER MESSAGE") {
+		t.Fatalf("transcript missing user-message block after fallback:\n%s", content)
 	}
 	if !strings.Contains(content, "Need a tighter scope") {
-		t.Fatalf("transcript missing goal-update content after fallback:\n%s", content)
+		t.Fatalf("transcript missing user-message content after fallback:\n%s", content)
 	}
 	if !strings.Contains(recorder.JSON(), "Need a tighter scope") {
 		t.Fatalf("conversation json missing appended raw content after fallback: %s", recorder.JSON())
@@ -139,14 +139,14 @@ func TestConversationRecorderAppendRawUserInputRequestAndReply(t *testing.T) {
 	if err := recorder.AppendRaw("assistant", "Do you want the safer fix?", "user_input_request"); err != nil {
 		t.Fatalf("AppendRaw request: %v", err)
 	}
-	if err := recorder.AppendRaw("user", "Use the safer fix.", "user_input"); err != nil {
+	if err := recorder.AppendRaw("user", "Use the safer fix.", "user_input_response"); err != nil {
 		t.Fatalf("AppendRaw reply: %v", err)
 	}
 	content := tr.Content()
-	if !strings.Contains(content, "=== USER INPUT NEEDED ===") {
+	if !strings.Contains(content, "=== USER INPUT REQUEST") {
 		t.Fatalf("expected user input request block, got %q", content)
 	}
-	if !strings.Contains(content, "=== USER INPUT") {
+	if !strings.Contains(content, "=== USER INPUT RESPONSE") {
 		t.Fatalf("expected user input reply block, got %q", content)
 	}
 	messages := recorder.Conversation().ToChatMessages("")
@@ -195,7 +195,7 @@ func TestRunLifecycleStateSuspendForUserInput(t *testing.T) {
 		t.Fatalf("unexpected question: %q", runState.pendingState.SuspendedUserInput.Question)
 	}
 	content := tr.Content()
-	if !strings.Contains(content, "=== USER INPUT NEEDED ===") || !strings.Contains(content, "Do you want the safer fix?") {
+	if !strings.Contains(content, "=== USER INPUT REQUEST") || !strings.Contains(content, "Do you want the safer fix?") {
 		t.Fatalf("expected suspended question in transcript, got %q", content)
 	}
 }

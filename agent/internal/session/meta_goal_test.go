@@ -57,8 +57,8 @@ func TestComposeRevisedGoalPromptIncludesInstruction(t *testing.T) {
 	if !strings.Contains(prompt, guidance) {
 		t.Fatalf("expected prompt to include guidance, got %q", prompt)
 	}
-	if !strings.Contains(prompt, "Revised Goal:") {
-		t.Fatalf("expected prompt to instruct revised goal output, got %q", prompt)
+	if !strings.Contains(prompt, "do not restate it as a separate revised-goal header") {
+		t.Fatalf("expected prompt to avoid revised goal wrapper, got %q", prompt)
 	}
 }
 
@@ -84,7 +84,7 @@ func TestExtractUserFeedbackStripsExactSessionWrapper(t *testing.T) {
 	raw := `list any untracked files or modified tracked files in project root and in git submoodule
 """
 
-Reevaluate the task in light of this guidance. Begin by writing a single line starting with "Revised Goal:" that captures the updated objective, then continue execution anchored on that revised goal.`
+Continue the task using the conversation and this additional guidance as the source of truth. Incorporate the guidance in context; do not restate it as a separate revised-goal header.`
 	want := "list any untracked files or modified tracked files in project root and in git submoodule"
 
 	if got := extractUserFeedback(raw); got != want {

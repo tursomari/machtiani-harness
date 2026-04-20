@@ -28,10 +28,6 @@ Decision: ask
 {{- end }}
 
 This step is decision-only; do NOT include the ask prompt here.
-{{- if .HasGoalUpdate }}
-
-Latest Goal takes precedence over the original goal and any prior decisions. Do not finalize until the Latest Goal is addressed.
-{{- end }}
 
 {{- if and .PatchEnabled .ForceRepatch }}
 
@@ -39,11 +35,6 @@ Latest Goal takes precedence over the original goal and any prior decisions. Do 
   <trigger>If the guard reports `Skipping patch because all target files were already updated earlier this session`</trigger>
   <instruction>Include `metadata.force_repatch: true` on the next patch.</instruction>
 </repatch>
-
-{{- end }}
-{{- if .HasGoalUpdate }}
-Latest Goal (takes precedence):
-{{.GoalUpdate}}
 
 {{- end }}
 Step {{.Step}} of {{.MaxSteps}}. Decide.

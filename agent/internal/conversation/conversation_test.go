@@ -59,8 +59,8 @@ func TestNewSeedsOriginalGoalMessage(t *testing.T) {
 	if first.Role != "user" {
 		t.Fatalf("expected goal message role user, got %s", first.Role)
 	}
-	if first.Metadata == nil || first.Metadata["type"] != "original_goal" {
-		t.Fatalf("expected original_goal metadata, got %v", first.Metadata)
+	if first.Metadata != nil {
+		t.Fatalf("expected plain user goal message metadata, got %v", first.Metadata)
 	}
 	if strings.TrimSpace(first.Content) != goal {
 		t.Fatalf("expected goal content preserved, got %q", first.Content)
@@ -106,18 +106,7 @@ func TestToTranscriptMatchesLegacyTurn(t *testing.T) {
 	}
 }
 
-func TestCurrentGoalUsesLatestUpdate(t *testing.T) {
-	conv := New("sess-goal", "Initial goal")
-	conv.AddMessage("user", "First update", map[string]any{"type": "goal_update"})
-	conv.AddMessage("assistant", "Answer", map[string]any{"type": "answer", "turn": 1})
-	conv.AddMessage("user", "Latest goal", map[string]any{"type": "goal_update"})
-
-	if got := conv.CurrentGoal(); got != "Latest goal" {
-		t.Fatalf("unexpected current goal: got %q want %q", got, "Latest goal")
-	}
-}
-
-func TestToTranscriptRendersGoalUpdateBlock(t *testing.T) {
+func TestToTranscriptRendersUserMessageBlock(t *testing.T) {
 	cwd, _ := os.Getwd()
 	t.Cleanup(func() { _ = os.Chdir(cwd) })
 	tmp := t.TempDir()
@@ -135,20 +124,20 @@ func TestToTranscriptRendersGoalUpdateBlock(t *testing.T) {
 		t.Fatalf("WriteHeader error: %v", err)
 	}
 	feedback := "Please focus on unit tests first."
-	if err := tr.AppendRaw("\n=== GOAL UPDATE\n\n" + feedback + "\n"); err != nil {
+	if err := tr.AppendRaw("\n=== USER MESSAGE\n\n" + feedback + "\n"); err != nil {
 		t.Fatalf("AppendRaw error: %v", err)
 	}
 	expected := tr.Content()
 
 	conv := New("sess-goal-update", goal)
-	conv.AddMessage("user", feedback, map[string]any{"type": "goal_update"})
+	conv.AddMessage("user", feedback, nil)
 
 	got, err := conv.ToTranscript()
 	if err != nil {
 		t.Fatalf("ToTranscript returned error: %v", err)
 	}
 	if got != expected {
-		t.Fatalf("goal update transcript mismatch:\nwant:\n%s\n----\n got:\n%s", expected, got)
+		t.Fatalf("user message transcript mismatch:\nwant:\n%s\n----\n got:\n%s", expected, got)
 	}
 }
 
@@ -230,7 +219,7 @@ func TestToChatMessagesSingleTurn(t *testing.T) {
 	if messages[1].Content != "Investigate issue" {
 		t.Fatalf("unexpected goal content: %q", messages[1].Content)
 	}
-	if messages[2].Content != "What happened?" {
+	if messages[2].Content != "[work_request] What happened?" {
 		t.Fatalf("unexpected ask content: %q", messages[2].Content)
 	}
 	if messages[2].Metadata["decision"] != "ask" {
@@ -241,11 +230,11 @@ func TestToChatMessagesSingleTurn(t *testing.T) {
 	}
 }
 
-func TestToChatMessagesOrdersGoalUpdate(t *testing.T) {
+func TestToChatMessagesKeepsPlainUserFollowUp(t *testing.T) {
 	conv := New("sess-goal", "Initial goal")
 	conv.AddMessage("assistant", "Question", map[string]any{"type": "ask", "turn": 1, "decision": "ask"})
 	conv.AddMessage("assistant", "Answer", map[string]any{"type": "answer", "turn": 1})
-	conv.AddMessage("user", "Updated goal", map[string]any{"type": "goal_update"})
+	conv.AddMessage("user", "Updated goal", nil)
 	conv.AddMessage("assistant", "Next question", map[string]any{"type": "ask", "turn": 2, "decision": "ask"})
 
 	messages := conv.ToChatMessages("")
@@ -259,7 +248,29 @@ func TestToChatMessagesOrdersGoalUpdate(t *testing.T) {
 		}
 	}
 	if messages[3].Content != "Updated goal" {
-		t.Fatalf("unexpected goal update content: %q", messages[3].Content)
+		t.Fatalf("unexpected plain user content: %q", messages[3].Content)
+	}
+}
+
+func TestToChatMessagesPrefixesProtocolTags(t *testing.T) {
+	conv := New("sess-protocol", "Initial goal")
+	conv.AddMessage("assistant", "Do you want the safer fix?", map[string]any{"type": "user_input_request"})
+	conv.AddMessage("user", "Use the safer fix.", map[string]any{"type": "user_input_response"})
+	conv.AddMessage("assistant", "Inspect the failing test and summarize the root cause.", map[string]any{"type": "work_request", "turn": 1})
+	conv.AddMessage("assistant", "The root cause is a stale cache invalidation path.", map[string]any{"type": "work_result", "turn": 1})
+
+	messages := conv.ToChatMessages("")
+	got := []string{messages[1].Content, messages[2].Content, messages[3].Content, messages[4].Content}
+	want := []string{
+		"[user_input_request] Do you want the safer fix?",
+		"[user_input_response] Use the safer fix.",
+		"[work_request] Inspect the failing test and summarize the root cause.",
+		"[work_result] The root cause is a stale cache invalidation path.",
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("message %d content = %q, want %q", i+1, got[i], want[i])
+		}
 	}
 }
 
@@ -299,6 +310,15 @@ func TestToChatMessagesIncludesFinalAnswer(t *testing.T) {
 	}
 	if messages[1].Metadata["turns"] != 3 {
 		t.Fatalf("unexpected final answer turn count: %v", messages[1].Metadata)
+	}
+}
+
+func TestUnmarshalRejectsLegacyVisibleTagTypes(t *testing.T) {
+	data := []byte(`{"session_id":"sess-legacy","original_goal":"Goal","messages":[{"role":"user","content":"Goal","metadata":{"type":"original_goal"}}],"created_at":"2026-04-18T00:00:00Z","updated_at":"2026-04-18T00:00:00Z"}`)
+	if _, err := Unmarshal(data); err == nil {
+		t.Fatal("expected legacy visible tag unmarshal failure")
+	} else if !strings.Contains(err.Error(), "unsupported legacy conversation message type") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
