@@ -59,6 +59,15 @@ func TestFinalizeProviderPayloadUsesSimplifiedVisibleTags(t *testing.T) {
 	if len(captured.Messages) < 7 {
 		t.Fatalf("expected at least 7 payload messages, got %d", len(captured.Messages))
 	}
+	if !strings.Contains(captured.Messages[0].Content, "A message tagged `answer_the_user` means produce the assistant's actual user-facing reply now, grounded in the conversation so far.") {
+		t.Fatalf("system prompt missing answer_the_user semantics\n%s", captured.Messages[0].Content)
+	}
+	if !strings.Contains(captured.Messages[0].Content, "<ANSWER_THE_USER_BEHAVIOR>") {
+		t.Fatalf("system prompt missing answer_the_user behavior section\n%s", captured.Messages[0].Content)
+	}
+	if !strings.Contains(captured.Messages[0].Content, "Do not make further `work_request` messages in this step.") {
+		t.Fatalf("system prompt missing no-further-work guidance\n%s", captured.Messages[0].Content)
+	}
 
 	got := []chatMessage{
 		captured.Messages[1],
@@ -85,10 +94,13 @@ func TestFinalizeProviderPayloadUsesSimplifiedVisibleTags(t *testing.T) {
 		}
 	}
 	last := captured.Messages[len(captured.Messages)-1]
-	if last.Role != "user" || last.Content != "Write the final answer using the conversation above as the source of truth.\n\nProduce a clear, self-contained final response grounded in the prior turns. If any important gaps or uncertainty remain, call them out briefly." {
+	if last.Role != "user" || last.Content != answerTheUserPrompt {
 		t.Fatalf("unexpected finalize payload message %#v", last)
 	}
 	if strings.Contains(last.Content, "Goal:") || strings.Contains(last.Content, "Current Goal:") {
 		t.Fatalf("finalize payload should omit goal anchors, got %q", last.Content)
+	}
+	if !strings.Contains(last.Content, "Do not make further work requests.") {
+		t.Fatalf("finalize payload should block further work requests, got %q", last.Content)
 	}
 }

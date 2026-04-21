@@ -1763,8 +1763,8 @@ func (c *Client) finalizePromptFallback(goal string, transcript string) string {
 	_ = goal
 	_ = transcript
 	var b strings.Builder
-	b.WriteString("Write the final answer using the conversation above as the source of truth.\n\n")
-	b.WriteString("Produce a clear, self-contained final response grounded in the prior turns. If any important gaps or uncertainty remain, call them out briefly.")
+	b.WriteString("[answer_the_user] Reply to the user now based on the conversation so far.\n\n")
+	b.WriteString("Answer for the user's current need. Do not make further work requests. Use relevant prior `work_result` messages when helpful. If the latest user turn calls for a narrow or conversational reply, answer naturally instead of re-summarizing the whole session. If the latest user turn asks for a summary or wrap-up, provide it. If important uncertainty remains, mention it briefly.")
 	return b.String()
 }
 

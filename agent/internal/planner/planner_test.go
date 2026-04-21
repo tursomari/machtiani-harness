@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -12,7 +13,25 @@ import (
 
 	"github.com/tursomari/machtiani/agent/internal/conversation"
 	"github.com/tursomari/machtiani/agent/internal/llm"
+	"github.com/tursomari/machtiani/agent/internal/templates"
 )
+
+const answerTheUserPrompt = "[answer_the_user] Reply to the user now based on the conversation so far.\n\nAnswer for the user's current need. Do not make further work requests. Use relevant prior `work_result` messages when helpful. If the latest user turn calls for a narrow or conversational reply, answer naturally instead of re-summarizing the whole session. If the latest user turn asks for a summary or wrap-up, provide it. If important uncertainty remains, mention it briefly."
+
+func readRepoFile(t *testing.T, rel string) string {
+	t.Helper()
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", ".."))
+	path := filepath.Join(repoRoot, filepath.FromSlash(rel))
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(data)
+}
 
 func TestParseDecisionAsk(t *testing.T) {
 	resp := "Decision: ask\nQuestion: What is the structure of the main module?"
@@ -1328,6 +1347,49 @@ func TestPlanSystemPromptOmitsFullFileTagGuidance(t *testing.T) {
 	}
 }
 
+func TestPlanSystemPromptDefinesAnswerTheUserContract(t *testing.T) {
+	client := NewClient(ClientConfig{})
+	conv := conversation.New("sess-answer-the-user", "Finish docs")
+	prompt := client.planSystemPrompt(conv, "Finish docs", 1, 3, nil)
+	checks := []string{
+		"A message tagged `answer_the_user` means produce the assistant's actual user-facing reply now, grounded in the conversation so far.",
+		"<ANSWER_THE_USER_BEHAVIOR>",
+		"When the latest message is tagged `answer_the_user`, produce the assistant's actual user-facing reply now.",
+		"Prefer a natural conversational reply when the latest user turn is narrow, incremental, or conversational.",
+		"If the latest real user turn asks for a summary, wrap-up, or overall conclusion, provide that broader response.",
+		"Do not make further `work_request` messages in this step.",
+	}
+	for _, check := range checks {
+		if !strings.Contains(prompt, check) {
+			t.Fatalf("plan system prompt missing %q\n%s", check, prompt)
+		}
+	}
+}
+
+func TestPlannerPromptOverridesMirrorEmbeddedTemplates(t *testing.T) {
+	tests := []struct {
+		name        string
+		embeddedKey string
+		overrideRel string
+	}{
+		{name: "plan system", embeddedKey: "planner.plan_system", overrideRel: ".machtiani/templates/planner/plan_system.tpl"},
+		{name: "finalize prompt", embeddedKey: "planner.finalize_prompt", overrideRel: ".machtiani/templates/planner/finalize_prompt.tpl"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			embedded, err := templates.GetEmbeddedTemplate(tc.embeddedKey)
+			if err != nil {
+				t.Fatalf("GetEmbeddedTemplate(%q) error: %v", tc.embeddedKey, err)
+			}
+			override := readRepoFile(t, tc.overrideRel)
+			if strings.TrimSpace(override) != embedded {
+				t.Fatalf("override %s drifted from embedded %s", tc.overrideRel, tc.embeddedKey)
+			}
+		})
+	}
+}
+
 func TestPlanSystemPromptIncludesPlannerOverlay(t *testing.T) {
 	client := NewClient(ClientConfig{PlannerOverlay: "Focus on security review and threat modeling."})
 	conv := conversation.New("sess-system-overlay", "Finish docs")
@@ -1602,11 +1664,14 @@ func TestFinalizeMessagesReusePlannerSystemPrompt(t *testing.T) {
 	if !strings.Contains(finalizeMessages[0].Content, "Prioritize migration safety checks.") {
 		t.Fatalf("expected planner overlay in finalize system prompt, got %q", finalizeMessages[0].Content)
 	}
+	if !strings.Contains(finalizeMessages[0].Content, "<ANSWER_THE_USER_BEHAVIOR>") {
+		t.Fatalf("expected answer-the-user behavior section in finalize system prompt, got %q", finalizeMessages[0].Content)
+	}
 	last := finalizeMessages[len(finalizeMessages)-1]
 	if last.Role != "user" {
 		t.Fatalf("expected finalize request to be a user message, got %q", last.Role)
 	}
-	if last.Content != "Write the final answer using the conversation above as the source of truth.\n\nProduce a clear, self-contained final response grounded in the prior turns. If any important gaps or uncertainty remain, call them out briefly." {
+	if last.Content != answerTheUserPrompt {
 		t.Fatalf("unexpected finalize request, got %q", last.Content)
 	}
 	if strings.Contains(last.Content, "Prioritize migration safety checks.") {
@@ -1642,7 +1707,7 @@ func TestFinalizeDoesNotPersistEphemeralRequest(t *testing.T) {
 		t.Fatalf("expected finalize request to be sent to model")
 	}
 	last := captured[len(captured)-1]
-	if last.Role != "user" || !strings.Contains(last.Content, "Write the final answer") {
+	if last.Role != "user" || last.Content != answerTheUserPrompt {
 		t.Fatalf("unexpected finalize request %#v", last)
 	}
 }
@@ -1658,6 +1723,50 @@ func TestFinalizePromptOmitsTranscript(t *testing.T) {
 	}
 	if contains(prompt, "You are the composer agent") {
 		t.Fatalf("finalize prompt should now be a request prompt, got:\n%s", prompt)
+	}
+	if !contains(prompt, "[answer_the_user] Reply to the user now based on the conversation so far.") {
+		t.Fatalf("finalize prompt should use the answer_the_user contract:\n%s", prompt)
+	}
+	if !contains(prompt, "Do not make further work requests.") {
+		t.Fatalf("finalize prompt should block further work requests:\n%s", prompt)
+	}
+}
+
+func TestBuildFinalizeMessagesForNarrowFollowUpUsesAnswerTheUserContract(t *testing.T) {
+	client := NewClient(ClientConfig{})
+	conv := conversation.New("sess-narrow-follow-up", "Investigate internet access")
+	conv.AddMessage("assistant", "[work_request] Test internet connectivity with one safe ping.", map[string]any{"type": "work_request", "turn": 1})
+	conv.AddMessage("assistant", "[work_result] Ping failed with timeout.", map[string]any{"type": "work_result", "turn": 1})
+	conv.AddMessage("user", "So do you have internet access or not?", nil)
+
+	messages := client.buildFinalizeMessages(conv, "stale goal")
+	if got := messages[len(messages)-2]; got.Role != "user" || got.Content != "So do you have internet access or not?" {
+		t.Fatalf("expected narrow follow-up to remain the latest real user turn, got %#v", got)
+	}
+	if got := messages[len(messages)-1].Content; got != answerTheUserPrompt {
+		t.Fatalf("unexpected finalize prompt, got %q", got)
+	}
+	if got := messages[0].Content; !strings.Contains(got, "Prefer a natural conversational reply when the latest user turn is narrow, incremental, or conversational.") {
+		t.Fatalf("system prompt missing narrow-reply guidance\n%s", got)
+	}
+}
+
+func TestBuildFinalizeMessagesForWrapUpRequestUsesAnswerTheUserContract(t *testing.T) {
+	client := NewClient(ClientConfig{})
+	conv := conversation.New("sess-wrap-up", "Investigate internet access")
+	conv.AddMessage("assistant", "[work_request] Test internet connectivity with one safe ping.", map[string]any{"type": "work_request", "turn": 1})
+	conv.AddMessage("assistant", "[work_result] Ping failed with timeout.", map[string]any{"type": "work_result", "turn": 1})
+	conv.AddMessage("user", "Please summarize the overall conclusion.", nil)
+
+	messages := client.buildFinalizeMessages(conv, "stale goal")
+	if got := messages[len(messages)-2]; got.Role != "user" || got.Content != "Please summarize the overall conclusion." {
+		t.Fatalf("expected wrap-up request to remain the latest real user turn, got %#v", got)
+	}
+	if got := messages[len(messages)-1].Content; got != answerTheUserPrompt {
+		t.Fatalf("unexpected finalize prompt, got %q", got)
+	}
+	if got := messages[0].Content; !strings.Contains(got, "If the latest real user turn asks for a summary, wrap-up, or overall conclusion, provide that broader response.") {
+		t.Fatalf("system prompt missing wrap-up guidance\n%s", got)
 	}
 }
 
@@ -1691,7 +1800,7 @@ func TestBuildFinalizeMessagesPreservesCleanConversationOrdering(t *testing.T) {
 	if got := messages[7].Content; strings.Contains(got, "Reevaluate the task in light of this guidance") || strings.Contains(got, `"""`) {
 		t.Fatalf("expected cleaned latest goal update, got %q", got)
 	}
-	if got := messages[10].Content; got != "Write the final answer using the conversation above as the source of truth.\n\nProduce a clear, self-contained final response grounded in the prior turns. If any important gaps or uncertainty remain, call them out briefly." {
+	if got := messages[10].Content; got != answerTheUserPrompt {
 		t.Fatalf("unexpected finalize prompt, got %q", got)
 	} else if strings.Contains(got, "Reevaluate the task in light of this guidance") || strings.Contains(got, "Begin by writing a single line starting with \"Revised Goal:\"") {
 		t.Fatalf("expected finalize prompt to omit ephemeral revised-goal instructions, got %q", got)
@@ -1732,7 +1841,7 @@ func TestBuildFinalizeMessagesMatchesCleanedSessionWireTranscript(t *testing.T) 
 		{role: "user", content: "list any untracked files or modified tracked files in project root and in git submoodule"},
 		{role: "assistant", content: "[work_request] Run `git -C /workspace status --short` for the project root, then `git -C /workspace/agent/internal/shell-agent status --short` for the submodule. Report any untracked or modified files found in each location.\n\nI understand that I don't have access to a shell directly. The `shell-agent` will carry out my request and report back with explanation of the results and not necessarily the full output of commands it executes."},
 		{role: "assistant", content: "[work_result] ## Answer\n- Confidence: 100% - The project root (`/workspace`) has the following modified/untracked files: `README.md` (staged modification), `agent/internal/llm/config.go` (unstaged modification), `agent/internal/session/runner_state.go` (unstaged modification), `agent/internal/session/runner_state_test.go` (unstaged modification), `agent/internal/shell-agent` (submodule pointer modified), and `.git.hydrated/` (untracked directory).\n- Confidence: 100% - The submodule (`/workspace/agent/internal/shell-agent`) has one modified file: `internal/environments/tempdir.go` (unstaged modification)."},
-		{role: "user", content: "Write the final answer using the conversation above as the source of truth.\n\nProduce a clear, self-contained final response grounded in the prior turns. If any important gaps or uncertainty remain, call them out briefly."},
+		{role: "user", content: answerTheUserPrompt},
 	}
 
 	for i, wantMsg := range want {
