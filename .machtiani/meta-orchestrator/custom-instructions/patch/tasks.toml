@@ -1,0 +1,5 @@
+title = "Patch and validate"
+description = "Apply the requested patch and run validations."
+instruction = "patch.txt"
+shell_agent = false
+patch_mode = true

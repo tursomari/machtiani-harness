@@ -2,95 +2,11 @@ package session
 
 import (
 	"bytes"
-	"encoding/json"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/tursomari/machtiani/agent/internal/ui"
 )
-
-func TestIntegrateTaskUserGuidance(t *testing.T) {
-	tests := []struct {
-		name     string
-		existing string
-		guidance string
-		expected string
-	}{
-		{
-			name:     "appends guidance to existing guidance",
-			existing: "Update licensing across repository",
-			guidance: "Focus on root LICENSE only",
-			expected: "Update licensing across repository\n\nFocus on root LICENSE only",
-		},
-		{
-			name:     "empty existing picks guidance",
-			existing: "",
-			guidance: "Limit scope to package.json",
-			expected: "Limit scope to package.json",
-		},
-		{
-			name:     "guidance already present avoids duplication",
-			existing: "Update licensing across repository\n\nFocus on root LICENSE only",
-			guidance: "Focus on root LICENSE only",
-			expected: "Update licensing across repository\n\nFocus on root LICENSE only",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := integrateTaskUserGuidance(tt.existing, tt.guidance)
-			if got != tt.expected {
-				t.Fatalf("expected %q, got %q", tt.expected, got)
-			}
-		})
-	}
-}
-
-func TestComposeRevisedGoalPromptIncludesInstruction(t *testing.T) {
-	base := "***Diagnose***\n\nUpdate licensing across repository"
-	guidance := "Only modify ./LICENSE"
-	prompt := composeRevisedGoalPrompt(base, guidance)
-	if !strings.Contains(prompt, base) {
-		t.Fatalf("expected prompt to include base content, got %q", prompt)
-	}
-	if !strings.Contains(prompt, guidance) {
-		t.Fatalf("expected prompt to include guidance, got %q", prompt)
-	}
-	if !strings.Contains(prompt, "do not restate it as a separate revised-goal header") {
-		t.Fatalf("expected prompt to avoid revised goal wrapper, got %q", prompt)
-	}
-}
-
-func TestExtractUserFeedbackStripsRevisedGoalWrapper(t *testing.T) {
-	base := "***Diagnose***\n\nUpdate licensing across repository"
-	guidance := "Only modify ./LICENSE\n\nLeave package metadata untouched."
-	prompt := composeRevisedGoalPrompt(base, guidance)
-
-	if got := extractUserFeedback(prompt); got != guidance {
-		t.Fatalf("expected extracted guidance %q, got %q", guidance, got)
-	}
-}
-
-func TestExtractUserFeedbackLeavesPlainPromptUntouched(t *testing.T) {
-	prompt := "List any untracked files or modified tracked files in project root and in git submodule"
-
-	if got := extractUserFeedback(prompt); got != prompt {
-		t.Fatalf("expected plain prompt %q, got %q", prompt, got)
-	}
-}
-
-func TestExtractUserFeedbackStripsExactSessionWrapper(t *testing.T) {
-	raw := `list any untracked files or modified tracked files in project root and in git submoodule
-"""
-
-Continue the task using the conversation and this additional guidance as the source of truth. Incorporate the guidance in context; do not restate it as a separate revised-goal header.`
-	want := "list any untracked files or modified tracked files in project root and in git submoodule"
-
-	if got := extractUserFeedback(raw); got != want {
-		t.Fatalf("expected extracted guidance %q, got %q", want, got)
-	}
-}
 
 func TestComposeTaskPromptUsesTitleWhenDescriptionExists(t *testing.T) {
 	prompt := composeTaskPrompt("Fix the issue", metaTaskState{
@@ -110,50 +26,79 @@ func TestComposeTaskPromptUsesTitleWhenDescriptionExists(t *testing.T) {
 	}
 }
 
-func TestUpdateChildSessionGoalPersists(t *testing.T) {
-	tmpDir := t.TempDir()
-	prevWD, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
+func TestMetaOrchestrateCompletedPlanWithResumePromptReturnsHandledFalse(t *testing.T) {
+	tempHome := t.TempDir()
+	t.Setenv("HOME", tempHome)
+
+	sessionID := "test-completed-resume"
+	plan := metaPlanState{
+		Goal:  "fix bug",
+		Mode:  "coding",
+		Tasks: []metaTaskState{{Title: "Implement solution", Mode: "coding", Status: "complete"}},
 	}
-	defer func() {
-		_ = os.Chdir(prevWD)
-	}()
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatalf("chdir temp dir: %v", err)
+	if err := persistMetaPlan(sessionID, plan); err != nil {
+		t.Fatalf("persistMetaPlan error: %v", err)
 	}
 
-	cmd := exec.Command("git", "init")
-	cmd.Stdout = &bytes.Buffer{}
-	cmd.Stderr = &bytes.Buffer{}
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("git init: %v", err)
+	ctx := metaContext{
+		SessionID:    sessionID,
+		Goal:         "fix bug",
+		ResumePrompt: "add more tests",
+		Config:       legacyConfig{mode: "coding"},
+		Display:      ui.NewTerminalDisplay(&bytes.Buffer{}, nil, ""),
 	}
 
-	sessionID := "test-session"
-	original := SessionState{SessionID: sessionID, Goal: "Original goal", OriginalPrompt: "Original goal"}
-	if err := SaveSessionState(original); err != nil {
-		t.Fatalf("save session state: %v", err)
+	outcome, handled := metaOrchestrate(ctx)
+	if handled {
+		t.Fatalf("expected handled=false for completed plan with resume prompt, got handled=%v", handled)
+	}
+	if outcome.Plan.Goal != "" || len(outcome.Plan.Tasks) > 0 {
+		t.Fatalf("expected empty outcome plan, got %+v", outcome.Plan)
+	}
+}
+
+func TestMetaOrchestrateCompletedPlanWithoutResumePromptReturnsHandledTrue(t *testing.T) {
+	tempHome := t.TempDir()
+	t.Setenv("HOME", tempHome)
+
+	sessionID := "test-completed-no-resume"
+	plan := metaPlanState{
+		Goal:  "fix bug",
+		Mode:  "coding",
+		Tasks: []metaTaskState{{Title: "Implement solution", Mode: "coding", Status: "complete"}},
+	}
+	if err := persistMetaPlan(sessionID, plan); err != nil {
+		t.Fatalf("persistMetaPlan error: %v", err)
 	}
 
-	revised := composeTaskPrompt("", metaTaskState{Instruction: original.Goal, UserGuidance: integrateTaskUserGuidance("", "Focus on root LICENSE")}, "", true)
-	if err := updateChildSessionGoal(sessionID, revised); err != nil {
-		t.Fatalf("update child session goal: %v", err)
+	ctx := metaContext{
+		SessionID:    sessionID,
+		Goal:         "fix bug",
+		ResumePrompt: "",
+		Config:       legacyConfig{mode: "coding"},
+		Display:      ui.NewTerminalDisplay(&bytes.Buffer{}, nil, ""),
 	}
 
-	statePath := filepath.Join(tmpDir, ".machtiani", "sessions", sessionID, "session-state.json")
-	data, err := os.ReadFile(statePath)
-	if err != nil {
-		t.Fatalf("read session state: %v", err)
+	outcome, handled := metaOrchestrate(ctx)
+	if !handled {
+		t.Fatalf("expected handled=true for completed plan without resume prompt, got handled=%v", handled)
 	}
-	var current SessionState
-	if err := json.Unmarshal(data, &current); err != nil {
-		t.Fatalf("unmarshal session state: %v", err)
+	if outcome.FinalAnswer == "" {
+		t.Fatalf("expected non-empty summary for completed plan")
 	}
-	if current.Goal != revised {
-		t.Fatalf("expected goal %q, got %q", revised, current.Goal)
+}
+
+func TestAllTasksComplete(t *testing.T) {
+	if allTasksComplete(metaPlanState{Tasks: []metaTaskState{}}) {
+		t.Fatalf("expected false for empty task list")
 	}
-	if current.OriginalPrompt != original.OriginalPrompt {
-		t.Fatalf("expected original prompt %q, got %q", original.OriginalPrompt, current.OriginalPrompt)
+	if !allTasksComplete(metaPlanState{Tasks: []metaTaskState{{Status: "complete"}}}) {
+		t.Fatalf("expected true for single complete task")
+	}
+	if allTasksComplete(metaPlanState{Tasks: []metaTaskState{{Status: "complete"}, {Status: "pending"}}}) {
+		t.Fatalf("expected false when one task is pending")
+	}
+	if !allTasksComplete(metaPlanState{Tasks: []metaTaskState{{Status: "complete"}, {Status: "complete"}}}) {
+		t.Fatalf("expected true when all tasks are complete")
 	}
 }

@@ -1,0 +1,4 @@
+title = "File Organization"
+system_prompt = "file-organization.txt"
+shell_agent = false
+patch_mode = false

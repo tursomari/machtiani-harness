@@ -42,12 +42,11 @@ func TestSaveLoadSessionStateRoundTrip(t *testing.T) {
 			Answer:      "diff --git a/file b/file",
 		},
 		SuspendedUserInput: &SuspendedUserInputState{
-			Kind:           "user-directed-ask",
-			Question:       "Do you want the safer fix, or the faster fix?",
-			Context:        "The safer fix preserves behavior.",
-			Reason:         "asks for the preferred tradeoff",
-			OriginalAsk:    "Do you want the safer fix or the faster fix? I can inspect more logs too.",
-			ChildSessionID: "child-123",
+			Kind:        "user-directed-ask",
+			Question:    "Do you want the safer fix, or the faster fix?",
+			Context:     "The safer fix preserves behavior.",
+			Reason:      "asks for the preferred tradeoff",
+			OriginalAsk: "Do you want the safer fix or the faster fix? I can inspect more logs too.",
 		},
 	}
 
@@ -150,8 +149,8 @@ func TestSaveLoadSessionStateRoundTrip(t *testing.T) {
 	if loaded.SuspendedUserInput.Question != state.SuspendedUserInput.Question {
 		t.Fatalf("unexpected suspended question: got %q want %q", loaded.SuspendedUserInput.Question, state.SuspendedUserInput.Question)
 	}
-	if loaded.SuspendedUserInput.ChildSessionID != state.SuspendedUserInput.ChildSessionID {
-		t.Fatalf("unexpected child session id: got %q want %q", loaded.SuspendedUserInput.ChildSessionID, state.SuspendedUserInput.ChildSessionID)
+	if loaded.SuspendedUserInput.OriginalAsk != state.SuspendedUserInput.OriginalAsk {
+		t.Fatalf("unexpected original ask: got %q want %q", loaded.SuspendedUserInput.OriginalAsk, state.SuspendedUserInput.OriginalAsk)
 	}
 
 	path := filepath.Join(dir, sessionStateFile)

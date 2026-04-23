@@ -38,13 +38,12 @@ type TerminalDisplay struct {
 
 	timerEnabled    bool
 	timerStart      time.Time
-	timerTicker     *time.Ticker
-	timerStop       chan struct{}
-	timerVisible    bool
-	lastTimer       string
-	manager         *ProcessTimerManager
-	id              string
-	parentSessionID string
+	timerTicker  *time.Ticker
+	timerStop    chan struct{}
+	timerVisible bool
+	lastTimer    string
+	manager      *ProcessTimerManager
+	id           string
 }
 
 // PromptStream coordinates streaming tokens for a single prompt turn.
@@ -75,17 +74,16 @@ type MetaTaskDisplay struct {
 }
 
 // NewTerminalDisplay constructs a TerminalDisplay writing to out (defaults to STDOUT).
-func NewTerminalDisplay(out io.Writer, manager *ProcessTimerManager, id string, parentSessionID string) *TerminalDisplay {
+func NewTerminalDisplay(out io.Writer, manager *ProcessTimerManager, id string) *TerminalDisplay {
 	if out == nil {
 		out = os.Stdout
 	}
 	return &TerminalDisplay{
-		out:             out,
-		width:           detectWidth(out),
-		timerEnabled:    isTerminalWriter(out),
-		manager:         manager,
-		id:              strings.TrimSpace(id),
-		parentSessionID: strings.TrimSpace(parentSessionID),
+		out:          out,
+		width:        detectWidth(out),
+		timerEnabled: isTerminalWriter(out),
+		manager:      manager,
+		id:           strings.TrimSpace(id),
 	}
 }
 

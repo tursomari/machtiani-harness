@@ -291,5 +291,5 @@ func TestPromptSelectionReturnsSelection(t *testing.T) {
 }
 
 func newTestDisplay(buf *bytes.Buffer) *TerminalDisplay {
-	return NewTerminalDisplay(buf, nil, "", "")
+	return NewTerminalDisplay(buf, nil, "")
 }

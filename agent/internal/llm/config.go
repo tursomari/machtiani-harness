@@ -226,7 +226,6 @@ const (
 // MetaInstructionTask represents a single task entry parsed from a TOML-based
 // meta instruction file.
 type MetaInstructionTask struct {
-	Step         int    `toml:"step"`
 	Title        string `toml:"title"`
 	Description  string `toml:"description"`
 	Instruction  string `toml:"instruction"`
@@ -236,12 +235,12 @@ type MetaInstructionTask struct {
 }
 
 // MetaInstructions captures the resolved instruction payload, preserving both
-// the raw source content and any structured tasks.
+// the raw source content and a single structured task.
 type MetaInstructions struct {
 	Format MetaInstructionsFormat
 	Path   string
 	Raw    string
-	Tasks  []MetaInstructionTask
+	Task   MetaInstructionTask
 }
 
 type ProviderConfig struct {
@@ -1841,11 +1840,11 @@ func LoadMetaInstructions(mode, overrideDir string, cfg Config, configPath strin
 		raw := string(data)
 		switch format {
 		case MetaInstructionsFormatTOML:
-			tasks, perr := parseMetaInstructionTOML(data, candidate)
+			task, perr := parseMetaInstructionTOML(data, candidate)
 			if perr != nil {
 				return MetaInstructions{}, fmt.Errorf("parse meta instructions %s: %w", candidate, perr)
 			}
-			return MetaInstructions{Format: format, Path: candidate, Raw: raw, Tasks: tasks}, nil
+			return MetaInstructions{Format: format, Path: candidate, Raw: raw, Task: task}, nil
 		default:
 			return MetaInstructions{Format: format, Path: candidate, Raw: raw}, nil
 		}
@@ -1863,47 +1862,41 @@ func detectMetaInstructionFormat(path string) MetaInstructionsFormat {
 	}
 }
 
-type metaInstructionsTOML struct {
-	Tasks []MetaInstructionTask `toml:"tasks"`
-}
+func parseMetaInstructionTOML(data []byte, tomlFilePath string) (MetaInstructionTask, error) {
+	var task MetaInstructionTask
+	if err := toml.Unmarshal(data, &task); err != nil {
+		return MetaInstructionTask{}, err
+	}
 
-func parseMetaInstructionTOML(data []byte, tomlFilePath string) ([]MetaInstructionTask, error) {
-	var parsed metaInstructionsTOML
-	if err := toml.Unmarshal(data, &parsed); err != nil {
-		return nil, err
+	// Detect legacy multi-step [[tasks]] arrays
+	var legacy struct {
+		Tasks []MetaInstructionTask `toml:"tasks"`
 	}
-	if len(parsed.Tasks) == 0 {
-		return nil, fmt.Errorf("no tasks defined")
+	if err := toml.Unmarshal(data, &legacy); err == nil && len(legacy.Tasks) > 0 {
+		return MetaInstructionTask{}, fmt.Errorf("unsupported TOML: multi-step [[tasks]] arrays are removed; use flat single-task schema")
 	}
-	tasks := make([]MetaInstructionTask, 0, len(parsed.Tasks))
+
 	baseDir := filepath.Dir(tomlFilePath)
-	for idx, task := range parsed.Tasks {
-		normalized := task
-		normalized.Title = strings.TrimSpace(normalized.Title)
-		description, err := resolveTaskTextField(baseDir, normalized.Description)
-		if err != nil {
-			return nil, fmt.Errorf("resolve tasks[%d].description: %w", idx, err)
-		}
-		normalized.Description = description
-		instruction, err := resolveTaskTextField(baseDir, normalized.Instruction)
-		if err != nil {
-			return nil, fmt.Errorf("resolve tasks[%d].instruction: %w", idx, err)
-		}
-		normalized.Instruction = instruction
-		systemPrompt, err := resolveTaskTextField(baseDir, normalized.SystemPrompt)
-		if err != nil {
-			return nil, fmt.Errorf("resolve tasks[%d].system_prompt: %w", idx, err)
-		}
-		normalized.SystemPrompt = systemPrompt
-		if normalized.Title == "" {
-			return nil, fmt.Errorf("tasks[%d].title is required", idx)
-		}
-		if normalized.Step <= 0 {
-			normalized.Step = idx + 1
-		}
-		tasks = append(tasks, normalized)
+	task.Title = strings.TrimSpace(task.Title)
+	description, err := resolveTaskTextField(baseDir, task.Description)
+	if err != nil {
+		return MetaInstructionTask{}, fmt.Errorf("resolve description: %w", err)
 	}
-	return tasks, nil
+	task.Description = description
+	instruction, err := resolveTaskTextField(baseDir, task.Instruction)
+	if err != nil {
+		return MetaInstructionTask{}, fmt.Errorf("resolve instruction: %w", err)
+	}
+	task.Instruction = instruction
+	systemPrompt, err := resolveTaskTextField(baseDir, task.SystemPrompt)
+	if err != nil {
+		return MetaInstructionTask{}, fmt.Errorf("resolve system_prompt: %w", err)
+	}
+	task.SystemPrompt = systemPrompt
+	if task.Title == "" {
+		return MetaInstructionTask{}, fmt.Errorf("title is required")
+	}
+	return task, nil
 }
 
 func resolveTaskTextField(baseDir, raw string) (string, error) {

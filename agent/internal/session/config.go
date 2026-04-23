@@ -45,7 +45,6 @@ type Config struct {
 	PromptText            string
 	Mode                  string
 	MetaInstructionDir    string
-	ParentSessionID       string
 	IncludeBackgroundTurn bool
 }
 
@@ -118,7 +117,6 @@ type legacyConfig struct {
 	promptText              string
 	mode                    string
 	metaInstructionDir      string
-	parentSessionID         string
 	includeBackgroundTurn   bool
 }
 
@@ -160,7 +158,6 @@ func newLegacyConfig(cfg Config) legacyConfig {
 		promptText:              cfg.PromptText,
 		mode:                    cfg.Mode,
 		metaInstructionDir:      cfg.MetaInstructionDir,
-		parentSessionID:         cfg.ParentSessionID,
 		includeBackgroundTurn:   cfg.IncludeBackgroundTurn,
 	}
 }

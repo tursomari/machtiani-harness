@@ -1,13 +1,4 @@
-[[tasks]]
-step = 1
 title = "Validate"
-instruction = "Run relevant validations (build/test) for the current changes."
+description = "Run relevant validations (build/test) for the current changes and report results."
 shell_agent = false
 patch_mode = true
-
-[[tasks]]
-step = 2
-title = "Report"
-instruction = "Report results and suggest follow-ups."
-shell_agent = false
-patch_mode = false

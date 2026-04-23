@@ -33,7 +33,6 @@ type SessionState struct {
 	ConversationPath   string                   `json:"conversation_path,omitempty"`
 	ConversationJSON   string                   `json:"conversation_json,omitempty"`
 	UpdatedAt          time.Time                `json:"updated_at"`
-	ParentSessionID    string                   `json:"parent_session_id,omitempty"`
 	MetaModes          []string                 `json:"meta_modes,omitempty"`
 	MetaInstructionDir string                   `json:"meta_instruction_dir,omitempty"`
 	PlannerProgress    *PlannerProgressState    `json:"planner_progress,omitempty"`
@@ -42,12 +41,11 @@ type SessionState struct {
 }
 
 type SuspendedUserInputState struct {
-	Kind           string `json:"kind,omitempty"`
-	Question       string `json:"question,omitempty"`
-	Context        string `json:"context,omitempty"`
-	Reason         string `json:"reason,omitempty"`
-	OriginalAsk    string `json:"original_ask,omitempty"`
-	ChildSessionID string `json:"child_session_id,omitempty"`
+	Kind        string `json:"kind,omitempty"`
+	Question    string `json:"question,omitempty"`
+	Context     string `json:"context,omitempty"`
+	Reason      string `json:"reason,omitempty"`
+	OriginalAsk string `json:"original_ask,omitempty"`
 }
 
 // PlannerProgressState captures planner-visible progress across turns so

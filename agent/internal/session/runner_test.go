@@ -311,7 +311,7 @@ func TestStartTranscriptIfNeededChildIncludesBackgroundWhenRequested(t *testing.
 
 	originalPrompt := "Original prompt"
 	taskDescription := "Investigate the Goal"
-	cfg := legacyConfig{parentSessionID: "parent", includeBackgroundTurn: true}
+	cfg := legacyConfig{includeBackgroundTurn: true}
 	started, err := startTranscriptIfNeeded(tr, originalPrompt, taskDescription, sessionID, cfg, false)
 	if err != nil {
 		t.Fatalf("startTranscriptIfNeeded error: %v", err)

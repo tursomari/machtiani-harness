@@ -1,20 +1,5 @@
-[[tasks]]
-step = 1
-title = "Plan"
-instruction = "plan.txt"
-shell_agent = false
-patch_mode = false
-
-[[tasks]]
-step = 2
-title = "Patch"
+title = "Implement patch and validate"
+description = "Plan the approach, implement the patch, and validate results."
 instruction = "patch.txt"
 shell_agent = true
-patch_mode = true
-
-[[tasks]]
-step = 3
-title = "Validate"
-instruction = "validate.txt"
-shell_agent = false
 patch_mode = true

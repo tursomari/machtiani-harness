@@ -578,7 +578,7 @@ func runSession(ctx context.Context, opts Options) Result {
 		fmt.Fprintln(os.Stderr, "[trajectory] unified stream:", trajectoryWriter.Config().Path)
 	}
 
-	display := ui.NewTerminalDisplay(os.Stdout, timerMgr, sessionID, strings.TrimSpace(cfg.parentSessionID))
+	display := ui.NewTerminalDisplay(os.Stdout, timerMgr, sessionID)
 	var failoverCancel context.CancelFunc
 	var failoverDone <-chan struct{}
 	var retryCancel context.CancelFunc
@@ -758,7 +758,6 @@ func runSession(ctx context.Context, opts Options) Result {
 	}
 	if err := mctRunner.Resolve(); err != nil {
 		fmt.Fprintln(os.Stderr, "mct resolution error:", err)
-		fmt.Fprintln(os.Stderr, "Hint: install 'mct' into PATH (see mct/README.md).")
 		return Result{ExitCode: 1, Err: err}
 	}
 
@@ -824,20 +823,19 @@ func runSession(ctx context.Context, opts Options) Result {
 		Prompts:           plannerPrompts,
 	})
 
-	isChildSession := strings.TrimSpace(cfg.parentSessionID) != ""
 	startingTranscript, headerErr := startTranscriptIfNeeded(tr, originalPrompt, taskDescription, sessionID, cfg, resumeMode)
 	if headerErr != nil {
 		fmt.Fprintln(os.Stderr, "Error writing transcript header:", headerErr)
 		return Result{ExitCode: 1, Err: headerErr}
 	}
 
-	if err := writeInitialBackgroundIfNeeded(tr, repoRoot, cfg, isChildSession, startingTranscript, writeTurn); err != nil {
+	if err := writeInitialBackgroundIfNeeded(tr, repoRoot, cfg, false, startingTranscript, writeTurn); err != nil {
 		fmt.Fprintln(os.Stderr, "Transcript write error:", err)
 		runState.sessionErr = err
 		return Result{ExitCode: 1, Err: err}
 	}
 
-	metaActive := strings.TrimSpace(cfg.mode) != "" && strings.TrimSpace(cfg.parentSessionID) == ""
+	metaActive := strings.TrimSpace(cfg.mode) != ""
 	if metaActive {
 		display.StartSession(goal)
 		if resumeMode {
@@ -881,7 +879,6 @@ func runSession(ctx context.Context, opts Options) Result {
 					Transcript:         tr.Content(),
 					ConversationPath:   recorder.Path(),
 					ConversationJSON:   recorder.JSON(),
-					ParentSessionID:    strings.TrimSpace(cfg.parentSessionID),
 					MetaModes:          metaModesFromPlan(outcome.Plan),
 					MetaInstructionDir: instructionDir,
 					SuspendedUserInput: outcome.SuspendedInput.Clone(),
@@ -912,7 +909,6 @@ func runSession(ctx context.Context, opts Options) Result {
 					Transcript:         tr.Content(),
 					ConversationPath:   recorder.Path(),
 					ConversationJSON:   recorder.JSON(),
-					ParentSessionID:    strings.TrimSpace(cfg.parentSessionID),
 					MetaModes:          metaModesFromPlan(outcome.Plan),
 					MetaInstructionDir: instructionDir,
 				}
@@ -1006,9 +1002,7 @@ func runSession(ctx context.Context, opts Options) Result {
 		if trimmedResumePrompt != "" {
 			feedback := trimmedResumePrompt
 			metaType := ""
-			if resumeSuspendedInput == nil {
-				feedback = extractUserFeedback(trimmedResumePrompt)
-			} else {
+			if resumeSuspendedInput != nil {
 				metaType = "user_input_response"
 			}
 			resumePrompt = feedback
@@ -1438,57 +1432,6 @@ func appendUserInputContext(transcript, prompt string) string {
 	b.WriteString(prompt)
 	b.WriteString("\n")
 	return b.String()
-}
-
-func extractUserFeedback(prompt string) string {
-	prompt = strings.TrimSpace(prompt)
-	if prompt == "" {
-		return ""
-	}
-
-	extractGuidanceBlock := func(marker string) string {
-		idx := strings.LastIndex(prompt, marker)
-		if idx == -1 {
-			return ""
-		}
-		candidate := prompt[idx+len(marker):]
-		if end := strings.Index(candidate, "\n\"\"\""); end != -1 {
-			candidate = candidate[:end]
-		}
-		return strings.TrimSpace(candidate)
-	}
-
-	for _, marker := range []string{
-		"The user provided additional guidance:\n\"\"\"\n",
-		"The user provided additional guidance:\n\n\"\"\"\n",
-		"\n\n\"\"\"\n",
-	} {
-		if candidate := extractGuidanceBlock(marker); candidate != "" {
-			return candidate
-		}
-	}
-	if idx := strings.LastIndex(prompt, "The user provided additional guidance:"); idx != -1 {
-		candidate := prompt[idx+len("The user provided additional guidance:"):]
-		candidate = strings.TrimSpace(candidate)
-		candidate = strings.Trim(candidate, "\"\n")
-		candidate = strings.TrimSpace(candidate)
-		if candidate != "" {
-			return candidate
-		}
-	}
-	if end := strings.Index(prompt, "\n\"\"\"\n\nContinue the task using the conversation and this additional guidance as the source of truth."); end != -1 {
-		candidate := strings.TrimSpace(prompt[:end])
-		if candidate != "" {
-			return candidate
-		}
-	}
-	if end := strings.Index(prompt, "\n\"\"\"\n\nReevaluate the task in light of this guidance."); end != -1 {
-		candidate := strings.TrimSpace(prompt[:end])
-		if candidate != "" {
-			return candidate
-		}
-	}
-	return prompt
 }
 
 func convertRewriteMissingToCreate(instr mctpatcher.Instructions, valErr *mctpatcher.ValidationError, verbose bool) (mctpatcher.Instructions, []int) {

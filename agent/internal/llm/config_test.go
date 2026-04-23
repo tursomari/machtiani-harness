@@ -354,11 +354,11 @@ func TestLoadMetaInstructionsPrefersTomlInOverrideDir(t *testing.T) {
 	if doc.Format != MetaInstructionsFormatTOML {
 		t.Fatalf("expected TOML format, got %q", doc.Format)
 	}
-	if len(doc.Tasks) != 4 {
-		t.Fatalf("expected 4 tasks, got %d", len(doc.Tasks))
+	if strings.TrimSpace(doc.Task.Title) == "" {
+		t.Fatalf("expected task title, got empty")
 	}
-	if doc.Tasks[0].Title != "Create an issue for the engineering team" {
-		t.Fatalf("unexpected first task title: %q", doc.Tasks[0].Title)
+	if doc.Task.Title != "Implement and validate" {
+		t.Fatalf("unexpected task title: %q", doc.Task.Title)
 	}
 	if doc.Path != filepath.Join(override, "coding", "tasks.toml") {
 		t.Fatalf("expected path %s, got %s", filepath.Join(override, "coding", "tasks.toml"), doc.Path)
@@ -428,24 +428,15 @@ func TestParseMetaInstructionTOMLLoadsDescriptionFromExternalFile(t *testing.T) 
 		t.Fatalf("ReadFile: %v", err)
 	}
 
-	tasks, err := parseMetaInstructionTOML(data, path)
+	task, err := parseMetaInstructionTOML(data, path)
 	if err != nil {
 		t.Fatalf("parseMetaInstructionTOML: %v", err)
 	}
-	if len(tasks) != 2 {
-		t.Fatalf("expected 2 tasks, got %d", len(tasks))
+	if task.Description != "Hello from inline" {
+		t.Fatalf("unexpected description: %q", task.Description)
 	}
-	if tasks[0].Description != "Hello from inline" {
-		t.Fatalf("unexpected inline description: %q", tasks[0].Description)
-	}
-	if tasks[1].Description != "Hello from file" {
-		t.Fatalf("unexpected file description: %q", tasks[1].Description)
-	}
-	if tasks[0].Instruction != "Do the inline task" {
-		t.Fatalf("unexpected inline instruction: %q", tasks[0].Instruction)
-	}
-	if tasks[1].Instruction != "Do the file-backed task" {
-		t.Fatalf("unexpected file-backed instruction: %q", tasks[1].Instruction)
+	if task.Instruction != "Do the inline task" {
+		t.Fatalf("unexpected instruction: %q", task.Instruction)
 	}
 }
 
@@ -455,8 +446,7 @@ func TestParseMetaInstructionTOMLLoadsSystemPromptFromExternalFile(t *testing.T)
 	mustWriteFile(t, filepath.Join(dir, "instruction.md"), "Check backward compatibility")
 	mustWriteFile(t, filepath.Join(dir, "overlay.md"), "Prioritize backward-compatible changes")
 	tomlPath := filepath.Join(dir, "tasks.toml")
-	mustWriteFile(t, tomlPath, `[[tasks]]
-title = "Review"
+	mustWriteFile(t, tomlPath, `title = "Review"
 description = "description.md"
 instruction = "instruction.md"
 system_prompt = "overlay.md"
@@ -466,26 +456,22 @@ system_prompt = "overlay.md"
 	if err != nil {
 		t.Fatalf("ReadFile: %v", err)
 	}
-	tasks, err := parseMetaInstructionTOML(data, tomlPath)
+	task, err := parseMetaInstructionTOML(data, tomlPath)
 	if err != nil {
 		t.Fatalf("parseMetaInstructionTOML: %v", err)
 	}
-	if len(tasks) != 1 {
-		t.Fatalf("expected 1 task, got %d", len(tasks))
+	if task.Instruction != "Check backward compatibility" {
+		t.Fatalf("unexpected instruction: %q", task.Instruction)
 	}
-	if tasks[0].Instruction != "Check backward compatibility" {
-		t.Fatalf("unexpected instruction: %q", tasks[0].Instruction)
-	}
-	if tasks[0].SystemPrompt != "Prioritize backward-compatible changes" {
-		t.Fatalf("unexpected system prompt: %q", tasks[0].SystemPrompt)
+	if task.SystemPrompt != "Prioritize backward-compatible changes" {
+		t.Fatalf("unexpected system prompt: %q", task.SystemPrompt)
 	}
 }
 
 func TestParseMetaInstructionTOMLFailsWhenExternalInstructionMissing(t *testing.T) {
 	dir := t.TempDir()
 	tomlPath := filepath.Join(dir, "tasks.toml")
-	mustWriteFile(t, tomlPath, `[[tasks]]
-title = "Review"
+	mustWriteFile(t, tomlPath, `title = "Review"
 instruction = "missing.txt"
 `)
 
@@ -495,7 +481,7 @@ instruction = "missing.txt"
 	}
 
 	_, err = parseMetaInstructionTOML(data, tomlPath)
-	if err == nil || !strings.Contains(err.Error(), "resolve tasks[0].instruction") {
+	if err == nil || !strings.Contains(err.Error(), "resolve instruction") {
 		t.Fatalf("expected missing instruction error, got %v", err)
 	}
 }
@@ -503,8 +489,7 @@ instruction = "missing.txt"
 func TestParseMetaInstructionTOMLFailsWhenExternalDescriptionMissing(t *testing.T) {
 	dir := t.TempDir()
 	tomlPath := filepath.Join(dir, "tasks.toml")
-	mustWriteFile(t, tomlPath, `[[tasks]]
-title = "Missing"
+	mustWriteFile(t, tomlPath, `title = "Missing"
 description = "missing.txt"
 `)
 
@@ -778,33 +763,10 @@ func mustWriteFile(t *testing.T, path string, content string) {
 }
 
 func sampleCodingToml() string {
-	return `[[tasks]]
-step = 1
-title = "Create an issue for the engineering team"
-instruction = "Create an issue for the engineering team. Do not make any code changes or patches."
-shell_agent = false
-patch_mode = false
-
-[[tasks]]
-step = 2
-title = "Implement the Issue"
-instruction = "Implement the Issue."
+	return `title = "Implement and validate"
+description = "Implement the patch to solve the Goal, make code changes and tests, run validations, and summarize."
 shell_agent = true
 patch_mode = true
-
-[[tasks]]
-step = 3
-title = "Run available validations"
-instruction = "Run available validations (tests, linters, or targeted reasoning) to confirm behavior and note any risks or follow-up work."
-shell_agent = true
-patch_mode = false
-
-[[tasks]]
-step = 4
-title = "Summarize the results"
-instruction = "Summarize the results, highlighting modifications, verification status, and remaining next steps for the parent session."
-shell_agent = false
-patch_mode = false
 `
 }
 

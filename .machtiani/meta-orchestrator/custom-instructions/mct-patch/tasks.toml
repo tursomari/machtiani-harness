@@ -1,13 +1,4 @@
-[[tasks]]
-step = 1
 title = "Implement patch"
-instruction = "Implement the patch to solve the Goal. Keep changes minimal and add tests where needed."
+description = "Implement the patch to solve the Goal. Keep changes minimal and add tests where needed."
 shell_agent = true
-patch_mode = true
-
-[[tasks]]
-step = 2
-title = "Validate"
-instruction = "Run available validations and summarize results."
-shell_agent = false
 patch_mode = true

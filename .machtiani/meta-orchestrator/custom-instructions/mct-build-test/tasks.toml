@@ -1,13 +1,4 @@
-[[tasks]]
-step = 1
-title = "Build"
-instruction = "Build the project with the safest available build commands."
-shell_agent = false
-patch_mode = true
-
-[[tasks]]
-step = 2
-title = "Test"
-instruction = "Run the relevant test suites and report failures precisely."
+title = "Build and test"
+description = "Build the project and run relevant test suites, reporting failures precisely."
 shell_agent = false
 patch_mode = true

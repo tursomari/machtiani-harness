@@ -8,8 +8,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -78,9 +76,6 @@ func metaOrchestrate(ctx metaContext) (metaOutcome, bool) {
 	if mode == "" {
 		return metaOutcome{}, false
 	}
-	if strings.TrimSpace(ctx.Config.parentSessionID) != "" {
-		return metaOutcome{}, false
-	}
 
 	plan, err := loadOrCreateMetaPlan(ctx.SessionID, ctx.Goal, mode, ctx.InstructionPath, ctx.Instruction)
 	if err != nil {
@@ -96,6 +91,10 @@ func metaOrchestrate(ctx metaContext) (metaOutcome, bool) {
 		}
 		outcome := metaOutcome{Plan: updatedPlan, Err: err, ExitCode: 1}
 		return outcome, true
+	}
+
+	if strings.TrimSpace(ctx.ResumePrompt) != "" && allTasksComplete(updatedPlan) {
+		return metaOutcome{}, false
 	}
 
 	summary := renderMetaSummary(ctx.Goal, updatedPlan)
@@ -195,45 +194,27 @@ func tasksFromText(goal, mode, instructions string) []metaTaskState {
 }
 
 func tasksFromTOML(goal, mode string, instructions llm.MetaInstructions) []metaTaskState {
-	if len(instructions.Tasks) == 0 {
+	task := instructions.Task
+	if strings.TrimSpace(task.Title) == "" {
 		return defaultTasksForMode(goal, mode)
 	}
-	items := append([]llm.MetaInstructionTask(nil), instructions.Tasks...)
-	sort.SliceStable(items, func(i, j int) bool {
-		if items[i].Step == items[j].Step {
-			return i < j
-		}
-		return items[i].Step < items[j].Step
-	})
-	tasks := make([]metaTaskState, 0, len(items))
-	for idx, item := range items {
-		title := strings.TrimSpace(item.Title)
-		if title == "" {
-			continue
-		}
-		description := strings.TrimSpace(item.Description)
-		step := item.Step
-		if step <= 0 {
-			step = idx + 1
-		}
-		instruction := taskInstructionText(title, item.Instruction)
-		plannerOverlay := taskPlannerOverlayText(item.SystemPrompt)
-		tasks = append(tasks, metaTaskState{
-			Step:           step,
+	title := strings.TrimSpace(task.Title)
+	description := strings.TrimSpace(task.Description)
+	instruction := taskInstructionText(title, task.Instruction)
+	plannerOverlay := taskPlannerOverlayText(task.SystemPrompt)
+	return []metaTaskState{
+		{
+			Step:           1,
 			Title:          title,
 			Description:    description,
 			Instruction:    instruction,
 			PlannerOverlay: plannerOverlay,
 			Mode:           mode,
 			Status:         "pending",
-			ShellAgent:     item.ShellAgent,
-			PatchMode:      item.PatchMode,
-		})
+			ShellAgent:     task.ShellAgent,
+			PatchMode:      task.PatchMode,
+		},
 	}
-	if len(tasks) == 0 {
-		return defaultTasksForMode(goal, mode)
-	}
-	return tasks
 }
 
 func taskInstructionText(title, instruction string) string {
@@ -253,32 +234,14 @@ func defaultTasksForMode(goal, mode string) []metaTaskState {
 	case "coding":
 		return []metaTaskState{
 			{
-				Title:       "Review existing context",
-				Instruction: fmt.Sprintf("Assess current state relevant to: %s", goal),
-				Mode:        "coding",
-				Status:      "pending",
-			},
-			{
 				Title:       "Implement solution",
 				Instruction: fmt.Sprintf("Implement changes to address: %s", goal),
-				Mode:        "coding",
-				Status:      "pending",
-			},
-			{
-				Title:       "Validate and summarize",
-				Instruction: fmt.Sprintf("Validate updates and summarize results for: %s", goal),
 				Mode:        "coding",
 				Status:      "pending",
 			},
 		}
 	case "research":
 		return []metaTaskState{
-			{
-				Title:       "Collect background",
-				Instruction: fmt.Sprintf("Collect background information for: %s", goal),
-				Mode:        "research",
-				Status:      "pending",
-			},
 			{
 				Title:       "Synthesize findings",
 				Instruction: fmt.Sprintf("Synthesize findings addressing: %s", goal),
@@ -288,12 +251,6 @@ func defaultTasksForMode(goal, mode string) []metaTaskState {
 		}
 	default:
 		return []metaTaskState{
-			{
-				Title:       "Plan approach",
-				Instruction: fmt.Sprintf("Plan the steps required for: %s", goal),
-				Mode:        "other",
-				Status:      "pending",
-			},
 			{
 				Title:       "Execute plan",
 				Instruction: fmt.Sprintf("Execute and document progress for: %s", goal),
@@ -371,243 +328,94 @@ func executeMetaPlan(ctx metaContext, plan metaPlanState) (metaPlanState, error)
 			pendingResumePrompt = ""
 			task.Status = "pending"
 		}
-		for {
-			priorAnswer := loadPreviousFinalAnswer(tasks[:idx])
-			basePrompt := composeTaskPrompt(ctx.Goal, *task, priorAnswer, idx == 0)
-			headerPrompt := strings.TrimSpace(ctx.Options.OriginalPrompt)
-			if headerPrompt == "" {
-				headerPrompt = ctx.Goal
-			}
-			if idx > 0 {
-				if strings.TrimSpace(priorAnswer) != "" {
-					headerPrompt = priorAnswer
-				} else {
-					headerPrompt = basePrompt
-				}
-			}
-			startSummary := buildMetaStartSummary(ctx.Goal, *task, tasks[:idx])
-			writeMetaTurn(ctx, metaTurn, fmt.Sprintf("Meta task start: %s", task.Title), startSummary, "meta-start")
-			if ctx.Display != nil {
-				ctx.Display.UpdateMetaTaskStatus(idx, task.Title, "running", task.SessionID)
-			}
-			includeBackground := idx == 0
-			result, err := runMetaTask(ctx, *task, basePrompt, headerPrompt, resumePrompt, includeBackground)
-			task.Attempts++
-			resumePrompt = ""
-			if result.SuspendedInput != nil {
-				task.Status = "suspended"
-				task.Summary = fmt.Sprintf("Awaiting user input: %s", strings.TrimSpace(result.SuspendedInput.Question))
-				task.Transcript = result.TranscriptPath
-				task.FinalAnswer = result.FinalAnswerPath
-				if result.SessionID != "" {
-					task.SessionID = result.SessionID
-				}
-				endSummary := buildMetaEndSummary(*task)
-				writeMetaTurn(ctx, metaTurn+1, fmt.Sprintf("Meta task result: %s", task.Title), endSummary, "meta-end")
-				metaTurn += 2
-				updated := plan
-				updated.Tasks = tasks
-				if perr := persistMetaPlan(ctx.SessionID, updated); perr != nil {
-					return updated, perr
-				}
-				if ctx.Display != nil {
-					ctx.Display.UpdateMetaTaskStatus(idx, task.Title, "suspended", task.SessionID)
-				}
-				return updated, &metaSuspendedError{input: result.SuspendedInput.Clone()}
-			}
-			if err != nil {
-				status := "failed"
-				summary := err.Error()
-				if result.Interrupted {
-					status = "interrupted"
-					if summary == "" {
-						summary = fmt.Sprintf("Task interrupted; resume session %s.", strings.TrimSpace(result.SessionID))
-					}
-				}
-				task.Status = status
-				task.Summary = summary
-				task.Transcript = result.TranscriptPath
-				task.FinalAnswer = result.FinalAnswerPath
-				if result.SessionID != "" {
-					task.SessionID = result.SessionID
-				}
-				endSummary := buildMetaEndSummary(*task)
-				writeMetaTurn(ctx, metaTurn+1, fmt.Sprintf("Meta task result: %s", task.Title), endSummary, "meta-end")
-				metaTurn += 2
-				updated := plan
-				updated.Tasks = tasks
-				if perr := persistMetaPlan(ctx.SessionID, updated); perr != nil {
-					return updated, perr
-				}
-				if ctx.Display != nil {
-					ctx.Display.UpdateMetaTaskStatus(idx, task.Title, status, task.SessionID)
-				}
-				return updated, err
-			}
-
-			task.SessionID = result.SessionID
-			task.Summary = result.Summary
-			task.Transcript = result.TranscriptPath
-			task.FinalAnswer = result.FinalAnswerPath
-
-			selection, selectionErr := promptMetaTaskSelection(ctx.Display, tasks)
-			if selectionErr != nil {
-				fmt.Fprintf(os.Stderr, "Meta prompt selection error: %v\n", selectionErr)
-				selection.decision = metaDecisionFeedback
-			}
-			switch selection.decision {
-			case metaDecisionComplete:
-				updated, err := finalizeMetaTask(ctx, plan, tasks, idx, &metaTurn)
-				if err != nil {
-					return updated, err
-				}
-				currentStep := taskStepNumber(*task, idx+1)
-				stepIndex := buildTaskStepIndex(tasks)
-				if nextIdx, ok := stepIndex[currentStep+1]; ok {
-					idx = nextIdx
-				} else {
-					idx = len(tasks)
-				}
-				break
-			case metaDecisionJump:
-				updated, err := finalizeMetaTask(ctx, plan, tasks, idx, &metaTurn)
-				if err != nil {
-					return updated, err
-				}
-				if selection.targetIndex >= 0 && selection.targetIndex < len(tasks) {
-					if tasks[selection.targetIndex].Status == "complete" {
-						tasks[selection.targetIndex].Status = "pending"
-					}
-					idx = selection.targetIndex
-					break
-				}
-				idx++
-				break
-			case metaDecisionFeedback:
-				additionalInput := ""
-				var inputErr error
-				if ctx.Display != nil {
-					additionalInput, inputErr = ctx.Display.PromptInput(fmt.Sprintf("Provide additional instructions to continue session %s (leave blank to interrupt)", strings.TrimSpace(result.SessionID)))
-				}
-				if inputErr != nil {
-					fmt.Fprintf(os.Stderr, "Meta prompt input error: %v\n", inputErr)
-				}
-				additionalInput = strings.TrimSpace(additionalInput)
-				if additionalInput == "" || inputErr != nil {
-					sessionID := strings.TrimSpace(result.SessionID)
-					declineSummary := "User declined to proceed after completion."
-					if sessionID != "" {
-						declineSummary = fmt.Sprintf("User declined to proceed after completion; resume session %s.", sessionID)
-					}
-					task.Status = "interrupted"
-					task.Summary = declineSummary
-					endSummary := buildMetaEndSummary(*task)
-					writeMetaTurn(ctx, metaTurn+1, fmt.Sprintf("Meta task result: %s", task.Title), endSummary, "meta-end")
-					metaTurn += 2
-					updated := plan
-					updated.Tasks = tasks
-					if perr := persistMetaPlan(ctx.SessionID, updated); perr != nil {
-						return updated, perr
-					}
-					if ctx.Display != nil {
-						ctx.Display.UpdateMetaTaskStatus(idx, task.Title, "interrupted", task.SessionID)
-					}
-					return updated, fmt.Errorf("orchestrator interrupted by user after task %d completion", idx+1)
-				}
-
-				task.Status = "pending"
-				task.Summary = fmt.Sprintf("User guidance pending incorporation: %s", additionalInput)
-				task.UserGuidance = integrateTaskUserGuidance(task.UserGuidance, additionalInput)
-				nextBasePrompt := composeTaskPrompt(ctx.Goal, *task, priorAnswer, idx == 0)
-				if sessionID := strings.TrimSpace(task.SessionID); sessionID != "" {
-					if err := updateChildSessionGoal(sessionID, nextBasePrompt); err != nil {
-						fmt.Fprintf(os.Stderr, "Meta goal update warning for %s: %v\n", sessionID, err)
-					}
-				}
-				resumePrompt = composeRevisedGoalPrompt(nextBasePrompt, additionalInput)
-				endSummary := buildMetaEndSummary(*task)
-				writeMetaTurn(ctx, metaTurn+1, fmt.Sprintf("Meta task result: %s", task.Title), endSummary, "meta-end")
-				metaTurn += 2
-				if ctx.Display != nil {
-					ctx.Display.UpdateMetaTaskStatus(idx, task.Title, "resuming", task.SessionID)
-				}
-			}
-			if selection.decision == metaDecisionComplete || selection.decision == metaDecisionJump {
-				break
+		priorAnswer := loadPreviousFinalAnswer(tasks[:idx])
+		basePrompt := composeTaskPrompt(ctx.Goal, *task, priorAnswer, idx == 0)
+		headerPrompt := strings.TrimSpace(ctx.Options.OriginalPrompt)
+		if headerPrompt == "" {
+			headerPrompt = ctx.Goal
+		}
+		if idx > 0 {
+			if strings.TrimSpace(priorAnswer) != "" {
+				headerPrompt = priorAnswer
+			} else {
+				headerPrompt = basePrompt
 			}
 		}
+		startSummary := buildMetaStartSummary(ctx.Goal, *task, tasks[:idx])
+		writeMetaTurn(ctx, metaTurn, fmt.Sprintf("Meta task start: %s", task.Title), startSummary, "meta-start")
+		if ctx.Display != nil {
+			ctx.Display.UpdateMetaTaskStatus(idx, task.Title, "running", task.SessionID)
+		}
+		includeBackground := idx == 0
+		result, err := runMetaTask(ctx, *task, basePrompt, headerPrompt, resumePrompt, includeBackground)
+		task.Attempts++
+		if result.SuspendedInput != nil {
+			task.Status = "suspended"
+			task.Summary = fmt.Sprintf("Awaiting user input: %s", strings.TrimSpace(result.SuspendedInput.Question))
+			task.Transcript = result.TranscriptPath
+			task.FinalAnswer = result.FinalAnswerPath
+			if result.SessionID != "" {
+				task.SessionID = result.SessionID
+			}
+			endSummary := buildMetaEndSummary(*task)
+			writeMetaTurn(ctx, metaTurn+1, fmt.Sprintf("Meta task result: %s", task.Title), endSummary, "meta-end")
+			metaTurn += 2
+			updated := plan
+			updated.Tasks = tasks
+			if perr := persistMetaPlan(ctx.SessionID, updated); perr != nil {
+				return updated, perr
+			}
+			if ctx.Display != nil {
+				ctx.Display.UpdateMetaTaskStatus(idx, task.Title, "suspended", task.SessionID)
+			}
+			return updated, &metaSuspendedError{input: result.SuspendedInput.Clone()}
+		}
+		if err != nil {
+			status := "failed"
+			summary := err.Error()
+			if result.Interrupted {
+				status = "interrupted"
+				if summary == "" {
+					summary = fmt.Sprintf("Task interrupted; resume session %s.", strings.TrimSpace(result.SessionID))
+				}
+			}
+			task.Status = status
+			task.Summary = summary
+			task.Transcript = result.TranscriptPath
+			task.FinalAnswer = result.FinalAnswerPath
+			if result.SessionID != "" {
+				task.SessionID = result.SessionID
+			}
+			endSummary := buildMetaEndSummary(*task)
+			writeMetaTurn(ctx, metaTurn+1, fmt.Sprintf("Meta task result: %s", task.Title), endSummary, "meta-end")
+			metaTurn += 2
+			updated := plan
+			updated.Tasks = tasks
+			if perr := persistMetaPlan(ctx.SessionID, updated); perr != nil {
+				return updated, perr
+			}
+			if ctx.Display != nil {
+				ctx.Display.UpdateMetaTaskStatus(idx, task.Title, status, task.SessionID)
+			}
+			return updated, err
+		}
+
+		task.SessionID = result.SessionID
+		task.Summary = result.Summary
+		task.Transcript = result.TranscriptPath
+		task.FinalAnswer = result.FinalAnswerPath
+
+		updated, err := finalizeMetaTask(ctx, plan, tasks, idx, &metaTurn)
+		if err != nil {
+			return updated, err
+		}
+		idx++
 	}
 	plan.Tasks = tasks
 	if perr := persistMetaPlan(ctx.SessionID, plan); perr != nil {
 		return plan, perr
 	}
 	return plan, nil
-}
-
-type metaPostTaskDecision int
-
-const (
-	metaDecisionComplete metaPostTaskDecision = iota
-	metaDecisionFeedback
-	metaDecisionJump
-)
-
-type metaPostTaskSelection struct {
-	decision    metaPostTaskDecision
-	targetIndex int
-}
-
-func promptMetaTaskSelection(display *ui.TerminalDisplay, tasks []metaTaskState) (metaPostTaskSelection, error) {
-	if display == nil {
-		return metaPostTaskSelection{decision: metaDecisionComplete}, nil
-	}
-	options := []string{
-		"- mark as complete - choose \"c\"",
-		"- give feedback     - choose \"f\"",
-	}
-	stepIndex := buildTaskStepIndex(tasks)
-	for idx, task := range tasks {
-		step := taskStepNumber(task, idx+1)
-		options = append(options, fmt.Sprintf("- run %s - choose \"%d\"", task.Title, step))
-	}
-
-	for {
-		choice, err := display.PromptSelection("Select next action:", options)
-		if err != nil {
-			return metaPostTaskSelection{decision: metaDecisionFeedback}, err
-		}
-		trimmed := strings.TrimSpace(strings.ToLower(choice))
-		switch trimmed {
-		case "c":
-			return metaPostTaskSelection{decision: metaDecisionComplete}, nil
-		case "f":
-			return metaPostTaskSelection{decision: metaDecisionFeedback}, nil
-		}
-		if step, err := strconv.Atoi(trimmed); err == nil {
-			if target, ok := stepIndex[step]; ok {
-				return metaPostTaskSelection{decision: metaDecisionJump, targetIndex: target}, nil
-			}
-		}
-		display.Notify(fmt.Sprintf("Invalid choice %q. Enter c, f, or a task number.", choice))
-	}
-}
-
-func buildTaskStepIndex(tasks []metaTaskState) map[int]int {
-	stepIndex := make(map[int]int, len(tasks))
-	for idx, task := range tasks {
-		step := taskStepNumber(task, idx+1)
-		if _, exists := stepIndex[step]; !exists {
-			stepIndex[step] = idx
-		}
-	}
-	return stepIndex
-}
-
-func taskStepNumber(task metaTaskState, fallback int) int {
-	if task.Step > 0 {
-		return task.Step
-	}
-	return fallback
 }
 
 func finalizeMetaTask(ctx metaContext, plan metaPlanState, tasks []metaTaskState, idx int, metaTurn *int) (metaPlanState, error) {
@@ -817,21 +625,6 @@ func taskPrimaryInstruction(task metaTaskState) string {
 	return fmt.Sprintf("%s\n\nUser guidance: %s", primary, guidance)
 }
 
-func composeRevisedGoalPrompt(basePrompt, userInput string) string {
-	basePrompt = strings.TrimSpace(basePrompt)
-	userInput = strings.TrimSpace(userInput)
-	var builder strings.Builder
-	if basePrompt != "" {
-		builder.WriteString(basePrompt)
-		builder.WriteString("\n\n")
-	}
-	builder.WriteString("The user provided additional guidance:\n\"\"\"\n")
-	builder.WriteString(userInput)
-	builder.WriteString("\n\"\"\"\n\n")
-	builder.WriteString("Continue the task using the conversation and this additional guidance as the source of truth. Incorporate the guidance in context; do not restate it as a separate revised-goal header.")
-	return builder.String()
-}
-
 func taskFocus(task metaTaskState) string {
 	if strings.TrimSpace(task.Description) != "" {
 		return strings.TrimSpace(task.Title)
@@ -840,34 +633,6 @@ func taskFocus(task metaTaskState) string {
 		return strings.TrimSpace(task.Title)
 	}
 	return ""
-}
-
-func integrateTaskUserGuidance(existing, guidance string) string {
-	existing = strings.TrimSpace(existing)
-	guidance = strings.TrimSpace(guidance)
-	if guidance == "" {
-		return existing
-	}
-	if existing == "" {
-		return guidance
-	}
-	if strings.Contains(strings.ToLower(existing), strings.ToLower(guidance)) {
-		return existing
-	}
-	return fmt.Sprintf("%s\n\n%s", existing, guidance)
-}
-
-func updateChildSessionGoal(sessionID, goal string) error {
-	sessionID = strings.TrimSpace(sessionID)
-	if sessionID == "" {
-		return nil
-	}
-	state, err := LoadSessionState(sessionID)
-	if err != nil {
-		return err
-	}
-	state.Goal = goal
-	return SaveSessionState(*state)
 }
 
 type metaTaskRunResult struct {
@@ -932,7 +697,6 @@ func runMetaTask(ctx metaContext, task metaTaskState, basePrompt string, headerP
 	} else {
 		childOptions.Config.SessionID = ""
 	}
-	childOptions.Config.ParentSessionID = ctx.SessionID
 	childOptions.Config.Mode = ""
 	childOptions.Config.PromptText = basePrompt
 	childOptions.Config.MetaInstructionDir = ctx.Config.metaInstructionDir
@@ -1117,4 +881,13 @@ func metaModesFromPlan(plan metaPlanState) []string {
 		modes = append(modes, mode)
 	}
 	return modes
+}
+
+func allTasksComplete(plan metaPlanState) bool {
+	for _, task := range plan.Tasks {
+		if strings.ToLower(strings.TrimSpace(task.Status)) != "complete" {
+			return false
+		}
+	}
+	return len(plan.Tasks) > 0
 }

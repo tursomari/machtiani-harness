@@ -114,9 +114,6 @@ func prepareRunBootstrap(rootCtx context.Context, opts Options) (*runBootstrap, 
 		if strings.TrimSpace(cfgInput.MetaInstructionDir) == "" && strings.TrimSpace(state.MetaInstructionDir) != "" {
 			cfgInput.MetaInstructionDir = strings.TrimSpace(state.MetaInstructionDir)
 		}
-		if strings.TrimSpace(cfgInput.ParentSessionID) == "" && strings.TrimSpace(state.ParentSessionID) != "" {
-			cfgInput.ParentSessionID = strings.TrimSpace(state.ParentSessionID)
-		}
 	}
 
 	if goal == "" {
@@ -156,7 +153,7 @@ func prepareRunBootstrap(rootCtx context.Context, opts Options) (*runBootstrap, 
 
 	metaInstructions := llm.MetaInstructions{}
 	metaInstructionPath := ""
-	if strings.TrimSpace(cfg.mode) != "" && strings.TrimSpace(cfg.parentSessionID) == "" {
+	if strings.TrimSpace(cfg.mode) != "" {
 		doc, err := llm.LoadMetaInstructions(cfg.mode, cfg.metaInstructionDir, opts.GlobalConfig, opts.GlobalConfigPath)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "Error loading meta instructions:", err)
@@ -720,27 +717,17 @@ func (r *runLifecycleState) isContextCancelled(err error) bool {
 func (r *runLifecycleState) printResumeHint(header string, turns int) {
 	fmt.Fprintf(os.Stdout, "%s\nSession ID: %s\nTurns completed: %d\nGoal so far: %q\n\n", header, r.sessionID, turns, r.goal)
 	fmt.Fprintf(os.Stdout, "To continue, provide your next instruction, for example:\n  mct-agent run \"<next instruction>\" --session-id %s\n", r.sessionID)
-	if parentID := strings.TrimSpace(r.cfg.parentSessionID); parentID != "" {
-		fmt.Fprintf(os.Stdout, "\nParent session detected (%s). To resume that session, rerun your original command with the parent session ID, for example:\n  mct-agent run \"<original prompt>\" --session-id %s\n", parentID, parentID)
-	}
 	fmt.Fprintln(os.Stdout)
 }
 
 func (r *runLifecycleState) printUserInputHint(question, context string) {
-	resumeSessionID := r.sessionID
-	if parentID := strings.TrimSpace(r.cfg.parentSessionID); parentID != "" {
-		resumeSessionID = parentID
-	}
 	fmt.Fprintln(os.Stdout, "=== USER INPUT NEEDED ===")
 	fmt.Fprintf(os.Stdout, "Session ID: %s\n", r.sessionID)
 	if strings.TrimSpace(context) != "" {
 		fmt.Fprintf(os.Stdout, "%s\n\n", strings.TrimSpace(context))
 	}
 	fmt.Fprintf(os.Stdout, "%s\n\n", strings.TrimSpace(question))
-	fmt.Fprintf(os.Stdout, "To continue, answer with:\n  mct-agent run \"<your answer>\" --session-id %s\n", resumeSessionID)
-	if parentID := strings.TrimSpace(r.cfg.parentSessionID); parentID != "" {
-		fmt.Fprintf(os.Stdout, "\nParent session detected (%s); resume that parent session rather than the child session above.\n", parentID)
-	}
+	fmt.Fprintf(os.Stdout, "To continue, answer with:\n  mct-agent run \"<your answer>\" --session-id %s\n", r.sessionID)
 	fmt.Fprintln(os.Stdout)
 }
 
@@ -818,7 +805,6 @@ func (r *runLifecycleState) hydrateState(state *SessionState) {
 	if len(state.MetaModes) == 0 && strings.TrimSpace(r.cfg.mode) != "" {
 		state.MetaModes = []string{strings.ToLower(strings.TrimSpace(r.cfg.mode))}
 	}
-	state.ParentSessionID = strings.TrimSpace(r.cfg.parentSessionID)
 	if state.Status == "" {
 		state.Status = r.sessionStatus
 	}

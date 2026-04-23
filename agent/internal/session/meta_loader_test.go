@@ -8,27 +8,31 @@ import (
 )
 
 func TestInstructionsToTasksFromTomlDocument(t *testing.T) {
-		doc := llm.MetaInstructions{
+	doc := llm.MetaInstructions{
 		Format: llm.MetaInstructionsFormatTOML,
 		Path:   "coding.toml",
-		Tasks: []llm.MetaInstructionTask{
-			{Step: 2, Title: "Second", Description: "Second desc", Instruction: "Run the second task", ShellAgent: boolPtr(true), PatchMode: boolPtr(true)},
-			{Step: 1, Title: "First", Description: "First desc", Instruction: "Review the first task", SystemPrompt: "Extra planner note", ShellAgent: boolPtr(false), PatchMode: boolPtr(false)},
+		Task: llm.MetaInstructionTask{
+			Title:        "First",
+			Description:  "First desc",
+			Instruction:  "Review the first task",
+			SystemPrompt: "Extra planner note",
+			ShellAgent:   boolPtr(false),
+			PatchMode:    boolPtr(false),
 		},
 	}
 
 	tasks := instructionsToTasks("overall goal", "coding", doc)
-	if len(tasks) != 2 {
-		t.Fatalf("expected 2 tasks, got %d", len(tasks))
+	if len(tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d", len(tasks))
 	}
 	if tasks[0].Title != "First" {
-		t.Fatalf("expected first task title to be First, got %q", tasks[0].Title)
+		t.Fatalf("expected task title to be First, got %q", tasks[0].Title)
 	}
-	if tasks[1].ShellAgent == nil || !*tasks[1].ShellAgent {
-		t.Fatalf("expected second task to enable shell agent")
+	if tasks[0].ShellAgent != nil && *tasks[0].ShellAgent {
+		t.Fatalf("expected shell agent to be disabled")
 	}
-	if tasks[1].PatchMode == nil || !*tasks[1].PatchMode {
-		t.Fatalf("expected second task to enable patch mode")
+	if tasks[0].PatchMode != nil && *tasks[0].PatchMode {
+		t.Fatalf("expected patch mode to be disabled")
 	}
 	if tasks[0].Description != "First desc" {
 		t.Fatalf("expected description metadata to be preserved, got %q", tasks[0].Description)
@@ -39,15 +43,12 @@ func TestInstructionsToTasksFromTomlDocument(t *testing.T) {
 	if tasks[0].PlannerOverlay != "Extra planner note" {
 		t.Fatalf("unexpected planner overlay: %q", tasks[0].PlannerOverlay)
 	}
-	if tasks[1].PlannerOverlay != "" {
-		t.Fatalf("expected description metadata to stay out of planner overlay, got %q", tasks[1].PlannerOverlay)
-	}
 }
 
 func TestInstructionsToTasksTomlFallsBackToTitleWhenInstructionMissing(t *testing.T) {
 	doc := llm.MetaInstructions{
 		Format: llm.MetaInstructionsFormatTOML,
-		Tasks: []llm.MetaInstructionTask{{Title: "Validate", Description: "Metadata only"}},
+		Task:   llm.MetaInstructionTask{Title: "Validate", Description: "Metadata only"},
 	}
 
 	tasks := instructionsToTasks("goal", "coding", doc)

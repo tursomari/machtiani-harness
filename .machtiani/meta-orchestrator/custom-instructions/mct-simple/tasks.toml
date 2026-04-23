@@ -1,13 +1,4 @@
-[[tasks]]
-step = 1
 title = "Patch"
-instruction = "Implement the patch for the Goal."
+description = "Implement the patch for the Goal."
 shell_agent = true
 patch_mode = true
-
-[[tasks]]
-step = 2
-title = "Summary"
-instruction = "Summarize what changed."
-shell_agent = false
-patch_mode = false

@@ -1,15 +1,5 @@
-[[tasks]]
-step = 1
 title = "Inline"
 description = "Hello from inline"
 instruction = "Do the inline task"
 shell_agent = false
 patch_mode = false
-
-[[tasks]]
-step = 2
-title = "From file"
-description = "description.txt"
-instruction = "instruction.txt"
-shell_agent = false
-patch_mode = true

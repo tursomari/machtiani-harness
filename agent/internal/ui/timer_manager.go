@@ -4,13 +4,12 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 	"sync"
 )
 
 // ProcessTimerManager serializes timer renders across multiple TerminalDisplay instances.
-// It maintains an "active" timer (prioritizing child sessions) to prevent footer collisions
-// when multiple displays write to the same stdout.
+// It maintains an "active" timer to prevent footer collisions when multiple displays
+// write to the same stdout.
 type ProcessTimerManager struct {
 	mu         sync.Mutex
 	registered map[string]*TerminalDisplay
@@ -27,8 +26,7 @@ func NewProcessTimerManager() *ProcessTimerManager {
 }
 
 // RegisterDisplay registers a display with the manager.
-// If the display is a child session (has ParentSessionID), it becomes the active timer.
-// Otherwise, if no active timer exists, this display becomes active.
+// If no active timer exists, this display becomes active.
 func (m *ProcessTimerManager) RegisterDisplay(id string, display *TerminalDisplay) {
 	if m == nil {
 		return
@@ -36,11 +34,7 @@ func (m *ProcessTimerManager) RegisterDisplay(id string, display *TerminalDispla
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.registered[id] = display
-	// Prioritize child: If this is a child session (has ParentSessionID), set as active
-	if strings.TrimSpace(display.parentSessionID) != "" {
-		m.activeID = id // Override with child
-	} else if m.activeID == "" {
-		// No active; set root parent as default
+	if m.activeID == "" {
 		m.activeID = id
 	}
 }

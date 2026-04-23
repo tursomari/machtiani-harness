@@ -1,27 +1,4 @@
-[[tasks]]
-step = 1
-title = "Understand the goal"
-instruction = "Restate the goal and identify the relevant code areas."
-shell_agent = false
-patch_mode = false
-
-[[tasks]]
-step = 2
-title = "Implement patch"
-instruction = "Implement the changes to satisfy the goal, updating tests/docs as needed."
+title = "Implement and validate"
+description = "Understand the goal, implement the required changes, validate with tests/build, and summarize."
 shell_agent = true
 patch_mode = true
-
-[[tasks]]
-step = 3
-title = "Validate"
-instruction = "Run available validations (build/test) and report results."
-shell_agent = false
-patch_mode = true
-
-[[tasks]]
-step = 4
-title = "Summarize"
-instruction = "Summarize what changed and any risks/follow-ups."
-shell_agent = false
-patch_mode = false

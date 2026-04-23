@@ -1,5 +1,3 @@
-[[tasks]]
-step = 1
 title = "Code"
 system_prompt = "code.txt"
 shell_agent = false
