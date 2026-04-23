@@ -340,6 +340,174 @@ func captureStderr(t *testing.T, fn func()) (captured string) {
 	return
 }
 
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	orig := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stdout = w
+	defer func() { os.Stdout = orig }()
+
+	var builder strings.Builder
+	done := make(chan struct{})
+	go func() {
+		io.Copy(&builder, r)
+		r.Close()
+		close(done)
+	}()
+
+	fn()
+	w.Close()
+	<-done
+	return builder.String()
+}
+
+func TestConfigCheckOK(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.toml")
+	content := `
+default_model = "gpt4"
+
+[models]
+[models.gpt4]
+provider = "openai"
+model = "gpt-4"
+`
+	if err := os.WriteFile(cfgPath, []byte(content), 0644); err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+	t.Setenv("MACHTIANI_CONFIG", cfgPath)
+	llm.ResetConfigForTesting()
+
+	var code int
+	stdout := captureStdout(t, func() {
+		code = handleConfigCheckCommand([]string{})
+	})
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d", code)
+	}
+	if !strings.Contains(stdout, "Config OK:") {
+		t.Fatalf("expected 'Config OK:' in stdout, got %q", stdout)
+	}
+	if !strings.Contains(stdout, "Default model: gpt4") {
+		t.Fatalf("expected 'Default model: gpt4' in stdout, got %q", stdout)
+	}
+}
+
+func TestConfigCheckLoadError(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(cfgPath, []byte("invalid toml [[[["), 0644); err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+	t.Setenv("MACHTIANI_CONFIG", cfgPath)
+	llm.ResetConfigForTesting()
+
+	var code int
+	stderr := captureStderr(t, func() {
+		code = handleConfigCheckCommand([]string{})
+	})
+	if code != 1 {
+		t.Fatalf("expected exit 1, got %d", code)
+	}
+	if !strings.Contains(stderr, "Config error:") {
+		t.Fatalf("expected 'Config error:' in stderr, got %q", stderr)
+	}
+}
+
+func TestConfigCheckMissingDefaultModel(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(cfgPath, []byte(""), 0644); err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+	t.Setenv("MACHTIANI_CONFIG", cfgPath)
+	llm.ResetConfigForTesting()
+
+	var code int
+	stderr := captureStderr(t, func() {
+		code = handleConfigCheckCommand([]string{})
+	})
+	if code != 1 {
+		t.Fatalf("expected exit 1, got %d", code)
+	}
+	if !strings.Contains(stderr, "missing default_model") {
+		t.Fatalf("expected 'missing default_model' in stderr, got %q", stderr)
+	}
+	if !strings.Contains(stderr, "Config issues found in") {
+		t.Fatalf("expected 'Config issues found in' in stderr, got %q", stderr)
+	}
+}
+
+func TestConfigCheckInvalidAlias(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.toml")
+	content := `
+default_model = "bogus"
+
+[models]
+[models.gpt4]
+provider = "openai"
+model = "gpt-4"
+`
+	if err := os.WriteFile(cfgPath, []byte(content), 0644); err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+	t.Setenv("MACHTIANI_CONFIG", cfgPath)
+	llm.ResetConfigForTesting()
+
+	var code int
+	stderr := captureStderr(t, func() {
+		code = handleConfigCheckCommand([]string{})
+	})
+	if code != 1 {
+		t.Fatalf("expected exit 1, got %d", code)
+	}
+	if !strings.Contains(stderr, "invalid model alias: \"bogus\" not found in [models]") {
+		t.Fatalf("expected alias error in stderr, got %q", stderr)
+	}
+}
+
+func TestConfigCommandNoSubcommand(t *testing.T) {
+	var code int
+	stderr := captureStderr(t, func() {
+		code = handleConfigCommand([]string{})
+	})
+	if code != 2 {
+		t.Fatalf("expected exit 2, got %d", code)
+	}
+	if !strings.Contains(stderr, "Usage: mct-agent config check") {
+		t.Fatalf("expected usage in stderr, got %q", stderr)
+	}
+}
+
+func TestConfigCommandUnknownSubcommand(t *testing.T) {
+	var code int
+	stderr := captureStderr(t, func() {
+		code = handleConfigCommand([]string{"unknown"})
+	})
+	if code != 2 {
+		t.Fatalf("expected exit 2, got %d", code)
+	}
+	if !strings.Contains(stderr, "Unknown config subcommand: unknown") {
+		t.Fatalf("expected unknown subcommand error in stderr, got %q", stderr)
+	}
+	if !strings.Contains(stderr, "Usage: mct-agent config check") {
+		t.Fatalf("expected usage in stderr, got %q", stderr)
+	}
+}
+
+func TestPrintUsageIncludesConfigCheck(t *testing.T) {
+	stderr := captureStderr(t, func() {
+		printUsage()
+	})
+	if !strings.Contains(stderr, "config check") {
+		t.Fatalf("expected 'config check' in usage output, got %q", stderr)
+	}
+}
+
 func prepareTestConfig(t *testing.T) {
 	t.Helper()
 	dir := t.TempDir()

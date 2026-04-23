@@ -59,6 +59,19 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
+check_prereq() {
+  local cmd="$1"
+  local name="$2"
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    echo "Error: $name is required but not found on PATH." >&2
+    exit 1
+  fi
+}
+
+check_prereq go "Go"
+check_prereq git "Git"
+check_prereq rg "ripgrep (rg)"
+
 mkdir -p "$BIN_DIR"
 log "Installing binaries into $BIN_DIR"
 

@@ -30,31 +30,56 @@ func createSeparator(message string) string {
 	return fmt.Sprintf("\n%s\n%s\n%s\n", separator, message, separator)
 }
 
-func handlePrompt(args []string) {
-	fs := pflag.NewFlagSet("prompt", pflag.ContinueOnError)
-	// Input source (exactly one required)
-	fileFlag := fs.StringP("file", "f", "", "Path to the markdown file (required if no positional message provided)")
-	// Supported flags
-	modelFlag := fs.String("model", "", "Model alias defined in .machtiani/config.toml")
-	orchModelFlag := fs.String("orch-model", "", "Fallback model alias to try if the primary model fails")
-	answerModelFlag := fs.String("answer-model", "", "Model alias for answer generation (defaults to --model)")
-	openAIModelFlag := fs.String("openai-model", "", "Direct upstream model name (deprecated; prefer --model)")
-	openAIAPIKeyFlag := fs.String("openai-api-key", "", "OpenAI-compatible API key (overrides env, deprecated)")
-	openAIBaseURLFlag := fs.String("openai-base-url", "", "OpenAI-compatible base URL (overrides env, deprecated)")
-	paramFlag := fs.StringArray("param", nil, "Additional request parameter key=value (repeatable)")
-	paramJSONFlag := fs.StringArray("param-json", nil, "Merge JSON object of additional parameters (repeatable)")
-	agentModelFlag := fs.String("agent-model", "", "Agent model for applying patches (defaults to --model)")
-	sessionFlag := fs.String("session", "", "Session identifier used to scope conversation history")
-	matchStrengthFlag := fs.String("match-strength", defaultMatchStrength, "Match strength: high | mid | low")
-	modeFlag := fs.String("mode", defaultMode, "Mode: chat | pure-chat | answer-only | default")
-	includeHistoryFlag := fs.Bool("include-history", false, "Include conversation history in the LLM prompt (internal use)")
-	maxInputTokensFlag := fs.Int("max-input-tokens", 0, "Maximum number of tokens allowed in the constructed prompt (0 disables truncation)")
-	// flags retained for compatibility in other subcommands; not used in local prompt path
-	verboseFlag := fs.Bool("verbose", false, "Enable verbose output")
-	shellAgentFlag := fs.Bool("shell-agent", false, "Enable shell-agent mode: invoke shell-agent subprocess binary for task execution")
-	// remote not needed for local prompt path
+type promptFlagValues struct {
+	fileFlag           *string
+	modelFlag          *string
+	orchModelFlag      *string
+	answerModelFlag    *string
+	openAIModelFlag    *string
+	openAIAPIKeyFlag   *string
+	openAIBaseURLFlag  *string
+	paramFlag          *[]string
+	paramJSONFlag      *[]string
+	agentModelFlag     *string
+	sessionFlag        *string
+	matchStrengthFlag  *string
+	modeFlag           *string
+	includeHistoryFlag *bool
+	maxInputTokensFlag *int
+	verboseFlag        *bool
+	shellAgentFlag     *bool
+}
+
+func registerPromptFlags(fs *pflag.FlagSet) *promptFlagValues {
+	f := &promptFlagValues{}
+	f.fileFlag = fs.StringP("file", "f", "", "Path to the markdown file (required if no positional message provided)")
+	f.modelFlag = fs.String("model", "", "Model alias defined in .machtiani/config.toml")
+	f.orchModelFlag = fs.String("orch-model", "", "Fallback model alias to try if the primary model fails")
+	f.answerModelFlag = fs.String("answer-model", "", "Model alias for answer generation (defaults to --model)")
+	f.openAIModelFlag = fs.String("openai-model", "", "Direct upstream model name (deprecated; prefer --model)")
+	f.openAIAPIKeyFlag = fs.String("openai-api-key", "", "OpenAI-compatible API key (overrides env, deprecated)")
+	f.openAIBaseURLFlag = fs.String("openai-base-url", "", "OpenAI-compatible base URL (overrides env, deprecated)")
+	f.paramFlag = fs.StringArray("param", nil, "Additional request parameter key=value (repeatable)")
+	f.paramJSONFlag = fs.StringArray("param-json", nil, "Merge JSON object of additional parameters (repeatable)")
+	f.agentModelFlag = fs.String("agent-model", "", "Agent model for applying patches (defaults to --model)")
+	f.sessionFlag = fs.String("session", "", "Session identifier used to scope conversation history")
+	f.matchStrengthFlag = fs.String("match-strength", defaultMatchStrength, "Match strength: high | mid | low")
+	f.modeFlag = fs.String("mode", defaultMode, "Mode: chat | pure-chat | answer-only | default")
+	f.includeHistoryFlag = fs.Bool("include-history", false, "Include conversation history in the LLM prompt (internal use)")
+	f.maxInputTokensFlag = fs.Int("max-input-tokens", 0, "Maximum number of tokens allowed in the constructed prompt (0 disables truncation)")
+	f.verboseFlag = fs.BoolP("verbose", "v", false, "Enable verbose output")
+	f.shellAgentFlag = fs.Bool("shell-agent", false, "Enable shell-agent mode: invoke shell-agent subprocess binary for task execution")
 
 	_ = fs.MarkHidden("include-history")
+	_ = fs.MarkHidden("openai-model")
+	_ = fs.MarkHidden("openai-api-key")
+	_ = fs.MarkHidden("openai-base-url")
+	return f
+}
+
+func handlePrompt(args []string) {
+	fs := pflag.NewFlagSet("prompt", pflag.ContinueOnError)
+	f := registerPromptFlags(fs)
 
 	// Parse the flags from args (unknown flags should error)
 	// Ensure Usage is non-nil and goes to stderr
@@ -69,13 +94,13 @@ func handlePrompt(args []string) {
 		fmt.Fprintf(os.Stderr, "Error parsing flags: %v\n", err)
 		os.Exit(2)
 	}
-	if session := strings.TrimSpace(*sessionFlag); session != "" {
+	if session := strings.TrimSpace(*f.sessionFlag); session != "" {
 		os.Setenv("MACHTIANI_SESSION_ID", session)
 	}
 
 	// Accept a single positional message if --file is not provided
 	positionalMessage := ""
-	if len(fs.Args()) == 1 && *fileFlag == "" {
+	if len(fs.Args()) == 1 && *f.fileFlag == "" {
 		positionalMessage = fs.Args()[0]
 	} else if len(fs.Args()) > 0 {
 		fs.Usage()
@@ -85,7 +110,7 @@ func handlePrompt(args []string) {
 
 	// Enforce exactly one of --file (or positional message)
 	sources := 0
-	if *fileFlag != "" {
+	if *f.fileFlag != "" {
 		sources++
 	}
 	if positionalMessage != "" {
@@ -98,15 +123,15 @@ func handlePrompt(args []string) {
 	}
 
 	// Use agent-model for patches if specified, otherwise fall back to model (unused in local prompt path)
-	agentModelVal := *agentModelFlag
+	agentModelVal := *f.agentModelFlag
 	if agentModelVal == "" {
-		agentModelVal = *modelFlag
+		agentModelVal = *f.modelFlag
 	}
 	_ = agentModelVal
-	_ = *matchStrengthFlag
+	_ = *f.matchStrengthFlag
 
 	// Check if we're in answer-only mode early
-	isAnswerOnlyMode := *modeFlag == "answer-only"
+	isAnswerOnlyMode := *f.modeFlag == "answer-only"
 
 	// Suppress all logging output if mode is answer-only
 	if isAnswerOnlyMode {
@@ -121,8 +146,8 @@ func handlePrompt(args []string) {
 
 	// Derive prompt content from exactly one source
 	var prompt string
-	if *fileFlag != "" {
-		content, err := ioutil.ReadFile(*fileFlag)
+	if *f.fileFlag != "" {
+		content, err := ioutil.ReadFile(*f.fileFlag)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error reading markdown file: %v\n", err)
 			os.Exit(1)
@@ -133,10 +158,10 @@ func handlePrompt(args []string) {
 		prompt = positionalMessage
 	}
 
-	paramPairs := append([]string(nil), (*paramFlag)...)
-	paramJSON := append([]string(nil), (*paramJSONFlag)...)
+	paramPairs := append([]string(nil), (*f.paramFlag)...)
+	paramJSON := append([]string(nil), (*f.paramJSONFlag)...)
 
-	runtime, err := resolveModelRuntime(strings.TrimSpace(*modelFlag), strings.TrimSpace(*orchModelFlag), strings.TrimSpace(*openAIBaseURLFlag), strings.TrimSpace(*openAIAPIKeyFlag), strings.TrimSpace(*openAIModelFlag), paramPairs, paramJSON)
+	runtime, err := resolveModelRuntime(strings.TrimSpace(*f.modelFlag), strings.TrimSpace(*f.orchModelFlag), strings.TrimSpace(*f.openAIBaseURLFlag), strings.TrimSpace(*f.openAIAPIKeyFlag), strings.TrimSpace(*f.openAIModelFlag), paramPairs, paramJSON)
 	if err != nil {
 		if miss, ok := err.(*missingConfigError); ok {
 			fmt.Fprintln(os.Stderr, "Missing model config: set:")
@@ -149,7 +174,7 @@ func handlePrompt(args []string) {
 		os.Exit(2)
 	}
 
-	answerAlias := strings.TrimSpace(*answerModelFlag)
+	answerAlias := strings.TrimSpace(*f.answerModelFlag)
 	answerDisplay := runtime.displayName()
 	var answerPromptRuntime promptsvc.ModelRuntime
 	if answerAlias != "" {
@@ -170,8 +195,8 @@ func handlePrompt(args []string) {
 		answerPromptRuntime = toPromptModelRuntime(answerRuntime)
 	}
 
-	if *verboseFlag && *modeFlag != "answer-only" {
-		printVerboseInfo(*fileFlag, runtime.displayName(), answerDisplay, *matchStrengthFlag, *modeFlag, prompt)
+	if *f.verboseFlag && *f.modeFlag != "answer-only" {
+		printVerboseInfo(*f.fileFlag, runtime.displayName(), answerDisplay, *f.matchStrengthFlag, *f.modeFlag, prompt)
 	}
 
 	ctx := context.Background()
@@ -195,7 +220,7 @@ func handlePrompt(args []string) {
 	primaryRuntime := toPromptModelRuntime(runtime)
 	fileDiscoveryRuntime := primaryRuntime
 
-	shellAgent := *shellAgentFlag
+	shellAgent := *f.shellAgentFlag
 	shellAgentFlagChanged := fs.Changed("shell-agent")
 	preflightReply := ""
 	var preflightErr error
@@ -249,17 +274,17 @@ func handlePrompt(args []string) {
 	}
 	result, err := promptsvc.Run(ctx, promptsvc.RunOptions{
 		Prompt:               prompt,
-		Mode:                 *modeFlag,
-		IncludeHistory:       *includeHistoryFlag,
+		Mode:                 *f.modeFlag,
+		IncludeHistory:       *f.includeHistoryFlag,
 		SessionID:            sessionID,
-		SourceFile:           *fileFlag,
+		SourceFile:           *f.fileFlag,
 		Runtime:              primaryRuntime,
 		AnswerRuntime:        answerPromptRuntime,
 		FileDiscoveryRuntime: fileDiscoveryRuntime,
 		OnHeader:             streamHeader,
 		OnToken:              streamToken,
-		Verbose:              *verboseFlag,
-		MaxInputTokens:       *maxInputTokensFlag,
+		Verbose:              *f.verboseFlag,
+		MaxInputTokens:       *f.maxInputTokensFlag,
 		Readme:               readmeOpts,
 		ShellAgent:           shellAgent,
 	})

@@ -56,6 +56,8 @@ func run() int {
 			return handleRunCommand(os.Args[2:])
 		case "sync":
 			return handleSyncCommand(os.Args[2:])
+		case "config":
+			return handleConfigCommand(os.Args[2:])
 		}
 	}
 
@@ -403,11 +405,60 @@ func configureSessionFlags(fs *flag.FlagSet, cfg *session.Config, paramFlags, pa
 	fs.Var(paramJSON, "param-json", "Merge JSON object of additional parameters (repeatable)")
 }
 
+func handleConfigCommand(args []string) int {
+	if len(args) < 1 {
+		fmt.Fprintln(os.Stderr, "Usage: mct-agent config check")
+		return 2
+	}
+	switch args[0] {
+	case "check":
+		return handleConfigCheckCommand(args[1:])
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown config subcommand: %s\n", args[0])
+		fmt.Fprintln(os.Stderr, "Usage: mct-agent config check")
+		return 2
+	}
+}
+
+func handleConfigCheckCommand(args []string) int {
+	cfg, path, err := llm.LoadGlobalConfig()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Config error: %v\n", err)
+		return 1
+	}
+
+	var issues []string
+
+	defaultModel := strings.TrimSpace(cfg.DefaultModel)
+	if defaultModel == "" {
+		issues = append(issues, "missing default_model")
+	} else {
+		if _, ok := cfg.Models[defaultModel]; !ok {
+			issues = append(issues, fmt.Sprintf("invalid model alias: %q not found in [models]", defaultModel))
+		}
+	}
+
+	if len(issues) > 0 {
+		fmt.Fprintf(os.Stderr, "Config issues found in %s:\n", path)
+		for _, issue := range issues {
+			fmt.Fprintf(os.Stderr, "  - %s\n", issue)
+		}
+		return 1
+	}
+
+	fmt.Printf("Config OK: %s\n", path)
+	if defaultModel != "" {
+		fmt.Printf("Default model: %s\n", defaultModel)
+	}
+	return 0
+}
+
 func printUsage() {
 	fmt.Fprintln(os.Stderr, "Usage: mct-agent <command> [options]")
 	fmt.Fprintln(os.Stderr, "Commands:")
-	fmt.Fprintln(os.Stderr, "  run   \"<issue or question>\" [flags]")
-	fmt.Fprintln(os.Stderr, "  sync  [--commit <hash>] [flags]")
+	fmt.Fprintln(os.Stderr, "  run    \"<issue or question>\" [flags]")
+	fmt.Fprintln(os.Stderr, "  sync   [--commit <hash>] [flags]")
+	fmt.Fprintln(os.Stderr, "  config check                  Validate configuration file")
 }
 
 func shortCommit(hash string) string {
