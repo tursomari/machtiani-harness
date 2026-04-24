@@ -1,7 +1,6 @@
 package session
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,8 +12,6 @@ import (
 
 	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
-	"github.com/tursomari/machtiani/agent/internal/parser"
-	"github.com/tursomari/machtiani/agent/internal/transcript"
 	"github.com/tursomari/machtiani/agent/internal/ui"
 )
 
@@ -43,15 +40,11 @@ type metaTaskState struct {
 	Status         string `json:"status"`
 	ShellAgent     *bool  `json:"shell_agent,omitempty"`
 	PatchMode      *bool  `json:"patch_mode,omitempty"`
-	SessionID      string `json:"session_id,omitempty"`
 	Attempts       int    `json:"attempts"`
 	Summary        string `json:"summary,omitempty"`
-	Transcript     string `json:"transcript_path,omitempty"`
-	FinalAnswer    string `json:"final_answer_path,omitempty"`
 }
 
 type metaContext struct {
-	RootCtx         context.Context
 	SessionID       string
 	Goal            string
 	ResumePrompt    string
@@ -60,46 +53,133 @@ type metaContext struct {
 	Display         *ui.TerminalDisplay
 	InstructionPath string
 	Instruction     llm.MetaInstructions
-	Transcript      *transcript.Transcript
 }
 
-type metaOutcome struct {
-	Plan           metaPlanState
-	FinalAnswer    string
-	ExitCode       int
-	Err            error
-	SuspendedInput *SuspendedUserInputState
+// metaConfigResult captures the configuration applied by metaOrchestrate()
+// when it returns handled=false so the caller can access the updated plan.
+type metaConfigResult struct {
+	Plan metaPlanState
 }
 
-func metaOrchestrate(ctx metaContext) (metaOutcome, bool) {
+// metaOrchestrate is a pre-loop configuration step. It loads (or creates) the
+// meta-plan, applies the task's PlannerOverlay and mode defaults to the
+// current session's configuration, and returns handled=false so that
+// runSession()'s existing planner loop runs with the configured state.
+//
+// It returns handled=true only for error conditions. For all normal paths
+// (fresh run, resume of running/suspended task, follow-up after completion)
+// it configures and returns handled=false.
+func metaOrchestrate(ctx *metaContext) (metaConfigResult, bool) {
 	mode := strings.TrimSpace(ctx.Config.mode)
 	if mode == "" {
-		return metaOutcome{}, false
+		return metaConfigResult{}, false
 	}
 
 	plan, err := loadOrCreateMetaPlan(ctx.SessionID, ctx.Goal, mode, ctx.InstructionPath, ctx.Instruction)
 	if err != nil {
-		return metaOutcome{ExitCode: 1, Err: err}, true
+		fmt.Fprintf(os.Stderr, "Error loading meta plan: %v\n", err)
+		return metaConfigResult{Plan: plan}, true
 	}
 
 	ctx.Display.RenderMetaPlan(tasksToDisplay(plan.Tasks))
 
-	updatedPlan, err := executeMetaPlan(ctx, plan)
+	// Follow-up after completion: all tasks done and user provided new input.
+	// Return handled=false so the planner loop picks up the new prompt with
+	// the full prior conversation already in place.
+	if allTasksComplete(plan) && strings.TrimSpace(ctx.ResumePrompt) != "" {
+		return metaConfigResult{Plan: plan}, false
+	}
+
+	// Configure the session for the single task.
+	updatedPlan, err := configureMetaPlan(ctx, plan)
 	if err != nil {
-		if suspended, ok := err.(*metaSuspendedError); ok {
-			return metaOutcome{Plan: updatedPlan, ExitCode: 0, SuspendedInput: suspended.input.Clone()}, true
+		fmt.Fprintf(os.Stderr, "Error configuring meta plan: %v\n", err)
+		return metaConfigResult{Plan: updatedPlan}, true
+	}
+
+	// Return handled=false so runSession() continues into the planner loop.
+	return metaConfigResult{Plan: updatedPlan}, false
+}
+
+// configureMetaPlan applies the single task's configuration to the current
+// session: PlannerOverlay, mode defaults, task overrides, and status tracking.
+// It does NOT spawn a child session.
+func configureMetaPlan(ctx *metaContext, plan metaPlanState) (metaPlanState, error) {
+	if len(plan.Tasks) == 0 {
+		return plan, fmt.Errorf("meta plan has no tasks")
+	}
+
+	task := &plan.Tasks[0]
+
+	// If suspended, reset to running (the user is resuming the session).
+	if strings.EqualFold(strings.TrimSpace(task.Status), "suspended") {
+		task.Status = "running"
+	}
+
+	// If already complete (and no resume prompt, since follow-up is handled
+	// above), return the plan as-is — the summary path in metaOrchestrate
+	// was removed; the planner loop handles finalization.
+	if strings.EqualFold(strings.TrimSpace(task.Status), "complete") {
+		return plan, nil
+	}
+
+	// Apply PlannerOverlay to the session's planner config.
+	if overlay := strings.TrimSpace(task.PlannerOverlay); overlay != "" {
+		ctx.Options.PlannerOverlay = overlay
+	}
+
+	// Apply mode defaults (e.g., patch=true, maxSteps floor for coding mode).
+	applyModeDefaults(&ctx.Options.Config, task.Mode)
+
+	// Apply task overrides (shell_agent, patch_mode from TOML).
+	applyTaskOverrides(&ctx.Options, *task)
+
+	// Mark the task as running.
+	task.Status = "running"
+
+	if err := persistMetaPlan(ctx.SessionID, plan); err != nil {
+		return plan, err
+	}
+
+	if ctx.Display != nil {
+		ctx.Display.UpdateMetaTaskStatus(0, task.Title, "running")
+	}
+
+	return plan, nil
+}
+
+// CompleteMetaPlanTask marks the first non-complete task in the meta-plan as
+// complete. Called from the finalization path in runSession() after the
+// planner loop finishes.
+func CompleteMetaPlanTask(sessionID string) error {
+	planPath, err := metaPlanPath(sessionID)
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(planPath)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil // no meta-plan, nothing to update
 		}
-		outcome := metaOutcome{Plan: updatedPlan, Err: err, ExitCode: 1}
-		return outcome, true
+		return fmt.Errorf("read meta plan: %w", err)
 	}
-
-	if strings.TrimSpace(ctx.ResumePrompt) != "" && allTasksComplete(updatedPlan) {
-		return metaOutcome{}, false
+	var plan metaPlanState
+	if err := json.Unmarshal(data, &plan); err != nil {
+		return fmt.Errorf("decode meta plan: %w", err)
 	}
-
-	summary := renderMetaSummary(ctx.Goal, updatedPlan)
-	outcome := metaOutcome{Plan: updatedPlan, FinalAnswer: summary, ExitCode: 0}
-	return outcome, true
+	changed := false
+	for i := range plan.Tasks {
+		status := strings.ToLower(strings.TrimSpace(plan.Tasks[i].Status))
+		if status != "complete" {
+			plan.Tasks[i].Status = "complete"
+			changed = true
+			break
+		}
+	}
+	if !changed {
+		return nil
+	}
+	return persistMetaPlan(sessionID, plan)
 }
 
 func loadOrCreateMetaPlan(sessionID, goal, mode, instructionPath string, instructions llm.MetaInstructions) (metaPlanState, error) {
@@ -311,521 +391,14 @@ func metaPlanPath(sessionID string) (string, error) {
 	return filepath.Join(dir, metaPlanFilename), nil
 }
 
-func executeMetaPlan(ctx metaContext, plan metaPlanState) (metaPlanState, error) {
-	tasks := append([]metaTaskState(nil), plan.Tasks...)
-	metaTurn := 1000
-	idx := 0
-	pendingResumePrompt := strings.TrimSpace(ctx.ResumePrompt)
-	for idx < len(tasks) {
-		task := &tasks[idx]
-		if task.Status == "complete" {
-			idx++
-			continue
-		}
-		resumePrompt := ""
-		if strings.EqualFold(strings.TrimSpace(task.Status), "suspended") && pendingResumePrompt != "" {
-			resumePrompt = pendingResumePrompt
-			pendingResumePrompt = ""
-			task.Status = "pending"
-		}
-		priorAnswer := loadPreviousFinalAnswer(tasks[:idx])
-		basePrompt := composeTaskPrompt(ctx.Goal, *task, priorAnswer, idx == 0)
-		headerPrompt := strings.TrimSpace(ctx.Options.OriginalPrompt)
-		if headerPrompt == "" {
-			headerPrompt = ctx.Goal
-		}
-		if idx > 0 {
-			if strings.TrimSpace(priorAnswer) != "" {
-				headerPrompt = priorAnswer
-			} else {
-				headerPrompt = basePrompt
-			}
-		}
-		startSummary := buildMetaStartSummary(ctx.Goal, *task, tasks[:idx])
-		writeMetaTurn(ctx, metaTurn, fmt.Sprintf("Meta task start: %s", task.Title), startSummary, "meta-start")
-		if ctx.Display != nil {
-			ctx.Display.UpdateMetaTaskStatus(idx, task.Title, "running", task.SessionID)
-		}
-		includeBackground := idx == 0
-		result, err := runMetaTask(ctx, *task, basePrompt, headerPrompt, resumePrompt, includeBackground)
-		task.Attempts++
-		if result.SuspendedInput != nil {
-			task.Status = "suspended"
-			task.Summary = fmt.Sprintf("Awaiting user input: %s", strings.TrimSpace(result.SuspendedInput.Question))
-			task.Transcript = result.TranscriptPath
-			task.FinalAnswer = result.FinalAnswerPath
-			if result.SessionID != "" {
-				task.SessionID = result.SessionID
-			}
-			endSummary := buildMetaEndSummary(*task)
-			writeMetaTurn(ctx, metaTurn+1, fmt.Sprintf("Meta task result: %s", task.Title), endSummary, "meta-end")
-			metaTurn += 2
-			updated := plan
-			updated.Tasks = tasks
-			if perr := persistMetaPlan(ctx.SessionID, updated); perr != nil {
-				return updated, perr
-			}
-			if ctx.Display != nil {
-				ctx.Display.UpdateMetaTaskStatus(idx, task.Title, "suspended", task.SessionID)
-			}
-			return updated, &metaSuspendedError{input: result.SuspendedInput.Clone()}
-		}
-		if err != nil {
-			status := "failed"
-			summary := err.Error()
-			if result.Interrupted {
-				status = "interrupted"
-				if summary == "" {
-					summary = fmt.Sprintf("Task interrupted; resume session %s.", strings.TrimSpace(result.SessionID))
-				}
-			}
-			task.Status = status
-			task.Summary = summary
-			task.Transcript = result.TranscriptPath
-			task.FinalAnswer = result.FinalAnswerPath
-			if result.SessionID != "" {
-				task.SessionID = result.SessionID
-			}
-			endSummary := buildMetaEndSummary(*task)
-			writeMetaTurn(ctx, metaTurn+1, fmt.Sprintf("Meta task result: %s", task.Title), endSummary, "meta-end")
-			metaTurn += 2
-			updated := plan
-			updated.Tasks = tasks
-			if perr := persistMetaPlan(ctx.SessionID, updated); perr != nil {
-				return updated, perr
-			}
-			if ctx.Display != nil {
-				ctx.Display.UpdateMetaTaskStatus(idx, task.Title, status, task.SessionID)
-			}
-			return updated, err
-		}
-
-		task.SessionID = result.SessionID
-		task.Summary = result.Summary
-		task.Transcript = result.TranscriptPath
-		task.FinalAnswer = result.FinalAnswerPath
-
-		updated, err := finalizeMetaTask(ctx, plan, tasks, idx, &metaTurn)
-		if err != nil {
-			return updated, err
-		}
-		idx++
-	}
-	plan.Tasks = tasks
-	if perr := persistMetaPlan(ctx.SessionID, plan); perr != nil {
-		return plan, perr
-	}
-	return plan, nil
-}
-
-func finalizeMetaTask(ctx metaContext, plan metaPlanState, tasks []metaTaskState, idx int, metaTurn *int) (metaPlanState, error) {
-	task := &tasks[idx]
-	task.Status = "complete"
-	endSummary := buildMetaEndSummary(*task)
-	writeMetaTurn(ctx, *metaTurn+1, fmt.Sprintf("Meta task result: %s", task.Title), endSummary, "meta-end")
-	*metaTurn += 2
-	updated := plan
-	updated.Tasks = tasks
-	if perr := persistMetaPlan(ctx.SessionID, updated); perr != nil {
-		return updated, perr
-	}
-	if ctx.Display != nil {
-		ctx.Display.UpdateMetaTaskStatus(idx, task.Title, "complete", task.SessionID)
-	}
-	return updated, nil
-}
-
-func writeMetaTurn(ctx metaContext, step int, question, summary, decision string) {
-	if ctx.Config.dryRun || ctx.Transcript == nil {
-		return
-	}
-	if err := ctx.Transcript.WriteTurn(step, question, "", nil, summary, decision); err != nil {
-		fmt.Fprintf(os.Stderr, "Meta transcript write error: %v\n", err)
-	}
-}
-
-func buildMetaStartSummary(goal string, task metaTaskState, prior []metaTaskState) string {
-	var b strings.Builder
-	trimmedGoal := strings.TrimSpace(goal)
-	if trimmedGoal == "" {
-		trimmedGoal = "(none)"
-	}
-	b.WriteString("Original Prompt:\n")
-	b.WriteString(trimmedGoal)
-	b.WriteString("\n\nCurrent Task:\n")
-	b.WriteString(fmt.Sprintf("- Title: %s\n", task.Title))
-	b.WriteString(fmt.Sprintf("- Mode: %s\n", strings.TrimSpace(task.Mode)))
-	if task.Step > 0 {
-		b.WriteString(fmt.Sprintf("- Step: %d\n", task.Step))
-	}
-	b.WriteString(fmt.Sprintf("- Shell Agent: %s\n", boolLabel(task.ShellAgent)))
-	b.WriteString(fmt.Sprintf("- Patch Mode: %s\n", boolLabel(task.PatchMode)))
-	if desc := strings.TrimSpace(task.Description); desc != "" {
-		b.WriteString("- Description:\n")
-		b.WriteString(desc)
-		b.WriteString("\n")
-	}
-	instruction := strings.TrimSpace(task.Instruction)
-	if instruction == "" {
-		instruction = "(no explicit task instruction)"
-	}
-	b.WriteString("- Instruction:\n")
-	b.WriteString(instruction)
-	b.WriteString("\n")
-	if guidance := strings.TrimSpace(task.UserGuidance); guidance != "" {
-		b.WriteString("- User Guidance:\n")
-		b.WriteString(guidance)
-		b.WriteString("\n")
-	}
-	if overlay := strings.TrimSpace(task.PlannerOverlay); overlay != "" {
-		b.WriteString("- Planner Overlay:\n")
-		b.WriteString(overlay)
-		b.WriteString("\n")
-	}
-	b.WriteString("\n\n")
-	b.WriteString(formatPriorOutcomes(prior))
-	return b.String()
-}
-
-func formatPriorOutcomes(prior []metaTaskState) string {
-	var b strings.Builder
-	b.WriteString("**Prior Task Outcomes:**\n")
-	found := false
-	for _, t := range prior {
-		status := strings.TrimSpace(t.Status)
-		if status == "" || strings.EqualFold(status, "pending") {
-			continue
-		}
-		summary := strings.TrimSpace(t.Summary)
-		if summary == "" {
-			summary = "No summary recorded."
-		}
-		summary = strings.ReplaceAll(summary, "\n", " ")
-		sessionID := strings.TrimSpace(t.SessionID)
-		if sessionID == "" {
-			sessionID = "n/a"
-		}
-		fmt.Fprintf(&b, "- %s: %s (Status: %s, Session: %s)\n", t.Title, summary, status, sessionID)
-		found = true
-	}
-	if !found {
-		b.WriteString("- None yet.\n")
-	}
-	return b.String()
-}
-
-func buildMetaEndSummary(task metaTaskState) string {
-	var b strings.Builder
-	b.WriteString("Task Outcome:\n")
-	b.WriteString(fmt.Sprintf("- Title: %s\n", task.Title))
-	if task.Step > 0 {
-		b.WriteString(fmt.Sprintf("- Step: %d\n", task.Step))
-	}
-	b.WriteString(fmt.Sprintf("- Shell Agent: %s\n", boolLabel(task.ShellAgent)))
-	b.WriteString(fmt.Sprintf("- Patch Mode: %s\n", boolLabel(task.PatchMode)))
-	status := strings.TrimSpace(task.Status)
-	if status == "" {
-		status = "unknown"
-	}
-	b.WriteString(fmt.Sprintf("- Status: %s\n", status))
-	if desc := strings.TrimSpace(task.Description); desc != "" {
-		b.WriteString(fmt.Sprintf("- Description: %s\n", desc))
-	}
-	if guidance := strings.TrimSpace(task.UserGuidance); guidance != "" {
-		b.WriteString(fmt.Sprintf("- User Guidance: %s\n", strings.ReplaceAll(guidance, "\n", " ")))
-	}
-	if sessionID := strings.TrimSpace(task.SessionID); sessionID != "" {
-		b.WriteString(fmt.Sprintf("- Session: %s\n", sessionID))
-	}
-	if summary := strings.TrimSpace(task.Summary); summary != "" {
-		summary = strings.ReplaceAll(summary, "\n", " ")
-		b.WriteString(fmt.Sprintf("- Summary: %s\n", summary))
-	}
-	if transcriptPath := strings.TrimSpace(task.Transcript); transcriptPath != "" {
-		b.WriteString(fmt.Sprintf("- Transcript: %s\n", transcriptPath))
-	}
-	if finalAnswer := strings.TrimSpace(task.FinalAnswer); finalAnswer != "" {
-		b.WriteString(fmt.Sprintf("- Final Answer: %s\n", finalAnswer))
-	}
-	return b.String()
-}
-
-func taskHeaderDescription(task metaTaskState) string {
-	if desc := strings.TrimSpace(task.Description); desc != "" {
-		return desc
-	}
-	return strings.TrimSpace(task.Title)
-}
-
-func loadPreviousFinalAnswer(prior []metaTaskState) string {
-	if len(prior) == 0 {
-		return ""
-	}
-	path := strings.TrimSpace(prior[len(prior)-1].FinalAnswer)
-	if path == "" {
-		return ""
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Meta final answer read error (%s): %v\n", path, err)
-		return ""
-	}
-	return strings.TrimSpace(string(data))
-}
-
-func composeTaskPrompt(sessionGoal string, task metaTaskState, priorFinalAnswer string, isFirstTask bool) string {
-	sessionGoal = strings.TrimSpace(sessionGoal)
-	priorFinalAnswer = strings.TrimSpace(priorFinalAnswer)
-
-	primary := strings.TrimSpace(taskPrimaryInstruction(task))
-	focus := strings.TrimSpace(taskFocus(task))
-
-	sections := make([]string, 0, 2)
-	if isFirstTask {
-		if primary != "" {
-			if strings.HasPrefix(primary, "***") && strings.HasSuffix(primary, "***") {
-				sections = append(sections, primary)
-			} else {
-				sections = append(sections, fmt.Sprintf("***%s***", primary))
-			}
-		}
-		if sessionGoal != "" {
-			sections = append(sections, fmt.Sprintf("Original prompt:\n%s", sessionGoal))
-		}
-	} else {
-		if focus != "" {
-			sections = append(sections, focus)
-		}
-		if priorFinalAnswer != "" {
-			sections = append(sections, priorFinalAnswer)
-			if focus != "" {
-				sections = append(sections, focus)
-			}
-		}
-	}
-
-	return strings.Join(sections, "\n\n")
-}
-
-func taskPrimaryInstruction(task metaTaskState) string {
-	primary := strings.TrimSpace(task.Instruction)
-	if primary == "" {
-		primary = strings.TrimSpace(task.Title)
-	}
-	guidance := strings.TrimSpace(task.UserGuidance)
-	if guidance == "" {
-		return primary
-	}
-	if primary == "" {
-		return fmt.Sprintf("User guidance: %s", guidance)
-	}
-	if strings.Contains(strings.ToLower(primary), strings.ToLower(guidance)) {
-		return primary
-	}
-	return fmt.Sprintf("%s\n\nUser guidance: %s", primary, guidance)
-}
-
-func taskFocus(task metaTaskState) string {
-	if strings.TrimSpace(task.Description) != "" {
-		return strings.TrimSpace(task.Title)
-	}
-	if strings.EqualFold(strings.TrimSpace(task.Instruction), strings.TrimSpace(task.Title)) {
-		return strings.TrimSpace(task.Title)
-	}
-	return ""
-}
-
-type metaTaskRunResult struct {
-	SessionID       string
-	Summary         string
-	TranscriptPath  string
-	FinalAnswerPath string
-	Interrupted     bool
-	SuspendedInput  *SuspendedUserInputState
-}
-
-type metaSuspendedError struct {
-	input *SuspendedUserInputState
-}
-
-func (e *metaSuspendedError) Error() string {
-	if e == nil || e.input == nil {
-		return "meta task suspended awaiting user input"
-	}
-	return fmt.Sprintf("meta task suspended awaiting user input: %s", strings.TrimSpace(e.input.Question))
-}
-
-func runMetaTask(ctx metaContext, task metaTaskState, basePrompt string, headerPrompt string, resumePrompt string, includeBackground bool) (metaTaskRunResult, error) {
-	if ctx.Config.dryRun {
-		sessionID := fmt.Sprintf("dry-run-%d", time.Now().UnixNano())
-		return metaTaskRunResult{
-			SessionID:       sessionID,
-			Summary:         fmt.Sprintf("[dry-run] would execute task %q", task.Title),
-			TranscriptPath:  "",
-			FinalAnswerPath: "",
-		}, nil
-	}
-
-	childOptions := ctx.Options
-	trimmedResume := strings.TrimSpace(resumePrompt)
-	if trimmedResume != "" {
-		childOptions.Goal = trimmedResume
-	} else {
-		childOptions.Goal = basePrompt
-	}
-	childOptions.OriginalPrompt = strings.TrimSpace(headerPrompt)
-	if childOptions.OriginalPrompt == "" {
-		childOptions.OriginalPrompt = childOptions.Goal
-	}
-	childOptions.TaskDescription = taskHeaderDescription(task)
-	childOptions.PlannerOverlay = strings.TrimSpace(task.PlannerOverlay)
-	statusNormalized := strings.ToLower(strings.TrimSpace(task.Status))
-	resumeSession := strings.TrimSpace(task.SessionID)
-	shouldResume := false
-	if resumeSession != "" && statusNormalized != "complete" {
-		if savedState, err := LoadSessionState(resumeSession); err == nil && savedState != nil {
-			shouldResume = true
-		} else if err != nil && !errors.Is(err, ErrSessionStateNotFound) {
-			fmt.Fprintf(os.Stderr, "Warning: unable to load session state for %s: %v\n", resumeSession, err)
-		}
-	}
-	if !shouldResume {
-		resumeSession = ""
-	}
-	if shouldResume {
-		childOptions.Config.SessionID = resumeSession
-	} else {
-		childOptions.Config.SessionID = ""
-	}
-	childOptions.Config.Mode = ""
-	childOptions.Config.PromptText = basePrompt
-	childOptions.Config.MetaInstructionDir = ctx.Config.metaInstructionDir
-	childOptions.Config.FinalFile = ""
-	childOptions.Config.TranscriptFile = ""
-	childOptions.Config.FileDiscoveryTrajectory = ""
-	childOptions.Config.FileDiscoveryOutputDir = ""
-	childOptions.Config.TrajectoryFile = ""
-	applyModeDefaults(&childOptions.Config, task.Mode)
-	applyTaskOverrides(&childOptions, task)
-	childOptions.Config.IncludeBackgroundTurn = includeBackground && !shouldResume
-	if ctx.RootCtx != nil {
-		childOptions.Context = ctx.RootCtx
-	}
-	childOptions.ProcessTimerManager = ctx.Options.ProcessTimerManager
-
-	origTempRoot, tempExists := os.LookupEnv("MACHTIANI_SESSION_TEMP_ROOT")
-	if tempExists {
-		_ = os.Unsetenv("MACHTIANI_SESSION_TEMP_ROOT")
-	}
-	defer func() {
-		if tempExists {
-			_ = os.Setenv("MACHTIANI_SESSION_TEMP_ROOT", origTempRoot)
-		} else {
-			_ = os.Unsetenv("MACHTIANI_SESSION_TEMP_ROOT")
-		}
-	}()
-
-	res := Run(ctx.RootCtx, childOptions)
-	result := metaTaskRunResult{SessionID: res.SessionID}
-	if res.SessionID != "" {
-		if chatDir, err := artifacts.SessionChatDirectory(res.SessionID); err == nil {
-			result.TranscriptPath = filepath.Join(chatDir, "agent-transcript.adoc")
-			result.FinalAnswerPath = filepath.Join(chatDir, "agent-final-answer.md")
-		}
-	}
-	if res.Status == "suspended_user_input" {
-		if savedState, err := LoadSessionState(res.SessionID); err == nil && savedState != nil {
-			result.SuspendedInput = savedState.SuspendedUserInput.Clone()
-		}
-		return result, nil
-	}
-	if res.Err != nil || res.ExitCode != 0 {
-		interrupted := res.ExitCode == 130 || errors.Is(res.Err, context.Canceled) || (shouldResume && res.ExitCode == 1 && errors.Is(res.Err, context.Canceled))
-		if interrupted {
-			result.Interrupted = true
-			if res.Err != nil {
-				return result, fmt.Errorf("meta task %q interrupted: %w", task.Title, res.Err)
-			}
-			return result, fmt.Errorf("meta task %q interrupted with exit code %d", task.Title, res.ExitCode)
-		}
-		if res.Err != nil {
-			return result, fmt.Errorf("meta task %q failed: %w", task.Title, res.Err)
-		}
-		return result, fmt.Errorf("meta task %q failed with exit code %d", task.Title, res.ExitCode)
-	}
-
-	if result.TranscriptPath == "" || result.FinalAnswerPath == "" {
-		chatDir, err := artifacts.SessionChatDirectory(res.SessionID)
-		if err != nil {
-			return result, err
-		}
-		result.TranscriptPath = filepath.Join(chatDir, "agent-transcript.adoc")
-		result.FinalAnswerPath = filepath.Join(chatDir, "agent-final-answer.md")
-	}
-
-	summary := loadMetaSummary(result.FinalAnswerPath)
-	if summary == "" {
-		summary = fmt.Sprintf("Completed task %q", task.Title)
-	}
-
-	result.Summary = summary
-	return result, nil
-}
-
-func loadMetaSummary(path string) string {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	return parser.ExtractAnswerSummary(string(data))
-}
-
-func renderMetaSummary(goal string, plan metaPlanState) string {
-	var b strings.Builder
-	b.WriteString("# Meta-Orchestrator Summary\n\n")
-	b.WriteString("## Primary Goal\n")
-	b.WriteString(goal)
-	b.WriteString("\n\n")
-	b.WriteString("## Tasks\n")
-	for idx, task := range plan.Tasks {
-		fmt.Fprintf(&b, "%d. %s (mode: %s)\n", idx+1, task.Title, task.Mode)
-		if task.Step > 0 {
-			fmt.Fprintf(&b, "   - Step: %d\n", task.Step)
-		}
-		fmt.Fprintf(&b, "   - Shell Agent: %s\n", boolLabel(task.ShellAgent))
-		fmt.Fprintf(&b, "   - Patch Mode: %s\n", boolLabel(task.PatchMode))
-		if desc := strings.TrimSpace(task.Description); desc != "" {
-			fmt.Fprintf(&b, "   - Description: %s\n", desc)
-		}
-		if task.SessionID != "" {
-			fmt.Fprintf(&b, "   - Session: %s\n", task.SessionID)
-		}
-		if task.Status != "" {
-			fmt.Fprintf(&b, "   - Status: %s\n", task.Status)
-		}
-		if summary := strings.TrimSpace(task.Summary); summary != "" {
-			fmt.Fprintf(&b, "   - Summary: %s\n", summary)
-		}
-		if task.FinalAnswer != "" {
-			fmt.Fprintf(&b, "   - Final Answer: %s\n", task.FinalAnswer)
-		}
-		if task.Transcript != "" {
-			fmt.Fprintf(&b, "   - Transcript: %s\n", task.Transcript)
-		}
-		b.WriteString("\n")
-	}
-	return b.String()
-}
-
 func tasksToDisplay(tasks []metaTaskState) []ui.MetaTaskDisplay {
 	displays := make([]ui.MetaTaskDisplay, 0, len(tasks))
 	for idx, task := range tasks {
 		displays = append(displays, ui.MetaTaskDisplay{
-			Index:     idx + 1,
-			Title:     task.Title,
-			Mode:      task.Mode,
-			Status:    task.Status,
-			SessionID: task.SessionID,
+			Index:  idx + 1,
+			Title:  task.Title,
+			Mode:   task.Mode,
+			Status: task.Status,
 		})
 	}
 	return displays

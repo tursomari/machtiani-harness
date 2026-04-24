@@ -2,29 +2,11 @@ package session
 
 import (
 	"bytes"
-	"strings"
 	"testing"
 
+	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/ui"
 )
-
-func TestComposeTaskPromptUsesTitleWhenDescriptionExists(t *testing.T) {
-	prompt := composeTaskPrompt("Fix the issue", metaTaskState{
-		Title:       "Create an issue for the engineering team",
-		Description: "Create an issue for the engineering team that solves the Goal. Do not make any code changes.",
-		Instruction: "Create an issue for the engineering team",
-	}, "", true)
-
-	if !strings.Contains(prompt, "***Create an issue for the engineering team***") {
-		t.Fatalf("expected prompt to include task title, got %q", prompt)
-	}
-	if strings.Contains(prompt, "Do not make any code changes") {
-		t.Fatalf("expected prompt to keep description out of composed goal, got %q", prompt)
-	}
-	if !strings.Contains(prompt, "Original prompt:\nFix the issue") {
-		t.Fatalf("expected prompt to include original prompt, got %q", prompt)
-	}
-}
 
 func TestMetaOrchestrateCompletedPlanWithResumePromptReturnsHandledFalse(t *testing.T) {
 	tempHome := t.TempDir()
@@ -48,16 +30,16 @@ func TestMetaOrchestrateCompletedPlanWithResumePromptReturnsHandledFalse(t *test
 		Display:      ui.NewTerminalDisplay(&bytes.Buffer{}, nil, ""),
 	}
 
-	outcome, handled := metaOrchestrate(ctx)
+	result, handled := metaOrchestrate(&ctx)
 	if handled {
 		t.Fatalf("expected handled=false for completed plan with resume prompt, got handled=%v", handled)
 	}
-	if outcome.Plan.Goal != "" || len(outcome.Plan.Tasks) > 0 {
-		t.Fatalf("expected empty outcome plan, got %+v", outcome.Plan)
+	if len(result.Plan.Tasks) == 0 {
+		t.Fatalf("expected non-empty plan tasks")
 	}
 }
 
-func TestMetaOrchestrateCompletedPlanWithoutResumePromptReturnsHandledTrue(t *testing.T) {
+func TestMetaOrchestrateCompletedPlanWithoutResumePromptReturnsHandledFalse(t *testing.T) {
 	tempHome := t.TempDir()
 	t.Setenv("HOME", tempHome)
 
@@ -79,12 +61,202 @@ func TestMetaOrchestrateCompletedPlanWithoutResumePromptReturnsHandledTrue(t *te
 		Display:      ui.NewTerminalDisplay(&bytes.Buffer{}, nil, ""),
 	}
 
-	outcome, handled := metaOrchestrate(ctx)
-	if !handled {
-		t.Fatalf("expected handled=true for completed plan without resume prompt, got handled=%v", handled)
+	// With the single-session model, completed plan without resume prompt
+	// returns handled=false (the planner loop handles finalization).
+	_, handled := metaOrchestrate(&ctx)
+	if handled {
+		t.Fatalf("expected handled=false for completed plan without resume prompt, got handled=%v", handled)
 	}
-	if outcome.FinalAnswer == "" {
-		t.Fatalf("expected non-empty summary for completed plan")
+}
+
+func TestMetaOrchestratePendingTaskReturnsHandledFalse(t *testing.T) {
+	tempHome := t.TempDir()
+	t.Setenv("HOME", tempHome)
+
+	sessionID := "test-pending-task"
+	plan := metaPlanState{
+		Goal:  "fix bug",
+		Mode:  "coding",
+		Tasks: []metaTaskState{{Title: "Implement solution", Mode: "coding", Status: "pending"}},
+	}
+	if err := persistMetaPlan(sessionID, plan); err != nil {
+		t.Fatalf("persistMetaPlan error: %v", err)
+	}
+
+	ctx := metaContext{
+		SessionID: sessionID,
+		Goal:      "fix bug",
+		Config:    legacyConfig{mode: "coding"},
+		Options:   Options{},
+		Display:   ui.NewTerminalDisplay(&bytes.Buffer{}, nil, ""),
+	}
+
+	result, handled := metaOrchestrate(&ctx)
+	if handled {
+		t.Fatalf("expected handled=false for pending task, got handled=%v", handled)
+	}
+	if len(result.Plan.Tasks) == 0 {
+		t.Fatalf("expected non-empty plan tasks")
+	}
+	if result.Plan.Tasks[0].Status != "running" {
+		t.Fatalf("expected task status to be 'running', got %q", result.Plan.Tasks[0].Status)
+	}
+}
+
+func TestMetaOrchestrateSuspendedTaskReturnsHandledFalse(t *testing.T) {
+	tempHome := t.TempDir()
+	t.Setenv("HOME", tempHome)
+
+	sessionID := "test-suspended-task"
+	plan := metaPlanState{
+		Goal:  "fix bug",
+		Mode:  "coding",
+		Tasks: []metaTaskState{{Title: "Implement solution", Mode: "coding", Status: "suspended"}},
+	}
+	if err := persistMetaPlan(sessionID, plan); err != nil {
+		t.Fatalf("persistMetaPlan error: %v", err)
+	}
+
+	ctx := metaContext{
+		SessionID:    sessionID,
+		Goal:         "fix bug",
+		ResumePrompt: "the answer is 42",
+		Config:       legacyConfig{mode: "coding"},
+		Options:      Options{},
+		Display:      ui.NewTerminalDisplay(&bytes.Buffer{}, nil, ""),
+	}
+
+	result, handled := metaOrchestrate(&ctx)
+	if handled {
+		t.Fatalf("expected handled=false for suspended task with resume prompt, got handled=%v", handled)
+	}
+	if result.Plan.Tasks[0].Status != "running" {
+		t.Fatalf("expected task status to be 'running' after resume, got %q", result.Plan.Tasks[0].Status)
+	}
+}
+
+func TestMetaOrchestrateSuspendedTaskWithoutResumePromptResetsToRunning(t *testing.T) {
+	tempHome := t.TempDir()
+	t.Setenv("HOME", tempHome)
+
+	sessionID := "test-suspended-no-prompt"
+	plan := metaPlanState{
+		Goal:  "fix bug",
+		Mode:  "coding",
+		Tasks: []metaTaskState{{Title: "Implement solution", Mode: "coding", Status: "suspended"}},
+	}
+	if err := persistMetaPlan(sessionID, plan); err != nil {
+		t.Fatalf("persistMetaPlan error: %v", err)
+	}
+
+	ctx := metaContext{
+		SessionID: sessionID,
+		Goal:      "fix bug",
+		Config:    legacyConfig{mode: "coding"},
+		Options:   Options{},
+		Display:   ui.NewTerminalDisplay(&bytes.Buffer{}, nil, ""),
+	}
+
+	result, handled := metaOrchestrate(&ctx)
+	if handled {
+		t.Fatalf("expected handled=false for suspended task without resume prompt, got handled=%v", handled)
+	}
+	if result.Plan.Tasks[0].Status != "running" {
+		t.Fatalf("expected task status to be 'running' even without resume prompt, got %q", result.Plan.Tasks[0].Status)
+	}
+}
+
+func TestCompleteMetaPlanTask(t *testing.T) {
+	tempHome := t.TempDir()
+	t.Setenv("HOME", tempHome)
+
+	sessionID := "test-complete-meta-task"
+	plan := metaPlanState{
+		Goal:  "fix bug",
+		Mode:  "coding",
+		Tasks: []metaTaskState{{Title: "Implement solution", Mode: "coding", Status: "running"}},
+	}
+	if err := persistMetaPlan(sessionID, plan); err != nil {
+		t.Fatalf("persistMetaPlan error: %v", err)
+	}
+
+	if err := CompleteMetaPlanTask(sessionID); err != nil {
+		t.Fatalf("CompleteMetaPlanTask error: %v", err)
+	}
+
+	loaded, err := loadOrCreateMetaPlan(sessionID, plan.Goal, plan.Mode, "", llm.MetaInstructions{})
+	if err != nil {
+		t.Fatalf("loadOrCreateMetaPlan error: %v", err)
+	}
+	if loaded.Tasks[0].Status != "complete" {
+		t.Fatalf("expected task status 'complete', got %q", loaded.Tasks[0].Status)
+	}
+}
+
+func TestCompleteMetaPlanTaskNoOp(t *testing.T) {
+	tempHome := t.TempDir()
+	t.Setenv("HOME", tempHome)
+
+	// No meta-plan file — should be a no-op.
+	if err := CompleteMetaPlanTask("nonexistent-session"); err != nil {
+		t.Fatalf("CompleteMetaPlanTask should be no-op for missing plan, got error: %v", err)
+	}
+}
+
+func TestMetaOrchestratePropagatesOverlayToContext(t *testing.T) {
+	tempHome := t.TempDir()
+	t.Setenv("HOME", tempHome)
+
+	sessionID := "test-overlay-propagation"
+	overlay := "Goal Adherence\n- Stay focused on the user's stated goal"
+	plan := metaPlanState{
+		Goal: "fix bug",
+		Mode: "coding",
+		Tasks: []metaTaskState{{
+			Title:          "Implement solution",
+			Mode:           "coding",
+			Status:         "pending",
+			PlannerOverlay: overlay,
+		}},
+	}
+	if err := persistMetaPlan(sessionID, plan); err != nil {
+		t.Fatalf("persistMetaPlan error: %v", err)
+	}
+
+	ctx := metaContext{
+		SessionID: sessionID,
+		Goal:      "fix bug",
+		Config:    legacyConfig{mode: "coding"},
+		Options:   Options{}, // PlannerOverlay starts empty
+		Display:   ui.NewTerminalDisplay(&bytes.Buffer{}, nil, ""),
+	}
+
+	_, handled := metaOrchestrate(&ctx)
+	if handled {
+		t.Fatalf("expected handled=false, got handled=true")
+	}
+	if ctx.Options.PlannerOverlay != overlay {
+		t.Fatalf("expected PlannerOverlay to be propagated to ctx.Options, got %q", ctx.Options.PlannerOverlay)
+	}
+}
+
+func TestMetaOverlayPersistedViaRunState(t *testing.T) {
+	tempHome := t.TempDir()
+	t.Setenv("HOME", tempHome)
+
+	overlay := "Goal Adherence\n- Stay focused"
+
+	rs := &runLifecycleState{
+		sessionID:      "test-overlay-persist",
+		goal:           "fix bug",
+		originalPrompt: "fix bug",
+		plannerOverlay: overlay,
+		sessionStatus:  "success",
+	}
+
+	state := rs.baseSessionState()
+	if state.PlannerOverlay != overlay {
+		t.Fatalf("expected baseSessionState().PlannerOverlay = %q, got %q", overlay, state.PlannerOverlay)
 	}
 }
 

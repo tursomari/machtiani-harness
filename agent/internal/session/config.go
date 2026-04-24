@@ -45,7 +45,6 @@ type Config struct {
 	PromptText            string
 	Mode                  string
 	MetaInstructionDir    string
-	IncludeBackgroundTurn bool
 }
 
 type BuildInfo struct {
@@ -117,7 +116,6 @@ type legacyConfig struct {
 	promptText              string
 	mode                    string
 	metaInstructionDir      string
-	includeBackgroundTurn   bool
 }
 
 func newLegacyConfig(cfg Config) legacyConfig {
@@ -158,6 +156,5 @@ func newLegacyConfig(cfg Config) legacyConfig {
 		promptText:              cfg.PromptText,
 		mode:                    cfg.Mode,
 		metaInstructionDir:      cfg.MetaInstructionDir,
-		includeBackgroundTurn:   cfg.IncludeBackgroundTurn,
 	}
 }

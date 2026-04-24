@@ -311,7 +311,7 @@ func TestStartTranscriptIfNeededChildIncludesBackgroundWhenRequested(t *testing.
 
 	originalPrompt := "Original prompt"
 	taskDescription := "Investigate the Goal"
-	cfg := legacyConfig{includeBackgroundTurn: true}
+	cfg := legacyConfig{}
 	started, err := startTranscriptIfNeeded(tr, originalPrompt, taskDescription, sessionID, cfg, false)
 	if err != nil {
 		t.Fatalf("startTranscriptIfNeeded error: %v", err)
@@ -319,7 +319,7 @@ func TestStartTranscriptIfNeededChildIncludesBackgroundWhenRequested(t *testing.
 	if !started {
 		t.Fatalf("expected transcript to start")
 	}
-	if err := writeInitialBackgroundIfNeeded(tr, ".", cfg, true, started, nil); err != nil {
+	if err := writeInitialBackgroundIfNeeded(tr, ".", cfg, started, nil); err != nil {
 		t.Fatalf("writeInitialBackgroundIfNeeded error: %v", err)
 	}
 	content := tr.Content()

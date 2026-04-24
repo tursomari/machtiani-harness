@@ -248,11 +248,8 @@ func restoreTranscriptFromConversation(tr *transcript.Transcript, conversationRe
 	return nil
 }
 
-func writeInitialBackgroundIfNeeded(tr *transcript.Transcript, repoRoot string, cfg legacyConfig, isChildSession bool, startingTranscript bool, writeTurn func(step int, question, savedPath string, retrieved []string, summary string, decision string) error) error {
+func writeInitialBackgroundIfNeeded(tr *transcript.Transcript, repoRoot string, cfg legacyConfig, startingTranscript bool, writeTurn func(step int, question, savedPath string, retrieved []string, summary string, decision string) error) error {
 	if tr == nil || !startingTranscript {
-		return nil
-	}
-	if isChildSession && !cfg.includeBackgroundTurn {
 		return nil
 	}
 	prefillAnswer := backgroundFallbackAnswer
@@ -680,7 +677,7 @@ func runSession(ctx context.Context, opts Options) Result {
 	}
 	tr := transcriptSetup.transcript
 	defer tr.Close()
-	recorder := transcriptSetup.recorder
+	_ = transcriptSetup.recorder // recorder is accessed via runState.recorder
 	defer func() {
 		runState.persistSessionState()
 	}()
@@ -803,6 +800,64 @@ func runSession(ctx context.Context, opts Options) Result {
 		defer pRunner.Close()
 	}
 
+	startingTranscript, headerErr := startTranscriptIfNeeded(tr, originalPrompt, taskDescription, sessionID, cfg, resumeMode)
+	if headerErr != nil {
+		fmt.Fprintln(os.Stderr, "Error writing transcript header:", headerErr)
+		return Result{ExitCode: 1, Err: headerErr}
+	}
+
+	if err := writeInitialBackgroundIfNeeded(tr, repoRoot, cfg, startingTranscript, writeTurn); err != nil {
+		fmt.Fprintln(os.Stderr, "Transcript write error:", err)
+		runState.sessionErr = err
+		return Result{ExitCode: 1, Err: err}
+	}
+
+	metaActive := strings.TrimSpace(cfg.mode) != ""
+	if metaActive {
+		metaCtx := metaContext{
+			SessionID:       sessionID,
+			Goal:            goal,
+			ResumePrompt:    resumePrompt,
+			Config:          cfg,
+			Options:         opts,
+			Display:         display,
+			InstructionPath: metaInstructionPath,
+			Instruction:     metaInstructions,
+		}
+		result, handled := metaOrchestrate(&metaCtx)
+		if handled {
+			// handled=true means error during meta configuration.
+			runState.sessionErr = fmt.Errorf("meta-orchestrator configuration failed")
+			runState.sessionStatus = "error"
+			runState.keepSessionState = true
+			runState.pendingState = &SessionState{
+				SessionID:       sessionID,
+				Goal:            goal,
+				OriginalPrompt:  originalPrompt,
+				TaskDescription: taskDescription,
+				PlannerOverlay:  plannerOverlay,
+				TurnsCompleted:  runState.turnsCompleted,
+				MetaModes:       metaModesFromPlan(result.Plan),
+			}
+			runState.hydrateState(runState.pendingState)
+			return Result{ExitCode: 1, Status: runState.sessionStatus, Turns: runState.turnsCompleted, SessionID: sessionID, Err: runState.sessionErr}
+		}
+		// metaOrchestrate configured the session (PlannerOverlay, mode
+		// defaults, task overrides). Apply any overlay it set back into
+		// the planner overlay variable used below.
+		plannerOverlay = metaCtx.Options.PlannerOverlay
+		opts = metaCtx.Options
+		cfg = newLegacyConfig(opts.Config)
+		runState.plannerOverlay = plannerOverlay
+
+		// When the user resumes with a follow-up prompt, promote it to
+		// the goal so that downstream analysis (e.g. AnalyzeUserDirectedAsk)
+		// sees the latest user intent instead of the original session goal.
+		if trimmedResume := strings.TrimSpace(resumePrompt); trimmedResume != "" {
+			goal = trimmedResume
+		}
+	}
+
 	var plannerPrompts *llm.PlannerPromptsConfig
 	if opts.GlobalConfig.Prompts != nil {
 		plannerPrompts = opts.GlobalConfig.Prompts.Planner
@@ -822,122 +877,6 @@ func runSession(ctx context.Context, opts Options) Result {
 		PlannerOverlay:    plannerOverlay,
 		Prompts:           plannerPrompts,
 	})
-
-	startingTranscript, headerErr := startTranscriptIfNeeded(tr, originalPrompt, taskDescription, sessionID, cfg, resumeMode)
-	if headerErr != nil {
-		fmt.Fprintln(os.Stderr, "Error writing transcript header:", headerErr)
-		return Result{ExitCode: 1, Err: headerErr}
-	}
-
-	if err := writeInitialBackgroundIfNeeded(tr, repoRoot, cfg, false, startingTranscript, writeTurn); err != nil {
-		fmt.Fprintln(os.Stderr, "Transcript write error:", err)
-		runState.sessionErr = err
-		return Result{ExitCode: 1, Err: err}
-	}
-
-	metaActive := strings.TrimSpace(cfg.mode) != ""
-	if metaActive {
-		display.StartSession(goal)
-		if resumeMode {
-			fmt.Fprintf(os.Stdout, "Resuming meta session %s\n", sessionID)
-		}
-		metaCtx := metaContext{
-			RootCtx:         rootCtx,
-			SessionID:       sessionID,
-			Goal:            goal,
-			ResumePrompt:    resumePrompt,
-			Config:          cfg,
-			Options:         opts,
-			Display:         display,
-			InstructionPath: metaInstructionPath,
-			Instruction:     metaInstructions,
-			Transcript:      tr,
-		}
-		outcome, handled := metaOrchestrate(metaCtx)
-		if handled {
-			runState.turnsCompleted = len(outcome.Plan.Tasks)
-			if outcome.SuspendedInput != nil {
-				runState.sessionStatus = "suspended_user_input"
-				runState.sessionErr = nil
-				runState.keepSessionState = true
-				instructionDir := strings.TrimSpace(cfg.metaInstructionDir)
-				if instructionDir == "" {
-					if strings.TrimSpace(metaInstructionPath) != "" {
-						instructionDir = filepath.Dir(metaInstructionPath)
-					}
-				}
-				runState.suspendedUserInput = outcome.SuspendedInput.Clone()
-				runState.pendingState = &SessionState{
-					SessionID:          sessionID,
-					Goal:               goal,
-					OriginalPrompt:     originalPrompt,
-					TaskDescription:    taskDescription,
-					PlannerOverlay:     plannerOverlay,
-					Status:             runState.sessionStatus,
-					TurnsCompleted:     runState.turnsCompleted,
-					TranscriptPath:     tr.Path(),
-					Transcript:         tr.Content(),
-					ConversationPath:   recorder.Path(),
-					ConversationJSON:   recorder.JSON(),
-					MetaModes:          metaModesFromPlan(outcome.Plan),
-					MetaInstructionDir: instructionDir,
-					SuspendedUserInput: outcome.SuspendedInput.Clone(),
-				}
-				runState.applyPlannerProgress(runState.pendingState)
-				display.EndSession()
-				runState.printUserInputHint(outcome.SuspendedInput.Question, outcome.SuspendedInput.Context)
-				return Result{ExitCode: 0, Status: runState.sessionStatus, Turns: runState.turnsCompleted, SessionID: sessionID}
-			}
-			if outcome.Err != nil {
-				runState.sessionErr = outcome.Err
-				runState.sessionStatus = "error"
-				runState.keepSessionState = true
-				instructionDir := strings.TrimSpace(cfg.metaInstructionDir)
-				if instructionDir == "" {
-					if strings.TrimSpace(metaInstructionPath) != "" {
-						instructionDir = filepath.Dir(metaInstructionPath)
-					}
-				}
-				runState.pendingState = &SessionState{
-					SessionID:          sessionID,
-					Goal:               goal,
-					OriginalPrompt:     originalPrompt,
-					TaskDescription:    taskDescription,
-					PlannerOverlay:     plannerOverlay,
-					TurnsCompleted:     runState.turnsCompleted,
-					TranscriptPath:     tr.Path(),
-					Transcript:         tr.Content(),
-					ConversationPath:   recorder.Path(),
-					ConversationJSON:   recorder.JSON(),
-					MetaModes:          metaModesFromPlan(outcome.Plan),
-					MetaInstructionDir: instructionDir,
-				}
-				runState.applyPlannerProgress(runState.pendingState)
-				display.EndSession()
-				return Result{ExitCode: outcome.ExitCode, Status: runState.sessionStatus, Turns: runState.turnsCompleted, SessionID: sessionID, Err: outcome.Err}
-			}
-			runState.sessionStatus = "success"
-			runState.sessionErr = nil
-			if strings.TrimSpace(outcome.FinalAnswer) != "" {
-				if err := writeTurn(1, "Meta-Orchestrator Summary", "", nil, outcome.FinalAnswer, "meta-summary"); err != nil {
-					fmt.Fprintln(os.Stderr, "Transcript write error:", err)
-					runState.sessionErr = err
-					display.EndSession()
-					return Result{ExitCode: 1, Err: err}
-				}
-			}
-			finalAnswer := appendFinalAnswerExtras(outcome.FinalAnswer, sessionID, cfg.verbose)
-			if err := writeFinalAnswer(sessionID, finalAnswer, cfg.finalFile, cfg.verbose, cfg.dryRun); err != nil {
-				fmt.Fprintln(os.Stderr, "Final file write error:", err)
-				runState.sessionErr = err
-				display.EndSession()
-				return Result{ExitCode: 1, Err: err}
-			}
-			presentFinalAnswer(display, finalAnswer)
-			display.EndSession()
-			return Result{ExitCode: 0, Status: runState.sessionStatus, Turns: runState.turnsCompleted, SessionID: sessionID}
-		}
-	}
 
 	display.StartSession(goal)
 	if resumeMode {

@@ -66,11 +66,10 @@ type PromptOptions struct {
 
 // MetaTaskDisplay captures the metadata required to render meta-orchestrator task progress.
 type MetaTaskDisplay struct {
-	Index     int
-	Title     string
-	Mode      string
-	Status    string
-	SessionID string
+	Index  int
+	Title  string
+	Mode   string
+	Status string
 }
 
 // NewTerminalDisplay constructs a TerminalDisplay writing to out (defaults to STDOUT).
@@ -216,25 +215,19 @@ func (t *TerminalDisplay) RenderMetaPlan(tasks []MetaTaskDisplay) {
 				status = "pending"
 			}
 			line := fmt.Sprintf("  %d. [%s] %s — %s", task.Index, mode, task.Title, status)
-			if strings.TrimSpace(task.SessionID) != "" {
-				line = fmt.Sprintf("%s (session %s)", line, task.SessionID)
-			}
 			fmt.Fprintln(t.out, line)
 		}
 	})
 }
 
 // UpdateMetaTaskStatus reports status transitions for a meta-orchestrator task.
-func (t *TerminalDisplay) UpdateMetaTaskStatus(index int, title, status, sessionID string) {
+func (t *TerminalDisplay) UpdateMetaTaskStatus(index int, title, status string) {
 	idx := index + 1
 	cleanStatus := strings.TrimSpace(status)
 	if cleanStatus == "" {
 		cleanStatus = "pending"
 	}
 	message := fmt.Sprintf("[meta] task %d (%s): %s", idx, title, cleanStatus)
-	if strings.TrimSpace(sessionID) != "" {
-		message = fmt.Sprintf("%s (session %s)", message, sessionID)
-	}
 	t.withLock(func() {
 		fmt.Fprintln(t.out)
 		fmt.Fprintln(t.out, message)
