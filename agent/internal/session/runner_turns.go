@@ -70,6 +70,7 @@ type runTurnEnv struct {
 	pRunner                     *runner.PatcherRunner
 	pl                          *planner.Client
 	tr                          *transcript.Transcript
+	recorder                    *conversationRecorder
 	orchPromptOpts              **ui.PromptOptions
 	baseOrchMetadata            []string
 	patcherPromptOpts           *ui.PromptOptions
@@ -600,7 +601,7 @@ func executePatchDecision(env *runTurnEnv, question string, patchPlan *PatchPlan
 		if patchPlan == nil {
 			hookCtx, hookCancel := makeTurnContext(env.rootCtx, env.cfg.timeoutPerTurn)
 			hookCtx = attachTrajectory(hookCtx, env.trajectoryWriter, env.parentSpanID)
-			generatedPlan, hookErr := invokePatchPlanUpdateHook(hookCtx, env.pl, env.tr, env.sessionID, env.goal, env.tr.Content(), env.plannerProgress.getLastPatchedFile(), env.display, true)
+			generatedPlan, hookErr := invokePatchPlanUpdateHook(hookCtx, env.pl, env.tr, env.recorder, env.sessionID, env.goal, env.tr.Content(), env.plannerProgress.getLastPatchedFile(), env.display, true)
 			if hookCancel != nil {
 				hookCancel()
 			}
@@ -622,7 +623,7 @@ func executePatchDecision(env *runTurnEnv, question string, patchPlan *PatchPlan
 		if env.plannerProgress.needsPatchPlanUpdate() {
 			hookCtx, hookCancel := makeTurnContext(env.rootCtx, env.cfg.timeoutPerTurn)
 			hookCtx = attachTrajectory(hookCtx, env.trajectoryWriter, env.parentSpanID)
-			refreshedPlan, hookErr := invokePatchPlanUpdateHook(hookCtx, env.pl, env.tr, env.sessionID, env.goal, env.tr.Content(), env.plannerProgress.getLastPatchedFile(), env.display, false)
+			refreshedPlan, hookErr := invokePatchPlanUpdateHook(hookCtx, env.pl, env.tr, env.recorder, env.sessionID, env.goal, env.tr.Content(), env.plannerProgress.getLastPatchedFile(), env.display, false)
 			if hookCancel != nil {
 				hookCancel()
 			}
@@ -853,7 +854,7 @@ func executePatchDecision(env *runTurnEnv, question string, patchPlan *PatchPlan
 				Messages:   convertPatchMessages(cleanErr.Diagnostics.Messages),
 				Conflicts:  formatContentConflicts(cleanErr.Diagnostics.ContentConflicts),
 			}
-			_ = env.tr.WritePatchValidation(env.step, rec)
+			_ = env.recorder.RecordPatchValidation(env.step, rec)
 			patchOutcome("error", applyErr, map[string]any{
 				"patch_error_kind":           "patch_validation_failed",
 				"patch_error":                applyErr.Error(),

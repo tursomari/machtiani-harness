@@ -1,6 +1,7 @@
 package session
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,10 +29,6 @@ type SessionState struct {
 	PlannerOverlay     string                   `json:"planner_overlay,omitempty"`
 	Status             string                   `json:"status,omitempty"`
 	TurnsCompleted     int                      `json:"turns_completed"`
-	TranscriptPath     string                   `json:"transcript_path,omitempty"`
-	Transcript         string                   `json:"transcript"`
-	ConversationPath   string                   `json:"conversation_path,omitempty"`
-	ConversationJSON   string                   `json:"conversation_json,omitempty"`
 	UpdatedAt          time.Time                `json:"updated_at"`
 	MetaModes          []string                 `json:"meta_modes,omitempty"`
 	MetaInstructionDir string                   `json:"meta_instruction_dir,omitempty"`
@@ -137,7 +134,63 @@ func LoadSessionState(sessionID string) (*SessionState, error) {
 	if state.SessionID == "" {
 		state.SessionID = sessionID
 	}
+
+	// One-time migration for sessions saved under the older schema, which
+	// embedded the full conversation JSON inline in session-state.json. If
+	// the on-disk conversation.json is missing but an inline copy is
+	// present, materialize it to disk before the inline copy is discarded.
+	// The on-disk file is authoritative when both are present.
+	migrateLegacyConversationJSON(sessionID, data)
+
 	return &state, nil
+}
+
+// migrateLegacyConversationJSON inspects the raw session-state.json bytes for a
+// legacy "conversation_json" field and writes it to the canonical
+// conversation.json path when the on-disk file is missing. This is a no-op for
+// states written under the slim schema.
+func migrateLegacyConversationJSON(sessionID string, raw []byte) {
+	if len(raw) == 0 {
+		return
+	}
+	var legacy struct {
+		ConversationJSON json.RawMessage `json:"conversation_json"`
+	}
+	if err := json.Unmarshal(raw, &legacy); err != nil {
+		return
+	}
+	if len(legacy.ConversationJSON) == 0 {
+		return
+	}
+	// If the value is a JSON string, unquote it so we write valid JSON to disk.
+	// A raw JSON object or array is written as-is.
+	var convBytes []byte
+	if legacy.ConversationJSON[0] == '"' {
+		var s string
+		if err := json.Unmarshal(legacy.ConversationJSON, &s); err != nil {
+			return
+		}
+		convBytes = []byte(s)
+	} else {
+		convBytes = legacy.ConversationJSON
+	}
+	if len(bytes.TrimSpace(convBytes)) == 0 {
+		return
+	}
+	convPath, err := artifacts.SessionConversationFile(sessionID)
+	if err != nil {
+		return
+	}
+	if _, err := os.Stat(convPath); err == nil {
+		// On-disk conversation wins; discard the inline copy silently.
+		return
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(convPath), 0o755); err != nil {
+		return
+	}
+	_ = os.WriteFile(convPath, convBytes, 0o644)
 }
 
 func RemoveSessionState(sessionID string) error {

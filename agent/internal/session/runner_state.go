@@ -105,9 +105,6 @@ func prepareRunBootstrap(rootCtx context.Context, opts Options) (*runBootstrap, 
 		if goal == "" {
 			goal = resumePrompt
 		}
-		if strings.TrimSpace(cfgInput.TranscriptFile) == "" && strings.TrimSpace(state.TranscriptPath) != "" {
-			cfgInput.TranscriptFile = state.TranscriptPath
-		}
 		if strings.TrimSpace(cfgInput.Mode) == "" && len(state.MetaModes) > 0 {
 			cfgInput.Mode = strings.TrimSpace(state.MetaModes[0])
 		}
@@ -288,7 +285,7 @@ func prepareSessionEnvironment(sessionID string, cfg legacyConfig) (*sessionEnvi
 }
 
 func prepareTranscriptBootstrap(cfg legacyConfig, sessionID, conversationGoal, conversationPath string, resumeMode bool, loadedState *SessionState, trajectoryWriter *trajectory.Writer, repoRoot string, notePrompts *llm.MCTPromptsConfig, runState *runLifecycleState) (*transcriptBootstrap, error) {
-	resumeTranscript := loadResumeTranscript(cfg, loadedState, resumeMode)
+	resumeTranscript := loadResumeTranscript(cfg, loadedState, resumeMode, sessionID)
 	runState.notePrompts = notePrompts
 
 	tr, err := transcript.NewWithPath(cfg.transcriptFile, sessionID)
@@ -331,19 +328,43 @@ func prepareTranscriptBootstrap(cfg legacyConfig, sessionID, conversationGoal, c
 	}, nil
 }
 
-func loadResumeTranscript(cfg legacyConfig, loadedState *SessionState, resumeMode bool) string {
+// loadResumeTranscript regenerates the transcript text for a resumed session
+// by reading conversation.json from disk and rendering it. The on-disk
+// conversation is authoritative; when the file is missing we return empty
+// string and let the subsequent recorder Load() handle the error path.
+func loadResumeTranscript(cfg legacyConfig, loadedState *SessionState, resumeMode bool, sessionID string) string {
 	if !resumeMode || loadedState == nil {
 		return ""
 	}
-	resumeTranscript := loadedState.Transcript
-	if strings.TrimSpace(resumeTranscript) == "" && strings.TrimSpace(loadedState.TranscriptPath) != "" {
-		if data, err := os.ReadFile(loadedState.TranscriptPath); err == nil {
-			resumeTranscript = string(data)
-		} else if cfg.verbose {
-			fmt.Fprintf(os.Stderr, "Warning: failed to read transcript for resume (%s): %v\n", loadedState.TranscriptPath, err)
+	convPath, err := artifacts.SessionConversationFile(sessionID)
+	if err != nil {
+		if cfg.verbose {
+			fmt.Fprintf(os.Stderr, "Warning: failed to resolve conversation path for resume: %v\n", err)
 		}
+		return ""
 	}
-	return resumeTranscript
+	data, err := os.ReadFile(convPath)
+	if err != nil {
+		if cfg.verbose && !errors.Is(err, os.ErrNotExist) {
+			fmt.Fprintf(os.Stderr, "Warning: failed to read conversation for resume (%s): %v\n", convPath, err)
+		}
+		return ""
+	}
+	conv, err := conversation.Unmarshal(data)
+	if err != nil {
+		if cfg.verbose {
+			fmt.Fprintf(os.Stderr, "Warning: failed to decode conversation for resume: %v\n", err)
+		}
+		return ""
+	}
+	rendered, err := conv.ToTranscript()
+	if err != nil {
+		if cfg.verbose {
+			fmt.Fprintf(os.Stderr, "Warning: failed to render transcript for resume: %v\n", err)
+		}
+		return ""
+	}
+	return rendered
 }
 
 func newRunLifecycleState(rootCtx context.Context, cfg legacyConfig, sessionID, goal, originalPrompt, taskDescription, plannerOverlay, metaInstructionPath string, loadedState *SessionState) *runLifecycleState {
@@ -411,23 +432,16 @@ func newConversationRecorder(tr *transcript.Transcript, sessionID, conversationG
 
 func (c *conversationRecorder) Load() error {
 	if c.resumeMode {
-		if data, err := os.ReadFile(c.conversationPath); err == nil {
-			conv, err := conversation.Unmarshal(data)
-			if err != nil {
-				return err
-			}
-			c.conversation = conv
-			c.conversationJSON = string(data)
-		} else if c.loadedState != nil && strings.TrimSpace(c.loadedState.ConversationJSON) != "" {
-			conv, err := conversation.Unmarshal([]byte(c.loadedState.ConversationJSON))
-			if err != nil {
-				return err
-			}
-			c.conversation = conv
-			c.conversationJSON = c.loadedState.ConversationJSON
-		} else {
-			return fmt.Errorf("conversation json missing for resume")
+		data, err := os.ReadFile(c.conversationPath)
+		if err != nil {
+			return fmt.Errorf("read conversation json for resume (%s): %w", c.conversationPath, err)
 		}
+		conv, err := conversation.Unmarshal(data)
+		if err != nil {
+			return err
+		}
+		c.conversation = conv
+		c.conversationJSON = string(data)
 	}
 	if c.conversation == nil {
 		c.conversation = conversation.New(c.sessionID, c.conversationGoal)
@@ -632,6 +646,85 @@ func (c *conversationRecorder) RecordFullDiff(step int, file, diff, note string)
 	return c.Save()
 }
 
+// RecordPatchValidation writes a patch validation block to both the
+// conversation and the transcript. The canonical block is rendered once and
+// stored verbatim in the conversation so that regenerating the transcript
+// from the conversation produces identical output.
+func (c *conversationRecorder) RecordPatchValidation(step int, record transcript.PatchValidationRecord) error {
+	block := transcript.FormatPatchValidation(step, record)
+	if strings.TrimSpace(block) == "" {
+		return nil
+	}
+	if c.conversation != nil {
+		c.conversation.AddMessage("assistant", block, map[string]any{
+			"type": "patch_validation",
+			"turn": step,
+		})
+	}
+	if c.tr != nil {
+		if err := c.tr.AppendBlock(block); err != nil {
+			return err
+		}
+	}
+	c.resyncRendered()
+	return c.Save()
+}
+
+// RecordPatchPlanCreated records an initial patch plan in the conversation
+// and transcript.
+func (c *conversationRecorder) RecordPatchPlanCreated(step int, planDetails string) error {
+	block := transcript.FormatPatchPlanCreated(step, planDetails)
+	return c.recordPatchPlanBlock(step, block, "patch_plan_created")
+}
+
+// RecordPatchPlanUpdated records an updated patch plan in the conversation
+// and transcript.
+func (c *conversationRecorder) RecordPatchPlanUpdated(step int, planDetails string) error {
+	block := transcript.FormatPatchPlanUpdated(step, planDetails)
+	return c.recordPatchPlanBlock(step, block, "patch_plan_updated")
+}
+
+func (c *conversationRecorder) recordPatchPlanBlock(step int, block, metaType string) error {
+	if strings.TrimSpace(block) == "" {
+		return nil
+	}
+	if c.conversation != nil {
+		c.conversation.AddMessage("assistant", block, map[string]any{
+			"type": metaType,
+			"turn": step,
+		})
+	}
+	if c.tr != nil {
+		if err := c.tr.AppendBlock(block); err != nil {
+			return err
+		}
+		// The on-disk transcript dedupes older patch plan sections so that
+		// only the most recent plan remains.
+		if err := c.tr.DeduplicatePatchPlan(); err != nil {
+			// Non-fatal: dedup is best-effort housekeeping.
+			fmt.Fprintf(os.Stderr, "[patch-plan] deduplicate failed: %v\n", err)
+		}
+	}
+	c.resyncRendered()
+	return c.Save()
+}
+
+// resyncRendered recomputes the rendered transcript snapshot from the stored
+// conversation. Callers should use this after writes that bypass the
+// incremental renderDelta path (for example, pre-rendered blocks or blocks
+// that trigger in-conversation dedup of earlier events).
+func (c *conversationRecorder) resyncRendered() {
+	if c.conversation == nil {
+		return
+	}
+	rendered, err := c.conversation.ToTranscript()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "session: resyncRendered failed: %v\n", err)
+		return
+	}
+	c.conversationRendered = rendered
+}
+
 func (c *conversationRecorder) appendRawToTranscript(role, content, metaType string) error {
 	if c.tr == nil {
 		return nil
@@ -773,10 +866,6 @@ func (r *runLifecycleState) baseSessionState() SessionState {
 	if r.suspendedUserInput != nil {
 		state.SuspendedUserInput = r.suspendedUserInput.Clone()
 	}
-	if r.tr != nil {
-		state.TranscriptPath = r.tr.Path()
-		state.Transcript = r.tr.Content()
-	}
 	return state
 }
 
@@ -784,20 +873,10 @@ func (r *runLifecycleState) hydrateState(state *SessionState) {
 	if state == nil {
 		return
 	}
+	// Persist the conversation to disk so that future resumes can
+	// regenerate the transcript without relying on inline state copies.
 	if r.recorder != nil && r.recorder.HasConversation() {
 		r.recorder.EnsureSaved()
-		if state.ConversationPath == "" {
-			state.ConversationPath = r.recorder.Path()
-		}
-		if state.ConversationJSON == "" {
-			state.ConversationJSON = r.recorder.JSON()
-		}
-	}
-	if state.TranscriptPath == "" && r.tr != nil {
-		state.TranscriptPath = r.tr.Path()
-	}
-	if state.Transcript == "" && r.tr != nil {
-		state.Transcript = r.tr.Content()
 	}
 	if strings.TrimSpace(state.MetaInstructionDir) == "" {
 		state.MetaInstructionDir = r.metaInstructionDir()

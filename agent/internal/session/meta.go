@@ -19,13 +19,12 @@ const metaPlanFilename = "meta-plan.json"
 
 // metaPlanState captures the persisted plan for a meta-orchestrated session.
 type metaPlanState struct {
-	Goal              string                `json:"goal"`
-	Mode              string                `json:"mode"`
-	InstructionPath   string                `json:"instruction_path,omitempty"`
-	InstructionFormat string                `json:"instruction_format,omitempty"`
-	Tasks             []metaTaskState       `json:"tasks"`
-	PlannerProgress   *PlannerProgressState `json:"planner_progress,omitempty"`
-	LastUpdated       time.Time             `json:"last_updated"`
+	Goal              string          `json:"goal"`
+	Mode              string          `json:"mode"`
+	InstructionPath   string          `json:"instruction_path,omitempty"`
+	InstructionFormat string          `json:"instruction_format,omitempty"`
+	Tasks             []metaTaskState `json:"tasks"`
+	LastUpdated       time.Time       `json:"last_updated"`
 }
 
 // metaTaskState tracks execution state for an individual task.
@@ -361,26 +360,12 @@ func persistMetaPlan(sessionID string, plan metaPlanState) error {
 }
 
 func UpdateMetaPlanProgress(sessionID string, progress *PlannerProgressState) error {
-	if progress == nil {
-		return nil
-	}
-	planPath, err := metaPlanPath(sessionID)
-	if err != nil {
-		return err
-	}
-	data, err := os.ReadFile(planPath)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil
-		}
-		return fmt.Errorf("read meta plan: %w", err)
-	}
-	var plan metaPlanState
-	if err := json.Unmarshal(data, &plan); err != nil {
-		return fmt.Errorf("decode meta plan: %w", err)
-	}
-	plan.PlannerProgress = progress.Clone()
-	return persistMetaPlan(sessionID, plan)
+	// PlannerProgress is now stored only in session-state.json; meta-plan.json
+	// no longer carries a redundant copy. Kept as a no-op to preserve the
+	// call-site surface across the codebase.
+	_ = sessionID
+	_ = progress
+	return nil
 }
 
 func metaPlanPath(sessionID string) (string, error) {

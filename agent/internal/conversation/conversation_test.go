@@ -352,3 +352,90 @@ func TestExtractFullDiffsNormalizesFileSuffixes(t *testing.T) {
 		t.Fatalf("unexpected full diffs:\nwant:\n%s\n----\n got:\n%s", diffNew, got)
 	}
 }
+
+func TestToTranscriptOmitsFullDiff(t *testing.T) {
+	conv := New("sess-full-diff-render", "Goal")
+	conv.AddMessage("assistant", "ask?", map[string]any{"type": "ask", "turn": 1, "decision": "ask"})
+	conv.AddMessage("assistant", "answer", map[string]any{"type": "answer", "turn": 1})
+	conv.AddMessage("assistant", "full diff note", map[string]any{"type": "full_diff", "turn": 1, "file": "a.txt", "diff": "diff content"})
+
+	got, err := conv.ToTranscript()
+	if err != nil {
+		t.Fatalf("ToTranscript error: %v", err)
+	}
+	if strings.Contains(got, "full diff note") {
+		t.Fatalf("expected full_diff content to be omitted, got:\n%s", got)
+	}
+	if strings.Contains(got, "diff content") {
+		t.Fatalf("expected full_diff diff body to be omitted, got:\n%s", got)
+	}
+}
+
+func TestToTranscriptRendersPatchValidationVerbatim(t *testing.T) {
+	conv := New("sess-patch-validation", "Goal")
+	block := "\n=== PATCH VALIDATION (Turn 2)\n\nOperation: apply\nStatus: failed\n"
+	conv.AddMessage("assistant", block, map[string]any{"type": "patch_validation", "turn": 2})
+
+	got, err := conv.ToTranscript()
+	if err != nil {
+		t.Fatalf("ToTranscript error: %v", err)
+	}
+	if !strings.Contains(got, "=== PATCH VALIDATION (Turn 2)") {
+		t.Fatalf("expected patch validation block to be rendered verbatim, got:\n%s", got)
+	}
+	if !strings.Contains(got, "Operation: apply") || !strings.Contains(got, "Status: failed") {
+		t.Fatalf("expected patch validation body fields to be present, got:\n%s", got)
+	}
+}
+
+func TestToTranscriptKeepsRecentPatchPlans(t *testing.T) {
+	conv := New("sess-patch-plan-dedup", "Goal")
+	for i, tag := range []string{"first", "second", "third"} {
+		body := "\n== PATCH PLAN CREATED ==\nStep: 0\n" + tag + "\n"
+		conv.AddMessage("assistant", body, map[string]any{"type": "patch_plan_created", "turn": i + 1})
+	}
+
+	got, err := conv.ToTranscript()
+	if err != nil {
+		t.Fatalf("ToTranscript error: %v", err)
+	}
+	if strings.Contains(got, "first") {
+		t.Fatalf("expected oldest patch plan to be dropped, got:\n%s", got)
+	}
+	if !strings.Contains(got, "second") {
+		t.Fatalf("expected second patch plan to be retained, got:\n%s", got)
+	}
+	if !strings.Contains(got, "third") {
+		t.Fatalf("expected third patch plan to be retained, got:\n%s", got)
+	}
+}
+
+func TestToTranscriptErrorsOnUnknownMessageType(t *testing.T) {
+	conv := New("sess-unknown-type", "Goal")
+	conv.AddMessage("assistant", "mystery payload", map[string]any{"type": "unknown_future_type", "turn": 1})
+
+	_, err := conv.ToTranscript()
+	if err == nil {
+		t.Fatalf("expected ToTranscript to error on unknown message type")
+	}
+	if !strings.Contains(err.Error(), "unknown_future_type") {
+		t.Fatalf("expected error to mention the offending type, got: %v", err)
+	}
+}
+
+func TestToChatMessagesSkipsBookkeepingTypes(t *testing.T) {
+	conv := New("sess-bookkeeping", "Goal")
+	conv.AddMessage("assistant", "validation block", map[string]any{"type": "patch_validation", "turn": 1})
+	conv.AddMessage("assistant", "plan block", map[string]any{"type": "patch_plan_created", "turn": 1})
+	conv.AddMessage("assistant", "updated plan", map[string]any{"type": "patch_plan_updated", "turn": 2})
+	conv.AddMessage("assistant", "diff", map[string]any{"type": "full_diff", "turn": 1, "file": "a.txt", "diff": "d"})
+
+	messages := conv.ToChatMessages("")
+	// Only the seeded goal message ("Goal") should be present.
+	if len(messages) != 1 {
+		t.Fatalf("expected bookkeeping messages to be filtered from chat stream, got %d messages: %+v", len(messages), messages)
+	}
+	if messages[0].Content != "Goal" {
+		t.Fatalf("unexpected message content: %q", messages[0].Content)
+	}
+}

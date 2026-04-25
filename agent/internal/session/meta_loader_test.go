@@ -1,6 +1,8 @@
 package session
 
 import (
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/tursomari/machtiani/agent/internal/llm"
@@ -126,7 +128,7 @@ func TestApplyTaskOverrides(t *testing.T) {
 	}
 }
 
-func TestUpdateMetaPlanProgress(t *testing.T) {
+func TestUpdateMetaPlanProgressNoLongerPersistsProgressInMetaPlan(t *testing.T) {
 	tempHome := t.TempDir()
 	t.Setenv("HOME", tempHome)
 	sessionID := "test-progress"
@@ -146,26 +148,17 @@ func TestUpdateMetaPlanProgress(t *testing.T) {
 	if err := UpdateMetaPlanProgress(sessionID, progress); err != nil {
 		t.Fatalf("UpdateMetaPlanProgress error: %v", err)
 	}
-	loaded, err := loadOrCreateMetaPlan(sessionID, plan.Goal, plan.Mode, "", llm.MetaInstructions{})
+
+	planPath, err := metaPlanPath(sessionID)
 	if err != nil {
-		t.Fatalf("loadOrCreateMetaPlan error: %v", err)
+		t.Fatalf("metaPlanPath: %v", err)
 	}
-	if loaded.PlannerProgress == nil {
-		t.Fatalf("expected planner progress to be persisted")
+	raw, err := os.ReadFile(planPath)
+	if err != nil {
+		t.Fatalf("read meta plan: %v", err)
 	}
-	if loaded.PlannerProgress.AppliedPatches != progress.AppliedPatches {
-		t.Fatalf("expected applied patches %d, got %d", progress.AppliedPatches, loaded.PlannerProgress.AppliedPatches)
-	}
-	if len(loaded.PlannerProgress.SuccessFiles) != len(progress.SuccessFiles) {
-		t.Fatalf("expected %d success files, got %d", len(progress.SuccessFiles), len(loaded.PlannerProgress.SuccessFiles))
-	}
-	for i, want := range progress.SuccessFiles {
-		if loaded.PlannerProgress.SuccessFiles[i] != want {
-			t.Fatalf("success file[%d] = %q, want %q", i, loaded.PlannerProgress.SuccessFiles[i], want)
-		}
-	}
-	if loaded.PlannerProgress.PendingReview == nil || loaded.PlannerProgress.PendingReview.PatchPath != "patch.diff" {
-		t.Fatalf("expected pending review to persist")
+	if strings.Contains(string(raw), "planner_progress") {
+		t.Fatalf("meta-plan.json must not contain planner_progress; got %s", string(raw))
 	}
 }
 

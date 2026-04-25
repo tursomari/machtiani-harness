@@ -103,7 +103,6 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 			historyNote, opts.Prompt)
 	}
 	combined := opts.Prompt
-	promptForHistory := opts.Prompt
 	included := []string(nil)
 	fileDiscoveryRan := false
 	var filtered []string
@@ -164,7 +163,6 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 
 	if opts.ShellAgent {
 		combined = AppendShellAgentPromptNotice(combined, opts.Prompts)
-		promptForHistory = AppendShellAgentPromptNotice(promptForHistory, opts.Prompts)
 	}
 	directiveBlock := formatResponseDirectives(opts.ResponseDirectives)
 	if directiveBlock != "" {
@@ -271,8 +269,8 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 	res.FileDiscoveryRan = fileDiscoveryRan
 	res.ShellAgentUsed = shellAgentUsed
 
-	_ = session.AddMessage("user", promptForHistory, nil)
-	_ = session.AddMessage("assistant", res.Assistant, included)
+	// History is now derived from conversation.json on read; the MCT prompt
+	// layer no longer maintains a parallel on-disk record.
 
 	if err := runReadmeManager(ctx, opts, isAnswerOnly); err != nil {
 		utils.LogErrorIfNotAnswerOnly(isAnswerOnly, err, "internal README management failed")

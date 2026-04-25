@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,17 +15,13 @@ import (
 func TestSaveLoadSessionStateRoundTrip(t *testing.T) {
 	sessionID := fmt.Sprintf("test-session-%d", time.Now().UnixNano())
 	state := SessionState{
-		SessionID:        sessionID,
-		Goal:             "Review database migrations",
-		OriginalPrompt:   "Review database migrations in detail",
-		TaskDescription:  "Validate migration ordering",
-		PlannerOverlay:   "Prefer migration safety over speed",
-		Status:           "suspended_user_input",
-		TurnsCompleted:   3,
-		TranscriptPath:   "/tmp/mct/transcript.md",
-		Transcript:       "# existing transcript\n\ncontent here\n",
-		ConversationPath: "/tmp/mct/conversation.json",
-		ConversationJSON: "{\n  \"messages\": []\n}",
+		SessionID:       sessionID,
+		Goal:            "Review database migrations",
+		OriginalPrompt:  "Review database migrations in detail",
+		TaskDescription: "Validate migration ordering",
+		PlannerOverlay:  "Prefer migration safety over speed",
+		Status:          "suspended_user_input",
+		TurnsCompleted:  3,
 		PlannerProgress: &PlannerProgressState{
 			SuccessFiles:   []string{"README.md", "db/migrations/20240101.sql"},
 			AppliedPatches: 2,
@@ -88,18 +85,6 @@ func TestSaveLoadSessionStateRoundTrip(t *testing.T) {
 	}
 	if loaded.TurnsCompleted != state.TurnsCompleted {
 		t.Fatalf("unexpected turns completed: got %d want %d", loaded.TurnsCompleted, state.TurnsCompleted)
-	}
-	if loaded.TranscriptPath != state.TranscriptPath {
-		t.Fatalf("unexpected transcript path: got %q want %q", loaded.TranscriptPath, state.TranscriptPath)
-	}
-	if loaded.Transcript != state.Transcript {
-		t.Fatalf("unexpected transcript content: got %q want %q", loaded.Transcript, state.Transcript)
-	}
-	if loaded.ConversationPath != state.ConversationPath {
-		t.Fatalf("unexpected conversation path: got %q want %q", loaded.ConversationPath, state.ConversationPath)
-	}
-	if loaded.ConversationJSON != state.ConversationJSON {
-		t.Fatalf("unexpected conversation json: got %q want %q", loaded.ConversationJSON, state.ConversationJSON)
 	}
 	if loaded.UpdatedAt.IsZero() {
 		t.Fatalf("expected UpdatedAt to be set")
@@ -167,5 +152,93 @@ func TestLoadSessionStateNotFound(t *testing.T) {
 	}
 	if err != ErrSessionStateNotFound {
 		t.Fatalf("expected ErrSessionStateNotFound, got %v", err)
+	}
+}
+
+func TestLoadSessionStateMigratesLegacyConversationJSON(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	sessionID := fmt.Sprintf("legacy-session-%d", time.Now().UnixNano())
+	dir, err := artifacts.SessionDirectory(sessionID)
+	if err != nil {
+		t.Fatalf("SessionDirectory: %v", err)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir session dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+
+	legacyPayload := `{"session_id":"` + sessionID + `","goal":"legacy","turns_completed":1,"conversation_json":"{\"session_id\":\"` + sessionID + `\",\"messages\":[],\"created_at\":\"2026-04-18T00:00:00Z\",\"updated_at\":\"2026-04-18T00:00:00Z\"}","updated_at":"2026-04-18T00:00:00Z"}`
+	statePath := filepath.Join(dir, sessionStateFile)
+	if err := os.WriteFile(statePath, []byte(legacyPayload), 0o644); err != nil {
+		t.Fatalf("write legacy state: %v", err)
+	}
+
+	convPath, err := artifacts.SessionConversationFile(sessionID)
+	if err != nil {
+		t.Fatalf("SessionConversationFile: %v", err)
+	}
+	if _, err := os.Stat(convPath); !os.IsNotExist(err) {
+		t.Fatalf("expected conversation file to be absent before migration, got err=%v", err)
+	}
+
+	loaded, err := LoadSessionState(sessionID)
+	if err != nil {
+		t.Fatalf("LoadSessionState: %v", err)
+	}
+	if loaded.Goal != "legacy" {
+		t.Fatalf("unexpected goal: %q", loaded.Goal)
+	}
+
+	migrated, err := os.ReadFile(convPath)
+	if err != nil {
+		t.Fatalf("expected migrated conversation file to exist: %v", err)
+	}
+	if !strings.Contains(string(migrated), `"session_id":"`+sessionID+`"`) {
+		t.Fatalf("migrated conversation.json missing session id: %s", migrated)
+	}
+}
+
+func TestLoadSessionStateKeepsExistingConversationJSON(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	sessionID := fmt.Sprintf("legacy-keep-%d", time.Now().UnixNano())
+	dir, err := artifacts.SessionDirectory(sessionID)
+	if err != nil {
+		t.Fatalf("SessionDirectory: %v", err)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir session dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+
+	convPath, err := artifacts.SessionConversationFile(sessionID)
+	if err != nil {
+		t.Fatalf("SessionConversationFile: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(convPath), 0o755); err != nil {
+		t.Fatalf("mkdir conv dir: %v", err)
+	}
+	authoritative := `{"session_id":"` + sessionID + `","original_goal":"keep","messages":[],"created_at":"2026-04-18T00:00:00Z","updated_at":"2026-04-18T00:00:00Z"}`
+	if err := os.WriteFile(convPath, []byte(authoritative), 0o644); err != nil {
+		t.Fatalf("write authoritative conv: %v", err)
+	}
+
+	legacyInline := `{"session_id":"` + sessionID + `","goal":"keep","turns_completed":1,"conversation_json":"STALE","updated_at":"2026-04-18T00:00:00Z"}`
+	statePath := filepath.Join(dir, sessionStateFile)
+	if err := os.WriteFile(statePath, []byte(legacyInline), 0o644); err != nil {
+		t.Fatalf("write legacy state: %v", err)
+	}
+
+	if _, err := LoadSessionState(sessionID); err != nil {
+		t.Fatalf("LoadSessionState: %v", err)
+	}
+
+	got, err := os.ReadFile(convPath)
+	if err != nil {
+		t.Fatalf("read conv: %v", err)
+	}
+	if string(got) != authoritative {
+		t.Fatalf("expected on-disk conversation to be preserved, got %q", got)
 	}
 }

@@ -143,7 +143,7 @@ func (r *runLifecycleState) maybeRunPreFinalizePatch(display *ui.TerminalDisplay
 						Messages:   convertPatchMessages(cleanErr.Diagnostics.Messages),
 						Conflicts:  formatContentConflicts(cleanErr.Diagnostics.ContentConflicts),
 					}
-					_ = r.tr.WritePatchValidation(step, rec)
+					_ = r.recorder.RecordPatchValidation(step, rec)
 				} else {
 					if stream != nil {
 						stream.Abort("patcher execution error")

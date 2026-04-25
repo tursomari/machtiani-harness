@@ -267,8 +267,8 @@ func writeInitialBackgroundIfNeeded(tr *transcript.Transcript, repoRoot string, 
 	return writeTurn(0, backgroundQuestionPrompt, "", nil, prefillAnswer, "background")
 }
 
-func writePatchPlanTranscriptEntry(tr *transcript.Transcript, plan *PatchPlan, action string) error {
-	if tr == nil || plan == nil {
+func writePatchPlanTranscriptEntry(tr *transcript.Transcript, recorder *conversationRecorder, plan *PatchPlan, action string) error {
+	if plan == nil {
 		return nil
 	}
 	data, err := json.MarshalIndent(plan, "", "  ")
@@ -285,7 +285,22 @@ func writePatchPlanTranscriptEntry(tr *transcript.Transcript, plan *PatchPlan, a
 	b.WriteString("\n\n")
 	b.Write(data)
 	b.WriteString("\n")
-	if err := tr.AppendRaw(b.String()); err != nil {
+	block := b.String()
+
+	// Route through the recorder when available so the patch plan is also
+	// captured in conversation.json. The recorder writes the same block to
+	// the transcript and then runs DeduplicatePatchPlan for us.
+	if recorder != nil && recorder.HasConversation() {
+		metaType := "patch_plan_updated"
+		if label == "CREATED" {
+			metaType = "patch_plan_created"
+		}
+		return recorder.recordPatchPlanBlock(0, block, metaType)
+	}
+	if tr == nil {
+		return nil
+	}
+	if err := tr.AppendRaw(block); err != nil {
 		return fmt.Errorf("append patch plan transcript: %w", err)
 	}
 	// Remove older patch plan sections, keeping recent history.
@@ -295,7 +310,7 @@ func writePatchPlanTranscriptEntry(tr *transcript.Transcript, plan *PatchPlan, a
 	return nil
 }
 
-func invokePatchPlanUpdateHook(ctx context.Context, pl patchPlanUpdater, tr *transcript.Transcript, sessionID, goal, transcriptContent, lastPatchedFile string, notifier patchPlanNotifier, allowCreate bool) (*PatchPlan, error) {
+func invokePatchPlanUpdateHook(ctx context.Context, pl patchPlanUpdater, tr *transcript.Transcript, recorder *conversationRecorder, sessionID, goal, transcriptContent, lastPatchedFile string, notifier patchPlanNotifier, allowCreate bool) (*PatchPlan, error) {
 	existing, err := LoadPatchPlan(sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("load patch plan: %w", err)
@@ -327,7 +342,7 @@ func invokePatchPlanUpdateHook(ctx context.Context, pl patchPlanUpdater, tr *tra
 	if err := SavePatchPlan(sessionID, updated); err != nil {
 		return nil, fmt.Errorf("save patch plan: %w", err)
 	}
-	if err := writePatchPlanTranscriptEntry(tr, updated, action); err != nil {
+	if err := writePatchPlanTranscriptEntry(tr, recorder, updated, action); err != nil {
 		return nil, err
 	}
 	if notifier != nil {
@@ -341,11 +356,11 @@ func invokePatchPlanUpdateHook(ctx context.Context, pl patchPlanUpdater, tr *tra
 	return updated, nil
 }
 
-func updatePatchPlanIfNeeded(ctx context.Context, pl patchPlanUpdater, tr *transcript.Transcript, sessionID, goal, transcriptContent, lastPatchedFile string, notifier patchPlanNotifier, progress *plannerProgressTracker) (*PatchPlan, error) {
+func updatePatchPlanIfNeeded(ctx context.Context, pl patchPlanUpdater, tr *transcript.Transcript, recorder *conversationRecorder, sessionID, goal, transcriptContent, lastPatchedFile string, notifier patchPlanNotifier, progress *plannerProgressTracker) (*PatchPlan, error) {
 	if progress == nil || !progress.needsPatchPlanUpdate() {
 		return nil, nil
 	}
-	updated, err := invokePatchPlanUpdateHook(ctx, pl, tr, sessionID, goal, transcriptContent, lastPatchedFile, notifier, false)
+	updated, err := invokePatchPlanUpdateHook(ctx, pl, tr, recorder, sessionID, goal, transcriptContent, lastPatchedFile, notifier, false)
 	if err != nil {
 		return nil, err
 	}
@@ -962,7 +977,7 @@ func runSession(ctx context.Context, opts Options) Result {
 			}
 			turnInfo["resume_prompt"] = true
 			if cfg.patch {
-				if _, err := invokePatchPlanUpdateHook(planCtx, pl, tr, sessionID, goal, trFull, "", display, true); err != nil {
+				if _, err := invokePatchPlanUpdateHook(planCtx, pl, tr, runState.recorder, sessionID, goal, trFull, "", display, true); err != nil {
 					fmt.Fprintf(os.Stderr, "Warning: patch plan hook (goal update) failed: %v\n", err)
 				}
 			}
@@ -1008,7 +1023,7 @@ func runSession(ctx context.Context, opts Options) Result {
 					break
 				}
 				lastPatched := plannerProgress.getLastPatchedFile()
-				refreshedPlan, err := invokePatchPlanUpdateHook(planCtx, pl, tr, sessionID, goal, trFull, lastPatched, display, false)
+				refreshedPlan, err := invokePatchPlanUpdateHook(planCtx, pl, tr, runState.recorder, sessionID, goal, trFull, lastPatched, display, false)
 				if err != nil {
 					perr = err
 					break
@@ -1236,6 +1251,7 @@ func runSession(ctx context.Context, opts Options) Result {
 			pRunner:                     pRunner,
 			pl:                          pl,
 			tr:                          tr,
+			recorder:                    runState.recorder,
 			orchPromptOpts:              &orchPromptOpts,
 			baseOrchMetadata:            baseOrchMetadata,
 			patcherPromptOpts:           patcherPromptOpts,

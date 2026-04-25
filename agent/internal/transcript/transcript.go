@@ -278,11 +278,10 @@ func (t *Transcript) WriteFinal(answer string, step int, capped bool) error {
 	return err
 }
 
-func (t *Transcript) WritePatchValidation(step int, record PatchValidationRecord) error {
-	if t == nil {
-		return nil
-	}
-
+// FormatPatchValidation renders a PatchValidationRecord into the canonical
+// "=== PATCH VALIDATION" transcript block. The returned string is sanitized
+// and may be empty if the record has no content.
+func FormatPatchValidation(step int, record PatchValidationRecord) string {
 	var b strings.Builder
 	b.WriteString("\n=== PATCH VALIDATION")
 	if step > 0 {
@@ -362,7 +361,14 @@ func (t *Transcript) WritePatchValidation(step int, record PatchValidationRecord
 		b.WriteString(record.Error)
 		b.WriteString("\n")
 	}
-	s := sanitizeTranscriptText(b.String())
+	return sanitizeTranscriptText(b.String())
+}
+
+func (t *Transcript) WritePatchValidation(step int, record PatchValidationRecord) error {
+	if t == nil {
+		return nil
+	}
+	s := FormatPatchValidation(step, record)
 	if s == "" {
 		return nil
 	}
@@ -846,13 +852,8 @@ func (t *Transcript) DeduplicatePatchPlan() error {
 	return nil
 }
 
-// WritePatchPlanCreated writes an initial patch plan to the transcript.
-// It then removes older patch plan sections to keep recent history.
-func (t *Transcript) WritePatchPlanCreated(step int, planDetails string) error {
-	if t == nil {
-		return nil
-	}
-
+// FormatPatchPlanCreated renders an initial patch plan as a transcript block.
+func FormatPatchPlanCreated(step int, planDetails string) string {
 	var b strings.Builder
 	b.WriteString("\n== PATCH PLAN CREATED ==\n")
 	if step > 0 {
@@ -862,8 +863,16 @@ func (t *Transcript) WritePatchPlanCreated(step int, planDetails string) error {
 	if !strings.HasSuffix(planDetails, "\n") {
 		b.WriteString("\n")
 	}
+	return sanitizeTranscriptText(b.String())
+}
 
-	s := sanitizeTranscriptText(b.String())
+// WritePatchPlanCreated writes an initial patch plan to the transcript.
+// It then removes older patch plan sections to keep recent history.
+func (t *Transcript) WritePatchPlanCreated(step int, planDetails string) error {
+	if t == nil {
+		return nil
+	}
+	s := FormatPatchPlanCreated(step, planDetails)
 	if s == "" {
 		return nil
 	}
@@ -882,13 +891,8 @@ func (t *Transcript) WritePatchPlanCreated(step int, planDetails string) error {
 	return t.compactNULsIfNeeded()
 }
 
-// WritePatchPlanUpdated writes an updated patch plan to the transcript.
-// It then removes older patch plan sections to keep recent history.
-func (t *Transcript) WritePatchPlanUpdated(step int, planDetails string) error {
-	if t == nil {
-		return nil
-	}
-
+// FormatPatchPlanUpdated renders an updated patch plan as a transcript block.
+func FormatPatchPlanUpdated(step int, planDetails string) string {
 	var b strings.Builder
 	b.WriteString("\n== PATCH PLAN UPDATED ==\n")
 	if step > 0 {
@@ -898,8 +902,16 @@ func (t *Transcript) WritePatchPlanUpdated(step int, planDetails string) error {
 	if !strings.HasSuffix(planDetails, "\n") {
 		b.WriteString("\n")
 	}
+	return sanitizeTranscriptText(b.String())
+}
 
-	s := sanitizeTranscriptText(b.String())
+// WritePatchPlanUpdated writes an updated patch plan to the transcript.
+// It then removes older patch plan sections to keep recent history.
+func (t *Transcript) WritePatchPlanUpdated(step int, planDetails string) error {
+	if t == nil {
+		return nil
+	}
+	s := FormatPatchPlanUpdated(step, planDetails)
 	if s == "" {
 		return nil
 	}

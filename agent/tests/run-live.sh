@@ -2034,6 +2034,389 @@ run_shell_container_workspace_live_case() {
   return_with_cleanup 0
 }
 
+run_resume_from_conversation_json_case() {
+  local case_id="resume-from-conversation-json"
+  local session_id="test-${case_id}-$(date +%s)"
+  local out_dir="$(pwd)/test-out-${session_id}"
+  mkdir -p "$out_dir"
+  local stdout_interrupt="$out_dir/stdout-interrupt-${session_id}.txt"
+  local stderr_interrupt="$out_dir/stderr-interrupt-${session_id}.txt"
+  local stdout_resume="$out_dir/stdout-resume-${session_id}.txt"
+  local stderr_resume="$out_dir/stderr-resume-${session_id}.txt"
+
+  echo "Running resume-from-conversation-json case: $case_id..." >&2
+
+  # Run 1: start a session that completes 1-2 turns, then SIGINT it via timeout.
+  # The agent handles SIGTERM gracefully and saves session state.
+  local rc=0
+  pushd "$REPO_ROOT" >/dev/null
+  set +e
+  timeout 420 "$MCT_AGENT" run \
+    --max-steps 3 \
+    --verbose \
+    --patch-no-apply \
+    --timeout-per-turn 300 \
+    "${DEFAULT_MODEL_ARGS[@]}" \
+    -t "Identify the main components of the mct-agent binary by reading agent/README.md and agent/cmd/mct-agent/main.go. List them." \
+    > "$stdout_interrupt" 2> "$stderr_interrupt"
+  rc=$?
+  set -e
+  popd >/dev/null
+  # rc 124 = timeout (expected), rc 0 = completed early (also fine)
+  if [[ $rc -ne 124 && $rc -ne 0 ]]; then
+    echo "Failed initial interrupt run (rc=$rc): $case_id" >&2
+    return 1
+  fi
+
+  local agent_session
+  agent_session=$(grep -m1 '^Session:' "$stderr_interrupt" | awk '{print $2}')
+  if [[ -z "$agent_session" ]]; then
+    echo "Failed to parse session ID from interrupted stderr for $case_id" >&2
+    return 1
+  fi
+
+  local session_dir="$REPO_ROOT/.machtiani/sessions/$agent_session"
+  local conv_path="$session_dir/artifacts/conversation.json"
+  local state_path="$session_dir/session-state.json"
+  local transcript_path="$session_dir/chat/agent-transcript.adoc"
+
+  # Assert conversation.json exists (the canonical source of truth)
+  if [[ ! -s "$conv_path" ]]; then
+    echo "conversation.json missing or empty after interrupt: $conv_path" >&2
+    return 1
+  fi
+
+  # Assert session-state.json has no legacy inline fields
+  if [[ ! -s "$state_path" ]]; then
+    echo "session-state.json missing after interrupt: $state_path" >&2
+    return 1
+  fi
+  if ! "$PYTHON_BIN" - "$state_path" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+with open(path, 'r', encoding='utf-8') as fh:
+    data = json.load(fh)
+
+legacy_fields = ['transcript', 'conversation_json', 'transcript_path', 'conversation_path']
+present = [f for f in legacy_fields if f in data and data[f]]
+if present:
+    print(f"ERROR: legacy fields present in session-state.json: {present}", file=sys.stderr)
+    sys.exit(1)
+PY
+  then
+    return 1
+  fi
+
+  # Assert .machtiani-session.json does not exist in repo root
+  if [[ -e "$REPO_ROOT/.machtiani-session.json" ]]; then
+    echo "ERROR: retired .machtiani-session.json exists in repo root" >&2
+    return 1
+  fi
+
+  # Run 2: resume the session
+  pushd "$REPO_ROOT" >/dev/null
+  set +e
+  timeout 420 "$MCT_AGENT" run \
+    --max-steps 2 \
+    --verbose \
+    --patch-no-apply \
+    --timeout-per-turn 300 \
+    --session-id "$agent_session" \
+    "${DEFAULT_MODEL_ARGS[@]}" \
+    -t "Continue." \
+    > "$stdout_resume" 2> "$stderr_resume"
+  rc=$?
+  set -e
+  popd >/dev/null
+  if [[ $rc -ne 0 ]]; then
+    echo "Failed resume run (rc=$rc): $case_id" >&2
+    return 1
+  fi
+
+  # After resume: final artifact must exist
+  local final_path="$session_dir/chat/agent-final-answer.md"
+  if [[ ! -s "$final_path" ]]; then
+    echo "Missing final artifact after resume: $final_path" >&2
+    return 1
+  fi
+
+  # Transcript must exist and contain expected turns
+  if [[ ! -s "$transcript_path" ]]; then
+    echo "Transcript missing after resume: $transcript_path" >&2
+    return 1
+  fi
+  local turns
+  turns=$(awk 'BEGIN { c = 0 } /^== TURN / {
+      if ($3 ~ /^[0-9]+$/ && ($3 + 0) > 0) {
+        c++
+      }
+    } END { print c }' "$transcript_path")
+  if [[ $turns -eq 0 ]]; then
+    turns=$(grep -E -c '^Step [0-9]+ decision: ' "$stderr_resume" 2>/dev/null || echo 0)
+  fi
+  if [[ $turns -lt 1 ]]; then
+    echo "Transcript has fewer than 1 turn after resume: $turns turns" >&2
+    return 1
+  fi
+
+  # Assert .machtiani-session.json still does not exist
+  if [[ -e "$REPO_ROOT/.machtiani-session.json" ]]; then
+    echo "ERROR: retired .machtiani-session.json exists after resume" >&2
+    return 1
+  fi
+
+  # Assert session-state.json after resume is still slim (no legacy fields)
+  if [[ -e "$state_path" ]]; then
+    if ! "$PYTHON_BIN" - "$state_path" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+with open(path, 'r', encoding='utf-8') as fh:
+    data = json.load(fh)
+
+legacy_fields = ['transcript', 'conversation_json', 'transcript_path', 'conversation_path']
+present = [f for f in legacy_fields if f in data and data[f]]
+if present:
+    print(f"ERROR: legacy fields present after resume: {present}", file=sys.stderr)
+    sys.exit(1)
+PY
+    then
+      return 1
+    fi
+  fi
+
+  cp -f "$transcript_path" "$out_dir/transcript-resume-${session_id}.adoc"
+  cp -f "$final_path" "$out_dir/final-resume-${session_id}.md"
+  cp -f "$conv_path" "$out_dir/conversation-${session_id}.json"
+
+  echo "Passed: $case_id (conversation.json is source of truth, $turns turns)" >&2
+  return 0
+}
+
+run_legacy_migration_resume_case() {
+  local case_id="legacy-migration-resume"
+  local stub_dir="$TMP_ROOT/stub-${case_id}-$(date +%s)"
+  mkdir -p "$stub_dir"
+  local state_file="$stub_dir/state.json"
+  local port_file="$stub_dir/port.txt"
+  start_llm_stub_server "$state_file" "$port_file"
+  local stub_port
+  stub_port="$(cat "$port_file")"
+  local base_url="http://127.0.0.1:${stub_port}/v1"
+  local stub_alias="stub-model"
+  local stub_config
+  stub_config="$(generate_stub_config "$base_url" "$stub_alias")"
+
+  local session_id="test-${case_id}-$(date +%s)"
+  local out_dir="$(pwd)/test-out-${session_id}"
+  mkdir -p "$out_dir"
+
+  cleanup_case() {
+    stop_llm_stub_server
+    if [[ "${KEEP_TEST_CONFIG:-}" != "true" ]]; then
+      rm -rf "$stub_dir"
+      rm -rf "$(dirname "$stub_config")"
+    fi
+  }
+  return_with_cleanup() {
+    local rc="${1:-0}"
+    cleanup_case
+    return "$rc"
+  }
+
+  echo "Running legacy migration resume case: $case_id..." >&2
+
+  # Fabricate a legacy-format session directory with inline conversation_json
+  # and transcript fields in session-state.json, but no on-disk conversation.json.
+  local session_dir="$REPO_ROOT/.machtiani/sessions/$session_id"
+  local state_path="$session_dir/session-state.json"
+  local conv_path="$session_dir/artifacts/conversation.json"
+  local transcript_path="$session_dir/chat/agent-transcript.adoc"
+  local artifacts_dir="$session_dir/artifacts"
+
+  # Remove any pre-existing conversation.json to ensure migration materializes it
+  rm -f "$conv_path"
+
+  # Build a legacy session-state.json with inline conversation_json.
+  # The conversation JSON is a simple session with 1 completed turn
+  # (ask + answer + finalize), stored inline as a raw JSON object.
+  # Use separate temp file for JSON to avoid shell escaping issues.
+  local conv_json_file="$stub_dir/legacy-conv.json"
+  "$PYTHON_BIN" - "$conv_json_file" "$session_id" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+session_id = sys.argv[2]
+
+conv = {
+    "session_id": session_id,
+    "original_goal": "Describe the file organization of agent/internal/session/.",
+    "messages": [
+        {"role": "user", "content": "Describe the file organization of agent/internal/session/.", "timestamp": "2026-04-24T00:00:00Z"},
+        {"role": "assistant", "content": "What are the key Go source files in agent/internal/session/ and what role does each one play? Read the directory listing and briefly summarize each file.", "metadata": {"type": "work_request", "turn": 1}, "turn": 1, "timestamp": "2026-04-24T00:00:01Z"},
+        {"role": "assistant", "content": "The directory agent/internal/session/ contains several key Go source files: runner.go handles the main run loop, state.go manages session state persistence, runner_state.go provides lifecycle state helpers, runner_turns.go manages turn progression, runner_finalize.go handles session finalization, and meta.go orchestrates child sessions for meta mode.", "metadata": {"type": "work_result", "turn": 1}, "turn": 1, "timestamp": "2026-04-24T00:00:02Z"},
+        {"role": "assistant", "content": "\n== CONCLUSION (after 1 turn(s))\n\nThe session directory contains the core orchestration components for the agent runtime.\n", "metadata": {"type": "final", "turns": 1, "capped": False}, "timestamp": "2026-04-24T00:00:03Z"}
+    ],
+    "created_at": "2026-04-24T00:00:00Z",
+    "updated_at": "2026-04-24T00:00:03Z"
+}
+
+with open(path, 'w', encoding='utf-8') as fh:
+    json.dump(conv, fh, indent=2)
+PY
+  local legacy_conv
+  legacy_conv=$(cat "$conv_json_file")
+
+  mkdir -p "$session_dir" "$session_dir/chat"
+  # Pre-create the artifacts directory so the agent can write conversation.json there
+  mkdir -p "$artifacts_dir"
+  cat > "$state_path" <<STATEFILE
+{
+  "session_id": "$session_id",
+  "goal": "Describe the file organization of agent/internal/session/.",
+  "original_prompt": "Describe the file organization of agent/internal/session/.",
+  "turns_completed": 1,
+  "status": "interrupted",
+  "transcript": "= MCT-AGENT TRANSCRIPT\n\n== GOAL:\n\nDescribe the file organization of agent/internal/session/.\n\n\n== TURN 1\n\nWhat are the key Go source files in agent/internal/session/ and what role does each one play? Read the directory listing and briefly summarize each file.\n\n=== ANSWER\n\nThe directory agent/internal/session/ contains several key Go source files: runner.go handles the main run loop, state.go manages session state persistence, runner_state.go provides lifecycle state helpers, runner_turns.go manages turn progression, runner_finalize.go handles session finalization, and meta.go orchestrates child sessions for meta mode.\n\n\n== CONCLUSION (after 1 turn(s))\n\nThe session directory contains the core orchestration components for the agent runtime.\n",
+  "transcript_path": "$transcript_path",
+  "conversation_json": $legacy_conv,
+  "conversation_path": "$conv_path",
+  "updated_at": "2026-04-24T00:00:03Z"
+}
+STATEFILE
+
+  # Pre-seed the transcript file so the legacy transcript_path resolves
+  cat > "$transcript_path" <<'TRANSCRIPT'
+= MCT-AGENT TRANSCRIPT
+
+== GOAL:
+
+Describe the file organization of agent/internal/session/.
+
+
+== TURN 1
+
+What are the key Go source files in agent/internal/session/ and what role does each one play? Read the directory listing and briefly summarize each file.
+
+=== ANSWER
+
+The directory agent/internal/session/ contains several key Go source files: runner.go handles the main run loop, state.go manages session state persistence, runner_state.go provides lifecycle state helpers, runner_turns.go manages turn progression, runner_finalize.go handles session finalization, and meta.go orchestrates child sessions for meta mode.
+
+
+== CONCLUSION (after 1 turn(s))
+
+The session directory contains the core orchestration components for the agent runtime.
+TRANSCRIPT
+
+  # Sanity check: conversation.json must NOT exist yet on disk
+  if [[ -f "$conv_path" ]]; then
+    echo "conversation.json already exists before migration: $conv_path" >&2
+    return_with_cleanup 1
+  fi
+
+  # Verify legacy fields are present in session-state.json before migration
+  if ! "$PYTHON_BIN" - "$state_path" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+with open(path, 'r', encoding='utf-8') as fh:
+    data = json.load(fh)
+
+legacy_fields = ['transcript', 'conversation_json', 'transcript_path', 'conversation_path']
+present = [f for f in legacy_fields if f in data and data[f]]
+if not present:
+    print(f"ERROR: legacy fields missing before migration: expected at least one", file=sys.stderr)
+    sys.exit(1)
+PY
+  then
+    return_with_cleanup 1
+  fi
+
+  local stdout_resume="$out_dir/stdout-resume-${session_id}.txt"
+  local stderr_resume="$out_dir/stderr-resume-${session_id}.txt"
+
+  # Resume the session - this triggers LoadSessionState which calls
+  # migrateLegacyConversationJSON, materializing conversation.json from
+  # the inline data.
+  local rc=0
+  pushd "$REPO_ROOT" >/dev/null
+  set +e
+  MACHTIANI_CONFIG="$stub_config" \
+    timeout 240 "$MCT_AGENT" run \
+      --max-steps 2 \
+      --verbose \
+      --patch-no-apply \
+      --timeout-per-turn 300 \
+      --session-id "$session_id" \
+      --model "$stub_alias" \
+      --orch-model "$stub_alias" \
+      --patcher-model "$stub_alias" \
+      --file-discovery-model "$stub_alias" \
+      -t "Continue." \
+      > "$stdout_resume" 2> "$stderr_resume"
+  rc=$?
+  set -e
+  popd >/dev/null
+  if [[ $rc -ne 0 ]]; then
+    echo "Failed migrate+resume run (rc=$rc): $case_id" >&2
+    return_with_cleanup 1
+  fi
+
+  # Assert conversation.json is materialized from inline data
+  if [[ ! -s "$conv_path" ]]; then
+    echo "conversation.json not materialized after migration: $conv_path" >&2
+    return_with_cleanup 1
+  fi
+
+  # Assert the session completed successfully (final artifact exists)
+  local final_path="$session_dir/chat/agent-final-answer.md"
+  if [[ ! -s "$final_path" ]]; then
+    echo "Missing final artifact after migration resume: $final_path" >&2
+    return_with_cleanup 1
+  fi
+
+  # Assert the rewritten session-state.json no longer contains legacy fields.
+  # After a successful run, persistSessionState may remove the state file
+  # entirely (normal cleanup). That is also valid - no legacy fields survive.
+  if [[ -e "$state_path" ]]; then
+    if ! "$PYTHON_BIN" - "$state_path" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+with open(path, 'r', encoding='utf-8') as fh:
+    data = json.load(fh)
+
+legacy_fields = ['transcript', 'conversation_json', 'transcript_path', 'conversation_path']
+present = [f for f in legacy_fields if f in data and data[f]]
+if present:
+    print(f"ERROR: legacy fields still present after migration: {present}", file=sys.stderr)
+    sys.exit(1)
+PY
+    then
+      return_with_cleanup 1
+    fi
+  fi
+
+  # Assert .machtiani-session.json does not exist
+  if [[ -e "$REPO_ROOT/.machtiani-session.json" ]]; then
+    echo "ERROR: retired .machtiani-session.json exists" >&2
+    return_with_cleanup 1
+  fi
+
+  cp -f "$conv_path" "$out_dir/conversation-${session_id}.json"
+  cp -f "$transcript_path" "$out_dir/transcript-${session_id}.adoc"
+  cp -f "$final_path" "$out_dir/final-${session_id}.md"
+
+  echo "Passed: $case_id (legacy migration materialized conversation.json)" >&2
+  return_with_cleanup 0
+}
+
 run_error_case() {
   local case_id="$1"
   local args="$2"
@@ -2155,6 +2538,7 @@ else
   run_file_discovery_live_case
   run_show_live_case
   run_show_range_live_case
+  run_resume_from_conversation_json_case || echo "FAILED (non-fatal): resume-from-conversation-json" >&2
   if shell_agent_available; then
     run_shell_live_case
   else
@@ -2215,6 +2599,8 @@ run_happy_case "planner-ask-monitor" 2 \
   "${DEFAULT_MODEL_ARGS[@]}"
 
 run_user_directed_suspend_case
+
+run_legacy_migration_resume_case || echo "FAILED (non-fatal): legacy-migration-resume" >&2
 
 run_happy_case "issue-c-1turn" 1 \
   "Explain how mct-agent handles errors during finalization and transcript writing." \

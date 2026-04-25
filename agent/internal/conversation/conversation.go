@@ -37,11 +37,21 @@ const (
 	messageTypeRawBlock          = "raw_block"
 	messageTypeFinal             = "final"
 	messageTypeFinalAnswer       = "final_answer"
+	messageTypeFullDiff          = "full_diff"
+	messageTypePatchValidation   = "patch_validation"
+	messageTypePatchPlanCreated  = "patch_plan_created"
+	messageTypePatchPlanUpdated  = "patch_plan_updated"
 
 	legacyTypeOriginalGoal = "original_goal"
 	legacyTypeGoalUpdate   = "goal_update"
 	legacyTypeUserFeedback = "user_feedback"
 	legacyTypeUserInput    = "user_input"
+
+	// patchPlanKeep mirrors transcript.patchPlanDedupKeep — ToTranscript()
+	// retains only the most recent patchPlanKeep patch plan sections so that
+	// the rendered transcript stays consistent with the on-disk transcript
+	// after DeduplicatePatchPlan runs.
+	patchPlanKeep = 2
 )
 
 // Message represents a single event in the conversation.
@@ -182,6 +192,7 @@ func (c *Conversation) ToTranscript() (string, error) {
 
 	events := []renderEvent{}
 	turns := map[int]*turnData{}
+	patchPlanEventIdxs := []int{}
 
 	addTurnEvent := func(turn int) *turnData {
 		if data, ok := turns[turn]; ok {
@@ -212,6 +223,11 @@ func (c *Conversation) ToTranscript() (string, error) {
 			}
 		case messageTypeCacheAnchor:
 			continue
+		case messageTypeFullDiff:
+			// full_diff entries are recorded for downstream consumers
+			// (e.g. loadFullDiffsForSession); they are not rendered in
+			// the transcript.
+			continue
 		case messageTypeUserInputResponse:
 			addRawEvent(renderUserInputResponse(msg.Content))
 		case messageTypeUserInputRequest:
@@ -219,6 +235,32 @@ func (c *Conversation) ToTranscript() (string, error) {
 		case messageTypeRaw, messageTypeRawBlock:
 			if strings.TrimSpace(msg.Content) != "" {
 				addRawEvent(msg.Content)
+			}
+		case messageTypePatchValidation:
+			// Content is already pre-rendered in the canonical block
+			// format (see recorder.RecordPatchValidation). Emit verbatim.
+			if strings.TrimSpace(msg.Content) != "" {
+				addRawEvent(msg.Content)
+			}
+		case messageTypePatchPlanCreated, messageTypePatchPlanUpdated:
+			if strings.TrimSpace(msg.Content) == "" {
+				continue
+			}
+			events = append(events, renderEvent{kind: "raw", raw: msg.Content})
+			patchPlanEventIdxs = append(patchPlanEventIdxs, len(events)-1)
+			// Mirror the on-disk dedup behaviour: keep only the
+			// most recent `patchPlanKeep` patch plan sections. The
+			// on-disk transcript uses patchPlanDedupKeep = 2.
+			if len(patchPlanEventIdxs) > patchPlanKeep {
+				removeIdx := patchPlanEventIdxs[0]
+				events = append(events[:removeIdx], events[removeIdx+1:]...)
+				// Shift remaining recorded indexes down by one.
+				patchPlanEventIdxs = patchPlanEventIdxs[1:]
+				for i := range patchPlanEventIdxs {
+					if patchPlanEventIdxs[i] > removeIdx {
+						patchPlanEventIdxs[i]--
+					}
+				}
 			}
 		case messageTypeFinal, messageTypeFinalAnswer:
 			turns, _ := coerceInt(msg.Metadata["turns"])
@@ -247,7 +289,11 @@ func (c *Conversation) ToTranscript() (string, error) {
 				td.savedPath = saved
 			}
 		default:
-			continue
+			// Every known message type is handled explicitly above. Reaching
+			// the default branch means an unrecognized type was added to the
+			// conversation without a matching render rule — return an error
+			// so we don't silently drop content from the transcript.
+			return "", fmt.Errorf("conversation: unhandled message type %q in ToTranscript", msgType)
 		}
 	}
 
@@ -360,6 +406,10 @@ func serializeChatMessage(role, msgType, content string) (string, string, bool) 
 		return "assistant", prefixVisibleTag(messageTypeWorkResult, content), true
 	case messageTypeRaw, messageTypeRawBlock, messageTypeFinal, messageTypeFinalAnswer:
 		return "assistant", content, true
+	case messageTypePatchValidation, messageTypePatchPlanCreated, messageTypePatchPlanUpdated, messageTypeFullDiff:
+		// These bookkeeping message types are not part of the chat
+		// stream sent to the planner/finalizer.
+		return "", "", false
 	default:
 		return "", "", false
 	}

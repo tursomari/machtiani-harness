@@ -280,11 +280,11 @@ func TestWritePatchPlanTranscriptEntryDeduplicates(t *testing.T) {
 	defer tr.Close()
 
 	plan := &PatchPlan{Items: []PatchPlanItem{{Description: "first", Complete: false}}}
-	if err := writePatchPlanTranscriptEntry(tr, plan, "created"); err != nil {
+	if err := writePatchPlanTranscriptEntry(tr, nil, plan, "created"); err != nil {
 		t.Fatalf("first writePatchPlanTranscriptEntry error: %v", err)
 	}
 	plan.Items[0].Complete = true
-	if err := writePatchPlanTranscriptEntry(tr, plan, "updated"); err != nil {
+	if err := writePatchPlanTranscriptEntry(tr, nil, plan, "updated"); err != nil {
 		t.Fatalf("second writePatchPlanTranscriptEntry error: %v", err)
 	}
 
@@ -393,7 +393,7 @@ func TestInvokePatchPlanUpdateHookWritesTranscript(t *testing.T) {
 	notifier := &collectingNotifier{}
 
 	ctx := context.Background()
-	createdPlan, err := invokePatchPlanUpdateHook(ctx, client, tr, "session-abc", "goal", "transcript body", "", notifier, true)
+	createdPlan, err := invokePatchPlanUpdateHook(ctx, client, tr, nil, "session-abc", "goal", "transcript body", "", notifier, true)
 	if err != nil {
 		t.Fatalf("invokePatchPlanUpdateHook (create) error: %v", err)
 	}
@@ -418,7 +418,7 @@ func TestInvokePatchPlanUpdateHookWritesTranscript(t *testing.T) {
 		t.Fatalf("expected notifier to record creation message, got %+v", notifier.messages)
 	}
 
-	updatedPlan, err := invokePatchPlanUpdateHook(ctx, client, tr, "session-abc", "goal", "transcript body", "last.txt", notifier, false)
+	updatedPlan, err := invokePatchPlanUpdateHook(ctx, client, tr, nil, "session-abc", "goal", "transcript body", "last.txt", notifier, false)
 	if err != nil {
 		t.Fatalf("invokePatchPlanUpdateHook (update) error: %v", err)
 	}
@@ -485,7 +485,7 @@ func TestUpdatePatchPlanIfNeededSkipsWithoutPending(t *testing.T) {
 	client := &stubPatchPlanClient{updatedPlan: plan}
 	progress := newPlannerProgressTracker(nil)
 
-	updated, err := updatePatchPlanIfNeeded(context.Background(), client, tr, sessionID, "goal", "transcript", progress.getLastPatchedFile(), nil, progress)
+	updated, err := updatePatchPlanIfNeeded(context.Background(), client, tr, nil, sessionID, "goal", "transcript", progress.getLastPatchedFile(), nil, progress)
 	if err != nil {
 		t.Fatalf("updatePatchPlanIfNeeded error: %v", err)
 	}
@@ -536,7 +536,7 @@ func TestUpdatePatchPlanIfNeededRunsAfterFileSwitch(t *testing.T) {
 	progress.beginPendingReview(&planner.PendingReview{Files: []string{"new.go"}})
 	progress.commitPendingReview()
 
-	updated, err := updatePatchPlanIfNeeded(context.Background(), client, tr, sessionID, "goal", "transcript", progress.getLastPatchedFile(), nil, progress)
+	updated, err := updatePatchPlanIfNeeded(context.Background(), client, tr, nil, sessionID, "goal", "transcript", progress.getLastPatchedFile(), nil, progress)
 	if err != nil {
 		t.Fatalf("updatePatchPlanIfNeeded error: %v", err)
 	}
@@ -593,7 +593,7 @@ func TestUpdatePatchPlanIfNeededSkipsSameFileCommit(t *testing.T) {
 	progress.beginPendingReview(&planner.PendingReview{Files: []string{"file.go"}})
 	progress.commitPendingReview()
 
-	updated, err := updatePatchPlanIfNeeded(context.Background(), client, tr, sessionID, "goal", "transcript", progress.getLastPatchedFile(), nil, progress)
+	updated, err := updatePatchPlanIfNeeded(context.Background(), client, tr, nil, sessionID, "goal", "transcript", progress.getLastPatchedFile(), nil, progress)
 	if err != nil {
 		t.Fatalf("updatePatchPlanIfNeeded error: %v", err)
 	}

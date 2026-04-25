@@ -3,127 +3,100 @@ package session
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
+
+	"github.com/tursomari/machtiani/agent/internal/conversation"
 )
 
-func TestAddMessagePersistsFiles(t *testing.T) {
-	tempHome := t.TempDir()
-	t.Setenv("HOME", tempHome)
-	t.Setenv("MACHTIANI_SESSION_ID", "test-session")
-
-	if err := AddMessage("user", "user prompt", nil); err != nil {
-		t.Fatalf("AddMessage user: %v", err)
-	}
-
-	files := []string{"path/to/file1.go", "docs/readme.md"}
-	if err := AddMessage("assistant", "assistant response", files); err != nil {
-		t.Fatalf("AddMessage assistant: %v", err)
-	}
-
-	// Mutate the original slice to ensure the stored history keeps its own copy.
-	files[0] = "mutated"
+func TestLoadHistoryReturnsEmptyWithoutSessionID(t *testing.T) {
+	t.Setenv("MACHTIANI_SESSION_ID", "")
+	t.Setenv("HOME", t.TempDir())
 
 	history, err := LoadHistory()
 	if err != nil {
 		t.Fatalf("LoadHistory: %v", err)
 	}
-
-	if len(history) != 2 {
-		t.Fatalf("expected 2 history entries, got %d", len(history))
-	}
-
-	if history[0].Role != "user" || history[0].Content != "user prompt" {
-		t.Fatalf("unexpected first history entry: %+v", history[0])
-	}
-	if history[0].Files != nil {
-		t.Fatalf("expected no files for user entry, got %v", history[0].Files)
-	}
-
-	if history[1].Role != "assistant" || history[1].Content != "assistant response" {
-		t.Fatalf("unexpected second history entry: %+v", history[1])
-	}
-
-	expectedFiles := []string{"path/to/file1.go", "docs/readme.md"}
-	if len(history[1].Files) != len(expectedFiles) {
-		t.Fatalf("expected %d files, got %d", len(expectedFiles), len(history[1].Files))
-	}
-	for i, want := range expectedFiles {
-		if history[1].Files[i] != want {
-			t.Fatalf("file[%d] = %q, want %q", i, history[1].Files[i], want)
-		}
-	}
-
-	sessionPath := filepath.Join(tempHome, ".machtiani", "sessions", "session-test-session.json")
-	data, err := os.ReadFile(sessionPath)
-	if err != nil {
-		t.Fatalf("ReadFile session: %v", err)
-	}
-
-	if count := strings.Count(string(data), "\"Files\""); count != 1 {
-		t.Fatalf("expected session JSON to contain Files exactly once, got %d occurrences", count)
+	if len(history) != 0 {
+		t.Fatalf("expected empty history, got %d entries", len(history))
 	}
 }
 
-func TestDiscoveryStatePendingNormalization(t *testing.T) {
+func TestLoadHistoryDerivesFromConversationJSON(t *testing.T) {
 	tempHome := t.TempDir()
 	t.Setenv("HOME", tempHome)
-	t.Setenv("MACHTIANI_SESSION_ID", "discovery-session")
-	workspaceDir := filepath.Join(t.TempDir(), "workspace")
-
-	pending := []string{" ./foo/bar.go ", "foo/../foo/qux.txt", "dir\\sub\\file.txt", "../escape", "foo/bar.go"}
-	if err := AddPendingDiscoveryPaths(pending); err != nil {
-		t.Fatalf("AddPendingDiscoveryPaths: %v", err)
-	}
-
-	state, err := LoadDiscoveryState()
+	t.Setenv("MACHTIANI_SESSION_ID", "derived-session")
+	// Force global (non-local) artifact layout by pointing cwd at a
+	// non-git directory.
+	nonGit := t.TempDir()
+	prevDir, err := os.Getwd()
 	if err != nil {
-		t.Fatalf("LoadDiscoveryState: %v", err)
+		t.Fatalf("getwd: %v", err)
 	}
-	if state == nil {
-		t.Fatalf("expected discovery state to be initialized")
+	if err := os.Chdir(nonGit); err != nil {
+		t.Fatalf("chdir: %v", err)
 	}
+	t.Cleanup(func() { _ = os.Chdir(prevDir) })
 
-	wantPending := []string{"dir/sub/file.txt", "foo/bar.go", "foo/qux.txt"}
-	if got := state.PendingPaths; len(got) != len(wantPending) {
-		t.Fatalf("unexpected pending paths length: got %d, want %d", len(got), len(wantPending))
-	}
-	for i, want := range wantPending {
-		if state.PendingPaths[i] != want {
-			t.Fatalf("pending[%d] = %q, want %q", i, state.PendingPaths[i], want)
-		}
-	}
+	conv := conversation.New("test-session", "goal")
+	conv.AddMessage("user", "hello from user", nil)
+	conv.AddMessage("assistant", "Shall I proceed?", map[string]any{"type": "work_request", "turn": 1})
+	conv.AddMessage("assistant", "Findings summarised.", map[string]any{"type": "work_result", "turn": 1})
+	conv.AddMessage("assistant", "irrelevant bookkeeping", map[string]any{"type": "patch_validation"})
+	conv.AddMessage("assistant", "Final wrap up.", map[string]any{"type": "final_answer"})
 
-	_, err = UpdateDiscoveryState(func(st *FileDiscoveryState) error {
-		st.PendingPaths = nil
-		st.WorkspacePath = workspaceDir
-		st.Files = map[string]FileMeta{
-			"foo/bar.go": {Hash: "abc123", Size: 10, ModTime: 42, Tracked: true},
-		}
-		return nil
-	})
+	data, err := conv.Marshal()
 	if err != nil {
-		t.Fatalf("UpdateDiscoveryState: %v", err)
+		t.Fatalf("marshal conversation: %v", err)
 	}
 
-	state, err = LoadDiscoveryState()
+	convPath := filepath.Join(tempHome, ".machtiani", "sessions", "derived-session", "artifacts", "conversation.json")
+	if err := os.MkdirAll(filepath.Dir(convPath), 0o755); err != nil {
+		t.Fatalf("mkdir artifacts: %v", err)
+	}
+	if err := os.WriteFile(convPath, data, 0o644); err != nil {
+		t.Fatalf("write conversation: %v", err)
+	}
+
+	history, err := LoadHistory()
 	if err != nil {
-		t.Fatalf("LoadDiscoveryState after update: %v", err)
+		t.Fatalf("LoadHistory: %v", err)
 	}
-	if state == nil {
-		t.Fatalf("expected discovery state after update")
+	if len(history) != 2 {
+		t.Fatalf("expected 2 history entries (work_request + work_result), got %d: %+v", len(history), history)
 	}
-	if len(state.PendingPaths) != 0 {
-		t.Fatalf("expected pending paths cleared, got %v", state.PendingPaths)
+	if history[0].Role != "assistant" || history[0].Content != "[work_request] Shall I proceed?" {
+		t.Fatalf("unexpected first entry: %+v", history[0])
 	}
-	if state.WorkspacePath != workspaceDir {
-		t.Fatalf("workspace path = %q, want %q", state.WorkspacePath, workspaceDir)
+	if history[1].Role != "assistant" || history[1].Content != "[work_result] Findings summarised." {
+		t.Fatalf("unexpected second entry: %+v", history[1])
 	}
-	meta, ok := state.Files["foo/bar.go"]
-	if !ok {
-		t.Fatalf("expected metadata for foo/bar.go")
+
+	// Legacy on-disk session file must not be written.
+	legacyPath := filepath.Join(tempHome, ".machtiani", "sessions", "session-derived-session.json")
+	if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
+		t.Fatalf("expected legacy session file to be absent, stat err = %v", err)
 	}
-	if !meta.Tracked || meta.Hash != "abc123" || meta.Size != 10 || meta.ModTime != 42 {
-		t.Fatalf("unexpected metadata: %+v", meta)
+}
+
+func TestLoadHistoryMissingConversationFileReturnsEmpty(t *testing.T) {
+	tempHome := t.TempDir()
+	t.Setenv("HOME", tempHome)
+	t.Setenv("MACHTIANI_SESSION_ID", "missing")
+	nonGit := t.TempDir()
+	prevDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(nonGit); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(prevDir) })
+
+	history, err := LoadHistory()
+	if err != nil {
+		t.Fatalf("LoadHistory: %v", err)
+	}
+	if len(history) != 0 {
+		t.Fatalf("expected empty history when conversation missing, got %+v", history)
 	}
 }
