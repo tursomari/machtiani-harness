@@ -567,3 +567,195 @@ func prepareTestConfig(t *testing.T) {
 	t.Setenv("MACHTIANI_CONFIG", path)
 	llm.ResetConfigForTesting()
 }
+
+// --- Tests for --file/-f flag on mct-agent run ---
+
+func TestFileFlagRegisteredInHelp(t *testing.T) {
+	cfg := session.Config{}
+	r := newRunFlagSet(&cfg)
+	fs := r.fs
+
+	f := fs.Lookup("file")
+	if f == nil {
+		t.Fatal("expected --file flag to be registered, got nil")
+	}
+	if f.Shorthand != "f" {
+		t.Fatalf("expected --file shorthand 'f', got %q", f.Shorthand)
+	}
+	if f.DefValue != "" {
+		t.Fatalf("expected --file default '', got %q", f.DefValue)
+	}
+
+	var buf strings.Builder
+	fs.SetOutput(&buf)
+	fs.Usage()
+	if !strings.Contains(buf.String(), "--file") {
+		t.Fatalf("expected --file in usage output, got: %q", buf.String())
+	}
+}
+
+func TestFileFlagReadsGoalFromFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	goalPath := filepath.Join(tmpDir, "goal.txt")
+	content := "goal from file\n"
+	if err := os.WriteFile(goalPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+
+	origHead := readmeHeadCommitFn
+	origCommit := readmeCommitForProjectFn
+	origSession := sessionRunFn
+	t.Cleanup(func() {
+		readmeHeadCommitFn = origHead
+		readmeCommitForProjectFn = origCommit
+		sessionRunFn = origSession
+	})
+
+	prepareTestConfig(t)
+	readmeHeadCommitFn = func() (string, error) { return "abcdef123456", nil }
+	readmeCommitForProjectFn = func(string) (string, error) { return "deadbeef", nil }
+
+	var received session.Options
+	sessionRunFn = func(_ context.Context, opts session.Options) session.Result {
+		received = opts
+		return session.Result{ExitCode: 0}
+	}
+
+	exitCode := handleRunCommand([]string{"--file", goalPath})
+	if exitCode != 0 {
+		t.Fatalf("expected exit code 0, got %d", exitCode)
+	}
+	if received.Goal != "goal from file" {
+		t.Fatalf("expected goal %q, got %q", "goal from file", received.Goal)
+	}
+}
+
+func TestFileFlagShorthandReadsGoalFromFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	goalPath := filepath.Join(tmpDir, "goal.txt")
+	content := "goal via shorthand\n"
+	if err := os.WriteFile(goalPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+
+	origHead := readmeHeadCommitFn
+	origCommit := readmeCommitForProjectFn
+	origSession := sessionRunFn
+	t.Cleanup(func() {
+		readmeHeadCommitFn = origHead
+		readmeCommitForProjectFn = origCommit
+		sessionRunFn = origSession
+	})
+
+	prepareTestConfig(t)
+	readmeHeadCommitFn = func() (string, error) { return "abcdef123456", nil }
+	readmeCommitForProjectFn = func(string) (string, error) { return "deadbeef", nil }
+
+	var received session.Options
+	sessionRunFn = func(_ context.Context, opts session.Options) session.Result {
+		received = opts
+		return session.Result{ExitCode: 0}
+	}
+
+	exitCode := handleRunCommand([]string{"-f", goalPath})
+	if exitCode != 0 {
+		t.Fatalf("expected exit code 0, got %d", exitCode)
+	}
+	if received.Goal != "goal via shorthand" {
+		t.Fatalf("expected goal %q, got %q", "goal via shorthand", received.Goal)
+	}
+}
+
+func TestTextAndFileMutuallyExclusive(t *testing.T) {
+	tmpDir := t.TempDir()
+	goalPath := filepath.Join(tmpDir, "goal.txt")
+	if err := os.WriteFile(goalPath, []byte("from file\n"), 0o644); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+
+	var exitCode int
+	stderr := captureStderr(t, func() {
+		exitCode = handleRunCommand([]string{"--text", "inline goal", "--file", goalPath})
+	})
+	if exitCode != 2 {
+		t.Fatalf("expected exit code 2, got %d", exitCode)
+	}
+	if !strings.Contains(stderr, "mutually exclusive") {
+		t.Fatalf("expected 'mutually exclusive' in stderr, got: %q", stderr)
+	}
+}
+
+func TestNeitherTextNorFileProvided(t *testing.T) {
+	var exitCode int
+	stderr := captureStderr(t, func() {
+		exitCode = handleRunCommand([]string{})
+	})
+	if exitCode != 2 {
+		t.Fatalf("expected exit code 2, got %d", exitCode)
+	}
+	if !strings.Contains(stderr, "one of --text or --file is required") {
+		t.Fatalf("expected 'one of --text or --file is required' in stderr, got: %q", stderr)
+	}
+}
+
+func TestFileFlagNonexistentFile(t *testing.T) {
+	var exitCode int
+	stderr := captureStderr(t, func() {
+		exitCode = handleRunCommand([]string{"--file", "/no/such/path/goal.txt"})
+	})
+	if exitCode != 2 {
+		t.Fatalf("expected exit code 2, got %d", exitCode)
+	}
+	if !strings.Contains(stderr, "Error reading file") {
+		t.Fatalf("expected 'Error reading file' in stderr, got: %q", stderr)
+	}
+}
+
+func TestUsageLineReflectsBothInputMethods(t *testing.T) {
+	cfg := session.Config{}
+	r := newRunFlagSet(&cfg)
+	fs := r.fs
+
+	var buf strings.Builder
+	fs.SetOutput(&buf)
+	fs.Usage()
+	output := buf.String()
+	if !strings.Contains(output, "--file") {
+		t.Fatalf("expected --file in usage output, got: %q", output)
+	}
+	if !strings.Contains(output, "-t") {
+		t.Fatalf("expected -t in usage output, got: %q", output)
+	}
+}
+
+func TestPositionalArgumentsError(t *testing.T) {
+	var exitCode int
+	stderr := captureStderr(t, func() {
+		exitCode = handleRunCommand([]string{"--text", "goal", "extra-arg"})
+	})
+	if exitCode != 2 {
+		t.Fatalf("expected exit code 2, got %d", exitCode)
+	}
+	if !strings.Contains(stderr, "Use -t or --file to specify the prompt") {
+		t.Fatalf("expected 'Use -t or --file to specify the prompt' in stderr, got: %q", stderr)
+	}
+}
+
+func TestEmptyGoalError(t *testing.T) {
+	tmpDir := t.TempDir()
+	goalPath := filepath.Join(tmpDir, "empty.txt")
+	if err := os.WriteFile(goalPath, []byte(""), 0o644); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+
+	var exitCode int
+	stderr := captureStderr(t, func() {
+		exitCode = handleRunCommand([]string{"--file", goalPath})
+	})
+	if exitCode != 2 {
+		t.Fatalf("expected exit code 2, got %d", exitCode)
+	}
+	if !strings.Contains(stderr, "Provide non-empty content via -t or --file") {
+		t.Fatalf("expected 'Provide non-empty content via -t or --file' in stderr, got: %q", stderr)
+	}
+}

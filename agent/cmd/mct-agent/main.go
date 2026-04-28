@@ -131,18 +131,33 @@ func run() int {
 	return 2
 }
 
-func handleRunCommand(args []string) int {
-	cfg := session.Config{}
+type runFlagSetResult struct {
+	fs          *pflag.FlagSet
+	promptFile  *string
+	paramFlags  *multiString
+	paramJSON   *multiString
+	apiKeyFlags *multiString
+}
+
+func newRunFlagSet(cfg *session.Config) runFlagSetResult {
 	fs := pflag.NewFlagSet("mct-agent run", pflag.ContinueOnError)
 	var paramFlags multiString
 	var paramJSON multiString
 	var apiKeyFlags multiString
-	configureSessionFlags(fs, &cfg, &paramFlags, &paramJSON, &apiKeyFlags)
+	configureSessionFlags(fs, cfg, &paramFlags, &paramJSON, &apiKeyFlags)
+	promptFile := fs.StringP("file", "f", "", "Read goal from file (mutually exclusive with --text)")
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: mct-agent run -t \"<issue or question>\" [flags]\n\n")
+		fmt.Fprintf(os.Stderr, "Usage: mct-agent run -t \"<goal>\" | --file <path> [flags]\n\n")
 		fmt.Fprintln(os.Stderr, "Flags:")
 		fs.PrintDefaults()
 	}
+	return runFlagSetResult{fs: fs, promptFile: promptFile, paramFlags: &paramFlags, paramJSON: &paramJSON, apiKeyFlags: &apiKeyFlags}
+}
+
+func handleRunCommand(args []string) int {
+	cfg := session.Config{}
+	r := newRunFlagSet(&cfg)
+	fs, promptFile, apiKeyFlags := r.fs, r.promptFile, r.apiKeyFlags
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, pflag.ErrHelp) {
 			return 0
@@ -154,20 +169,43 @@ func handleRunCommand(args []string) int {
 		fmt.Fprintln(os.Stderr, "Error: --max-input-tokens must be zero or positive")
 		return 2
 	}
-	apiOverrides, err := llm.ParseAPIKeyOverrides(apiKeyFlags)
+
+	// Validate goal input: exactly one of --text or --file is required.
+	hasText := strings.TrimSpace(cfg.PromptText) != ""
+	hasFile := strings.TrimSpace(*promptFile) != ""
+	if hasText && hasFile {
+		fmt.Fprintln(os.Stderr, "Error: --text and --file are mutually exclusive")
+		return 2
+	}
+	if !hasText && !hasFile {
+		fmt.Fprintln(os.Stderr, "Error: one of --text or --file is required")
+		return 2
+	}
+
+	var goal string
+	if hasFile {
+		data, err := os.ReadFile(strings.TrimSpace(*promptFile))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading file: %v\n", err)
+			return 2
+		}
+		goal = strings.TrimSpace(string(data))
+	} else {
+		goal = strings.TrimSpace(cfg.PromptText)
+	}
+
+	apiOverrides, err := llm.ParseAPIKeyOverrides(*apiKeyFlags)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
 	parsedArgs := fs.Args()
 	if len(parsedArgs) > 0 {
-		fmt.Fprintln(os.Stderr, "Error: unexpected positional arguments for 'run' command. Use -t flag for the prompt. Example: mct-agent run -t \"Explain X...\"")
+		fmt.Fprintln(os.Stderr, "Error: unexpected positional arguments for 'run' command. Use -t or --file to specify the prompt.")
 		return 2
 	}
-	var goal string
-	goal = strings.TrimSpace(cfg.PromptText)
 	if goal == "" {
-		fmt.Fprintln(os.Stderr, "Error: missing issue/question. Use -t flag to specify the prompt. Example: mct-agent run -t \"Explain X...\"")
+		fmt.Fprintln(os.Stderr, "Error: goal is empty. Provide non-empty content via -t or --file.")
 		return 2
 	}
 
@@ -196,8 +234,8 @@ func handleRunCommand(args []string) int {
 	opts := session.Options{
 		Config:     cfg,
 		Goal:       goal,
-		ParamPairs: append([]string(nil), paramFlags...),
-		ParamJSON:  append([]string(nil), paramJSON...),
+		ParamPairs: append([]string(nil), *r.paramFlags...),
+		ParamJSON:  append([]string(nil), *r.paramJSON...),
 		Build: session.BuildInfo{
 			Version: Version,
 			Commit:  Commit,
