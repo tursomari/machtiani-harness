@@ -633,6 +633,10 @@ generate_test_config() {
 
   if [[ "$LIVE_MODE" == true ]]; then
     TEST_MODEL_ALIAS="${TEST_MODEL:-${OPENAI_MODEL:-${ORCH_MODEL_ALIAS}}}"
+    # Fallback to a default if all env vars are empty
+    if [[ -z "$TEST_MODEL_ALIAS" ]]; then
+      TEST_MODEL_ALIAS="sonnet"
+    fi
   else
     TEST_MODEL_ALIAS="test-model"
     ORCH_MODEL_ALIAS="${TEST_MODEL_ALIAS}"
@@ -1193,7 +1197,7 @@ run_happy_case() {
   if ((${#runtime_args[@]})); then
     cmd+=("${runtime_args[@]}")
   fi
-  cmd+=(-t "$prompt")
+  cmd+=(--text "$prompt")
 
   pushd "$REPO_ROOT" >/dev/null
   set +e
@@ -1223,7 +1227,7 @@ run_happy_case() {
   fi
 
   local agent_session
-  agent_session=$(grep -m1 '^Session:' "$stderr_file" | awk '{print $2}')
+  agent_session=$(grep -m1 '^Session:' "$stderr_file" | awk '{print $2}' || true)
   if [[ -z "$agent_session" ]]; then
     echo "Failed to parse session ID from stderr for $case_id" >&2
     return_with_cleanup 1
@@ -1443,7 +1447,7 @@ run_user_directed_suspend_case() {
       --orch-model "$stub_alias" \
       --patcher-model "$stub_alias" \
       --file-discovery-model "$stub_alias" \
-      -t "Ask me which tradeoff I prefer before you continue." \
+      --text "Ask me which tradeoff I prefer before you continue." \
       > "$stdout_suspend" 2> "$stderr_suspend"
   rc=$?
   set -e
@@ -1454,7 +1458,7 @@ run_user_directed_suspend_case() {
   fi
 
   local agent_session
-  agent_session=$(grep -m1 '^Session:' "$stderr_suspend" | awk '{print $2}')
+  agent_session=$(grep -m1 '^Session:' "$stderr_suspend" | awk '{print $2}' || true)
   if [[ -z "$agent_session" ]]; then
     echo "Failed to parse session ID from suspended stderr for $case_id" >&2
     return_with_cleanup 1
@@ -1520,7 +1524,7 @@ PY
       --orch-model "$stub_alias" \
       --patcher-model "$stub_alias" \
       --file-discovery-model "$stub_alias" \
-      -t "Use the safer fix that preserves behavior." \
+      --text "Use the safer fix that preserves behavior." \
       > "$stdout_resume" 2> "$stderr_resume"
   rc=$?
   set -e
@@ -1799,7 +1803,7 @@ EOF
   fi
   cmd+=(
     --model "$TEST_MODEL_ALIAS"
-    -t "$prompt"
+    --text "$prompt"
   )
 
   pushd "$REPO_ROOT" >/dev/null
@@ -1822,7 +1826,7 @@ EOF
   fi
 
   local agent_session
-  agent_session=$(grep -m1 '^Session:' "$stderr_file" | awk '{print $2}')
+  agent_session=$(grep -m1 '^Session:' "$stderr_file" | awk '{print $2}' || true)
   if [[ -z "$agent_session" ]]; then
     echo "Failed to parse session ID from stderr for $case_id" >&2
     return_with_cleanup 1
@@ -1948,7 +1952,7 @@ run_shell_container_workspace_live_case() {
   fi
   cmd+=(
     --shell-agent-model "$TEST_MODEL_ALIAS"
-    -t "List the 10 most recent commits and summarize them briefly."
+    --text "List the 10 most recent commits and summarize them briefly."
   )
 
   pushd "$REPO_ROOT" >/dev/null
@@ -1968,7 +1972,7 @@ run_shell_container_workspace_live_case() {
   popd >/dev/null
   if [[ $rc -ne 0 ]]; then
     local failed_agent_session
-    failed_agent_session="$(grep -m1 '^Session:' "$stderr_file" | awk '{print $2}')"
+    failed_agent_session="$(grep -m1 '^Session:' "$stderr_file" | awk '{print $2}' || true)"
     if [[ -n "$failed_agent_session" ]]; then
       live_workspace_root="$(resolve_live_workspace_root "$container_config" "$failed_agent_session")"
     fi
@@ -1977,7 +1981,7 @@ run_shell_container_workspace_live_case() {
   fi
 
   local agent_session
-  agent_session=$(grep -m1 '^Session:' "$stderr_file" | awk '{print $2}')
+  agent_session=$(grep -m1 '^Session:' "$stderr_file" | awk '{print $2}' || true)
   if [[ -z "$agent_session" ]]; then
     echo "Failed to parse session ID from stderr for $case_id" >&2
     return_with_cleanup 1
@@ -2057,7 +2061,7 @@ run_resume_from_conversation_json_case() {
     --patch-no-apply \
     --timeout-per-turn 300 \
     "${DEFAULT_MODEL_ARGS[@]}" \
-    -t "Identify the main components of the mct-agent binary by reading agent/README.md and agent/cmd/mct-agent/main.go. List them." \
+    --text "Identify the main components of the mct-agent binary by reading agent/README.md and agent/cmd/mct-agent/main.go. List them." \
     > "$stdout_interrupt" 2> "$stderr_interrupt"
   rc=$?
   set -e
@@ -2069,7 +2073,7 @@ run_resume_from_conversation_json_case() {
   fi
 
   local agent_session
-  agent_session=$(grep -m1 '^Session:' "$stderr_interrupt" | awk '{print $2}')
+  agent_session=$(grep -m1 '^Session:' "$stderr_interrupt" | awk '{print $2}' || true)
   if [[ -z "$agent_session" ]]; then
     echo "Failed to parse session ID from interrupted stderr for $case_id" >&2
     return 1
@@ -2125,7 +2129,7 @@ PY
     --timeout-per-turn 300 \
     --session-id "$agent_session" \
     "${DEFAULT_MODEL_ARGS[@]}" \
-    -t "Continue." \
+    --text "Continue." \
     > "$stdout_resume" 2> "$stderr_resume"
   rc=$?
   set -e
@@ -2357,7 +2361,7 @@ PY
       --orch-model "$stub_alias" \
       --patcher-model "$stub_alias" \
       --file-discovery-model "$stub_alias" \
-      -t "Continue." \
+      --text "Continue." \
       > "$stdout_resume" 2> "$stderr_resume"
   rc=$?
   set -e

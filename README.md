@@ -276,6 +276,24 @@ When resuming, the agent:
 
 Session state is stored in `.machtiani/sessions/<session-id>/session-state.json` and includes the goal, turn count, and paths to transcript artifacts. This allows you to pause, inspect results, and resume later without losing context.
 
+### Session Management
+
+List all sessions:
+```bash
+mct-agent session list
+```
+
+Show details for a specific session:
+```bash
+mct-agent session show <session-id>
+```
+
+Both commands support `--json` for machine-readable output:
+```bash
+mct-agent session list --json
+mct-agent session show <session-id> --json
+```
+
 ### Graceful Interruption and Auto-Save Mechanism
 
 When `mct-agent` receives `SIGINT` (Ctrl+C) or `SIGTERM`, it:

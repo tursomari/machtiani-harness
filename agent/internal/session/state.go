@@ -209,6 +209,50 @@ func RemoveSessionState(sessionID string) error {
 	return nil
 }
 
+// ListSessions returns all session states found in the sessions directory,
+// sorted by UpdatedAt in descending order (most recent first).
+// Sessions that fail to load (corrupt or missing files) are skipped.
+func ListSessions() ([]SessionState, error) {
+	sessionsDir, err := artifacts.SessionsRoot()
+	if err != nil {
+		return nil, fmt.Errorf("resolve sessions root: %w", err)
+	}
+
+	entries, err := os.ReadDir(sessionsDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			// No sessions directory means no sessions
+			return []SessionState{}, nil
+		}
+		return nil, fmt.Errorf("read sessions directory: %w", err)
+	}
+
+	var sessions []SessionState
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		sessionID := entry.Name()
+		state, err := LoadSessionState(sessionID)
+		if err != nil {
+			// Skip sessions that fail to load (corrupt or missing)
+			continue
+		}
+		sessions = append(sessions, *state)
+	}
+
+	// Sort by UpdatedAt descending (most recent first)
+	for i := 0; i < len(sessions); i++ {
+		for j := i + 1; j < len(sessions); j++ {
+			if sessions[j].UpdatedAt.After(sessions[i].UpdatedAt) {
+				sessions[i], sessions[j] = sessions[j], sessions[i]
+			}
+		}
+	}
+
+	return sessions, nil
+}
+
 // LoadPatchPlan returns the cached patch plan for a session. When the patch
 // plan file is missing, it returns (nil, nil).
 func LoadPatchPlan(sessionID string) (*PatchPlan, error) {

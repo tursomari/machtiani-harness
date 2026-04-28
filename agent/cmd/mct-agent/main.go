@@ -2,14 +2,16 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
+	"github.com/spf13/pflag"
 	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/mct/readmesync"
 	"github.com/tursomari/machtiani/agent/internal/session"
@@ -38,6 +40,10 @@ func (m *multiString) Set(value string) error {
 	return nil
 }
 
+func (m *multiString) Type() string {
+	return "strings"
+}
+
 func printVersion() {
 	fmt.Printf("mct-agent %s\ncommit: %s\nbuilt: %s\ndirty: %s\n", Version, Commit, BuiltAt, Dirty)
 }
@@ -56,6 +62,8 @@ func run() int {
 			return handleRunCommand(os.Args[2:])
 		case "sync":
 			return handleSyncCommand(os.Args[2:])
+		case "session":
+			return handleSessionCommand(os.Args[2:])
 		case "config":
 			return handleConfigCommand(os.Args[2:])
 		}
@@ -67,13 +75,15 @@ func run() int {
 
 func handleRunCommand(args []string) int {
 	cfg := session.Config{}
-	fs := flag.NewFlagSet("mct-agent run", flag.ExitOnError)
+	fs := pflag.NewFlagSet("mct-agent run", pflag.ExitOnError)
 	var paramFlags multiString
 	var paramJSON multiString
 	var apiKeyFlags multiString
 	configureSessionFlags(fs, &cfg, &paramFlags, &paramJSON, &apiKeyFlags)
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "Usage: mct-agent run -t \"<issue or question>\" [flags]")
+		fmt.Fprintf(os.Stderr, "Usage: mct-agent run -t \"<issue or question>\" [flags]\n\n")
+		fmt.Fprintln(os.Stderr, "Flags:")
+		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -274,14 +284,16 @@ func shortSHA(hash string, length int) string {
 
 func handleSyncCommand(args []string) int {
 	cfg := session.Config{}
-	fs := flag.NewFlagSet("mct-agent sync", flag.ExitOnError)
+	fs := pflag.NewFlagSet("mct-agent sync", pflag.ExitOnError)
 	var paramFlags multiString
 	var paramJSON multiString
 	var apiKeyFlags multiString
 	commitRef := fs.String("commit", "", "project commit hash to sync")
 	configureSessionFlags(fs, &cfg, &paramFlags, &paramJSON, &apiKeyFlags)
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "Usage: mct-agent sync [--commit <hash>] [flags]")
+		fmt.Fprintf(os.Stderr, "Usage: mct-agent sync [--commit <hash>] [flags]\n\n")
+		fmt.Fprintln(os.Stderr, "Flags:")
+		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -361,7 +373,7 @@ func handleSyncCommand(args []string) int {
 	return 0
 }
 
-func configureSessionFlags(fs *flag.FlagSet, cfg *session.Config, paramFlags, paramJSON, apiKeyFlags *multiString) {
+func configureSessionFlags(fs *pflag.FlagSet, cfg *session.Config, paramFlags, paramJSON, apiKeyFlags *multiString) {
 	fs.IntVar(&cfg.MaxSteps, "max-steps", 4, "maximum number of turns before finalizing")
 	fs.StringVar(&cfg.OrchModel, "model", "", "Model alias defined in .machtiani/config.toml (alias for --orch-model)")
 	fs.StringVar(&cfg.OrchModel, "orch-model", "", "Model alias for orchestration/planner steps (default: config or env)")
@@ -370,7 +382,7 @@ func configureSessionFlags(fs *flag.FlagSet, cfg *session.Config, paramFlags, pa
 	fs.StringVar(&cfg.FileDiscoveryModel, "file-discovery-model", "", "Model alias for file discovery runs (default: orchestration model)")
 	fs.StringVar(&cfg.AgentModel, "agent-model", "", "Legacy planner model alias (deprecated; use --orch-model)")
 	fs.IntVar(&cfg.TimeoutPerTurn, "timeout-per-turn", 120, "per-turn timeout in seconds (set 0 for no timeout)")
-	fs.BoolVar(&cfg.DryRun, "dry-run", false, "print intended mct calls; don’t execute")
+	fs.BoolVar(&cfg.DryRun, "dry-run", false, "print intended mct calls; don't execute")
 	fs.BoolVar(&cfg.Verbose, "verbose", false, "verbose agent logging")
 	fs.BoolVar(&cfg.PersistTmpData, "persist-tmp-data", false, "keep temporary data (worktrees, trajectories) after execution; startup orphan cleanup always runs")
 	fs.BoolVar(&cfg.ShellAgent, "shell-agent", false, "Enable shell-agent mode: invoke shell-agent subprocess binary for task execution")
@@ -397,14 +409,20 @@ func configureSessionFlags(fs *flag.FlagSet, cfg *session.Config, paramFlags, pa
 	fs.BoolVar(&cfg.EnableTagFormat, "enable-tag-format", false, "Enable tag-format response directives and validation (experimental)")
 	fs.StringVar(&cfg.Mode, "mode", "", "Meta-orchestrator mode (coding, research, other)")
 	fs.StringVar(&cfg.MetaInstructionDir, "meta-instruction-dir", "", "Directory containing meta-orchestrator custom instructions (overrides config)")
-	fs.StringVar(&cfg.PromptText, "t", "", "prompt text (alternative to positional argument)")
+	fs.StringVarP(&cfg.PromptText, "text", "t", "", "prompt text (alternative to positional argument)")
 	if apiKeyFlags != nil {
 		fs.Var(apiKeyFlags, "api-key", "Provider-specific API key override in provider:key format (repeatable)")
 	}
 	fs.Var(paramFlags, "param", "Additional request parameter key=value (repeatable)")
 	fs.Var(paramJSON, "param-json", "Merge JSON object of additional parameters (repeatable)")
-}
 
+	// Mark deprecated flags as hidden
+	fs.MarkHidden("orch-model")
+	fs.MarkHidden("agent-model")
+	fs.MarkHidden("openai-api-key")
+	fs.MarkHidden("openai-base-url")
+	fs.MarkHidden("openai-model")
+}
 func handleConfigCommand(args []string) int {
 	if len(args) < 1 {
 		fmt.Fprintln(os.Stderr, "Usage: mct-agent config check")
@@ -453,12 +471,164 @@ func handleConfigCheckCommand(args []string) int {
 	return 0
 }
 
+func handleSessionCommand(args []string) int {
+	if len(args) < 1 {
+		fmt.Fprintln(os.Stderr, "Usage: mct-agent session <subcommand> [flags]")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Subcommands:")
+		fmt.Fprintln(os.Stderr, "  list    List all sessions")
+		fmt.Fprintln(os.Stderr, "  show    Show details for a specific session")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Use 'mct-agent session <subcommand> --help' for more information.")
+		return 2
+	}
+	switch args[0] {
+	case "list":
+		return handleSessionListCommand(args[1:])
+	case "show":
+		return handleSessionShowCommand(args[1:])
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown session subcommand: %s\n", args[0])
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Usage: mct-agent session <subcommand> [flags]")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Subcommands:")
+		fmt.Fprintln(os.Stderr, "  list    List all sessions")
+		fmt.Fprintln(os.Stderr, "  show    Show details for a specific session")
+		return 2
+	}
+}
+
+func handleSessionListCommand(args []string) int {
+	fs := pflag.NewFlagSet("mct-agent session list", pflag.ExitOnError)
+	jsonOutput := fs.Bool("json", false, "Output sessions as JSON array")
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: mct-agent session list [flags]\n\n")
+		fmt.Fprintln(os.Stderr, "Flags:")
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 2
+	}
+
+	sessions, err := session.ListSessions()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error listing sessions: %v\n", err)
+		return 1
+	}
+
+	if *jsonOutput {
+		// Output as JSON array
+		data, err := json.MarshalIndent(sessions, "", "  ")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error marshaling sessions to JSON: %v\n", err)
+			return 1
+		}
+		fmt.Println(string(data))
+		return 0
+	}
+
+	// Output as table
+	if len(sessions) == 0 {
+		fmt.Println("No sessions found.")
+		return 0
+	}
+
+	fmt.Printf("%-20s  %-30s  %-10s  %-5s  %s\n", "SESSION_ID", "GOAL", "STATUS", "TURNS", "UPDATED")
+	fmt.Println(strings.Repeat("-", 80))
+	for _, s := range sessions {
+		goal := s.Goal
+		if len(goal) > 30 {
+			goal = goal[:27] + "..."
+		}
+		updated := s.UpdatedAt.Format("2006-01-02 15:04")
+		fmt.Printf("%-20s  %-30s  %-10s  %-5d  %s\n", s.SessionID, goal, s.Status, s.TurnsCompleted, updated)
+	}
+	return 0
+}
+
+func handleSessionShowCommand(args []string) int {
+	fs := pflag.NewFlagSet("mct-agent session show", pflag.ExitOnError)
+	jsonOutput := fs.Bool("json", false, "Output session as JSON object")
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: mct-agent session show <session-id> [flags]\n\n")
+		fmt.Fprintln(os.Stderr, "Flags:")
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 2
+	}
+
+	if fs.NArg() < 1 {
+		fmt.Fprintln(os.Stderr, "Error: session-id is required")
+		fs.Usage()
+		return 2
+	}
+
+	sessionID := fs.Arg(0)
+	state, err := session.LoadSessionState(sessionID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading session %s: %v\n", sessionID, err)
+		return 1
+	}
+
+	if *jsonOutput {
+		// Output as JSON object
+		data, err := json.MarshalIndent(state, "", "  ")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error marshaling session to JSON: %v\n", err)
+			return 1
+		}
+		fmt.Println(string(data))
+		return 0
+	}
+
+	// Output as key-value pairs
+	fmt.Printf("Session ID:      %s\n", state.SessionID)
+	fmt.Printf("Goal:            %s\n", state.Goal)
+	if state.OriginalPrompt != "" {
+		fmt.Printf("Original Prompt: %s\n", state.OriginalPrompt)
+	}
+	if state.TaskDescription != "" {
+		fmt.Printf("Task:            %s\n", state.TaskDescription)
+	}
+	fmt.Printf("Status:          %s\n", state.Status)
+	fmt.Printf("Turns Completed: %d\n", state.TurnsCompleted)
+	fmt.Printf("Updated:         %s\n", state.UpdatedAt.Format(time.RFC3339))
+	if len(state.MetaModes) > 0 {
+		fmt.Printf("Meta Modes:      %s\n", strings.Join(state.MetaModes, ", "))
+	}
+	if state.MetaInstructionDir != "" {
+		fmt.Printf("Meta Inst Dir:   %s\n", state.MetaInstructionDir)
+	}
+	if state.PlannerProgress != nil {
+		fmt.Printf("Planner Progress:\n")
+		fmt.Printf("  Applied Patches: %d\n", state.PlannerProgress.AppliedPatches)
+		if len(state.PlannerProgress.SuccessFiles) > 0 {
+			fmt.Printf("  Success Files:   %d files\n", len(state.PlannerProgress.SuccessFiles))
+		}
+	}
+	if state.SuspendedUserInput != nil {
+		fmt.Printf("Suspended Input:\n")
+		fmt.Printf("  Kind:     %s\n", state.SuspendedUserInput.Kind)
+		fmt.Printf("  Question: %s\n", state.SuspendedUserInput.Question)
+	}
+
+	return 0
+}
+
 func printUsage() {
-	fmt.Fprintln(os.Stderr, "Usage: mct-agent <command> [options]")
+	fmt.Fprintln(os.Stderr, "Usage: mct-agent <command> [flags]")
+	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Commands:")
-	fmt.Fprintln(os.Stderr, "  run    \"<issue or question>\" [flags]")
-	fmt.Fprintln(os.Stderr, "  sync   [--commit <hash>] [flags]")
-	fmt.Fprintln(os.Stderr, "  config check                  Validate configuration file")
+	fmt.Fprintln(os.Stderr, "  run      Run an agent session with a prompt")
+	fmt.Fprintln(os.Stderr, "  sync     Sync the internal README with current git state")
+	fmt.Fprintln(os.Stderr, "  session  Manage sessions (list, show)")
+	fmt.Fprintln(os.Stderr, "  config   Validate configuration")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Use 'mct-agent <command> --help' for more information about a command.")
 }
 
 func shortCommit(hash string) string {

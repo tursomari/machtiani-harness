@@ -22,6 +22,20 @@ const (
 	scratchDirName    = "tmp"
 )
 
+// SessionsRoot returns the root directory containing all session directories.
+// When invoked inside a git repository it returns the repo-scoped `.machtiani/sessions` path.
+// Otherwise it returns the global `$HOME/.machtiani/sessions` location.
+func SessionsRoot() (string, error) {
+	root, local, err := projectRoot()
+	if err != nil {
+		return "", err
+	}
+	if local {
+		return filepath.Join(root, machtianiRootDir, sessionsDirName), nil
+	}
+	return globalMachtianiPath(sessionsDirName)
+}
+
 // SessionDirectory resolves the root directory for a session-scoped run.
 // The caller must provide a non-empty session identifier.
 func SessionDirectory(sessionID string) (string, error) {
