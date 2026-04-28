@@ -242,3 +242,173 @@ func TestLoadSessionStateKeepsExistingConversationJSON(t *testing.T) {
 		t.Fatalf("expected on-disk conversation to be preserved, got %q", got)
 	}
 }
+
+func TestListSessionsEmpty(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+	// Change to temp dir to avoid git repo context
+	oldWd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldWd)
+
+	sessions, err := ListSessions()
+	if err != nil {
+		t.Fatalf("ListSessions returned error: %v", err)
+	}
+	if len(sessions) != 0 {
+		t.Fatalf("expected empty list, got %d sessions", len(sessions))
+	}
+}
+
+func TestListSessionsMultiple(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+	// Change to temp dir to avoid git repo context
+	oldWd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldWd)
+
+	// Create 3 sessions with different timestamps
+	sessionIDs := []string{}
+	for i := 0; i < 3; i++ {
+		sessionID := fmt.Sprintf("test-list-session-%d-%d", i, time.Now().UnixNano())
+		sessionIDs = append(sessionIDs, sessionID)
+
+		state := SessionState{
+			SessionID:      sessionID,
+			Goal:           fmt.Sprintf("Test goal %d", i),
+			Status:         "completed",
+			TurnsCompleted: i + 1,
+		}
+		if err := SaveSessionState(state); err != nil {
+			t.Fatalf("SaveSessionState %d: %v", i, err)
+		}
+		// Small delay to ensure different UpdatedAt timestamps
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// Cleanup
+	t.Cleanup(func() {
+		for _, id := range sessionIDs {
+			_ = RemoveSessionState(id)
+			dir, _ := artifacts.SessionDirectory(id)
+			_ = os.RemoveAll(dir)
+		}
+	})
+
+	sessions, err := ListSessions()
+	if err != nil {
+		t.Fatalf("ListSessions returned error: %v", err)
+	}
+	if len(sessions) != 3 {
+		t.Fatalf("expected 3 sessions, got %d", len(sessions))
+	}
+
+	// Verify sessions are sorted by UpdatedAt descending (most recent first)
+	for i := 0; i < len(sessions)-1; i++ {
+		if sessions[i].UpdatedAt.Before(sessions[i+1].UpdatedAt) {
+			t.Fatalf("sessions not sorted by UpdatedAt descending: session[%d].UpdatedAt (%s) < session[%d].UpdatedAt (%s)",
+				i, sessions[i].UpdatedAt, i+1, sessions[i+1].UpdatedAt)
+		}
+	}
+
+	// Verify all session IDs are present
+	sessionIDMap := make(map[string]bool)
+	for _, s := range sessions {
+		sessionIDMap[s.SessionID] = true
+		if s.Goal == "" {
+			t.Fatalf("session %s has empty goal", s.SessionID)
+		}
+	}
+	for _, id := range sessionIDs {
+		if !sessionIDMap[id] {
+			t.Fatalf("session ID %s not found in results", id)
+		}
+	}
+}
+
+func TestListSessionsSkipsCorrupt(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+	// Change to temp dir to avoid git repo context
+	oldWd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldWd)
+
+	// Create one good session
+	goodSessionID := fmt.Sprintf("test-good-session-%d", time.Now().UnixNano())
+	goodState := SessionState{
+		SessionID:      goodSessionID,
+		Goal:           "Good session",
+		Status:         "completed",
+		TurnsCompleted: 1,
+	}
+	if err := SaveSessionState(goodState); err != nil {
+		t.Fatalf("SaveSessionState good: %v", err)
+	}
+
+	// Create one corrupt session (invalid JSON)
+	corruptSessionID := fmt.Sprintf("test-corrupt-session-%d", time.Now().UnixNano())
+	corruptDir, err := artifacts.SessionDirectory(corruptSessionID)
+	if err != nil {
+		t.Fatalf("SessionDirectory corrupt: %v", err)
+	}
+	if err := os.MkdirAll(corruptDir, 0o755); err != nil {
+		t.Fatalf("mkdir corrupt dir: %v", err)
+	}
+	corruptPath := filepath.Join(corruptDir, sessionStateFile)
+	if err := os.WriteFile(corruptPath, []byte("invalid json{"), 0o644); err != nil {
+		t.Fatalf("write corrupt state: %v", err)
+	}
+
+	// Cleanup
+	t.Cleanup(func() {
+		_ = RemoveSessionState(goodSessionID)
+		goodDir, _ := artifacts.SessionDirectory(goodSessionID)
+		_ = os.RemoveAll(goodDir)
+		_ = os.RemoveAll(corruptDir)
+	})
+
+	sessions, err := ListSessions()
+	if err != nil {
+		t.Fatalf("ListSessions returned error: %v", err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("expected 1 good session, got %d", len(sessions))
+	}
+	if sessions[0].SessionID != goodSessionID {
+		t.Fatalf("expected good session ID %s, got %s", goodSessionID, sessions[0].SessionID)
+	}
+}
+
+func TestListSessionsSkipsInvalidDirs(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+	// Change to temp dir to avoid git repo context
+	oldWd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldWd)
+
+	// Create a directory without session-state.json
+	invalidSessionID := fmt.Sprintf("test-invalid-session-%d", time.Now().UnixNano())
+	invalidDir, err := artifacts.SessionDirectory(invalidSessionID)
+	if err != nil {
+		t.Fatalf("SessionDirectory invalid: %v", err)
+	}
+	if err := os.MkdirAll(invalidDir, 0o755); err != nil {
+		t.Fatalf("mkdir invalid dir: %v", err)
+	}
+
+	// Cleanup
+	t.Cleanup(func() {
+		_ = os.RemoveAll(invalidDir)
+	})
+
+	sessions, err := ListSessions()
+	if err != nil {
+		t.Fatalf("ListSessions returned error: %v", err)
+	}
+	if len(sessions) != 0 {
+		t.Fatalf("expected 0 sessions, got %d", len(sessions))
+	}
+}

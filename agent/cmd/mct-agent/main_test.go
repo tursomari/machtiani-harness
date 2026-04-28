@@ -94,7 +94,7 @@ func TestRunCommandSucceedsWhenReadmeTagPresent(t *testing.T) {
 
 	var exitCode int
 	stderr := captureStderr(t, func() {
-		exitCode = handleRunCommand([]string{"--t", "Investigate bug"})
+		exitCode = handleRunCommand([]string{"-t", "Investigate bug"})
 	})
 	if exitCode != 0 {
 		t.Fatalf("expected exit code 0, got %d", exitCode)
@@ -132,7 +132,7 @@ func TestRunCommandFailsWhenReadmeMissing(t *testing.T) {
 
 	var exitCode int
 	stderr := captureStderr(t, func() {
-		exitCode = handleRunCommand([]string{"--dry-run", "--t", "Document behavior"})
+		exitCode = handleRunCommand([]string{"--dry-run", "-t", "Document behavior"})
 	})
 	if exitCode != 1 {
 		t.Fatalf("expected exit code 1, got %d", exitCode)
@@ -171,7 +171,7 @@ func TestRunCommandFailsWhenRepoHasNoCommits(t *testing.T) {
 
 	var exitCode int
 	stderr := captureStderr(t, func() {
-		exitCode = handleRunCommand([]string{"--t", "Assess repo"})
+		exitCode = handleRunCommand([]string{"-t", "Assess repo"})
 	})
 	if exitCode != 1 {
 		t.Fatalf("expected exit code 1, got %d", exitCode)
@@ -202,7 +202,7 @@ func TestRunCommandPropagatesShellAgentFlag(t *testing.T) {
 		return session.Result{ExitCode: 0}
 	}
 
-	if exit := handleRunCommand([]string{"--shell-agent", "--t", "Investigate env drift"}); exit != 0 {
+	if exit := handleRunCommand([]string{"--shell-agent", "-t", "Investigate env drift"}); exit != 0 {
 		t.Fatalf("expected exit code 0, got %d", exit)
 	}
 
@@ -235,7 +235,7 @@ func TestRunCommandPropagatesShellAgentModel(t *testing.T) {
 		return session.Result{ExitCode: 0}
 	}
 
-	args := []string{"--shell-agent", "--shell-agent-model", "gpt-shell", "--t", "Diagnose drift"}
+	args := []string{"--shell-agent", "--shell-agent-model", "gpt-shell", "-t", "Diagnose drift"}
 	if exit := handleRunCommand(args); exit != 0 {
 		t.Fatalf("expected exit code 0, got %d", exit)
 	}
@@ -269,7 +269,7 @@ func TestRunCommandDefaultsToFileDiscoveryMode(t *testing.T) {
 		return session.Result{ExitCode: 0}
 	}
 
-	if exit := handleRunCommand([]string{"--t", "Audit service rollout"}); exit != 0 {
+	if exit := handleRunCommand([]string{"-t", "Audit service rollout"}); exit != 0 {
 		t.Fatalf("expected exit code 0, got %d", exit)
 	}
 

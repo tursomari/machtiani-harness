@@ -620,15 +620,20 @@ func handleSessionShowCommand(args []string) int {
 }
 
 func printUsage() {
-	fmt.Fprintln(os.Stderr, "Usage: mct-agent <command> [flags]")
-	fmt.Fprintln(os.Stderr, "")
-	fmt.Fprintln(os.Stderr, "Commands:")
-	fmt.Fprintln(os.Stderr, "  run      Run an agent session with a prompt")
-	fmt.Fprintln(os.Stderr, "  sync     Sync the internal README with current git state")
-	fmt.Fprintln(os.Stderr, "  session  Manage sessions (list, show)")
-	fmt.Fprintln(os.Stderr, "  config   Validate configuration")
-	fmt.Fprintln(os.Stderr, "")
-	fmt.Fprintln(os.Stderr, "Use 'mct-agent <command> --help' for more information about a command.")
+	fs := pflag.NewFlagSet("mct-agent", pflag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, "Usage: mct-agent <command> [flags]")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Commands:")
+		fmt.Fprintln(os.Stderr, "  run      Run an agent session with a prompt")
+		fmt.Fprintln(os.Stderr, "  sync     Sync the internal README with current git state")
+		fmt.Fprintln(os.Stderr, "  session  Manage sessions (list, show)")
+		fmt.Fprintln(os.Stderr, "  config   Validate configuration")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Use 'mct-agent <command> --help' for more information about a command.")
+	}
+	fs.Usage()
 }
 
 func shortCommit(hash string) string {

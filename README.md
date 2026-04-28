@@ -101,11 +101,13 @@ Run the installer from the repo root to build **mct-agent** into `~/.local/bin`:
 
 Prefer a different prefix? Supply `PREFIX=...` and add the resulting `bin` directory to PATH.
 
-Need the standalone CLIs? Append `--install-peripherals` to also build **mct**, **file-discovery**, **shell-agent**, and **patcher**:
+Need the standalone CLIs for development or debugging? Append `--install-peripherals` to also build **mct**, **file-discovery**, **shell-agent**, and **patcher**:
 
 ```
 ./scripts/install.sh --install-peripherals
 ```
+
+This is primarily for development workflows. Most users should use `mct-agent` directly.
 
 Prefer to see the full sequence? The commands below inline the default install (without metadata ldflags):
 
@@ -375,8 +377,11 @@ Startup cleanup also treats these paths differently:
 
 When investigating failures, treat `.machtiani/tmp/<session-id>/session.lock` and nearby runtime artifacts as protected evidence. Do not delete or mutate them unless you are intentionally testing cleanup or recovery behavior.
 
-## Optional: Standalone CLIs
-If you installed the peripherals (`./scripts/install.sh --install-peripherals`), you can continue using the individual tools. Example `mct` flows:
+## Internal Tools (Development/Debugging Only)
+
+These tools are used internally by `mct-agent` and are exposed for development or debugging purposes. Most users should use `mct-agent` directly.
+
+If you installed the peripherals (`./scripts/install.sh --install-peripherals`), you can use the individual tools. Example `mct` flows:
 
 ```
 # Inline question
