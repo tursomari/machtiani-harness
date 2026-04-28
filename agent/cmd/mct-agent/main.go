@@ -52,30 +52,88 @@ func main() {
 	os.Exit(run())
 }
 
-func run() int {
-	if len(os.Args) >= 2 {
-		switch os.Args[1] {
-		case "--version", "-version":
-			printVersion()
-			return 0
-		case "run":
-			return handleRunCommand(os.Args[2:])
-		case "sync":
-			return handleSyncCommand(os.Args[2:])
-		case "session":
-			return handleSessionCommand(os.Args[2:])
-		case "config":
-			return handleConfigCommand(os.Args[2:])
+type cliCommand struct {
+	name        string
+	description string
+	handler     func(args []string) int
+}
+
+var cliCommands = []cliCommand{
+	{name: "run", description: "Run an agent session with a prompt", handler: handleRunCommand},
+	{name: "sync", description: "Sync the internal README with current git state", handler: handleSyncCommand},
+	{name: "session", description: "Manage sessions (list, show)", handler: handleSessionCommand},
+	{name: "config", description: "Validate configuration", handler: handleConfigCommand},
+}
+
+func newTopLevelFlagSet() *pflag.FlagSet {
+	fs := pflag.NewFlagSet("mct-agent", pflag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	fs.Bool("version", false, "print build metadata and exit")
+	fs.BoolP("help", "h", false, "show usage information")
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, "Usage: mct-agent <command> [flags]")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Commands:")
+		for _, cmd := range cliCommands {
+			fmt.Fprintf(os.Stderr, "  %-10s %s\n", cmd.name, cmd.description)
 		}
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Flags:")
+		fs.PrintDefaults()
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Use 'mct-agent <command> --help' for more information about a command.")
+	}
+	return fs
+}
+
+func run() int {
+	// Handle -version (single-dash, Go convention) before pflag parsing.
+	// pflag does not treat -version as --version; it would try to
+	// interpret it as a shorthand chain.
+	if len(os.Args) >= 2 && os.Args[1] == "-version" {
+		printVersion()
+		return 0
 	}
 
-	printUsage()
+	// If the first argument looks like a subcommand (no leading dash),
+	// dispatch directly without top-level flag parsing so that flags like
+	// --help are handled by the subcommand's own FlagSet.
+	if len(os.Args) >= 2 && !strings.HasPrefix(os.Args[1], "-") {
+		subcmd := os.Args[1]
+		for _, cmd := range cliCommands {
+			if cmd.name == subcmd {
+				return cmd.handler(os.Args[2:])
+			}
+		}
+		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", subcmd)
+		printUsage()
+		return 2
+	}
+
+	// Parse top-level flags (--version, --help, -h).
+	fs := newTopLevelFlagSet()
+	if err := fs.Parse(os.Args[1:]); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 2
+	}
+
+	if v, _ := fs.GetBool("version"); v {
+		printVersion()
+		return 0
+	}
+	if h, _ := fs.GetBool("help"); h {
+		fs.Usage()
+		return 0
+	}
+
+	// No subcommand and no action flag — show usage.
+	fs.Usage()
 	return 2
 }
 
 func handleRunCommand(args []string) int {
 	cfg := session.Config{}
-	fs := pflag.NewFlagSet("mct-agent run", pflag.ExitOnError)
+	fs := pflag.NewFlagSet("mct-agent run", pflag.ContinueOnError)
 	var paramFlags multiString
 	var paramJSON multiString
 	var apiKeyFlags multiString
@@ -86,6 +144,9 @@ func handleRunCommand(args []string) int {
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, pflag.ErrHelp) {
+			return 0
+		}
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
@@ -284,7 +345,7 @@ func shortSHA(hash string, length int) string {
 
 func handleSyncCommand(args []string) int {
 	cfg := session.Config{}
-	fs := pflag.NewFlagSet("mct-agent sync", pflag.ExitOnError)
+	fs := pflag.NewFlagSet("mct-agent sync", pflag.ContinueOnError)
 	var paramFlags multiString
 	var paramJSON multiString
 	var apiKeyFlags multiString
@@ -296,6 +357,9 @@ func handleSyncCommand(args []string) int {
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, pflag.ErrHelp) {
+			return 0
+		}
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
@@ -383,7 +447,7 @@ func configureSessionFlags(fs *pflag.FlagSet, cfg *session.Config, paramFlags, p
 	fs.StringVar(&cfg.AgentModel, "agent-model", "", "Legacy planner model alias (deprecated; use --orch-model)")
 	fs.IntVar(&cfg.TimeoutPerTurn, "timeout-per-turn", 120, "per-turn timeout in seconds (set 0 for no timeout)")
 	fs.BoolVar(&cfg.DryRun, "dry-run", false, "print intended mct calls; don't execute")
-	fs.BoolVar(&cfg.Verbose, "verbose", false, "verbose agent logging")
+	fs.BoolVarP(&cfg.Verbose, "verbose", "v", false, "verbose agent logging")
 	fs.BoolVar(&cfg.PersistTmpData, "persist-tmp-data", false, "keep temporary data (worktrees, trajectories) after execution; startup orphan cleanup always runs")
 	fs.BoolVar(&cfg.ShellAgent, "shell-agent", false, "Enable shell-agent mode: invoke shell-agent subprocess binary for task execution")
 	fs.StringVar(&cfg.ShellAgentModel, "shell-agent-model", "", "Model alias override for shell-agent subprocesses (default: config)")
@@ -424,8 +488,11 @@ func configureSessionFlags(fs *pflag.FlagSet, cfg *session.Config, paramFlags, p
 	fs.MarkHidden("openai-model")
 }
 func handleConfigCommand(args []string) int {
-	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "Usage: mct-agent config check")
+	if len(args) < 1 || args[0] == "--help" || args[0] == "-h" {
+		fmt.Fprintln(os.Stderr, "Usage: mct-agent config <subcommand>")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Subcommands:")
+		fmt.Fprintln(os.Stderr, "  check    Validate configuration")
 		return 2
 	}
 	switch args[0] {
@@ -472,7 +539,7 @@ func handleConfigCheckCommand(args []string) int {
 }
 
 func handleSessionCommand(args []string) int {
-	if len(args) < 1 {
+	if len(args) < 1 || args[0] == "--help" || args[0] == "-h" {
 		fmt.Fprintln(os.Stderr, "Usage: mct-agent session <subcommand> [flags]")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Subcommands:")
@@ -500,7 +567,7 @@ func handleSessionCommand(args []string) int {
 }
 
 func handleSessionListCommand(args []string) int {
-	fs := pflag.NewFlagSet("mct-agent session list", pflag.ExitOnError)
+	fs := pflag.NewFlagSet("mct-agent session list", pflag.ContinueOnError)
 	jsonOutput := fs.Bool("json", false, "Output sessions as JSON array")
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: mct-agent session list [flags]\n\n")
@@ -508,6 +575,9 @@ func handleSessionListCommand(args []string) int {
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, pflag.ErrHelp) {
+			return 0
+		}
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
@@ -549,7 +619,7 @@ func handleSessionListCommand(args []string) int {
 }
 
 func handleSessionShowCommand(args []string) int {
-	fs := pflag.NewFlagSet("mct-agent session show", pflag.ExitOnError)
+	fs := pflag.NewFlagSet("mct-agent session show", pflag.ContinueOnError)
 	jsonOutput := fs.Bool("json", false, "Output session as JSON object")
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: mct-agent session show <session-id> [flags]\n\n")
@@ -557,6 +627,9 @@ func handleSessionShowCommand(args []string) int {
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, pflag.ErrHelp) {
+			return 0
+		}
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
@@ -620,19 +693,7 @@ func handleSessionShowCommand(args []string) int {
 }
 
 func printUsage() {
-	fs := pflag.NewFlagSet("mct-agent", pflag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "Usage: mct-agent <command> [flags]")
-		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "Commands:")
-		fmt.Fprintln(os.Stderr, "  run      Run an agent session with a prompt")
-		fmt.Fprintln(os.Stderr, "  sync     Sync the internal README with current git state")
-		fmt.Fprintln(os.Stderr, "  session  Manage sessions (list, show)")
-		fmt.Fprintln(os.Stderr, "  config   Validate configuration")
-		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "Use 'mct-agent <command> --help' for more information about a command.")
-	}
+	fs := newTopLevelFlagSet()
 	fs.Usage()
 }
 

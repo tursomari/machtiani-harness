@@ -478,8 +478,11 @@ func TestConfigCommandNoSubcommand(t *testing.T) {
 	if code != 2 {
 		t.Fatalf("expected exit 2, got %d", code)
 	}
-	if !strings.Contains(stderr, "Usage: mct-agent config check") {
+	if !strings.Contains(stderr, "Usage: mct-agent config") {
 		t.Fatalf("expected usage in stderr, got %q", stderr)
+	}
+	if !strings.Contains(stderr, "check") {
+		t.Fatalf("expected 'check' subcommand in stderr, got %q", stderr)
 	}
 }
 
@@ -494,7 +497,7 @@ func TestConfigCommandUnknownSubcommand(t *testing.T) {
 	if !strings.Contains(stderr, "Unknown config subcommand: unknown") {
 		t.Fatalf("expected unknown subcommand error in stderr, got %q", stderr)
 	}
-	if !strings.Contains(stderr, "Usage: mct-agent config check") {
+	if !strings.Contains(stderr, "Usage: mct-agent config") {
 		t.Fatalf("expected usage in stderr, got %q", stderr)
 	}
 }
@@ -505,6 +508,52 @@ func TestPrintUsageIncludesConfigCheck(t *testing.T) {
 	})
 	if !strings.Contains(stderr, "config") {
 		t.Fatalf("expected 'config' in usage output, got %q", stderr)
+	}
+}
+
+func TestPrintUsageIncludesTopLevelFlags(t *testing.T) {
+	stderr := captureStderr(t, func() {
+		printUsage()
+	})
+	if !strings.Contains(stderr, "--version") {
+		t.Fatalf("expected '--version' in usage output, got %q", stderr)
+	}
+	if !strings.Contains(stderr, "--help") {
+		t.Fatalf("expected '--help' in usage output, got %q", stderr)
+	}
+	if !strings.Contains(stderr, "Flags:") {
+		t.Fatalf("expected 'Flags:' section in usage output, got %q", stderr)
+	}
+}
+
+func TestPrintUsageIncludesAllSubcommands(t *testing.T) {
+	stderr := captureStderr(t, func() {
+		printUsage()
+	})
+	for _, name := range []string{"run", "sync", "session", "config"} {
+		if !strings.Contains(stderr, name) {
+			t.Fatalf("expected %q in usage output, got %q", name, stderr)
+		}
+	}
+}
+
+func TestTopLevelFlagSetHelpExitsZero(t *testing.T) {
+	fs := newTopLevelFlagSet()
+	if err := fs.Parse([]string{"--help"}); err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+	if h, _ := fs.GetBool("help"); !h {
+		t.Fatalf("expected help flag to be true")
+	}
+}
+
+func TestTopLevelFlagSetVersionFlag(t *testing.T) {
+	fs := newTopLevelFlagSet()
+	if err := fs.Parse([]string{"--version"}); err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+	if v, _ := fs.GetBool("version"); !v {
+		t.Fatalf("expected version flag to be true")
 	}
 }
 

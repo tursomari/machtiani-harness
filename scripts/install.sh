@@ -11,7 +11,9 @@ usage() {
 Usage: $(basename "$0") [--install-peripherals]
 
 Installs the mct-agent binary by default. Pass --install-peripherals to also
-build and install mct, file-discovery, snippet-discovery, shell-agent, and patcher.
+build and install mct, file-discovery, snippet-discovery, shell-agent, and
+patcher (for development and debugging only; most users should use mct-agent
+directly).
 Environment:
   PREFIX   Destination prefix for the install (default: \$HOME/.local)
 EOF
