@@ -1,0 +1,262 @@
+# Machtiani Configuration Example
+# Copy to .machtiani/config.toml or set MACHTIANI_CONFIG to this file's path.
+# Every section and field is documented below. Omit sections you don't need.
+#
+# VALIDATION GAPS:
+# The 'mct-agent config check' command validates only:
+#   - default_model is non-empty
+#   - default_model resolves to a key in [models]
+#
+# NOT validated (causes runtime errors if misconfigured):
+#   - Model 'provider' references an existing [providers] key
+#   - Provider 'base_url' is set and non-empty
+#   - Environment 'type' is a known value ("local" or "docker")
+#   - Meta-orchestrator 'instruction_file' paths exist on disk
+#   - Prompt template file paths are reachable
+#   - [environment] 'image' field is rejected at parse time
+#   - [[tasks]] arrays in meta-orchestrator TOML are rejected at parse time
+
+# ── Top-level ──────────────────────────────────────────────────────────────────
+
+# listen is an optional host:port for the local HTTP telemetry server.
+# Set to "" to disable. Default: "127.0.0.1:8042"
+listen = "127.0.0.1:8042"
+
+# default_model is the model alias used when --model is not specified.
+# This alias must exist under [models] below.
+default_model = "foo"
+
+# ── [model] ────────────────────────────────────────────────────────────────────
+# [LEGACY] Direct model overrides used by shell-agent and as fallback when aliases
+# are absent. Most users should define aliases under [models] instead.
+# This section is retained for backward compatibility but superseded by
+# [providers] + [models] pattern.
+
+[model]
+# model_name is the alias to resolve from [models].
+model_name = "foo"
+# api_key is optional; prefer provider-level keys or environment variables.
+api_key = ""
+
+# [model.model_kwargs] — additional keyword arguments forwarded to the model.
+# [model.model_kwargs]
+# temperature = 0.7
+
+# ── [planner] ──────────────────────────────────────────────────────────────────
+# Configuration for the orchestration planner.
+
+[planner]
+# step_limit is the default maximum number of orchestration turns.
+step_limit = 6
+# cost_limit caps the total spend per session (0 = unlimited).
+cost_limit = 0.0
+
+# Prompt templates (override defaults by setting any of these):
+# system_template = "You are the planning layer for the Machtiani shell agent."
+# instance_template = "Task: {{.Task}}"
+# timeout_template = "The operation timed out."
+# format_error_template = "Please respond with a natural-language description."
+# ask_prompt = "..."
+# plan_system_prompt = "..."
+# plan_prompt = "..."
+# plan_patch_rules = "..."
+# plan_patch_strict_rules = "..."
+# plan_patch_enabled_intro = "..."
+# plan_patch_disabled_intro = "..."
+# finalize_prompt = "..."
+# review_prompt = "..."
+
+# ── [shell-agent] ──────────────────────────────────────────────────────────────
+# Configuration for the shell-agent subprocess.
+# [LEGACY ALIAS] This section can also be named [agent] for backward compatibility.
+
+[shell-agent]
+# lightweight_max_attempts is retained for backward-compatible parsing only.
+lightweight_max_attempts = 3
+# step_limit caps the number of shell-agent steps per turn.
+step_limit = 10
+# cost_limit caps the total spend for shell-agent per session (0 = unlimited).
+cost_limit = 0.0
+# finalize_remaining_steps: when set, finalize after this many remaining steps.
+finalize_remaining_steps = 0
+
+# Prompt templates (override defaults):
+# system_template = "..."
+# instance_template = "..."
+# timeout_template = "..."
+# format_error_template = "..."
+# action_observation_template = "..."
+# lightweight_system_template = "..."
+# lightweight_intent_template = "..."
+# lightweight_error_template = "..."
+
+# ── [environment] ──────────────────────────────────────────────────────────────
+# Shell execution environment settings.
+
+[environment]
+# type: "local" (default) or "docker".
+type = "local"
+# timeout: per-command timeout in seconds.
+timeout = 30
+# cwd: working directory for subprocesses (default: ".").
+cwd = "."
+# internet_access is a capability hint for planner guardrails; not an escalation trigger.
+internet_access = true
+
+# [environment.env_vars] — extra environment variables for subprocesses.
+# [environment.env_vars]
+# FOO = "bar"
+
+# REJECTED FIELD: 'image' is no longer supported. Use dockerfile_path instead.
+# image = ""
+
+# dockerfile_path: path to a Dockerfile for non-local environments.
+# dockerfile_path = ""
+# runtime: container runtime (default: "docker").
+# runtime = "docker"
+# trajectory_dir: override directory for trajectory JSONL files.
+# trajectory_dir = ""
+# tmp_root: override directory for temporary session data.
+# tmp_root = ""
+
+# ── [ignore] ────────────────────────────────────────────────────────────────────
+# File filtering rules for the agent.
+
+[ignore]
+# paths: repo-relative paths to exclude from retrieval.
+paths = []
+# extensions: file extensions to exclude.
+extensions = []
+# git_synced_only: when true, only consider git-tracked files.
+git_synced_only = false
+
+# ── [workspace] ─────────────────────────────────────────────────────────────────
+# Snapshot hydration behavior for non-local environments.
+
+# [[workspace.git_hydration]]
+# root = "subdir/"
+# branches = ["main"]
+
+# [LEGACY] Flat array alternatives (used when git_hydration is empty):
+# git_hydration_roots = []
+# git_hydration_branches = []
+
+# ── [patcher] ───────────────────────────────────────────────────────────────────
+# Strategy for persisting sandbox edits back to the host repository.
+# NOTE: This section is defined in the Config struct but NOT loaded by parseConfig().
+# Values set here are currently ignored.
+
+[patcher]
+# strategy: "patch" (default) or "full_rewrite".
+strategy = "patch"
+
+# ── [providers] ─────────────────────────────────────────────────────────────────
+# Each provider defines an API endpoint. Models reference a provider by name.
+
+[providers.openrouter]
+base_url = "https://openrouter.ai/api/v1"
+# api_key: set directly or use ${ENV_VAR} references. Prefer environment variables
+# (OPENROUTER_API_KEY) or the --api-key CLI flag for secrets.
+api_key = "${OPENROUTER_API_KEY}"
+
+# [providers.openai]
+# base_url = "https://api.openai.com/v1"
+# api_key = "${OPENAI_API_KEY}"
+# endpoint = "/chat/completions"
+
+# [providers.custom]
+# base_url = "https://my-llm.example.com/v1"
+# api_key = "${CUSTOM_API_KEY}"
+# [providers.custom.headers]
+#   X-Custom-Header = "value"
+# [providers.custom.query]
+#   api-version = "2024-01-01"
+
+# ── [models] ────────────────────────────────────────────────────────────────────
+# Each model alias maps to a provider and an upstream model identifier.
+# Note: model 'provider' must reference a [providers] key (this is NOT validated by config check).
+
+[models.foo]
+provider = "openrouter"
+model    = "openai/gpt-5-nano"
+
+# Prompt caching (per model, optional):
+# [models.haiku]
+# provider = "openrouter"
+# model = "anthropic/claude-haiku-4.5"
+# cache_key_name = "cache_control"
+# cache_control = { type = "ephemeral" }
+# cache_trigger_threshold = 4096
+# cache_lookback_offset = 1
+#
+# Anchor rotation (optional, disabled when 0 or unset):
+# cache_reanchor_tokens = 4096
+# cache_reanchor_messages = 20
+# cache_reanchor_min_cached_tokens = 2048
+
+# Extra request parameters:
+# [models.foo.params]
+# temperature = 0.7
+# max_tokens = 4096
+
+# ── [meta-orchestrator] ─────────────────────────────────────────────────────────
+# Configuration for the meta-orchestrator that supervises multi-step work.
+# REJECTED: [[tasks]] arrays are not supported. Use flat single-task TOML schema.
+
+[meta-orchestrator]
+# instruction_dir: override directory for custom instructions.
+# instruction_dir = ".machtiani/meta-orchestrator/custom-instructions"
+
+# Per-mode instruction file overrides:
+# [meta-orchestrator.modes.code]
+# instruction_file = "code/tasks.toml"
+# [meta-orchestrator.modes.research]
+# instruction_file = "research/tasks.toml"
+
+# ── [prompts] ───────────────────────────────────────────────────────────────────
+# Override prompt templates. Each section mirrors the prompt types above.
+# Prefer editing files in .machtiani/meta-orchestrator/custom-instructions/
+# for task-specific changes. Only set these for global overrides.
+
+# [prompts.planner]
+# system_template = "..."
+# instance_template = "..."
+# (etc.)
+
+# [prompts.shell-agent]
+# system_template = "..."
+# instance_template = "..."
+# (etc.)
+
+# [prompts.file_discovery]
+# system_prompt_template = "..."
+
+# [prompts.mct]
+# shell_agent_context_prefix = "..."
+# shell_agent_prompt_notice = "..."
+# header_user_template = "..."
+# header_existing_template = "..."
+# conversation_history_template = "..."
+# readme_system_template = "..."
+# shell_agent_context_template = "..."
+# patch_success_note = "..."
+# full_diff_note = "..."
+
+# ── [debug] ─────────────────────────────────────────────────────────────────────
+# Optional debugging toggles.
+# NOTE: This section is defined in the Config struct but NOT loaded by parseConfig().
+# Values set here are currently ignored (Debug.LLMInputLogPath is consumed directly
+# from the Config struct in some code paths, but never populated by the config loader).
+
+# [debug]
+# llm_input_log_path = "/tmp/mct-llm-input.log"
+
+# ── Runtime dependencies ────────────────────────────────────────────────────────
+# The following tools must be on PATH for mct-agent to function:
+#   - git   (required for repo operations, README sync, and snapshots)
+#   - rg    (ripgrep; required for file-discovery)
+#   - sed   (used by shell-agent for inline edits)
+#   - bash  (required for install.sh and test harnesses)
+#   - go    (Go 1.23+; required for building from source)
+#
+# install.sh checks: go, git, rg (bash and sed are NOT checked at install time)
