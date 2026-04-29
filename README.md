@@ -428,6 +428,7 @@ See `agent/internal/patcher/README.md` for patch workflows and `agent/internal/f
 - `file-discovery` internals and flags: see `agent/internal/file-discovery/README.md`.
 - Agent specifics (flags, behavior): see `agent/README.md`.
 - If you installed the `mct` CLI, it falls back to a bundled `file-discovery` if it can’t find one on PATH and was built via `build.sh`.
+- **Ask categorization** — The planner's `no-shell`/`shell` categories shape the question, not the execution path. [`docs/adr/0001`](docs/adr/0001-ask-categorization-as-cognitive-scaffold.md)
 
 ## Integration Tests (mct-agent)
 See the [Testing](#testing) section above or `TESTING.md` for up-to-date commands, environment requirements, and artifact locations for `agent/tests/run-live.sh` and the undici regression harnesses.
