@@ -138,7 +138,7 @@ func TestTryStreamThenFallbackRetriesStreamAfterHTTP429(t *testing.T) {
 	}()
 
 	streamAttempts := 0
-	nonStreamAttempts := 0
+	probeAttempts := 0
 	streamingHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		streamAttempts++
 		if streamAttempts < 3 {
@@ -165,7 +165,22 @@ func TestTryStreamThenFallbackRetriesStreamAfterHTTP429(t *testing.T) {
 		}, nil
 	})}
 	http.DefaultClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		nonStreamAttempts++
+		body, _ := io.ReadAll(req.Body)
+		_ = req.Body.Close()
+		var payload struct {
+			Messages []Message `json:"messages"`
+		}
+		_ = json.Unmarshal(body, &payload)
+		isProbe := len(payload.Messages) == 1 && payload.Messages[0].Content == "."
+		if isProbe {
+			probeAttempts++
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(`{"choices":[{"message":{"content":"pong"}}]}`)),
+				Request:    req,
+			}, nil
+		}
 		t.Fatalf("unexpected non-stream fallback request: %s", req.URL.String())
 		return nil, nil
 	})
@@ -197,8 +212,8 @@ func TestTryStreamThenFallbackRetriesStreamAfterHTTP429(t *testing.T) {
 	if streamAttempts != 3 {
 		t.Fatalf("unexpected stream attempts: got %d want 3", streamAttempts)
 	}
-	if nonStreamAttempts != 0 {
-		t.Fatalf("unexpected non-stream attempts: got %d want 0", nonStreamAttempts)
+	if probeAttempts != 2 {
+		t.Fatalf("unexpected probe attempts: got %d want 2", probeAttempts)
 	}
 	if len(tokens) != 1 || tokens[0] != "done" {
 		t.Fatalf("unexpected streamed tokens: %v", tokens)
@@ -223,12 +238,10 @@ func TestTryStreamThenFallbackStopsRetryingStreamOnContextCancel(t *testing.T) {
 		if streamAttempts == 4 {
 			cancel()
 		}
-		header := make(http.Header)
-		header.Set("Retry-After", "0")
 		return &http.Response{
-			StatusCode: http.StatusTooManyRequests,
-			Header:     header,
-			Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"still rate limited"}}`)),
+			StatusCode: http.StatusServiceUnavailable,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"temporarily unavailable"}}`)),
 			Request:    req,
 		}, nil
 	})}
@@ -272,12 +285,10 @@ func TestExecuteOnceWithRetriesRetriesPastLegacyLimit(t *testing.T) {
 	http.DefaultClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		attempts++
 		if attempts < 6 {
-			header := make(http.Header)
-			header.Set("Retry-After", "0")
 			return &http.Response{
-				StatusCode: http.StatusTooManyRequests,
-				Header:     header,
-				Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"still limited"}}`)),
+				StatusCode: http.StatusServiceUnavailable,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"temporarily unavailable"}}`)),
 				Request:    req,
 			}, nil
 		}
@@ -401,6 +412,371 @@ func TestChatWithResolvedFallback_SwitchesOnHTTP400(t *testing.T) {
 	}
 }
 
+func TestExecuteOnceWithRetriesStopsAfterMaxRetries(t *testing.T) {
+	originalTransport := http.DefaultClient.Transport
+	defer func() { http.DefaultClient.Transport = originalTransport }()
+
+	fullAttempts := 0
+	probeAttempts := 0
+	http.DefaultClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body, _ := io.ReadAll(req.Body)
+		_ = req.Body.Close()
+		var payload struct {
+			Messages []Message `json:"messages"`
+		}
+		_ = json.Unmarshal(body, &payload)
+		isProbe := len(payload.Messages) == 1 && payload.Messages[0].Content == "."
+		if isProbe {
+			probeAttempts++
+			header := make(http.Header)
+			header.Set("Retry-After", "0")
+			return &http.Response{
+				StatusCode: http.StatusTooManyRequests,
+				Header:     header,
+				Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"probe rate limited"}}`)),
+				Request:    req,
+			}, nil
+		}
+		fullAttempts++
+		header := make(http.Header)
+		header.Set("Retry-After", "0")
+		return &http.Response{
+			StatusCode: http.StatusTooManyRequests,
+			Header:     header,
+			Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"rate limited"}}`)),
+			Request:    req,
+		}, nil
+	})
+
+	body, err := encodePayload(map[string]any{
+		"model":    "test-model",
+		"messages": []Message{{Role: "user", Content: "hi"}},
+	}, false)
+	if err != nil {
+		t.Fatalf("encode payload: %v", err)
+	}
+
+	model := ResolvedModel{Alias: "primary", BaseURL: "http://example.com", Endpoint: "/chat/completions", APIKey: "test", Model: "test-model"}
+	_, err = executeOnceWithRetries(context.Background(), model, body, llmAttemptMeta{})
+	if err == nil {
+		t.Fatalf("expected error after max retries, got nil")
+	}
+	if fullAttempts != 1 {
+		t.Fatalf("expected 1 full attempt, got %d", fullAttempts)
+	}
+	if probeAttempts != maxRetries {
+		t.Fatalf("expected %d probe attempts, got %d", maxRetries, probeAttempts)
+	}
+	if !strings.Contains(err.Error(), "rate-limit probe failed") {
+		t.Fatalf("expected rate-limit probe error, got: %v", err)
+	}
+}
+
+func TestExecuteOnceWithRetriesSucceedsBeforeMaxRetries(t *testing.T) {
+	originalTransport := http.DefaultClient.Transport
+	defer func() { http.DefaultClient.Transport = originalTransport }()
+
+	fullAttempts := 0
+	probeAttempts := 0
+	http.DefaultClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body, _ := io.ReadAll(req.Body)
+		_ = req.Body.Close()
+		var payload struct {
+			Messages []Message `json:"messages"`
+		}
+		_ = json.Unmarshal(body, &payload)
+		isProbe := len(payload.Messages) == 1 && payload.Messages[0].Content == "."
+		if isProbe {
+			probeAttempts++
+			if probeAttempts < 2 {
+				header := make(http.Header)
+				header.Set("Retry-After", "0")
+				return &http.Response{
+					StatusCode: http.StatusTooManyRequests,
+					Header:     header,
+					Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"probe rate limited"}}`)),
+					Request:    req,
+				}, nil
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(`{"choices":[{"message":{"content":"pong"}}]}`)),
+				Request:    req,
+			}, nil
+		}
+		fullAttempts++
+		if fullAttempts == 1 {
+			header := make(http.Header)
+			header.Set("Retry-After", "0")
+			return &http.Response{
+				StatusCode: http.StatusTooManyRequests,
+				Header:     header,
+				Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"rate limited"}}`)),
+				Request:    req,
+			}, nil
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"choices":[{"message":{"content":"success"}}]}`)),
+			Request:    req,
+		}, nil
+	})
+
+	body, err := encodePayload(map[string]any{
+		"model":    "test-model",
+		"messages": []Message{{Role: "user", Content: "hi"}},
+	}, false)
+	if err != nil {
+		t.Fatalf("encode payload: %v", err)
+	}
+
+	model := ResolvedModel{Alias: "primary", BaseURL: "http://example.com", Endpoint: "/chat/completions", APIKey: "test", Model: "test-model"}
+	got, err := executeOnceWithRetries(context.Background(), model, body, llmAttemptMeta{})
+	if err != nil {
+		t.Fatalf("executeOnceWithRetries error: %v", err)
+	}
+	if got != "success" {
+		t.Fatalf("unexpected result: %q", got)
+	}
+	if fullAttempts != 2 {
+		t.Fatalf("expected 2 full attempts, got %d", fullAttempts)
+	}
+	if probeAttempts != 2 {
+		t.Fatalf("expected 2 probe attempts, got %d", probeAttempts)
+	}
+}
+
+// TestTryStreamThenFallbackStopsAfterMaxRetries verifies that after the stream
+// retry loop exhausts maxRetries, the non-stream fallback is attempted.
+func TestTryStreamThenFallbackStopsAfterMaxRetries(t *testing.T) {
+	originalStreamClient := streamingHTTPClient
+	originalTransport := http.DefaultClient.Transport
+	defer func() {
+		streamingHTTPClient = originalStreamClient
+		http.DefaultClient.Transport = originalTransport
+	}()
+
+	streamAttempts := 0
+	fallbackAttempts := 0
+	streamBody, err := encodePayload(map[string]any{
+		"model":    "test-model",
+		"messages": []Message{{Role: "user", Content: "hi"}},
+	}, true)
+	if err != nil {
+		t.Fatalf("encode stream payload: %v", err)
+	}
+	nonStreamBody, err := encodePayload(map[string]any{
+		"model":    "test-model",
+		"messages": []Message{{Role: "user", Content: "hi"}},
+	}, false)
+	if err != nil {
+		t.Fatalf("encode non-stream payload: %v", err)
+	}
+
+	// Use 503 (retryable, non-429) so the stream loop exhausts maxRetries
+	// without triggering the probe path.
+	streamingHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		streamAttempts++
+		header := make(http.Header)
+		header.Set("Retry-After", "0")
+		return &http.Response{
+			StatusCode: http.StatusServiceUnavailable,
+			Header:     header,
+			Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"unavailable"}}`)),
+			Request:    req,
+		}, nil
+	})}
+	http.DefaultClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		fallbackAttempts++
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"choices":[{"message":{"content":"fallback success"}}]}`)),
+			Request:    req,
+		}, nil
+	})
+
+	model := ResolvedModel{Alias: "primary", BaseURL: "http://example.com", Endpoint: "/chat/completions", APIKey: "test", Model: "test-model"}
+	result, err := tryStreamThenFallback(context.Background(), model, streamBody, nonStreamBody, func(string) {})
+	if err != nil {
+		t.Fatalf("expected success via fallback, got error: %v", err)
+	}
+	if streamAttempts != maxRetries {
+		t.Fatalf("expected %d stream attempts, got %d", maxRetries, streamAttempts)
+	}
+	if fallbackAttempts != 1 {
+		t.Fatalf("expected 1 fallback attempt, got %d", fallbackAttempts)
+	}
+	if result != "fallback success" {
+		t.Fatalf("expected 'fallback success', got %q", result)
+	}
+}
+
+// TestTryStreamThenFallbackFallbackFailsAfterMaxRetries verifies that when
+// stream retries exhaust maxRetries and the non-stream fallback also fails,
+// the fallback error is returned.
+func TestTryStreamThenFallbackFallbackFailsAfterMaxRetries(t *testing.T) {
+	originalStreamClient := streamingHTTPClient
+	originalTransport := http.DefaultClient.Transport
+	defer func() {
+		streamingHTTPClient = originalStreamClient
+		http.DefaultClient.Transport = originalTransport
+	}()
+
+	streamAttempts := 0
+	fallbackAttempts := 0
+	streamBody, err := encodePayload(map[string]any{
+		"model":    "test-model",
+		"messages": []Message{{Role: "user", Content: "hi"}},
+	}, true)
+	if err != nil {
+		t.Fatalf("encode stream payload: %v", err)
+	}
+	nonStreamBody, err := encodePayload(map[string]any{
+		"model":    "test-model",
+		"messages": []Message{{Role: "user", Content: "hi"}},
+	}, false)
+	if err != nil {
+		t.Fatalf("encode non-stream payload: %v", err)
+	}
+
+	streamingHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		streamAttempts++
+		header := make(http.Header)
+		header.Set("Retry-After", "0")
+		return &http.Response{
+			StatusCode: http.StatusServiceUnavailable,
+			Header:     header,
+			Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"unavailable"}}`)),
+			Request:    req,
+		}, nil
+	})}
+	http.DefaultClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		fallbackAttempts++
+		return &http.Response{
+			StatusCode: http.StatusBadRequest,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"fallback failed"}}`)),
+			Request:    req,
+		}, nil
+	})
+
+	model := ResolvedModel{Alias: "primary", BaseURL: "http://example.com", Endpoint: "/chat/completions", APIKey: "test", Model: "test-model"}
+	_, err = tryStreamThenFallback(context.Background(), model, streamBody, nonStreamBody, func(string) {})
+	if err == nil {
+		t.Fatal("expected error when fallback also fails")
+	}
+	if streamAttempts != maxRetries {
+		t.Fatalf("expected %d stream attempts, got %d", maxRetries, streamAttempts)
+	}
+	if fallbackAttempts != 1 {
+		t.Fatalf("expected 1 fallback attempt, got %d", fallbackAttempts)
+	}
+	if !strings.Contains(err.Error(), "fallback failed") {
+		t.Fatalf("expected fallback error in message, got: %v", err)
+	}
+}
+
+// TestExecuteOnceWithRetriesMultiple429sWithProbes verifies that each full
+// request getting 429 triggers a probe cycle, but the full-request attempt
+// counter (not the probe counter) is what maxRetries bounds.
+func TestExecuteOnceWithRetriesMultiple429sWithProbes(t *testing.T) {
+	originalTransport := http.DefaultClient.Transport
+	defer func() { http.DefaultClient.Transport = originalTransport }()
+
+	fullReqCount := 0
+	probeReqCount := 0
+	http.DefaultClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body, _ := io.ReadAll(req.Body)
+		_ = req.Body.Close()
+		var payload struct {
+			Messages  []Message `json:"messages"`
+			MaxTokens int       `json:"max_tokens"`
+		}
+		_ = json.Unmarshal(body, &payload)
+		isProbe := payload.MaxTokens == 1 && len(payload.Messages) == 1 && payload.Messages[0].Content == "."
+		if isProbe {
+			probeReqCount++
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(`{"choices":[{"message":{"content":"pong"}}]}`)),
+				Request:    req,
+			}, nil
+		}
+		fullReqCount++
+		header := make(http.Header)
+		header.Set("Retry-After", "0")
+		return &http.Response{
+			StatusCode: http.StatusTooManyRequests,
+			Header:     header,
+			Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"rate limited"}}`)),
+			Request:    req,
+		}, nil
+	})
+
+	body, err := encodePayload(map[string]any{
+		"model":    "test-model",
+		"messages": []Message{{Role: "user", Content: "hello"}},
+	}, false)
+	if err != nil {
+		t.Fatalf("encode payload: %v", err)
+	}
+
+	model := ResolvedModel{Alias: "primary", BaseURL: "http://example.com", Endpoint: "/chat/completions", APIKey: "test", Model: "test-model"}
+	_, err = executeOnceWithRetries(context.Background(), model, body, llmAttemptMeta{})
+	if err == nil {
+		t.Fatal("expected error after exhausting retries")
+	}
+	// maxRetries bounds full requests. On attempts 1-9, a 429 triggers a probe.
+	// On attempt 10, the maxRetries check fires first (before the 429 probe),
+	// so no probe is sent on the final attempt.
+	if fullReqCount != maxRetries {
+		t.Fatalf("expected %d full requests, got %d", maxRetries, fullReqCount)
+	}
+	if probeReqCount != maxRetries-1 {
+		t.Fatalf("expected %d probe requests, got %d", maxRetries-1, probeReqCount)
+	}
+	if !strings.Contains(err.Error(), "retry limit exhausted") {
+		t.Fatalf("expected retry-exhausted error, got: %v", err)
+	}
+}
+
+func TestExecuteOnceWithRetriesDoesNotRetryOnNonRetryableError(t *testing.T) {
+	originalTransport := http.DefaultClient.Transport
+	defer func() { http.DefaultClient.Transport = originalTransport }()
+
+	attempts := 0
+	http.DefaultClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		attempts++
+		return &http.Response{
+			StatusCode: http.StatusBadRequest,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"bad request"}}`)),
+			Request:    req,
+		}, nil
+	})
+
+	body, err := encodePayload(map[string]any{
+		"model":    "test-model",
+		"messages": []Message{{Role: "user", Content: "hi"}},
+	}, false)
+	if err != nil {
+		t.Fatalf("encode payload: %v", err)
+	}
+
+	model := ResolvedModel{Alias: "primary", BaseURL: "http://example.com", Endpoint: "/chat/completions", APIKey: "test", Model: "test-model"}
+	_, err = executeOnceWithRetries(context.Background(), model, body, llmAttemptMeta{})
+	if err == nil {
+		t.Fatalf("expected error on non-retryable status, got nil")
+	}
+	if attempts != 1 {
+		t.Fatalf("expected 1 attempt for non-retryable error, got %d", attempts)
+	}
+}
+
 func TestChatRespectsAPIKeyOverridesFromContext(t *testing.T) {
 	ResetConfigForTesting()
 	t.Cleanup(ResetConfigForTesting)
@@ -438,5 +814,265 @@ model = "gpt-4"
 	}
 	if resp == "" {
 		t.Fatalf("expected stub response, got empty string")
+	}
+}
+
+func TestExecuteOnceWithRetriesProbesOn429ThenSucceeds(t *testing.T) {
+	originalTransport := http.DefaultClient.Transport
+	defer func() { http.DefaultClient.Transport = originalTransport }()
+
+	fullAttempts := 0
+	probeAttempts := 0
+	http.DefaultClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body, _ := io.ReadAll(req.Body)
+		_ = req.Body.Close()
+		var payload struct {
+			Messages []Message `json:"messages"`
+		}
+		_ = json.Unmarshal(body, &payload)
+		isProbe := len(payload.Messages) == 1 && payload.Messages[0].Content == "."
+		if isProbe {
+			probeAttempts++
+			if probeAttempts < 2 {
+				header := make(http.Header)
+				header.Set("Retry-After", "0")
+				return &http.Response{
+					StatusCode: http.StatusTooManyRequests,
+					Header:     header,
+					Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"probe rate limited"}}`)),
+					Request:    req,
+				}, nil
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(`{"choices":[{"message":{"content":"pong"}}]}`)),
+				Request:    req,
+			}, nil
+		}
+		fullAttempts++
+		if fullAttempts == 1 {
+			header := make(http.Header)
+			header.Set("Retry-After", "0")
+			return &http.Response{
+				StatusCode: http.StatusTooManyRequests,
+				Header:     header,
+				Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"rate limited"}}`)),
+				Request:    req,
+			}, nil
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"choices":[{"message":{"content":"success"}}]}`)),
+			Request:    req,
+		}, nil
+	})
+
+	body, err := encodePayload(map[string]any{
+		"model":    "test-model",
+		"messages": []Message{{Role: "user", Content: "hi"}},
+	}, false)
+	if err != nil {
+		t.Fatalf("encode payload: %v", err)
+	}
+
+	model := ResolvedModel{Alias: "primary", BaseURL: "http://example.com", Endpoint: "/chat/completions", APIKey: "test", Model: "test-model"}
+	got, err := executeOnceWithRetries(context.Background(), model, body, llmAttemptMeta{})
+	if err != nil {
+		t.Fatalf("executeOnceWithRetries error: %v", err)
+	}
+	if got != "success" {
+		t.Fatalf("unexpected result: %q", got)
+	}
+	if fullAttempts != 2 {
+		t.Fatalf("expected 2 full attempts (initial + post-probe), got %d", fullAttempts)
+	}
+	if probeAttempts != 2 {
+		t.Fatalf("expected 2 probe attempts, got %d", probeAttempts)
+	}
+}
+
+func TestExecuteOnceWithRetriesProbeUsesMinimalBody(t *testing.T) {
+	originalTransport := http.DefaultClient.Transport
+	defer func() { http.DefaultClient.Transport = originalTransport }()
+
+	var probeBody []byte
+	attempts := 0
+	http.DefaultClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body, _ := io.ReadAll(req.Body)
+		_ = req.Body.Close()
+		var payload struct {
+			Messages []Message `json:"messages"`
+		}
+		_ = json.Unmarshal(body, &payload)
+		isProbe := len(payload.Messages) == 1 && payload.Messages[0].Content == "."
+		if isProbe {
+			probeBody = body
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(`{"choices":[{"message":{"content":"pong"}}]}`)),
+				Request:    req,
+			}, nil
+		}
+		attempts++
+		if attempts == 1 {
+			header := make(http.Header)
+			header.Set("Retry-After", "0")
+			return &http.Response{
+				StatusCode: http.StatusTooManyRequests,
+				Header:     header,
+				Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"rate limited"}}`)),
+				Request:    req,
+			}, nil
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"choices":[{"message":{"content":"success"}}]}`)),
+			Request:    req,
+		}, nil
+	})
+
+	body, err := encodePayload(map[string]any{
+		"model":    "test-model",
+		"messages": []Message{{Role: "user", Content: "a much longer message that would be expensive to send repeatedly"}},
+	}, false)
+	if err != nil {
+		t.Fatalf("encode payload: %v", err)
+	}
+
+	model := ResolvedModel{Alias: "primary", BaseURL: "http://example.com", Endpoint: "/chat/completions", APIKey: "test", Model: "test-model"}
+	_, err = executeOnceWithRetries(context.Background(), model, body, llmAttemptMeta{})
+	if err != nil {
+		t.Fatalf("executeOnceWithRetries error: %v", err)
+	}
+	if probeBody == nil {
+		t.Fatalf("expected probe request to be captured")
+	}
+	if len(probeBody) >= len(body) {
+		t.Fatalf("probe body (%d bytes) should be smaller than full body (%d bytes)", len(probeBody), len(body))
+	}
+}
+
+// TestExecuteOnceWithRetriesExhaustsOnNon429Retryable verifies that a
+// retryable non-429 error (e.g. HTTP 503) exhausts maxRetries and hard-fails.
+func TestExecuteOnceWithRetriesExhaustsOnNon429Retryable(t *testing.T) {
+	originalTransport := http.DefaultClient.Transport
+	defer func() { http.DefaultClient.Transport = originalTransport }()
+
+	attempts := 0
+	http.DefaultClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		attempts++
+		header := make(http.Header)
+		header.Set("Retry-After", "0")
+		return &http.Response{
+			StatusCode: http.StatusServiceUnavailable,
+			Header:     header,
+			Body:       io.NopCloser(strings.NewReader(`{"error":"unavailable"}`)),
+			Request:    req,
+		}, nil
+	})
+
+	body, err := encodePayload(map[string]any{
+		"model":    "test-model",
+		"messages": []Message{{Role: "user", Content: "hello"}},
+	}, false)
+	if err != nil {
+		t.Fatalf("encode payload: %v", err)
+	}
+
+	model := ResolvedModel{Alias: "primary", BaseURL: "http://example.com", Endpoint: "/chat/completions", APIKey: "test", Model: "test-model"}
+	_, err = executeOnceWithRetries(context.Background(), model, body, llmAttemptMeta{})
+	if err == nil {
+		t.Fatal("expected error after exhausting retries")
+	}
+	if attempts != maxRetries {
+		t.Fatalf("expected %d attempts, got %d", maxRetries, attempts)
+	}
+	if !strings.Contains(err.Error(), "retry limit exhausted") {
+		t.Fatalf("expected retry-exhausted error, got: %v", err)
+	}
+}
+
+// TestExecuteOnceWithRetriesDoesNotProbeOnNon429 verifies that a retryable
+// non-429 error (e.g. HTTP 503) does NOT trigger the probe path.
+func TestExecuteOnceWithRetriesDoesNotProbeOnNon429(t *testing.T) {
+	originalTransport := http.DefaultClient.Transport
+	defer func() { http.DefaultClient.Transport = originalTransport }()
+
+	fullReqCount := 0
+	probeReqCount := 0
+	http.DefaultClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body, _ := io.ReadAll(req.Body)
+		if strings.Contains(string(body), `"max_tokens":1`) {
+			probeReqCount++
+		} else {
+			fullReqCount++
+		}
+		header := make(http.Header)
+		header.Set("Retry-After", "0")
+		return &http.Response{
+			StatusCode: http.StatusServiceUnavailable,
+			Header:     header,
+			Body:       io.NopCloser(strings.NewReader(`{"error":"unavailable"}`)),
+			Request:    req,
+		}, nil
+	})
+
+	body, err := encodePayload(map[string]any{
+		"model":    "test-model",
+		"messages": []Message{{Role: "user", Content: "hello"}},
+	}, false)
+	if err != nil {
+		t.Fatalf("encode payload: %v", err)
+	}
+
+	model := ResolvedModel{Alias: "primary", BaseURL: "http://example.com", Endpoint: "/chat/completions", APIKey: "test", Model: "test-model"}
+	_, err = executeOnceWithRetries(context.Background(), model, body, llmAttemptMeta{})
+	if err == nil {
+		t.Fatal("expected error after exhausting retries")
+	}
+	if probeReqCount != 0 {
+		t.Fatalf("expected 0 probe requests for non-429 error, got %d", probeReqCount)
+	}
+	if fullReqCount != maxRetries {
+		t.Fatalf("expected %d full requests, got %d", maxRetries, fullReqCount)
+	}
+}
+
+// TestProbeUntilReadyTimesOut verifies that probeUntilReady returns a timeout
+// error when the server never returns 200.
+func TestProbeUntilReadyTimesOut(t *testing.T) {
+	originalTransport := http.DefaultClient.Transport
+	defer func() { http.DefaultClient.Transport = originalTransport }()
+
+	// Override probe timeout to a short duration for testing.
+	originalProbeTimeout := probeTimeoutOverride
+	probeTimeoutOverride = 50 * time.Millisecond
+	defer func() { probeTimeoutOverride = originalProbeTimeout }()
+
+	attempts := 0
+	http.DefaultClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		attempts++
+		return &http.Response{
+			StatusCode: http.StatusTooManyRequests,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"error":"rate limited"}`)),
+			Request:    req,
+		}, nil
+	})
+
+	model := ResolvedModel{Alias: "primary", BaseURL: "http://example.com", Endpoint: "/chat/completions", APIKey: "test", Model: "test-model"}
+	err := probeUntilReady(context.Background(), model)
+	if err == nil {
+		t.Fatal("expected timeout error from probeUntilReady")
+	}
+	if !strings.Contains(err.Error(), "probe timed out") && !strings.Contains(err.Error(), "context deadline exceeded") {
+		t.Fatalf("expected timeout-related error, got: %v", err)
+	}
+	if attempts < 1 {
+		t.Fatalf("expected at least 1 probe attempt, got %d", attempts)
 	}
 }

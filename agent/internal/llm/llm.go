@@ -42,6 +42,8 @@ const (
 	nonStreamRetryInitialBackoff       = 1 * time.Second
 	nonStreamRetryMaxBackoff           = 30 * time.Second
 	retryAfterCap                      = 15 * time.Second
+	maxRetries                         = 10 // hard ceiling for LLM retry loops
+	probeTimeout                       = 10 * time.Minute
 	llmInputLogEnv                     = "MCT_LLM_INPUT_LOG" // optional debug log file path for full LLM request inputs
 	llmStageEnv                        = "MCT_LLM_STAGE"     // optional stage label for LLM calls (planner/shell-agent/etc)
 	CacheAnchorMarkerText              = "[cache anchor]"
@@ -52,6 +54,9 @@ const (
 	CacheAnchorTokensMetadataKey       = "anchor_tokens"
 	CacheAnchorCachedTokensMetadataKey = "anchor_cached_tokens"
 )
+
+// probeTimeoutOverride allows tests to override the default probeTimeout.
+var probeTimeoutOverride time.Duration
 
 func stageFromContext(ctx context.Context) string {
 	if ctx == nil {
@@ -1298,6 +1303,19 @@ func tryStreamThenFallback(ctx context.Context, model ResolvedModel, streamBody,
 		attemptErr = err
 		fallbackCtx = attemptCtx
 		if !emitted && shouldRetry(err) {
+			if attempt >= maxRetries {
+				break
+			}
+			// For rate-limit errors, probe with a minimal request to avoid
+			// burning full conversation tokens while waiting.
+			if isRateLimitError(err) {
+				emitRetryEvent(attemptCtx, model, attempt, 0, err, streamMeta)
+				if probeErr := probeUntilReady(attemptCtx, model); probeErr != nil {
+					return "", fmt.Errorf("rate-limit probe failed: %w", probeErr)
+				}
+				// Probe succeeded; retry the full stream request immediately.
+				continue
+			}
 			wait := retryDelay(err, nonStreamRetryBackoff(attempt))
 			emitRetryEvent(attemptCtx, model, attempt, wait, err, streamMeta)
 			if wait > 0 {
@@ -1347,6 +1365,78 @@ func executeStream(ctx context.Context, model ResolvedModel, body []byte, onToke
 	return performStream(req, onToken)
 }
 
+// probeModel sends a minimal request to the model to check if it's available.
+// It's used to avoid burning full conversation tokens during 429 rate-limit retries.
+func probeModel(ctx context.Context, model ResolvedModel) error {
+	probePayload := map[string]any{
+		"model":    model.Model,
+		"messages": []Message{{Role: "user", Content: "."}},
+		"max_tokens": 1,
+	}
+	body, err := json.Marshal(probePayload)
+	if err != nil {
+		return err
+	}
+	req, err := buildRequest(ctx, model, body)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return &UnreachableHostError{URL: req.URL.String(), Err: err}
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		return &HTTPResponseError{URL: req.URL.String(), Status: resp.StatusCode, Body: strings.TrimSpace(string(b)), Header: resp.Header.Clone()}
+	}
+	return nil
+}
+
+func isRateLimitError(err error) bool {
+	var httpErr *HTTPResponseError
+	if errors.As(err, &httpErr) {
+		return httpErr.Status == http.StatusTooManyRequests
+	}
+	return false
+}
+
+// probeUntilReady loops with a small delay, sending minimal probe requests,
+// until the model returns 200 or the probe timeout expires.
+func probeUntilReady(ctx context.Context, model ResolvedModel) error {
+	timeout := probeTimeout
+	if probeTimeoutOverride > 0 {
+		timeout = probeTimeoutOverride
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	for attempt := 1; ; attempt++ {
+		if err := probeCtx.Err(); err != nil {
+			return fmt.Errorf("probe timed out after %v: %w", timeout, err)
+		}
+		err := probeModel(probeCtx, model)
+		if err == nil {
+			return nil
+		}
+		if !shouldRetry(err) {
+			return fmt.Errorf("probe failed with non-retryable error: %w", err)
+		}
+		if attempt >= maxRetries {
+			return fmt.Errorf("probe retry limit exhausted after %d attempts: %w", maxRetries, err)
+		}
+		wait := retryDelay(err, nonStreamRetryBackoff(attempt))
+		if wait > 0 {
+			timer := time.NewTimer(wait)
+			select {
+			case <-probeCtx.Done():
+				timer.Stop()
+				return fmt.Errorf("probe timed out after %v: %w", timeout, probeCtx.Err())
+			case <-timer.C:
+			}
+		}
+	}
+}
+
 func executeOnceWithRetries(ctx context.Context, model ResolvedModel, body []byte, meta llmAttemptMeta) (string, error) {
 	var lastErr error
 	for attempt := 1; ; attempt++ {
@@ -1379,6 +1469,19 @@ func executeOnceWithRetries(ctx context.Context, model ResolvedModel, body []byt
 		if !retryable {
 			break
 		}
+		if attempt >= maxRetries {
+			break
+		}
+		// For rate-limit errors, probe with a minimal request to avoid
+		// burning full conversation tokens while waiting.
+		if isRateLimitError(err) {
+			emitRetryEvent(attemptCtx, model, attempt, 0, err, attemptMeta)
+			if probeErr := probeUntilReady(attemptCtx, model); probeErr != nil {
+				return "", fmt.Errorf("rate-limit probe failed: %w", probeErr)
+			}
+			// Probe succeeded; retry the full request immediately.
+			continue
+		}
 		wait := retryDelay(err, nonStreamRetryBackoff(attempt))
 		emitRetryEvent(attemptCtx, model, attempt, wait, err, attemptMeta)
 		if wait > 0 {
@@ -1392,7 +1495,7 @@ func executeOnceWithRetries(ctx context.Context, model ResolvedModel, body []byt
 		}
 	}
 	if lastErr != nil {
-		return "", lastErr
+		return "", fmt.Errorf("retry limit exhausted after %d attempts: %w", maxRetries, lastErr)
 	}
 	return "", errors.New("non-stream request failed without a retryable error")
 }
