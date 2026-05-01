@@ -692,6 +692,10 @@ func runSession(ctx context.Context, opts Options) Result {
 	}
 	tr := transcriptSetup.transcript
 	defer tr.Close()
+
+	// Inject verbose flag and transcript into context for cache warning diagnostics.
+	rootCtx = llm.WithVerbose(rootCtx, cfg.verbose)
+	rootCtx = llm.WithTranscript(rootCtx, tr)
 	_ = transcriptSetup.recorder // recorder is accessed via runState.recorder
 	defer func() {
 		runState.persistSessionState()

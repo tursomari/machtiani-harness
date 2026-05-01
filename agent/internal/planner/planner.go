@@ -340,7 +340,7 @@ func (c *Client) Plan(ctx context.Context, conv *conversation.Conversation, goal
 		promptLog = strings.TrimSpace(prompt)
 		messages = []llm.Message{messageWithEstimatedTokens("user", promptLog)}
 	} else {
-		messages = c.buildPlanMessages(conv, goal, step, maxSteps, patchPlan)
+		messages = c.buildPlanMessages(ctx, conv, goal, step, maxSteps, patchPlan)
 		promptLog = renderMessagesForLogging(messages)
 	}
 	c.logTokenEstimate(messages)
@@ -776,7 +776,7 @@ func chatPlannerTaskJSONWithFormatRetry[T any](c *Client, ctx context.Context, c
 	if formatPrompt == "" {
 		return zero, err
 	}
-	retryMessages := c.buildPlannerTaskMessages(conv, goal, step, maxSteps, nil, finalUserPrompt)
+	retryMessages := c.buildPlannerTaskMessages(ctx, conv, goal, step, maxSteps, nil, finalUserPrompt)
 	retryMessages = append(retryMessages, messageWithEstimatedTokens("user", formatPrompt))
 	c.logTokenEstimate(retryMessages)
 	chatCtx := ctx
@@ -795,29 +795,29 @@ func chatPlannerTaskJSONWithFormatRetry[T any](c *Client, ctx context.Context, c
 	return parse(retryResp)
 }
 
-func (c *Client) buildPlanMessages(conv *conversation.Conversation, goal string, step, maxSteps int, patchPlan *PatchPlan) []llm.Message {
+func (c *Client) buildPlanMessages(ctx context.Context, conv *conversation.Conversation, goal string, step, maxSteps int, patchPlan *PatchPlan) []llm.Message {
 	finalUserPrompt := c.planPrompt(conv, strings.TrimSpace(goal), "", step, maxSteps, patchPlan)
-	return c.buildPlannerTaskMessages(conv, strings.TrimSpace(goal), step, maxSteps, patchPlan, finalUserPrompt)
+	return c.buildPlannerTaskMessages(ctx, conv, strings.TrimSpace(goal), step, maxSteps, patchPlan, finalUserPrompt)
 }
 
-func (c *Client) buildFinalizeMessages(conv *conversation.Conversation, goal string) []llm.Message {
+func (c *Client) buildFinalizeMessages(ctx context.Context, conv *conversation.Conversation, goal string) []llm.Message {
 	finalUserPrompt := c.finalizePrompt(strings.TrimSpace(goal), "")
-	return c.buildPlannerTaskMessages(conv, strings.TrimSpace(goal), 0, 0, nil, finalUserPrompt)
+	return c.buildPlannerTaskMessages(ctx, conv, strings.TrimSpace(goal), 0, 0, nil, finalUserPrompt)
 }
 
-func (c *Client) buildPlannerTaskMessages(conv *conversation.Conversation, goal string, step, maxSteps int, patchPlan *PatchPlan, finalUserPrompt string) []llm.Message {
+func (c *Client) buildPlannerTaskMessages(ctx context.Context, conv *conversation.Conversation, goal string, step, maxSteps int, patchPlan *PatchPlan, finalUserPrompt string) []llm.Message {
 	systemPrompt := strings.TrimSpace(c.planSystemPrompt(conv, strings.TrimSpace(goal), step, maxSteps, patchPlan))
 	messages := conv.ToChatMessages(systemPrompt)
 	finalMessage := messageWithEstimatedTokens("user", strings.TrimSpace(finalUserPrompt))
 	messages = append(messages, finalMessage)
-	return c.ensurePlanCacheAnchor(conv, systemPrompt, finalMessage, messages, step)
+	return c.ensurePlanCacheAnchor(ctx, conv, systemPrompt, finalMessage, messages, step)
 }
 
 func (c *Client) chatPlannerTask(ctx context.Context, conv *conversation.Conversation, goal string, step, maxSteps int, patchPlan *PatchPlan, finalUserPrompt string) (string, error) {
 	if conv == nil {
 		return c.chat(ctx, finalUserPrompt)
 	}
-	messages := c.buildPlannerTaskMessages(conv, goal, step, maxSteps, patchPlan, finalUserPrompt)
+	messages := c.buildPlannerTaskMessages(ctx, conv, goal, step, maxSteps, patchPlan, finalUserPrompt)
 	c.logTokenEstimate(messages)
 	chatCtx := ctx
 	var usageTracker *cacheUsageTracker
@@ -835,7 +835,7 @@ func (c *Client) chatPlannerTask(ctx context.Context, conv *conversation.Convers
 	return resp, nil
 }
 
-func (c *Client) ensurePlanCacheAnchor(conv *conversation.Conversation, systemPrompt string, stepMessage llm.Message, messages []llm.Message, step int) []llm.Message {
+func (c *Client) ensurePlanCacheAnchor(ctx context.Context, conv *conversation.Conversation, systemPrompt string, stepMessage llm.Message, messages []llm.Message, step int) []llm.Message {
 	if conv == nil {
 		return messages
 	}
@@ -852,10 +852,11 @@ func (c *Client) ensurePlanCacheAnchor(conv *conversation.Conversation, systemPr
 		anchorTokens := estimatePlanTokens(messages)
 		conv.InsertMessageAt(insertIndex, "user", llm.CacheAnchorMarkerText, newCacheAnchorMetadata(conv, step, anchorTokens))
 		refreshed := conv.ToChatMessages(systemPrompt)
+		stampInsertionPrefixHash(conv, refreshed)
 		refreshed = append(refreshed, stepMessage)
 		return refreshed
 	}
-	if !shouldRotateCacheAnchor(c.cfg.Model, conv.Messages[anchorIndex].Metadata, messages) {
+	if !shouldRotateCacheAnchor(ctx, c.cfg.Model, conv.Messages[anchorIndex].Metadata, messages) {
 		return messages
 	}
 	markCacheAnchorRetired(conv, anchorIndex)
@@ -863,12 +864,45 @@ func (c *Client) ensurePlanCacheAnchor(conv *conversation.Conversation, systemPr
 	anchorTokens := estimatePlanTokens(messages)
 	conv.InsertMessageAt(insertIndex, "user", llm.CacheAnchorMarkerText, newCacheAnchorMetadata(conv, step, anchorTokens))
 	refreshed := conv.ToChatMessages(systemPrompt)
+	stampInsertionPrefixHash(conv, refreshed)
 	refreshed = append(refreshed, stepMessage)
 	return refreshed
 }
 
 func cacheControlEnabled(model llm.ResolvedModel) bool {
 	return strings.TrimSpace(model.CacheKeyName) != "" && model.CacheTriggerThreshold > 0 && len(model.CacheControl) > 0
+}
+
+// stampInsertionPrefixHash computes the insertion-time cache prefix hash for the
+// most recently inserted anchor and stores it in the anchor's metadata within conv.
+func stampInsertionPrefixHash(conv *conversation.Conversation, messages []llm.Message) {
+	if conv == nil || len(messages) == 0 {
+		return
+	}
+	anchorIndex := cacheAnchorMessageIndex(messages)
+	if anchorIndex < 0 {
+		return
+	}
+	hash := llm.CachePrefixHash(llm.FormatMessagesForHashing(messages), anchorIndex)
+	if hash == "" {
+		return
+	}
+	// Find and update the anchor in conv.
+	for i := len(conv.Messages) - 1; i >= 0; i-- {
+		msg := conv.Messages[i]
+		if !isCacheAnchorMessage(msg.Metadata) {
+			continue
+		}
+		if cacheAnchorRetired(msg.Metadata) {
+			continue
+		}
+		if msg.Metadata == nil {
+			msg.Metadata = map[string]any{}
+		}
+		msg.Metadata[llm.CacheAnchorInsertionPrefixHashMetadataKey] = hash
+		conv.Messages[i] = msg
+		return
+	}
 }
 
 func activeCacheAnchorIndex(conv *conversation.Conversation) int {
@@ -920,7 +954,7 @@ func cacheAnchorRetired(metadata map[string]any) bool {
 	return false
 }
 
-func shouldRotateCacheAnchor(model llm.ResolvedModel, anchorMetadata map[string]any, messages []llm.Message) bool {
+func shouldRotateCacheAnchor(ctx context.Context, model llm.ResolvedModel, anchorMetadata map[string]any, messages []llm.Message) bool {
 	if model.CacheReanchorTokens <= 0 && model.CacheReanchorMessages <= 0 {
 		return false
 	}
@@ -934,6 +968,16 @@ func shouldRotateCacheAnchor(model llm.ResolvedModel, anchorMetadata map[string]
 			if cacheReanchorMinSatisfied(anchorMetadata, model.CacheReanchorMinCachedTokens) {
 				return true
 			}
+			// Rotation blocked: token threshold exceeded but min cached tokens not met.
+			if model.CacheReanchorMinCachedTokens > 0 {
+				llm.EmitCacheWarning(ctx, "rotation_blocked", map[string]any{
+					"anchor_sequence":     anchorSeqFromMetadata(anchorMetadata),
+					"tokens_since_anchor": tokensSince,
+					"min_cached_tokens":   model.CacheReanchorMinCachedTokens,
+					"anchor_cached":       anchorCachedTokens(anchorMetadata),
+					"reanchor_threshold":  model.CacheReanchorTokens,
+				})
+			}
 		}
 	}
 	if model.CacheReanchorMessages > 0 {
@@ -941,6 +985,16 @@ func shouldRotateCacheAnchor(model llm.ResolvedModel, anchorMetadata map[string]
 		if messagesSince >= model.CacheReanchorMessages {
 			if cacheReanchorMinSatisfied(anchorMetadata, model.CacheReanchorMinCachedTokens) {
 				return true
+			}
+			// Rotation blocked: message threshold exceeded but min cached tokens not met.
+			if model.CacheReanchorMinCachedTokens > 0 {
+				llm.EmitCacheWarning(ctx, "rotation_blocked", map[string]any{
+					"anchor_sequence":       anchorSeqFromMetadata(anchorMetadata),
+					"messages_since_anchor": messagesSince,
+					"min_cached_tokens":     model.CacheReanchorMinCachedTokens,
+					"anchor_cached":         anchorCachedTokens(anchorMetadata),
+					"reanchor_messages":     model.CacheReanchorMessages,
+				})
 			}
 		}
 	}
@@ -998,6 +1052,27 @@ func anchorCachedTokens(metadata map[string]any) int {
 		return 0
 	}
 	if raw, ok := metadata[llm.CacheAnchorCachedTokensMetadataKey]; ok {
+		switch v := raw.(type) {
+		case int:
+			return v
+		case int64:
+			return int(v)
+		case float64:
+			return int(v)
+		case string:
+			if parsed, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+				return parsed
+			}
+		}
+	}
+	return 0
+}
+
+func anchorSeqFromMetadata(metadata map[string]any) int {
+	if metadata == nil {
+		return 0
+	}
+	if raw, ok := metadata[llm.CacheAnchorSequenceMetadataKey]; ok {
 		switch v := raw.(type) {
 		case int:
 			return v
@@ -1212,7 +1287,7 @@ func (c *Client) Finalize(ctx context.Context, conv *conversation.Conversation, 
 	if conv == nil {
 		return "", errors.New("planner: conversation is required")
 	}
-	messages := c.buildFinalizeMessages(conv, goal)
+	messages := c.buildFinalizeMessages(ctx, conv, goal)
 	promptLog := renderMessagesForLogging(messages)
 	c.logTokenEstimate(messages)
 	w, hasWriter := trajectory.FromContext(ctx)

@@ -1448,10 +1448,10 @@ func TestPlannerHelperMessagesSharePlanPrefix(t *testing.T) {
 	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask"})
 	conv.AddMessage("assistant", "Answer: done", map[string]any{"type": "answer", "turn": 1})
 
-	planMessages := client.buildPlanMessages(conv, conv.OriginalGoal, 2, 4, nil)
-	askMessages := client.buildPlannerTaskMessages(conv, conv.OriginalGoal, 2, 4, nil, client.askPrompt(client.buildAskRequest(conv, conv.OriginalGoal, 2, 4), ""))
-	monitorMessages := client.buildPlannerTaskMessages(conv, conv.OriginalGoal, 2, 4, nil, client.askMonitorPrompt("Explain config loading."))
-	mixedMessages := client.buildPlannerTaskMessages(conv, conv.OriginalGoal, 2, 4, nil, client.askMixedMonitorPrompt("Explain config loading and run git diff --stat."))
+	planMessages := client.buildPlanMessages(context.Background(), conv, conv.OriginalGoal, 2, 4, nil)
+	askMessages := client.buildPlannerTaskMessages(context.Background(), conv, conv.OriginalGoal, 2, 4, nil, client.askPrompt(client.buildAskRequest(conv, conv.OriginalGoal, 2, 4), ""))
+	monitorMessages := client.buildPlannerTaskMessages(context.Background(), conv, conv.OriginalGoal, 2, 4, nil, client.askMonitorPrompt("Explain config loading."))
+	mixedMessages := client.buildPlannerTaskMessages(context.Background(), conv, conv.OriginalGoal, 2, 4, nil, client.askMixedMonitorPrompt("Explain config loading and run git diff --stat."))
 
 	messageSets := [][]llm.Message{askMessages, monitorMessages, mixedMessages}
 	for _, messages := range messageSets {
@@ -1478,11 +1478,11 @@ func TestPlannerOverlayStaysInSharedSystemPrompt(t *testing.T) {
 	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask"})
 	conv.AddMessage("assistant", "Answer: done", map[string]any{"type": "answer", "turn": 1})
 
-	planMessages := client.buildPlanMessages(conv, conv.OriginalGoal, 2, 4, nil)
+	planMessages := client.buildPlanMessages(context.Background(), conv, conv.OriginalGoal, 2, 4, nil)
 	taskMessages := [][]llm.Message{
-		client.buildPlannerTaskMessages(conv, conv.OriginalGoal, 2, 4, nil, client.askPrompt(client.buildAskRequest(conv, conv.OriginalGoal, 2, 4), "")),
-		client.buildPlannerTaskMessages(conv, conv.OriginalGoal, 2, 4, nil, client.askMonitorPrompt("Explain config loading.")),
-		client.buildPlannerTaskMessages(conv, conv.OriginalGoal, 2, 4, nil, client.askMixedMonitorPrompt("Explain config loading and run git diff --stat.")),
+		client.buildPlannerTaskMessages(context.Background(), conv, conv.OriginalGoal, 2, 4, nil, client.askPrompt(client.buildAskRequest(conv, conv.OriginalGoal, 2, 4), "")),
+		client.buildPlannerTaskMessages(context.Background(), conv, conv.OriginalGoal, 2, 4, nil, client.askMonitorPrompt("Explain config loading.")),
+		client.buildPlannerTaskMessages(context.Background(), conv, conv.OriginalGoal, 2, 4, nil, client.askMixedMonitorPrompt("Explain config loading and run git diff --stat.")),
 	}
 
 	if len(planMessages) == 0 || planMessages[0].Role != "system" {
@@ -1510,7 +1510,7 @@ func TestBuildPlanMessagesNoGoalUpdate(t *testing.T) {
 	conv := conversation.New("sess-1", "Finish docs")
 	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask"})
 	conv.AddMessage("assistant", "Answer: done", map[string]any{"type": "answer", "turn": 1})
-	messages := client.buildPlanMessages(conv, "Finish docs", 2, 4, nil)
+	messages := client.buildPlanMessages(context.Background(), conv, "Finish docs", 2, 4, nil)
 
 	wantRoles := []string{"system", "user", "assistant", "assistant", "user"}
 	if len(messages) != len(wantRoles) {
@@ -1545,7 +1545,7 @@ func TestBuildPlanMessagesUsesConversation(t *testing.T) {
 	client := NewClient(ClientConfig{PatchEnabled: true})
 	conv := conversation.New("sess-2", "Finish docs")
 	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask"})
-	messages := client.buildPlanMessages(conv, "Finish docs", 2, 4, nil)
+	messages := client.buildPlanMessages(context.Background(), conv, "Finish docs", 2, 4, nil)
 	if len(messages) != 4 {
 		t.Fatalf("expected 4 messages, got %d", len(messages))
 	}
@@ -1567,7 +1567,7 @@ func TestBuildPlanMessagesInsertsCacheAnchorMetadata(t *testing.T) {
 	client := NewClient(ClientConfig{Model: model})
 	conv := conversation.New("sess-anchor", "Goal")
 	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask"})
-	client.buildPlanMessages(conv, "Goal", 2, 4, nil)
+	client.buildPlanMessages(context.Background(), conv, "Goal", 2, 4, nil)
 
 	anchors := cacheAnchorIndexes(conv)
 	if len(anchors) != 1 {
@@ -1600,7 +1600,7 @@ func TestBuildPlanMessagesKeepsAnchorStable(t *testing.T) {
 	conv := conversation.New("sess-stable", "Goal")
 	conv.AddMessage("user", llm.CacheAnchorMarkerText, map[string]any{"type": "cache_anchor", llm.CacheAnchorSequenceMetadataKey: 1})
 	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask"})
-	client.buildPlanMessages(conv, "Goal", 2, 4, nil)
+	client.buildPlanMessages(context.Background(), conv, "Goal", 2, 4, nil)
 
 	anchors := cacheAnchorIndexes(conv)
 	if len(anchors) != 1 {
@@ -1627,7 +1627,7 @@ func TestBuildPlanMessagesRotatesCacheAnchor(t *testing.T) {
 		llm.CacheAnchorCachedTokensMetadataKey: 5,
 	})
 	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask"})
-	client.buildPlanMessages(conv, "Goal", 3, 6, nil)
+	client.buildPlanMessages(context.Background(), conv, "Goal", 3, 6, nil)
 
 	anchors := cacheAnchorIndexes(conv)
 	if len(anchors) != 2 {
@@ -1650,8 +1650,8 @@ func TestFinalizeMessagesReusePlannerSystemPrompt(t *testing.T) {
 	conv.AddMessage("user", "Updated goal", nil)
 	conv.AddMessage("assistant", "Answer: done", map[string]any{"type": "answer", "turn": 1})
 
-	planMessages := client.buildPlanMessages(conv, "stale goal", 2, 4, nil)
-	finalizeMessages := client.buildFinalizeMessages(conv, "stale goal")
+	planMessages := client.buildPlanMessages(context.Background(), conv, "stale goal", 2, 4, nil)
+	finalizeMessages := client.buildFinalizeMessages(context.Background(), conv, "stale goal")
 	if len(finalizeMessages) != len(planMessages) {
 		t.Fatalf("expected matching message counts, got finalize=%d plan=%d", len(finalizeMessages), len(planMessages))
 	}
@@ -1739,7 +1739,7 @@ func TestBuildFinalizeMessagesForNarrowFollowUpUsesAnswerTheUserContract(t *test
 	conv.AddMessage("assistant", "[work_result] Ping failed with timeout.", map[string]any{"type": "work_result", "turn": 1})
 	conv.AddMessage("user", "So do you have internet access or not?", nil)
 
-	messages := client.buildFinalizeMessages(conv, "stale goal")
+	messages := client.buildFinalizeMessages(context.Background(), conv, "stale goal")
 	if got := messages[len(messages)-2]; got.Role != "user" || got.Content != "So do you have internet access or not?" {
 		t.Fatalf("expected narrow follow-up to remain the latest real user turn, got %#v", got)
 	}
@@ -1758,7 +1758,7 @@ func TestBuildFinalizeMessagesForWrapUpRequestUsesAnswerTheUserContract(t *testi
 	conv.AddMessage("assistant", "[work_result] Ping failed with timeout.", map[string]any{"type": "work_result", "turn": 1})
 	conv.AddMessage("user", "Please summarize the overall conclusion.", nil)
 
-	messages := client.buildFinalizeMessages(conv, "stale goal")
+	messages := client.buildFinalizeMessages(context.Background(), conv, "stale goal")
 	if got := messages[len(messages)-2]; got.Role != "user" || got.Content != "Please summarize the overall conclusion." {
 		t.Fatalf("expected wrap-up request to remain the latest real user turn, got %#v", got)
 	}
@@ -1782,7 +1782,7 @@ func TestBuildFinalizeMessagesPreservesCleanConversationOrdering(t *testing.T) {
 	conv.AddMessage("assistant", "Run `git -C /workspace status --short` for the project root, then `git -C /workspace/agent/internal/shell-agent status --short` for the submodule.", map[string]any{"type": "ask", "turn": 3, "decision": "ask"})
 	conv.AddMessage("assistant", "## Answer\n- Confidence: 100% - Reported modified and untracked files for the project root and submodule.", map[string]any{"type": "answer", "turn": 3})
 
-	messages := client.buildFinalizeMessages(conv, "stale goal")
+	messages := client.buildFinalizeMessages(context.Background(), conv, "stale goal")
 	if len(messages) != 11 {
 		t.Fatalf("expected 11 messages, got %d", len(messages))
 	}
@@ -1819,7 +1819,7 @@ func TestBuildFinalizeMessagesMatchesCleanedSessionWireTranscript(t *testing.T) 
 	conv.AddMessage("assistant", "Run `git -C /workspace status --short` for the project root, then `git -C /workspace/agent/internal/shell-agent status --short` for the submodule. Report any untracked or modified files found in each location.\n\nI understand that I don't have access to a shell directly. The `shell-agent` will carry out my request and report back with explanation of the results and not necessarily the full output of commands it executes.", map[string]any{"type": "ask", "turn": 3, "decision": "ask"})
 	conv.AddMessage("assistant", "## Answer\n- Confidence: 100% - The project root (`/workspace`) has the following modified/untracked files: `README.md` (staged modification), `agent/internal/llm/config.go` (unstaged modification), `agent/internal/session/runner_state.go` (unstaged modification), `agent/internal/session/runner_state_test.go` (unstaged modification), `agent/internal/shell-agent` (submodule pointer modified), and `.git.hydrated/` (untracked directory).\n- Confidence: 100% - The submodule (`/workspace/agent/internal/shell-agent`) has one modified file: `internal/environments/tempdir.go` (unstaged modification).", map[string]any{"type": "answer", "turn": 3})
 
-	messages := client.buildFinalizeMessages(conv, "stale goal")
+	messages := client.buildFinalizeMessages(context.Background(), conv, "stale goal")
 	if len(messages) != 11 {
 		t.Fatalf("expected 11 messages, got %d", len(messages))
 	}

@@ -38,21 +38,24 @@ var (
 )
 
 const (
-	testStubEnv                        = "MCT_LLM_TEST_STUB" // test-only knob to bypass network LLM calls
-	nonStreamRetryInitialBackoff       = 1 * time.Second
-	nonStreamRetryMaxBackoff           = 30 * time.Second
-	retryAfterCap                      = 15 * time.Second
-	maxRetries                         = 10 // hard ceiling for LLM retry loops
-	probeTimeout                       = 10 * time.Minute
-	llmInputLogEnv                     = "MCT_LLM_INPUT_LOG" // optional debug log file path for full LLM request inputs
-	llmStageEnv                        = "MCT_LLM_STAGE"     // optional stage label for LLM calls (planner/shell-agent/etc)
-	CacheAnchorMarkerText              = "[cache anchor]"
-	cacheAnchorMarkerText              = CacheAnchorMarkerText
-	CacheAnchorRetiredMetadataKey      = "cache_anchor_retired"
-	CacheAnchorSequenceMetadataKey     = "anchor_seq"
-	CacheAnchorTurnMetadataKey         = "anchor_turn"
-	CacheAnchorTokensMetadataKey       = "anchor_tokens"
-	CacheAnchorCachedTokensMetadataKey = "anchor_cached_tokens"
+	testStubEnv                               = "MCT_LLM_TEST_STUB" // test-only knob to bypass network LLM calls
+	nonStreamRetryInitialBackoff              = 1 * time.Second
+	nonStreamRetryMaxBackoff                  = 30 * time.Second
+	retryAfterCap                             = 15 * time.Second
+	maxRetries                                = 10 // hard ceiling for LLM retry loops
+	probeTimeout                              = 10 * time.Minute
+	llmInputLogEnv                            = "MCT_LLM_INPUT_LOG" // optional debug log file path for full LLM request inputs
+	llmStageEnv                               = "MCT_LLM_STAGE"     // optional stage label for LLM calls (planner/shell-agent/etc)
+	CacheAnchorMarkerText                     = "[cache anchor]"
+	cacheAnchorMarkerText                     = CacheAnchorMarkerText
+	CacheAnchorRetiredMetadataKey             = "cache_anchor_retired"
+	CacheAnchorSequenceMetadataKey            = "anchor_seq"
+	CacheAnchorTurnMetadataKey                = "anchor_turn"
+	CacheAnchorTokensMetadataKey              = "anchor_tokens"
+	CacheAnchorCachedTokensMetadataKey        = "anchor_cached_tokens"
+	CacheAnchorInsertionPrefixHashMetadataKey = "insertion_prefix_hash"
+
+	cacheWarningPrefix = "\u26a0 cache:"
 )
 
 // probeTimeoutOverride allows tests to override the default probeTimeout.
@@ -76,6 +79,10 @@ type contextKeyLLMStage struct{}
 
 type contextKeyCacheUsageObserver struct{}
 
+type contextKeyVerbose struct{}
+
+type contextKeyTranscript struct{}
+
 type CacheUsageInfo struct {
 	CachedTokens     int
 	CacheWriteTokens int
@@ -94,6 +101,50 @@ func WithStage(ctx context.Context, stage string) context.Context {
 		return ctx
 	}
 	return context.WithValue(ctx, contextKeyLLMStage{}, stage)
+}
+
+// WithVerbose annotates the context so downstream cache warning emitters can
+// decide whether to produce verbose diagnostics (TUI + trajectory + transcript).
+func WithVerbose(ctx context.Context, verbose bool) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if !verbose {
+		return ctx
+	}
+	return context.WithValue(ctx, contextKeyVerbose{}, true)
+}
+
+func verboseFromContext(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	v, ok := ctx.Value(contextKeyVerbose{}).(bool)
+	return ok && v
+}
+
+// WithTranscript attaches a transcript writer to the context for cache warning
+// emission. The value is stored as interface{} to avoid an import cycle.
+func WithTranscript(ctx context.Context, t interface{ AppendBlock(string) error }) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if t == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, contextKeyTranscript{}, t)
+}
+
+type transcriptAppender interface {
+	AppendBlock(string) error
+}
+
+func transcriptFromContext(ctx context.Context) (transcriptAppender, bool) {
+	if ctx == nil {
+		return nil, false
+	}
+	t, ok := ctx.Value(contextKeyTranscript{}).(transcriptAppender)
+	return t, ok
 }
 
 func WithCacheUsageObserver(ctx context.Context, observer CacheUsageObserver) context.Context {
@@ -206,6 +257,16 @@ func applyCacheControl(ctx context.Context, messages []Message, model ResolvedMo
 		totalTokens += estimateTokensFromMetadata(msg)
 	}
 	if totalTokens < model.CacheTriggerThreshold {
+		// Detection: threshold stripping — an active anchor exists but we're
+		// stripping cache_control because total tokens dropped below threshold.
+		if activeIdx := cacheAnchorMessageIndex(messages); activeIdx >= 0 {
+			EmitCacheWarning(ctx, "threshold_stripped", map[string]any{
+				"anchor_sequence":  metadataInt(messages[activeIdx].Metadata, CacheAnchorSequenceMetadataKey),
+				"total_tokens":    totalTokens,
+				"threshold":       model.CacheTriggerThreshold,
+				"anchor_index":    activeIdx,
+			})
+		}
 		return messagesToAny(messages)
 	}
 
@@ -267,6 +328,8 @@ func applyCacheControl(ctx context.Context, messages []Message, model ResolvedMo
 		}
 
 		cacheDetails := cacheDiagnosticsDetailsForAnchor(messages, anchorIndex, anchorPrevIndex, insertedAnchor)
+		// Drift detection: compare stored insertion hash with freshly computed prefix hash.
+		detectCachePrefixDrift(ctx, useStoredAnchor, messages, anchorIndex, result)
 		emitCacheDiagnostics(ctx, anchorIndex, len(result), totalTokens, model, result, cacheDetails)
 		return result
 	}
@@ -286,6 +349,8 @@ func applyCacheControl(ctx context.Context, messages []Message, model ResolvedMo
 	}
 
 	cacheDetails := cacheDiagnosticsDetailsForAnchor(messages, anchorIndex, anchorPrevIndex, insertedAnchor)
+	// Drift detection: compare stored insertion hash with freshly computed prefix hash.
+	detectCachePrefixDrift(ctx, useStoredAnchor, messages, anchorIndex, result)
 	emitCacheDiagnostics(ctx, anchorIndex, len(result), totalTokens, model, result, cacheDetails)
 	return result
 }
@@ -302,6 +367,26 @@ func messagesToAny(messages []Message) []any {
 		}
 	}
 	return result
+}
+
+// FormatMessagesForHashing converts messages to the provider-formatted shape used
+// by applyCacheControl, so that hashes computed at anchor-insertion time match
+// hashes computed at call time. Each message's Content is wrapped in a textPart
+// slice (without cache_control) to mirror the format produced by messageMap.
+func FormatMessagesForHashing(msgs []Message) []any {
+	out := make([]any, 0, len(msgs))
+	for _, m := range msgs {
+		out = append(out, map[string]any{
+			"role": m.Role,
+			"content": []any{
+				map[string]string{
+					"type": "text",
+					"text": m.Content,
+				},
+			},
+		})
+	}
+	return out
 }
 
 func cacheAnchorMessageIndex(messages []Message) int {
@@ -411,20 +496,160 @@ func emitCacheDiagnostics(ctx context.Context, anchorIndex, messageCount, totalT
 		payload["anchor_prev_index"] = details.AnchorPrevIndex
 		payload["anchor_rotated"] = true
 	}
-	if stageFromContext(ctx) == "planner" {
-		if prefix := cachePrefixHash(messages, anchorIndex); prefix != "" {
-			payload["prefix_hash"] = prefix
-		}
+	// Always compute prefix hash (was previously gated on stage == "planner").
+	if prefix := CachePrefixHash(messages, anchorIndex); prefix != "" {
+		payload["prefix_hash"] = prefix
 	}
 	emitLLMEvent(ctx, "info", "llm.cache.injected", payload, nil)
 }
 
-func cachePrefixHash(messages []any, anchorIndex int) string {
+// detectCachePrefixDrift checks whether the prefix content has changed since the
+// active anchor was inserted. If the stored insertion_prefix_hash differs from a
+// freshly computed hash, it emits a prefix_drift warning.
+// This only fires when useStoredAnchor is true (i.e. an active anchor exists).
+func detectCachePrefixDrift(ctx context.Context, useStoredAnchor bool, messages []Message, anchorIndex int, result []any) {
+	if !useStoredAnchor || anchorIndex < 0 || anchorIndex >= len(messages) {
+		return
+	}
+	storedHash, ok := messages[anchorIndex].Metadata[CacheAnchorInsertionPrefixHashMetadataKey]
+	if !ok {
+		return
+	}
+	storedHashStr, ok := storedHash.(string)
+	if !ok || storedHashStr == "" {
+		return
+	}
+	currentHash := CachePrefixHash(result, anchorIndex)
+	if currentHash == "" || currentHash == storedHashStr {
+		return
+	}
+	EmitCacheWarning(ctx, "prefix_drift", map[string]any{
+		"anchor_sequence":        metadataInt(messages[anchorIndex].Metadata, CacheAnchorSequenceMetadataKey),
+		"anchor_index":           anchorIndex,
+		"prefix_hash_expected":   storedHashStr,
+		"prefix_hash_actual":     currentHash,
+	})
+}
+
+// EmitCacheWarning produces a cache warning when verbose mode is active.
+// It writes a one-line TUI warning, appends a cache_warning event to the
+// trajectory JSONL, and appends a WARNING block to the transcript.
+// When verbose is off this is a no-op.
+func EmitCacheWarning(ctx context.Context, reason string, payload map[string]any) {
+	if !verboseFromContext(ctx) {
+		return
+	}
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	payload["reason"] = reason
+
+	// TUI: single-line warning to stderr.
+	var tuiMsg string
+	switch reason {
+	case "prefix_drift":
+		tuiMsg = fmt.Sprintf("%s prefix drift — anchor seq %v, expected %s, got %s",
+			cacheWarningPrefix, payload["anchor_sequence"],
+			truncateHash(payload["prefix_hash_expected"]), truncateHash(payload["prefix_hash_actual"]))
+	case "threshold_stripped":
+		tuiMsg = fmt.Sprintf("%s stripped below threshold — %v total tokens, threshold %v — active anchor seq %v unmarked",
+			cacheWarningPrefix, payload["total_tokens"], payload["threshold"], payload["anchor_sequence"])
+	case "rotation_blocked":
+		tuiMsg = fmt.Sprintf("%s rotation blocked — %v tokens past anchor, min cached floor %v — anchor seq %v pinned",
+			cacheWarningPrefix, payload["tokens_since_anchor"], payload["min_cached_tokens"], payload["anchor_sequence"])
+	default:
+		tuiMsg = fmt.Sprintf("%s %s — %v", cacheWarningPrefix, reason, payload)
+	}
+	_, _ = fmt.Fprintln(os.Stderr, tuiMsg)
+
+	// Trajectory: emit cache_warning event.
+	w, ok := trajectory.FromContext(ctx)
+	if ok && w != nil {
+		evt := trajectory.Event{
+			Level:   "warning",
+			Kind:    "cache_warning",
+			SpanID:  trajectory.NewSpanID(),
+			Payload: payload,
+		}
+		component := stageFromContext(ctx)
+		if component == "" {
+			component = "llm"
+		}
+		evt.Component = component
+		if parent, pok := trajectory.ParentSpanID(ctx); pok && parent != "" {
+			evt.ParentSpanID = parent
+		}
+		if emitErr := w.Emit(ctx, evt); emitErr != nil {
+			reportLLMTrajectoryError(emitErr)
+		}
+	}
+
+	// Transcript: append WARNING block.
+	if tr, ok := transcriptFromContext(ctx); ok {
+		_ = tr.AppendBlock(formatCacheWarningTranscript(reason, payload))
+	}
+}
+
+func formatCacheWarningTranscript(reason string, payload map[string]any) string {
+	var b strings.Builder
+	b.WriteString("\n")
+	switch reason {
+	case "prefix_drift":
+		b.WriteString(fmt.Sprintf("WARNING: Cache prefix drift detected. Anchor sequence %v. Expected hash %s, actual %s. The provider will likely miss cache on this request.\n\n",
+			payload["anchor_sequence"], truncateHash(payload["prefix_hash_expected"]), truncateHash(payload["prefix_hash_actual"])))
+	case "threshold_stripped":
+		b.WriteString(fmt.Sprintf("WARNING: Cache anchor unmarked below threshold. Anchor sequence %v. %v total tokens (threshold %v).\n\n",
+			payload["anchor_sequence"], payload["total_tokens"], payload["threshold"]))
+	case "rotation_blocked":
+		b.WriteString(fmt.Sprintf("WARNING: Cache rotation blocked. Anchor sequence %v pinned. %v tokens past anchor (min cached floor %v).\n\n",
+			payload["anchor_sequence"], payload["tokens_since_anchor"], payload["min_cached_tokens"]))
+	default:
+		b.WriteString(fmt.Sprintf("WARNING: Cache %s. %v\n\n", reason, payload))
+	}
+	return b.String()
+}
+
+func truncateHash(v any) string {
+	switch val := v.(type) {
+	case string:
+		if len(val) > 8 {
+			return val[:8] + "…"
+		}
+		return val
+	default:
+		return fmt.Sprintf("%v", v)
+	}
+}
+
+func metadataInt(metadata map[string]any, key string) int {
+	if metadata == nil {
+		return 0
+	}
+	raw, ok := metadata[key]
+	if !ok {
+		return 0
+	}
+	switch v := raw.(type) {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	case string:
+		if parsed, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+			return parsed
+		}
+	}
+	return 0
+}
+
+func CachePrefixHash(messages []any, anchorIndex int) string {
 	if anchorIndex < 0 || anchorIndex >= len(messages) {
 		return ""
 	}
 	var b strings.Builder
-	for i := 0; i <= anchorIndex && i < len(messages); i++ {
+	for i := 0; i < anchorIndex && i < len(messages); i++ {
 		msg, ok := messages[i].(map[string]any)
 		if !ok {
 			continue
