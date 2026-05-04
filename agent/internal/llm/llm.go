@@ -645,7 +645,7 @@ func metadataInt(metadata map[string]any, key string) int {
 }
 
 func CachePrefixHash(messages []any, anchorIndex int) string {
-	if anchorIndex < 0 || anchorIndex >= len(messages) {
+	if anchorIndex < 0 || anchorIndex > len(messages) {
 		return ""
 	}
 	var b strings.Builder
