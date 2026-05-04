@@ -33,7 +33,6 @@ func (r *runLifecycleState) completeSession(display *ui.TerminalDisplay, answer 
 	display.EndSession()
 	r.turnsCompleted = turnsCompleted
 	r.sessionStatus = "success"
-	r.keepSessionState = true
 	// Mark the meta-plan task as complete (no-op if no meta-plan exists).
 	if err := CompleteMetaPlanTask(r.sessionID); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to update meta plan task status: %v\n", err)

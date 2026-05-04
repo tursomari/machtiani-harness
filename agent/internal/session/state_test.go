@@ -1,7 +1,9 @@
 package session
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -410,5 +412,262 @@ func TestListSessionsSkipsInvalidDirs(t *testing.T) {
 	}
 	if len(sessions) != 0 {
 		t.Fatalf("expected 0 sessions, got %d", len(sessions))
+	}
+}
+
+func TestPersistSessionStateNormalExit(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+	oldWd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldWd)
+
+	sessionID := fmt.Sprintf("test-persist-normal-%d", time.Now().UnixNano())
+	runState := &runLifecycleState{
+		sessionID:      sessionID,
+		goal:           "Test goal",
+		originalPrompt: "Test original prompt",
+		sessionStatus:  "error",
+		turnsCompleted: 2,
+		interrupted:    false,
+	}
+
+	dir, err := artifacts.SessionDirectory(sessionID)
+	if err != nil {
+		t.Fatalf("SessionDirectory: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+
+	runState.persistSessionState()
+
+	loaded, err := LoadSessionState(sessionID)
+	if err != nil {
+		t.Fatalf("LoadSessionState returned error: %v", err)
+	}
+	if loaded.SessionID != sessionID {
+		t.Fatalf("unexpected session ID: got %s want %s", loaded.SessionID, sessionID)
+	}
+	if loaded.Goal != "Test goal" {
+		t.Fatalf("unexpected goal: got %q want %q", loaded.Goal, "Test goal")
+	}
+	if loaded.TurnsCompleted != 2 {
+		t.Fatalf("unexpected turns completed: got %d want 2", loaded.TurnsCompleted)
+	}
+	if loaded.Status != "error" {
+		t.Fatalf("unexpected status: got %q want %q", loaded.Status, "error")
+	}
+}
+
+func TestPersistSessionStateInterrupted(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+	oldWd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldWd)
+
+	sessionID := fmt.Sprintf("test-persist-interrupted-%d", time.Now().UnixNano())
+	runState := &runLifecycleState{
+		sessionID:      sessionID,
+		goal:           "Interrupted goal",
+		originalPrompt: "Interrupted prompt",
+		sessionStatus:  "interrupted",
+		turnsCompleted: 3,
+		interrupted:    true,
+	}
+
+	dir, err := artifacts.SessionDirectory(sessionID)
+	if err != nil {
+		t.Fatalf("SessionDirectory: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+
+	// Capture stdout to verify the resume hint is printed.
+	origStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	done := make(chan []byte)
+	go func() {
+		data, _ := io.ReadAll(r)
+		done <- data
+	}()
+
+	runState.persistSessionState()
+
+	w.Close()
+	stdout := string(<-done)
+	os.Stdout = origStdout
+
+	// Verify state file exists and is loadable.
+	loaded, err := LoadSessionState(sessionID)
+	if err != nil {
+		t.Fatalf("LoadSessionState returned error: %v", err)
+	}
+	if loaded.SessionID != sessionID {
+		t.Fatalf("unexpected session ID: got %s want %s", loaded.SessionID, sessionID)
+	}
+	if loaded.TurnsCompleted != 3 {
+		t.Fatalf("unexpected turns completed: got %d want 3", loaded.TurnsCompleted)
+	}
+
+	// Verify interruption banner was printed.
+	if !strings.Contains(stdout, "=== SESSION INTERRUPTED ===") {
+		t.Fatalf("expected interruption banner in stdout, got: %s", stdout)
+	}
+	if !strings.Contains(stdout, sessionID) {
+		t.Fatalf("expected session ID %s in stdout, got: %s", sessionID, stdout)
+	}
+}
+
+func TestPersistSessionStatePendingStateOverride(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+	oldWd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldWd)
+
+	sessionID := fmt.Sprintf("test-persist-override-%d", time.Now().UnixNano())
+	overrideID := "override-id"
+	runState := &runLifecycleState{
+		sessionID:      sessionID,
+		goal:           "Original goal",
+		originalPrompt: "Original prompt",
+		sessionStatus:  "error",
+		turnsCompleted: 1,
+		interrupted:    false,
+		pendingState: &SessionState{
+			SessionID:      overrideID,
+			Goal:           "Overridden goal",
+			OriginalPrompt: "Overridden prompt",
+			Status:         "success",
+			TurnsCompleted: 5,
+		},
+	}
+
+	dir, err := artifacts.SessionDirectory(sessionID)
+	if err != nil {
+		t.Fatalf("SessionDirectory: %v", err)
+	}
+	overrideDir, err := artifacts.SessionDirectory(overrideID)
+	if err != nil {
+		t.Fatalf("SessionDirectory override: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.RemoveAll(dir)
+		_ = os.RemoveAll(overrideDir)
+	})
+
+	runState.persistSessionState()
+
+	// The saved state should reflect the pendingState override.
+	// Since pendingState.SessionID is "override-id", the file was saved
+	// under that ID, not the original sessionID.
+	loaded, err := LoadSessionState(overrideID)
+	if err != nil {
+		t.Fatalf("LoadSessionState returned error: %v", err)
+	}
+	// The saved state should reflect the pendingState override.
+	if loaded.SessionID != overrideID {
+		t.Fatalf("expected overridden session ID: got %s want %s", loaded.SessionID, overrideID)
+	}
+	if loaded.Goal != "Overridden goal" {
+		t.Fatalf("expected overridden goal: got %q want %q", loaded.Goal, "Overridden goal")
+	}
+	if loaded.TurnsCompleted != 5 {
+		t.Fatalf("expected overridden turns: got %d want 5", loaded.TurnsCompleted)
+	}
+	if loaded.Status != "success" {
+		t.Fatalf("expected overridden status: got %q want %q", loaded.Status, "success")
+	}
+}
+
+func TestPersistSessionStateEmptySessionID(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+	oldWd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldWd)
+
+	runState := &runLifecycleState{
+		sessionID:      "",
+		goal:           "Goal",
+		originalPrompt: "Prompt",
+		sessionStatus:  "error",
+		turnsCompleted: 0,
+		interrupted:    false,
+	}
+
+	// Should not panic and should not create any file.
+	runState.persistSessionState()
+
+	// Verify no session-state.json was created in the sessions root.
+	sessionsDir, err := artifacts.SessionsRoot()
+	if err != nil {
+		t.Fatalf("SessionsRoot: %v", err)
+	}
+	entries, err := os.ReadDir(sessionsDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return // No sessions dir at all, which is fine.
+		}
+		t.Fatalf("ReadDir: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("expected no session directories, got %d", len(entries))
+	}
+}
+
+func TestPersistSessionStateSaveFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+	oldWd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldWd)
+
+	sessionID := fmt.Sprintf("test-persist-failure-%d", time.Now().UnixNano())
+
+	// Pre-create the sessions root and then place a file at the session
+	// directory path to block MkdirAll inside SaveSessionState.
+	sessionsDir, err := artifacts.SessionsRoot()
+	if err != nil {
+		t.Fatalf("SessionsRoot: %v", err)
+	}
+	if err := os.MkdirAll(sessionsDir, 0o755); err != nil {
+		t.Fatalf("mkdir sessions root: %v", err)
+	}
+	dir := filepath.Join(sessionsDir, sessionID)
+	// Write a file where the session directory should be, blocking MkdirAll.
+	if err := os.WriteFile(dir, []byte("block"), 0o444); err != nil {
+		t.Fatalf("write blocker file: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+
+	runState := &runLifecycleState{
+		sessionID:      sessionID,
+		goal:           "Goal",
+		originalPrompt: "Prompt",
+		sessionStatus:  "error",
+		turnsCompleted: 1,
+		interrupted:    false,
+	}
+
+	// Capture stderr to verify the warning is printed.
+	origStderr := os.Stderr
+	r, w, _ := os.Pipe()
+	os.Stderr = w
+	done := make(chan []byte)
+	go func() {
+		data, _ := io.ReadAll(r)
+		done <- data
+	}()
+
+	// Should not panic.
+	runState.persistSessionState()
+
+	w.Close()
+	stderr := string(<-done)
+	os.Stderr = origStderr
+
+	if !strings.Contains(stderr, "Warning: failed to save session state") {
+		t.Fatalf("expected save failure warning in stderr, got: %s", stderr)
 	}
 }

@@ -768,7 +768,6 @@ type runLifecycleState struct {
 	turnsCompleted      int
 	userTurnCounter     int
 	interrupted         bool
-	keepSessionState    bool
 	pendingState        *SessionState
 	suspendedUserInput  *SuspendedUserInputState
 }
@@ -894,33 +893,24 @@ func (r *runLifecycleState) hydrateState(state *SessionState) {
 }
 
 func (r *runLifecycleState) persistSessionState() {
-	if r.interrupted {
-		state := r.baseSessionState()
-		r.hydrateState(&state)
-		if err := SaveSessionState(state); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to save session state for %s: %v\n", r.sessionID, err)
-		} else {
-			r.printResumeHint("=== SESSION INTERRUPTED ===", r.turnsCompleted)
-		}
-		return
-	}
 	sid := strings.TrimSpace(r.sessionID)
 	if sid == "" {
 		return
 	}
-	if r.keepSessionState {
-		state := r.baseSessionState()
-		if r.pendingState != nil {
-			state = *r.pendingState
-		}
-		r.hydrateState(&state)
-		if err := SaveSessionState(state); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to save session state for %s: %v\n", sid, err)
-		}
+
+	state := r.baseSessionState()
+	if r.pendingState != nil {
+		state = *r.pendingState
+	}
+	r.hydrateState(&state)
+
+	if err := SaveSessionState(state); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to save session state for %s: %v\n", sid, err)
 		return
 	}
-	if err := RemoveSessionState(sid); err != nil && r.cfg.verbose {
-		fmt.Fprintf(os.Stderr, "Warning: failed to remove session state for %s: %v\n", sid, err)
+
+	if r.interrupted {
+		r.printResumeHint("=== SESSION INTERRUPTED ===", r.turnsCompleted)
 	}
 }
 
@@ -948,7 +938,6 @@ func (r *runLifecycleState) suspendForUserInput(display *ui.TerminalDisplay, que
 	r.sessionErr = nil
 	r.turnsCompleted = r.userTurnCounter
 	r.sessionStatus = "suspended_user_input"
-	r.keepSessionState = true
 	r.suspendedUserInput = &SuspendedUserInputState{
 		Kind:        "user-directed-ask",
 		Question:    strings.TrimSpace(question),

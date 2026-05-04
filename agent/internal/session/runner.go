@@ -848,7 +848,6 @@ func runSession(ctx context.Context, opts Options) Result {
 			// handled=true means error during meta configuration.
 			runState.sessionErr = fmt.Errorf("meta-orchestrator configuration failed")
 			runState.sessionStatus = "error"
-			runState.keepSessionState = true
 			runState.pendingState = &SessionState{
 				SessionID:       sessionID,
 				Goal:            goal,
