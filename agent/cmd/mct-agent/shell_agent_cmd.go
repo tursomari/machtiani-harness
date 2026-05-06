@@ -102,7 +102,7 @@ func handleShellAgentCommand(args []string) int {
 	}
 
 	// Build the shell-agent library (model + environment) once.
-	lib, err := shellAgentBuildLibFn(&globalCfg, apiOverrides, false)
+	lib, err := shellAgentBuildLibFn(&globalCfg, apiOverrides, false, "")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error building shell-agent library: %v\n", err)
 		return 1

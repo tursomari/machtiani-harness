@@ -758,6 +758,14 @@ func runSession(ctx context.Context, opts Options) Result {
 	if shellAgentModel == "" && strings.TrimSpace(models.shellAgent.alias) != "" && models.shellAgent.usingAlias {
 		shellAgentModel = strings.TrimSpace(models.shellAgent.alias)
 	}
+	// When the shell-agent model is not explicitly set (e.g. running
+	// with --mode code without --shell-agent), fall back to the
+	// orchestrator model. This ensures --model is respected by the
+	// shell-agent library and prevents provider mismatch errors when
+	// the config's default_model uses a different provider.
+	if shellAgentModel == "" && strings.TrimSpace(models.orchestrator.alias) != "" && models.orchestrator.usingAlias {
+		shellAgentModel = strings.TrimSpace(models.orchestrator.alias)
+	}
 
 	mctRunner := runner.Runner{
 		Verbose:                 cfg.verbose,
@@ -783,7 +791,7 @@ func runSession(ctx context.Context, opts Options) Result {
 	// once. The planner may dynamically decide to use the shell-agent
 	// even without an explicit --shell-agent flag (e.g. "Ask" routing),
 	// so the library is always built when possible.
-	lib, libErr := shellagent.BuildLibrary(&opts.GlobalConfig, opts.APIKeyOverrides, cfg.persistTmpData)
+	lib, libErr := shellagent.BuildLibrary(&opts.GlobalConfig, opts.APIKeyOverrides, cfg.persistTmpData, shellAgentModel)
 	if libErr != nil {
 		// Non-fatal: the library is a prerequisite only when the
 		// planner actually delegates to the shell-agent. If it's
