@@ -1263,7 +1263,7 @@ run_happy_case() {
       }
     } END { print c }' "$transcript_path")
   if [[ $turns -eq 0 ]]; then
-    turns=$(grep -E -c '^Step [0-9]+ decision: ' "$stderr_file" "$stdout_file" 2>/dev/null; true)
+    turns=$(grep -E '^Step [0-9]+ decision: ' "$stderr_file" "$stdout_file" 2>/dev/null | wc -l)
   fi
   if [[ $turns -gt $max_steps || $turns -lt $min_turns ]]; then
     echo "Invalid turns ($turns): $case_id" >&2
