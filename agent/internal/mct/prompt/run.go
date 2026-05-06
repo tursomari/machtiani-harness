@@ -1,18 +1,12 @@
 package prompt
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -30,19 +24,15 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/patcher"
 	"github.com/tursomari/machtiani/agent/internal/patchlog"
 	"github.com/tursomari/machtiani/agent/internal/prompts"
-	"github.com/tursomari/machtiani/agent/internal/shellbridge"
 	"github.com/tursomari/machtiani/agent/internal/templates"
-	"github.com/tursomari/machtiani/agent/internal/trajectory"
 )
 
 var (
-	chatStreamWithRuntime    = llm.ChatStreamWithResolvedFallback
-	discoveryRunnerRun       = discoveryrunner.Run
-	shellAgentCommandContext = exec.CommandContext
-	patchPromptLogger        = patchlog.WritePrompt
+	chatStreamWithRuntime  = llm.ChatStreamWithResolvedFallback
+	discoveryRunnerRun     = discoveryrunner.Run
+	patchPromptLogger      = patchlog.WritePrompt
 )
 
-const shellAgentContextPrefix = "Here is possibly relevant information from the shell agent."
 const defaultShellAgentPromptNotice = "I understand that I don't have access to a shell directly. The `shell-agent` will carry out my request and report back with explanation of the results and not necessarily the full output of commands it executes."
 
 // Run executes the core prompt flow used by the mct CLI and mct-agent.
@@ -140,12 +130,16 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 	}
 
 	switch {
-	case isAnswerOnly || opts.ShellAgent:
+	case isAnswerOnly:
 		var buildErr error
 		combined, included, buildErr = contextbuilder.Build(opts.Prompt, nil, hist, contextbuilder.Options{IncludeHistory: includeHistory, MaxInputTokens: opts.MaxInputTokens, PreludeTemplate: historyTemplate})
 		if buildErr != nil {
 			return res, buildErr
 		}
+	case opts.ShellAgent:
+		// History is carried in pre-built messages; the combined
+		// string is only used for the header template.
+		combined = opts.Prompt
 	case useBaselineContext:
 		var err error
 		combined, included, err = buildBaselinePromptContext(opts.Prompt, hist, filtered, includeHistory, opts.MaxInputTokens, opts.SessionID, opts.Verbose, historyTemplate)
@@ -161,9 +155,6 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 		}
 	}
 
-	if opts.ShellAgent {
-		combined = AppendShellAgentPromptNotice(combined, opts.Prompts)
-	}
 	directiveBlock := formatResponseDirectives(opts.ResponseDirectives)
 	if directiveBlock != "" {
 		if strings.TrimSpace(combined) != "" {
@@ -174,7 +165,6 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 	}
 	res.DirectiveBlock = directiveBlock
 
-	shellTrajectory := ""
 	shellAgentUsed := false
 	shellAgentOutput := ""
 	if opts.ShellAgent {
@@ -187,23 +177,15 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 				opts.ShellAgentModel = candidate
 			}
 		}
-		contextBlock, verbatimBlock, trajectoryPath, err := invokeShellAgent(ctx, combined, opts)
-		if err != nil {
-			return res, err
+		if opts.ShellAgentLibrary == nil {
+			return res, fmt.Errorf("shell-agent library is required when shell-agent mode is enabled")
 		}
-		shellTrajectory = trajectoryPath
+		_, verbatimBlock, _, shellErr := runShellAgentLibrary(ctx, opts.Prompt, opts)
+		if shellErr != nil {
+			return res, shellErr
+		}
 		shellAgentUsed = true
 		shellAgentOutput = verbatimBlock
-		if strings.TrimSpace(shellAgentOutput) == "" {
-			shellAgentOutput = ""
-		}
-		if shellAgentOutput == "" && strings.TrimSpace(contextBlock) != "" {
-			if strings.TrimSpace(combined) != "" {
-				combined = combined + "\n\n" + contextBlock
-			} else {
-				combined = contextBlock
-			}
-		}
 	}
 
 	header, err := buildHeader(combined, opts.Prompts)
@@ -263,9 +245,6 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 		res.FullText = appendFullDiffSection(res.FullText, fullDiffs)
 	}
 	res.RetrievedFiles = append([]string(nil), included...)
-	if shellTrajectory != "" {
-		res.TrajectoryPath = shellTrajectory
-	}
 	res.FileDiscoveryRan = fileDiscoveryRan
 	res.ShellAgentUsed = shellAgentUsed
 
@@ -449,370 +428,6 @@ func isPatcherPromptMode(mode string) bool {
 	default:
 		return false
 	}
-}
-
-func invokeShellAgent(ctx context.Context, prompt string, opts RunOptions) (string, string, string, error) {
-	args := make([]string, 0, 3)
-	if opts.Verbose {
-		args = append(args, "-verbose")
-	}
-	if model := strings.TrimSpace(opts.ShellAgentModel); model != "" {
-		args = append(args, "--shell-agent-model", model)
-	}
-	if opts.MaxInputTokens > 0 {
-		args = append(args, "--max-input-tokens", fmt.Sprintf("%d", opts.MaxInputTokens))
-	}
-	if overrides := firstNonEmptyOverrides(opts.Runtime, opts.FileDiscoveryRuntime, opts.AnswerRuntime); len(overrides) > 0 {
-		providers := make([]string, 0, len(overrides))
-		trimmed := make(map[string]string, len(overrides))
-		for provider, key := range overrides {
-			p := strings.TrimSpace(provider)
-			k := strings.TrimSpace(key)
-			if p == "" || k == "" {
-				continue
-			}
-			if _, exists := trimmed[p]; exists {
-				continue
-			}
-			providers = append(providers, p)
-			trimmed[p] = k
-		}
-		sort.Strings(providers)
-		for _, provider := range providers {
-			args = append(args, "--api-key", fmt.Sprintf("%s:%s", provider, trimmed[provider]))
-		}
-	}
-	args = append(args, prompt)
-
-	cmd := shellAgentCommandContext(ctx, "shell-agent", args...)
-	env := append([]string(nil), os.Environ()...)
-	env = append(env, runtimeEnvFrom(opts.Runtime)...)
-	if opts.PersistTmpData {
-		env = append(env, "MACHTIANI_PERSIST_TMP_DATA=1")
-	}
-	if tempRoot := strings.TrimSpace(opts.SessionTempRoot); tempRoot != "" {
-		env = append(env, "MACHTIANI_SESSION_TEMP_ROOT="+tempRoot)
-	}
-	if configPath := strings.TrimSpace(opts.GlobalConfigPath); configPath != "" {
-		env = append(env, "MACHTIANI_CONFIG="+configPath)
-	}
-	cmd.Env = env
-
-	stdoutPipe, err := cmd.StdoutPipe()
-	if err != nil {
-		return "", "", "", fmt.Errorf("shell-agent stdout pipe: %w", err)
-	}
-	stderrPipe, err := cmd.StderrPipe()
-	if err != nil {
-		return "", "", "", fmt.Errorf("shell-agent stderr pipe: %w", err)
-	}
-
-	if err := cmd.Start(); err != nil {
-		return "", "", "", fmt.Errorf("shell-agent start: %w", err)
-	}
-
-	var stdoutBuf bytes.Buffer
-
-	var stderrBuf bytes.Buffer
-	stderrDone := make(chan struct{})
-	var stderrErr error
-	go func() {
-		_, stderrErr = io.Copy(&stderrBuf, stderrPipe)
-		close(stderrDone)
-	}()
-
-	trajWriter, _ := trajectory.FromContext(ctx)
-	parentSpan, _ := trajectory.ParentSpanID(ctx)
-	emitAction := func(msg shellbridge.ActionMessage) {
-		emitShellActionEvent(ctx, trajWriter, parentSpan, msg)
-	}
-	if err := interceptShellAgentStdout(stdoutPipe, &stdoutBuf, opts.OnToken, emitAction); err != nil {
-		_ = cmd.Process.Kill()
-		<-stderrDone
-		_ = cmd.Wait()
-		return "", "", "", fmt.Errorf("shell-agent read stdout: %w", err)
-	}
-
-	err = cmd.Wait()
-	<-stderrDone
-	if stderrErr != nil && !isClosedPipeError(stderrErr) {
-		return "", "", "", fmt.Errorf("shell-agent read stderr: %w", stderrErr)
-	}
-	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			stderrMsg := strings.TrimSpace(stderrBuf.String())
-			if stderrMsg == "" {
-				stderrMsg = strings.TrimSpace(stdoutBuf.String())
-			}
-			if stderrMsg != "" {
-				return "", "", "", fmt.Errorf("shell-agent exited with code %d: %s", exitErr.ExitCode(), stderrMsg)
-			}
-			return "", "", "", fmt.Errorf("shell-agent exited with code %d", exitErr.ExitCode())
-		}
-		return "", "", "", fmt.Errorf("shell-agent wait: %w", err)
-	}
-
-	stdoutText := strings.TrimSpace(stdoutBuf.String())
-	stderrText := strings.TrimSpace(stderrBuf.String())
-	contextBlock, formatErr := formatShellAgentContext(stdoutText, stderrText, opts.Prompts, false)
-	if formatErr != nil {
-		return "", "", "", formatErr
-	}
-	verbatimOutput, _ := formatShellAgentContext(stdoutText, stderrText, opts.Prompts, true)
-	trajectory := extractTrajectoryPath(stdoutText, stderrText)
-	return contextBlock, verbatimOutput, trajectory, nil
-}
-
-func formatShellAgentContext(stdoutText, stderrText string, cfg *llm.MCTPromptsConfig, verbatim bool) (string, error) {
-	stdout := strings.TrimSpace(stdoutText)
-	if block, ok := extractShellAgentResultBlock(stdoutText); ok {
-		if shellAgentLimitsExceeded(block) {
-			return "", fmt.Errorf("shell-agent exited with LimitsExceeded")
-		}
-		if verbatim {
-			if result, ok := extractShellAgentResultText(block); ok && strings.TrimSpace(result) != "" {
-				return strings.TrimSpace(result), nil
-			}
-			return strings.TrimSpace(block), nil
-		}
-		stdout = block
-	}
-	stderr := strings.TrimSpace(stderrText)
-	if verbatim {
-		if stdout != "" {
-			return stdout, nil
-		}
-		return stderr, nil
-	}
-	prefix := shellAgentContextPrefix
-	if cfg != nil {
-		if configured := strings.TrimSpace(cfg.ShellAgentContextPrefix); configured != "" {
-			prefix = configured
-		} else if embedded, err := templates.GetEmbeddedTemplate("mct.shell_agent_context_prefix"); err == nil && strings.TrimSpace(embedded) != "" {
-			prefix = embedded
-		}
-	} else if embedded, err := templates.GetEmbeddedTemplate("mct.shell_agent_context_prefix"); err == nil && strings.TrimSpace(embedded) != "" {
-		prefix = embedded
-	}
-
-	var tmpl string
-	if cfg != nil {
-		tmpl = strings.TrimSpace(cfg.ShellAgentContextTemplate)
-	}
-	if tmpl == "" {
-		if embedded, err := templates.GetEmbeddedTemplate("mct.shell_agent_context_template"); err == nil {
-			tmpl = embedded
-		}
-	}
-	if strings.TrimSpace(tmpl) == "" {
-		return "", fmt.Errorf("shell context template not configured")
-	}
-	data := map[string]any{
-		"Prefix":    prefix,
-		"Stdout":    stdout,
-		"Stderr":    stderr,
-		"HasStdout": stdout != "",
-		"HasStderr": stderr != "",
-	}
-	rendered, err := prompts.Render("mct_shell_context", tmpl, data, nil)
-	if err != nil {
-		return "", fmt.Errorf("render shell context template: %w", err)
-	}
-	return strings.TrimSpace(rendered), nil
-}
-
-func shellAgentLimitsExceeded(resultBlock string) bool {
-	lines := strings.Split(resultBlock, "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		if !strings.HasPrefix(strings.ToLower(line), "exit status:") {
-			continue
-		}
-		parts := strings.SplitN(line, ":", 2)
-		if len(parts) != 2 {
-			return false
-		}
-		status := strings.TrimSpace(parts[1])
-		return strings.EqualFold(status, "LimitsExceeded")
-	}
-	return false
-}
-
-func extractTrajectoryPath(outputs ...string) string {
-	trajectoryLine := regexp.MustCompile(`Trajectory:\s*(.+\.json)`) // e.g. "Trajectory: trajectory-20240930-120000.json"
-	filePattern := regexp.MustCompile(`trajectory-\d{8}-\d{6}\.json`)
-	for _, out := range outputs {
-		if strings.TrimSpace(out) == "" {
-			continue
-		}
-		if match := trajectoryLine.FindStringSubmatch(out); len(match) == 2 {
-			candidate := strings.TrimSpace(match[1])
-			if candidate != "" {
-				if abs, err := filepath.Abs(candidate); err == nil {
-					return abs
-				}
-				return candidate
-			}
-		}
-	}
-	for _, out := range outputs {
-		if strings.TrimSpace(out) == "" {
-			continue
-		}
-		if match := filePattern.FindString(out); match != "" {
-			if abs, err := filepath.Abs(match); err == nil {
-				return abs
-			}
-			return match
-		}
-	}
-	return ""
-}
-
-func interceptShellAgentStdout(r io.Reader, buf *bytes.Buffer, onToken func(string), emitAction func(shellbridge.ActionMessage)) error {
-	if r == nil {
-		return nil
-	}
-	tmp := make([]byte, 4096)
-	pending := make([]byte, 0, 4096)
-	flush := func(data []byte) {
-		if len(data) == 0 {
-			return
-		}
-		buf.Write(data)
-		if onToken != nil {
-			onToken(string(data))
-		}
-	}
-	for {
-		n, err := r.Read(tmp)
-		if n > 0 {
-			pending = append(pending, tmp[:n]...)
-			for {
-				idx := bytes.IndexByte(pending, '\n')
-				if idx == -1 {
-					break
-				}
-				line := pending[:idx+1]
-				pending = pending[idx+1:]
-				if handleShellActionLine(line, emitAction) {
-					continue
-				}
-				flush(line)
-			}
-		}
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-			return err
-		}
-	}
-	if len(pending) > 0 {
-		if handleShellActionLine(pending, emitAction) {
-			return nil
-		}
-		flush(pending)
-	}
-	return nil
-}
-
-func handleShellActionLine(line []byte, emitAction func(shellbridge.ActionMessage)) bool {
-	trimmed := bytes.TrimRight(line, "\r\n")
-	if !bytes.HasPrefix(trimmed, []byte(shellbridge.ActionPrefix)) {
-		return false
-	}
-	payload := bytes.TrimSpace(trimmed[len(shellbridge.ActionPrefix):])
-	if len(payload) == 0 {
-		return true
-	}
-	var msg shellbridge.ActionMessage
-	if err := json.Unmarshal(payload, &msg); err != nil {
-		return false
-	}
-	msg.Description = strings.TrimSpace(msg.Description)
-	msg.Command = strings.TrimSpace(msg.Command)
-	if msg.Description == "" && msg.Command == "" {
-		return true
-	}
-	if emitAction != nil {
-		emitAction(msg)
-	}
-	return true
-}
-
-func emitShellActionEvent(ctx context.Context, writer *trajectory.Writer, parentSpan string, msg shellbridge.ActionMessage) {
-	if writer == nil {
-		return
-	}
-	if msg.Description == "" && msg.Command == "" {
-		return
-	}
-	payload := map[string]any{
-		"event_version": 1,
-	}
-	if msg.Description != "" {
-		payload["description"] = msg.Description
-	}
-	if msg.Command != "" {
-		payload["command"] = msg.Command
-	}
-	if msg.ModelCallsUsed > 0 {
-		payload["model_calls_used"] = msg.ModelCallsUsed
-	}
-	if msg.StepLimit > 0 {
-		payload["step_limit"] = msg.StepLimit
-	}
-	if msg.RemainingSteps > 0 {
-		payload["remaining_steps"] = msg.RemainingSteps
-	}
-	if msg.CommandsExecuted > 0 {
-		payload["commands_executed"] = msg.CommandsExecuted
-	}
-	evt := trajectory.Event{Kind: "shell-agent.action", ParentSpanID: strings.TrimSpace(parentSpan), Payload: payload}
-	if err := writer.Emit(ctx, evt); err != nil {
-		fmt.Fprintf(os.Stderr, "[trajectory] shell action emit error: %v\n", err)
-	}
-}
-
-func firstNonEmptyOverrides(runtimes ...ModelRuntime) map[string]string {
-	for _, rt := range runtimes {
-		if len(rt.APIKeyOverrides) > 0 {
-			return rt.APIKeyOverrides
-		}
-	}
-	return nil
-}
-
-func runtimeEnvFrom(rt ModelRuntime) []string {
-	env := []string{}
-	apiKey := strings.TrimSpace(rt.Resolved.APIKey)
-	if apiKey != "" {
-		env = append(env, "OPENAI_API_KEY="+apiKey)
-	}
-	baseURL := strings.TrimSpace(rt.Resolved.BaseURL)
-	if baseURL != "" {
-		env = append(env, "OPENAI_BASE_URL="+baseURL)
-	}
-	model := strings.TrimSpace(rt.Resolved.Model)
-	if model != "" {
-		env = append(env, "OPENAI_MODEL="+model)
-	}
-	return env
-}
-
-type tokenWriter struct {
-	onToken func(string)
-}
-
-func (w *tokenWriter) Write(p []byte) (int, error) {
-	if w.onToken != nil && len(p) > 0 {
-		w.onToken(string(p))
-	}
-	return len(p), nil
 }
 
 func runReadmeManager(ctx context.Context, opts RunOptions, isAnswerOnly bool) error {
@@ -1002,20 +617,6 @@ func validateMCTPromptsConfig(cfg *llm.MCTPromptsConfig) error {
 		return fmt.Errorf("readme system template is required")
 	}
 	return nil
-}
-
-func isClosedPipeError(err error) bool {
-	if err == nil {
-		return false
-	}
-	if errors.Is(err, os.ErrClosed) {
-		return true
-	}
-	if pe, ok := err.(*os.PathError); ok {
-		return isClosedPipeError(pe.Err)
-	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "file already closed") || strings.Contains(msg, "use of closed file")
 }
 
 func deriveFilename(source string) string {

@@ -620,3 +620,43 @@ func coerceBool(val any) (bool, bool) {
 	}
 	return false, false
 }
+
+// ToLLMMessages converts the conversation's messages into a slice of
+// llm.Message suitable for the shell-agent's pre-built message prefix.
+//
+// The conversion uses serializeChatMessage to apply role mapping and
+// [work_request]/[work_result] prefixes. Internal-only markers such as
+// cache_anchor sentinels are filtered out. The resulting messages carry
+// a "source":"planner" metadata entry and an estimated_tokens count.
+func (c *Conversation) ToLLMMessages() []llm.Message {
+	if c == nil {
+		return nil
+	}
+	out := make([]llm.Message, 0, len(c.Messages))
+	for _, msg := range c.Messages {
+		msgType := getType(msg.Metadata)
+		if msgType == messageTypeCacheAnchor {
+			continue
+		}
+		role, content, ok := serializeChatMessage(msg.Role, msgType, msg.Content)
+		if !ok {
+			continue
+		}
+		if strings.TrimSpace(content) == "" {
+			continue
+		}
+		meta := map[string]any{
+			"source": "planner",
+		}
+		if msg.Turn != nil {
+			meta["turn"] = *msg.Turn
+		}
+		meta["estimated_tokens"] = llm.EstimateMessageTokens(llm.Message{Content: content})
+		out = append(out, llm.Message{
+			Role:     role,
+			Content:  content,
+			Metadata: meta,
+		})
+	}
+	return out
+}

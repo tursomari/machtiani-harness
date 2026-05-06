@@ -1,6 +1,9 @@
 package prompt
 
-import "github.com/tursomari/machtiani/agent/internal/llm"
+import (
+	"github.com/tursomari/machtiani/agent/internal/llm"
+	"github.com/tursomari/machtiani/agent/internal/shell-agent/pkg/minisweagent"
+)
 
 // ModelRuntime captures the resolved model configuration used for LLM calls
 // and file discovery. It mirrors the data produced by the existing runtime
@@ -42,12 +45,33 @@ type RunOptions struct {
 	SessionTempRoot         string
 	ResponseDirectives      []string
 	Prompts                 *llm.MCTPromptsConfig
+
+	// ShellAgentLibrary enables the in-process library path. When set
+	// alongside ShellAgent=true, the prompt layer calls shellagent.Run
+	// directly instead of spawning a subprocess.
+	ShellAgentLibrary *ShellAgentLibraryConfig
 }
 
 // ReadmeOptions configure optional internal README management hooks.
 type ReadmeOptions struct {
 	Enabled          bool
 	ProjectCommitSHA string
+}
+
+// ShellAgentLibraryConfig holds the live objects needed for the in-process
+// shell-agent library path. When set on RunOptions, the prompt layer calls
+// shellagent.Run directly instead of spawning a subprocess.
+type ShellAgentLibraryConfig struct {
+	Model   minisweagent.Model
+	Env     minisweagent.Environment
+	Config  *minisweagent.ShellAgentConfig
+	Prompts *minisweagent.PromptsConfig
+
+	// PrebuiltMessages, when non-nil, carries the pre-built message
+	// prefix (system prompt + planner conversation messages). The
+	// prompt layer appends the instance prompt and passes the complete
+	// array to shellagent.Run.
+	PrebuiltMessages []llm.Message
 }
 
 // Result captures the outcome of a prompt execution.

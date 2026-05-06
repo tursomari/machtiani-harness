@@ -285,3 +285,68 @@ func TestRunFullFilePromptStillGeneratesAnswer(t *testing.T) {
 		t.Fatalf("did not expect show-file formatting in prompt, got %q", capturedPrompt)
 	}
 }
+
+func TestFileDiscoveryRunsWhenShellAgentDisabled(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	workDir := t.TempDir()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	if err := os.Chdir(workDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+
+	sessionID := "file-discovery-default"
+	t.Setenv("MACHTIANI_SESSION_ID", sessionID)
+
+	origDiscovery := discoveryRunnerRun
+	var discoveryCalls int
+	discoveryRunnerRun = func(ctx context.Context, prompt string, model discoveryrunner.ModelSettings, sid string, verbose bool) (discoveryrunner.Result, error) {
+		discoveryCalls++
+		return discoveryrunner.Result{Paths: []string{"src/main.go", "README.md"}}, nil
+	}
+	t.Cleanup(func() { discoveryRunnerRun = origDiscovery })
+
+	origChat := chatStreamWithRuntime
+	var capturedPrompt string
+	chatStreamWithRuntime = func(ctx context.Context, resolved llm.ResolvedModel, aliases []string, fallbacks []llm.ResolvedModel, extras map[string]any, msgs []llm.Message, onToken func(string)) (string, error) {
+		if len(msgs) != 1 {
+			t.Fatalf("expected single message, got %d", len(msgs))
+		}
+		capturedPrompt = msgs[0].Content
+		return "ok", nil
+	}
+	t.Cleanup(func() { chatStreamWithRuntime = origChat })
+
+	opts := RunOptions{
+		Prompt:       "Summarize the project state",
+		Mode:         "default",
+		SessionID:    sessionID,
+		Runtime:      ModelRuntime{Resolved: llm.ResolvedModel{Model: "test-model"}},
+		ShellAgent:   false,
+		ExplicitName: "integration-default",
+		Prompts:      testPromptsConfig(),
+	}
+
+	res, err := Run(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if discoveryCalls != 1 {
+		t.Fatalf("expected file discovery to run once, got %d", discoveryCalls)
+	}
+	if !res.FileDiscoveryRan {
+		t.Fatalf("expected FileDiscoveryRan to be true")
+	}
+	if res.ShellAgentUsed {
+		t.Fatalf("expected ShellAgentUsed to be false")
+	}
+	if len(res.RetrievedFiles) != 2 {
+		t.Fatalf("unexpected retrieved files: %+v", res.RetrievedFiles)
+	}
+	if !strings.Contains(capturedPrompt, "README.md") {
+		t.Fatalf("expected retrieved files in prompt: %q", capturedPrompt)
+	}
+}

@@ -5,9 +5,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-
-	"github.com/tursomari/machtiani/agent/internal/mct/internal/contextbuilder"
-	"github.com/tursomari/machtiani/agent/internal/mct/internal/session"
 )
 
 // ShellAgentOnlyResult captures the shell-agent output when running without the chat model.
@@ -45,49 +42,6 @@ func RunShellAgentOnly(ctx context.Context, opts RunOptions) (ShellAgentOnlyResu
 		}()
 	}
 
-	hist, err := session.LoadHistory()
-	if err != nil {
-		hist = []contextbuilder.Message{}
-	}
-
-	if opts.SessionID != "" {
-		historyNote := ""
-		if len(hist) > 0 {
-			historyNote = "Review the session history above and "
-		}
-		opts.Prompt = fmt.Sprintf(
-			"Continue this session. %sAnalyze the conversation history and decide what action to take or how to respond: %s",
-			historyNote, opts.Prompt)
-	}
-
-	historyTemplate := ""
-	if opts.Prompts != nil {
-		historyTemplate = opts.Prompts.ConversationHistoryTemplate
-	}
-	combined, _, err := contextbuilder.Build(
-		opts.Prompt,
-		nil,
-		hist,
-		contextbuilder.Options{
-			IncludeHistory:  opts.IncludeHistory,
-			MaxInputTokens:  opts.MaxInputTokens,
-			PreludeTemplate: historyTemplate,
-		},
-	)
-	if err != nil {
-		return res, err
-	}
-
-	combined = AppendShellAgentPromptNotice(combined, opts.Prompts)
-	directiveBlock := formatResponseDirectives(opts.ResponseDirectives)
-	if directiveBlock != "" {
-		if strings.TrimSpace(combined) != "" {
-			combined = combined + "\n\n" + directiveBlock
-		} else {
-			combined = directiveBlock
-		}
-	}
-
 	if strings.TrimSpace(opts.ShellAgentModel) == "" {
 		candidate := strings.TrimSpace(opts.Runtime.Alias)
 		if candidate == "" {
@@ -98,14 +52,15 @@ func RunShellAgentOnly(ctx context.Context, opts RunOptions) (ShellAgentOnlyResu
 		}
 	}
 
-	contextBlock, verbatimBlock, trajectoryPath, err := invokeShellAgent(ctx, combined, opts)
+	if opts.ShellAgentLibrary == nil {
+		return res, fmt.Errorf("shell-agent library is required when shell-agent mode is enabled")
+	}
+	contextBlock, verbatimBlock, _, err := runShellAgentLibrary(ctx, opts.Prompt, opts)
 	if err != nil {
 		return res, err
 	}
-
 	res.Context = strings.TrimSpace(contextBlock)
 	res.Verbatim = strings.TrimSpace(verbatimBlock)
-	res.TrajectoryPath = strings.TrimSpace(trajectoryPath)
 	res.Summary = strings.TrimSpace(res.Verbatim)
 	if res.Summary == "" {
 		res.Summary = res.Context

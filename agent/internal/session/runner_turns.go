@@ -18,6 +18,7 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/parser"
 	"github.com/tursomari/machtiani/agent/internal/planner"
 	"github.com/tursomari/machtiani/agent/internal/runner"
+	shellagent "github.com/tursomari/machtiani/agent/internal/shell-agent"
 	"github.com/tursomari/machtiani/agent/internal/tempdir"
 	"github.com/tursomari/machtiani/agent/internal/trajectory"
 	"github.com/tursomari/machtiani/agent/internal/transcript"
@@ -357,6 +358,22 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 			if env.mctRunner.Prompts != nil {
 				shellOpts.Prompts = env.mctRunner.Prompts.MCT
 			}
+			if env.mctRunner.ShellAgentLibrary != nil {
+				conv := env.recorder.Conversation()
+				prebuilt, err := shellagent.BuildShellAgentMessages(conv.ToLLMMessages(), env.mctRunner.ShellAgentLibrary.Prompts)
+				if err != nil && env.cfg.verbose {
+					fmt.Fprintln(os.Stderr, "shell-agent library: build prebuilt messages:", err)
+				}
+				if err == nil {
+					shellOpts.ShellAgentLibrary = &promptsvc.ShellAgentLibraryConfig{
+						Model:             env.mctRunner.ShellAgentLibrary.Model,
+						Env:               env.mctRunner.ShellAgentLibrary.Env,
+						Config:            env.mctRunner.ShellAgentLibrary.Config,
+						Prompts:           env.mctRunner.ShellAgentLibrary.Prompts,
+						PrebuiltMessages:  prebuilt,
+					}
+				}
+			}
 			go func() {
 				defer close(shellDone)
 				if shellCancel != nil {
@@ -491,6 +508,22 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 		OnStreamToken:      stream.OnChunk,
 		MaxInputTokens:     env.cfg.maxInputTokens,
 		ResponseDirectives: append([]string(nil), env.mctResponseDirectives...),
+	}
+	if useShellAgent && env.mctRunner.ShellAgentLibrary != nil {
+		conv := env.recorder.Conversation()
+		prebuilt, err := shellagent.BuildShellAgentMessages(conv.ToLLMMessages(), env.mctRunner.ShellAgentLibrary.Prompts)
+		if err != nil && env.cfg.verbose {
+			fmt.Fprintln(os.Stderr, "shell-agent library: build prebuilt messages:", err)
+		}
+		if err == nil {
+			input.ShellAgentLibrary = &promptsvc.ShellAgentLibraryConfig{
+				Model:            env.mctRunner.ShellAgentLibrary.Model,
+				Env:              env.mctRunner.ShellAgentLibrary.Env,
+				Config:           env.mctRunner.ShellAgentLibrary.Config,
+				Prompts:          env.mctRunner.ShellAgentLibrary.Prompts,
+				PrebuiltMessages: prebuilt,
+			}
+		}
 	}
 	ctx2, cancel2 := makeTurnContext(env.rootCtx, env.cfg.timeoutPerTurn)
 	ctx2 = attachTrajectory(ctx2, env.trajectoryWriter, env.parentSpanID)

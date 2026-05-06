@@ -10,6 +10,7 @@ import (
 
 	"github.com/tursomari/machtiani/agent/internal/llm"
 	promptsvc "github.com/tursomari/machtiani/agent/internal/mct/prompt"
+	shellagent "github.com/tursomari/machtiani/agent/internal/shell-agent"
 	"github.com/tursomari/machtiani/agent/internal/trajectory"
 )
 
@@ -27,6 +28,13 @@ type Runner struct {
 	PersistTmpData          bool
 	SessionTempRoot         string
 	Prompts                 *llm.PromptsConfig
+
+	// ShellAgentLibrary holds the pre-built model, environment, config,
+	// and prompts for the in-process shell-agent library path. When
+	// non-nil, the session layer passes it through to the prompt layer
+	// so shellagent.Run is called directly instead of spawning a
+	// subprocess.
+	ShellAgentLibrary *shellagent.ShellAgentLibrary
 }
 
 type PromptInput struct {
@@ -38,6 +46,13 @@ type PromptInput struct {
 	OnStreamToken      func(string)
 	MaxInputTokens     int
 	ResponseDirectives []string
+
+	// ShellAgentLibrary, when non-nil, carries the pre-built message
+	// prefix and live objects for the in-process shell-agent library
+	// path. When set alongside ShellAgent=true on the Runner, the
+	// prompt layer calls shellagent.Run directly instead of spawning
+	// a subprocess.
+	ShellAgentLibrary *promptsvc.ShellAgentLibraryConfig
 }
 
 func (r *Runner) Resolve() error {
@@ -161,6 +176,7 @@ func (r *Runner) RunPrompt(ctx context.Context, sessionID string, in PromptInput
 		SessionTempRoot:         r.SessionTempRoot,
 		ResponseDirectives:      append([]string(nil), in.ResponseDirectives...),
 		Prompts:                 mctPrompts,
+		ShellAgentLibrary:       in.ShellAgentLibrary,
 	})
 	if useMarkdown && ms != nil {
 		_ = ms.Flush()

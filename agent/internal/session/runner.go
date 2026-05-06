@@ -22,6 +22,7 @@ import (
 	patchersvc "github.com/tursomari/machtiani/agent/internal/patcher"
 	"github.com/tursomari/machtiani/agent/internal/planner"
 	"github.com/tursomari/machtiani/agent/internal/runner"
+	shellagent "github.com/tursomari/machtiani/agent/internal/shell-agent"
 	"github.com/tursomari/machtiani/agent/internal/tempdir"
 	"github.com/tursomari/machtiani/agent/internal/trajectory"
 	"github.com/tursomari/machtiani/agent/internal/transcript"
@@ -706,11 +707,11 @@ func runSession(ctx context.Context, opts Options) Result {
 	interruptedResult := runState.interruptedResult
 	isContextCancelled := runState.isContextCancelled
 	writePendingPatchTranscript := runState.writePendingPatchTranscript
-
+	fmt.Fprintln(os.Stderr, "Session:", sessionID)
 	if cfg.verbose {
 		fmt.Fprintln(os.Stderr, "mct-agent starting; transcript:", tr.Path())
-		fmt.Fprintln(os.Stderr, "Session:", sessionID)
 	}
+
 
 	trajectoryPath, err := resolveFileDiscoveryTrajectory(cfg, sessionID)
 	if err != nil {
@@ -775,6 +776,21 @@ func runSession(ctx context.Context, opts Options) Result {
 	if err := mctRunner.Resolve(); err != nil {
 		fmt.Fprintln(os.Stderr, "mct resolution error:", err)
 		return Result{ExitCode: 1, Err: err}
+	}
+
+	// Build the in-process shell-agent library objects. These are
+	// reused across turns so the model and environment are created
+	// once. The planner may dynamically decide to use the shell-agent
+	// even without an explicit --shell-agent flag (e.g. "Ask" routing),
+	// so the library is always built when possible.
+	lib, libErr := shellagent.BuildLibrary(&opts.GlobalConfig, opts.APIKeyOverrides, cfg.persistTmpData)
+	if libErr != nil {
+		// Non-fatal: the library is a prerequisite only when the
+		// planner actually delegates to the shell-agent. If it's
+		// never used the warning is harmless.
+		fmt.Fprintln(os.Stderr, "shell-agent library init warning:", libErr)
+	} else {
+		mctRunner.ShellAgentLibrary = lib
 	}
 
 	mctResponseDirectives := []string(nil)

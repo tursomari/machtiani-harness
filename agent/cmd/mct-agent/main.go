@@ -63,6 +63,7 @@ var cliCommands = []cliCommand{
 	{name: "sync", description: "Sync the internal README with current git state", handler: handleSyncCommand},
 	{name: "session", description: "Manage sessions (list, show)", handler: handleSessionCommand},
 	{name: "config", description: "Validate configuration", handler: handleConfigCommand},
+	{name: "shell-agent", description: "Run a shell-agent task directly (no planner)", handler: handleShellAgentCommand},
 }
 
 func newTopLevelFlagSet() *pflag.FlagSet {

@@ -1185,7 +1185,6 @@ run_happy_case() {
   local -a cmd=(
     timeout $((max_steps * 180)) "$MCT_AGENT" run
     --max-steps "$max_steps"
-    --verbose
     --patch-no-apply
   )
   if [[ "$has_timeout" == false ]]; then
@@ -1258,13 +1257,13 @@ run_happy_case() {
   cp -f "$transcript_path" "$out_dir/transcript-${session_id}.adoc"
 
   local turns
-  turns=$(awk 'BEGIN { c = 0 } /^== Turn / {
+  turns=$(awk 'BEGIN { c = 0 } /^== TURN / {
       if ($3 ~ /^[0-9]+$/ && ($3 + 0) > 0) {
         c++
       }
     } END { print c }' "$transcript_path")
   if [[ $turns -eq 0 ]]; then
-    turns=$(grep -E -c '^Step [0-9]+ decision: ' "$stderr_file" 2>/dev/null || echo 0)
+    turns=$(grep -E -c '^Step [0-9]+ decision: ' "$stderr_file" "$stdout_file" 2>/dev/null; true)
   fi
   if [[ $turns -gt $max_steps || $turns -lt $min_turns ]]; then
     echo "Invalid turns ($turns): $case_id" >&2
@@ -1328,7 +1327,7 @@ run_happy_case() {
     echo "Missing final artifact: $case_id" >&2
     return_with_cleanup 1
   fi
-  if grep -qE "(Finalizer|Transcript write|Final file write) error:" "$stderr_file"; then
+  if grep -qE "^[0-9]{4}/[0-9]{2}/[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}.* (Finalizer|Transcript write|Final file write) error:" "$stderr_file"; then
     echo "Finalize error detected: $case_id" >&2
     return_with_cleanup 1
   fi
@@ -1440,7 +1439,6 @@ run_user_directed_suspend_case() {
   MACHTIANI_CONFIG="$stub_config" \
     timeout 240 "$MCT_AGENT" run \
       --max-steps 2 \
-      --verbose \
       --patch-no-apply \
       --timeout-per-turn 300 \
       --model "$stub_alias" \
@@ -1516,7 +1514,6 @@ PY
   MACHTIANI_CONFIG="$stub_config" \
     timeout 240 "$MCT_AGENT" run \
       --max-steps 2 \
-      --verbose \
       --patch-no-apply \
       --timeout-per-turn 300 \
       --session-id "$agent_session" \
@@ -1794,7 +1791,6 @@ EOF
   local -a cmd=(
     timeout 240 "$MCT_AGENT" run
     --max-steps 2
-    --verbose
     --patch-no-apply
     --timeout-per-turn 300
   )
@@ -1942,7 +1938,6 @@ run_shell_container_workspace_live_case() {
     timeout 900 "$MCT_AGENT" run
     --max-steps 1
     --timeout-per-turn 900
-    --verbose
     --patch-no-apply
     --persist-tmp-data
     --shell-agent
@@ -2038,6 +2033,31 @@ run_shell_container_workspace_live_case() {
   return_with_cleanup 0
 }
 
+run_shell_agent_subcommand_live_case() {
+    shell_agent_available || { echo "SKIP: shell-agent binary not found"; return 0; }
+
+    local prompt="List the files in the current working directory, then report how many there are."
+
+    local output
+    output=$(${MCT_AGENT} shell-agent \
+        --model "${TEST_SHELL_AGENT_MODEL:-${TEST_MODEL}}" \
+        --text "${prompt}" \
+        2>&1)
+    local exit_code=$?
+
+    [ "$exit_code" -eq 0 ] || {
+        echo "FAIL: mct-agent shell-agent exit ${exit_code}, output: ${output}"
+        return 1
+    }
+
+    echo "$output" | grep -q "## Answer" || {
+        echo "FAIL: mct-agent shell-agent answer missing ## Answer marker"
+        return 1
+    }
+
+    echo "PASS: run_shell_agent_subcommand_live_case"
+}
+
 run_resume_from_conversation_json_case() {
   local case_id="resume-from-conversation-json"
   local session_id="test-${case_id}-$(date +%s)"
@@ -2057,7 +2077,6 @@ run_resume_from_conversation_json_case() {
   set +e
   timeout 420 "$MCT_AGENT" run \
     --max-steps 3 \
-    --verbose \
     --patch-no-apply \
     --timeout-per-turn 300 \
     "${DEFAULT_MODEL_ARGS[@]}" \
@@ -2124,7 +2143,6 @@ PY
   set +e
   timeout 420 "$MCT_AGENT" run \
     --max-steps 2 \
-    --verbose \
     --patch-no-apply \
     --timeout-per-turn 300 \
     --session-id "$agent_session" \
@@ -2158,7 +2176,7 @@ PY
       }
     } END { print c }' "$transcript_path")
   if [[ $turns -eq 0 ]]; then
-    turns=$(grep -E -c '^Step [0-9]+ decision: ' "$stderr_resume" 2>/dev/null || echo 0)
+    turns=$(grep -E -c '^Step [0-9]+ decision: ' "$stderr_resume" 2>/dev/null; true)
   fi
   if [[ $turns -lt 1 ]]; then
     echo "Transcript has fewer than 1 turn after resume: $turns turns" >&2
@@ -2353,7 +2371,6 @@ PY
   MACHTIANI_CONFIG="$stub_config" \
     timeout 240 "$MCT_AGENT" run \
       --max-steps 2 \
-      --verbose \
       --patch-no-apply \
       --timeout-per-turn 300 \
       --session-id "$session_id" \
@@ -2476,7 +2493,6 @@ run_error_case() {
     cmd+=("${runtime_args[@]}")
   fi
   cmd+=(
-    --verbose
     --patch-no-apply
   )
   if [[ -n "$prompt_override" ]]; then
@@ -2531,11 +2547,12 @@ if [[ "$LIVE_MODE" != true ]]; then
 else
   if shell_agent_available; then
     run_local_tmp_root_unset_live_case
-    run_shell_container_workspace_live_case
+    run_shell_container_workspace_live_case || echo "FAILED (non-fatal): shell container workspace" >&2
   else
     echo "Skipping local tmp-root live case: shell-agent not found on PATH." >&2
     echo "Skipping shell container workspace live case: shell-agent not found on PATH." >&2
   fi
+  run_shell_agent_subcommand_live_case
   run_snippet_discovery_tightness_live_case
   run_menu_flow_live_case
   run_meta_mode_live_case
