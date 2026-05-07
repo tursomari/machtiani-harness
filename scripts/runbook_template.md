@@ -1,7 +1,7 @@
 # Harness Comparison Runbook: mct-agent vs Forge (`muse`)
 
-**Generated** {{GENERATED_AT}}  
-**Project** `{{PROJECT_NAME}}` at `{{PROJECT_ROOT}}`  
+**Generated** {{GENERATED_AT}}
+**Project** `{{PROJECT_NAME}}` at `{{PROJECT_ROOT}}`
 **Prompt** `{{PROMPT_FILE}}`
 
 ---
