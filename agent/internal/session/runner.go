@@ -798,6 +798,7 @@ func runSession(ctx context.Context, opts Options) Result {
 		// never used the warning is harmless.
 		fmt.Fprintln(os.Stderr, "shell-agent library init warning:", libErr)
 	} else {
+		lib.ExtraInstructions = metaInstructions.ShellInstruction
 		mctRunner.ShellAgentLibrary = lib
 	}
 

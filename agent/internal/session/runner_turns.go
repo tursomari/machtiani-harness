@@ -360,7 +360,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 			}
 			if env.mctRunner.ShellAgentLibrary != nil {
 				conv := env.recorder.Conversation()
-				prebuilt, err := shellagent.BuildShellAgentMessages(conv.ToLLMMessages(), env.mctRunner.ShellAgentLibrary.Prompts)
+				prebuilt, err := shellagent.BuildShellAgentMessages(conv.ToLLMMessages(), env.mctRunner.ShellAgentLibrary.Prompts, env.mctRunner.ShellAgentLibrary.ExtraInstructions)
 				if err != nil && env.cfg.verbose {
 					fmt.Fprintln(os.Stderr, "shell-agent library: build prebuilt messages:", err)
 				}
@@ -511,7 +511,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 	}
 	if useShellAgent && env.mctRunner.ShellAgentLibrary != nil {
 		conv := env.recorder.Conversation()
-		prebuilt, err := shellagent.BuildShellAgentMessages(conv.ToLLMMessages(), env.mctRunner.ShellAgentLibrary.Prompts)
+		prebuilt, err := shellagent.BuildShellAgentMessages(conv.ToLLMMessages(), env.mctRunner.ShellAgentLibrary.Prompts, env.mctRunner.ShellAgentLibrary.ExtraInstructions)
 		if err != nil && env.cfg.verbose {
 			fmt.Fprintln(os.Stderr, "shell-agent library: build prebuilt messages:", err)
 		}

@@ -213,6 +213,7 @@ type MetaOrchestratorConfig struct {
 
 type MetaModeConfig struct {
 	InstructionFile string `toml:"instruction_file"`
+	ShellPrompt     string `toml:"shell_prompt"`
 }
 
 // MetaInstructionsFormat enumerates the supported custom instruction formats.
@@ -232,15 +233,17 @@ type MetaInstructionTask struct {
 	SystemPrompt string `toml:"system_prompt"`
 	ShellAgent   *bool  `toml:"shell_agent"`
 	PatchMode    *bool  `toml:"patch_mode"`
+	ShellPrompt  string `toml:"shell_prompt"`
 }
 
 // MetaInstructions captures the resolved instruction payload, preserving both
 // the raw source content and a single structured task.
 type MetaInstructions struct {
-	Format MetaInstructionsFormat
-	Path   string
-	Raw    string
-	Task   MetaInstructionTask
+	Format          MetaInstructionsFormat
+	Path            string
+	Raw             string
+	Task            MetaInstructionTask
+	ShellInstruction string
 }
 
 type ProviderConfig struct {
@@ -1844,7 +1847,17 @@ func LoadMetaInstructions(mode, overrideDir string, cfg Config, configPath strin
 			if perr != nil {
 				return MetaInstructions{}, fmt.Errorf("parse meta instructions %s: %w", candidate, perr)
 			}
-			return MetaInstructions{Format: format, Path: candidate, Raw: raw, Task: task}, nil
+			result := MetaInstructions{Format: format, Path: candidate, Raw: raw, Task: task}
+			if strings.TrimSpace(task.ShellPrompt) != "" {
+				baseDir := filepath.Dir(candidate)
+				shellPath := filepath.Join(baseDir, task.ShellPrompt)
+				shellContent, err := os.ReadFile(shellPath)
+				if err != nil {
+					return MetaInstructions{}, fmt.Errorf("read shell-agent instructions %s: %w", shellPath, err)
+				}
+				result.ShellInstruction = strings.TrimSpace(string(shellContent))
+			}
+			return result, nil
 		default:
 			return MetaInstructions{Format: format, Path: candidate, Raw: raw}, nil
 		}

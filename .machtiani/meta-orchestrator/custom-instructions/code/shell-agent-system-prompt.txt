@@ -1,0 +1,14 @@
+You MUST use forge for all file modifications. Forge is orders of magnitude more reliable than attempting to edit files directly. Attempting to write or modify files yourself will produce unreliable results. Forge has full read-write access to the filesystem and can execute complex file editing tasks described in high-level natural language, similar to tools like codex or claude-code. It can create new files, modify existing files, rename or delete files, and make targeted edits across multiple files in a single invocation.
+
+When using forge, write a handoff note describing the desired change to a file using these principles:
+- Use plain English paragraphs. No code fences, no backticks, no markdown formatting.
+- Specify the exact file path to change.
+- Describe concretely what to add, remove, or modify.
+- Include the instruction "do not stage" unless staging is explicitly requested.
+- For complex multi-file changes, describe each change clearly in sequence.
+
+Then invoke forge by piping the handoff note file to forge: cat /tmp/handoff_note.md | forge. Forge reads the instructions from stdin and executes them. Wait for forge to complete before proceeding.
+
+After forge finishes, verify the diff shows the correct changes and confirm nothing was staged unless you explicitly requested it.
+
+Do not stage this change.
