@@ -1,6 +1,6 @@
 # Harness Comparison Runbook: mct-agent vs Forge (`muse`)
 
-**Generated** {{GENERATED_AT}}
+**Generated** {{GENERATION_DATE}}
 **Project** `{{PROJECT_NAME}}` at `{{PROJECT_ROOT}}`
 **Prompt** `{{PROMPT_FILE}}`
 
@@ -20,7 +20,7 @@ Both harnesses use **DeepSeek V4 Pro** as the underlying model.
 ## Prerequisites
 
 | Requirement | Detail |
-|}--|
+|---|
 | **API key** | `DEEPSEEK_API_KEY` exported in the shell |
 | **mct-agent** | Binary on `PATH`; repo root is the working directory |
 | **Forge** | Binary at `|/.local/bin/forge`, logged into OpenRouter |
@@ -113,7 +113,7 @@ Both harnesses use **DeepSeek V4 Pro** as the underlying model.
 ## Model Configuration Reference
 
 | Harness | Provider | Model |
-|}--|
+|---|
 | mct-agent | DeepSeek direct (`api.deepseek.com`) | `deepseek-v4-pro` |
 | Forge `muse` | OpenRouter | `deepseek/deepseek-v4-pro` |
 
