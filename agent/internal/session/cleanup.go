@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
@@ -14,7 +15,6 @@ import (
 const (
 	defaultCleanupAge             = 24 * time.Hour
 	sessionLockFileName           = "session.lock"
-	sessionLockStaleDuration      = 3 * time.Second
 	defaultShellAgentMarkerMaxAge = time.Hour
 	shellAgentMarkerMaxAgeEnv     = "MACHTIANI_SHELL_AGENT_MARKER_MAX_AGE"
 	shellAgentMarkerPrefix        = "mct-swe-agent-finale"
@@ -49,7 +49,7 @@ func cleanupOrphanedTempDirs(verbose bool) error {
 			if trimmed == "" {
 				continue
 			}
-			if err := cleanupOrphanedSessionDirs(trimmed, now, sessionLockStaleDuration, verbose); err != nil {
+			if err := cleanupOrphanedSessionDirs(trimmed, verbose); err != nil {
 				errs = append(errs, err)
 			}
 			if err := cleanupOrphanedTempDirsInternal(trimmed, now, defaultCleanupAge, verbose); err != nil {
@@ -60,7 +60,7 @@ func cleanupOrphanedTempDirs(verbose bool) error {
 
 	// Remove legacy session directories under /tmp/mct for backwards compatibility.
 	legacySessionRoot := filepath.Join(os.TempDir(), "mct")
-	if err := cleanupOrphanedSessionDirs(legacySessionRoot, now, sessionLockStaleDuration, verbose); err != nil {
+	if err := cleanupOrphanedSessionDirs(legacySessionRoot, verbose); err != nil {
 		errs = append(errs, err)
 	}
 	if err := cleanupOrphanedTempDirsInternal(os.TempDir(), now, defaultCleanupAge, verbose); err != nil {
@@ -203,7 +203,7 @@ func cleanupOrphanedTempDirsInternal(tempDir string, now time.Time, maxAge time.
 	return nil
 }
 
-func cleanupOrphanedSessionDirs(root string, now time.Time, staleThreshold time.Duration, verbose bool) error {
+func cleanupOrphanedSessionDirs(root string, verbose bool) error {
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -223,25 +223,51 @@ func cleanupOrphanedSessionDirs(root string, now time.Time, staleThreshold time.
 		}
 		sessionPath := filepath.Join(root, entry.Name())
 		lockPath := filepath.Join(sessionPath, sessionLockFileName)
-		lockInfo, statErr := os.Stat(lockPath)
 
-		removalReason := ""
-		if statErr != nil {
-			if os.IsNotExist(statErr) {
-				removalReason = "missing lock file"
-			} else {
-				warnCleanupError(lockPath, statErr)
-				errs = append(errs, fmt.Errorf("stat %s: %w", lockPath, statErr))
+		// Try to acquire a shared lock without blocking.
+		// If the lock file is missing, the session is orphaned.
+		// If EWOULDBLOCK is returned, some process still holds an exclusive
+		// lock on the session.lock file, so the session is alive.
+		// If we acquire the shared lock, the original process has exited
+		// (the kernel released its exclusive lock) and it is safe to clean up.
+		f, openErr := os.OpenFile(lockPath, os.O_RDONLY, 0)
+		if openErr != nil {
+			if os.IsNotExist(openErr) {
+				removalReason := "missing lock file"
+				if removeErr := os.RemoveAll(sessionPath); removeErr != nil {
+					warnCleanupError(sessionPath, removeErr)
+					errs = append(errs, fmt.Errorf("remove %s: %w", sessionPath, removeErr))
+					continue
+				}
+				if verbose {
+					fmt.Fprintf(os.Stderr, "[cleanup] removed orphaned session dir: %s (%s)\n", sessionPath, removalReason)
+				}
 				continue
 			}
-		} else if now.Sub(lockInfo.ModTime()) > staleThreshold {
-			removalReason = "stale lock"
-		}
-
-		if removalReason == "" {
+			warnCleanupError(lockPath, openErr)
+			errs = append(errs, fmt.Errorf("open %s: %w", lockPath, openErr))
 			continue
 		}
 
+		flockErr := syscall.Flock(int(f.Fd()), syscall.LOCK_SH|syscall.LOCK_NB)
+		if flockErr != nil {
+			if errors.Is(flockErr, syscall.EWOULDBLOCK) {
+				// Session is alive — another process holds the exclusive lock.
+				f.Close()
+				continue
+			}
+			warnCleanupError(lockPath, flockErr)
+			errs = append(errs, fmt.Errorf("lock %s: %w", lockPath, flockErr))
+			f.Close()
+			continue
+		}
+
+		// Lock acquired: the original process has exited.
+		// Release the shared lock, close the file, and clean up.
+		syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		f.Close()
+
+		removalReason := "orphaned lock file"
 		if err := os.RemoveAll(sessionPath); err != nil {
 			warnCleanupError(sessionPath, err)
 			errs = append(errs, fmt.Errorf("remove %s: %w", sessionPath, err))

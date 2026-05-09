@@ -5,21 +5,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sync"
 	"syscall"
 	"time"
 )
-
-const sessionLockUpdateInterval = time.Second
 
 // sessionLock maintains an exclusive lock file for the lifetime of a session.
 type sessionLock struct {
 	file      *os.File
 	path      string
 	sessionID string
-	stopCh    chan struct{}
-	doneCh    chan struct{}
-	stopOnce  sync.Once
 }
 
 func acquireSessionLock(sessionID, sessionRoot string) (*sessionLock, error) {
@@ -50,11 +44,8 @@ func acquireSessionLock(sessionID, sessionRoot string) (*sessionLock, error) {
 		file:      file,
 		path:      lockPath,
 		sessionID: sessionID,
-		stopCh:    make(chan struct{}),
-		doneCh:    make(chan struct{}),
 	}
 
-	go lock.keepAlive()
 	return lock, nil
 }
 
@@ -79,33 +70,10 @@ func initialiseLockFile(file *os.File, sessionID string) error {
 	return nil
 }
 
-func (l *sessionLock) keepAlive() {
-	ticker := time.NewTicker(sessionLockUpdateInterval)
-	defer ticker.Stop()
-	defer close(l.doneCh)
-
-	for {
-		select {
-		case <-ticker.C:
-			now := time.Now()
-			if err := os.Chtimes(l.path, now, now); err != nil {
-				fmt.Fprintf(os.Stderr, "[session-lock] warning: keep-alive failed for session %s (%s): %v\n", l.sessionID, l.path, err)
-			}
-		case <-l.stopCh:
-			return
-		}
-	}
-}
-
 func (l *sessionLock) Close() error {
 	if l == nil {
 		return nil
 	}
-
-	l.stopOnce.Do(func() {
-		close(l.stopCh)
-	})
-	<-l.doneCh
 
 	var errs []error
 	if err := syscall.Flock(int(l.file.Fd()), syscall.LOCK_UN); err != nil {

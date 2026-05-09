@@ -222,6 +222,9 @@ counts = {
     "preflight": 0,
     "other": 0,
     "last_plan_content": "",
+    "shell_agent": 0,
+    "shell_agent_code_mode": 0,
+    "last_shell_agent_content": "",
 }
 
 def write_state():
@@ -287,6 +290,12 @@ class Handler(BaseHTTPRequestHandler):
         elif "You classify user requests for a developer assistant" in content:
             counts["preflight"] += 1
             reply = "content"
+        elif "You are the planning layer for the Machtiani shell agent." in content:
+            counts["shell_agent"] += 1
+            counts["last_shell_agent_content"] = content
+            if "You MUST use forge" in content:
+                counts["shell_agent_code_mode"] += 1
+            reply = "## Answer\nStub shell-agent final answer."
         else:
             counts["other"] += 1
 
@@ -359,6 +368,37 @@ if missing:
 
 if "Task-Specific Guidance" in system_prompt:
     print("ERROR: stub planner prompt still uses deprecated Task-Specific Guidance heading", file=sys.stderr)
+    sys.exit(1)
+PY
+}
+
+assert_stub_shell_agent_code_mode() {
+  local state_file="$1"
+  local phase_label="$2"
+  local min_count="${3:-1}"
+  "$PYTHON_BIN" - "$state_file" "$phase_label" "$min_count" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+phase = sys.argv[2]
+min_count = int(sys.argv[3])
+
+try:
+    with open(path, "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+except Exception:
+    print(f"ERROR: failed to read stub state for {phase}", file=sys.stderr)
+    sys.exit(1)
+
+count = int(data.get("shell_agent_code_mode", 0))
+if count < min_count:
+    print(f"ERROR: [{phase}] shell_agent_code_mode={count}, expected at least {min_count}", file=sys.stderr)
+    sys.exit(1)
+
+content = str(data.get("last_shell_agent_content") or "")
+if "You MUST use forge" not in content:
+    print(f"ERROR: [{phase}] last_shell_agent_content missing 'You MUST use forge'", file=sys.stderr)
     sys.exit(1)
 PY
 }
@@ -2058,6 +2098,148 @@ run_shell_agent_subcommand_live_case() {
     echo "PASS: run_shell_agent_subcommand_live_case"
 }
 
+# run_resume_without_mode_case verifies that the meta-mode is preserved
+# when resuming a session via --session-id without re-specifying --mode.
+# It starts a session with --mode code, captures the session ID, then
+# resumes via --session-id without --mode, and checks that the session
+# state file still contains MetaModes=["code"].
+run_resume_without_mode_case() {
+  local case_id="resume-without-mode"
+  local stub_dir="$TMP_ROOT/stub-${case_id}-$(date +%s)"
+  mkdir -p "$stub_dir"
+  local state_file="$stub_dir/state.json"
+  local port_file="$stub_dir/port.txt"
+  start_llm_stub_server "$state_file" "$port_file"
+  local stub_port
+  stub_port="$(cat "$port_file")"
+  local base_url="http://127.0.0.1:${stub_port}/v1"
+  local stub_alias="stub-model"
+  local stub_config
+  stub_config="$(generate_stub_config "$base_url" "$stub_alias")"
+
+  local session_id="test-${case_id}-$(date +%s)"
+  local out_dir="$(pwd)/test-out-${session_id}"
+  mkdir -p "$out_dir"
+  local stdout_init="$out_dir/stdout-init-${session_id}.txt"
+  local stderr_init="$out_dir/stderr-init-${session_id}.txt"
+  local stdout_resume="$out_dir/stdout-resume-${session_id}.txt"
+  local stderr_resume="$out_dir/stderr-resume-${session_id}.txt"
+
+  echo "Running resume-without-mode case: $case_id..." >&2
+
+  # Phase 1: Start a session with --mode code.
+  local rc=0
+  pushd "$REPO_ROOT" >/dev/null
+  set +e
+  MACHTIANI_CONFIG="$stub_config" \
+  timeout 120 "$MCT_AGENT" run \
+    --max-steps 2 \
+    --patch-no-apply \
+    --timeout-per-turn 300 \
+    --mode code \
+    --model "$stub_alias" \
+    --orch-model "$stub_alias" \
+    --patcher-model "$stub_alias" \
+    --file-discovery-model "$stub_alias" \
+    --text "Explain how to modify files in this project." \
+    > "$stdout_init" 2> "$stderr_init"
+  rc=$?
+  set -e
+  popd >/dev/null
+  if [[ $rc -ne 0 ]]; then
+    echo "Failed initial run (rc=$rc): $case_id" >&2
+    cat "$stderr_init" >&2 || true
+    stop_llm_stub_server
+    return 1
+  fi
+
+  # Extract the session ID from stderr.
+  local agent_session
+  agent_session=$(grep -m1 '^Session ID:' "$stdout_init" | awk '{print $NF}' || true)
+  if [[ -z "$agent_session" ]]; then
+    agent_session=$(grep -m1 '^Session:' "$stderr_init" | awk '{print $2}' || true)
+  fi
+  if [[ -z "$agent_session" ]]; then
+    echo "Failed to parse session ID for $case_id" >&2
+    cat "$stderr_init" >&2 || true
+    stop_llm_stub_server
+    return 1
+  fi
+
+  # Verify the session state has meta_modes containing "code".
+  local session_state_path="$REPO_ROOT/.machtiani/sessions/$agent_session/session-state.json"
+  if ! "$PYTHON_BIN" -c "
+import json, sys
+try:
+    with open('$session_state_path') as f:
+        state = json.load(f)
+    modes = state.get('meta_modes', [])
+    if 'code' not in modes:
+        print(f'ERROR: meta_modes={modes}, expected code to be present', file=sys.stderr)
+        sys.exit(1)
+    print(f'OK: meta_modes={modes}')
+except Exception as e:
+    print(f'ERROR: {e}', file=sys.stderr)
+    sys.exit(1)
+" 2>&1; then
+    echo "Phase 1: session state verification failed for $case_id" >&2
+    stop_llm_stub_server
+    return 1
+  fi
+
+  # Phase 2: Resume the session WITHOUT --mode.
+  pushd "$REPO_ROOT" >/dev/null
+  set +e
+  MACHTIANI_CONFIG="$stub_config" \
+  timeout 120 "$MCT_AGENT" run \
+    --max-steps 2 \
+    --patch-no-apply \
+    --timeout-per-turn 300 \
+    --session-id "$agent_session" \
+    --model "$stub_alias" \
+    --orch-model "$stub_alias" \
+    --patcher-model "$stub_alias" \
+    --file-discovery-model "$stub_alias" \
+    --text "Continue." \
+    > "$stdout_resume" 2> "$stderr_resume"
+  rc=$?
+  set -e
+  popd >/dev/null
+  if [[ $rc -ne 0 ]]; then
+    echo "Failed resume run (rc=$rc): $case_id" >&2
+    cat "$stderr_resume" >&2 || true
+    stop_llm_stub_server
+    return 1
+  fi
+
+  # Verify the session state STILL has meta_modes containing "code".
+  if ! "$PYTHON_BIN" -c "
+import json, sys
+try:
+    with open('$session_state_path') as f:
+        state = json.load(f)
+    modes = state.get('meta_modes', [])
+    if 'code' not in modes:
+        print(f'ERROR: meta_modes={modes}, expected code to be present after resume', file=sys.stderr)
+        sys.exit(1)
+    print(f'OK: meta_modes after resume={modes}')
+except Exception as e:
+    print(f'ERROR: {e}', file=sys.stderr)
+    sys.exit(1)
+" 2>&1; then
+    echo "Phase 2: session state verification failed for $case_id" >&2
+    stop_llm_stub_server
+    return 1
+  fi
+
+  stop_llm_stub_server
+  if [[ "${KEEP_TEST_CONFIG:-}" != "true" ]]; then
+    rm -rf "$stub_dir"
+    rm -rf "$(dirname "$stub_config")"
+  fi
+  echo "Passed: $case_id" >&2
+}
+
 run_resume_from_conversation_json_case() {
   local case_id="resume-from-conversation-json"
   local session_id="test-${case_id}-$(date +%s)"
@@ -2569,6 +2751,10 @@ fi
 
 # Per-component flag coverage.
 run_meta_mode_prompt_layers_case
+
+# Resume without mode: verify shell-agent system prompt survives
+# a mode-less resume (uses stub server).
+run_resume_without_mode_case
 
 run_happy_case "models-per-component" 3 \
   "Outline how the orchestrator, patcher, and file discovery collaborators interact." \

@@ -1,3 +1,6 @@
+// Package session coordinates the interaction between the planner, patcher, and discovery runners.
+// The orchestrator manages turn sequences, ensuring the conversation.json state reflects
+// the results of file discovery and the status of pending patch applications.
 package session
 
 import (
