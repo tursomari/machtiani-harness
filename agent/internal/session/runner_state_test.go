@@ -300,6 +300,66 @@ func TestPrepareSessionEnvironmentDockerRepurposesTmpRootToWorkspace(t *testing.
 	}
 }
 
+func TestPrepareSessionEnvironment_ImplicitSessionID_IgnoresInheritedTempRoot(t *testing.T) {
+	repo := setupSessionEnvironmentTestRepo(t, "[environment]\ntype = \"local\"\n")
+
+	// Simulate a child process that inherited both MACHTIANI_SESSION_ID
+	// and MACHTIANI_SESSION_TEMP_ROOT from a parent process.
+	// When no explicit --session-id is given (cfg.sessionID == ""),
+	// prepareRunBootstrap unsets the env var before
+	// prepareSessionEnvironment runs so that the child session never
+	// reuses the parent's lock directory.
+	t.Setenv("MACHTIANI_SESSION_ID", "parent-session-123")
+	t.Setenv("MACHTIANI_SESSION_TEMP_ROOT", "/tmp/fake-parent-session")
+
+	cfg := legacyConfig{} // sessionID defaults to ""
+	// Simulate the fix from prepareRunBootstrap: ignore inherited
+	// temp root for a fresh session.
+	_ = os.Unsetenv("MACHTIANI_SESSION_TEMP_ROOT")
+
+	const sessionID = "agent-implicit"
+	bootstrap, err := prepareSessionEnvironment(sessionID, cfg)
+	if err != nil {
+		t.Fatalf("prepareSessionEnvironment() error = %v", err)
+	}
+
+	// Must never use the inherited parent session path.
+	if bootstrap.sessionTempRoot == "/tmp/fake-parent-session" {
+		t.Fatalf("sessionTempRoot = %s, should not equal inherited parent path", bootstrap.sessionTempRoot)
+	}
+
+	wantSessionRoot := filepath.Join(repo, ".machtiani", "tmp", sessionID)
+	if bootstrap.sessionTempRoot != wantSessionRoot {
+		t.Fatalf("sessionTempRoot = %s, want %s", bootstrap.sessionTempRoot, wantSessionRoot)
+	}
+	if got := os.Getenv("MACHTIANI_SESSION_TEMP_ROOT"); got != bootstrap.sessionTempRoot {
+		t.Fatalf("MACHTIANI_SESSION_TEMP_ROOT = %s, want %s", got, bootstrap.sessionTempRoot)
+	}
+}
+
+func TestPrepareSessionEnvironment_ExplicitTempRootHonoredWhenNotChildProcess(t *testing.T) {
+	setupSessionEnvironmentTestRepo(t, "[environment]\ntype = \"local\"\n")
+
+	// Simulate an explicit temp root set by the caller (e.g. via
+	// --session-temp-root).  Since MACHTIANI_SESSION_ID is NOT set,
+	// this is not a child-process inherit scenario and the explicit
+	// temp root should be honored as-is.
+	t.Setenv("MACHTIANI_SESSION_TEMP_ROOT", "/tmp/explicit-temp-root")
+
+	const sessionID = "agent-explicit"
+	bootstrap, err := prepareSessionEnvironment(sessionID, legacyConfig{})
+	if err != nil {
+		t.Fatalf("prepareSessionEnvironment() error = %v", err)
+	}
+
+	if bootstrap.sessionTempRoot != "/tmp/explicit-temp-root" {
+		t.Fatalf("sessionTempRoot = %s, want /tmp/explicit-temp-root", bootstrap.sessionTempRoot)
+	}
+	if got := os.Getenv("MACHTIANI_SESSION_TEMP_ROOT"); got != "/tmp/explicit-temp-root" {
+		t.Fatalf("MACHTIANI_SESSION_TEMP_ROOT = %s, want /tmp/explicit-temp-root", got)
+	}
+}
+
 func TestConversationRecorderRecordsPatchValidationInConversation(t *testing.T) {
 	withTempSessionRecorderEnv(t)
 

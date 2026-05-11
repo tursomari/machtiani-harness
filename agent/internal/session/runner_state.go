@@ -129,10 +129,17 @@ func prepareRunBootstrap(rootCtx context.Context, opts Options) (*runBootstrap, 
 	opts.PlannerOverlay = plannerOverlay
 	conversationGoal := formatGoalText(originalPrompt, taskDescription)
 
+	inheritedSessionID := os.Getenv("MACHTIANI_SESSION_ID")
 	if sessionID == "" {
 		sessionID = runner.GenerateSessionID()
 	}
 	_ = os.Setenv("MACHTIANI_SESSION_ID", sessionID)
+
+	// Ignore inherited MACHTIANI_SESSION_TEMP_ROOT for new sessions
+	// to prevent child processes from colliding with a parent session lock.
+	if strings.TrimSpace(cfgInput.SessionID) == "" && inheritedSessionID != "" {
+		_ = os.Unsetenv("MACHTIANI_SESSION_TEMP_ROOT")
+	}
 
 	conversationPath, err := artifacts.SessionConversationFile(sessionID)
 	if err != nil {
