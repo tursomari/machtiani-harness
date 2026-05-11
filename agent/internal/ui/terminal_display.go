@@ -64,8 +64,8 @@ type PromptOptions struct {
 	ModeIndicator string
 }
 
-// MetaTaskDisplay captures the metadata required to render meta-orchestrator task progress.
-type MetaTaskDisplay struct {
+// ModeTaskDisplay captures the metadata required to render mode task progress.
+type ModeTaskDisplay struct {
 	Index  int
 	Title  string
 	Mode   string
@@ -197,8 +197,8 @@ func (t *TerminalDisplay) Notify(message string) {
 	})
 }
 
-// RenderMetaPlan prints the initial overview of planned meta-orchestrator tasks.
-func (t *TerminalDisplay) RenderMetaPlan(tasks []MetaTaskDisplay) {
+// RenderModePlan prints the initial overview of planned mode tasks.
+func (t *TerminalDisplay) RenderModePlan(tasks []ModeTaskDisplay) {
 	if len(tasks) == 0 {
 		return
 	}
@@ -220,8 +220,8 @@ func (t *TerminalDisplay) RenderMetaPlan(tasks []MetaTaskDisplay) {
 	})
 }
 
-// UpdateMetaTaskStatus reports status transitions for a meta-orchestrator task.
-func (t *TerminalDisplay) UpdateMetaTaskStatus(index int, title, status string) {
+// UpdateModeTaskStatus reports status transitions for a mode task.
+func (t *TerminalDisplay) UpdateModeTaskStatus(index int, title, status string) {
 	idx := index + 1
 	cleanStatus := strings.TrimSpace(status)
 	if cleanStatus == "" {

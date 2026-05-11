@@ -15,20 +15,20 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/ui"
 )
 
-const metaPlanFilename = "meta-plan.json"
+const modePlanFilename = "mode-plan.json"
 
-// metaPlanState captures the persisted plan for a meta-orchestrated session.
-type metaPlanState struct {
+// modePlanState captures the persisted plan for a mode system session.
+type modePlanState struct {
 	Goal              string          `json:"goal"`
 	Mode              string          `json:"mode"`
 	InstructionPath   string          `json:"instruction_path,omitempty"`
 	InstructionFormat string          `json:"instruction_format,omitempty"`
-	Tasks             []metaTaskState `json:"tasks"`
+	Tasks             []modeTaskState `json:"tasks"`
 	LastUpdated       time.Time       `json:"last_updated"`
 }
 
-// metaTaskState tracks execution state for an individual task.
-type metaTaskState struct {
+// modeTaskState tracks execution state for an individual task.
+type modeTaskState struct {
 	Step           int    `json:"step,omitempty"`
 	Title          string `json:"title"`
 	Description    string `json:"description,omitempty"`
@@ -37,13 +37,11 @@ type metaTaskState struct {
 	UserGuidance   string `json:"user_guidance,omitempty"`
 	Mode           string `json:"mode"`
 	Status         string `json:"status"`
-	ShellAgent     *bool  `json:"shell_agent,omitempty"`
-	PatchMode      *bool  `json:"patch_mode,omitempty"`
 	Attempts       int    `json:"attempts"`
 	Summary        string `json:"summary,omitempty"`
 }
 
-type metaContext struct {
+type modeContext struct {
 	SessionID       string
 	Goal            string
 	ResumePrompt    string
@@ -51,61 +49,61 @@ type metaContext struct {
 	Options         Options
 	Display         *ui.TerminalDisplay
 	InstructionPath string
-	Instruction     llm.MetaInstructions
+	Instruction     llm.ModeInstructions
 }
 
-// metaConfigResult captures the configuration applied by metaOrchestrate()
+// modeConfigResult captures the configuration applied by applyMode()
 // when it returns handled=false so the caller can access the updated plan.
-type metaConfigResult struct {
-	Plan metaPlanState
+type modeConfigResult struct {
+	Plan modePlanState
 }
 
-// metaOrchestrate is a pre-loop configuration step. It loads (or creates) the
-// meta-plan, applies the task's PlannerOverlay and mode defaults to the
+// applyMode is a pre-loop configuration step. It loads (or creates) the
+// mode-plan, applies the task's PlannerOverlay and mode defaults to the
 // current session's configuration, and returns handled=false so that
 // runSession()'s existing planner loop runs with the configured state.
 //
 // It returns handled=true only for error conditions. For all normal paths
 // (fresh run, resume of running/suspended task, follow-up after completion)
 // it configures and returns handled=false.
-func metaOrchestrate(ctx *metaContext) (metaConfigResult, bool) {
+func applyMode(ctx *modeContext) (modeConfigResult, bool) {
 	mode := strings.TrimSpace(ctx.Config.mode)
 	if mode == "" {
-		return metaConfigResult{}, false
+		return modeConfigResult{}, false
 	}
 
-	plan, err := loadOrCreateMetaPlan(ctx.SessionID, ctx.Goal, mode, ctx.InstructionPath, ctx.Instruction)
+	plan, err := loadOrCreateModePlan(ctx.SessionID, ctx.Goal, mode, ctx.InstructionPath, ctx.Instruction)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading meta plan: %v\n", err)
-		return metaConfigResult{Plan: plan}, true
+		fmt.Fprintf(os.Stderr, "Error loading mode plan: %v\n", err)
+		return modeConfigResult{Plan: plan}, true
 	}
 
-	ctx.Display.RenderMetaPlan(tasksToDisplay(plan.Tasks))
+	ctx.Display.RenderModePlan(tasksToDisplay(plan.Tasks))
 
 	// Follow-up after completion: all tasks done and user provided new input.
 	// Return handled=false so the planner loop picks up the new prompt with
 	// the full prior conversation already in place.
 	if allTasksComplete(plan) && strings.TrimSpace(ctx.ResumePrompt) != "" {
-		return metaConfigResult{Plan: plan}, false
+		return modeConfigResult{Plan: plan}, false
 	}
 
 	// Configure the session for the single task.
-	updatedPlan, err := configureMetaPlan(ctx, plan)
+	updatedPlan, err := configureModePlan(ctx, plan)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error configuring meta plan: %v\n", err)
-		return metaConfigResult{Plan: updatedPlan}, true
+		fmt.Fprintf(os.Stderr, "Error configuring mode plan: %v\n", err)
+		return modeConfigResult{Plan: updatedPlan}, true
 	}
 
 	// Return handled=false so runSession() continues into the planner loop.
-	return metaConfigResult{Plan: updatedPlan}, false
+	return modeConfigResult{Plan: updatedPlan}, false
 }
 
-// configureMetaPlan applies the single task's configuration to the current
+// configureModePlan applies the single task's configuration to the current
 // session: PlannerOverlay, mode defaults, task overrides, and status tracking.
 // It does NOT spawn a child session.
-func configureMetaPlan(ctx *metaContext, plan metaPlanState) (metaPlanState, error) {
+func configureModePlan(ctx *modeContext, plan modePlanState) (modePlanState, error) {
 	if len(plan.Tasks) == 0 {
-		return plan, fmt.Errorf("meta plan has no tasks")
+		return plan, fmt.Errorf("mode plan has no tasks")
 	}
 
 	task := &plan.Tasks[0]
@@ -116,7 +114,7 @@ func configureMetaPlan(ctx *metaContext, plan metaPlanState) (metaPlanState, err
 	}
 
 	// If already complete (and no resume prompt, since follow-up is handled
-	// above), return the plan as-is — the summary path in metaOrchestrate
+	// above), return the plan as-is — the summary path in applyMode
 	// was removed; the planner loop handles finalization.
 	if strings.EqualFold(strings.TrimSpace(task.Status), "complete") {
 		return plan, nil
@@ -130,41 +128,39 @@ func configureMetaPlan(ctx *metaContext, plan metaPlanState) (metaPlanState, err
 	// Apply mode defaults (e.g., patch=true, maxSteps floor for coding mode).
 	applyModeDefaults(&ctx.Options.Config, task.Mode)
 
-	// Apply task overrides (shell_agent, patch_mode from TOML).
-	applyTaskOverrides(&ctx.Options, *task)
 
 	// Mark the task as running.
 	task.Status = "running"
 
-	if err := persistMetaPlan(ctx.SessionID, plan); err != nil {
+	if err := persistModePlan(ctx.SessionID, plan); err != nil {
 		return plan, err
 	}
 
 	if ctx.Display != nil {
-		ctx.Display.UpdateMetaTaskStatus(0, task.Title, "running")
+		ctx.Display.UpdateModeTaskStatus(0, task.Title, "running")
 	}
 
 	return plan, nil
 }
 
-// CompleteMetaPlanTask marks the first non-complete task in the meta-plan as
+// CompleteModePlanTask marks the first non-complete task in the mode-plan as
 // complete. Called from the finalization path in runSession() after the
 // planner loop finishes.
-func CompleteMetaPlanTask(sessionID string) error {
-	planPath, err := metaPlanPath(sessionID)
+func CompleteModePlanTask(sessionID string) error {
+	planPath, err := modePlanPath(sessionID)
 	if err != nil {
 		return err
 	}
 	data, err := os.ReadFile(planPath)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return nil // no meta-plan, nothing to update
+			return nil // no mode-plan, nothing to update
 		}
-		return fmt.Errorf("read meta plan: %w", err)
+		return fmt.Errorf("read mode plan: %w", err)
 	}
-	var plan metaPlanState
+	var plan modePlanState
 	if err := json.Unmarshal(data, &plan); err != nil {
-		return fmt.Errorf("decode meta plan: %w", err)
+		return fmt.Errorf("decode mode plan: %w", err)
 	}
 	changed := false
 	for i := range plan.Tasks {
@@ -178,19 +174,19 @@ func CompleteMetaPlanTask(sessionID string) error {
 	if !changed {
 		return nil
 	}
-	return persistMetaPlan(sessionID, plan)
+	return persistModePlan(sessionID, plan)
 }
 
-func loadOrCreateMetaPlan(sessionID, goal, mode, instructionPath string, instructions llm.MetaInstructions) (metaPlanState, error) {
-	planPath, err := metaPlanPath(sessionID)
+func loadOrCreateModePlan(sessionID, goal, mode, instructionPath string, instructions llm.ModeInstructions) (modePlanState, error) {
+	planPath, err := modePlanPath(sessionID)
 	if err != nil {
-		return metaPlanState{}, err
+		return modePlanState{}, err
 	}
 	data, err := os.ReadFile(planPath)
 	if err == nil {
-		var plan metaPlanState
+		var plan modePlanState
 		if uErr := json.Unmarshal(data, &plan); uErr != nil {
-			return metaPlanState{}, fmt.Errorf("decode meta plan: %w", uErr)
+			return modePlanState{}, fmt.Errorf("decode mode plan: %w", uErr)
 		}
 		plan.InstructionPath = resolvedInstructionPath(plan.InstructionPath, instructionPath, instructions.Path)
 		if instructions.Format != "" {
@@ -202,10 +198,10 @@ func loadOrCreateMetaPlan(sessionID, goal, mode, instructionPath string, instruc
 		return plan, nil
 	}
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return metaPlanState{}, fmt.Errorf("read meta plan: %w", err)
+		return modePlanState{}, fmt.Errorf("read mode plan: %w", err)
 	}
 
-	plan := metaPlanState{
+	plan := modePlanState{
 		Goal:              goal,
 		Mode:              mode,
 		InstructionPath:   resolvedInstructionPath("", instructionPath, instructions.Path),
@@ -213,8 +209,8 @@ func loadOrCreateMetaPlan(sessionID, goal, mode, instructionPath string, instruc
 		Tasks:             instructionsToTasks(goal, mode, instructions),
 		LastUpdated:       time.Now().UTC(),
 	}
-	if perr := persistMetaPlan(sessionID, plan); perr != nil {
-		return metaPlanState{}, perr
+	if perr := persistModePlan(sessionID, plan); perr != nil {
+		return modePlanState{}, perr
 	}
 	return plan, nil
 }
@@ -229,19 +225,19 @@ func resolvedInstructionPath(existing, provided, docPath string) string {
 	return existing
 }
 
-func instructionsToTasks(goal, mode string, instructions llm.MetaInstructions) []metaTaskState {
+func instructionsToTasks(goal, mode string, instructions llm.ModeInstructions) []modeTaskState {
 	switch instructions.Format {
-	case llm.MetaInstructionsFormatTOML:
+	case llm.ModeInstructionsFormatTOML:
 		return tasksFromTOML(goal, mode, instructions)
-	case llm.MetaInstructionsFormatText, "":
+	case llm.ModeInstructionsFormatText, "":
 		return tasksFromText(goal, mode, instructions.Raw)
 	default:
 		return tasksFromText(goal, mode, instructions.Raw)
 	}
 }
 
-func tasksFromText(goal, mode, instructions string) []metaTaskState {
-	var tasks []metaTaskState
+func tasksFromText(goal, mode, instructions string) []modeTaskState {
+	var tasks []modeTaskState
 	lines := strings.Split(instructions, "\n")
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
@@ -255,7 +251,7 @@ func tasksFromText(goal, mode, instructions string) []metaTaskState {
 			continue
 		}
 		step := len(tasks) + 1
-		tasks = append(tasks, metaTaskState{
+		tasks = append(tasks, modeTaskState{
 			Step:        step,
 			Title:       trimmed,
 			Instruction: trimmed,
@@ -272,7 +268,7 @@ func tasksFromText(goal, mode, instructions string) []metaTaskState {
 	return defaultTasksForMode(goal, mode)
 }
 
-func tasksFromTOML(goal, mode string, instructions llm.MetaInstructions) []metaTaskState {
+func tasksFromTOML(goal, mode string, instructions llm.ModeInstructions) []modeTaskState {
 	task := instructions.Task
 	if strings.TrimSpace(task.Title) == "" {
 		return defaultTasksForMode(goal, mode)
@@ -281,7 +277,7 @@ func tasksFromTOML(goal, mode string, instructions llm.MetaInstructions) []metaT
 	description := strings.TrimSpace(task.Description)
 	instruction := taskInstructionText(title, task.Instruction)
 	plannerOverlay := taskPlannerOverlayText(task.SystemPrompt)
-	return []metaTaskState{
+	return []modeTaskState{
 		{
 			Step:           1,
 			Title:          title,
@@ -290,8 +286,7 @@ func tasksFromTOML(goal, mode string, instructions llm.MetaInstructions) []metaT
 			PlannerOverlay: plannerOverlay,
 			Mode:           mode,
 			Status:         "pending",
-			ShellAgent:     task.ShellAgent,
-			PatchMode:      task.PatchMode,
+
 		},
 	}
 }
@@ -308,10 +303,10 @@ func taskPlannerOverlayText(systemPrompt string) string {
 	return strings.TrimSpace(systemPrompt)
 }
 
-func defaultTasksForMode(goal, mode string) []metaTaskState {
+func defaultTasksForMode(goal, mode string) []modeTaskState {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case "coding":
-		return []metaTaskState{
+		return []modeTaskState{
 			{
 				Title:       "Implement solution",
 				Instruction: fmt.Sprintf("Implement changes to address: %s", goal),
@@ -320,7 +315,7 @@ func defaultTasksForMode(goal, mode string) []metaTaskState {
 			},
 		}
 	case "research":
-		return []metaTaskState{
+		return []modeTaskState{
 			{
 				Title:       "Synthesize findings",
 				Instruction: fmt.Sprintf("Synthesize findings addressing: %s", goal),
@@ -329,7 +324,7 @@ func defaultTasksForMode(goal, mode string) []metaTaskState {
 			},
 		}
 	default:
-		return []metaTaskState{
+		return []modeTaskState{
 			{
 				Title:       "Execute plan",
 				Instruction: fmt.Sprintf("Execute and document progress for: %s", goal),
@@ -340,27 +335,27 @@ func defaultTasksForMode(goal, mode string) []metaTaskState {
 	}
 }
 
-func persistMetaPlan(sessionID string, plan metaPlanState) error {
-	planPath, err := metaPlanPath(sessionID)
+func persistModePlan(sessionID string, plan modePlanState) error {
+	planPath, err := modePlanPath(sessionID)
 	if err != nil {
 		return err
 	}
 	plan.LastUpdated = time.Now().UTC()
 	data, err := json.MarshalIndent(plan, "", "  ")
 	if err != nil {
-		return fmt.Errorf("encode meta plan: %w", err)
+		return fmt.Errorf("encode mode plan: %w", err)
 	}
 	if err := os.MkdirAll(filepath.Dir(planPath), 0o755); err != nil {
-		return fmt.Errorf("ensure meta plan dir: %w", err)
+		return fmt.Errorf("ensure mode plan dir: %w", err)
 	}
 	if err := os.WriteFile(planPath, data, 0o644); err != nil {
-		return fmt.Errorf("write meta plan: %w", err)
+		return fmt.Errorf("write mode plan: %w", err)
 	}
 	return nil
 }
 
-func UpdateMetaPlanProgress(sessionID string, progress *PlannerProgressState) error {
-	// PlannerProgress is now stored only in session-state.json; meta-plan.json
+func UpdateModePlanProgress(sessionID string, progress *PlannerProgressState) error {
+	// PlannerProgress is now stored only in session-state.json; mode-plan.json
 	// no longer carries a redundant copy. Kept as a no-op to preserve the
 	// call-site surface across the codebase.
 	_ = sessionID
@@ -368,18 +363,18 @@ func UpdateMetaPlanProgress(sessionID string, progress *PlannerProgressState) er
 	return nil
 }
 
-func metaPlanPath(sessionID string) (string, error) {
+func modePlanPath(sessionID string) (string, error) {
 	dir, err := artifacts.SessionDirectory(sessionID)
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, metaPlanFilename), nil
+	return filepath.Join(dir, modePlanFilename), nil
 }
 
-func tasksToDisplay(tasks []metaTaskState) []ui.MetaTaskDisplay {
-	displays := make([]ui.MetaTaskDisplay, 0, len(tasks))
+func tasksToDisplay(tasks []modeTaskState) []ui.ModeTaskDisplay {
+	displays := make([]ui.ModeTaskDisplay, 0, len(tasks))
 	for idx, task := range tasks {
-		displays = append(displays, ui.MetaTaskDisplay{
+		displays = append(displays, ui.ModeTaskDisplay{
 			Index:  idx + 1,
 			Title:  task.Title,
 			Mode:   task.Mode,
@@ -399,32 +394,11 @@ func applyModeDefaults(cfg *Config, mode string) {
 	}
 }
 
-func applyTaskOverrides(opts *Options, task metaTaskState) {
-	if opts == nil {
-		return
-	}
-	if task.ShellAgent != nil {
-		opts.Config.ShellAgent = *task.ShellAgent
-	}
-	if task.PatchMode != nil {
-		opts.Config.Patch = *task.PatchMode
-		if !*task.PatchMode {
-			opts.Config.PatchStrict = false
-		}
-	}
-}
 
-func boolLabel(flag *bool) string {
-	if flag == nil {
-		return "inherit"
-	}
-	if *flag {
-		return "true"
-	}
-	return "false"
-}
 
-func metaModesFromPlan(plan metaPlanState) []string {
+
+
+func modesFromPlan(plan modePlanState) []string {
 	seen := make(map[string]struct{})
 	var modes []string
 	for _, task := range plan.Tasks {
@@ -441,7 +415,7 @@ func metaModesFromPlan(plan metaPlanState) []string {
 	return modes
 }
 
-func allTasksComplete(plan metaPlanState) bool {
+func allTasksComplete(plan modePlanState) bool {
 	for _, task := range plan.Tasks {
 		if strings.ToLower(strings.TrimSpace(task.Status)) != "complete" {
 			return false

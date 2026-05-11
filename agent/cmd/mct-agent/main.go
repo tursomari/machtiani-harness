@@ -510,8 +510,8 @@ func configureSessionFlags(fs *pflag.FlagSet, cfg *session.Config, paramFlags, p
 	fs.StringVar(&cfg.OpenAIModel, "openai-model", "", "Direct upstream model name (deprecated; prefer --model)")
 	fs.StringVar(&cfg.SessionID, "session-id", "", "Existing session identifier to resume")
 	fs.BoolVar(&cfg.EnableTagFormat, "enable-tag-format", false, "Enable tag-format response directives and validation (experimental)")
-	fs.StringVar(&cfg.Mode, "mode", "", "Meta-orchestrator mode (coding, research, other)")
-	fs.StringVar(&cfg.MetaInstructionDir, "meta-instruction-dir", "", "Directory containing meta-orchestrator custom instructions (overrides config)")
+	fs.StringVar(&cfg.Mode, "mode", "", "Operating mode")
+	fs.StringVar(&cfg.ModeInstructionDir, "mode-instruction-dir", "", "Directory containing mode custom instructions (overrides config)")
 	fs.StringVarP(&cfg.PromptText, "text", "t", "", "prompt text (alternative to positional argument)")
 	if apiKeyFlags != nil {
 		fs.Var(apiKeyFlags, "api-key", "Provider-specific API key override in provider:key format (repeatable)")
@@ -709,11 +709,11 @@ func handleSessionShowCommand(args []string) int {
 	fmt.Printf("Status:          %s\n", state.Status)
 	fmt.Printf("Turns Completed: %d\n", state.TurnsCompleted)
 	fmt.Printf("Updated:         %s\n", state.UpdatedAt.Format(time.RFC3339))
-	if len(state.MetaModes) > 0 {
-		fmt.Printf("Meta Modes:      %s\n", strings.Join(state.MetaModes, ", "))
+	if len(state.Modes) > 0 {
+		fmt.Printf("Modes:           %s\n", strings.Join(state.Modes, ", "))
 	}
-	if state.MetaInstructionDir != "" {
-		fmt.Printf("Meta Inst Dir:   %s\n", state.MetaInstructionDir)
+	if state.ModeInstructionDir != "" {
+		fmt.Printf("Mode Inst Dir:   %s\n", state.ModeInstructionDir)
 	}
 	if state.PlannerProgress != nil {
 		fmt.Printf("Planner Progress:\n")

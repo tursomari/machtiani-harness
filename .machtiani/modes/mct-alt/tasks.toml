@@ -1,5 +1,3 @@
 title = "Implement patch and validate"
 description = "Plan the approach, implement the patch, and validate results."
 instruction = "patch.txt"
-shell_agent = true
-patch_mode = true

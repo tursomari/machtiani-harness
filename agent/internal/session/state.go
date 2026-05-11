@@ -30,8 +30,8 @@ type SessionState struct {
 	Status             string                   `json:"status,omitempty"`
 	TurnsCompleted     int                      `json:"turns_completed"`
 	UpdatedAt          time.Time                `json:"updated_at"`
-	MetaModes          []string                 `json:"meta_modes,omitempty"`
-	MetaInstructionDir string                   `json:"meta_instruction_dir,omitempty"`
+	Modes              []string                 `json:"modes,omitempty"`
+	ModeInstructionDir string                   `json:"mode_instruction_dir,omitempty"`
 	PlannerProgress    *PlannerProgressState    `json:"planner_progress,omitempty"`
 	PendingPatchTurn   *PendingPatchTurnState   `json:"pending_patch_turn,omitempty"`
 	SuspendedUserInput *SuspendedUserInputState `json:"suspended_user_input,omitempty"`

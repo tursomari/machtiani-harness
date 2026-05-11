@@ -14,15 +14,15 @@ If you are using `mct-agent` inside this repository, start with `docs/mct-agent-
 - That runbook is the durable repo-specific guide for how to operate `mct-agent` in this repository.
 - Keep repo-specific operational guidance there; keep this README as the top-level discovery hook.
 
-## Meta-Orchestrator
-The agent now ships with a meta-orchestrator that supervises multi-step work. When you enable it, a top-level session decomposes the goal into a series of child sessions, runs each one with the appropriate mode presets, and finally emits a summary artifact that stitches the results together.
+## Mode System
+The agent now ships with a mode system that supervises multi-step work. When you enable it, a top-level session applies the mode's PlannerOverlay and task guidance, runs the agent loop with the configured mode presets, and finally emits a summary artifact that records the result.
 
-- **Enable it per run** with `mct-agent run --mode <mode> "<goal>"`. For repo-local usage in this repository, follow `docs/mct-agent-runbook.md`. Each configured mode resolves its instructions from `.machtiani/meta-orchestrator/custom-instructions/<mode>/` (or configured overrides), and each non-empty bullet / line or declared task becomes a meta task.
-- **What happens during a run:** the terminal prints `[meta]` updates as the orchestrator works through the plan. For every task it spawns a child session (e.g., "Review existing context", "Implement the Issue"), captures the transcript/final answers, and records progress to `.machtiani/sessions/<parent-session-id>/meta-plan.json`.
-- **Outputs:** the parent transcript gains a “Meta-Orchestrator Summary” turn, and every child session keeps its own transcript/final-answer under `.machtiani/sessions/<child-session-id>/`. The summary lists the tasks, their status, and where to find the detailed artifacts.
-- **Resume support:** progress is stored in `.machtiani/sessions/<parent-session-id>/meta-plan.json`, so resuming the parent session continues with the remaining tasks instead of replaying everything from scratch.
-- **Customize instructions** by editing the shipped mode files or pointing elsewhere with `--meta-instruction-dir <dir>`. Use `instruction` for task-local objectives, `description` for metadata/display text, and `system_prompt` for repo/mode planner guidance. You can also configure search paths in `[meta-orchestrator]` within `.machtiani/config.toml` (set `instruction_dir` or per-mode `instruction_file`). The agent looks in the override directory first, then the config entries, and finally falls back to repo-local custom instructions relative to the repo/config.
-- **Optional defaults:** when fewer than two tasks are defined for a mode, the orchestrator falls back to mode-specific defaults. Set different task files or bullet points if you want a custom workflow.
+- **Enable it per run** with `mct-agent run --mode <mode> "<goal>"`. For repo-local usage in this repository, follow `docs/mct-agent-runbook.md`. Each configured mode resolves its instructions from `.machtiani/modes/custom-instructions/<mode>/` (or configured overrides), and each non-empty bullet / line or declared task becomes a mode task.
+- **What happens during a run:** the terminal prints `[mode]` updates as the mode system works through the plan. For every task the session applies the task's PlannerOverlay and records progress to `.machtiani/sessions/<session-id>/mode-plan.json`.
+- **Outputs:** the session transcript collects all turns, and every task contributes its own artifacts under the session directory. The final summary lists the tasks, their status, and where to find the detailed artifacts.
+- **Resume support:** progress is stored in `.machtiani/sessions/<session-id>/mode-plan.json`, so resuming the session continues with the remaining tasks instead of replaying everything from scratch.
+- **Customize instructions** by editing the shipped mode files or pointing elsewhere with `--mode-instruction-dir <dir>`. Use `instruction` for task-local objectives, `description` for metadata/display text, and `system_prompt` for repo/mode planner guidance. You can also configure search paths in `[mode]` within `.machtiani/config.toml` (set `instruction_dir` or per-mode `instruction_file`). The agent looks in the override directory first, then the config entries, and finally falls back to repo-local custom instructions relative to the repo/config.
+- **Optional defaults:** when fewer than two tasks are defined for a mode, the mode system falls back to mode-specific defaults. Set different task files or bullet points if you want a custom workflow.
 
 ## Prerequisites
 - Go: install Go 1.23+ (to satisfy all internal packages; `mct` builds with 1.22+, `file-discovery` with 1.23).
@@ -57,7 +57,7 @@ export TEST_MODEL=gpt-4o-mini
 ./scripts/install.sh && bash agent/tests/run-live.sh
 ```
 
-- Installs `mct-agent` on PATH and exercises Issue A/B/C scenarios, a meta-mode `--mode code` regression, and error paths.
+- Installs `mct-agent` on PATH and exercises Issue A/B/C scenarios, a `--mode code` regression, and error paths.
 - Writes `test-out-*` directories containing logs, transcripts, and artifacts in the repo root.
 - If the harness fails with `mct is not synced at current git state ... Run mct-agent sync before proceeding.`, run the repo-local sync command from `docs/mct-agent-runbook.md` and rerun the harness.
 - When `TEST_*` and `OPENAI_*` are both unset the script injects stub credentials and forces `--dry-run`.

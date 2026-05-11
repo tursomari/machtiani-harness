@@ -11,10 +11,10 @@
 #   - Model 'provider' references an existing [providers] key
 #   - Provider 'base_url' is set and non-empty
 #   - Environment 'type' is a known value ("local" or "docker")
-#   - Meta-orchestrator 'instruction_file' paths exist on disk
+#   - Mode 'instruction_file' paths exist on disk
 #   - Prompt template file paths are reachable
 #   - [environment] 'image' field is rejected at parse time
-#   - [[tasks]] arrays in meta-orchestrator TOML are rejected at parse time
+#   - [[tasks]] arrays in mode TOML are rejected at parse time
 
 # ── Top-level ──────────────────────────────────────────────────────────────────
 
@@ -199,23 +199,23 @@ model    = "openai/gpt-5-nano"
 # temperature = 0.7
 # max_tokens = 4096
 
-# ── [meta-orchestrator] ─────────────────────────────────────────────────────────
-# Configuration for the meta-orchestrator that supervises multi-step work.
+# ── [mode] ──────────────────────────────────────────────────────────────────────
+# Configuration for the mode system that supervises multi-step work.
 # REJECTED: [[tasks]] arrays are not supported. Use flat single-task TOML schema.
 
-[meta-orchestrator]
+[mode]
 # instruction_dir: override directory for custom instructions.
-# instruction_dir = ".machtiani/meta-orchestrator/custom-instructions"
+# instruction_dir = ".machtiani/modes/custom-instructions"
 
 # Per-mode instruction file overrides:
-# [meta-orchestrator.modes.code]
+# [mode.modes.code]
 # instruction_file = "code/tasks.toml"
-# [meta-orchestrator.modes.research]
+# [mode.modes.research]
 # instruction_file = "research/tasks.toml"
 
 # ── [prompts] ───────────────────────────────────────────────────────────────────
 # Override prompt templates. Each section mirrors the prompt types above.
-# Prefer editing files in .machtiani/meta-orchestrator/custom-instructions/
+# Prefer editing files in .machtiani/modes/custom-instructions/
 # for task-specific changes. Only set these for global overrides.
 
 # [prompts.planner]

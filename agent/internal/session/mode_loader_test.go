@@ -10,16 +10,14 @@ import (
 )
 
 func TestInstructionsToTasksFromTomlDocument(t *testing.T) {
-	doc := llm.MetaInstructions{
-		Format: llm.MetaInstructionsFormatTOML,
+	doc := llm.ModeInstructions{
+		Format: llm.ModeInstructionsFormatTOML,
 		Path:   "coding.toml",
-		Task: llm.MetaInstructionTask{
+		Task: llm.ModeTask{
 			Title:        "First",
 			Description:  "First desc",
 			Instruction:  "Review the first task",
 			SystemPrompt: "Extra planner note",
-			ShellAgent:   boolPtr(false),
-			PatchMode:    boolPtr(false),
 		},
 	}
 
@@ -29,12 +27,6 @@ func TestInstructionsToTasksFromTomlDocument(t *testing.T) {
 	}
 	if tasks[0].Title != "First" {
 		t.Fatalf("expected task title to be First, got %q", tasks[0].Title)
-	}
-	if tasks[0].ShellAgent != nil && *tasks[0].ShellAgent {
-		t.Fatalf("expected shell agent to be disabled")
-	}
-	if tasks[0].PatchMode != nil && *tasks[0].PatchMode {
-		t.Fatalf("expected patch mode to be disabled")
 	}
 	if tasks[0].Description != "First desc" {
 		t.Fatalf("expected description metadata to be preserved, got %q", tasks[0].Description)
@@ -48,9 +40,9 @@ func TestInstructionsToTasksFromTomlDocument(t *testing.T) {
 }
 
 func TestInstructionsToTasksTomlFallsBackToTitleWhenInstructionMissing(t *testing.T) {
-	doc := llm.MetaInstructions{
-		Format: llm.MetaInstructionsFormatTOML,
-		Task:   llm.MetaInstructionTask{Title: "Validate", Description: "Metadata only"},
+	doc := llm.ModeInstructions{
+		Format: llm.ModeInstructionsFormatTOML,
+		Task:   llm.ModeTask{Title: "Validate", Description: "Metadata only"},
 	}
 
 	tasks := instructionsToTasks("goal", "coding", doc)
@@ -66,8 +58,8 @@ func TestInstructionsToTasksTomlFallsBackToTitleWhenInstructionMissing(t *testin
 }
 
 func TestInstructionsToTasksFromTextDocument(t *testing.T) {
-	doc := llm.MetaInstructions{
-		Format: llm.MetaInstructionsFormatText,
+	doc := llm.ModeInstructions{
+		Format: llm.ModeInstructionsFormatText,
 		Raw:    "- plan\n- execute\n",
 	}
 
@@ -78,13 +70,10 @@ func TestInstructionsToTasksFromTextDocument(t *testing.T) {
 	if tasks[0].Title != "plan" {
 		t.Fatalf("unexpected first task title: %q", tasks[0].Title)
 	}
-	if tasks[1].ShellAgent != nil {
-		t.Fatalf("text tasks should not set shell agent override by default")
-	}
 }
 
 func TestInstructionsToTasksEmptyTomlFallsBackToDefault(t *testing.T) {
-	doc := llm.MetaInstructions{Format: llm.MetaInstructionsFormatTOML}
+	doc := llm.ModeInstructions{Format: llm.ModeInstructionsFormatTOML}
 	tasks := instructionsToTasks("goal", "coding", doc)
 	if len(tasks) == 0 {
 		t.Fatalf("expected fallback tasks")
@@ -94,74 +83,36 @@ func TestInstructionsToTasksEmptyTomlFallsBackToDefault(t *testing.T) {
 	}
 }
 
-func TestApplyTaskOverrides(t *testing.T) {
-	opts := Options{}
-	task := metaTaskState{ShellAgent: boolPtr(true), PatchMode: boolPtr(true)}
-
-	applyTaskOverrides(&opts, task)
-
-	if !opts.Config.ShellAgent {
-		t.Fatalf("expected shell agent to be enabled")
-	}
-	if !opts.Config.Patch {
-		t.Fatalf("expected patch mode to be enabled")
-	}
-
-	second := metaTaskState{ShellAgent: boolPtr(false), PatchMode: boolPtr(false)}
-	applyTaskOverrides(&opts, second)
-	if opts.Config.ShellAgent {
-		t.Fatalf("expected shell agent to be disabled")
-	}
-	if opts.Config.Patch {
-		t.Fatalf("expected patch mode to be disabled")
-	}
-
-	opts.Config.ShellAgent = true
-	opts.Config.Patch = true
-	inherit := metaTaskState{}
-	applyTaskOverrides(&opts, inherit)
-	if !opts.Config.ShellAgent {
-		t.Fatalf("expected shell agent to remain enabled when override missing")
-	}
-	if !opts.Config.Patch {
-		t.Fatalf("expected patch mode to remain enabled when override missing")
-	}
-}
-
-func TestUpdateMetaPlanProgressNoLongerPersistsProgressInMetaPlan(t *testing.T) {
+func TestUpdateModePlanProgressNoLongerPersistsProgressInModePlan(t *testing.T) {
 	tempHome := t.TempDir()
 	t.Setenv("HOME", tempHome)
 	sessionID := "test-progress"
-	plan := metaPlanState{
+	plan := modePlanState{
 		Goal:  "goal",
 		Mode:  "coding",
-		Tasks: []metaTaskState{{Title: "Task", Instruction: "Task goal", Mode: "coding", Status: "pending"}},
+		Tasks: []modeTaskState{{Title: "Task", Instruction: "Task goal", Mode: "coding", Status: "pending"}},
 	}
-	if err := persistMetaPlan(sessionID, plan); err != nil {
-		t.Fatalf("persistMetaPlan error: %v", err)
+	if err := persistModePlan(sessionID, plan); err != nil {
+		t.Fatalf("persistModePlan error: %v", err)
 	}
 	progress := &PlannerProgressState{
 		SuccessFiles:   []string{"LICENSE", "docs/README.md"},
 		AppliedPatches: 2,
 		PendingReview:  &planner.PendingReview{PatchPath: "patch.diff"},
 	}
-	if err := UpdateMetaPlanProgress(sessionID, progress); err != nil {
-		t.Fatalf("UpdateMetaPlanProgress error: %v", err)
+	if err := UpdateModePlanProgress(sessionID, progress); err != nil {
+		t.Fatalf("UpdateModePlanProgress error: %v", err)
 	}
 
-	planPath, err := metaPlanPath(sessionID)
+	planPath, err := modePlanPath(sessionID)
 	if err != nil {
-		t.Fatalf("metaPlanPath: %v", err)
+		t.Fatalf("modePlanPath: %v", err)
 	}
 	raw, err := os.ReadFile(planPath)
 	if err != nil {
-		t.Fatalf("read meta plan: %v", err)
+		t.Fatalf("read mode plan: %v", err)
 	}
 	if strings.Contains(string(raw), "planner_progress") {
-		t.Fatalf("meta-plan.json must not contain planner_progress; got %s", string(raw))
+		t.Fatalf("mode-plan.json must not contain planner_progress; got %s", string(raw))
 	}
-}
-
-func boolPtr(v bool) *bool {
-	return &v
 }

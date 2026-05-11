@@ -35,8 +35,8 @@ type runBootstrap struct {
 	resumeMode           bool
 	loadedState          *SessionState
 	resumeSuspendedInput *SuspendedUserInputState
-	metaInstructions     llm.MetaInstructions
-	metaInstructionPath  string
+	modeInstructions     llm.ModeInstructions
+	modeInstructionPath  string
 	runState             *runLifecycleState
 }
 
@@ -105,11 +105,11 @@ func prepareRunBootstrap(rootCtx context.Context, opts Options) (*runBootstrap, 
 		if goal == "" {
 			goal = resumePrompt
 		}
-		if strings.TrimSpace(cfgInput.Mode) == "" && len(state.MetaModes) > 0 {
-			cfgInput.Mode = strings.TrimSpace(state.MetaModes[0])
+		if strings.TrimSpace(cfgInput.Mode) == "" && len(state.Modes) > 0 {
+			cfgInput.Mode = strings.TrimSpace(state.Modes[0])
 		}
-		if strings.TrimSpace(cfgInput.MetaInstructionDir) == "" && strings.TrimSpace(state.MetaInstructionDir) != "" {
-			cfgInput.MetaInstructionDir = strings.TrimSpace(state.MetaInstructionDir)
+		if strings.TrimSpace(cfgInput.ModeInstructionDir) == "" && strings.TrimSpace(state.ModeInstructionDir) != "" {
+			cfgInput.ModeInstructionDir = strings.TrimSpace(state.ModeInstructionDir)
 		}
 	}
 
@@ -148,19 +148,19 @@ func prepareRunBootstrap(rootCtx context.Context, opts Options) (*runBootstrap, 
 		fmt.Fprintf(os.Stderr, "Warning: failed to cleanup orphaned temp dirs: %v\n", err)
 	}
 
-	metaInstructions := llm.MetaInstructions{}
-	metaInstructionPath := ""
+	modeInstructions := llm.ModeInstructions{}
+	modeInstructionPath := ""
 	if strings.TrimSpace(cfg.mode) != "" {
-		doc, err := llm.LoadMetaInstructions(cfg.mode, cfg.metaInstructionDir, opts.GlobalConfig, opts.GlobalConfigPath)
+		doc, err := llm.LoadModeInstructions(cfg.mode, cfg.modeInstructionDir, opts.GlobalConfig, opts.GlobalConfigPath)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "Error loading meta instructions:", err)
+			fmt.Fprintln(os.Stderr, "Error loading mode instructions:", err)
 			return nil, Result{ExitCode: 1, Err: err}, false
 		}
-		metaInstructions = doc
-		metaInstructionPath = doc.Path
+		modeInstructions = doc
+		modeInstructionPath = doc.Path
 	}
 
-	runState := newRunLifecycleState(rootCtx, cfg, sessionID, goal, originalPrompt, taskDescription, plannerOverlay, metaInstructionPath, loadedState)
+	runState := newRunLifecycleState(rootCtx, cfg, sessionID, goal, originalPrompt, taskDescription, plannerOverlay, modeInstructionPath, loadedState)
 
 	return &runBootstrap{
 		opts:                 opts,
@@ -176,8 +176,8 @@ func prepareRunBootstrap(rootCtx context.Context, opts Options) (*runBootstrap, 
 		resumeMode:           resumeMode,
 		loadedState:          loadedState,
 		resumeSuspendedInput: loadedStateSuspendedInput(loadedState),
-		metaInstructions:     metaInstructions,
-		metaInstructionPath:  metaInstructionPath,
+		modeInstructions:     modeInstructions,
+		modeInstructionPath:  modeInstructionPath,
 		runState:             runState,
 	}, Result{}, true
 }
@@ -367,7 +367,7 @@ func loadResumeTranscript(cfg legacyConfig, loadedState *SessionState, resumeMod
 	return rendered
 }
 
-func newRunLifecycleState(rootCtx context.Context, cfg legacyConfig, sessionID, goal, originalPrompt, taskDescription, plannerOverlay, metaInstructionPath string, loadedState *SessionState) *runLifecycleState {
+func newRunLifecycleState(rootCtx context.Context, cfg legacyConfig, sessionID, goal, originalPrompt, taskDescription, plannerOverlay, modeInstructionPath string, loadedState *SessionState) *runLifecycleState {
 	turnsCompleted := 0
 	if loadedState != nil && loadedState.TurnsCompleted > 0 {
 		turnsCompleted = loadedState.TurnsCompleted
@@ -384,7 +384,7 @@ func newRunLifecycleState(rootCtx context.Context, cfg legacyConfig, sessionID, 
 		originalPrompt:      originalPrompt,
 		taskDescription:     taskDescription,
 		plannerOverlay:      plannerOverlay,
-		metaInstructionPath: metaInstructionPath,
+		modeInstructionPath: modeInstructionPath,
 		plannerProgress:     plannerProgress,
 		pendingPatchDraft:   pendingPatchDraftFromState(loadedState),
 		suspendedUserInput:  loadedStateSuspendedInput(loadedState),
@@ -755,7 +755,7 @@ type runLifecycleState struct {
 	originalPrompt      string
 	taskDescription     string
 	plannerOverlay      string
-	metaInstructionPath string
+	modeInstructionPath string
 	recorder            *conversationRecorder
 	plannerProgress     *plannerProgressTracker
 	pendingPatchDraft   *patchTranscriptDraft
@@ -838,16 +838,16 @@ func (r *runLifecycleState) applyPlannerProgress(state *SessionState) {
 		state.PendingPatchTurn = nil
 	}
 	if state.PlannerProgress != nil {
-		if err := UpdateMetaPlanProgress(r.sessionID, state.PlannerProgress); err != nil && r.cfg.verbose {
-			fmt.Fprintf(os.Stderr, "Warning: failed to update meta plan progress for %s: %v\n", r.sessionID, err)
+		if err := UpdateModePlanProgress(r.sessionID, state.PlannerProgress); err != nil && r.cfg.verbose {
+			fmt.Fprintf(os.Stderr, "Warning: failed to update mode plan progress for %s: %v\n", r.sessionID, err)
 		}
 	}
 }
 
-func (r *runLifecycleState) metaInstructionDir() string {
-	dir := strings.TrimSpace(r.cfg.metaInstructionDir)
-	if dir == "" && strings.TrimSpace(r.metaInstructionPath) != "" {
-		dir = filepath.Dir(r.metaInstructionPath)
+func (r *runLifecycleState) modeInstructionDir() string {
+	dir := strings.TrimSpace(r.cfg.modeInstructionDir)
+	if dir == "" && strings.TrimSpace(r.modeInstructionPath) != "" {
+		dir = filepath.Dir(r.modeInstructionPath)
 	}
 	return dir
 }
@@ -877,11 +877,11 @@ func (r *runLifecycleState) hydrateState(state *SessionState) {
 	if r.recorder != nil && r.recorder.HasConversation() {
 		r.recorder.EnsureSaved()
 	}
-	if strings.TrimSpace(state.MetaInstructionDir) == "" {
-		state.MetaInstructionDir = r.metaInstructionDir()
+	if strings.TrimSpace(state.ModeInstructionDir) == "" {
+		state.ModeInstructionDir = r.modeInstructionDir()
 	}
-	if len(state.MetaModes) == 0 && strings.TrimSpace(r.cfg.mode) != "" {
-		state.MetaModes = []string{strings.ToLower(strings.TrimSpace(r.cfg.mode))}
+	if len(state.Modes) == 0 && strings.TrimSpace(r.cfg.mode) != "" {
+		state.Modes = []string{strings.ToLower(strings.TrimSpace(r.cfg.mode))}
 	}
 	if state.Status == "" {
 		state.Status = r.sessionStatus

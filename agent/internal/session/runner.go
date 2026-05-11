@@ -542,8 +542,8 @@ func runSession(ctx context.Context, opts Options) Result {
 	conversationPath := bootstrap.conversationPath
 	resumeMode := bootstrap.resumeMode
 	loadedState := bootstrap.loadedState
-	metaInstructions := bootstrap.metaInstructions
-	metaInstructionPath := bootstrap.metaInstructionPath
+	modeInstructions := bootstrap.modeInstructions
+	modeInstructionPath := bootstrap.modeInstructionPath
 	runState := bootstrap.runState
 	plannerProgress := runState.plannerProgress
 	envBootstrap, err := prepareSessionEnvironment(sessionID, cfg)
@@ -798,7 +798,7 @@ func runSession(ctx context.Context, opts Options) Result {
 		// never used the warning is harmless.
 		fmt.Fprintln(os.Stderr, "shell-agent library init warning:", libErr)
 	} else {
-		lib.ExtraInstructions = metaInstructions.ShellInstruction
+		lib.ExtraInstructions = modeInstructions.ShellInstruction
 		mctRunner.ShellAgentLibrary = lib
 	}
 
@@ -856,22 +856,22 @@ func runSession(ctx context.Context, opts Options) Result {
 		return Result{ExitCode: 1, Err: err}
 	}
 
-	metaActive := strings.TrimSpace(cfg.mode) != ""
-	if metaActive {
-		metaCtx := metaContext{
+	modeActive := strings.TrimSpace(cfg.mode) != ""
+	if modeActive {
+		modeCtx := modeContext{
 			SessionID:       sessionID,
 			Goal:            goal,
 			ResumePrompt:    resumePrompt,
 			Config:          cfg,
 			Options:         opts,
 			Display:         display,
-			InstructionPath: metaInstructionPath,
-			Instruction:     metaInstructions,
+			InstructionPath: modeInstructionPath,
+			Instruction:     modeInstructions,
 		}
-		result, handled := metaOrchestrate(&metaCtx)
+		result, handled := applyMode(&modeCtx)
 		if handled {
-			// handled=true means error during meta configuration.
-			runState.sessionErr = fmt.Errorf("meta-orchestrator configuration failed")
+			// handled=true means error during mode configuration.
+			runState.sessionErr = fmt.Errorf("mode configuration failed")
 			runState.sessionStatus = "error"
 			runState.pendingState = &SessionState{
 				SessionID:       sessionID,
@@ -880,16 +880,16 @@ func runSession(ctx context.Context, opts Options) Result {
 				TaskDescription: taskDescription,
 				PlannerOverlay:  plannerOverlay,
 				TurnsCompleted:  runState.turnsCompleted,
-				MetaModes:       metaModesFromPlan(result.Plan),
+				Modes:           modesFromPlan(result.Plan),
 			}
 			runState.hydrateState(runState.pendingState)
 			return Result{ExitCode: 1, Status: runState.sessionStatus, Turns: runState.turnsCompleted, SessionID: sessionID, Err: runState.sessionErr}
 		}
-		// metaOrchestrate configured the session (PlannerOverlay, mode
+		// applyMode configured the session (PlannerOverlay, mode
 		// defaults, task overrides). Apply any overlay it set back into
 		// the planner overlay variable used below.
-		plannerOverlay = metaCtx.Options.PlannerOverlay
-		opts = metaCtx.Options
+		plannerOverlay = modeCtx.Options.PlannerOverlay
+		opts = modeCtx.Options
 		cfg = newLegacyConfig(opts.Config)
 		runState.plannerOverlay = plannerOverlay
 
@@ -1103,7 +1103,7 @@ func runSession(ctx context.Context, opts Options) Result {
 				finishTurn(sessTelemetry, turn, turnDecision, "error", turnInfo, perr)
 				continue
 			}
-			if strings.Contains(perrStr, "deadline exceeded") || strings.Contains(perrStr, "timeout") || strings.Contains(perrStr, "temporary") {
+			if strings.Contains(perrStr, "deadline exceeded") || strings.Contains(perrStr, "timeout") || strings.Contains(perrStr, "temporary") || strings.Contains(perrStr, "no choices") {
 				fmt.Fprintln(os.Stderr, "Planner warning:", perr)
 				fmt.Fprintln(os.Stderr, "Falling back to finalizing with current transcript.")
 				ctxF, cancelF := makeTurnContext(rootCtx, cfg.timeoutPerTurn)

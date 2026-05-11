@@ -23,14 +23,14 @@ mct-agent run --mode code --model glm-5-high \
 
 ## Why `--mode code`
 
-- In this repo, the practical meta-orchestrator mode to use is `code`.
+- In this repo, the practical mode to use is `code`.
 - That creates a parent session first, then spawns child task sessions under `.machtiani/sessions/`.
-- The repo-local mode files live under `.machtiani/meta-orchestrator/custom-instructions/code/`.
+- The repo-local mode files live under `.machtiani/modes/custom-instructions/code/`.
 
 ## Planner system prompt shape
 
-- For `--mode code`, the meta task definition lives in `.machtiani/meta-orchestrator/custom-instructions/code/tasks.toml`.
-- That file points `system_prompt` at `.machtiani/meta-orchestrator/custom-instructions/code/code.txt`.
+- For `--mode code`, the mode task definition lives in `.machtiani/modes/custom-instructions/code/tasks.toml`.
+- That file points `system_prompt` at `.machtiani/modes/custom-instructions/code/code.txt`.
 - The contents of `code.txt` are loaded as repo/mode planner guidance and injected into the planner system template inside `<REPO_MODE_GUIDANCE> ... </REPO_MODE_GUIDANCE>`.
 - `description` is metadata only, and `instruction` is the task-local objective that flows through the planner user-message path.
 - So the planner system prompt is not just `code.txt`; it is the base planner system template plus the full text of `code.txt` in the third system layer.
@@ -119,7 +119,7 @@ Useful artifacts under `.machtiani/sessions/<session-id>/`:
 - `chat/agent-transcript.adoc` — readable transcript of the session.
 - `session-state.json` — machine-readable session metadata.
 - `trajectory/agent.jsonl` — lower-level step/event log.
-- `meta-plan.json` — parent-session plan state for meta-orchestrated runs.
+- `mode-plan.json` — parent-session plan state for mode-system runs.
 
 ## Completion signal
 

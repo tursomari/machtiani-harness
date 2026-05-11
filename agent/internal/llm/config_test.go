@@ -343,15 +343,15 @@ cache_trigger_threshold = 100
 	}
 }
 
-func TestLoadMetaInstructionsPrefersTomlInOverrideDir(t *testing.T) {
+func TestLoadModeInstructionsPrefersTomlInOverrideDir(t *testing.T) {
 	override := filepath.Join(t.TempDir(), "override")
 	mustWriteFile(t, filepath.Join(override, "coding", "tasks.toml"), sampleCodingToml())
 
-	doc, err := LoadMetaInstructions("coding", override, Config{}, "")
+	doc, err := LoadModeInstructions("coding", override, Config{}, "")
 	if err != nil {
-		t.Fatalf("LoadMetaInstructions returned error: %v", err)
+		t.Fatalf("LoadModeInstructions returned error: %v", err)
 	}
-	if doc.Format != MetaInstructionsFormatTOML {
+	if doc.Format != ModeInstructionsFormatTOML {
 		t.Fatalf("expected TOML format, got %q", doc.Format)
 	}
 	if strings.TrimSpace(doc.Task.Title) == "" {
@@ -365,7 +365,7 @@ func TestLoadMetaInstructionsPrefersTomlInOverrideDir(t *testing.T) {
 	}
 }
 
-func TestLoadMetaInstructionsSearchOrder(t *testing.T) {
+func TestLoadModeInstructionsSearchOrder(t *testing.T) {
 	baseDir := t.TempDir()
 	configDir := filepath.Join(baseDir, "config")
 	mustWriteFile(t, filepath.Join(configDir, ".placeholder"), "")
@@ -376,34 +376,34 @@ func TestLoadMetaInstructionsSearchOrder(t *testing.T) {
 	mustWriteFile(t, filepath.Join(configDir, "coding", "tasks.toml"), sampleCodingToml())
 
 	cfg := Config{
-		MetaOrchestrator: &MetaOrchestratorConfig{
+		Mode: &ModeConfig{
 			InstructionDir: configDir,
 		},
 	}
 
-	doc, err := LoadMetaInstructions("coding", "", cfg, configPath)
+	doc, err := LoadModeInstructions("coding", "", cfg, configPath)
 	if err != nil {
-		t.Fatalf("LoadMetaInstructions returned error: %v", err)
+		t.Fatalf("LoadModeInstructions returned error: %v", err)
 	}
 	if !strings.HasSuffix(doc.Path, filepath.Join("coding", "tasks.toml")) {
 		t.Fatalf("expected coding/tasks.toml to be selected, got %s", doc.Path)
 	}
-	if doc.Format != MetaInstructionsFormatTOML {
+	if doc.Format != ModeInstructionsFormatTOML {
 		t.Fatalf("expected TOML format, got %q", doc.Format)
 	}
 }
 
-func TestLoadMetaInstructionsInvalidTomlReturnsError(t *testing.T) {
+func TestLoadModeInstructionsInvalidTomlReturnsError(t *testing.T) {
 	dir := t.TempDir()
 	mustWriteFile(t, filepath.Join(dir, "coding", "tasks.toml"), "[[tasks]\n title = \"broken\"")
 
-	_, err := LoadMetaInstructions("coding", dir, Config{}, "")
+	_, err := LoadModeInstructions("coding", dir, Config{}, "")
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}
 }
 
-func TestLoadMetaInstructionsPermissionError(t *testing.T) {
+func TestLoadModeInstructionsPermissionError(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("permissions semantics differ on Windows")
 	}
@@ -415,22 +415,22 @@ func TestLoadMetaInstructionsPermissionError(t *testing.T) {
 	}
 	defer os.Chmod(path, 0o644)
 
-	_, err := LoadMetaInstructions("coding", dir, Config{}, "")
+	_, err := LoadModeInstructions("coding", dir, Config{}, "")
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}
 }
 
-func TestParseMetaInstructionTOMLLoadsDescriptionFromExternalFile(t *testing.T) {
-	path := filepath.Join("testdata", "meta_instructions", "external", "tasks.toml")
+func TestParseModeInstructionTOMLLoadsDescriptionFromExternalFile(t *testing.T) {
+	path := filepath.Join("testdata", "mode_instructions", "external", "tasks.toml")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("ReadFile: %v", err)
 	}
 
-	task, err := parseMetaInstructionTOML(data, path)
+	task, err := parseModeInstructionTOML(data, path)
 	if err != nil {
-		t.Fatalf("parseMetaInstructionTOML: %v", err)
+		t.Fatalf("parseModeInstructionTOML: %v", err)
 	}
 	if task.Description != "Hello from inline" {
 		t.Fatalf("unexpected description: %q", task.Description)
@@ -440,7 +440,7 @@ func TestParseMetaInstructionTOMLLoadsDescriptionFromExternalFile(t *testing.T) 
 	}
 }
 
-func TestParseMetaInstructionTOMLLoadsSystemPromptFromExternalFile(t *testing.T) {
+func TestParseModeInstructionTOMLLoadsSystemPromptFromExternalFile(t *testing.T) {
 	dir := t.TempDir()
 	mustWriteFile(t, filepath.Join(dir, "description.md"), "Investigate schema drift")
 	mustWriteFile(t, filepath.Join(dir, "instruction.md"), "Check backward compatibility")
@@ -456,9 +456,9 @@ system_prompt = "overlay.md"
 	if err != nil {
 		t.Fatalf("ReadFile: %v", err)
 	}
-	task, err := parseMetaInstructionTOML(data, tomlPath)
+	task, err := parseModeInstructionTOML(data, tomlPath)
 	if err != nil {
-		t.Fatalf("parseMetaInstructionTOML: %v", err)
+		t.Fatalf("parseModeInstructionTOML: %v", err)
 	}
 	if task.Instruction != "Check backward compatibility" {
 		t.Fatalf("unexpected instruction: %q", task.Instruction)
@@ -468,7 +468,7 @@ system_prompt = "overlay.md"
 	}
 }
 
-func TestParseMetaInstructionTOMLFailsWhenExternalInstructionMissing(t *testing.T) {
+func TestParseModeInstructionTOMLFailsWhenExternalInstructionMissing(t *testing.T) {
 	dir := t.TempDir()
 	tomlPath := filepath.Join(dir, "tasks.toml")
 	mustWriteFile(t, tomlPath, `title = "Review"
@@ -480,13 +480,13 @@ instruction = "missing.txt"
 		t.Fatalf("ReadFile: %v", err)
 	}
 
-	_, err = parseMetaInstructionTOML(data, tomlPath)
+	_, err = parseModeInstructionTOML(data, tomlPath)
 	if err == nil || !strings.Contains(err.Error(), "resolve instruction") {
 		t.Fatalf("expected missing instruction error, got %v", err)
 	}
 }
 
-func TestParseMetaInstructionTOMLFailsWhenExternalDescriptionMissing(t *testing.T) {
+func TestParseModeInstructionTOMLFailsWhenExternalDescriptionMissing(t *testing.T) {
 	dir := t.TempDir()
 	tomlPath := filepath.Join(dir, "tasks.toml")
 	mustWriteFile(t, tomlPath, `title = "Missing"
@@ -497,7 +497,7 @@ description = "missing.txt"
 	if err != nil {
 		t.Fatalf("ReadFile: %v", err)
 	}
-	_, err = parseMetaInstructionTOML(data, tomlPath)
+	_, err = parseModeInstructionTOML(data, tomlPath)
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}
@@ -765,8 +765,6 @@ func mustWriteFile(t *testing.T, path string, content string) {
 func sampleCodingToml() string {
 	return `title = "Implement and validate"
 description = "Implement the patch to solve the Goal, make code changes and tests, run validations, and summarize."
-shell_agent = true
-patch_mode = true
 `
 }
 

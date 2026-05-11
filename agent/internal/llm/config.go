@@ -27,7 +27,7 @@ type Config struct {
 	Patcher          *PatcherConfig             `toml:"patcher"`
 	Providers        map[string]ProviderConfig  `toml:"providers"`
 	Models           map[string]ModelDefinition `toml:"models"`
-	MetaOrchestrator *MetaOrchestratorConfig    `toml:"meta-orchestrator"`
+	Mode *ModeConfig `toml:"mode"`
 }
 
 // WorkspaceConfig controls snapshot hydration behavior.
@@ -206,43 +206,43 @@ type EnvironmentConfig struct {
 	ComputedImageTag string            `toml:"-"`
 }
 
-type MetaOrchestratorConfig struct {
-	InstructionDir string                    `toml:"instruction_dir"`
-	Modes          map[string]MetaModeConfig `toml:"modes"`
+type ModeConfig struct {
+	InstructionDir  string                 `toml:"instruction_dir"`
+	InstructionFile string                 `toml:"instruction_file"`
+	ShellPrompt     string                 `toml:"shell_prompt"`
+	Modes           map[string]ModeOverride `toml:"modes"`
 }
 
-type MetaModeConfig struct {
+type ModeOverride struct {
 	InstructionFile string `toml:"instruction_file"`
 	ShellPrompt     string `toml:"shell_prompt"`
 }
 
-// MetaInstructionsFormat enumerates the supported custom instruction formats.
-type MetaInstructionsFormat string
+// ModeInstructionsFormat enumerates the supported custom instruction formats.
+type ModeInstructionsFormat string
 
 const (
-	MetaInstructionsFormatText MetaInstructionsFormat = "text"
-	MetaInstructionsFormatTOML MetaInstructionsFormat = "toml"
+	ModeInstructionsFormatText ModeInstructionsFormat = "text"
+	ModeInstructionsFormatTOML ModeInstructionsFormat = "toml"
 )
 
-// MetaInstructionTask represents a single task entry parsed from a TOML-based
-// meta instruction file.
-type MetaInstructionTask struct {
+// ModeTask represents a single task entry parsed from a TOML-based
+// mode instruction file.
+type ModeTask struct {
 	Title        string `toml:"title"`
 	Description  string `toml:"description"`
 	Instruction  string `toml:"instruction"`
 	SystemPrompt string `toml:"system_prompt"`
-	ShellAgent   *bool  `toml:"shell_agent"`
-	PatchMode    *bool  `toml:"patch_mode"`
 	ShellPrompt  string `toml:"shell_prompt"`
 }
 
-// MetaInstructions captures the resolved instruction payload, preserving both
+// ModeInstructions captures the resolved instruction payload, preserving both
 // the raw source content and a single structured task.
-type MetaInstructions struct {
-	Format          MetaInstructionsFormat
-	Path            string
-	Raw             string
-	Task            MetaInstructionTask
+type ModeInstructions struct {
+	Format           ModeInstructionsFormat
+	Path             string
+	Raw              string
+	Task             ModeTask
 	ShellInstruction string
 }
 
@@ -299,7 +299,7 @@ var (
 	cfgErr     error
 )
 
-const defaultMetaInstructionDir = ".machtiani/meta-orchestrator/custom-instructions"
+const defaultModeInstructionDir = ".machtiani/modes"
 
 func ResolveModel(alias string) (ResolvedModel, error) {
 	return ResolveModelWithOverrides(alias, nil)
@@ -641,12 +641,12 @@ func parseConfig(path string) (Config, error) {
 		}
 		cfg.Environment = envCfg
 	}
-	if metaRaw, ok := toMap(raw["meta-orchestrator"]); ok {
-		metaCfg, err := parseMetaOrchestratorSection(path, metaRaw)
+	if modeRaw, ok := toMap(raw["mode"]); ok {
+		modeCfg, err := parseModeSection(path, modeRaw)
 		if err != nil {
 			return Config{}, err
 		}
-		cfg.MetaOrchestrator = metaCfg
+		cfg.Mode = modeCfg
 	}
 	if provRaw, ok := toMap(raw["providers"]); ok {
 		for name, entry := range provRaw {
@@ -1345,42 +1345,42 @@ func parseEnvironmentSection(path string, data map[string]any) (*EnvironmentConf
 	return env, nil
 }
 
-func parseMetaOrchestratorSection(path string, data map[string]any) (*MetaOrchestratorConfig, error) {
-	meta := &MetaOrchestratorConfig{}
+func parseModeSection(path string, data map[string]any) (*ModeConfig, error) {
+	mode := &ModeConfig{}
 	if v, ok := data["instruction_dir"].(string); ok {
-		meta.InstructionDir = v
+		mode.InstructionDir = v
 	}
 	if rawModes, exists := data["modes"]; exists {
 		modesMap, ok := toMap(rawModes)
 		if !ok {
-			return nil, fmt.Errorf("parse %s [meta-orchestrator.modes]: expected table", path)
+			return nil, fmt.Errorf("parse %s [mode.modes]: expected table", path)
 		}
 		if len(modesMap) > 0 {
-			meta.Modes = make(map[string]MetaModeConfig, len(modesMap))
-			for mode, inner := range modesMap {
+			mode.Modes = make(map[string]ModeOverride, len(modesMap))
+			for modeName, inner := range modesMap {
 				entry, ok := toMap(inner)
 				if !ok {
-					return nil, fmt.Errorf("parse %s [meta-orchestrator.modes.%s]: expected table", path, mode)
+					return nil, fmt.Errorf("parse %s [mode.modes.%s]: expected table", path, modeName)
 				}
-				cfg := MetaModeConfig{}
+				cfg := ModeOverride{}
 				if v, ok := entry["instruction_file"].(string); ok {
 					cfg.InstructionFile = v
 				}
-				trimmed := strings.TrimSpace(mode)
+				trimmed := strings.TrimSpace(modeName)
 				if trimmed == "" {
 					continue
 				}
-				meta.Modes[trimmed] = cfg
+				mode.Modes[trimmed] = cfg
 				lower := strings.ToLower(trimmed)
 				if lower != trimmed {
-					if _, exists := meta.Modes[lower]; !exists {
-						meta.Modes[lower] = cfg
+					if _, exists := mode.Modes[lower]; !exists {
+						mode.Modes[lower] = cfg
 					}
 				}
 			}
 		}
 	}
-	return meta, nil
+	return mode, nil
 }
 
 func toMap(v any) (map[string]any, bool) {
@@ -1419,11 +1419,11 @@ func copyStringMap(in map[string]string) map[string]string {
 	return out
 }
 
-func copyMetaModeMap(in map[string]MetaModeConfig) map[string]MetaModeConfig {
+func copyModeMap(in map[string]ModeOverride) map[string]ModeOverride {
 	if len(in) == 0 {
 		return nil
 	}
-	out := make(map[string]MetaModeConfig, len(in))
+	out := make(map[string]ModeOverride, len(in))
 	for k, v := range in {
 		out[k] = v
 	}
@@ -1653,12 +1653,12 @@ func cloneConfig(in Config) Config {
 		}
 		clone.Environment = &env
 	}
-	if in.MetaOrchestrator != nil {
-		meta := *in.MetaOrchestrator
-		if len(meta.Modes) > 0 {
-			meta.Modes = copyMetaModeMap(meta.Modes)
+	if in.Mode != nil {
+		m := *in.Mode
+		if len(m.Modes) > 0 {
+			m.Modes = copyModeMap(m.Modes)
 		}
-		clone.MetaOrchestrator = &meta
+		clone.Mode = &m
 	}
 	if in.Model != nil {
 		model := *in.Model
@@ -1744,19 +1744,19 @@ func CloneResolvedModel(in ResolvedModel) ResolvedModel {
 	return clone
 }
 
-// LoadMetaInstructions resolves the meta-orchestrator instructions for the
+// LoadModeInstructions resolves the mode instructions for the
 // given mode. The lookup order is:
-//  1. --meta-instruction-dir (overrideDir)
-//  2. Mode-specific config entry [meta-orchestrator.modes.<mode>]
-//  3. [meta-orchestrator] instruction_dir
-//  4. Default .machtiani/meta-orchestrator/custom-instructions relative to repo/config
+//  1. --mode-instruction-dir (overrideDir)
+//  2. Mode-specific config entry [mode.modes.<mode>]
+//  3. [mode] instruction_dir
+//  4. Default .machtiani/modes relative to repo/config
 //
 // The function returns the resolved instruction payload including structured
 // tasks when a TOML file is used.
-func LoadMetaInstructions(mode, overrideDir string, cfg Config, configPath string) (MetaInstructions, error) {
+func LoadModeInstructions(mode, overrideDir string, cfg Config, configPath string) (ModeInstructions, error) {
 	trimmedMode := strings.TrimSpace(mode)
 	if trimmedMode == "" {
-		return MetaInstructions{}, fmt.Errorf("meta-orchestrator mode is required")
+		return ModeInstructions{}, fmt.Errorf("mode name is required")
 	}
 	tasksFile := filepath.Join(trimmedMode, "tasks.toml")
 
@@ -1780,37 +1780,37 @@ func LoadMetaInstructions(mode, overrideDir string, cfg Config, configPath strin
 	}
 
 	configDir := effectiveConfigDir(configPath)
-	metaCfg := cfg.MetaOrchestrator
+	modeCfg := cfg.Mode
 
 	if strings.TrimSpace(overrideDir) != "" {
-		dirs, err := resolveMetaInstructionDir(overrideDir, configDir)
+		dirs, err := resolveModeInstructionDir(overrideDir, configDir)
 		if err != nil {
-			return MetaInstructions{}, err
+			return ModeInstructions{}, err
 		}
 		for _, dir := range dirs {
 			addDirCandidates(dir)
 		}
 	}
 
-	if metaCfg != nil {
+	if modeCfg != nil {
 		modeKey := trimmedMode
-		modeCfg, ok := metaCfg.Modes[modeKey]
+		modeOverride, ok := modeCfg.Modes[modeKey]
 		if !ok {
-			modeCfg, ok = metaCfg.Modes[strings.ToLower(modeKey)]
+			modeOverride, ok = modeCfg.Modes[strings.ToLower(modeKey)]
 		}
-		if ok && strings.TrimSpace(modeCfg.InstructionFile) != "" {
-			files, err := resolveMetaInstructionFile(modeCfg.InstructionFile, configDir)
+		if ok && strings.TrimSpace(modeOverride.InstructionFile) != "" {
+			files, err := resolveModeInstructionFile(modeOverride.InstructionFile, configDir)
 			if err != nil {
-				return MetaInstructions{}, err
+				return ModeInstructions{}, err
 			}
 			for _, file := range files {
 				addFileCandidates(file)
 			}
 		}
-		if strings.TrimSpace(metaCfg.InstructionDir) != "" {
-			dirs, err := resolveMetaInstructionDir(metaCfg.InstructionDir, configDir)
+		if strings.TrimSpace(modeCfg.InstructionDir) != "" {
+			dirs, err := resolveModeInstructionDir(modeCfg.InstructionDir, configDir)
 			if err != nil {
-				return MetaInstructions{}, err
+				return ModeInstructions{}, err
 			}
 			for _, dir := range dirs {
 				addDirCandidates(dir)
@@ -1818,7 +1818,7 @@ func LoadMetaInstructions(mode, overrideDir string, cfg Config, configPath strin
 		}
 	}
 
-	defaultDirs, err := resolveMetaInstructionDir(defaultMetaInstructionDir, configDir)
+	defaultDirs, err := resolveModeInstructionDir(defaultModeInstructionDir, configDir)
 	if err == nil {
 		for _, dir := range defaultDirs {
 			addDirCandidates(dir)
@@ -1826,7 +1826,7 @@ func LoadMetaInstructions(mode, overrideDir string, cfg Config, configPath strin
 	}
 
 	if len(candidates) == 0 {
-		return MetaInstructions{}, fmt.Errorf("no search paths available for meta instructions (%s mode)", trimmedMode)
+		return ModeInstructions{}, fmt.Errorf("no search paths available for mode instructions (%s mode)", trimmedMode)
 	}
 
 	var notFound []string
@@ -1837,77 +1837,77 @@ func LoadMetaInstructions(mode, overrideDir string, cfg Config, configPath strin
 				notFound = append(notFound, candidate)
 				continue
 			}
-			return MetaInstructions{}, fmt.Errorf("read meta instructions %s: %w", candidate, err)
+			return ModeInstructions{}, fmt.Errorf("read mode instructions %s: %w", candidate, err)
 		}
-		format := detectMetaInstructionFormat(candidate)
+		format := detectModeInstructionFormat(candidate)
 		raw := string(data)
 		switch format {
-		case MetaInstructionsFormatTOML:
-			task, perr := parseMetaInstructionTOML(data, candidate)
+		case ModeInstructionsFormatTOML:
+			task, perr := parseModeInstructionTOML(data, candidate)
 			if perr != nil {
-				return MetaInstructions{}, fmt.Errorf("parse meta instructions %s: %w", candidate, perr)
+				return ModeInstructions{}, fmt.Errorf("parse mode instructions %s: %w", candidate, perr)
 			}
-			result := MetaInstructions{Format: format, Path: candidate, Raw: raw, Task: task}
+			result := ModeInstructions{Format: format, Path: candidate, Raw: raw, Task: task}
 			if strings.TrimSpace(task.ShellPrompt) != "" {
 				baseDir := filepath.Dir(candidate)
 				shellPath := filepath.Join(baseDir, task.ShellPrompt)
 				shellContent, err := os.ReadFile(shellPath)
 				if err != nil {
-					return MetaInstructions{}, fmt.Errorf("read shell-agent instructions %s: %w", shellPath, err)
+					return ModeInstructions{}, fmt.Errorf("read shell-agent instructions %s: %w", shellPath, err)
 				}
 				result.ShellInstruction = strings.TrimSpace(string(shellContent))
 			}
 			return result, nil
 		default:
-			return MetaInstructions{Format: format, Path: candidate, Raw: raw}, nil
+			return ModeInstructions{Format: format, Path: candidate, Raw: raw}, nil
 		}
 	}
 
-	return MetaInstructions{}, fmt.Errorf("meta instructions for mode %q not found (searched %s)", trimmedMode, strings.Join(notFound, ", "))
+	return ModeInstructions{}, fmt.Errorf("mode instructions for mode %q not found (searched %s)", trimmedMode, strings.Join(notFound, ", "))
 }
 
-func detectMetaInstructionFormat(path string) MetaInstructionsFormat {
+func detectModeInstructionFormat(path string) ModeInstructionsFormat {
 	switch strings.ToLower(filepath.Ext(path)) {
 	case ".toml":
-		return MetaInstructionsFormatTOML
+		return ModeInstructionsFormatTOML
 	default:
-		return MetaInstructionsFormatText
+		return ModeInstructionsFormatText
 	}
 }
 
-func parseMetaInstructionTOML(data []byte, tomlFilePath string) (MetaInstructionTask, error) {
-	var task MetaInstructionTask
+func parseModeInstructionTOML(data []byte, tomlFilePath string) (ModeTask, error) {
+	var task ModeTask
 	if err := toml.Unmarshal(data, &task); err != nil {
-		return MetaInstructionTask{}, err
+		return ModeTask{}, err
 	}
 
 	// Detect legacy multi-step [[tasks]] arrays
 	var legacy struct {
-		Tasks []MetaInstructionTask `toml:"tasks"`
+		Tasks []ModeTask `toml:"tasks"`
 	}
 	if err := toml.Unmarshal(data, &legacy); err == nil && len(legacy.Tasks) > 0 {
-		return MetaInstructionTask{}, fmt.Errorf("unsupported TOML: multi-step [[tasks]] arrays are removed; use flat single-task schema")
+		return ModeTask{}, fmt.Errorf("unsupported TOML: multi-step [[tasks]] arrays are removed; use flat single-task schema")
 	}
 
 	baseDir := filepath.Dir(tomlFilePath)
 	task.Title = strings.TrimSpace(task.Title)
 	description, err := resolveTaskTextField(baseDir, task.Description)
 	if err != nil {
-		return MetaInstructionTask{}, fmt.Errorf("resolve description: %w", err)
+		return ModeTask{}, fmt.Errorf("resolve description: %w", err)
 	}
 	task.Description = description
 	instruction, err := resolveTaskTextField(baseDir, task.Instruction)
 	if err != nil {
-		return MetaInstructionTask{}, fmt.Errorf("resolve instruction: %w", err)
+		return ModeTask{}, fmt.Errorf("resolve instruction: %w", err)
 	}
 	task.Instruction = instruction
 	systemPrompt, err := resolveTaskTextField(baseDir, task.SystemPrompt)
 	if err != nil {
-		return MetaInstructionTask{}, fmt.Errorf("resolve system_prompt: %w", err)
+		return ModeTask{}, fmt.Errorf("resolve system_prompt: %w", err)
 	}
 	task.SystemPrompt = systemPrompt
 	if task.Title == "" {
-		return MetaInstructionTask{}, fmt.Errorf("title is required")
+		return ModeTask{}, fmt.Errorf("title is required")
 	}
 	return task, nil
 }
@@ -1967,10 +1967,10 @@ func effectiveConfigDir(configPath string) string {
 	return filepath.Dir(abs)
 }
 
-func resolveMetaInstructionDir(base, configDir string) ([]string, error) {
+func resolveModeInstructionDir(base, configDir string) ([]string, error) {
 	expanded, err := expandUserPath(base)
 	if err != nil {
-		return nil, fmt.Errorf("resolve meta instruction dir %q: %w", base, err)
+		return nil, fmt.Errorf("resolve mode instruction dir %q: %w", base, err)
 	}
 	cleaned := filepath.Clean(expanded)
 	if filepath.IsAbs(cleaned) {
@@ -2004,10 +2004,10 @@ func resolveMetaInstructionDir(base, configDir string) ([]string, error) {
 	return uniqueStrings(dirs), nil
 }
 
-func resolveMetaInstructionFile(path, configDir string) ([]string, error) {
+func resolveModeInstructionFile(path, configDir string) ([]string, error) {
 	expanded, err := expandUserPath(path)
 	if err != nil {
-		return nil, fmt.Errorf("resolve meta instruction file %q: %w", path, err)
+		return nil, fmt.Errorf("resolve mode instruction file %q: %w", path, err)
 	}
 	cleaned := filepath.Clean(expanded)
 	if filepath.IsAbs(cleaned) {

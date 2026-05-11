@@ -1680,7 +1680,8 @@ func probeUntilReadyIndefinite(ctx context.Context, model ResolvedModel) error {
 
 func executeOnceWithRetries(ctx context.Context, model ResolvedModel, body []byte, meta llmAttemptMeta) (string, error) {
 	var lastErr error
-	for attempt := 1; ; attempt++ {
+	var attempt int
+	for attempt = 1; ; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}
@@ -1722,7 +1723,10 @@ func executeOnceWithRetries(ctx context.Context, model ResolvedModel, body []byt
 		// Probe succeeded; retry the full request immediately.
 	}
 	if lastErr != nil {
-		return "", fmt.Errorf("retry limit exhausted after %d attempts: %w", maxRetries, lastErr)
+		if !shouldRetry(lastErr) {
+			return "", fmt.Errorf("non-retryable error on attempt %d: %w", attempt, lastErr)
+		}
+		return "", fmt.Errorf("retry limit exhausted after %d attempts: %w", attempt, lastErr)
 	}
 	return "", errors.New("non-stream request failed without a retryable error")
 }
@@ -1855,6 +1859,9 @@ func shouldRetry(err error) bool {
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
+	}
+	if errors.Is(err, ErrNoChoices) {
+		return true
 	}
 	var ue *UnreachableHostError
 	if errors.As(err, &ue) {

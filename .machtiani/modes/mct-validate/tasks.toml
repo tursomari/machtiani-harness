@@ -1,4 +1,2 @@
 title = "Validate"
 description = "Run relevant validations (build/test) for the current changes and report results."
-shell_agent = false
-patch_mode = true

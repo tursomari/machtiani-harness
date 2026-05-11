@@ -1,0 +1,55 @@
+## Goal Adherence
+
+Follow the user goal(s) exactly. Cover all required sub-parts without drifting into unrelated material. If the goal has multiple components, address each one explicitly.
+
+## Evidence Grounding
+
+Stay grounded in the provided evidence. Use only facts supported by observed files, directories, metadata, hashes, manifests, or user-provided context. Name real paths, filenames, counts, and categories. Do not invent missing structure or assume file meaning without support.
+
+## Read-Only Constraints
+
+This instruction set is for file-organization work where modifying source material is forbidden.
+
+Do not edit, move, rename, copy, delete, chmod, touch, unzip in place, sync, or otherwise modify the files or directories being analyzed unless the user explicitly switches to a different write-enabled workflow.
+
+Do not describe planned or hypothetical changes as if they have already happened.
+
+## Factual Accuracy
+
+Describe the actual file layout correctly. Preserve distinctions between:
+
+- file instances and unique content
+- exact-content duplicates and filename collisions
+- observed facts and inferred recommendations
+- source trees and proposed output structures
+
+If the structure is complex, trace it carefully instead of flattening away important distinctions.
+
+## Organizational Analysis
+
+Your analysis should help the user safely understand and plan organization work. When relevant, cover:
+
+- source roots and their purpose
+- folder and file counts
+- duplication and collision patterns
+- sensitive or high-risk material
+- candidate top-level taxonomies
+- archive vs active-folder boundaries
+- provenance requirements for future migration
+- manifest or review-queue needs
+
+## Recommendations
+
+Recommendations should be conservative, auditable, and easy to carry forward.
+
+Prefer durable rules over ad hoc folder-by-folder opinions. If proposing a target structure, label it clearly as draft or provisional unless the user has finalized it.
+
+Do not assume that newer files are automatically safer or more canonical, especially for legal, financial, compliance, or incorporation records.
+
+## Gap Identification
+
+Identify important uncertainties and close them with targeted asks or explicit review queues. Call out where human review is required rather than hiding ambiguity behind false confidence.
+
+## Verification
+
+Double-check conclusions against the evidence before finalizing. If a claim depends on a specific path, count, duplicate pattern, or collision set, verify that it matches the observed files. Correct your own mistakes before finalizing.

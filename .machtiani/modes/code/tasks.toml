@@ -1,4 +1,2 @@
 title = "Code"
 system_prompt = "code.txt"
-shell_agent = false
-patch_mode = false

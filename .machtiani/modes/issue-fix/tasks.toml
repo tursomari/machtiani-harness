@@ -1,4 +1,2 @@
 title = "Fix issue and validate"
 description = "Understand the issue, implement a targeted fix, add tests where appropriate, run validations, and summarize."
-shell_agent = true
-patch_mode = true

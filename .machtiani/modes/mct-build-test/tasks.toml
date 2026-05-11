@@ -1,4 +1,2 @@
 title = "Build and test"
 description = "Build the project and run relevant test suites, reporting failures precisely."
-shell_agent = false
-patch_mode = true

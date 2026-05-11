@@ -403,6 +403,42 @@ if "You MUST use forge" not in content:
 PY
 }
 
+assert_file_contains() {
+  local file="$1"
+  local pattern="$2"
+  local label="${3:-}"
+  local msg=""
+  if [[ -n "$label" ]]; then
+    msg=" ($label)"
+  fi
+  if [[ ! -f "$file" ]]; then
+    echo "ERROR: file missing for assert_file_contains: $file${msg}" >&2
+    return 1
+  fi
+  if ! grep -qF "$pattern" "$file"; then
+    echo "ERROR: pattern not found in $file${msg}: $pattern" >&2
+    return 1
+  fi
+}
+
+assert_file_not_contains() {
+  local file="$1"
+  local pattern="$2"
+  local label="${3:-}"
+  local msg=""
+  if [[ -n "$label" ]]; then
+    msg=" ($label)"
+  fi
+  if [[ ! -f "$file" ]]; then
+    echo "ERROR: file missing for assert_file_not_contains: $file${msg}" >&2
+    return 1
+  fi
+  if grep -qF "$pattern" "$file"; then
+    echo "ERROR: pattern found in $file${msg} when it should not be: $pattern" >&2
+    return 1
+  fi
+}
+
 stop_llm_stub_server() {
   if [[ -n "${STUB_SERVER_PID:-}" ]]; then
     kill "$STUB_SERVER_PID" 2>/dev/null || true
@@ -691,9 +727,8 @@ generate_test_config() {
   if [[ -d "$REPO_ROOT/.machtiani/templates" ]]; then
     cp -R "$REPO_ROOT/.machtiani/templates" "$config_dir/"
   fi
-  if [[ -d "$REPO_ROOT/.machtiani/meta-orchestrator/custom-instructions" ]]; then
-    mkdir -p "$config_dir/meta-orchestrator"
-    cp -R "$REPO_ROOT/.machtiani/meta-orchestrator/custom-instructions" "$config_dir/meta-orchestrator/"
+  if [[ -d "$REPO_ROOT/.machtiani/modes" ]]; then
+    cp -R "$REPO_ROOT/.machtiani/modes" "$config_dir/"
   fi
 
   "$PYTHON_BIN" - "$config_file" "$TEST_MODEL_ALIAS" <<'PY'
@@ -793,9 +828,8 @@ generate_stub_config() {
   if [[ -d "$REPO_ROOT/.machtiani/templates" ]]; then
     cp -R "$REPO_ROOT/.machtiani/templates" "$config_dir/"
   fi
-  if [[ -d "$REPO_ROOT/.machtiani/meta-orchestrator/custom-instructions" ]]; then
-    mkdir -p "$config_dir/meta-orchestrator"
-    cp -R "$REPO_ROOT/.machtiani/meta-orchestrator/custom-instructions" "$config_dir/meta-orchestrator/"
+  if [[ -d "$REPO_ROOT/.machtiani/modes" ]]; then
+    cp -R "$REPO_ROOT/.machtiani/modes" "$config_dir/"
   fi
 
   "$PYTHON_BIN" - "$config_file" "$alias" <<'PY'
@@ -1222,6 +1256,8 @@ run_happy_case() {
   fi
 
   echo "Running happy case: $case_id (max $max_steps turns)..." >&2
+  local tmp_root="${TMP_ROOT:-}"
+  local scratch_root=$(mktemp -d "$tmp_root/scratch-${case_id:-default}.XXXXXX")
   local -a cmd=(
     timeout $((max_steps * 180)) "$MCT_AGENT" run
     --max-steps "$max_steps"
@@ -1242,18 +1278,22 @@ run_happy_case() {
   set +e
   if [[ "$marker_checks" == true ]]; then
     if [[ -n "$harness_input" ]]; then
+      MACHTIANI_TMP_ROOT="$scratch_root" \
       MACHTIANI_SESSION_TEMP_ROOT="$session_temp_root" \
         MACHTIANI_SHELL_AGENT_MARKER_MAX_AGE="$marker_max_age" \
         "${cmd[@]}" < <(printf '%b' "$harness_input") > "$stdout_file" 2> "$stderr_file"
     else
+      MACHTIANI_TMP_ROOT="$scratch_root" \
       MACHTIANI_SESSION_TEMP_ROOT="$session_temp_root" \
         MACHTIANI_SHELL_AGENT_MARKER_MAX_AGE="$marker_max_age" \
         "${cmd[@]}" > "$stdout_file" 2> "$stderr_file"
     fi
   else
     if [[ -n "$harness_input" ]]; then
+      MACHTIANI_TMP_ROOT="$scratch_root" \
       "${cmd[@]}" < <(printf '%b' "$harness_input") > "$stdout_file" 2> "$stderr_file"
     else
+      MACHTIANI_TMP_ROOT="$scratch_root" \
       "${cmd[@]}" > "$stdout_file" 2> "$stderr_file"
     fi
   fi
@@ -1262,33 +1302,33 @@ run_happy_case() {
   popd >/dev/null
   if [[ $rc -ne 0 ]]; then
     echo "Failed (rc=$rc): $case_id" >&2
-    return_with_cleanup 1
+    return_with_cleanup 1 || return 1
   fi
 
   local agent_session
   agent_session=$(grep -m1 '^Session:' "$stderr_file" | awk '{print $2}' || true)
   if [[ -z "$agent_session" ]]; then
     echo "Failed to parse session ID from stderr for $case_id" >&2
-    return_with_cleanup 1
+    return_with_cleanup 1 || return 1
   fi
 
   local sessions_root="$REPO_ROOT/.machtiani/sessions"
   local session_dir="$sessions_root/$agent_session"
   if [[ ! -d "$session_dir" ]]; then
     echo "Session directory missing: $session_dir" >&2
-    return_with_cleanup 1
+    return_with_cleanup 1 || return 1
   fi
 
   local chat_dir="$session_dir/chat"
   if [[ ! -d "$chat_dir" ]]; then
     echo "Chat directory missing: $chat_dir" >&2
-    return_with_cleanup 1
+    return_with_cleanup 1 || return 1
   fi
 
   local transcript_path="$chat_dir/agent-transcript.adoc"
   if [[ ! -s "$transcript_path" ]]; then
     echo "Transcript missing or empty: $transcript_path" >&2
-    return_with_cleanup 1
+    return_with_cleanup 1 || return 1
   fi
 
   local mode_file_oriented=false
@@ -1307,7 +1347,7 @@ run_happy_case() {
   fi
   if [[ $turns -gt $max_steps || $turns -lt $min_turns ]]; then
     echo "Invalid turns ($turns): $case_id" >&2
-    return_with_cleanup 1
+    return_with_cleanup 1 || return 1
   fi
   local -a keyword_files=("$stdout_file" "$transcript_path")
 
@@ -1317,7 +1357,7 @@ run_happy_case() {
     final_path="$chat_dir/agent-final-answer.md"
     if [[ ! -s "$final_path" ]]; then
       echo "Missing final artifact in session directory: $final_path" >&2
-      return_with_cleanup 1
+      return_with_cleanup 1 || return 1
     fi
     cp -f "$final_path" "$out_dir/final-${session_id}.md"
     keyword_files+=("$final_path")
@@ -1338,7 +1378,7 @@ run_happy_case() {
     if [[ "$require_fd_artifact" == true ]] && grep -qE '^Step [0-9]+ decision: ask' "$stderr_file" 2>/dev/null; then
       if [[ ! -f "$fd_path" ]]; then
         echo "Missing file-discovery trajectory: $fd_path" >&2
-        return_with_cleanup 1
+        return_with_cleanup 1 || return 1
       fi
       keyword_files+=("$fd_path")
     fi
@@ -1349,7 +1389,7 @@ run_happy_case() {
   local patches_dir="$session_dir/artifacts/patches"
   if [[ -e "$patches_dir" && ! -d "$patches_dir" ]]; then
     echo "Patches path exists but is not a directory: $patches_dir" >&2
-    return_with_cleanup 1
+    return_with_cleanup 1 || return 1
   fi
 
   if [[ "$LIVE_MODE" == true ]]; then
@@ -1357,23 +1397,23 @@ run_happy_case() {
   fi
   if ! contains_keywords "$expected_keywords" "${keyword_files[@]}"; then
     echo "Missing keywords: $case_id" >&2
-    return_with_cleanup 1
+    return_with_cleanup 1 || return 1
   fi
   if [[ ! -s "$out_dir/transcript-${session_id}.adoc" ]]; then
     echo "Missing transcript: $case_id" >&2
-    return_with_cleanup 1
+    return_with_cleanup 1 || return 1
   fi
   if [[ "$LIVE_MODE" == true && ! -s "$out_dir/final-${session_id}.md" ]]; then
     echo "Missing final artifact: $case_id" >&2
-    return_with_cleanup 1
+    return_with_cleanup 1 || return 1
   fi
   if grep -qE "^[0-9]{4}/[0-9]{2}/[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}.* (Finalizer|Transcript write|Final file write) error:" "$stderr_file"; then
     echo "Finalize error detected: $case_id" >&2
-    return_with_cleanup 1
+    return_with_cleanup 1 || return 1
   fi
   if [[ "$marker_checks" == true ]]; then
     if ! assert_shell_agent_marker_cleanup "$marker_dir" "$stale_marker" "$recent_marker" "$case_id"; then
-      return_with_cleanup 1
+      return_with_cleanup 1 || return 1
     fi
   fi
 
@@ -1402,7 +1442,7 @@ run_menu_flow_case() {
     COMMON_AGENT_ARGS=()
     run_happy_case "$case_id" 1 \
       "Identify the functions in \`agent/internal/planner/planner.go\` and \`agent/internal/session/runner.go\` that handle ask selection and ask execution, then summarize the control flow after an ask is chosen." \
-      "(?s)(?=.*Summarize the staged planner menu flow)(?=.*git diff --stat)(?!.*No-shell:)(?!.*Shell:)" \
+      "(?s)(?=.*Summarize the staged planner menu flow)(?=.*git diff --stat)(?!.*\bNo-shell:)(?!.*\bShell:)" \
       1 \
       --model "$stub_alias" \
       --orch-model "$stub_alias" \
@@ -1430,7 +1470,7 @@ run_menu_flow_live_case() {
 
   run_happy_case "$case_id" 2 \
     'Identify the functions in `agent/internal/planner/planner.go` and `agent/internal/session/runner.go` that handle ask selection and ask execution, then summarize the control flow after an ask is chosen.' \
-    "(?s)(?=.*\[mct:shell\])(?!.*No-shell:)(?!.*Shell:)" \
+    "(?s)(?=.*\[mct:shell\])(?!.*\bNo-shell:)(?!.*\bShell:)" \
     1 \
     --timeout-per-turn 600 \
     "${DEFAULT_MODEL_ARGS[@]}"
@@ -1492,14 +1532,14 @@ run_user_directed_suspend_case() {
   popd >/dev/null
   if [[ $rc -ne 0 ]]; then
     echo "Failed initial suspend run (rc=$rc): $case_id" >&2
-    return_with_cleanup 1
+    return_with_cleanup 1 || return 1
   fi
 
   local agent_session
   agent_session=$(grep -m1 '^Session:' "$stderr_suspend" | awk '{print $2}' || true)
   if [[ -z "$agent_session" ]]; then
     echo "Failed to parse session ID from suspended stderr for $case_id" >&2
-    return_with_cleanup 1
+    return_with_cleanup 1 || return 1
   fi
 
   local session_dir="$REPO_ROOT/.machtiani/sessions/$agent_session"
@@ -1509,22 +1549,22 @@ run_user_directed_suspend_case() {
 
   if [[ ! -s "$transcript_path" ]]; then
     echo "Transcript missing or empty after suspend: $transcript_path" >&2
-    return_with_cleanup 1
+    return_with_cleanup 1 || return 1
   fi
   if [[ ! -s "$session_state_path" ]]; then
     echo "Session state missing after suspend: $session_state_path" >&2
-    return_with_cleanup 1
+    return_with_cleanup 1 || return 1
   fi
   if [[ -e "$final_path" ]]; then
     echo "Final artifact should not exist before resume: $final_path" >&2
-    return_with_cleanup 1
+    return_with_cleanup 1 || return 1
   fi
 
   cp -f "$transcript_path" "$out_dir/transcript-suspend-${session_id}.adoc"
 
   if ! contains_keywords '=== USER INPUT NEEDED ===|Do you want the safer fix' "$stdout_suspend" "$transcript_path"; then
     echo "Missing suspended user-input prompt: $case_id" >&2
-    return_with_cleanup 1
+    return_with_cleanup 1 || return 1
   fi
 
   if ! "$PYTHON_BIN" - "$session_state_path" <<'PY'
@@ -1546,7 +1586,7 @@ if 'safer fix' not in question:
     sys.exit(1)
 PY
   then
-    return_with_cleanup 1
+    return_with_cleanup 1 || return 1
   fi
 
   pushd "$REPO_ROOT" >/dev/null
@@ -1568,12 +1608,12 @@ PY
   popd >/dev/null
   if [[ $rc -ne 0 ]]; then
     echo "Failed resume run (rc=$rc): $case_id" >&2
-    return_with_cleanup 1
+    return_with_cleanup 1 || return 1
   fi
 
   if [[ ! -s "$final_path" ]]; then
     echo "Missing final artifact after resume: $final_path" >&2
-    return_with_cleanup 1
+    return_with_cleanup 1 || return 1
   fi
   if [[ -e "$session_state_path" ]]; then
     if ! "$PYTHON_BIN" - "$session_state_path" <<'PY'
@@ -1593,7 +1633,7 @@ if data.get('suspended_user_input'):
     sys.exit(1)
 PY
     then
-      return_with_cleanup 1
+      return_with_cleanup 1 || return 1
     fi
   fi
 
@@ -1602,7 +1642,7 @@ PY
 
   if ! contains_keywords '===> FINAL RESPONSE <===|Stub response\.|=== USER INPUT ===|=== USER INPUT NEEDED ===' "$stdout_resume" "$transcript_path" "$final_path"; then
     echo "Missing resume completion markers: $case_id" >&2
-    return_with_cleanup 1
+    return_with_cleanup 1 || return 1
   fi
 
   assert_stub_counts "$state_file" 2 1 1 0
@@ -1612,8 +1652,8 @@ PY
   return_with_cleanup 0
 }
 
-run_meta_mode_prompt_layers_case() {
-  local case_id="meta-mode-prompt-layers"
+run_mode_prompt_layers_case() {
+  local case_id="mode-prompt-layers"
   local stub_dir="$TMP_ROOT/stub-${case_id}-$(date +%s)"
   mkdir -p "$stub_dir"
   local state_file="$stub_dir/state.json"
@@ -1657,12 +1697,12 @@ run_meta_mode_prompt_layers_case() {
   fi
 }
 
-run_meta_mode_live_case() {
-  local case_id="meta-mode-code-live"
+run_mode_live_case() {
+  local case_id="mode-code-live"
 
   HARNESS_STDIN_INPUT=$'c\n' run_happy_case "$case_id" 2 \
     'Using only `docs/mct-agent-runbook.md`, summarize the recommended `--mode code` workflow in this repository and name the most useful artifacts written under `.machtiani/sessions/<session-id>/`.' \
-    'meta-plan.json|agent-transcript.adoc|agent-final-answer.md' \
+    'mode-plan.json|agent-transcript.adoc|agent-final-answer.md' \
     1 \
     --mode code \
     --timeout-per-turn 600 \
@@ -1858,14 +1898,14 @@ EOF
   popd >/dev/null
   if [[ $rc -ne 0 ]]; then
     echo "Failed (rc=$rc): $case_id" >&2
-    return_with_cleanup 1
+    return_with_cleanup 1 || return 1
   fi
 
   local agent_session
   agent_session=$(grep -m1 '^Session:' "$stderr_file" | awk '{print $2}' || true)
   if [[ -z "$agent_session" ]]; then
     echo "Failed to parse session ID from stderr for $case_id" >&2
-    return_with_cleanup 1
+    return_with_cleanup 1 || return 1
   fi
 
   local session_dir="$REPO_ROOT/.machtiani/sessions/$agent_session"
@@ -1873,7 +1913,7 @@ EOF
   local final_path="$session_dir/chat/agent-final-answer.md"
   if [[ ! -s "$transcript_path" || ! -s "$final_path" ]]; then
     echo "Missing live artifacts for $case_id" >&2
-    return_with_cleanup 1
+    return_with_cleanup 1 || return 1
   fi
   cp -f "$transcript_path" "$out_dir/transcript-${session_id}.adoc"
   cp -f "$final_path" "$out_dir/final-${session_id}.md"
@@ -1881,7 +1921,7 @@ EOF
   if ! contains_keywords "(?s)(?=.*\[mct:shell\])(?=.*MCT_LOCAL_TMP_ROOT=UNSET)" \
       "$stdout_file" "$transcript_path" "$final_path"; then
     echo "Missing local tmp-root unset proof: $case_id" >&2
-    return_with_cleanup 1
+    return_with_cleanup 1 || return 1
   fi
 
   local live_workspace_root
@@ -1889,12 +1929,12 @@ EOF
   if [[ -e "$live_workspace_root" ]]; then
     echo "Unexpected snapshot workspace created for local env: $live_workspace_root ($case_id)" >&2
     find "$live_workspace_root" -maxdepth 2 -mindepth 0 2>/dev/null | sort >&2 || true
-    return_with_cleanup 1
+    return_with_cleanup 1 || return 1
   fi
 
   if [[ "$marker_checks" == true ]]; then
     if ! assert_shell_agent_marker_cleanup "$marker_dir" "$stale_marker" "$recent_marker" "$case_id"; then
-      return_with_cleanup 1
+      return_with_cleanup 1 || return 1
     fi
   fi
 
@@ -1968,7 +2008,7 @@ run_shell_container_workspace_live_case() {
 
   if ! command -v go >/dev/null 2>&1; then
     echo "go binary not found; cannot run $case_id post-check" >&2
-    return_with_cleanup 1
+    return_with_cleanup 1 || return 1
   fi
 
   container_config="$(generate_container_test_config)"
@@ -2012,24 +2052,24 @@ run_shell_container_workspace_live_case() {
       live_workspace_root="$(resolve_live_workspace_root "$container_config" "$failed_agent_session")"
     fi
     echo "Failed (rc=$rc): $case_id" >&2
-    return_with_cleanup 1
+    return_with_cleanup 1 || return 1
   fi
 
   local agent_session
   agent_session=$(grep -m1 '^Session:' "$stderr_file" | awk '{print $2}' || true)
   if [[ -z "$agent_session" ]]; then
     echo "Failed to parse session ID from stderr for $case_id" >&2
-    return_with_cleanup 1
+    return_with_cleanup 1 || return 1
   fi
 
   live_workspace_root="$(resolve_live_workspace_root "$container_config" "$agent_session")"
   if [[ -z "$live_workspace_root" ]]; then
     echo "Failed to resolve live workspace root for $case_id" >&2
-    return_with_cleanup 1
+    return_with_cleanup 1 || return 1
   fi
   if [[ ! -d "$live_workspace_root/repo" ]]; then
     echo "Missing live workspace snapshot for $case_id: $live_workspace_root/repo" >&2
-    return_with_cleanup 1
+    return_with_cleanup 1 || return 1
   fi
 
   local session_dir="$REPO_ROOT/.machtiani/sessions/$agent_session"
@@ -2037,14 +2077,14 @@ run_shell_container_workspace_live_case() {
   local final_path="$session_dir/chat/agent-final-answer.md"
   if [[ ! -s "$transcript_path" || ! -s "$final_path" ]]; then
     echo "Missing live artifacts for $case_id" >&2
-    return_with_cleanup 1
+    return_with_cleanup 1 || return 1
   fi
   cp -f "$transcript_path" "$out_dir/transcript-${session_id}.adoc"
   cp -f "$final_path" "$out_dir/final-${session_id}.md"
 
   if ! contains_keywords "(?s)(?=.*\\[mct:shell\\])" "$stdout_file" "$transcript_path" "$final_path"; then
     echo "Missing shell-agent keywords: $case_id" >&2
-    return_with_cleanup 1
+    return_with_cleanup 1 || return 1
   fi
 
   pushd "$REPO_ROOT/agent" >/dev/null
@@ -2060,12 +2100,12 @@ run_shell_container_workspace_live_case() {
   if [[ $rc -ne 0 ]]; then
     echo "Container workspace verification failed: $case_id" >&2
     cat "$verify_file" >&2 || true
-    return_with_cleanup 1
+    return_with_cleanup 1 || return 1
   fi
 
   if [[ "$marker_checks" == true ]]; then
     if ! assert_shell_agent_marker_cleanup "$marker_dir" "$stale_marker" "$recent_marker" "$case_id"; then
-      return_with_cleanup 1
+      return_with_cleanup 1 || return 1
     fi
   fi
 
@@ -2098,7 +2138,7 @@ run_shell_agent_subcommand_live_case() {
     echo "PASS: run_shell_agent_subcommand_live_case"
 }
 
-# run_resume_without_mode_case verifies that the meta-mode is preserved
+# run_resume_without_mode_case verifies that the mode is preserved
 # when resuming a session via --session-id without re-specifying --mode.
 # It starts a session with --mode code, captures the session ID, then
 # resumes via --session-id without --mode, and checks that the session
@@ -2166,18 +2206,18 @@ run_resume_without_mode_case() {
     return 1
   fi
 
-  # Verify the session state has meta_modes containing "code".
+  # Verify the session state has modes containing "code".
   local session_state_path="$REPO_ROOT/.machtiani/sessions/$agent_session/session-state.json"
   if ! "$PYTHON_BIN" -c "
 import json, sys
 try:
     with open('$session_state_path') as f:
         state = json.load(f)
-    modes = state.get('meta_modes', [])
+    modes = state.get('modes', [])
     if 'code' not in modes:
-        print(f'ERROR: meta_modes={modes}, expected code to be present', file=sys.stderr)
+        print(f'ERROR: modes={modes}, expected code to be present', file=sys.stderr)
         sys.exit(1)
-    print(f'OK: meta_modes={modes}')
+    print(f'OK: modes={modes}')
 except Exception as e:
     print(f'ERROR: {e}', file=sys.stderr)
     sys.exit(1)
@@ -2212,17 +2252,17 @@ except Exception as e:
     return 1
   fi
 
-  # Verify the session state STILL has meta_modes containing "code".
+  # Verify the session state STILL has modes containing "code".
   if ! "$PYTHON_BIN" -c "
 import json, sys
 try:
     with open('$session_state_path') as f:
         state = json.load(f)
-    modes = state.get('meta_modes', [])
+    modes = state.get('modes', [])
     if 'code' not in modes:
-        print(f'ERROR: meta_modes={modes}, expected code to be present after resume', file=sys.stderr)
+        print(f'ERROR: modes={modes}, expected code to be present after resume', file=sys.stderr)
         sys.exit(1)
-    print(f'OK: meta_modes after resume={modes}')
+    print(f'OK: modes after resume={modes}')
 except Exception as e:
     print(f'ERROR: {e}', file=sys.stderr)
     sys.exit(1)
@@ -2233,6 +2273,566 @@ except Exception as e:
   fi
 
   stop_llm_stub_server
+  if [[ "${KEEP_TEST_CONFIG:-}" != "true" ]]; then
+    rm -rf "$stub_dir"
+    rm -rf "$(dirname "$stub_config")"
+  fi
+  echo "Passed: $case_id" >&2
+}
+
+# test_code_no_forge verifies that --mode code does NOT inject the forge
+# instruction into the shell-agent system prompt.  It asserts mode-plan.json
+# mode is "code" and inputs.jsonl does not contain "You MUST use forge".
+test_code_no_forge() {
+  local case_id="code-no-forge"
+  local stub_dir="$TMP_ROOT/stub-${case_id}-$(date +%s)"
+  mkdir -p "$stub_dir"
+  local state_file="$stub_dir/state.json"
+  local port_file="$stub_dir/port.txt"
+  start_llm_stub_server "$state_file" "$port_file"
+  local stub_port
+  stub_port="$(cat "$port_file")"
+  local base_url="http://127.0.0.1:${stub_port}/v1"
+  local stub_alias="stub-model"
+  local stub_config
+  stub_config="$(generate_stub_config "$base_url" "$stub_alias")"
+
+  local session_id="test-${case_id}-$(date +%s)"
+  local out_dir="$(pwd)/test-out-${session_id}"
+  mkdir -p "$out_dir"
+  local stdout_file="$out_dir/stdout-${session_id}.txt"
+  local stderr_file="$out_dir/stderr-${session_id}.txt"
+
+  echo "Running code-no-forge case..." >&2
+
+  local rc=0
+  pushd "$REPO_ROOT" >/dev/null
+  set +e
+  MACHTIANI_CONFIG="$stub_config" \
+  timeout 120 "$MCT_AGENT" run \
+    --max-steps 2 \
+    --patch-no-apply \
+    --timeout-per-turn 300 \
+    --mode code \
+    --model "$stub_alias" \
+    --orch-model "$stub_alias" \
+    --patcher-model "$stub_alias" \
+    --file-discovery-model "$stub_alias" \
+    --text "confirm the full path to README.md in the cwd" \
+    > "$stdout_file" 2> "$stderr_file"
+  rc=$?
+  set -e
+  popd >/dev/null
+  if [[ $rc -ne 0 ]]; then
+    echo "Failed (rc=$rc): $case_id" >&2
+    cat "$stderr_file" >&2 || true
+    stop_llm_stub_server
+
+    return 1
+  fi
+
+  local agent_session
+  agent_session=$(grep -m1 '^Session:' "$stderr_file" | awk '{print $2}' || true)
+  if [[ -z "$agent_session" ]]; then
+    echo "Failed to parse session ID for $case_id" >&2
+    stop_llm_stub_server
+
+    return 1
+  fi
+
+  local sessions_root="$REPO_ROOT/.machtiani/sessions"
+  local session_dir="$sessions_root/$agent_session"
+  local meta_plan="$session_dir/mode-plan.json"
+  local inputs_jsonl="$session_dir/artifacts/llm/inputs.jsonl"
+
+  # Assert mode-plan.json mode is "code".
+  if ! assert_file_contains "$meta_plan" '"mode": "code"' "$case_id mode-plan.json"; then
+    stop_llm_stub_server
+
+    return 1
+  fi
+
+  # Assert inputs.jsonl does NOT contain the forge instruction.
+  if ! assert_file_not_contains "$inputs_jsonl" "You MUST use forge" "$case_id inputs.jsonl"; then
+    stop_llm_stub_server
+
+    return 1
+  fi
+
+  stop_llm_stub_server
+
+  if [[ "${KEEP_TEST_CONFIG:-}" != "true" ]]; then
+    rm -rf "$stub_dir"
+    rm -rf "$(dirname "$stub_config")"
+  fi
+  echo "Passed: $case_id" >&2
+}
+
+# test_code_forge_initial verifies that --mode code-forge injects the forge
+# instruction into the shell-agent system prompt.  It asserts mode-plan.json
+# mode is "code-forge" and inputs.jsonl contains "You MUST use forge".
+test_code_forge_initial() {
+  local case_id="code-forge-initial"
+  local stub_dir="$TMP_ROOT/stub-${case_id}-$(date +%s)"
+  mkdir -p "$stub_dir"
+  local state_file="$stub_dir/state.json"
+  local port_file="$stub_dir/port.txt"
+  start_llm_stub_server "$state_file" "$port_file"
+  local stub_port
+  stub_port="$(cat "$port_file")"
+  local base_url="http://127.0.0.1:${stub_port}/v1"
+  local stub_alias="stub-model"
+  local stub_config
+  stub_config="$(generate_stub_config "$base_url" "$stub_alias")"
+
+  local session_id="test-${case_id}-$(date +%s)"
+  local out_dir="$(pwd)/test-out-${session_id}"
+  mkdir -p "$out_dir"
+  local stdout_file="$out_dir/stdout-${session_id}.txt"
+  local stderr_file="$out_dir/stderr-${session_id}.txt"
+
+  echo "Running code-forge-initial case..." >&2
+
+  local rc=0
+  pushd "$REPO_ROOT" >/dev/null
+  set +e
+  MACHTIANI_CONFIG="$stub_config" \
+  timeout 120 "$MCT_AGENT" run \
+    --max-steps 2 \
+    --patch-no-apply \
+    --timeout-per-turn 300 \
+    --mode code-forge \
+    --model "$stub_alias" \
+    --orch-model "$stub_alias" \
+    --patcher-model "$stub_alias" \
+    --file-discovery-model "$stub_alias" \
+    --text "confirm the full path to README.md in the cwd" \
+    > "$stdout_file" 2> "$stderr_file"
+  rc=$?
+  set -e
+  popd >/dev/null
+  if [[ $rc -ne 0 ]]; then
+    echo "Failed (rc=$rc): $case_id" >&2
+    cat "$stderr_file" >&2 || true
+    stop_llm_stub_server
+
+    return 1
+  fi
+
+  local agent_session
+  agent_session=$(grep -m1 '^Session:' "$stderr_file" | awk '{print $2}' || true)
+  if [[ -z "$agent_session" ]]; then
+    echo "Failed to parse session ID for $case_id" >&2
+    stop_llm_stub_server
+
+    return 1
+  fi
+
+  local sessions_root="$REPO_ROOT/.machtiani/sessions"
+  local session_dir="$sessions_root/$agent_session"
+  local meta_plan="$session_dir/mode-plan.json"
+  local inputs_jsonl="$session_dir/artifacts/llm/inputs.jsonl"
+
+  # Assert mode-plan.json mode is "code-forge".
+  if ! assert_file_contains "$meta_plan" '"mode": "code-forge"' "$case_id mode-plan.json"; then
+    stop_llm_stub_server
+
+    return 1
+  fi
+
+  # Assert inputs.jsonl DOES contain the forge instruction.
+  if ! assert_file_contains "$inputs_jsonl" "You MUST use forge" "$case_id inputs.jsonl"; then
+    stop_llm_stub_server
+
+    return 1
+  fi
+
+  stop_llm_stub_server
+
+  if [[ "${KEEP_TEST_CONFIG:-}" != "true" ]]; then
+    rm -rf "$stub_dir"
+    rm -rf "$(dirname "$stub_config")"
+  fi
+  echo "Passed: $case_id" >&2
+}
+
+# test_code_forge_resume_with_mode starts a session with --mode code-forge,
+# captures the session ID, then resumes with --session-id and --mode code-forge,
+# asserting mode-plan.json mode and forge instruction presence in both phases.
+test_code_forge_resume_with_mode() {
+  local case_id="code-forge-resume-with-mode"
+  local stub_dir="$TMP_ROOT/stub-${case_id}-$(date +%s)"
+  mkdir -p "$stub_dir"
+  local state_file="$stub_dir/state.json"
+  local port_file="$stub_dir/port.txt"
+  start_llm_stub_server "$state_file" "$port_file"
+  local stub_port
+  stub_port="$(cat "$port_file")"
+  local base_url="http://127.0.0.1:${stub_port}/v1"
+  local stub_alias="stub-model"
+  local stub_config
+  stub_config="$(generate_stub_config "$base_url" "$stub_alias")"
+
+  local session_id="test-${case_id}-$(date +%s)"
+  local out_dir="$(pwd)/test-out-${session_id}"
+  mkdir -p "$out_dir"
+  local stdout_init="$out_dir/stdout-init-${session_id}.txt"
+  local stderr_init="$out_dir/stderr-init-${session_id}.txt"
+  local stdout_resume="$out_dir/stdout-resume-${session_id}.txt"
+  local stderr_resume="$out_dir/stderr-resume-${session_id}.txt"
+
+  echo "Running code-forge-resume-with-mode case..." >&2
+
+  # Phase 1: Start a session with --mode code-forge.
+  local rc=0
+  pushd "$REPO_ROOT" >/dev/null
+  set +e
+  MACHTIANI_CONFIG="$stub_config" \
+  timeout 120 "$MCT_AGENT" run \
+    --max-steps 2 \
+    --patch-no-apply \
+    --timeout-per-turn 300 \
+    --mode code-forge \
+    --model "$stub_alias" \
+    --orch-model "$stub_alias" \
+    --patcher-model "$stub_alias" \
+    --file-discovery-model "$stub_alias" \
+    --text "confirm the full path to README.md in the cwd" \
+    > "$stdout_init" 2> "$stderr_init"
+  rc=$?
+  set -e
+  popd >/dev/null
+  if [[ $rc -ne 0 ]]; then
+    echo "Failed initial run (rc=$rc): $case_id" >&2
+    cat "$stderr_init" >&2 || true
+    stop_llm_stub_server
+
+    return 1
+  fi
+
+  local agent_session
+  agent_session=$(grep -m1 '^Session:' "$stderr_init" | awk '{print $2}' || true)
+  if [[ -z "$agent_session" ]]; then
+    echo "Failed to parse session ID for $case_id" >&2
+    stop_llm_stub_server
+
+    return 1
+  fi
+
+  local sessions_root="$REPO_ROOT/.machtiani/sessions"
+  local session_dir="$sessions_root/$agent_session"
+  local meta_plan="$session_dir/mode-plan.json"
+  local inputs_jsonl="$session_dir/artifacts/llm/inputs.jsonl"
+
+  # Phase 1 assertions.
+  if ! assert_file_contains "$meta_plan" '"mode": "code-forge"' "$case_id phase1 mode-plan.json"; then
+    stop_llm_stub_server
+
+    return 1
+  fi
+  if ! assert_file_contains "$inputs_jsonl" "You MUST use forge" "$case_id phase1 inputs.jsonl"; then
+    stop_llm_stub_server
+
+    return 1
+  fi
+
+  # Phase 2: Resume the session WITH --mode code-forge.
+  pushd "$REPO_ROOT" >/dev/null
+  set +e
+  MACHTIANI_CONFIG="$stub_config" \
+  timeout 120 "$MCT_AGENT" run \
+    --max-steps 2 \
+    --patch-no-apply \
+    --timeout-per-turn 300 \
+    --session-id "$agent_session" \
+    --mode code-forge \
+    --model "$stub_alias" \
+    --orch-model "$stub_alias" \
+    --patcher-model "$stub_alias" \
+    --file-discovery-model "$stub_alias" \
+    --text "Continue." \
+    > "$stdout_resume" 2> "$stderr_resume"
+  rc=$?
+  set -e
+  popd >/dev/null
+  if [[ $rc -ne 0 ]]; then
+    echo "Failed resume run (rc=$rc): $case_id" >&2
+    cat "$stderr_resume" >&2 || true
+    stop_llm_stub_server
+
+    return 1
+  fi
+
+  # Phase 2 assertions.
+  if ! assert_file_contains "$meta_plan" '"mode": "code-forge"' "$case_id phase2 mode-plan.json"; then
+    stop_llm_stub_server
+
+    return 1
+  fi
+  if ! assert_file_contains "$inputs_jsonl" "You MUST use forge" "$case_id phase2 inputs.jsonl"; then
+    stop_llm_stub_server
+
+    return 1
+  fi
+
+  stop_llm_stub_server
+
+  if [[ "${KEEP_TEST_CONFIG:-}" != "true" ]]; then
+    rm -rf "$stub_dir"
+    rm -rf "$(dirname "$stub_config")"
+  fi
+  echo "Passed: $case_id" >&2
+}
+
+# test_code_forge_resume_without_mode starts a session with --mode code-forge,
+# captures the session ID, then resumes WITHOUT --mode.  It asserts that
+# mode-plan.json mode remains "code-forge" and the forge instruction is still
+# present in inputs.jsonl.
+test_code_forge_resume_without_mode() {
+  local case_id="code-forge-resume-without-mode"
+  local stub_dir="$TMP_ROOT/stub-${case_id}-$(date +%s)"
+  mkdir -p "$stub_dir"
+  local state_file="$stub_dir/state.json"
+  local port_file="$stub_dir/port.txt"
+  start_llm_stub_server "$state_file" "$port_file"
+  local stub_port
+  stub_port="$(cat "$port_file")"
+  local base_url="http://127.0.0.1:${stub_port}/v1"
+  local stub_alias="stub-model"
+  local stub_config
+  stub_config="$(generate_stub_config "$base_url" "$stub_alias")"
+
+  local session_id="test-${case_id}-$(date +%s)"
+  local out_dir="$(pwd)/test-out-${session_id}"
+  mkdir -p "$out_dir"
+  local stdout_init="$out_dir/stdout-init-${session_id}.txt"
+  local stderr_init="$out_dir/stderr-init-${session_id}.txt"
+  local stdout_resume="$out_dir/stdout-resume-${session_id}.txt"
+  local stderr_resume="$out_dir/stderr-resume-${session_id}.txt"
+
+  echo "Running code-forge-resume-without-mode case..." >&2
+
+  # Phase 1: Start a session with --mode code-forge.
+  local rc=0
+  pushd "$REPO_ROOT" >/dev/null
+  set +e
+  MACHTIANI_CONFIG="$stub_config" \
+  timeout 120 "$MCT_AGENT" run \
+    --max-steps 2 \
+    --patch-no-apply \
+    --timeout-per-turn 300 \
+    --mode code-forge \
+    --model "$stub_alias" \
+    --orch-model "$stub_alias" \
+    --patcher-model "$stub_alias" \
+    --file-discovery-model "$stub_alias" \
+    --text "confirm the full path to README.md in the cwd" \
+    > "$stdout_init" 2> "$stderr_init"
+  rc=$?
+  set -e
+  popd >/dev/null
+  if [[ $rc -ne 0 ]]; then
+    echo "Failed initial run (rc=$rc): $case_id" >&2
+    cat "$stderr_init" >&2 || true
+    stop_llm_stub_server
+
+    return 1
+  fi
+
+  local agent_session
+  agent_session=$(grep -m1 '^Session:' "$stderr_init" | awk '{print $2}' || true)
+  if [[ -z "$agent_session" ]]; then
+    echo "Failed to parse session ID for $case_id" >&2
+    stop_llm_stub_server
+
+    return 1
+  fi
+
+  local sessions_root="$REPO_ROOT/.machtiani/sessions"
+  local session_dir="$sessions_root/$agent_session"
+  local meta_plan="$session_dir/mode-plan.json"
+  local inputs_jsonl="$session_dir/artifacts/llm/inputs.jsonl"
+
+  # Phase 1 assertions.
+  if ! assert_file_contains "$meta_plan" '"mode": "code-forge"' "$case_id phase1 mode-plan.json"; then
+    stop_llm_stub_server
+
+    return 1
+  fi
+  if ! assert_file_contains "$inputs_jsonl" "You MUST use forge" "$case_id phase1 inputs.jsonl"; then
+    stop_llm_stub_server
+
+    return 1
+  fi
+
+  # Phase 2: Resume the session WITHOUT --mode.
+  pushd "$REPO_ROOT" >/dev/null
+  set +e
+  MACHTIANI_CONFIG="$stub_config" \
+  timeout 120 "$MCT_AGENT" run \
+    --max-steps 2 \
+    --patch-no-apply \
+    --timeout-per-turn 300 \
+    --session-id "$agent_session" \
+    --model "$stub_alias" \
+    --orch-model "$stub_alias" \
+    --patcher-model "$stub_alias" \
+    --file-discovery-model "$stub_alias" \
+    --text "Continue." \
+    > "$stdout_resume" 2> "$stderr_resume"
+  rc=$?
+  set -e
+  popd >/dev/null
+  if [[ $rc -ne 0 ]]; then
+    echo "Failed resume run (rc=$rc): $case_id" >&2
+    cat "$stderr_resume" >&2 || true
+    stop_llm_stub_server
+
+    return 1
+  fi
+
+  # Phase 2 assertions: mode must still be "code-forge".
+  if ! assert_file_contains "$meta_plan" '"mode": "code-forge"' "$case_id phase2 mode-plan.json"; then
+    stop_llm_stub_server
+
+    return 1
+  fi
+  if ! assert_file_contains "$inputs_jsonl" "You MUST use forge" "$case_id phase2 inputs.jsonl"; then
+    stop_llm_stub_server
+
+    return 1
+  fi
+
+  stop_llm_stub_server
+
+  if [[ "${KEEP_TEST_CONFIG:-}" != "true" ]]; then
+    rm -rf "$stub_dir"
+    rm -rf "$(dirname "$stub_config")"
+  fi
+  echo "Passed: $case_id" >&2
+}
+
+# test_code_resume_without_mode_no_forge starts a session with --mode code
+# (no forge), captures the session ID, then resumes WITHOUT --mode.  It asserts
+# mode-plan.json mode is still "code" and inputs.jsonl still does NOT contain
+# the forge instruction.
+test_code_resume_without_mode_no_forge() {
+  local case_id="code-resume-without-mode-no-forge"
+  local stub_dir="$TMP_ROOT/stub-${case_id}-$(date +%s)"
+  mkdir -p "$stub_dir"
+  local state_file="$stub_dir/state.json"
+  local port_file="$stub_dir/port.txt"
+  start_llm_stub_server "$state_file" "$port_file"
+  local stub_port
+  stub_port="$(cat "$port_file")"
+  local base_url="http://127.0.0.1:${stub_port}/v1"
+  local stub_alias="stub-model"
+  local stub_config
+  stub_config="$(generate_stub_config "$base_url" "$stub_alias")"
+
+  local session_id="test-${case_id}-$(date +%s)"
+  local out_dir="$(pwd)/test-out-${session_id}"
+  mkdir -p "$out_dir"
+  local stdout_init="$out_dir/stdout-init-${session_id}.txt"
+  local stderr_init="$out_dir/stderr-init-${session_id}.txt"
+  local stdout_resume="$out_dir/stdout-resume-${session_id}.txt"
+  local stderr_resume="$out_dir/stderr-resume-${session_id}.txt"
+
+  echo "Running code-resume-without-mode-no-forge case..." >&2
+
+  # Phase 1: Start a session with --mode code (no forge).
+  local rc=0
+  pushd "$REPO_ROOT" >/dev/null
+  set +e
+  MACHTIANI_CONFIG="$stub_config" \
+  timeout 120 "$MCT_AGENT" run \
+    --max-steps 2 \
+    --patch-no-apply \
+    --timeout-per-turn 300 \
+    --mode code \
+    --model "$stub_alias" \
+    --orch-model "$stub_alias" \
+    --patcher-model "$stub_alias" \
+    --file-discovery-model "$stub_alias" \
+    --text "confirm the full path to README.md in the cwd" \
+    > "$stdout_init" 2> "$stderr_init"
+  rc=$?
+  set -e
+  popd >/dev/null
+  if [[ $rc -ne 0 ]]; then
+    echo "Failed initial run (rc=$rc): $case_id" >&2
+    cat "$stderr_init" >&2 || true
+    stop_llm_stub_server
+
+    return 1
+  fi
+
+  local agent_session
+  agent_session=$(grep -m1 '^Session:' "$stderr_init" | awk '{print $2}' || true)
+  if [[ -z "$agent_session" ]]; then
+    echo "Failed to parse session ID for $case_id" >&2
+    stop_llm_stub_server
+
+    return 1
+  fi
+
+  local sessions_root="$REPO_ROOT/.machtiani/sessions"
+  local session_dir="$sessions_root/$agent_session"
+  local meta_plan="$session_dir/mode-plan.json"
+  local inputs_jsonl="$session_dir/artifacts/llm/inputs.jsonl"
+
+  # Phase 1 assertions.
+  if ! assert_file_contains "$meta_plan" '"mode": "code"' "$case_id phase1 mode-plan.json"; then
+    stop_llm_stub_server
+
+    return 1
+  fi
+  if ! assert_file_not_contains "$inputs_jsonl" "You MUST use forge" "$case_id phase1 inputs.jsonl"; then
+    stop_llm_stub_server
+
+    return 1
+  fi
+
+  # Phase 2: Resume the session WITHOUT --mode.
+  pushd "$REPO_ROOT" >/dev/null
+  set +e
+  MACHTIANI_CONFIG="$stub_config" \
+  timeout 120 "$MCT_AGENT" run \
+    --max-steps 2 \
+    --patch-no-apply \
+    --timeout-per-turn 300 \
+    --session-id "$agent_session" \
+    --model "$stub_alias" \
+    --orch-model "$stub_alias" \
+    --patcher-model "$stub_alias" \
+    --file-discovery-model "$stub_alias" \
+    --text "Continue." \
+    > "$stdout_resume" 2> "$stderr_resume"
+  rc=$?
+  set -e
+  popd >/dev/null
+  if [[ $rc -ne 0 ]]; then
+    echo "Failed resume run (rc=$rc): $case_id" >&2
+    cat "$stderr_resume" >&2 || true
+    stop_llm_stub_server
+
+    return 1
+  fi
+
+  # Phase 2 assertions: mode must still be "code" and no forge.
+  if ! assert_file_contains "$meta_plan" '"mode": "code"' "$case_id phase2 mode-plan.json"; then
+    stop_llm_stub_server
+
+    return 1
+  fi
+  if ! assert_file_not_contains "$inputs_jsonl" "You MUST use forge" "$case_id phase2 inputs.jsonl"; then
+    stop_llm_stub_server
+
+    return 1
+  fi
+
+  stop_llm_stub_server
+
   if [[ "${KEEP_TEST_CONFIG:-}" != "true" ]]; then
     rm -rf "$stub_dir"
     rm -rf "$(dirname "$stub_config")"
@@ -2519,7 +3119,7 @@ TRANSCRIPT
   # Sanity check: conversation.json must NOT exist yet on disk
   if [[ -f "$conv_path" ]]; then
     echo "conversation.json already exists before migration: $conv_path" >&2
-    return_with_cleanup 1
+    return_with_cleanup 1 || return 1
   fi
 
   # Verify legacy fields are present in session-state.json before migration
@@ -2538,7 +3138,7 @@ if not present:
     sys.exit(1)
 PY
   then
-    return_with_cleanup 1
+    return_with_cleanup 1 || return 1
   fi
 
   local stdout_resume="$out_dir/stdout-resume-${session_id}.txt"
@@ -2567,20 +3167,20 @@ PY
   popd >/dev/null
   if [[ $rc -ne 0 ]]; then
     echo "Failed migrate+resume run (rc=$rc): $case_id" >&2
-    return_with_cleanup 1
+    return_with_cleanup 1 || return 1
   fi
 
   # Assert conversation.json is materialized from inline data
   if [[ ! -s "$conv_path" ]]; then
     echo "conversation.json not materialized after migration: $conv_path" >&2
-    return_with_cleanup 1
+    return_with_cleanup 1 || return 1
   fi
 
   # Assert the session completed successfully (final artifact exists)
   local final_path="$session_dir/chat/agent-final-answer.md"
   if [[ ! -s "$final_path" ]]; then
     echo "Missing final artifact after migration resume: $final_path" >&2
-    return_with_cleanup 1
+    return_with_cleanup 1 || return 1
   fi
 
   # Assert the rewritten session-state.json no longer contains legacy fields.
@@ -2602,14 +3202,14 @@ if present:
     sys.exit(1)
 PY
     then
-      return_with_cleanup 1
+      return_with_cleanup 1 || return 1
     fi
   fi
 
   # Assert .machtiani-session.json does not exist
   if [[ -e "$REPO_ROOT/.machtiani-session.json" ]]; then
     echo "ERROR: retired .machtiani-session.json exists" >&2
-    return_with_cleanup 1
+    return_with_cleanup 1 || return 1
   fi
 
   cp -f "$conv_path" "$out_dir/conversation-${session_id}.json"
@@ -2722,13 +3322,14 @@ INVALID_ALIAS="does-not-exist-alias"
 INVALID_ALIAS_REGEX="$(regex_escape "$INVALID_ALIAS")"
 MODEL_ALIAS_NOT_FOUND_PATTERN="model alias \"${INVALID_ALIAS_REGEX}\" not found"
 
+if [[ $# -eq 0 ]]; then
 if [[ "$LIVE_MODE" != true ]]; then
   # Temporarily disable the legacy `both` routing dry-run case while
   # `Ask Mode: both` is treated as a single shell ask.
   :
 else
   if shell_agent_available; then
-    run_local_tmp_root_unset_live_case
+    run_local_tmp_root_unset_live_case || true
     run_shell_container_workspace_live_case || echo "FAILED (non-fatal): shell container workspace" >&2
   else
     echo "Skipping local tmp-root live case: shell-agent not found on PATH." >&2
@@ -2737,7 +3338,7 @@ else
   run_shell_agent_subcommand_live_case
   run_snippet_discovery_tightness_live_case
   run_menu_flow_live_case
-  run_meta_mode_live_case
+  run_mode_live_case
   run_file_discovery_live_case
   run_show_live_case
   run_show_range_live_case
@@ -2748,13 +3349,61 @@ else
     echo "Skipping shell-only live case: shell-agent not found on PATH." >&2
   fi
 fi
+fi  # $# -eq 0 guard
 
+# --- Named test dispatch -------------------------------------------------
+# When called with one or more test names (e.g. ./run-live.sh test_code_no_forge),
+# run only the requested tests in order.  Each name must map to a registered
+# function in the TESTS array.
+
+declare -A TESTS=(
+  ["test_code_no_forge"]="test_code_no_forge"
+  ["test_code_forge_initial"]="test_code_forge_initial"
+  ["test_code_forge_resume_with_mode"]="test_code_forge_resume_with_mode"
+  ["test_code_forge_resume_without_mode"]="test_code_forge_resume_without_mode"
+  ["test_code_resume_without_mode_no_forge"]="test_code_resume_without_mode_no_forge"
+)
+
+if [[ $# -gt 0 ]]; then
+  # Named-test mode: run each argument as a test name, exit on first failure.
+  failed=0
+  for tname in "$@"; do
+    tfunc="${TESTS[$tname]:-}"
+    if [[ -z "$tfunc" ]]; then
+      echo "ERROR: unknown test name '$tname'" >&2
+      echo "Available: ${!TESTS[*]}" >&2
+      exit 1
+    fi
+    if ! "$tfunc"; then
+      echo "FAILED: $tname" >&2
+      failed=1
+    else
+      echo "OK: $tname" >&2
+    fi
+  done
+  if [[ $failed -ne 0 ]]; then
+    echo "One or more named tests failed." >&2
+    exit 1
+  fi
+  echo "All requested tests passed." >&2
+  exit 0
+fi
+
+if [[ $# -eq 0 ]]; then
 # Per-component flag coverage.
-run_meta_mode_prompt_layers_case
+run_mode_prompt_layers_case
 
 # Resume without mode: verify shell-agent system prompt survives
 # a mode-less resume (uses stub server).
 run_resume_without_mode_case
+
+if [[ "$LIVE_MODE" == true ]]; then
+  test_code_no_forge
+  test_code_forge_initial
+  test_code_forge_resume_with_mode
+  test_code_forge_resume_without_mode
+  test_code_resume_without_mode_no_forge
+fi
 
 run_happy_case "models-per-component" 3 \
   "Outline how the orchestrator, patcher, and file discovery collaborators interact." \
@@ -2839,6 +3488,7 @@ if [[ "$LIVE_MODE" == true ]]; then
   MACHTIANI_CONFIG="/nonexistent/machtiani-config.toml" OPENAI_API_KEY="" OPENAI_BASE_URL="" OPENAI_MODEL="" \
   run_error_case "missing-config" "" 1 "Missing model config|Model resolution error|MACHTIANI_CONFIG" \
     "Explain how the agent chooses its model runtime."
+
 else
   echo "Skipping missing-config error case in dry-run mode (requires live env)." >&2
 fi
@@ -2846,3 +3496,4 @@ fi
 echo "Skipping missing-mct and timeout simulations: preflight ensures PATH binaries and no stub overrides." >&2
 
 echo "All cases finished. Check test-out-* dirs for artifacts." >&2
+fi  # $# -eq 0 guard

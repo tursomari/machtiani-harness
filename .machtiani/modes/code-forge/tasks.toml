@@ -1,5 +1,3 @@
 title = "Code (Forge)"
 system_prompt = "code.txt"
 shell_prompt = "shell-agent-system-prompt.txt"
-shell_agent = false
-patch_mode = false

@@ -33,9 +33,9 @@ func (r *runLifecycleState) completeSession(display *ui.TerminalDisplay, answer 
 	display.EndSession()
 	r.turnsCompleted = turnsCompleted
 	r.sessionStatus = "success"
-	// Mark the meta-plan task as complete (no-op if no meta-plan exists).
-	if err := CompleteMetaPlanTask(r.sessionID); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to update meta plan task status: %v\n", err)
+	// Mark the mode-plan task as complete (no-op if no mode-plan exists).
+	if err := CompleteModePlanTask(r.sessionID); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to update mode plan task status: %v\n", err)
 	}
 	state := r.baseSessionState()
 	r.pendingState = &state

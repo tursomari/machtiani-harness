@@ -1,5 +1,3 @@
 title = "Inline"
 description = "Hello from inline"
 instruction = "Do the inline task"
-shell_agent = false
-patch_mode = false

@@ -1,4 +1,2 @@
 title = "Implement patch"
 description = "Implement the patch to solve the Goal. Keep changes minimal and add tests where needed."
-shell_agent = true
-patch_mode = true

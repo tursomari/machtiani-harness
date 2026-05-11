@@ -44,7 +44,7 @@ type Config struct {
 	EnableTagFormat       bool
 	PromptText            string
 	Mode                  string
-	MetaInstructionDir    string
+	ModeInstructionDir    string
 }
 
 type BuildInfo struct {
@@ -115,7 +115,7 @@ type legacyConfig struct {
 	sessionID               string
 	promptText              string
 	mode                    string
-	metaInstructionDir      string
+	modeInstructionDir      string
 }
 
 func newLegacyConfig(cfg Config) legacyConfig {
@@ -155,6 +155,6 @@ func newLegacyConfig(cfg Config) legacyConfig {
 		sessionID:               cfg.SessionID,
 		promptText:              cfg.PromptText,
 		mode:                    cfg.Mode,
-		metaInstructionDir:      cfg.MetaInstructionDir,
+		modeInstructionDir:      cfg.ModeInstructionDir,
 	}
 }

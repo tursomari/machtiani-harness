@@ -1,4 +1,2 @@
 title = "Implement and validate"
 description = "Understand the goal, implement the required changes, validate with tests/build, and summarize."
-shell_agent = true
-patch_mode = true
