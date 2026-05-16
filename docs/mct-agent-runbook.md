@@ -6,6 +6,7 @@ Use this runbook when operating `mct-agent` from inside this repository.
 
 - Run from the repo root so the agent picks up `.machtiani/config.toml` and writes artifacts under this repo's `.machtiani/sessions/` tree.
 - In this repo, prefer the `glm-5-high` model alias from `.machtiani/config.toml`.
+- See `.machtiani/config.minimal.toml` for a minimal getting-started config, or `.machtiani/config.comprehensive.toml` for a full reference of every section and field.
 - For OpenRouter-backed runs here, export `OPENROUTER_API_KEY` from the existing `TEST_API_KEY` environment variable.
 
 Preferred live invocation:

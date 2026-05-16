@@ -154,7 +154,7 @@ system_template = "You are the planning layer for the Machtiani shell agent."
 instance_template = "Task: {{.Task}}"
 
 [shell-agent]
-format_error_template = "Please respond with a natural-language description of the next action."
+format_error_template = "Your response did not include a properly formatted bash command. Please respond with exactly one fenced bash command."
 lightweight_max_attempts = 3
 
 [model]
@@ -175,6 +175,8 @@ api_key = "${OPENROUTER_API_KEY}"
 provider = "openrouter"
 model    = "openai/gpt-5-nano"
 ```
+
+See `.machtiani/config.minimal.toml` for a minimal getting-started config, or `.machtiani/config.comprehensive.toml` for a full reference of every section and field.
 
 Keys inside `[planner]`, `[shell-agent]`, `[model]`, and `[environment]` are shared across Machtiani binaries; omit `model.api_key` to keep credentials out of the file. `[environment].internet_access` is only a capability hint for planner guardrails so the agent can distinguish information gaps from user-authority gaps; it does not itself force escalation to the user. When you need an alternate model temporarily, pass `--shell-agent-model <alias>` to `mct-agent run --shell-agent` or to the standalone `shell-agent` binary.
 

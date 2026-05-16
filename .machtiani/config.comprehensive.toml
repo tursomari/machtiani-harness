@@ -55,7 +55,7 @@ cost_limit = 0.0
 # system_template = "You are the planning layer for the Machtiani shell agent."
 # instance_template = "Task: {{.Task}}"
 # timeout_template = "The operation timed out."
-# format_error_template = "Please respond with a natural-language description."
+# format_error_template = "Your response did not include a properly formatted bash command. Please respond with exactly one fenced bash command using triple backticks with bash language tag."
 # ask_prompt = "..."
 # plan_system_prompt = "..."
 # plan_prompt = "..."
@@ -214,33 +214,35 @@ model    = "openai/gpt-5-nano"
 # instruction_file = "research/tasks.toml"
 
 # ── [prompts] ───────────────────────────────────────────────────────────────────
-# Override prompt templates. Each section mirrors the prompt types above.
-# Prefer editing files in .machtiani/modes/custom-instructions/
-# for task-specific changes. Only set these for global overrides.
+# Override prompt templates with inline string values. Uncomment and customize
+# any of the examples below for global overrides.
 
 # [prompts.planner]
-# system_template = "..."
-# instance_template = "..."
-# (etc.)
+# # Override the plan system prompt to inject domain-specific context
+# # (e.g., project architecture rules, coding conventions, or business logic).
+# plan_system_prompt = "You are an expert planner for a Go microservice codebase.
+#   Always prefer standard library over third-party dependencies. All HTTP handlers
+#   must include request validation and structured error responses."
+#
+# # Or load the prompt from a template file instead of inlining the string:
+# # plan_system_prompt = { file = "prompts/planner-system.txt" }
 
 # [prompts.shell-agent]
-# system_template = "..."
-# instance_template = "..."
-# (etc.)
-
-# [prompts.file_discovery]
-# system_prompt_template = "..."
+# # Override the format-error template to customize how malformed shell-agent
+# # responses are reported back to the model for correction.
+# format_error_template = "Your response did not include a properly formatted bash command. Please respond with exactly one fenced bash command using triple backticks with bash language tag."
+#
+# # Or load the template from a file instead of inlining the string:
+# # format_error_template = { file = "prompts/shell-format-error.txt" }
 
 # [prompts.mct]
-# shell_agent_context_prefix = "..."
-# shell_agent_prompt_notice = "..."
-# header_user_template = "..."
-# header_existing_template = "..."
-# conversation_history_template = "..."
-# readme_system_template = "..."
-# shell_agent_context_template = "..."
-# patch_success_note = "..."
-# full_diff_note = "..."
+# # Override the patch-success note appended after a successful patch application
+# # to confirm the edit was applied and remind the agent to continue.
+# patch_success_note = "Patch applied successfully. Continue with the next step
+#   and verify the changes if needed."
+#
+# # Or load the note from a file instead of inlining the string:
+# # patch_success_note = { file = "prompts/patch-success-note.txt" }
 
 # ── [debug] ─────────────────────────────────────────────────────────────────────
 # Optional debugging toggles.

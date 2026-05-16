@@ -1,6 +1,0 @@
-# User
-
-{{.Combined}}
-
-# Assistant
-

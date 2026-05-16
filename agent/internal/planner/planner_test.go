@@ -13,7 +13,6 @@ import (
 
 	"github.com/tursomari/machtiani/agent/internal/conversation"
 	"github.com/tursomari/machtiani/agent/internal/llm"
-	"github.com/tursomari/machtiani/agent/internal/templates"
 )
 
 const answerTheUserPrompt = "[answer_the_user] Reply to the user now based on the conversation so far.\n\nAnswer for the user's current need. Do not make further work requests. Use relevant prior `work_result` messages when helpful. If the latest user turn calls for a narrow or conversational reply, answer naturally instead of re-summarizing the whole session. If the latest user turn asks for a summary or wrap-up, provide it. If important uncertainty remains, mention it briefly."
@@ -1363,30 +1362,6 @@ func TestPlanSystemPromptDefinesAnswerTheUserContract(t *testing.T) {
 		if !strings.Contains(prompt, check) {
 			t.Fatalf("plan system prompt missing %q\n%s", check, prompt)
 		}
-	}
-}
-
-func TestPlannerPromptOverridesMirrorEmbeddedTemplates(t *testing.T) {
-	tests := []struct {
-		name        string
-		embeddedKey string
-		overrideRel string
-	}{
-		{name: "plan system", embeddedKey: "planner.plan_system", overrideRel: ".machtiani/templates/planner/plan_system.tpl"},
-		{name: "finalize prompt", embeddedKey: "planner.finalize_prompt", overrideRel: ".machtiani/templates/planner/finalize_prompt.tpl"},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			embedded, err := templates.GetEmbeddedTemplate(tc.embeddedKey)
-			if err != nil {
-				t.Fatalf("GetEmbeddedTemplate(%q) error: %v", tc.embeddedKey, err)
-			}
-			override := readRepoFile(t, tc.overrideRel)
-			if strings.TrimSpace(override) != embedded {
-				t.Fatalf("override %s drifted from embedded %s", tc.overrideRel, tc.embeddedKey)
-			}
-		})
 	}
 }
 

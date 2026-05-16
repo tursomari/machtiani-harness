@@ -1,0 +1,18 @@
+# Minimal Machtiani configuration — enough to get started.
+# Copy to .machtiani/config.toml and adjust the model alias and provider.
+# For full documentation of every section and field, see config.comprehensive.toml.
+
+default_model = "foo"
+
+[providers.openrouter]
+base_url = "https://openrouter.ai/api/v1"
+api_key = "${OPENROUTER_API_KEY}"
+
+[models.foo]
+provider = "openrouter"
+model = "openai/gpt-5-nano"
+
+[environment]
+type = "local"
+timeout = 30
+internet_access = true
