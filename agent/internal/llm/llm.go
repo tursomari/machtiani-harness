@@ -42,7 +42,7 @@ const (
 	nonStreamRetryInitialBackoff              = 1 * time.Second
 	nonStreamRetryMaxBackoff                  = 30 * time.Second
 	retryAfterCap                             = 15 * time.Second
-	maxRetries                                = 10 // hard ceiling for LLM retry loops
+	maxRetries                                = 20 // hard ceiling for LLM retry loops
 	probeTimeout                              = 10 * time.Minute
 	llmInputLogEnv                            = "MCT_LLM_INPUT_LOG" // optional debug log file path for full LLM request inputs
 	llmStageEnv                               = "MCT_LLM_STAGE"     // optional stage label for LLM calls (planner/shell-agent/etc)
