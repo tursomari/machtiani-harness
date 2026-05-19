@@ -1,6 +1,26 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Cleanup worktrees on script exit
+cleanup() {
+    if [ "${KEEP:-false}" = true ]; then
+        return
+    fi
+    if [ -n "${MCT_WORKTREE:-}" ]; then
+        rm -rf "$MCT_WORKTREE" 2>/dev/null
+    fi
+    if [ -n "${FORGE_WORKTREE:-}" ]; then
+        rm -rf "$FORGE_WORKTREE" 2>/dev/null
+    fi
+    if [ -n "${JUDGE_WORKTREE:-}" ]; then
+        rm -rf "$JUDGE_WORKTREE" 2>/dev/null
+    fi
+    if [ -n "${REPO:-}" ]; then
+        git -C "$REPO" worktree prune 2>/dev/null || true
+    fi
+}
+trap cleanup EXIT
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ============================================================================
@@ -278,18 +298,33 @@ if [ -n "$MCT_API_KEY_ARG" ]; then
     esac
 fi
 
-# Run mct-agent sync in the worktree
-echo ""
-echo "[setup] Running mct-agent sync in worktree..."
-cd "$MCT_WORKTREE"
-MACHTIANI_CONFIG="$CONFIG" mct-agent sync \
-    --model "$SYNC_MODEL" \
-    --timeout-per-turn 0 \
-    --max-steps 20 || {
-    echo "ERROR: mct-agent sync failed" >&2
-    exit 1
-}
-echo "[setup] mct-agent sync completed successfully."
+# Sync cache setup
+SYNC_CACHE_DIR="$HOME/.cache/mct-eval-sync/$PROJECT_NAME/$EVAL_COMMIT/readme"
+
+if [ -d "$SYNC_CACHE_DIR" ]; then
+    echo "[sync] Cache hit for $EVAL_COMMIT, skipping sync"
+    mkdir -p "$MCT_WORKTREE/.machtiani/artifacts/readme"
+    cp -r "$SYNC_CACHE_DIR/"* "$MCT_WORKTREE/.machtiani/artifacts/readme/"
+else
+    echo ""
+    echo "[setup] Running mct-agent sync in worktree..."
+    cd "$MCT_WORKTREE"
+    MACHTIANI_CONFIG="$CONFIG" mct-agent sync \
+        --model "$SYNC_MODEL" \
+        --timeout-per-turn 0 \
+        --max-steps 20 || {
+        echo "ERROR: mct-agent sync failed" >&2
+        exit 1
+    }
+    echo "[setup] mct-agent sync completed successfully."
+
+    # Cache the sync result
+    mkdir -p "$SYNC_CACHE_DIR"
+    if [ -d "$MCT_WORKTREE/.machtiani/artifacts/readme" ]; then
+        cp -r "$MCT_WORKTREE/.machtiani/artifacts/readme/"* "$SYNC_CACHE_DIR/"
+        echo "[setup] Sync result cached at: $SYNC_CACHE_DIR"
+    fi
+fi
 
 # ============================================================================
 # Step 1 - Run mct-agent
@@ -348,6 +383,13 @@ echo "[forge] Eval ID: $EVAL_ID"
 
 JUDGE_ID="$(uuidgen 2>/dev/null || python3 -c "import uuid; print(uuid.uuid4())" 2>/dev/null || cat /proc/sys/kernel/random/uuid 2>/dev/null || printf "%08x-%04x-%04x-%04x-%012x" $(date +%s) 0 0 0 0)"
 echo "[judge] Judge ID: $JUDGE_ID"
+
+# Copy cached readme to forge worktree if available
+if [ -n "${SYNC_CACHE_DIR:-}" ] && [ -d "$SYNC_CACHE_DIR" ]; then
+    mkdir -p "$FORGE_WORKTREE/.machtiani/artifacts/readme"
+    cp -r "$SYNC_CACHE_DIR/"* "$FORGE_WORKTREE/.machtiani/artifacts/readme/"
+    echo "[forge] Cached readme copied to forge worktree"
+fi
 
 # Step 2a: Plan with muse
 cd "$OUTPUT_DIR"
@@ -527,6 +569,91 @@ if [ -s "$OUTPUT_DIR/judgment.md" ]; then
     echo "[judge] Judgment: $OUTPUT_DIR/judgment.md ($(wc -c < "$OUTPUT_DIR/judgment.md") bytes, $(wc -l < "$OUTPUT_DIR/judgment.md") lines)"
 else
     echo "[judge] WARNING: No judgment produced (file empty or missing)" >&2
+fi
+
+# ============================================================================
+# Step 4b - Generate evaluation report
+# ============================================================================
+echo ""
+echo "============================================================"
+echo "  Step 4b - Evaluation Report"
+echo "============================================================"
+
+if [ -s "$OUTPUT_DIR/judgment.md" ]; then
+    # Extract mct-agent evaluation section
+    MCT_SECTION=$(sed -n '/### mct-agent Evaluation/,/### Forge Evaluation/p' "$OUTPUT_DIR/judgment.md")
+
+    # Extract forge evaluation section
+    FORGE_SECTION=$(sed -n '/### Forge Evaluation/,/### Winner/p' "$OUTPUT_DIR/judgment.md")
+    if [ -z "$FORGE_SECTION" ]; then
+        FORGE_SECTION=$(sed -n '/### Forge Evaluation/,$p' "$OUTPUT_DIR/judgment.md")
+    fi
+
+    # Extract scores for mct-agent
+    MCT_ACC=$(echo "$MCT_SECTION" | grep -oP 'Accuracy\s*\(\K\d+' | head -1 || echo "N/A")
+    MCT_COMP=$(echo "$MCT_SECTION" | grep -oP 'Completeness\s*\(\K\d+' | head -1 || echo "N/A")
+    MCT_CLR=$(echo "$MCT_SECTION" | grep -oP 'Clarity\s*\(\K\d+' | head -1 || echo "N/A")
+    MCT_ACT=$(echo "$MCT_SECTION" | grep -oP 'Actionability\s*\(\K\d+' | head -1 || echo "N/A")
+    MCT_TOTAL=$(echo "$MCT_SECTION" | grep -oP '\*\*Total:\*\*\s*\K\d+' | head -1 || echo "N/A")
+
+    # Extract scores for forge
+    FORGE_ACC=$(echo "$FORGE_SECTION" | grep -oP 'Accuracy\s*\(\K\d+' | head -1 || echo "N/A")
+    FORGE_COMP=$(echo "$FORGE_SECTION" | grep -oP 'Completeness\s*\(\K\d+' | head -1 || echo "N/A")
+    FORGE_CLR=$(echo "$FORGE_SECTION" | grep -oP 'Clarity\s*\(\K\d+' | head -1 || echo "N/A")
+    FORGE_ACT=$(echo "$FORGE_SECTION" | grep -oP 'Actionability\s*\(\K\d+' | head -1 || echo "N/A")
+    FORGE_TOTAL=$(echo "$FORGE_SECTION" | grep -oP '\*\*Total:\*\*\s*\K\d+' | head -1 || echo "N/A")
+
+    # Extract winner
+    WINNER=$(sed -n '/### Winner/,$p' "$OUTPUT_DIR/judgment.md" | sed '1d' | grep -m1 '.' || echo "N/A")
+    WINNER=$(echo "$WINNER" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+
+    echo ""
+    echo "============================================================"
+    echo "  Evaluation Report"
+    echo "============================================================"
+    echo ""
+    printf "  %-20s %-12s %-12s\\n" "Dimension" "mct-agent" "Forge"
+    printf "  %-20s %-12s %-12s\\n" "--------------------" "------------" "------------"
+    printf "  %-20s %-12s %-12s\\n" "Accuracy" "$MCT_ACC" "$FORGE_ACC"
+    printf "  %-20s %-12s %-12s\\n" "Completeness" "$MCT_COMP" "$FORGE_COMP"
+    printf "  %-20s %-12s %-12s\\n" "Clarity" "$MCT_CLR" "$FORGE_CLR"
+    printf "  %-20s %-12s %-12s\\n" "Actionability" "$MCT_ACT" "$FORGE_ACT"
+    printf "  %-20s %-12s %-12s\\n" "--------------------" "------------" "------------"
+    printf "  %-20s %-12s %-12s\\n" "TOTAL" "$MCT_TOTAL" "$FORGE_TOTAL"
+    echo ""
+    echo "  Winner: $WINNER"
+    echo ""
+
+    # Write report.md
+    REPORT_FILE="$OUTPUT_DIR/report.md"
+    {
+        echo "# Evaluation Report"
+        echo ""
+        echo "## Comparative Scores"
+        echo ""
+        echo "| Dimension | mct-agent | Forge |"
+        echo "|---------------|-----------|-------|"
+        echo "| Accuracy | $MCT_ACC/10 | $FORGE_ACC/10 |"
+        echo "| Completeness | $MCT_COMP/10 | $FORGE_COMP/10 |"
+        echo "| Clarity | $MCT_CLR/10 | $FORGE_CLR/10 |"
+        echo "| Actionability | $MCT_ACT/10 | $FORGE_ACT/10 |"
+        echo "| **TOTAL** | **$MCT_TOTAL/40** | **$FORGE_TOTAL/40** |"
+        echo ""
+        echo "## Winner"
+        echo ""
+        echo "$WINNER"
+        echo ""
+        echo "## Artifact Paths"
+        echo ""
+        echo "- mct_answer.md: \`$OUTPUT_DIR/mct_answer.md\`"
+        echo "- forge_answer.md: \`$OUTPUT_DIR/forge_answer.md\`"
+        echo "- ground_truth.patch: \`$OUTPUT_DIR/ground_truth.patch\`"
+        echo "- judgment.md: \`$OUTPUT_DIR/judgment.md\`"
+        echo "- judge_prompt.md: \`$OUTPUT_DIR/judge_prompt.md\`"
+    } > "$REPORT_FILE"
+    echo "[report] Report written to: $REPORT_FILE"
+else
+    echo "[report] No judgment to parse; report skipped."
 fi
 
 # ============================================================================
