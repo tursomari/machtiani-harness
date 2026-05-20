@@ -24,7 +24,7 @@ trap cleanup EXIT
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ============================================================================
-# run_eval.sh — Automated eval pipeline comparing mct-agent vs Forge
+# run_eval.sh — Two-phase evaluation pipeline comparing mct-agent vs Forge
 # ============================================================================
 
 usage() {
@@ -56,6 +56,7 @@ Optional:
   --config <path>          Path to machtiani config.toml (auto-discovered if not set)
   --output-dir <path>      Directory for all artifacts (default: /tmp/eval_<timestamp>)
   --keep                   Keep worktree and artifacts after completion (for debugging)
+  --sequential             Run agents sequentially instead of in parallel (default: parallel)
   --help                   Print this message and exit
 EOF
     exit 1
@@ -75,6 +76,7 @@ API_KEY=""
 CONFIG=""
 OUTPUT_DIR=""
 KEEP=false
+SEQUENTIAL=0
 
 # ----------------------------------------------------------------------------
 # Parse arguments
@@ -126,6 +128,10 @@ while [ $# -gt 0 ]; do
             KEEP=true
             shift
             ;;
+        --sequential)
+            SEQUENTIAL=1
+            shift
+            ;;
         --help)
             usage
             ;;
@@ -170,6 +176,54 @@ fi
 # ----------------------------------------------------------------------------
 REPO="$(realpath "$REPO")"
 PROMPT="$(realpath "$PROMPT")"
+
+# ----------------------------------------------------------------------------
+# Parallel execution helper
+# ----------------------------------------------------------------------------
+# run_parallel - Run two commands concurrently with 5-second stagger
+# Usage: run_parallel "cmd1" "logfile1" "cmd2" "logfile2"
+# Returns the higher exit code of the two commands
+run_parallel() {
+    local cmd1="$1"
+    local log1="$2"
+    local cmd2="$3"
+    local log2="$4"
+    local pid1="" pid2=""
+    local rc1=0 rc2=0
+
+    set +e
+
+    echo "[parallel] Starting command1 (log: $log1)"
+    eval "$cmd1" > "$log1" 2>&1 &
+    pid1=$!
+    echo "[parallel] Command1 PID: $pid1"
+
+    echo "[parallel] Sleeping 5 seconds before starting command2..."
+    sleep 5
+
+    echo "[parallel] Starting command2 (log: $log2)"
+    eval "$cmd2" > "$log2" 2>&1 &
+    pid2=$!
+    echo "[parallel] Command2 PID: $pid2"
+
+    echo "[parallel] Waiting for command1 (PID: $pid1)..."
+    wait $pid1
+    rc1=$?
+    echo "[parallel] Command1 finished with exit code: $rc1"
+
+    echo "[parallel] Waiting for command2 (PID: $pid2)..."
+    wait $pid2
+    rc2=$?
+    echo "[parallel] Command2 finished with exit code: $rc2"
+
+    set -e
+
+    if [ "$rc1" -ge "$rc2" ]; then
+        return $rc1
+    else
+        return $rc2
+    fi
+}
 
 # ============================================================================
 # Step 0 - Setup
@@ -301,122 +355,331 @@ fi
 # Sync cache setup
 SYNC_CACHE_DIR="$HOME/.cache/mct-eval-sync/$PROJECT_NAME/$EVAL_COMMIT/readme"
 
-if [ -d "$SYNC_CACHE_DIR" ]; then
-    echo "[sync] Cache hit for $EVAL_COMMIT, skipping sync"
-    mkdir -p "$MCT_WORKTREE/.machtiani/artifacts/readme"
-    cp -r "$SYNC_CACHE_DIR/"* "$MCT_WORKTREE/.machtiani/artifacts/readme/"
-else
-    echo ""
-    echo "[setup] Running mct-agent sync in worktree..."
-    cd "$MCT_WORKTREE"
-    MACHTIANI_CONFIG="$CONFIG" mct-agent sync \
-        --model "$SYNC_MODEL" \
-        --timeout-per-turn 0 \
-        --max-steps 20 || {
-        echo "ERROR: mct-agent sync failed" >&2
-        exit 1
-    }
-    echo "[setup] mct-agent sync completed successfully."
+# Sync cache: always run mct-agent sync (fast when tag matches, slow on first run)
 
-    # Cache the sync result
-    mkdir -p "$SYNC_CACHE_DIR"
-    if [ -d "$MCT_WORKTREE/.machtiani/artifacts/readme" ]; then
-        cp -r "$MCT_WORKTREE/.machtiani/artifacts/readme/"* "$SYNC_CACHE_DIR/"
-        echo "[setup] Sync result cached at: $SYNC_CACHE_DIR"
-    fi
-fi
-
-# ============================================================================
-# Step 1 - Run mct-agent
-# ============================================================================
 echo ""
-echo "============================================================"
-echo "  Step 1 - Run mct-agent (code mode)"
-echo "============================================================"
-
+echo "[setup] Running mct-agent sync in worktree..."
 cd "$MCT_WORKTREE"
-MCT_RC=0
-MCT_SUCCESS=false
-for ATTEMPT in 1 2 3; do
-    echo "[mct-agent] Attempt $ATTEMPT/3: Running mct-agent..."
-    if MACHTIANI_CONFIG="$CONFIG" mct-agent run \
-        --mode code \
-        --final-file "$OUTPUT_DIR/mct_answer.md" \
-        --model "$MODEL" \
-        $MCT_API_KEY_ARG \
-        --timeout-per-turn 0 \
-        --max-steps 20 \
-        --file "$PROMPT"; then
-        MCT_SUCCESS=true
-        break
-    fi
-    echo "[mct-agent] Attempt $ATTEMPT failed. Waiting 30 seconds before retry..." >&2
-    sleep 30
-done
-if ! $MCT_SUCCESS; then
-    echo "[mct-agent] ERROR: mct-agent failed after 3 attempts" >&2
-    echo "mct-agent failed after 3 retry attempts" > "$OUTPUT_DIR/mct_answer.md"
+MACHTIANI_CONFIG="$CONFIG" mct-agent sync \
+    --model "$SYNC_MODEL" \
+    --timeout-per-turn 0 \
+    --max-steps 20 || {
+    echo "ERROR: mct-agent sync failed" >&2
+    exit 1
+}
+echo "[setup] mct-agent sync completed successfully."
+
+# Cache the sync result for future runs
+if [ ! -d "$SYNC_CACHE_DIR" ] && [ -d "$MCT_WORKTREE/.machtiani/artifacts/readme" ]; then
+    mkdir -p "$SYNC_CACHE_DIR"
+    cp -r "$MCT_WORKTREE/.machtiani/artifacts/readme/"* "$SYNC_CACHE_DIR/"
+    echo "[setup] Sync result cached at: $SYNC_CACHE_DIR"
 fi
 
-if [ "$MCT_RC" -ne 0 ]; then
-    echo "[mct-agent] WARNING: mct-agent exited with code $MCT_RC" >&2
-else
-    echo "[mct-agent] Completed successfully."
-fi
-
-if [ -s "$OUTPUT_DIR/mct_answer.md" ]; then
-    echo "[mct-agent] Answer: $OUTPUT_DIR/mct_answer.md ($(wc -c < "$OUTPUT_DIR/mct_answer.md") bytes, $(wc -l < "$OUTPUT_DIR/mct_answer.md") lines)"
-else
-    echo "[mct-agent] WARNING: No answer produced (file empty or missing)" >&2
-fi
+# Copy cached readme to forge worktree (must happen before parallel agents start)
+# Forge worktree: sync will be handled by forge agent separately
 
 # ============================================================================
-# Step 2 - Run Forge (muse-forge handoff)
+# Phase 1 - Plan
 # ============================================================================
 echo ""
 echo "============================================================"
-echo "  Step 2 - Run Forge (muse-forge handoff)"
+echo "  Phase 1 - Plan"
 echo "============================================================"
 
+# Step 1: Create plan-only prompt
+PLAN_PROMPT="$OUTPUT_DIR/plan_prompt.md"
+echo "[plan] Creating plan-only prompt at $PLAN_PROMPT..."
+{
+    echo "IMPORTANT: Do not make any code changes. Produce only a detailed implementation plan. Do not modify any files."
+    echo ""
+    cat "$PROMPT"
+} > "$PLAN_PROMPT"
+echo "[plan] Plan prompt written ($(wc -c < "$PLAN_PROMPT") bytes)"
+
+# Generate eval ID for forge conversation (must happen before agents run)
 EVAL_ID="$(uuidgen 2>/dev/null || python3 -c "import uuid; print(uuid.uuid4())" 2>/dev/null || cat /proc/sys/kernel/random/uuid 2>/dev/null || printf "%08x-%04x-%04x-%04x-%012x" $(date +%s) 0 0 0 0)"
 echo "[forge] Eval ID: $EVAL_ID"
 
-JUDGE_ID="$(uuidgen 2>/dev/null || python3 -c "import uuid; print(uuid.uuid4())" 2>/dev/null || cat /proc/sys/kernel/random/uuid 2>/dev/null || printf "%08x-%04x-%04x-%04x-%012x" $(date +%s) 0 0 0 0)"
-echo "[judge] Judge ID: $JUDGE_ID"
+if [ "$SEQUENTIAL" -eq 1 ]; then
+    # --- Sequential mode: run mct-agent first, then forge ---
+    echo "[plan] Running agents sequentially..."
 
-# Copy cached readme to forge worktree if available
-if [ -n "${SYNC_CACHE_DIR:-}" ] && [ -d "$SYNC_CACHE_DIR" ]; then
-    mkdir -p "$FORGE_WORKTREE/.machtiani/artifacts/readme"
-    cp -r "$SYNC_CACHE_DIR/"* "$FORGE_WORKTREE/.machtiani/artifacts/readme/"
-    echo "[forge] Cached readme copied to forge worktree"
-fi
+    # Run mct-agent with plan-only prompt
+    cd "$MCT_WORKTREE"
+    MCT_PLAN_SUCCESS=false
+    for ATTEMPT in 1 2 3; do
+        echo "[mct-agent] Plan attempt $ATTEMPT/3: Running mct-agent in plan mode..."
+        if MACHTIANI_CONFIG="$CONFIG" mct-agent run \
+            --mode code \
+            --final-file "$OUTPUT_DIR/mct_plan.md" \
+            --model "$MODEL" \
+            $MCT_API_KEY_ARG \
+            --timeout-per-turn 0 \
+            --max-steps 20 \
+            --file "$PLAN_PROMPT"; then
+            MCT_PLAN_SUCCESS=true
+            break
+        fi
+        echo "[mct-agent] Plan attempt $ATTEMPT failed. Waiting 30 seconds before retry..." >&2
+        sleep 30
+    done
+    if ! $MCT_PLAN_SUCCESS; then
+        echo "[mct-agent] ERROR: mct-agent plan phase failed after 3 attempts" >&2
+        echo "mct-agent plan phase failed after 3 retry attempts" > "$OUTPUT_DIR/mct_plan.md"
+    fi
 
-# Step 2a: Plan with muse
-cd "$OUTPUT_DIR"
-echo "[forge] Step 2a: Planning with muse..."
-MUSE_RC=0
-env $FORGE_ENV forge --agent muse -C "$FORGE_WORKTREE" --conversation-id "$EVAL_ID" < "$PROMPT" || MUSE_RC=$?
+    if [ -s "$OUTPUT_DIR/mct_plan.md" ]; then
+        echo "[mct-agent] Plan: $OUTPUT_DIR/mct_plan.md ($(wc -c < "$OUTPUT_DIR/mct_plan.md") bytes, $(wc -l < "$OUTPUT_DIR/mct_plan.md") lines)"
+    else
+        echo "[mct-agent] WARNING: No plan produced (file empty or missing)" >&2
+    fi
 
-if [ "$MUSE_RC" -ne 0 ]; then
-    echo "[forge] WARNING: muse planning exited with code $MUSE_RC" >&2
+    # Capture mct-agent session ID for later continuation
+    MCT_SESSION_ID=$(ls -t "$MCT_WORKTREE/.machtiani/sessions/" 2>/dev/null | head -1)
+    if [ -n "$MCT_SESSION_ID" ]; then
+        echo "[mct-agent] Captured session ID: $MCT_SESSION_ID"
+    else
+        echo "[mct-agent] WARNING: Could not capture session ID; implementation will use fresh session" >&2
+    fi
+
+    # Run forge muse with plan-only prompt
+    cd "$OUTPUT_DIR"
+    echo "[forge] Phase 1: Planning with muse..."
+    MUSE_PLAN_RC=0
+    env $FORGE_ENV forge --agent muse -C "$FORGE_WORKTREE" --conversation-id "$EVAL_ID" < "$PLAN_PROMPT" || MUSE_PLAN_RC=$?
+
+    if [ "$MUSE_PLAN_RC" -ne 0 ]; then
+        echo "[forge] WARNING: muse planning exited with code $MUSE_PLAN_RC" >&2
+    else
+        echo "[forge] Muse planning completed successfully."
+    fi
 else
-    echo "[forge] Muse planning completed successfully."
+    # --- Parallel mode: run both agents concurrently ---
+    echo "[plan] Running mct-agent and forge in parallel..."
+    echo "[plan] mct-agent log: $OUTPUT_DIR/mct_plan.log"
+    echo "[plan] forge log: $OUTPUT_DIR/forge_plan.log"
+
+    # Define runner for mct-agent plan with retry logic
+    _mct_plan_runner() {
+        cd "$MCT_WORKTREE"
+        for ATTEMPT in 1 2 3; do
+            echo "[mct-agent] Plan attempt $ATTEMPT/3: Running mct-agent in plan mode..."
+            if MACHTIANI_CONFIG="$CONFIG" mct-agent run \
+                --mode code \
+                --final-file "$OUTPUT_DIR/mct_plan.md" \
+                --model "$MODEL" \
+                $MCT_API_KEY_ARG \
+                --timeout-per-turn 0 \
+                --max-steps 20 \
+                --file "$PLAN_PROMPT"; then
+                return 0
+            fi
+            echo "[mct-agent] Plan attempt $ATTEMPT failed. Waiting 30 seconds before retry..." >&2
+            sleep 30
+        done
+        echo "[mct-agent] ERROR: mct-agent plan phase failed after 3 attempts" >&2
+        echo "mct-agent plan phase failed after 3 retry attempts" > "$OUTPUT_DIR/mct_plan.md"
+        return 1
+    }
+
+    PARALLEL_RC=0
+    run_parallel \
+        "_mct_plan_runner" \
+        "$OUTPUT_DIR/mct_plan.log" \
+        "cd \"$OUTPUT_DIR\" && env $FORGE_ENV forge --agent muse -C \"$FORGE_WORKTREE\" --conversation-id \"$EVAL_ID\" < \"$PLAN_PROMPT\"" \
+        "$OUTPUT_DIR/forge_plan.log" || PARALLEL_RC=$?
+
+    if [ "$PARALLEL_RC" -ne 0 ]; then
+        echo "[plan] WARNING: one or both agents exited with non-zero status" >&2
+    fi
+
+    # Capture mct-agent session ID for later continuation
+    MCT_SESSION_ID=$(ls -t "$MCT_WORKTREE/.machtiani/sessions/" 2>/dev/null | head -1)
+    if [ -n "$MCT_SESSION_ID" ]; then
+        echo "[mct-agent] Captured session ID: $MCT_SESSION_ID"
+    else
+        echo "[mct-agent] WARNING: Could not capture session ID; implementation will use fresh session" >&2
+    fi
+
+    if [ -s "$OUTPUT_DIR/mct_plan.md" ]; then
+        echo "[mct-agent] Plan: $OUTPUT_DIR/mct_plan.md ($(wc -c < "$OUTPUT_DIR/mct_plan.md") bytes, $(wc -l < "$OUTPUT_DIR/mct_plan.md") lines)"
+    else
+        echo "[mct-agent] WARNING: No plan produced (file empty or missing)" >&2
+    fi
 fi
 
-# Step 2b: Implement with forge
-echo "[forge] Step 2b: Implementing with forge..."
-FORGE_RC=0
-echo "Implement the plan from the previous step. Make all necessary code changes to resolve the issue." | env $FORGE_ENV forge --agent forge --conversation-id "$EVAL_ID" -C "$FORGE_WORKTREE" || FORGE_RC=$?
-
-if [ "$FORGE_RC" -ne 0 ]; then
-    echo "[forge] WARNING: forge exited with code $FORGE_RC" >&2
+# Extract forge plan
+echo "[forge] Extracting forge plan..."
+(cd "$OUTPUT_DIR" && forge conversation dump "$EVAL_ID" 2>/dev/null)
+DUMP_FILE="$(ls -t "$OUTPUT_DIR"/*-dump.json 2>/dev/null | head -1)"
+if [ -n "$DUMP_FILE" ] && [ -f "$DUMP_FILE" ]; then
+    jq -r '[.conversation.context.messages[] | select(.text.role == "Assistant") | .text.content | select(length > 0)] | last' \
+        "$DUMP_FILE" > "$OUTPUT_DIR/forge_plan.md"
+    rm -f "$DUMP_FILE"
+    echo "[forge] Plan extracted to: $OUTPUT_DIR/forge_plan.md"
 else
-    echo "[forge] Completed successfully."
+    echo "[forge] WARNING: forge conversation dump did not produce a dump file for $EVAL_ID" >&2
+    echo "Forge did not produce a plan (conversation dump failed)." > "$OUTPUT_DIR/forge_plan.md"
 fi
 
-echo "[forge] Extracting assistant answer..."
-echo "[forge] Dumping conversation $EVAL_ID..."
-forge conversation dump "$EVAL_ID" 2>/dev/null
+if [ -s "$OUTPUT_DIR/forge_plan.md" ]; then
+    echo "[forge] Plan: $OUTPUT_DIR/forge_plan.md ($(wc -c < "$OUTPUT_DIR/forge_plan.md") bytes, $(wc -l < "$OUTPUT_DIR/forge_plan.md") lines)"
+else
+    echo "[forge] WARNING: No forge plan produced (file empty or missing)" >&2
+fi
+
+# Step 5: Verify worktrees are clean after plan phase
+echo "[plan] Verifying worktrees are clean after plan phase..."
+MCT_CLEAN=true
+FORGE_CLEAN=true
+if ! git -C "$MCT_WORKTREE" diff --exit-code > /dev/null 2>&1; then
+    echo "[plan] WARNING: mct worktree is dirty after plan phase!" >&2
+    MCT_CLEAN=false
+fi
+if ! git -C "$FORGE_WORKTREE" diff --exit-code > /dev/null 2>&1; then
+    echo "[plan] WARNING: forge worktree is dirty after plan phase!" >&2
+    FORGE_CLEAN=false
+fi
+if $MCT_CLEAN && $FORGE_CLEAN; then
+    echo "[plan] Both worktrees are clean."
+fi
+echo "[plan] Plan phase complete."
+
+# ============================================================================
+# Phase 2 - Implement
+# ============================================================================
+echo ""
+echo "============================================================"
+echo "  Phase 2 - Implement"
+echo "============================================================"
+
+# Step 6: Create implementation prompt
+IMPL_PROMPT="$OUTPUT_DIR/impl_prompt.md"
+echo "[impl] Creating implementation prompt at $IMPL_PROMPT..."
+echo "Implement the plan from the previous step. Make all necessary code changes to resolve the issue." > "$IMPL_PROMPT"
+echo "[impl] Implementation prompt written ($(wc -c < "$IMPL_PROMPT") bytes)"
+
+if [ "$SEQUENTIAL" -eq 1 ]; then
+    # --- Sequential mode: run mct-agent first, then forge ---
+    echo "[impl] Running agents sequentially..."
+
+    # Run mct-agent with implementation prompt
+    cd "$MCT_WORKTREE"
+    MCT_IMPL_SUCCESS=false
+    MCT_SESSION_ID_ARG=""
+    if [ -n "$MCT_SESSION_ID" ]; then
+        MCT_SESSION_ID_ARG="--session-id $MCT_SESSION_ID"
+        echo "[mct-agent] Continuing session $MCT_SESSION_ID for implementation..."
+    else
+        echo "[mct-agent] Starting fresh session for implementation (no session ID captured)..."
+    fi
+
+    for ATTEMPT in 1 2 3; do
+        echo "[mct-agent] Impl attempt $ATTEMPT/3: Running mct-agent..."
+        if MACHTIANI_CONFIG="$CONFIG" mct-agent run \
+            --mode code \
+            --final-file "$OUTPUT_DIR/mct_answer.md" \
+            --model "$MODEL" \
+            $MCT_API_KEY_ARG \
+            $MCT_SESSION_ID_ARG \
+            --timeout-per-turn 0 \
+            --max-steps 20 \
+            --file "$IMPL_PROMPT"; then
+            MCT_IMPL_SUCCESS=true
+            break
+        fi
+        echo "[mct-agent] Impl attempt $ATTEMPT failed. Waiting 30 seconds before retry..." >&2
+        sleep 30
+    done
+    if ! $MCT_IMPL_SUCCESS; then
+        echo "[mct-agent] ERROR: mct-agent implementation phase failed after 3 attempts" >&2
+        echo "mct-agent implementation phase failed after 3 retry attempts" > "$OUTPUT_DIR/mct_answer.md"
+    fi
+
+    if [ -s "$OUTPUT_DIR/mct_answer.md" ]; then
+        echo "[mct-agent] Implementation: $OUTPUT_DIR/mct_answer.md ($(wc -c < "$OUTPUT_DIR/mct_answer.md") bytes, $(wc -l < "$OUTPUT_DIR/mct_answer.md") lines)"
+    else
+        echo "[mct-agent] WARNING: No implementation produced (file empty or missing)" >&2
+    fi
+
+    # Run forge with --agent forge --conversation-id for implementation
+    echo "[forge] Phase 2: Implementing with forge..."
+    cd "$OUTPUT_DIR"
+    FORGE_RC=0
+    env $FORGE_ENV forge --agent forge --conversation-id "$EVAL_ID" -C "$FORGE_WORKTREE" < "$IMPL_PROMPT" || FORGE_RC=$?
+
+    if [ "$FORGE_RC" -ne 0 ]; then
+        echo "[forge] WARNING: forge exited with code $FORGE_RC" >&2
+    else
+        echo "[forge] Completed successfully."
+    fi
+else
+    # --- Parallel mode: run both agents concurrently ---
+    echo "[impl] Running mct-agent and forge in parallel..."
+    echo "[impl] mct-agent log: $OUTPUT_DIR/mct_implement.log"
+    echo "[impl] forge log: $OUTPUT_DIR/forge_implement.log"
+
+    # Define runner for mct-agent implementation with retry logic
+    _mct_impl_runner() {
+        cd "$MCT_WORKTREE"
+        local session_arg=""
+        if [ -n "$MCT_SESSION_ID" ]; then
+            session_arg="--session-id $MCT_SESSION_ID"
+            echo "[mct-agent] Continuing session $MCT_SESSION_ID for implementation..."
+        else
+            echo "[mct-agent] Starting fresh session for implementation (no session ID captured)..."
+        fi
+        for ATTEMPT in 1 2 3; do
+            echo "[mct-agent] Impl attempt $ATTEMPT/3: Running mct-agent..."
+            if MACHTIANI_CONFIG="$CONFIG" mct-agent run \
+                --mode code \
+                --final-file "$OUTPUT_DIR/mct_answer.md" \
+                --model "$MODEL" \
+                $MCT_API_KEY_ARG \
+                $session_arg \
+                --timeout-per-turn 0 \
+                --max-steps 20 \
+                --file "$IMPL_PROMPT"; then
+                return 0
+            fi
+            echo "[mct-agent] Impl attempt $ATTEMPT failed. Waiting 30 seconds before retry..." >&2
+            sleep 30
+        done
+        echo "[mct-agent] ERROR: mct-agent implementation phase failed after 3 attempts" >&2
+        echo "mct-agent implementation phase failed after 3 retry attempts" > "$OUTPUT_DIR/mct_answer.md"
+        return 1
+    }
+
+    PARALLEL_RC=0
+    run_parallel \
+        "_mct_impl_runner" \
+        "$OUTPUT_DIR/mct_implement.log" \
+        "cd \"$OUTPUT_DIR\" && env $FORGE_ENV forge --agent forge --conversation-id \"$EVAL_ID\" -C \"$FORGE_WORKTREE\" < \"$IMPL_PROMPT\"" \
+        "$OUTPUT_DIR/forge_implement.log" || PARALLEL_RC=$?
+
+    if [ "$PARALLEL_RC" -ne 0 ]; then
+        echo "[impl] WARNING: one or both agents exited with non-zero status" >&2
+    fi
+
+    if [ -s "$OUTPUT_DIR/mct_answer.md" ]; then
+        echo "[mct-agent] Implementation: $OUTPUT_DIR/mct_answer.md ($(wc -c < "$OUTPUT_DIR/mct_answer.md") bytes, $(wc -l < "$OUTPUT_DIR/mct_answer.md") lines)"
+    else
+        echo "[mct-agent] WARNING: No implementation produced (file empty or missing)" >&2
+    fi
+fi
+
+# Step 9: Capture git diffs from each worktree
+echo "[impl] Capturing git diffs..."
+git -C "$MCT_WORKTREE" diff > "$OUTPUT_DIR/mct_changes.patch"
+echo "[impl] MCT changes: $OUTPUT_DIR/mct_changes.patch ($(wc -c < "$OUTPUT_DIR/mct_changes.patch") bytes, $(wc -l < "$OUTPUT_DIR/mct_changes.patch") lines)"
+
+git -C "$FORGE_WORKTREE" diff > "$OUTPUT_DIR/forge_changes.patch"
+echo "[impl] Forge changes: $OUTPUT_DIR/forge_changes.patch ($(wc -c < "$OUTPUT_DIR/forge_changes.patch") bytes, $(wc -l < "$OUTPUT_DIR/forge_changes.patch") lines)"
+
+# Step 10: Extract forge answer from conversation dump
+echo "[forge] Extracting forge implementation answer..."
+(cd "$OUTPUT_DIR" && forge conversation dump "$EVAL_ID" 2>/dev/null)
 DUMP_FILE="$(ls -t "$OUTPUT_DIR"/*-dump.json 2>/dev/null | head -1)"
 if [ -n "$DUMP_FILE" ] && [ -f "$DUMP_FILE" ]; then
     jq -r '[.conversation.context.messages[] | select(.text.role == "Assistant") | .text.content | select(length > 0)] | last' \
@@ -458,6 +721,10 @@ echo "============================================================"
 echo "  Step 4 - Run forge as judge"
 echo "============================================================"
 
+# Generate judge ID
+JUDGE_ID="$(uuidgen 2>/dev/null || python3 -c "import uuid; print(uuid.uuid4())" 2>/dev/null || cat /proc/sys/kernel/random/uuid 2>/dev/null || printf "%08x-%04x-%04x-%04x-%012x" $(date +%s) 0 0 0 0)"
+echo "[judge] Judge ID: $JUDGE_ID"
+
 # Generate the judge prompt
 JUDGE_PROMPT_FILE="$OUTPUT_DIR/judge_prompt.md"
 echo "[judge] Generating judge prompt at $JUDGE_PROMPT_FILE..."
@@ -477,52 +744,96 @@ if [ -z "$JUDGE_TEMPLATE" ] || [ ! -f "$JUDGE_TEMPLATE" ]; then
 fi
 echo "[judge] Using template: $JUDGE_TEMPLATE"
 
-# Substitute placeholders
+# Substitute placeholders (project and commit references only)
 sed \
     -e "s|{{PROJECT_NAME}}|$PROJECT_NAME|g" \
     -e "s|{{EVAL_COMMIT}}|$EVAL_COMMIT_FULL|g" \
     -e "s|{{GROUND_TRUTH_COMMIT}}|$GROUND_TRUTH_FULL|g" \
-    -e "s|{{MCT_ANSWER_PATH}}|$OUTPUT_DIR/mct_answer.md|g" \
-    -e "s|{{FORGE_ANSWER_PATH}}|$OUTPUT_DIR/forge_answer.md|g" \
-    -e "s|{{GROUND_TRUTH_PATCH_PATH}}|$OUTPUT_DIR/ground_truth.patch|g" \
     "$JUDGE_TEMPLATE" > "$JUDGE_PROMPT_FILE"
 
-# Append the original task
+# Append mct-agent Plan
 {
     echo ""
-    echo "## Original Task"
+    echo "## mct-agent Plan"
     echo ""
-    cat "$PROMPT"
+    if [ -s "$OUTPUT_DIR/mct_plan.md" ]; then
+        cat "$OUTPUT_DIR/mct_plan.md"
+    else
+        echo "(mct-agent did not produce a plan)"
+    fi
     echo ""
 } >> "$JUDGE_PROMPT_FILE"
 
-# Append the mct-agent answer
+# Append Forge Plan
 {
     echo ""
-    echo "## mct-agent Answer"
+    echo "## Forge Plan"
+    echo ""
+    if [ -s "$OUTPUT_DIR/forge_plan.md" ]; then
+        cat "$OUTPUT_DIR/forge_plan.md"
+    else
+        echo "(Forge did not produce a plan)"
+    fi
+    echo ""
+} >> "$JUDGE_PROMPT_FILE"
+
+# Append mct-agent Implementation
+{
+    echo ""
+    echo "## mct-agent Implementation"
     echo ""
     if [ -s "$OUTPUT_DIR/mct_answer.md" ]; then
         cat "$OUTPUT_DIR/mct_answer.md"
     else
-        echo "(mct-agent did not produce an answer)"
+        echo "(mct-agent did not produce an implementation)"
     fi
     echo ""
 } >> "$JUDGE_PROMPT_FILE"
 
-# Append the forge answer
+# Append Forge Implementation
 {
     echo ""
-    echo "## Forge Answer"
+    echo "## Forge Implementation"
     echo ""
     if [ -s "$OUTPUT_DIR/forge_answer.md" ]; then
         cat "$OUTPUT_DIR/forge_answer.md"
     else
-        echo "(forge did not produce an answer)"
+        echo "(Forge did not produce an implementation)"
     fi
     echo ""
 } >> "$JUDGE_PROMPT_FILE"
 
-# Append the ground truth diff
+# Append mct-agent Changes
+{
+    echo ""
+    echo "## mct-agent Changes"
+    echo ""
+    echo '```diff'
+    if [ -s "$OUTPUT_DIR/mct_changes.patch" ]; then
+        cat "$OUTPUT_DIR/mct_changes.patch"
+    else
+        echo "(mct-agent produced no changes)"
+    fi
+    echo '```'
+    echo ""
+} >> "$JUDGE_PROMPT_FILE"
+
+# Append Forge Changes
+{
+    echo ""
+    echo "## Forge Changes"
+    echo ""
+    echo '```diff'
+    if [ -s "$OUTPUT_DIR/forge_changes.patch" ]; then
+        cat "$OUTPUT_DIR/forge_changes.patch"
+    else
+        echo "(Forge produced no changes)"
+    fi
+    echo '```'
+    echo ""
+} >> "$JUDGE_PROMPT_FILE"
+
+# Append Ground Truth Diff
 {
     echo ""
     echo "## Ground Truth Diff"
@@ -553,7 +864,7 @@ fi
 # Extract judgment
 echo "[judge] Extracting judgment..."
 echo "[judge] Dumping conversation $JUDGE_ID..."
-forge conversation dump "$JUDGE_ID" 2>/dev/null
+(cd "$OUTPUT_DIR" && forge conversation dump "$JUDGE_ID" 2>/dev/null)
 DUMP_FILE="$(ls -t "$OUTPUT_DIR"/*-dump.json 2>/dev/null | head -1)"
 if [ -n "$DUMP_FILE" ] && [ -f "$DUMP_FILE" ]; then
     jq -r '[.conversation.context.messages[] | select(.text.role == "Assistant") | .text.content | select(length > 0)] | last' \
@@ -580,48 +891,88 @@ echo "  Step 4b - Evaluation Report"
 echo "============================================================"
 
 if [ -s "$OUTPUT_DIR/judgment.md" ]; then
-    # Extract mct-agent evaluation section
-    MCT_SECTION=$(sed -n '/### mct-agent Evaluation/,/### Forge Evaluation/p' "$OUTPUT_DIR/judgment.md")
+    # ---- Plan Quality Axis ----
+    # Extract Plan Quality section
+    PLAN_SECTION=$(sed -n '/### Plan Quality/,/### Implementation Quality/p' "$OUTPUT_DIR/judgment.md")
 
-    # Extract forge evaluation section
-    FORGE_SECTION=$(sed -n '/### Forge Evaluation/,/### Winner/p' "$OUTPUT_DIR/judgment.md")
-    if [ -z "$FORGE_SECTION" ]; then
-        FORGE_SECTION=$(sed -n '/### Forge Evaluation/,$p' "$OUTPUT_DIR/judgment.md")
-    fi
+    # mct-agent Plan scores
+    MCT_PLAN_SUB=$(echo "$PLAN_SECTION" | sed -n '/#### mct-agent Plan/,/####/p')
+    MCT_PLAN_ACC=$(echo "$MCT_PLAN_SUB" | grep -oP 'Accuracy\s*\(\K\d+' | head -1 || echo "N/A")
+    MCT_PLAN_COMP=$(echo "$MCT_PLAN_SUB" | grep -oP 'Completeness\s*\(\K\d+' | head -1 || echo "N/A")
+    MCT_PLAN_SPEC=$(echo "$MCT_PLAN_SUB" | grep -oP 'Specificity\s*\(\K\d+' | head -1 || echo "N/A")
+    MCT_PLAN_TOTAL=$(echo "$MCT_PLAN_SUB" | grep -oP '\*\*Total:\*\*\s*\K\d+' | head -1 || echo "N/A")
 
-    # Extract scores for mct-agent
-    MCT_ACC=$(echo "$MCT_SECTION" | grep -oP 'Accuracy\s*\(\K\d+' | head -1 || echo "N/A")
-    MCT_COMP=$(echo "$MCT_SECTION" | grep -oP 'Completeness\s*\(\K\d+' | head -1 || echo "N/A")
-    MCT_CLR=$(echo "$MCT_SECTION" | grep -oP 'Clarity\s*\(\K\d+' | head -1 || echo "N/A")
-    MCT_ACT=$(echo "$MCT_SECTION" | grep -oP 'Actionability\s*\(\K\d+' | head -1 || echo "N/A")
-    MCT_TOTAL=$(echo "$MCT_SECTION" | grep -oP '\*\*Total:\*\*\s*\K\d+' | head -1 || echo "N/A")
+    # Forge Plan scores
+    FORGE_PLAN_SUB=$(echo "$PLAN_SECTION" | sed -n '/#### Forge Plan/,/####/p')
+    FORGE_PLAN_ACC=$(echo "$FORGE_PLAN_SUB" | grep -oP 'Accuracy\s*\(\K\d+' | head -1 || echo "N/A")
+    FORGE_PLAN_COMP=$(echo "$FORGE_PLAN_SUB" | grep -oP 'Completeness\s*\(\K\d+' | head -1 || echo "N/A")
+    FORGE_PLAN_SPEC=$(echo "$FORGE_PLAN_SUB" | grep -oP 'Specificity\s*\(\K\d+' | head -1 || echo "N/A")
+    FORGE_PLAN_TOTAL=$(echo "$FORGE_PLAN_SUB" | grep -oP '\*\*Total:\*\*\s*\K\d+' | head -1 || echo "N/A")
 
-    # Extract scores for forge
-    FORGE_ACC=$(echo "$FORGE_SECTION" | grep -oP 'Accuracy\s*\(\K\d+' | head -1 || echo "N/A")
-    FORGE_COMP=$(echo "$FORGE_SECTION" | grep -oP 'Completeness\s*\(\K\d+' | head -1 || echo "N/A")
-    FORGE_CLR=$(echo "$FORGE_SECTION" | grep -oP 'Clarity\s*\(\K\d+' | head -1 || echo "N/A")
-    FORGE_ACT=$(echo "$FORGE_SECTION" | grep -oP 'Actionability\s*\(\K\d+' | head -1 || echo "N/A")
-    FORGE_TOTAL=$(echo "$FORGE_SECTION" | grep -oP '\*\*Total:\*\*\s*\K\d+' | head -1 || echo "N/A")
+    # Plan Winner
+    PLAN_WINNER=$(echo "$PLAN_SECTION" | sed -n '/#### Plan Winner/,$p' | sed '1d' | grep -m1 '.' || echo "N/A")
+    PLAN_WINNER=$(echo "$PLAN_WINNER" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
 
-    # Extract winner
-    WINNER=$(sed -n '/### Winner/,$p' "$OUTPUT_DIR/judgment.md" | sed '1d' | grep -m1 '.' || echo "N/A")
-    WINNER=$(echo "$WINNER" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    # ---- Implementation Quality Axis ----
+    # Extract Implementation Quality section
+    IMPL_SECTION=$(sed -n '/### Implementation Quality/,/### Overall Assessment/p' "$OUTPUT_DIR/judgment.md")
 
+    # mct-agent Implementation scores
+    MCT_IMPL_SUB=$(echo "$IMPL_SECTION" | sed -n '/#### mct-agent Implementation/,/####/p')
+    MCT_IMPL_CORR=$(echo "$MCT_IMPL_SUB" | grep -oP 'Correctness\s*\(\K\d+' | head -1 || echo "N/A")
+    MCT_IMPL_PREC=$(echo "$MCT_IMPL_SUB" | grep -oP 'Precision\s*\(\K\d+' | head -1 || echo "N/A")
+    MCT_IMPL_COMP=$(echo "$MCT_IMPL_SUB" | grep -oP 'Completeness\s*\(\K\d+' | head -1 || echo "N/A")
+    MCT_IMPL_TOTAL=$(echo "$MCT_IMPL_SUB" | grep -oP '\*\*Total:\*\*\s*\K\d+' | head -1 || echo "N/A")
+
+    # Forge Implementation scores
+    FORGE_IMPL_SUB=$(echo "$IMPL_SECTION" | sed -n '/#### Forge Implementation/,/####/p')
+    FORGE_IMPL_CORR=$(echo "$FORGE_IMPL_SUB" | grep -oP 'Correctness\s*\(\K\d+' | head -1 || echo "N/A")
+    FORGE_IMPL_PREC=$(echo "$FORGE_IMPL_SUB" | grep -oP 'Precision\s*\(\K\d+' | head -1 || echo "N/A")
+    FORGE_IMPL_COMP=$(echo "$FORGE_IMPL_SUB" | grep -oP 'Completeness\s*\(\K\d+' | head -1 || echo "N/A")
+    FORGE_IMPL_TOTAL=$(echo "$FORGE_IMPL_SUB" | grep -oP '\*\*Total:\*\*\s*\K\d+' | head -1 || echo "N/A")
+
+    # Implementation Winner
+    IMPL_WINNER=$(echo "$IMPL_SECTION" | sed -n '/#### Implementation Winner/,$p' | sed '1d' | grep -m1 '.' || echo "N/A")
+    IMPL_WINNER=$(echo "$IMPL_WINNER" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+
+    # ---- Overall Assessment ----
+    OVERALL_SECTION=$(sed -n '/### Overall Assessment/,$p' "$OUTPUT_DIR/judgment.md" | sed '1d')
+    OVERALL_WINNER=$(echo "$OVERALL_SECTION" | grep -m1 '.' | head -1 || echo "N/A")
+    OVERALL_WINNER=$(echo "$OVERALL_WINNER" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+
+    # Print two-axis comparative table to stdout
     echo ""
     echo "============================================================"
-    echo "  Evaluation Report"
+    echo "  Evaluation Report — Two-Axis"
     echo "============================================================"
+    echo ""
+    echo "  --- Plan Quality (each /10, total /30) ---"
     echo ""
     printf "  %-20s %-12s %-12s\\n" "Dimension" "mct-agent" "Forge"
     printf "  %-20s %-12s %-12s\\n" "--------------------" "------------" "------------"
-    printf "  %-20s %-12s %-12s\\n" "Accuracy" "$MCT_ACC" "$FORGE_ACC"
-    printf "  %-20s %-12s %-12s\\n" "Completeness" "$MCT_COMP" "$FORGE_COMP"
-    printf "  %-20s %-12s %-12s\\n" "Clarity" "$MCT_CLR" "$FORGE_CLR"
-    printf "  %-20s %-12s %-12s\\n" "Actionability" "$MCT_ACT" "$FORGE_ACT"
+    printf "  %-20s %-12s %-12s\\n" "Accuracy" "$MCT_PLAN_ACC" "$FORGE_PLAN_ACC"
+    printf "  %-20s %-12s %-12s\\n" "Completeness" "$MCT_PLAN_COMP" "$FORGE_PLAN_COMP"
+    printf "  %-20s %-12s %-12s\\n" "Specificity" "$MCT_PLAN_SPEC" "$FORGE_PLAN_SPEC"
     printf "  %-20s %-12s %-12s\\n" "--------------------" "------------" "------------"
-    printf "  %-20s %-12s %-12s\\n" "TOTAL" "$MCT_TOTAL" "$FORGE_TOTAL"
+    printf "  %-20s %-12s %-12s\\n" "PLAN TOTAL" "$MCT_PLAN_TOTAL" "$FORGE_PLAN_TOTAL"
     echo ""
-    echo "  Winner: $WINNER"
+    echo "  Plan Winner: $PLAN_WINNER"
+    echo ""
+    echo "  --- Implementation Quality (each /10, total /30) ---"
+    echo ""
+    printf "  %-20s %-12s %-12s\\n" "Dimension" "mct-agent" "Forge"
+    printf "  %-20s %-12s %-12s\\n" "--------------------" "------------" "------------"
+    printf "  %-20s %-12s %-12s\\n" "Correctness" "$MCT_IMPL_CORR" "$FORGE_IMPL_CORR"
+    printf "  %-20s %-12s %-12s\\n" "Precision" "$MCT_IMPL_PREC" "$FORGE_IMPL_PREC"
+    printf "  %-20s %-12s %-12s\\n" "Completeness" "$MCT_IMPL_COMP" "$FORGE_IMPL_COMP"
+    printf "  %-20s %-12s %-12s\\n" "--------------------" "------------" "------------"
+    printf "  %-20s %-12s %-12s\\n" "IMPL TOTAL" "$MCT_IMPL_TOTAL" "$FORGE_IMPL_TOTAL"
+    echo ""
+    echo "  Implementation Winner: $IMPL_WINNER"
+    echo ""
+    echo "  --- Overall ---"
+    echo ""
+    echo "  Overall Winner: $OVERALL_WINNER"
     echo ""
 
     # Write report.md
@@ -629,24 +980,40 @@ if [ -s "$OUTPUT_DIR/judgment.md" ]; then
     {
         echo "# Evaluation Report"
         echo ""
-        echo "## Comparative Scores"
+        echo "## Plan Quality (each /10, total /30)"
         echo ""
         echo "| Dimension | mct-agent | Forge |"
         echo "|---------------|-----------|-------|"
-        echo "| Accuracy | $MCT_ACC/10 | $FORGE_ACC/10 |"
-        echo "| Completeness | $MCT_COMP/10 | $FORGE_COMP/10 |"
-        echo "| Clarity | $MCT_CLR/10 | $FORGE_CLR/10 |"
-        echo "| Actionability | $MCT_ACT/10 | $FORGE_ACT/10 |"
-        echo "| **TOTAL** | **$MCT_TOTAL/40** | **$FORGE_TOTAL/40** |"
+        echo "| Accuracy | $MCT_PLAN_ACC/10 | $FORGE_PLAN_ACC/10 |"
+        echo "| Completeness | $MCT_PLAN_COMP/10 | $FORGE_PLAN_COMP/10 |"
+        echo "| Specificity | $MCT_PLAN_SPEC/10 | $FORGE_PLAN_SPEC/10 |"
+        echo "| **Plan Total** | **$MCT_PLAN_TOTAL/30** | **$FORGE_PLAN_TOTAL/30** |"
         echo ""
-        echo "## Winner"
+        echo "**Plan Winner:** $PLAN_WINNER"
         echo ""
-        echo "$WINNER"
+        echo "## Implementation Quality (each /10, total /30)"
+        echo ""
+        echo "| Dimension | mct-agent | Forge |"
+        echo "|---------------|-----------|-------|"
+        echo "| Correctness | $MCT_IMPL_CORR/10 | $FORGE_IMPL_CORR/10 |"
+        echo "| Precision | $MCT_IMPL_PREC/10 | $FORGE_IMPL_PREC/10 |"
+        echo "| Completeness | $MCT_IMPL_COMP/10 | $FORGE_IMPL_COMP/10 |"
+        echo "| **Impl Total** | **$MCT_IMPL_TOTAL/30** | **$FORGE_IMPL_TOTAL/30** |"
+        echo ""
+        echo "**Implementation Winner:** $IMPL_WINNER"
+        echo ""
+        echo "## Overall Winner"
+        echo ""
+        echo "$OVERALL_WINNER"
         echo ""
         echo "## Artifact Paths"
         echo ""
+        echo "- mct_plan.md: \`$OUTPUT_DIR/mct_plan.md\`"
+        echo "- forge_plan.md: \`$OUTPUT_DIR/forge_plan.md\`"
         echo "- mct_answer.md: \`$OUTPUT_DIR/mct_answer.md\`"
         echo "- forge_answer.md: \`$OUTPUT_DIR/forge_answer.md\`"
+        echo "- mct_changes.patch: \`$OUTPUT_DIR/mct_changes.patch\`"
+        echo "- forge_changes.patch: \`$OUTPUT_DIR/forge_changes.patch\`"
         echo "- ground_truth.patch: \`$OUTPUT_DIR/ground_truth.patch\`"
         echo "- judgment.md: \`$OUTPUT_DIR/judgment.md\`"
         echo "- judge_prompt.md: \`$OUTPUT_DIR/judge_prompt.md\`"
@@ -706,8 +1073,12 @@ print_artifact() {
     fi
 }
 
+print_artifact "mct_plan.md:" "$OUTPUT_DIR/mct_plan.md"
+print_artifact "forge_plan.md:" "$OUTPUT_DIR/forge_plan.md"
 print_artifact "mct_answer.md:" "$OUTPUT_DIR/mct_answer.md"
 print_artifact "forge_answer.md:" "$OUTPUT_DIR/forge_answer.md"
+print_artifact "mct_changes.patch:" "$OUTPUT_DIR/mct_changes.patch"
+print_artifact "forge_changes.patch:" "$OUTPUT_DIR/forge_changes.patch"
 print_artifact "ground_truth.patch:" "$OUTPUT_DIR/ground_truth.patch"
 print_artifact "judgment.md:" "$OUTPUT_DIR/judgment.md"
 print_artifact "judge_prompt.md:" "$OUTPUT_DIR/judge_prompt.md"
