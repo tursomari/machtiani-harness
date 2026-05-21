@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"syscall"
 	"time"
+
+	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
 )
 
 // sessionLock maintains an exclusive lock file for the lifetime of a session.
@@ -90,4 +92,34 @@ func (l *sessionLock) Close() error {
 		return errors.Join(errs...)
 	}
 	return nil
+}
+
+// IsSessionActive checks whether the session identified by sessionID is
+// currently locked by an active process.
+func IsSessionActive(sessionID string) (bool, error) {
+	scratchDir, err := artifacts.SessionScratchDirectory(sessionID)
+	if err != nil {
+		return false, fmt.Errorf("resolve scratch directory: %w", err)
+	}
+	lockPath := filepath.Join(scratchDir, sessionLockFileName)
+
+	file, err := os.OpenFile(lockPath, os.O_RDONLY, 0)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("open session lock %s: %w", lockPath, err)
+	}
+	defer file.Close()
+
+	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_SH|syscall.LOCK_NB); err != nil {
+		if errors.Is(err, syscall.EWOULDBLOCK) {
+			return true, nil
+		}
+		return false, fmt.Errorf("check session lock %s: %w", lockPath, err)
+	}
+
+	// Successfully acquired shared lock, release it.
+	syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+	return false, nil
 }

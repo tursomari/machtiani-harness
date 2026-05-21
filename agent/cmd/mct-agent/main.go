@@ -584,6 +584,7 @@ func handleSessionCommand(args []string) int {
 		fmt.Fprintln(os.Stderr, "Subcommands:")
 		fmt.Fprintln(os.Stderr, "  list    List all sessions")
 		fmt.Fprintln(os.Stderr, "  show    Show details for a specific session")
+		fmt.Fprintln(os.Stderr, "  fork    Fork a session")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Use 'mct-agent session <subcommand> --help' for more information.")
 		return 2
@@ -593,6 +594,8 @@ func handleSessionCommand(args []string) int {
 		return handleSessionListCommand(args[1:])
 	case "show":
 		return handleSessionShowCommand(args[1:])
+	case "fork":
+		return handleSessionForkCommand(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown session subcommand: %s\n", args[0])
 		fmt.Fprintln(os.Stderr, "")
@@ -601,6 +604,7 @@ func handleSessionCommand(args []string) int {
 		fmt.Fprintln(os.Stderr, "Subcommands:")
 		fmt.Fprintln(os.Stderr, "  list    List all sessions")
 		fmt.Fprintln(os.Stderr, "  show    Show details for a specific session")
+		fmt.Fprintln(os.Stderr, "  fork    Fork a session")
 		return 2
 	}
 }
@@ -728,6 +732,38 @@ func handleSessionShowCommand(args []string) int {
 		fmt.Printf("  Question: %s\n", state.SuspendedUserInput.Question)
 	}
 
+	return 0
+}
+
+func handleSessionForkCommand(args []string) int {
+	fs := pflag.NewFlagSet("mct-agent session fork", pflag.ContinueOnError)
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: mct-agent session fork <session-id>\n\n")
+		fmt.Fprintln(os.Stderr, "Flags:")
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, pflag.ErrHelp) {
+			return 0
+		}
+		fmt.Fprintln(os.Stderr, err)
+		return 2
+	}
+
+	if fs.NArg() < 1 {
+		fmt.Fprintln(os.Stderr, "Error: session-id is required")
+		fs.Usage()
+		return 2
+	}
+
+	sessionID := fs.Arg(0)
+	newSessionID, err := session.ForkSession(sessionID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error forking session %s: %v\n", sessionID, err)
+		return 1
+	}
+
+	fmt.Println(newSessionID)
 	return 0
 }
 
