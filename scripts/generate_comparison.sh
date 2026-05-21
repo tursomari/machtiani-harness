@@ -11,7 +11,7 @@ EOF
 PROJECT_ROOT=""
 PROMPT_FILE=""
 OUTPUT="/tmp/comparison_runbook.md"
-MCT_MODEL="deepseek-v4-pro"
+MCT_MODEL="glm-5-high-deepinfra"
 MCT_API_KEY=""
 GROUND_TRUTH_COMMIT=""
 EVAL_COMMIT=""

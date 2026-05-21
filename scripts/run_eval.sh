@@ -47,12 +47,14 @@ Required:
   --ground-truth <oid>     Fix commit OID (the ground truth)
 
 Optional:
-  --model <alias>          mct-agent model alias (default: deepseek-v4-pro)
-  --sync-model <alias>     model alias for the sync step (default: glm-5-high)
+  --model <alias>          mct-agent model alias (default: glm-5-high-deepinfra)
+  --sync-model <alias>     model alias for the sync step (default: glm-5-high-deepinfra)
   --api-key-file <provider:path>
                            API key file in provider:path format
   --api-key <provider:key>
                            API key in provider:key format
+  --sync-api-key <provider:key>
+                           API key for the sync step (defaults to --api-key if not set)
   --config <path>          Path to machtiani config.toml (auto-discovered if not set)
   --output-dir <path>      Directory for all artifacts (default: /tmp/eval_<timestamp>)
   --keep                   Keep worktree and artifacts after completion (for debugging)
@@ -69,10 +71,11 @@ REPO=""
 PROMPT=""
 EVAL_COMMIT=""
 GROUND_TRUTH=""
-SYNC_MODEL="glm-5-high"
-MODEL="deepseek-v4-pro"
+SYNC_MODEL="glm-5-high-deepinfra"
+MODEL="glm-5-high-deepinfra"
 API_KEY_FILE=""
 API_KEY=""
+SYNC_API_KEY=""
 CONFIG=""
 OUTPUT_DIR=""
 KEEP=false
@@ -115,6 +118,10 @@ while [ $# -gt 0 ]; do
             API_KEY="$2"
             shift 2
             ;;
+        --sync-api-key)
+            SYNC_API_KEY="$2"
+            shift 2
+            ;;
         --config)
             CONFIG="$2"
             shift 2
@@ -141,6 +148,40 @@ while [ $# -gt 0 ]; do
             ;;
     esac
 done
+
+# ----------------------------------------------------------------------------
+# Helper: derive model provider from config.toml
+# ----------------------------------------------------------------------------
+derive_model_provider() {
+    local model="$1"
+    local config="$2"
+
+    if [ -z "$config" ] || [ ! -f "$config" ]; then
+        echo ""
+        return
+    fi
+
+    awk -v target="$model" '
+        /^\[models\./ {
+            in_section = 0
+            section_name = $0
+            gsub(/^\[models\./, "", section_name)
+            gsub(/\]$/, "", section_name)
+            if (section_name == target) {
+                in_section = 1
+            }
+            next
+        }
+        in_section && /^provider/ {
+            val = $0
+            sub(/^provider[[:space:]]*=[[:space:]]*/, "", val)
+            gsub(/"/, "", val)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", val)
+            print val
+            exit
+        }
+    ' "$config"
+}
 
 # ----------------------------------------------------------------------------
 # Validate required arguments
@@ -294,6 +335,16 @@ MCT_API_KEY_ARG=""
 if [ -n "$API_KEY" ]; then
     # --api-key takes precedence
     MCT_API_KEY_ARG="--api-key $API_KEY"
+    if [[ "$API_KEY" != *:* ]]; then
+        MODEL_PROVIDER=$(derive_model_provider "$MODEL" "$CONFIG")
+        if [ -n "$MODEL_PROVIDER" ]; then
+            API_KEY="${MODEL_PROVIDER}:${API_KEY}"
+            MCT_API_KEY_ARG="--api-key $API_KEY"
+        else
+            echo "Error: API_KEY does not contain a provider prefix and could not be derived from config" >&2
+            exit 1
+        fi
+    fi
     echo "[setup] API key: from --api-key flag"
 elif [ -n "$API_KEY_FILE" ]; then
     API_KEY_PROVIDER="${API_KEY_FILE%%:*}"
@@ -337,6 +388,27 @@ else
     echo "[setup] API key: using config file or environment"
 fi
 
+# Resolve sync API key
+SYNC_API_KEY_ARG=""
+if [ -n "$SYNC_API_KEY" ]; then
+    if [[ "$SYNC_API_KEY" != *:* ]]; then
+        SYNC_PROVIDER=$(derive_model_provider "$SYNC_MODEL" "$CONFIG")
+        if [ -n "$SYNC_PROVIDER" ]; then
+            SYNC_API_KEY="${SYNC_PROVIDER}:${SYNC_API_KEY}"
+        else
+            echo "Error: SYNC_API_KEY does not contain a provider prefix and could not be derived from config" >&2
+            exit 1
+        fi
+    fi
+    SYNC_API_KEY_ARG="--api-key $SYNC_API_KEY"
+    echo "[setup] Sync API key: from --sync-api-key flag"
+elif [ -n "$MCT_API_KEY_ARG" ]; then
+    SYNC_API_KEY_ARG="$MCT_API_KEY_ARG"
+    echo "[setup] Sync API key: using main API key"
+else
+    echo "[setup] Sync API key: using config file or environment"
+fi
+
 # Derive environment variables for forge from resolved API key
 FORGE_ENV="TERM=dumb"
 if [ -n "$MCT_API_KEY_ARG" ]; then
@@ -362,6 +434,7 @@ echo "[setup] Running mct-agent sync in worktree..."
 cd "$MCT_WORKTREE"
 MACHTIANI_CONFIG="$CONFIG" mct-agent sync \
     --model "$SYNC_MODEL" \
+    $SYNC_API_KEY_ARG \
     --timeout-per-turn 0 \
     --max-steps 20 || {
     echo "ERROR: mct-agent sync failed" >&2
@@ -411,7 +484,7 @@ if [ "$SEQUENTIAL" -eq 1 ]; then
     for ATTEMPT in 1 2 3; do
         echo "[mct-agent] Plan attempt $ATTEMPT/3: Running mct-agent in plan mode..."
         if MACHTIANI_CONFIG="$CONFIG" mct-agent run \
-            --mode code \
+            --mode code-forge \
             --final-file "$OUTPUT_DIR/mct_plan.md" \
             --model "$MODEL" \
             $MCT_API_KEY_ARG \
@@ -466,7 +539,7 @@ else
         for ATTEMPT in 1 2 3; do
             echo "[mct-agent] Plan attempt $ATTEMPT/3: Running mct-agent in plan mode..."
             if MACHTIANI_CONFIG="$CONFIG" mct-agent run \
-                --mode code \
+                --mode code-forge \
                 --final-file "$OUTPUT_DIR/mct_plan.md" \
                 --model "$MODEL" \
                 $MCT_API_KEY_ARG \
@@ -578,7 +651,7 @@ if [ "$SEQUENTIAL" -eq 1 ]; then
     for ATTEMPT in 1 2 3; do
         echo "[mct-agent] Impl attempt $ATTEMPT/3: Running mct-agent..."
         if MACHTIANI_CONFIG="$CONFIG" mct-agent run \
-            --mode code \
+            --mode code-forge \
             --final-file "$OUTPUT_DIR/mct_answer.md" \
             --model "$MODEL" \
             $MCT_API_KEY_ARG \
@@ -633,7 +706,7 @@ else
         for ATTEMPT in 1 2 3; do
             echo "[mct-agent] Impl attempt $ATTEMPT/3: Running mct-agent..."
             if MACHTIANI_CONFIG="$CONFIG" mct-agent run \
-                --mode code \
+                --mode code-forge \
                 --final-file "$OUTPUT_DIR/mct_answer.md" \
                 --model "$MODEL" \
                 $MCT_API_KEY_ARG \
@@ -893,50 +966,50 @@ echo "============================================================"
 if [ -s "$OUTPUT_DIR/judgment.md" ]; then
     # ---- Plan Quality Axis ----
     # Extract Plan Quality section
-    PLAN_SECTION=$(sed -n '/### Plan Quality/,/### Implementation Quality/p' "$OUTPUT_DIR/judgment.md")
+    PLAN_SECTION=$(sed -n '/^#.* Plan Quality/,/^#.* Implementation Quality/p' "$OUTPUT_DIR/judgment.md")
 
     # mct-agent Plan scores
-    MCT_PLAN_SUB=$(echo "$PLAN_SECTION" | sed -n '/#### mct-agent Plan/,/####/p')
+    MCT_PLAN_SUB=$(echo "$PLAN_SECTION" | sed -n '/^#.* mct-agent Plan/,/^#.* Forge Plan/p')
     MCT_PLAN_ACC=$(echo "$MCT_PLAN_SUB" | grep -oP 'Accuracy\s*\(\K\d+' | head -1 || echo "N/A")
     MCT_PLAN_COMP=$(echo "$MCT_PLAN_SUB" | grep -oP 'Completeness\s*\(\K\d+' | head -1 || echo "N/A")
     MCT_PLAN_SPEC=$(echo "$MCT_PLAN_SUB" | grep -oP 'Specificity\s*\(\K\d+' | head -1 || echo "N/A")
     MCT_PLAN_TOTAL=$(echo "$MCT_PLAN_SUB" | grep -oP '\*\*Total:\*\*\s*\K\d+' | head -1 || echo "N/A")
 
     # Forge Plan scores
-    FORGE_PLAN_SUB=$(echo "$PLAN_SECTION" | sed -n '/#### Forge Plan/,/####/p')
+    FORGE_PLAN_SUB=$(echo "$PLAN_SECTION" | sed -n '/^#.* Forge Plan/,/^#.* Plan Winner/p')
     FORGE_PLAN_ACC=$(echo "$FORGE_PLAN_SUB" | grep -oP 'Accuracy\s*\(\K\d+' | head -1 || echo "N/A")
     FORGE_PLAN_COMP=$(echo "$FORGE_PLAN_SUB" | grep -oP 'Completeness\s*\(\K\d+' | head -1 || echo "N/A")
     FORGE_PLAN_SPEC=$(echo "$FORGE_PLAN_SUB" | grep -oP 'Specificity\s*\(\K\d+' | head -1 || echo "N/A")
     FORGE_PLAN_TOTAL=$(echo "$FORGE_PLAN_SUB" | grep -oP '\*\*Total:\*\*\s*\K\d+' | head -1 || echo "N/A")
 
     # Plan Winner
-    PLAN_WINNER=$(echo "$PLAN_SECTION" | sed -n '/#### Plan Winner/,$p' | sed '1d' | grep -m1 '.' || echo "N/A")
+    PLAN_WINNER=$(echo "$PLAN_SECTION" | sed -n '/^#.* Plan Winner/,$p' | sed '1d' | grep -m1 '.' || echo "N/A")
     PLAN_WINNER=$(echo "$PLAN_WINNER" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
 
     # ---- Implementation Quality Axis ----
     # Extract Implementation Quality section
-    IMPL_SECTION=$(sed -n '/### Implementation Quality/,/### Overall Assessment/p' "$OUTPUT_DIR/judgment.md")
+    IMPL_SECTION=$(sed -n '/^#.* Implementation Quality/,/^#.* Overall Assessment/p' "$OUTPUT_DIR/judgment.md")
 
     # mct-agent Implementation scores
-    MCT_IMPL_SUB=$(echo "$IMPL_SECTION" | sed -n '/#### mct-agent Implementation/,/####/p')
+    MCT_IMPL_SUB=$(echo "$IMPL_SECTION" | sed -n '/^#.* mct-agent Implementation/,/^#.* Forge Implementation/p')
     MCT_IMPL_CORR=$(echo "$MCT_IMPL_SUB" | grep -oP 'Correctness\s*\(\K\d+' | head -1 || echo "N/A")
     MCT_IMPL_PREC=$(echo "$MCT_IMPL_SUB" | grep -oP 'Precision\s*\(\K\d+' | head -1 || echo "N/A")
     MCT_IMPL_COMP=$(echo "$MCT_IMPL_SUB" | grep -oP 'Completeness\s*\(\K\d+' | head -1 || echo "N/A")
     MCT_IMPL_TOTAL=$(echo "$MCT_IMPL_SUB" | grep -oP '\*\*Total:\*\*\s*\K\d+' | head -1 || echo "N/A")
 
     # Forge Implementation scores
-    FORGE_IMPL_SUB=$(echo "$IMPL_SECTION" | sed -n '/#### Forge Implementation/,/####/p')
+    FORGE_IMPL_SUB=$(echo "$IMPL_SECTION" | sed -n '/^#.* Forge Implementation/,/^#.* Implementation Winner/p')
     FORGE_IMPL_CORR=$(echo "$FORGE_IMPL_SUB" | grep -oP 'Correctness\s*\(\K\d+' | head -1 || echo "N/A")
     FORGE_IMPL_PREC=$(echo "$FORGE_IMPL_SUB" | grep -oP 'Precision\s*\(\K\d+' | head -1 || echo "N/A")
     FORGE_IMPL_COMP=$(echo "$FORGE_IMPL_SUB" | grep -oP 'Completeness\s*\(\K\d+' | head -1 || echo "N/A")
     FORGE_IMPL_TOTAL=$(echo "$FORGE_IMPL_SUB" | grep -oP '\*\*Total:\*\*\s*\K\d+' | head -1 || echo "N/A")
 
     # Implementation Winner
-    IMPL_WINNER=$(echo "$IMPL_SECTION" | sed -n '/#### Implementation Winner/,$p' | sed '1d' | grep -m1 '.' || echo "N/A")
+    IMPL_WINNER=$(echo "$IMPL_SECTION" | sed -n '/^#.* Implementation Winner/,$p' | sed '1d' | grep -m1 '.' || echo "N/A")
     IMPL_WINNER=$(echo "$IMPL_WINNER" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
 
     # ---- Overall Assessment ----
-    OVERALL_SECTION=$(sed -n '/### Overall Assessment/,$p' "$OUTPUT_DIR/judgment.md" | sed '1d')
+    OVERALL_SECTION=$(sed -n '/^#.* Overall Assessment/,$p' "$OUTPUT_DIR/judgment.md" | sed '1d')
     OVERALL_WINNER=$(echo "$OVERALL_SECTION" | grep -m1 '.' | head -1 || echo "N/A")
     OVERALL_WINNER=$(echo "$OVERALL_WINNER" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
 
