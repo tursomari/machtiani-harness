@@ -72,6 +72,87 @@ bash agent/internal/mct/tests/run-undici-readme-integration.sh
 - Supply the `OPENAI_*` variables to exercise live mode; the script falls back to stub credentials otherwise.
 - Produces artifacts in `agent/internal/mct/tests/artifacts/readme/` and cleans its temp workspace unless `KEEP_README_TEST_TMP=true` is set.
 
+## Evaluation
+
+### HEAD-Based Evaluation (run_eval_head.sh)
+
+A separate evaluation pipeline that tests the mct-agent and Forge on arbitrary tasks on the current repository HEAD, without requiring pre-defined ground truth commits. It creates worktrees from HEAD, runs agents in plan and implement phases, and uses a judge to score their plans and implementations against the current repo state. Supports two modes:
+
+- write (default): The judge also produces its own implementation as an unscored benchmark.
+- read-only: The judge only evaluates and scores the agents.
+
+#### Quick Start
+
+```bash
+# Read the API key for your LLM provider from the configured secrets file
+API_KEY=$(cat <path-to-your-api-key-file>)
+
+# Run the HEAD-based evaluation with default write mode
+env -u MACHTIANI_SESSION_ID -u MACHTIANI_SESSION_TEMP_ROOT \
+  MACHTIANI_SESSION_TEMP_ROOT=/tmp/isolated_machtiani_sessions \
+  bash scripts/run_eval_head.sh \
+    --repo "$(pwd)" \
+    --prompt /path/to/task_prompt.md \
+    --model glm-5-high-deepinfra \
+    --api-key "<provider>:${API_KEY}" \
+    --config .machtiani/config.toml \
+    --output-dir /tmp/my_eval_output \
+    --keep
+```
+
+Replace <path-to-your-api-key-file> with the path to your API key file. Replace <provider> with the provider matching the model in .machtiani/config.toml (e.g., deepinfra, openai, openrouter, anthropic)., or use the `TEST_API_KEY (or your own API key)` environment variable if set: `--api-key <provider>:${TEST_API_KEY}`.
+
+#### Flags
+
+| Flag | Required | Description |
+| --repo | yes | Path to the target git repository |
+| --prompt | yes | Path to a markdown file describing the task |
+| --model | no | Model alias for mct-agent and Forge (default: glm-5-high-deepinfra) |
+| --judge-model | no | Separate model alias for the judge agent |
+| --mode | no | write (default) or read-only |
+| --api-key | no | API key in provider:key format (e.g., deepinfra:sk-... ; the provider must match the model's provider in .machtiani/config.toml) |
+| --config | no | Path to Machtiani config file (default: .machtiani/config.toml) |
+| --output-dir | no | Artifact output directory (default: /tmp/eval_timestamp) |
+| --keep | flag | Preserve worktrees after run |
+| --sequential | flag | Run agents sequentially instead of in parallel |
+
+#### Output Artifacts
+
+All files land under output-dir/:
+
+- worktree_mct/, worktree_forge/, worktree_judge/ - agent worktrees checked out at HEAD
+- mct_plan.md, forge_plan.md - agent plans
+- mct_answer.md, forge_answer.md - agent implementation answers
+- mct_changes.patch, forge_changes.patch - agent code diffs
+- judgment.md - judge scoring output
+- judge_impl_prompt.md, judge_answer.md, judge_changes.patch - judge implementation (write mode only)
+- report.md - summary report with scores and winners
+
+#### Session Lock Workaround
+
+When running inside an active mct-agent session (e.g., during development), unset the inherited session variables to avoid flock conflicts:
+
+```bash
+env -u MACHTIANI_SESSION_ID -u MACHTIANI_SESSION_TEMP_ROOT \
+  MACHTIANI_SESSION_TEMP_ROOT=/tmp/isolated_machtiani_sessions \
+  bash scripts/run_eval_head.sh ...
+```
+
+#### Validation Checklist
+
+After a successful run, verify:
+
+1. All three worktrees exist with HEAD checked out. Use git -C worktree rev-parse HEAD to check.
+2. Plan answer files (mct_plan.md, forge_plan.md) contain non-empty content
+3. Implementation patches (star_changes.patch) contain changes or are legitimately empty
+4. judgment.md contains scores for both axes (Plan Quality: Accuracy, Completeness, Specificity; Implementation Quality: Correctness, Precision, Completeness)
+5. In write mode, judge_changes.patch and judge_answer.md are present
+6. report.md is generated with a summary table
+
+### Ground-Truth Evaluation (run_eval.sh)
+
+The original evaluation pipeline, documented in scripts/run_eval.sh itself. It compares agent outputs against a known ground truth commit and requires --eval-commit and --ground-truth flags. Refer to the script header and inline comments for usage details.
+
 ## Environment Variable Reference
 - `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL` — primary credentials for live runs; omitting them keeps all harnesses in stub/dry-run mode.
 - `MACHTIANI_CONFIG` — optional path to a pre-existing Machtiani config. Required when `tests/run-agent-undici.sh` runs live because it overrides `HOME`.
