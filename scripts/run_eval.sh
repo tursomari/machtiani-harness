@@ -464,7 +464,7 @@ echo "============================================================"
 PLAN_PROMPT="$OUTPUT_DIR/plan_prompt.md"
 echo "[plan] Creating plan-only prompt at $PLAN_PROMPT..."
 {
-    echo "IMPORTANT: Do not make any code changes. Produce only a detailed implementation plan. Do not modify any files."
+    echo "Produce a detailed implementation plan. Do not modify any files, unless the user instructs you."
     echo ""
     cat "$PROMPT"
 } > "$PLAN_PROMPT"

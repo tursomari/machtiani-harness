@@ -15,6 +15,9 @@ cleanup() {
     if [ -n "${JUDGE_WORKTREE:-}" ]; then
         rm -rf "$JUDGE_WORKTREE" 2>/dev/null
     fi
+    if [ -n "${SESSION_TEMP_ROOT:-}" ]; then
+        rm -rf "$SESSION_TEMP_ROOT" 2>/dev/null
+    fi
     if [ -n "${REPO:-}" ]; then
         git -C "$REPO" worktree prune 2>/dev/null || true
     fi
@@ -29,24 +32,22 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
     cat <<'EOF'
-Usage: run_eval_head.sh --repo <path> --prompt <path> [--mode <read-only|write>] [--judge-model <alias>] [--model <alias>] [--sync-model <alias>] [--api-key-file <provider:path>] [--api-key <provider:key>] [--sync-api-key <provider:key>] [--config <path>] [--output-dir <path>] [--keep] [--sequential] [--help]
+Usage: run_eval_head.sh --prompt <path> --api-key <provider:key> [--repo <path>] [--mode <read-only|write>] [--judge-model <alias>] [--model <alias>] [--sync-model <alias>] [--sync-api-key <provider:key>] [--config <path>] [--output-dir <path>] [--keep] [--sequential] [--help]
 
 Automated evaluation pipeline that compares mct-agent (code mode) against
 Forge (muse agent) on a resolved issue in a git repository.
 
 Required:
-  --repo <path>            Path to the git repository
   --prompt <path>          Path to the task prompt file
-
-Optional:
-  --mode <read-only|write>  Evaluation mode: read-only (judge only evaluates) or write (judge also implements, default: write)
-  --judge-model <alias>    Model alias for the judge Forge agent (default: use Forge default model)
-  --model <alias>          mct-agent model alias (default: glm-5-high-deepinfra)
-  --sync-model <alias>     model alias for the sync step (default: glm-5-high-deepinfra)
-  --api-key-file <provider:path>
-                           API key file in provider:path format
   --api-key <provider:key>
                            API key in provider:key format
+
+Optional:
+  --repo <path>            Path to the git repository (default: current working directory)
+  --mode <read-only|write>  Evaluation mode: read-only (judge only evaluates) or write (judge also implements, default: write)
+  --judge-model <alias>    Model alias for the judge Forge agent (default: use Forge default model)
+  --model <alias>          mct-agent model alias (default: resolved from .machtiani/config.toml)
+  --sync-model <alias>     model alias for the sync step (default: resolved model)
   --sync-api-key <provider:key>
                            API key for the sync step (defaults to --api-key if not set)
   --config <path>          Path to machtiani config.toml (auto-discovered if not set)
@@ -65,8 +66,8 @@ REPO=""
 PROMPT=""
 JUDGE_MODEL=""
 MODE="write"
-SYNC_MODEL="glm-5-high-deepinfra"
-MODEL="glm-5-high-deepinfra"
+SYNC_MODEL=""
+MODEL=""
 API_KEY_FILE=""
 API_KEY=""
 SYNC_API_KEY=""
@@ -181,8 +182,7 @@ derive_model_provider() {
 # Validate required arguments
 # ----------------------------------------------------------------------------
 if [ -z "$REPO" ]; then
-    echo "Error: --repo is required" >&2
-    usage
+    REPO="$PWD"
 fi
 if [ -z "$PROMPT" ]; then
     echo "Error: --prompt is required" >&2
@@ -281,6 +281,12 @@ fi
 mkdir -p "$OUTPUT_DIR"
 echo "[setup] Output directory: $OUTPUT_DIR"
 
+# Create session temp root directory
+SESSION_TEMP_ROOT="/tmp/eval_session_${TIMESTAMP}"
+mkdir -p "$SESSION_TEMP_ROOT"
+export MACHTIANI_SESSION_TEMP_ROOT="$SESSION_TEMP_ROOT"
+echo "[setup] Session temp root: $SESSION_TEMP_ROOT"
+
 # Create three separate git worktrees
 MCT_WORKTREE="$OUTPUT_DIR/worktree_mct"
 FORGE_WORKTREE="$OUTPUT_DIR/worktree_forge"
@@ -322,6 +328,20 @@ if [ -z "$CONFIG" ]; then
 fi
 echo "[setup] Config: $CONFIG"
 
+# Resolve model from config if not explicitly set
+if [ -z "$MODEL" ] && [ -n "$CONFIG" ] && [ -f "$CONFIG" ]; then
+    MODEL=$(awk -F= "/^default_model[[:space:]]*=/ { gsub(/^[[:space:]]+|[[:space:]]+\"|\"/, \"\", \$2); print \$2; exit }" "$CONFIG")
+fi
+if [ -z "$MODEL" ]; then
+    echo "Error: --model not provided and no default_model found in $CONFIG" >&2
+    exit 1
+fi
+if [ -z "$SYNC_MODEL" ]; then
+    SYNC_MODEL="$MODEL"
+fi
+echo "[setup] Model: $MODEL"
+echo "[setup] Sync model: $SYNC_MODEL"
+
 # Resolve API key
 MCT_API_KEY_ARG=""
 if [ -n "$API_KEY" ]; then
@@ -338,46 +358,9 @@ if [ -n "$API_KEY" ]; then
         fi
     fi
     echo "[setup] API key: from --api-key flag"
-elif [ -n "$API_KEY_FILE" ]; then
-    API_KEY_PROVIDER="${API_KEY_FILE%%:*}"
-    API_KEY_FILEPATH="${API_KEY_FILE#*:}"
-    # Expand ~ if present
-    API_KEY_FILEPATH="${API_KEY_FILEPATH/#\~/$HOME}"
-    if [ -d "$API_KEY_FILEPATH" ]; then
-        KEY_DIR="$API_KEY_FILEPATH"
-        API_KEY_FILEPATH=""
-        for candidate in "work-api-key.txt" "api-key.txt"; do
-            if [ -f "$KEY_DIR/$candidate" ]; then
-                API_KEY_FILEPATH="$KEY_DIR/$candidate"
-                break
-            fi
-        done
-        if [ -z "$API_KEY_FILEPATH" ]; then
-            # fall back to first *.txt file
-            for f in "$KEY_DIR"/*.txt; do
-                if [ -f "$f" ]; then
-                    API_KEY_FILEPATH="$f"
-                    break
-                fi
-            done
-        fi
-        if [ -z "$API_KEY_FILEPATH" ]; then
-            echo "Error: no key file found in directory: $KEY_DIR (looked for work-api-key.txt, api-key.txt, *.txt)" >&2
-            exit 1
-        fi
-    elif [ ! -f "$API_KEY_FILEPATH" ]; then
-        echo "Error: API key file not found: $API_KEY_FILEPATH" >&2
-        exit 1
-    fi
-    API_KEY_VALUE="$(tr -d '\n\r' < "$API_KEY_FILEPATH")"
-    if [ -z "$API_KEY_VALUE" ]; then
-        echo "Error: API key file is empty: $API_KEY_FILEPATH" >&2
-        exit 1
-    fi
-    MCT_API_KEY_ARG="--api-key ${API_KEY_PROVIDER}:${API_KEY_VALUE}"
-    echo "[setup] API key: from --api-key-file ($API_KEY_FILEPATH)"
 else
-    echo "[setup] API key: using config file or environment"
+    echo "Error: --api-key is required" >&2
+    usage
 fi
 
 # Resolve sync API key
@@ -421,24 +404,52 @@ MCT_ENV="$FORGE_ENV"
 # Sync cache setup
 SYNC_CACHE_DIR="$HOME/.cache/mct-eval-sync/$PROJECT_NAME/$HEAD_SHA/readme"
 
-# Sync cache: always run mct-agent sync (fast when tag matches, slow on first run)
+# Copy existing sync state from the main repo into the worktree if available and valid
+if [ -f "$REPO/.machtiani/artifacts/readme/internal-readme.md" ]; then
+    echo "[setup] Found existing sync state in repo, copying to worktree..."
+    mkdir -p "$MCT_WORKTREE/.machtiani/artifacts/readme"
+    shopt -s dotglob
+    cp -r "$REPO/.machtiani/artifacts/readme/." "$MCT_WORKTREE/.machtiani/artifacts/readme/"
+    shopt -u dotglob
+    echo "[setup] Sync state copied from main repo."
+    SYNC_NEEDED=false
+else
+    SYNC_NEEDED=true
+fi
 
-echo ""
-echo "[setup] Running mct-agent sync in worktree..."
-cd "$MCT_WORKTREE"
-MACHTIANI_CONFIG="$CONFIG" mct-agent sync \
-    --model "$SYNC_MODEL" \
-    $SYNC_API_KEY_ARG \
-    --timeout-per-turn 0 \
-    --max-steps 20 || {
-    echo "WARNING: mct-agent sync failed (non-fatal, continuing)" >&2
-}
-echo "[setup] mct-agent sync completed successfully."
+# Also check and restore from cache if available and we still need sync
+if [ "$SYNC_NEEDED" = true ] && [ -f "$SYNC_CACHE_DIR/internal-readme.md" ]; then
+    echo "[setup] Found cached sync state, restoring to worktree..."
+    mkdir -p "$MCT_WORKTREE/.machtiani/artifacts/readme"
+    shopt -s dotglob
+    cp -r "$SYNC_CACHE_DIR/." "$MCT_WORKTREE/.machtiani/artifacts/readme/"
+    shopt -u dotglob
+    echo "[setup] Sync state restored from cache."
+    SYNC_NEEDED=false
+fi
+
+if [ "$SYNC_NEEDED" = true ]; then
+    echo ""
+    echo "[setup] No existing sync state found. Running mct-agent sync in worktree..."
+    cd "$MCT_WORKTREE"
+    MACHTIANI_CONFIG="$CONFIG" mct-agent sync \
+        --model "$SYNC_MODEL" \
+        $SYNC_API_KEY_ARG \
+        --timeout-per-turn 0 \
+        --max-steps 20 || {
+        echo "WARNING: mct-agent sync failed (non-fatal, continuing)" >&2
+    }
+    echo "[setup] mct-agent sync completed successfully."
+else
+    echo "[setup] Skipping mct-agent sync (state already available)."
+fi
 
 # Cache the sync result for future runs
 if [ ! -d "$SYNC_CACHE_DIR" ] && [ -d "$MCT_WORKTREE/.machtiani/artifacts/readme" ]; then
     mkdir -p "$SYNC_CACHE_DIR"
-    cp -r "$MCT_WORKTREE/.machtiani/artifacts/readme/"* "$SYNC_CACHE_DIR/"
+    shopt -s dotglob
+    cp -r "$MCT_WORKTREE/.machtiani/artifacts/readme/." "$SYNC_CACHE_DIR/"
+    shopt -u dotglob
     echo "[setup] Sync result cached at: $SYNC_CACHE_DIR"
 fi
 
@@ -457,7 +468,7 @@ echo "============================================================"
 PLAN_PROMPT="$OUTPUT_DIR/plan_prompt.md"
 echo "[plan] Creating plan-only prompt at $PLAN_PROMPT..."
 {
-    echo "IMPORTANT: Do not make any code changes. Produce only a detailed implementation plan. Do not modify any files."
+    echo "Produce a detailed implementation plan. Do not modify any files, unless the user instructs you."
     echo ""
     cat "$PROMPT"
 } > "$PLAN_PROMPT"
@@ -1193,6 +1204,7 @@ if [ "$KEEP" = true ]; then
     echo "[teardown] Worktree (mct): $MCT_WORKTREE"
     echo "[teardown] Worktree (forge): $FORGE_WORKTREE"
     echo "[teardown] Worktree (judge): $JUDGE_WORKTREE"
+    echo "[teardown] Session temp root: $SESSION_TEMP_ROOT"
     echo "[teardown] Artifacts: $OUTPUT_DIR"
 else
     echo "[teardown] Removing worktrees..."
