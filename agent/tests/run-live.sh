@@ -704,11 +704,9 @@ generate_test_config() {
   FILE_DISCOVERY_MODEL_ALIAS="${OPENAI_FILE_DISCOVERY_MODEL_ALIAS:-${fd_remote_model}}"
 
   if [[ "$LIVE_MODE" == true ]]; then
-    TEST_MODEL_ALIAS="${TEST_MODEL:-${OPENAI_MODEL:-${ORCH_MODEL_ALIAS}}}"
-    # Fallback to a default if all env vars are empty
-    if [[ -z "$TEST_MODEL_ALIAS" ]]; then
-      TEST_MODEL_ALIAS="sonnet"
-    fi
+    # TEST_MODEL_ALIAS is already set by the caller, do nothing here
+    ORCH_MODEL_ALIAS="${TEST_MODEL_ALIAS}"
+    FILE_DISCOVERY_MODEL_ALIAS="${TEST_MODEL_ALIAS}"
   else
     TEST_MODEL_ALIAS="test-model"
     ORCH_MODEL_ALIAS="${TEST_MODEL_ALIAS}"
@@ -750,6 +748,76 @@ if not replaced:
 path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 PY
 
+if [[ "$LIVE_MODE" == true ]]; then
+  "$PYTHON_BIN" - "$config_file" "$TEST_MODEL_ALIAS" "$provider_api_key" "$provider_base_url" <<'PY'
+import pathlib
+import re
+import sys
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
+
+config_path = pathlib.Path(sys.argv[1])
+alias = sys.argv[2]
+api_key = sys.argv[3]
+base_url = sys.argv[4]
+
+# 1. Parse TOML to find which provider the model alias references.
+with config_path.open('rb') as fh:
+    data = tomllib.load(fh)
+
+models = data.get('models', {})
+if alias not in models:
+    print(f"ERROR: model alias '{alias}' not found in config", file=sys.stderr)
+    sys.exit(1)
+
+provider_name = models[alias].get('provider', '')
+if not provider_name:
+    print(f"ERROR: model alias '{alias}' has no provider field", file=sys.stderr)
+    sys.exit(1)
+
+# 2. Line-based edit: set api_key and base_url in the provider section.
+lines = config_path.read_text(encoding='utf-8').splitlines()
+
+def replace_section_key(src_lines, section_name, key, value):
+    out = []
+    in_section = False
+    found_section = False
+    wrote_key = False
+    for line in src_lines:
+        stripped = line.strip()
+        if stripped.startswith('[') and stripped.endswith(']'):
+            if in_section and not wrote_key:
+                out.append(f'{key} = "{value}"')
+                wrote_key = True
+            in_section = stripped == f'[{section_name}]'
+            if in_section:
+                found_section = True
+            out.append(line)
+            continue
+        if in_section and re.match(rf'^\s*{re.escape(key)}\s*=', line):
+            out.append(f'{key} = "{value}"')
+            wrote_key = True
+            continue
+        out.append(line)
+    if in_section and not wrote_key:
+        out.append(f'{key} = "{value}"')
+    if not found_section:
+        if out and out[-1] != '':
+            out.append('')
+        out.append(f'[{section_name}]')
+        out.append(f'{key} = "{value}"')
+    return out
+
+section = f'providers.{provider_name}'
+lines = replace_section_key(lines, section, 'api_key', api_key)
+lines = replace_section_key(lines, section, 'base_url', base_url)
+
+config_path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+PY
+else
   cat >> "$config_file" <<EOF
 
 [providers.${test_provider_name}]
@@ -792,6 +860,7 @@ EOF
   write_model_block "$FILE_DISCOVERY_MODEL_ALIAS" "$fd_remote_model"
 
   unset -f write_model_block
+fi
 
   if [[ "${TRACE_TEST_CONFIG:-}" == "true" ]]; then
     echo "Generated test config ($config_file):" >&2
@@ -1122,6 +1191,27 @@ cleanup_config() {
 }
 trap cleanup_config EXIT
 
+# Resolve model aliases in the parent shell so they are available
+# both inside generate_test_config (subshell) and to subsequent commands.
+if [[ "$LIVE_MODE" == true ]]; then
+  if [[ -n "${TEST_MODEL:-}" ]]; then
+    TEST_MODEL_ALIAS="$TEST_MODEL"
+  elif [[ -n "${TEST_MODEL_ALIAS:-}" ]]; then
+    : # already set
+  else
+    echo "Error: TEST_MODEL and TEST_MODEL_ALIAS are both unset" >&2
+    exit 1
+  fi
+  ORCH_MODEL_ALIAS="${TEST_MODEL_ALIAS}"
+  FILE_DISCOVERY_MODEL_ALIAS="${TEST_MODEL_ALIAS}"
+else
+  TEST_MODEL_ALIAS="test-model"
+  ORCH_MODEL_ALIAS="${TEST_MODEL_ALIAS}"
+  FILE_DISCOVERY_MODEL_ALIAS="${TEST_MODEL_ALIAS}"
+  orch_remote_model="gpt-4o-mini"
+  fd_remote_model="${orch_remote_model}"
+fi
+
 TEST_CONFIG_FILE="$(generate_test_config)"
 export MACHTIANI_CONFIG="$TEST_CONFIG_FILE"
 
@@ -1253,7 +1343,7 @@ run_happy_case() {
   local -a cmd=(
     timeout $((max_steps * 180)) "$MCT_AGENT" run
     --max-steps "$max_steps"
-    --patch-no-apply
+    
   )
   if [[ "$has_timeout" == false ]]; then
     cmd+=(--timeout-per-turn 300)
@@ -1510,7 +1600,7 @@ run_user_directed_suspend_case() {
   MACHTIANI_CONFIG="$stub_config" \
     timeout 240 "$MCT_AGENT" run \
       --max-steps 2 \
-      --patch-no-apply \
+      \
       --timeout-per-turn 300 \
       --model "$stub_alias" \
       --orch-model "$stub_alias" \
@@ -1584,7 +1674,7 @@ PY
   MACHTIANI_CONFIG="$stub_config" \
     timeout 240 "$MCT_AGENT" run \
       --max-steps 2 \
-      --patch-no-apply \
+      \
       --timeout-per-turn 300 \
       --session-id "$agent_session" \
       --model "$stub_alias" \
@@ -1859,7 +1949,7 @@ EOF
   local -a cmd=(
     timeout 240 "$MCT_AGENT" run
     --max-steps 2
-    --patch-no-apply
+    
     --timeout-per-turn 300
   )
   if ((${#COMMON_AGENT_ARGS[@]})); then
@@ -2006,7 +2096,7 @@ run_shell_container_workspace_live_case() {
     timeout 900 "$MCT_AGENT" run
     --max-steps 1
     --timeout-per-turn 900
-    --patch-no-apply
+    
     --persist-tmp-data
     --shell-agent
   )
@@ -2162,7 +2252,7 @@ run_resume_without_mode_case() {
   MACHTIANI_CONFIG="$stub_config" \
   timeout 120 "$MCT_AGENT" run \
     --max-steps 2 \
-    --patch-no-apply \
+    \
     --timeout-per-turn 300 \
     --mode code \
     --model "$stub_alias" \
@@ -2220,7 +2310,7 @@ except Exception as e:
   MACHTIANI_CONFIG="$stub_config" \
   timeout 120 "$MCT_AGENT" run \
     --max-steps 2 \
-    --patch-no-apply \
+    \
     --timeout-per-turn 300 \
     --session-id "$agent_session" \
     --model "$stub_alias" \
@@ -2297,7 +2387,7 @@ test_code_no_forge() {
   MACHTIANI_CONFIG="$stub_config" \
   timeout 120 "$MCT_AGENT" run \
     --max-steps 2 \
-    --patch-no-apply \
+    \
     --timeout-per-turn 300 \
     --mode code \
     --model "$stub_alias" \
@@ -2384,7 +2474,7 @@ test_code_forge_initial() {
   MACHTIANI_CONFIG="$stub_config" \
   timeout 120 "$MCT_AGENT" run \
     --max-steps 2 \
-    --patch-no-apply \
+    \
     --timeout-per-turn 300 \
     --mode code-forge \
     --model "$stub_alias" \
@@ -2474,7 +2564,7 @@ test_code_forge_resume_with_mode() {
   MACHTIANI_CONFIG="$stub_config" \
   timeout 120 "$MCT_AGENT" run \
     --max-steps 2 \
-    --patch-no-apply \
+    \
     --timeout-per-turn 300 \
     --mode code-forge \
     --model "$stub_alias" \
@@ -2525,7 +2615,7 @@ test_code_forge_resume_with_mode() {
   MACHTIANI_CONFIG="$stub_config" \
   timeout 120 "$MCT_AGENT" run \
     --max-steps 2 \
-    --patch-no-apply \
+    \
     --timeout-per-turn 300 \
     --session-id "$agent_session" \
     --mode code-forge \
@@ -2601,7 +2691,7 @@ test_code_forge_resume_without_mode() {
   MACHTIANI_CONFIG="$stub_config" \
   timeout 120 "$MCT_AGENT" run \
     --max-steps 2 \
-    --patch-no-apply \
+    \
     --timeout-per-turn 300 \
     --mode code-forge \
     --model "$stub_alias" \
@@ -2652,7 +2742,7 @@ test_code_forge_resume_without_mode() {
   MACHTIANI_CONFIG="$stub_config" \
   timeout 120 "$MCT_AGENT" run \
     --max-steps 2 \
-    --patch-no-apply \
+    \
     --timeout-per-turn 300 \
     --session-id "$agent_session" \
     --model "$stub_alias" \
@@ -2727,7 +2817,7 @@ test_code_resume_without_mode_no_forge() {
   MACHTIANI_CONFIG="$stub_config" \
   timeout 120 "$MCT_AGENT" run \
     --max-steps 2 \
-    --patch-no-apply \
+    \
     --timeout-per-turn 300 \
     --mode code \
     --model "$stub_alias" \
@@ -2778,7 +2868,7 @@ test_code_resume_without_mode_no_forge() {
   MACHTIANI_CONFIG="$stub_config" \
   timeout 120 "$MCT_AGENT" run \
     --max-steps 2 \
-    --patch-no-apply \
+    \
     --timeout-per-turn 300 \
     --session-id "$agent_session" \
     --model "$stub_alias" \
@@ -2837,7 +2927,7 @@ run_resume_from_conversation_json_case() {
   set +e
   timeout 420 "$MCT_AGENT" run \
     --max-steps 3 \
-    --patch-no-apply \
+    \
     --timeout-per-turn 300 \
     "${DEFAULT_MODEL_ARGS[@]}" \
     --text "Identify the main components of the mct-agent binary by reading agent/README.md and agent/cmd/mct-agent/main.go. List them." \
@@ -2903,7 +2993,7 @@ PY
   set +e
   timeout 420 "$MCT_AGENT" run \
     --max-steps 2 \
-    --patch-no-apply \
+    \
     --timeout-per-turn 300 \
     --session-id "$agent_session" \
     "${DEFAULT_MODEL_ARGS[@]}" \
@@ -3131,7 +3221,7 @@ PY
   MACHTIANI_CONFIG="$stub_config" \
     timeout 240 "$MCT_AGENT" run \
       --max-steps 2 \
-      --patch-no-apply \
+      \
       --timeout-per-turn 300 \
       --session-id "$session_id" \
       --model "$stub_alias" \
@@ -3252,7 +3342,7 @@ run_error_case() {
     cmd+=("${runtime_args[@]}")
   fi
   cmd+=(
-    --patch-no-apply
+    
   )
   if [[ -n "$prompt_override" ]]; then
     cmd+=(-t "$prompt_override")
@@ -3386,14 +3476,14 @@ run_happy_case "models-per-component" 3 \
   "Outline how the orchestrator and file discovery collaborators interact." \
   "$PER_COMPONENT_LABEL_PATTERN" \
   1 \
-  --patch \
+  \
   "${PER_COMPONENT_MODEL_ARGS[@]}"
 
 run_happy_case "models-mixed-fallback" 3 \
   "Summarize how shell-agent falls back to the orchestrator model when unspecified." \
   "$MIXED_LABEL_PATTERN" \
   1 \
-  --patch \
+  \
   --orch-model "$ORCH_MODEL_ALIAS"
 
 run_happy_case "models-catch-all" 1 \
