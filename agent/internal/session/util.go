@@ -1,12 +1,7 @@
 package session
 
 import (
-	"fmt"
-	"os"
 	"strings"
-
-	mctpatcher "github.com/tursomari/machtiani/agent/internal/mct/patcher"
-	"github.com/tursomari/machtiani/agent/internal/transcript"
 )
 
 func firstNonEmpty(vals ...string) string {
@@ -105,103 +100,4 @@ func countTurns(doc string) int {
 		count--
 	}
 	return count
-}
-
-func convertPatchMessages(msgs []mctpatcher.PatchValidationMessage) []transcript.PatchValidationMessage {
-	if len(msgs) == 0 {
-		return nil
-	}
-	out := make([]transcript.PatchValidationMessage, 0, len(msgs))
-	for _, msg := range msgs {
-		out = append(out, transcript.PatchValidationMessage{
-			Severity: strings.TrimSpace(msg.Severity),
-			Path:     strings.TrimSpace(msg.Path),
-			Line:     msg.Line,
-			Message:  strings.TrimSpace(firstNonEmpty(msg.Message, msg.Raw)),
-			Raw:      strings.TrimSpace(msg.Raw),
-		})
-	}
-	return out
-}
-
-func formatContentConflicts(conflicts []mctpatcher.ContentConflictDiagnostic) []string {
-	if len(conflicts) == 0 {
-		return nil
-	}
-	formatted := make([]string, 0, len(conflicts))
-	for _, conflict := range conflicts {
-		var b strings.Builder
-		header := fmt.Sprintf("* Edit[%d] %s: %s\n", conflict.EditIndex, strings.TrimSpace(conflict.Path), strings.TrimSpace(conflict.Reason))
-		b.WriteString(header)
-		for _, h := range conflict.HunkConflicts {
-			b.WriteString(fmt.Sprintf("  Hunk[%d] %s\n", h.HunkIndex, strings.TrimSpace(h.Reason)))
-			b.WriteString(fmt.Sprintf("    Expected lines: %d, actual: %d\n", h.ExpectedLines, h.ActualLines))
-			expectedHash := truncateHash(h.ExpectedHash)
-			actualHash := truncateHash(h.ActualHash)
-			if expectedHash != "" || actualHash != "" {
-				b.WriteString(fmt.Sprintf("    Expected hash: %s\n", expectedHash))
-				b.WriteString(fmt.Sprintf("    Actual hash:   %s\n", actualHash))
-			}
-			if strings.TrimSpace(h.DiffPreview) != "" {
-				b.WriteString(indentMultiline("    ", strings.TrimSpace(h.DiffPreview)))
-				b.WriteString("\n")
-			}
-		}
-		formatted = append(formatted, b.String())
-	}
-	return formatted
-}
-
-func truncateHash(hash string) string {
-	trimmed := strings.TrimSpace(hash)
-	if trimmed == "" {
-		return ""
-	}
-	if len(trimmed) <= 16 {
-		return trimmed
-	}
-	return trimmed[:16] + "..."
-}
-
-func indentMultiline(prefix, text string) string {
-	if text == "" {
-		return ""
-	}
-	lines := strings.Split(text, "\n")
-	for i, line := range lines {
-		if strings.TrimSpace(line) == "" {
-			lines[i] = line
-			continue
-		}
-		lines[i] = prefix + line
-	}
-	return strings.Join(lines, "\n")
-}
-
-func patchDiffForTranscript(path string, limit int) (string, error) {
-	trimmed := strings.TrimSpace(path)
-	if trimmed == "" {
-		return "", fmt.Errorf("patch path empty")
-	}
-	data, err := os.ReadFile(trimmed)
-	if err != nil {
-		return "", err
-	}
-	diff := strings.TrimSpace(string(data))
-	if diff == "" {
-		return "(empty patch diff)", nil
-	}
-	truncated := false
-	if limit > 0 && len(diff) > limit {
-		truncated = true
-		if limit <= 3 {
-			diff = diff[:limit]
-		} else {
-			diff = diff[:limit-3] + "..."
-		}
-	}
-	if truncated {
-		diff += "\n\n[diff truncated]"
-	}
-	return diff, nil
 }

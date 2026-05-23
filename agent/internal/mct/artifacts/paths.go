@@ -16,7 +16,6 @@ const (
 	chatDirName       = "chat"
 	readmeDirName     = "readme"
 	artifactDirName   = "artifacts"
-	patchesDirName    = "patches"
 	llmInputsDirName  = "llm"
 	trajectoryDirName = "trajectory"
 	scratchDirName    = "tmp"
@@ -76,15 +75,6 @@ func SessionArtifactsDirectory(sessionID string) (string, error) {
 		return "", err
 	}
 	return filepath.Join(root, artifactDirName), nil
-}
-
-// SessionPatchPlanFile returns the canonical path for the session patch plan JSON.
-func SessionPatchPlanFile(sessionID string) (string, error) {
-	artifactsDir, err := SessionArtifactsDirectory(sessionID)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(artifactsDir, "patch-plan.json"), nil
 }
 
 // SessionConversationFile returns the canonical path for the session
@@ -182,16 +172,6 @@ func SessionTrajectoryFile(sessionID, name string) (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, name+".jsonl"), nil
-}
-
-// SessionPatchesDirectory returns the directory under the session artifacts
-// directory dedicated to storing generated patch files.
-func SessionPatchesDirectory(sessionID string) (string, error) {
-	artifactsDir, err := SessionArtifactsDirectory(sessionID)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(artifactsDir, patchesDirName), nil
 }
 
 // SessionLLMDirectory returns the directory under the session artifacts

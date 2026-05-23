@@ -387,7 +387,6 @@ func tasksToDisplay(tasks []modeTaskState) []ui.ModeTaskDisplay {
 func applyModeDefaults(cfg *Config, mode string) {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case "coding":
-		cfg.Patch = true
 		if cfg.MaxSteps < 3 {
 			cfg.MaxSteps = 3
 		}

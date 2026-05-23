@@ -9,20 +9,15 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 
-	"github.com/tursomari/machtiani/agent/internal/conversation"
 	"github.com/tursomari/machtiani/agent/internal/git"
 	"github.com/tursomari/machtiani/agent/internal/llm"
-	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/contextbuilder"
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/discoveryrunner"
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/naming"
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/readme"
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/session"
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/utils"
-	"github.com/tursomari/machtiani/agent/internal/patcher"
-	"github.com/tursomari/machtiani/agent/internal/patchlog"
 	"github.com/tursomari/machtiani/agent/internal/prompts"
 	"github.com/tursomari/machtiani/agent/internal/templates"
 )
@@ -30,7 +25,6 @@ import (
 var (
 	chatStreamWithRuntime  = llm.ChatStreamWithResolvedFallback
 	discoveryRunnerRun     = discoveryrunner.Run
-	patchPromptLogger      = patchlog.WritePrompt
 )
 
 const defaultShellAgentPromptNotice = "I understand that I don't have access to a shell directly. The `shell-agent` will carry out my request and report back with explanation of the results and not necessarily the full output of commands it executes."
@@ -71,7 +65,6 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 	}
 
 	includeHistory := opts.IncludeHistory
-	useBaselineContext := isPatcherPromptMode(mode)
 
 	if err := validateMCTPromptsConfig(opts.Prompts); err != nil {
 		return res, err
@@ -94,9 +87,8 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 	}
 	combined := opts.Prompt
 	included := []string(nil)
+	filtered := []string(nil)
 	fileDiscoveryRan := false
-	var filtered []string
-	assistantOverride := ""
 
 	if !isAnswerOnly && !opts.ShellAgent {
 		ignoreFiles, err := utils.ReadIgnoreFile(".machtiani.ignore")
@@ -140,12 +132,6 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 		// History is carried in pre-built messages; the combined
 		// string is only used for the header template.
 		combined = opts.Prompt
-	case useBaselineContext:
-		var err error
-		combined, included, err = buildBaselinePromptContext(opts.Prompt, hist, filtered, includeHistory, opts.MaxInputTokens, opts.SessionID, opts.Verbose, historyTemplate)
-		if err != nil {
-			return res, err
-		}
 	default:
 		options := contextbuilder.Options{IncludeHistory: includeHistory, MaxInputTokens: opts.MaxInputTokens, PreludeTemplate: historyTemplate}
 		var buildErr error
@@ -202,21 +188,8 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 	if runtimeIsZero(answerRuntime) {
 		answerRuntime = opts.Runtime
 	}
-	if shouldLogPatchPrompt(opts) {
-		meta := patchlog.Metadata{
-			Source: "prompt.run",
-			Model:  strings.TrimSpace(answerRuntime.Resolved.Model),
-			Alias:  strings.TrimSpace(answerRuntime.Alias),
-			Note:   fmt.Sprintf("mode=%s", strings.TrimSpace(opts.Mode)),
-		}
-		if path, err := patchPromptLogger(combined, meta); err != nil {
-			fmt.Fprintf(os.Stderr, "[patch-log] failed to write prompt log: %v\n", err)
-		} else if opts.Verbose {
-			fmt.Fprintf(os.Stderr, "[patch-log] wrote prompt log to %s\n", path)
-		}
-	}
 	chatCtx := llm.WithAPIKeyOverrides(ctx, answerRuntime.APIKeyOverrides)
-	assistant := assistantOverride
+	assistant := ""
 	assistantFromShell := false
 	if shellAgentOutput != "" {
 		assistant = shellAgentOutput
@@ -241,9 +214,7 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 	if len(included) > 0 {
 		res.FullText += formatRetrievedSection(included)
 	}
-	if fullDiffs, err := loadFullDiffsForSession(opts.SessionID, opts.Verbose); err == nil && strings.TrimSpace(fullDiffs) != "" {
-		res.FullText = appendFullDiffSection(res.FullText, fullDiffs)
-	}
+
 	res.RetrievedFiles = append([]string(nil), included...)
 	res.FileDiscoveryRan = fileDiscoveryRan
 	res.ShellAgentUsed = shellAgentUsed
@@ -277,158 +248,11 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 	return res, nil
 }
 
-func buildBaselinePromptContext(prompt string, history []contextbuilder.Message, filePaths []string, includeHistory bool, maxInputTokens int, sessionID string, verbose bool, historyTemplate string) (string, []string, error) {
-	options := contextbuilder.Options{IncludeHistory: includeHistory, MaxInputTokens: maxInputTokens, PreludeTemplate: historyTemplate}
-	base, _, err := contextbuilder.Build(prompt, nil, history, options)
-	if err != nil {
-		return "", nil, err
-	}
 
-	if len(filePaths) == 0 {
-		return base, nil, nil
-	}
 
-	sessionID = strings.TrimSpace(sessionID)
-	if sessionID == "" {
-		if verbose {
-			fmt.Fprintf(os.Stderr, "[baseline-context] session id missing; falling back to raw file contents\n")
-		}
-		combined, included, err := contextbuilder.Build(prompt, filePaths, history, options)
-		if err != nil {
-			return "", nil, err
-		}
-		return combined, included, nil
-	}
 
-	cwd, err := os.Getwd()
-	if err != nil {
-		return "", nil, fmt.Errorf("resolve working directory: %w", err)
-	}
-	repoRoot, err := git.RepoRoot(cwd)
-	if err != nil {
-		if verbose {
-			fmt.Fprintf(os.Stderr, "[baseline-context] not inside a git repository; falling back to raw file contents: %v\n", err)
-		}
-		combined, included, buildErr := contextbuilder.Build(prompt, filePaths, history, options)
-		if buildErr != nil {
-			return "", nil, buildErr
-		}
-		return combined, included, nil
-	}
 
-	baseline, err := patcher.EnsureBaseline(sessionID, repoRoot, time.Now())
-	if err != nil {
-		if verbose {
-			fmt.Fprintf(os.Stderr, "[baseline-context] ensure baseline failed; falling back to raw file contents: %v\n", err)
-		}
-		combined, included, buildErr := contextbuilder.Build(prompt, filePaths, history, options)
-		if buildErr != nil {
-			return "", nil, buildErr
-		}
-		return combined, included, nil
-	}
 
-	sections := make([]string, 0, len(filePaths))
-	included := make([]string, 0, len(filePaths))
-	for _, rel := range filePaths {
-		section, ok, err := patcher.BuildBaselineDiffSection(baseline, repoRoot, rel)
-		if err != nil {
-			if verbose {
-				fmt.Fprintf(os.Stderr, "[baseline-context] failed to render %s: %v\n", rel, err)
-			}
-			continue
-		}
-		if ok {
-			sections = append(sections, section)
-			included = append(included, rel)
-		}
-	}
-
-	if len(sections) == 0 {
-		if verbose {
-			fmt.Fprintf(os.Stderr, "[baseline-context] no diff sections generated; falling back to raw file contents\n")
-		}
-		combined, fallbackIncluded, buildErr := contextbuilder.Build(prompt, filePaths, history, options)
-		if buildErr != nil {
-			return "", nil, buildErr
-		}
-		return combined, fallbackIncluded, nil
-	}
-
-	diffBlock := strings.Join(sections, "\n\n")
-	var builder strings.Builder
-	base = strings.TrimRight(base, "\n")
-	if strings.TrimSpace(base) != "" {
-		builder.WriteString(base)
-		builder.WriteString("\n\n")
-	}
-	builder.WriteString("Here are baseline-relative unified diffs for the referenced files:\n\n")
-	builder.WriteString(diffBlock)
-
-	return builder.String(), included, nil
-}
-
-func loadFullDiffsForSession(sessionID string, verbose bool) (string, error) {
-	sessionID = strings.TrimSpace(sessionID)
-	if sessionID == "" {
-		return "", nil
-	}
-	conversationPath, err := artifacts.SessionConversationFile(sessionID)
-	if err != nil {
-		return "", err
-	}
-	data, err := os.ReadFile(conversationPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			if verbose {
-				fmt.Fprintf(os.Stderr, "[full-diff] conversation not found at %s\n", conversationPath)
-			}
-			return "", nil
-		}
-		if verbose {
-			fmt.Fprintf(os.Stderr, "[full-diff] read conversation failed: %v\n", err)
-		}
-		return "", err
-	}
-	conv, err := conversation.Unmarshal(data)
-	if err != nil {
-		if verbose {
-			fmt.Fprintf(os.Stderr, "[full-diff] parse conversation failed: %v\n", err)
-		}
-		return "", err
-	}
-	fullDiffs := conversation.ExtractFullDiffs(conv)
-	if verbose && strings.TrimSpace(fullDiffs) == "" {
-		fmt.Fprintln(os.Stderr, "[full-diff] no full diffs found")
-	}
-	return fullDiffs, nil
-}
-
-func appendFullDiffSection(base, fullDiffs string) string {
-	trimmedDiffs := strings.TrimRight(fullDiffs, "\n")
-	if strings.TrimSpace(trimmedDiffs) == "" {
-		return base
-	}
-	const sectionHeader = "# Full Diffs of Patched Files"
-	marker := "\n\n---\n\n" + sectionHeader
-	if idx := strings.Index(base, marker); idx != -1 {
-		base = strings.TrimRight(base[:idx], "\n")
-	}
-	section := marker + "\n\n" + trimmedDiffs
-	if strings.TrimSpace(base) == "" {
-		return strings.TrimLeft(section, "\n")
-	}
-	return strings.TrimRight(base, "\n") + section
-}
-
-func isPatcherPromptMode(mode string) bool {
-	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "patch", "patcher", "patch-json", "strict-patch":
-		return true
-	default:
-		return false
-	}
-}
 
 func runReadmeManager(ctx context.Context, opts RunOptions, isAnswerOnly bool) error {
 	if opts.Readme == nil || !opts.Readme.Enabled {
@@ -589,16 +413,6 @@ func validateMCTPromptsConfig(cfg *llm.MCTPromptsConfig) error {
 	if strings.TrimSpace(cfg.ShellAgentPromptNotice) == "" {
 		if embedded, err := templates.GetEmbeddedTemplate("mct.shell_agent_prompt_notice"); err == nil {
 			cfg.ShellAgentPromptNotice = embedded
-		}
-	}
-	if strings.TrimSpace(cfg.PatchSuccessNote) == "" {
-		if embedded, err := templates.GetEmbeddedTemplate("mct.patch_success_note"); err == nil {
-			cfg.PatchSuccessNote = embedded
-		}
-	}
-	if strings.TrimSpace(cfg.FullDiffNote) == "" {
-		if embedded, err := templates.GetEmbeddedTemplate("mct.full_diff_note"); err == nil {
-			cfg.FullDiffNote = embedded
 		}
 	}
 	if strings.TrimSpace(cfg.ConversationHistoryTemplate) == "" {
@@ -956,24 +770,6 @@ func AppendShellAgentPromptNotice(prompt string, cfg *llm.MCTPromptsConfig) stri
 	return strings.TrimRight(prompt, "\n") + "\n\n" + notice
 }
 
-func shouldLogPatchPrompt(opts RunOptions) bool {
-	mode := strings.ToLower(strings.TrimSpace(opts.Mode))
-	switch mode {
-	case "patch", "patcher", "patch-json", "strict-patch":
-		return true
-	}
-	for _, directive := range opts.ResponseDirectives {
-		clean := strings.ToLower(strings.TrimSpace(directive))
-		switch {
-		case strings.Contains(clean, "patch"),
-			strings.Contains(clean, "instruction"),
-			strings.Contains(clean, "edits"),
-			strings.Contains(clean, "hunk"):
-			return true
-		}
-	}
-	return false
-}
 
 func runtimeIsZero(rt ModelRuntime) bool {
 	if strings.TrimSpace(rt.Resolved.Model) != "" {

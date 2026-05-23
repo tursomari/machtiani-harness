@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
-	"github.com/tursomari/machtiani/agent/internal/planner"
 )
 
 func TestSaveLoadSessionStateRoundTrip(t *testing.T) {
@@ -26,20 +25,7 @@ func TestSaveLoadSessionStateRoundTrip(t *testing.T) {
 		TurnsCompleted:  3,
 		PlannerProgress: &PlannerProgressState{
 			SuccessFiles:   []string{"README.md", "db/migrations/20240101.sql"},
-			AppliedPatches: 2,
-			PendingReview: &planner.PendingReview{
-				PatchPath:        "patch.diff",
-				ReversePatchPath: "patch.diff.reverse",
-				Description:      "Update migration",
-				Files:            []string{"db/migrations/20240101.sql"},
-				Sequence:         3,
 			},
-		},
-		PendingPatchTurn: &PendingPatchTurnState{
-			Step:        4,
-			Description: "Update migration",
-			Answer:      "diff --git a/file b/file",
-		},
 		SuspendedUserInput: &SuspendedUserInputState{
 			Kind:        "user-directed-ask",
 			Question:    "Do you want the safer fix, or the faster fix?",
@@ -102,33 +88,6 @@ func TestSaveLoadSessionStateRoundTrip(t *testing.T) {
 				t.Fatalf("unexpected success file at %d: got %q want %q", i, got[i], want[i])
 			}
 		}
-	}
-	if loaded.PlannerProgress.AppliedPatches != state.PlannerProgress.AppliedPatches {
-		t.Fatalf("unexpected applied patches: got %d want %d", loaded.PlannerProgress.AppliedPatches, state.PlannerProgress.AppliedPatches)
-	}
-	if loaded.PlannerProgress.PendingReview == nil {
-		t.Fatalf("expected pending review to round-trip")
-	}
-	if loaded.PlannerProgress.PendingReview.Description != state.PlannerProgress.PendingReview.Description {
-		t.Fatalf("unexpected pending review description: got %q want %q", loaded.PlannerProgress.PendingReview.Description, state.PlannerProgress.PendingReview.Description)
-	}
-	if len(loaded.PlannerProgress.PendingReview.Files) != len(state.PlannerProgress.PendingReview.Files) {
-		t.Fatalf("unexpected pending review files length")
-	}
-	if state.PendingPatchTurn == nil {
-		t.Fatalf("test setup missing pending patch turn")
-	}
-	if loaded.PendingPatchTurn == nil {
-		t.Fatalf("expected pending patch turn to round-trip")
-	}
-	if loaded.PendingPatchTurn.Step != state.PendingPatchTurn.Step {
-		t.Fatalf("unexpected pending patch step: got %d want %d", loaded.PendingPatchTurn.Step, state.PendingPatchTurn.Step)
-	}
-	if loaded.PendingPatchTurn.Description != state.PendingPatchTurn.Description {
-		t.Fatalf("unexpected pending patch description: got %q want %q", loaded.PendingPatchTurn.Description, state.PendingPatchTurn.Description)
-	}
-	if loaded.PendingPatchTurn.Answer != state.PendingPatchTurn.Answer {
-		t.Fatalf("unexpected pending patch answer: got %q want %q", loaded.PendingPatchTurn.Answer, state.PendingPatchTurn.Answer)
 	}
 	if loaded.SuspendedUserInput == nil {
 		t.Fatalf("expected suspended user input to round-trip")

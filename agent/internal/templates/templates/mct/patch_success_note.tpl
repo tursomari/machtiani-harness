@@ -1,2 +1,0 @@
-Note:
-The assistant must understand that the following `=== ANSWER` block is a unified diff produced by the patcher agent, and can be trusted as the source of truth for the resulting change. It is the assistant's responsibility to analyze the unified diff. There is no way for me or the assistant to revert changes directly with git or by request. The assistant must ask for changes in the manner above to make any file edits, patches, or changes.

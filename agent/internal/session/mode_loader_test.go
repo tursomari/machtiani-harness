@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/tursomari/machtiani/agent/internal/llm"
-	"github.com/tursomari/machtiani/agent/internal/planner"
 )
 
 func TestInstructionsToTasksFromTomlDocument(t *testing.T) {
@@ -96,9 +95,7 @@ func TestUpdateModePlanProgressNoLongerPersistsProgressInModePlan(t *testing.T) 
 		t.Fatalf("persistModePlan error: %v", err)
 	}
 	progress := &PlannerProgressState{
-		SuccessFiles:   []string{"LICENSE", "docs/README.md"},
-		AppliedPatches: 2,
-		PendingReview:  &planner.PendingReview{PatchPath: "patch.diff"},
+		SuccessFiles: []string{"LICENSE", "docs/README.md"},
 	}
 	if err := UpdateModePlanProgress(sessionID, progress); err != nil {
 		t.Fatalf("UpdateModePlanProgress error: %v", err)

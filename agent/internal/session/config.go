@@ -11,7 +11,6 @@ type Config struct {
 	MaxSteps                int
 	OrchModel               string
 	AnswerModel             string
-	PatcherModel            string
 	FileDiscoveryModel      string
 	AgentModel              string
 	TimeoutPerTurn          int
@@ -29,11 +28,6 @@ type Config struct {
 	TrajectoryStreamTokens  bool
 	TrajectoryExcerpt       int
 	TrajectoryOmitRepoRoot  bool
-	PatchNoApply            bool
-	Patch                   bool
-	PatchStrict             bool
-	// Enable full file rewrite mode for patches, converting hunk patches to full file replacements
-	PatchFull             bool
 	OpenAIAPIKey          string
 	OpenAIBaseURL         string
 	OpenAIModel           string
@@ -83,7 +77,6 @@ type legacyConfig struct {
 	maxSteps                int
 	orchModel               string
 	answerModel             string
-	patcherModel            string
 	fileDiscoveryModel      string
 	agentModel              string
 	timeoutPerTurn          int
@@ -101,10 +94,6 @@ type legacyConfig struct {
 	trajectoryStreamTokens  bool
 	trajectoryExcerpt       int
 	trajectoryOmitRepoRoot  bool
-	patchNoApply            bool
-	patch                   bool
-	patchStrict             bool
-	patchFull               bool
 	openAIAPIKey            string
 	openAIBaseURL           string
 	openAIModel             string
@@ -123,7 +112,6 @@ func newLegacyConfig(cfg Config) legacyConfig {
 		maxSteps:                cfg.MaxSteps,
 		orchModel:               cfg.OrchModel,
 		answerModel:             cfg.AnswerModel,
-		patcherModel:            cfg.PatcherModel,
 		fileDiscoveryModel:      cfg.FileDiscoveryModel,
 		agentModel:              cfg.AgentModel,
 		timeoutPerTurn:          cfg.TimeoutPerTurn,
@@ -140,10 +128,6 @@ func newLegacyConfig(cfg Config) legacyConfig {
 		trajectoryStreamTokens:  cfg.TrajectoryStreamTokens,
 		trajectoryExcerpt:       cfg.TrajectoryExcerpt,
 		trajectoryOmitRepoRoot:  cfg.TrajectoryOmitRepoRoot,
-		patchNoApply:            cfg.PatchNoApply,
-		patch:                   cfg.Patch,
-		patchStrict:             cfg.PatchStrict,
-		patchFull:               cfg.PatchFull,
 		openAIAPIKey:            cfg.OpenAIAPIKey,
 		openAIBaseURL:           cfg.OpenAIBaseURL,
 		openAIModel:             cfg.OpenAIModel,

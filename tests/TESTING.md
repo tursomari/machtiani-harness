@@ -3,7 +3,7 @@
 This directory hosts the `run-agent-undici.sh` script, which exercises `mct-agent` against the undici fixture repo to validate the internal README manager in a near-real workflow. It reproduces the state assertions from `agent/internal/mct/tests/run-undici-readme-integration.sh` but swaps stubbed CLI calls for end-to-end agent runs.
 
 ## What the Script Does
-- Builds local `mct`, `mct-agent`, `patcher`, and `file-discovery` binaries into an isolated temp bin directory.
+- Builds local `mct`, `mct-agent`, and `file-discovery` binaries into an isolated temp bin directory.
 - Clones `tests/repositories/undici` into a scratch workspace and runs five scenarios (initial generation, significant change, repeat, docs-only, latest).
 - Captures stdout, stderr, transcripts, final answers, and file-discovery outputs under `tests/artifacts/agent-undici/<case>/` for post-run triage.
 - Defaults to offline stubs (`MCT_LLM_TEST_STUB=stub-echo`, `MCT_README_TEST_STUB=mock`) so it runs without network access; only the first agent turn executes (`MAX_STEPS=1`) to focus on README regeneration.

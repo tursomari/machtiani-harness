@@ -18,18 +18,12 @@ var templateMap = map[string]string{
 	"planner.format_error_template":      "templates/planner/format_error_template.tpl",
 	"planner.plan_system":                "templates/planner/plan_system.tpl",
 	"planner.plan_prompt":                "templates/planner/plan_prompt.tpl",
-	"planner.plan_patch_rules":           "templates/planner/plan_patch_rules.tpl",
-	"planner.plan_patch_strict_rules":    "templates/planner/plan_patch_strict_rules.tpl",
-	"planner.plan_patch_enabled_intro":   "templates/planner/plan_patch_enabled_intro.tpl",
-	"planner.plan_patch_disabled_intro":  "templates/planner/plan_patch_disabled_intro.tpl",
 	"planner.ask_prompt":                 "templates/planner/ask_prompt.tpl",
 	"planner.ask_mixed_monitor":          "templates/planner/ask_mixed_monitor.tpl",
 	"planner.ask_user_directed_monitor":  "templates/planner/ask_user_directed_monitor.tpl",
 	"planner.ask_user_directed_purifier": "templates/planner/ask_user_directed_purifier.tpl",
 	"planner.finalize_prompt":            "templates/planner/finalize_prompt.tpl",
 	"planner.review_prompt":              "templates/planner/review_prompt.tpl",
-	"planner.patch_plan_generate":        "templates/planner/patch_plan_generate.tpl",
-	"planner.patch_plan_update":          "templates/planner/patch_plan_update.tpl",
 
 	// Shell-agent
 	"shell_agent.system_template":             "templates/shell-agent/system_template.tpl",
@@ -49,8 +43,6 @@ var templateMap = map[string]string{
 	"mct.shell_agent_prompt_notice":     "templates/mct/shell_agent_prompt_notice.tpl",
 	"mct.conversation_history_template": "templates/mct/conversation_history_template.tpl",
 	"mct.readme_system_template":        "templates/mct/readme_system_template.tpl",
-	"mct.patch_success_note":            "templates/mct/patch_success_note.tpl",
-	"mct.full_diff_note":                "templates/mct/full_diff_note.tpl",
 
 	// File discovery
 	"file_discovery.system_prompt_template": "templates/file-discovery/system_prompt_template.tpl",

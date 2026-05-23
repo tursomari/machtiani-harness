@@ -35,7 +35,7 @@ Scenarios covered
 
 Modes
 - Live: export `TEST_API_KEY`, `TEST_BASE_URL`, and `TEST_MODEL` before running, or omit `TEST_*` and let the harness fall back to `OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_MODEL`.
-- Optional live overrides: `TEST_ORCH_MODEL`, `TEST_PATCHER_MODEL`, and `TEST_FILE_DISCOVERY_MODEL` take precedence over the corresponding `OPENAI_*` component model vars.
+- Optional live overrides: `TEST_ORCH_MODEL` and `TEST_FILE_DISCOVERY_MODEL` take precedence over the corresponding `OPENAI_*` component model vars.
 - Dry-run: omit the env vars; the script injects stub credentials and appends `--dry-run`.
 
 Running from Codex or other agents

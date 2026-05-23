@@ -481,7 +481,6 @@ func configureSessionFlags(fs *pflag.FlagSet, cfg *session.Config, paramFlags, p
 	fs.StringVar(&cfg.OrchModel, "model", "", "Model alias defined in .machtiani/config.toml (alias for --orch-model)")
 	fs.StringVar(&cfg.OrchModel, "orch-model", "", "Model alias for orchestration/planner steps (default: config or env)")
 	fs.StringVar(&cfg.AnswerModel, "answer-model", "", "Model alias for final answer generation (defaults to --orch-model)")
-	fs.StringVar(&cfg.PatcherModel, "patcher-model", "", "Reserved placeholder; patch instructions currently use the orchestrator model")
 	fs.StringVar(&cfg.FileDiscoveryModel, "file-discovery-model", "", "Model alias for file discovery runs (default: orchestration model)")
 	fs.StringVar(&cfg.AgentModel, "agent-model", "", "Legacy planner model alias (deprecated; use --orch-model)")
 	fs.IntVar(&cfg.TimeoutPerTurn, "timeout-per-turn", 120, "per-turn timeout in seconds (set 0 for no timeout)")
@@ -501,10 +500,6 @@ func configureSessionFlags(fs *pflag.FlagSet, cfg *session.Config, paramFlags, p
 	fs.BoolVar(&cfg.TrajectoryStreamTokens, "trajectory-stream-tokens", false, "record LLM token streaming events in the trajectory (disabled by default)")
 	fs.IntVar(&cfg.TrajectoryExcerpt, "trajectory-excerpt", 512, "excerpt length (in characters) for prompts/responses captured in the trajectory")
 	fs.BoolVar(&cfg.TrajectoryOmitRepoRoot, "trajectory-omit-repo-root", false, "omit repo_root from trajectory events")
-	fs.BoolVar(&cfg.PatchNoApply, "patch-no-apply", false, "skip applying generated patches to the worktree (default: apply)")
-	fs.BoolVar(&cfg.Patch, "patch", false, "enable patch planning (disabled by default)")
-	fs.BoolVar(&cfg.PatchStrict, "patch-strict", true, "enable strict context-anchored patch mode (requires --patch)")
-	fs.BoolVar(&cfg.PatchFull, "patch-full", false, "Enable full file rewrite mode for patches, converting hunk patches to full file replacements")
 	fs.StringVar(&cfg.OpenAIAPIKey, "openai-api-key", "", "OpenAI-compatible API key (overrides env, deprecated)")
 	fs.StringVar(&cfg.OpenAIBaseURL, "openai-base-url", "", "OpenAI-compatible base URL (overrides env, deprecated)")
 	fs.StringVar(&cfg.OpenAIModel, "openai-model", "", "Direct upstream model name (deprecated; prefer --model)")
@@ -721,7 +716,6 @@ func handleSessionShowCommand(args []string) int {
 	}
 	if state.PlannerProgress != nil {
 		fmt.Printf("Planner Progress:\n")
-		fmt.Printf("  Applied Patches: %d\n", state.PlannerProgress.AppliedPatches)
 		if len(state.PlannerProgress.SuccessFiles) > 0 {
 			fmt.Printf("  Success Files:   %d files\n", len(state.PlannerProgress.SuccessFiles))
 		}

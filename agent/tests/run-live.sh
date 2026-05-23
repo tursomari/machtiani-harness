@@ -569,7 +569,7 @@ check_bin() {
   local got_dirty_raw=""
   if [ -n "$version_output" ]; then
     case "$name" in
-      mct-agent|patcher)
+      mct-agent)
         got_commit="$(printf '%s\n' "$version_output" | awk -F': ' '/^commit:/ {print $2; exit}')"
         got_commit="${got_commit:0:12}"
         got_dirty_raw="$(printf '%s\n' "$version_output" | awk -F': ' '/^dirty:/ {print $2; exit}')"
@@ -667,7 +667,6 @@ fi
 
 TEST_MODEL_ALIAS=""
 ORCH_MODEL_ALIAS=""
-PATCHER_MODEL_ALIAS=""
 FILE_DISCOVERY_MODEL_ALIAS=""
 TMP_ROOT="$SCRIPT_DIR/tmp"
 mkdir -p "$TMP_ROOT"
@@ -692,19 +691,16 @@ generate_test_config() {
   local provider_endpoint="/chat/completions"
 
   local orch_remote_model="gpt-4o-mini"
-  local patcher_remote_model="gpt-4o-mini"
   local fd_remote_model="gpt-4o-mini"
 
   if [[ "$LIVE_MODE" == true ]]; then
     provider_base_url="${TEST_BASE_URL:-${OPENAI_BASE_URL}}"
     provider_api_key="${TEST_API_KEY:-${OPENAI_API_KEY}}"
     orch_remote_model="${TEST_ORCH_MODEL:-${OPENAI_ORCH_MODEL:-${TEST_MODEL:-${OPENAI_MODEL}}}}"
-    patcher_remote_model="${TEST_PATCHER_MODEL:-${OPENAI_PATCHER_MODEL:-${orch_remote_model}}}"
-    fd_remote_model="${TEST_FILE_DISCOVERY_MODEL:-${OPENAI_FILE_DISCOVERY_MODEL:-${patcher_remote_model}}}"
+    fd_remote_model="${TEST_FILE_DISCOVERY_MODEL:-${OPENAI_FILE_DISCOVERY_MODEL:-${orch_remote_model}}}"
   fi
 
   ORCH_MODEL_ALIAS="${OPENAI_ORCH_MODEL_ALIAS:-${orch_remote_model}}"
-  PATCHER_MODEL_ALIAS="${OPENAI_PATCHER_MODEL_ALIAS:-${patcher_remote_model}}"
   FILE_DISCOVERY_MODEL_ALIAS="${OPENAI_FILE_DISCOVERY_MODEL_ALIAS:-${fd_remote_model}}"
 
   if [[ "$LIVE_MODE" == true ]]; then
@@ -716,11 +712,9 @@ generate_test_config() {
   else
     TEST_MODEL_ALIAS="test-model"
     ORCH_MODEL_ALIAS="${TEST_MODEL_ALIAS}"
-    PATCHER_MODEL_ALIAS="${TEST_MODEL_ALIAS}"
     FILE_DISCOVERY_MODEL_ALIAS="${TEST_MODEL_ALIAS}"
     orch_remote_model="gpt-4o-mini"
-    patcher_remote_model="${orch_remote_model}"
-    fd_remote_model="${patcher_remote_model}"
+    fd_remote_model="${orch_remote_model}"
   fi
 
   cp "$repo_config" "$config_file"
@@ -795,7 +789,6 @@ EOF
 
   write_model_block "$TEST_MODEL_ALIAS" "$orch_remote_model"
   write_model_block "$ORCH_MODEL_ALIAS" "$orch_remote_model"
-  write_model_block "$PATCHER_MODEL_ALIAS" "$patcher_remote_model"
   write_model_block "$FILE_DISCOVERY_MODEL_ALIAS" "$fd_remote_model"
 
   unset -f write_model_block
@@ -1140,7 +1133,6 @@ fi
 DEFAULT_MODEL_ARGS=(--model "$TEST_MODEL_ALIAS")
 PER_COMPONENT_MODEL_ARGS=(
   --orch-model "$ORCH_MODEL_ALIAS"
-  --patcher-model "$PATCHER_MODEL_ALIAS"
   --file-discovery-model "$FILE_DISCOVERY_MODEL_ALIAS"
 )
 
@@ -1446,7 +1438,6 @@ run_menu_flow_case() {
       1 \
       --model "$stub_alias" \
       --orch-model "$stub_alias" \
-      --patcher-model "$stub_alias" \
       --file-discovery-model "$stub_alias"
   )
   rc=$?
@@ -1523,7 +1514,6 @@ run_user_directed_suspend_case() {
       --timeout-per-turn 300 \
       --model "$stub_alias" \
       --orch-model "$stub_alias" \
-      --patcher-model "$stub_alias" \
       --file-discovery-model "$stub_alias" \
       --text "Ask me which tradeoff I prefer before you continue." \
       > "$stdout_suspend" 2> "$stderr_suspend"
@@ -1599,7 +1589,6 @@ PY
       --session-id "$agent_session" \
       --model "$stub_alias" \
       --orch-model "$stub_alias" \
-      --patcher-model "$stub_alias" \
       --file-discovery-model "$stub_alias" \
       --text "Use the safer fix that preserves behavior." \
       > "$stdout_resume" 2> "$stderr_resume"
@@ -1678,7 +1667,6 @@ run_mode_prompt_layers_case() {
       --mode code \
       --model "$stub_alias" \
       --orch-model "$stub_alias" \
-      --patcher-model "$stub_alias" \
       --file-discovery-model "$stub_alias"
   )
   rc=$?
@@ -2179,7 +2167,6 @@ run_resume_without_mode_case() {
     --mode code \
     --model "$stub_alias" \
     --orch-model "$stub_alias" \
-    --patcher-model "$stub_alias" \
     --file-discovery-model "$stub_alias" \
     --text "Explain how to modify files in this project." \
     > "$stdout_init" 2> "$stderr_init"
@@ -2238,7 +2225,6 @@ except Exception as e:
     --session-id "$agent_session" \
     --model "$stub_alias" \
     --orch-model "$stub_alias" \
-    --patcher-model "$stub_alias" \
     --file-discovery-model "$stub_alias" \
     --text "Continue." \
     > "$stdout_resume" 2> "$stderr_resume"
@@ -2316,7 +2302,6 @@ test_code_no_forge() {
     --mode code \
     --model "$stub_alias" \
     --orch-model "$stub_alias" \
-    --patcher-model "$stub_alias" \
     --file-discovery-model "$stub_alias" \
     --text "confirm the full path to README.md in the cwd" \
     > "$stdout_file" 2> "$stderr_file"
@@ -2404,7 +2389,6 @@ test_code_forge_initial() {
     --mode code-forge \
     --model "$stub_alias" \
     --orch-model "$stub_alias" \
-    --patcher-model "$stub_alias" \
     --file-discovery-model "$stub_alias" \
     --text "confirm the full path to README.md in the cwd" \
     > "$stdout_file" 2> "$stderr_file"
@@ -2495,7 +2479,6 @@ test_code_forge_resume_with_mode() {
     --mode code-forge \
     --model "$stub_alias" \
     --orch-model "$stub_alias" \
-    --patcher-model "$stub_alias" \
     --file-discovery-model "$stub_alias" \
     --text "confirm the full path to README.md in the cwd" \
     > "$stdout_init" 2> "$stderr_init"
@@ -2548,7 +2531,6 @@ test_code_forge_resume_with_mode() {
     --mode code-forge \
     --model "$stub_alias" \
     --orch-model "$stub_alias" \
-    --patcher-model "$stub_alias" \
     --file-discovery-model "$stub_alias" \
     --text "Continue." \
     > "$stdout_resume" 2> "$stderr_resume"
@@ -2624,7 +2606,6 @@ test_code_forge_resume_without_mode() {
     --mode code-forge \
     --model "$stub_alias" \
     --orch-model "$stub_alias" \
-    --patcher-model "$stub_alias" \
     --file-discovery-model "$stub_alias" \
     --text "confirm the full path to README.md in the cwd" \
     > "$stdout_init" 2> "$stderr_init"
@@ -2676,7 +2657,6 @@ test_code_forge_resume_without_mode() {
     --session-id "$agent_session" \
     --model "$stub_alias" \
     --orch-model "$stub_alias" \
-    --patcher-model "$stub_alias" \
     --file-discovery-model "$stub_alias" \
     --text "Continue." \
     > "$stdout_resume" 2> "$stderr_resume"
@@ -2752,7 +2732,6 @@ test_code_resume_without_mode_no_forge() {
     --mode code \
     --model "$stub_alias" \
     --orch-model "$stub_alias" \
-    --patcher-model "$stub_alias" \
     --file-discovery-model "$stub_alias" \
     --text "confirm the full path to README.md in the cwd" \
     > "$stdout_init" 2> "$stderr_init"
@@ -2804,7 +2783,6 @@ test_code_resume_without_mode_no_forge() {
     --session-id "$agent_session" \
     --model "$stub_alias" \
     --orch-model "$stub_alias" \
-    --patcher-model "$stub_alias" \
     --file-discovery-model "$stub_alias" \
     --text "Continue." \
     > "$stdout_resume" 2> "$stderr_resume"
@@ -3158,7 +3136,6 @@ PY
       --session-id "$session_id" \
       --model "$stub_alias" \
       --orch-model "$stub_alias" \
-      --patcher-model "$stub_alias" \
       --file-discovery-model "$stub_alias" \
       --text "Continue." \
       > "$stdout_resume" 2> "$stderr_resume"
@@ -3406,14 +3383,14 @@ if [[ "$LIVE_MODE" == true ]]; then
 fi
 
 run_happy_case "models-per-component" 3 \
-  "Outline how the orchestrator, patcher, and file discovery collaborators interact." \
+  "Outline how the orchestrator and file discovery collaborators interact." \
   "$PER_COMPONENT_LABEL_PATTERN" \
   1 \
   --patch \
   "${PER_COMPONENT_MODEL_ARGS[@]}"
 
 run_happy_case "models-mixed-fallback" 3 \
-  "Summarize how the patcher falls back to the orchestrator model when unspecified." \
+  "Summarize how shell-agent falls back to the orchestrator model when unspecified." \
   "$MIXED_LABEL_PATTERN" \
   1 \
   --patch \
@@ -3474,10 +3451,6 @@ run_error_case "invalid-orch-model" "" 1 "$MODEL_ALIAS_NOT_FOUND_PATTERN" \
   "Trigger orchestrator alias failure" \
   --orch-model "$INVALID_ALIAS"
 
-run_error_case "invalid-patcher-model" "" 1 "$MODEL_ALIAS_NOT_FOUND_PATTERN" \
-  "Trigger patcher alias failure" \
-  --patcher-model "$INVALID_ALIAS" \
-  "${DEFAULT_MODEL_ARGS[@]}"
 
 run_error_case "invalid-file-discovery-model" "" 1 "$MODEL_ALIAS_NOT_FOUND_PATTERN" \
   "Trigger file discovery alias failure" \

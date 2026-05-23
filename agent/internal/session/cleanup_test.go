@@ -163,7 +163,7 @@ func TestCleanupSkipsLockProtectedDir(t *testing.T) {
 	tempDir := t.TempDir()
 	now := time.Now()
 
-	target := filepath.Join(tempDir, "patcher-mirror-locked")
+	target := filepath.Join(tempDir, "workspace-mirror-locked")
 	if err := os.MkdirAll(target, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}

@@ -7,14 +7,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/tursomari/machtiani/agent/internal/conversation"
 	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
-	patchersvc "github.com/tursomari/machtiani/agent/internal/patcher"
 	"github.com/tursomari/machtiani/agent/internal/runner"
-	"github.com/tursomari/machtiani/agent/internal/session/fulldiff"
 	"github.com/tursomari/machtiani/agent/internal/tempdir"
 	"github.com/tursomari/machtiani/agent/internal/trajectory"
 	"github.com/tursomari/machtiani/agent/internal/transcript"
@@ -224,16 +221,6 @@ func prepareSessionEnvironment(sessionID string, cfg legacyConfig) (*sessionEnvi
 	workspaceRoot := filepath.Join(tmpRoot, "workspace-"+sessionID)
 	useSnapshotWorkspace := !isLocalSessionEnvironment(&globalConfig)
 
-	patchStrategy := ""
-	if globalConfig.Patcher != nil {
-		patchStrategy = strings.TrimSpace(globalConfig.Patcher.Strategy)
-	}
-	if patchStrategy == "" {
-		patchStrategy = "export-only"
-	}
-	if err := os.Setenv("MACHTIANI_PATCH_STRATEGY", patchStrategy); err != nil {
-		fmt.Fprintln(os.Stderr, "Warning: unable to export patch strategy:", err)
-	}
 	// In non-local environments the child tools should create temp data inside
 	// the snapshot workspace, not beside the host-side session lock. During the
 	// run MACHTIANI_TMP_ROOT is therefore repurposed from "scratch root override"
@@ -275,7 +262,6 @@ func prepareSessionEnvironment(sessionID string, cfg legacyConfig) (*sessionEnvi
 		} else {
 			_ = os.Setenv("MACHTIANI_TMP_ROOT", origTmpRootRaw)
 		}
-		_ = os.Unsetenv("MACHTIANI_PATCH_STRATEGY")
 		if strings.TrimSpace(origSessionTempRootRaw) == "" {
 			_ = os.Unsetenv("MACHTIANI_SESSION_TEMP_ROOT")
 		} else {
@@ -291,10 +277,8 @@ func prepareSessionEnvironment(sessionID string, cfg legacyConfig) (*sessionEnvi
 	}, nil
 }
 
-func prepareTranscriptBootstrap(cfg legacyConfig, sessionID, conversationGoal, conversationPath string, resumeMode bool, loadedState *SessionState, trajectoryWriter *trajectory.Writer, repoRoot string, notePrompts *llm.MCTPromptsConfig, runState *runLifecycleState) (*transcriptBootstrap, error) {
+func prepareTranscriptBootstrap(cfg legacyConfig, sessionID, conversationGoal, conversationPath string, resumeMode bool, loadedState *SessionState, trajectoryWriter *trajectory.Writer, repoRoot string, runState *runLifecycleState) (*transcriptBootstrap, error) {
 	resumeTranscript := loadResumeTranscript(cfg, loadedState, resumeMode, sessionID)
-	runState.notePrompts = notePrompts
-
 	tr, err := transcript.NewWithPath(cfg.transcriptFile, sessionID)
 	if err != nil {
 		return nil, err
@@ -393,7 +377,6 @@ func newRunLifecycleState(rootCtx context.Context, cfg legacyConfig, sessionID, 
 		plannerOverlay:      plannerOverlay,
 		modeInstructionPath: modeInstructionPath,
 		plannerProgress:     plannerProgress,
-		pendingPatchDraft:   pendingPatchDraftFromState(loadedState),
 		suspendedUserInput:  loadedStateSuspendedInput(loadedState),
 		sessionStatus:       "error",
 		turnsCompleted:      turnsCompleted,
@@ -401,16 +384,6 @@ func newRunLifecycleState(rootCtx context.Context, cfg legacyConfig, sessionID, 
 	}
 }
 
-func pendingPatchDraftFromState(loadedState *SessionState) *patchTranscriptDraft {
-	if loadedState == nil || loadedState.PendingPatchTurn == nil {
-		return nil
-	}
-	return &patchTranscriptDraft{
-		Step:        loadedState.PendingPatchTurn.Step,
-		Description: strings.TrimSpace(loadedState.PendingPatchTurn.Description),
-		Answer:      loadedState.PendingPatchTurn.Answer,
-	}
-}
 
 type conversationRecorder struct {
 	tr                   *transcript.Transcript
@@ -640,97 +613,17 @@ func (c *conversationRecorder) WriteFinal(answer string, step int, capped bool) 
 	return c.Save()
 }
 
-func (c *conversationRecorder) RecordFullDiff(step int, file, diff, note string) error {
-	if c.conversation == nil {
-		return nil
-	}
-	c.conversation.AddMessage("assistant", note, map[string]any{
-		"type": "full_diff",
-		"turn": step,
-		"file": strings.TrimSpace(file),
-		"diff": diff,
-	})
-	return c.Save()
-}
 
-// RecordPatchValidation writes a patch validation block to both the
-// conversation and the transcript. The canonical block is rendered once and
-// stored verbatim in the conversation so that regenerating the transcript
-// from the conversation produces identical output.
-func (c *conversationRecorder) RecordPatchValidation(step int, record transcript.PatchValidationRecord) error {
-	block := transcript.FormatPatchValidation(step, record)
-	if strings.TrimSpace(block) == "" {
-		return nil
-	}
-	if c.conversation != nil {
-		c.conversation.AddMessage("assistant", block, map[string]any{
-			"type": "patch_validation",
-			"turn": step,
-		})
-	}
-	if c.tr != nil {
-		if err := c.tr.AppendBlock(block); err != nil {
-			return err
-		}
-	}
-	c.resyncRendered()
-	return c.Save()
-}
 
-// RecordPatchPlanCreated records an initial patch plan in the conversation
-// and transcript.
-func (c *conversationRecorder) RecordPatchPlanCreated(step int, planDetails string) error {
-	block := transcript.FormatPatchPlanCreated(step, planDetails)
-	return c.recordPatchPlanBlock(step, block, "patch_plan_created")
-}
 
-// RecordPatchPlanUpdated records an updated patch plan in the conversation
-// and transcript.
-func (c *conversationRecorder) RecordPatchPlanUpdated(step int, planDetails string) error {
-	block := transcript.FormatPatchPlanUpdated(step, planDetails)
-	return c.recordPatchPlanBlock(step, block, "patch_plan_updated")
-}
 
-func (c *conversationRecorder) recordPatchPlanBlock(step int, block, metaType string) error {
-	if strings.TrimSpace(block) == "" {
-		return nil
-	}
-	if c.conversation != nil {
-		c.conversation.AddMessage("assistant", block, map[string]any{
-			"type": metaType,
-			"turn": step,
-		})
-	}
-	if c.tr != nil {
-		if err := c.tr.AppendBlock(block); err != nil {
-			return err
-		}
-		// The on-disk transcript dedupes older patch plan sections so that
-		// only the most recent plan remains.
-		if err := c.tr.DeduplicatePatchPlan(); err != nil {
-			// Non-fatal: dedup is best-effort housekeeping.
-			fmt.Fprintf(os.Stderr, "[patch-plan] deduplicate failed: %v\n", err)
-		}
-	}
-	c.resyncRendered()
-	return c.Save()
-}
 
-// resyncRendered recomputes the rendered transcript snapshot from the stored
-// conversation. Callers should use this after writes that bypass the
-// incremental renderDelta path (for example, pre-rendered blocks or blocks
-// that trigger in-conversation dedup of earlier events).
-func (c *conversationRecorder) resyncRendered() {
-	if c.conversation == nil {
-		return
-	}
-	rendered, err := c.conversation.ToTranscript()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "session: resyncRendered failed: %v\n", err)
-		return
-	}
-	c.conversationRendered = rendered
-}
+
+
+
+
+
+
 
 func (c *conversationRecorder) appendRawToTranscript(role, content, metaType string) error {
 	if c.tr == nil {
@@ -765,8 +658,7 @@ type runLifecycleState struct {
 	modeInstructionPath string
 	recorder            *conversationRecorder
 	plannerProgress     *plannerProgressTracker
-	pendingPatchDraft   *patchTranscriptDraft
-	notePrompts         *llm.MCTPromptsConfig
+
 	repoRoot            string
 	trajectoryWriter    *trajectory.Writer
 	tr                  *transcript.Transcript
@@ -835,15 +727,6 @@ func (r *runLifecycleState) applyPlannerProgress(state *SessionState) {
 		return
 	}
 	state.PlannerProgress = r.plannerProgress.toState()
-	if r.pendingPatchDraft != nil {
-		state.PendingPatchTurn = &PendingPatchTurnState{
-			Step:        r.pendingPatchDraft.Step,
-			Description: r.pendingPatchDraft.Description,
-			Answer:      r.pendingPatchDraft.Answer,
-		}
-	} else {
-		state.PendingPatchTurn = nil
-	}
 	if state.PlannerProgress != nil {
 		if err := UpdateModePlanProgress(r.sessionID, state.PlannerProgress); err != nil && r.cfg.verbose {
 			fmt.Fprintf(os.Stderr, "Warning: failed to update mode plan progress for %s: %v\n", r.sessionID, err)
@@ -959,85 +842,4 @@ func (r *runLifecycleState) suspendForUserInput(display *ui.TerminalDisplay, que
 	return Result{ExitCode: 0, Status: r.sessionStatus, Turns: r.turnsCompleted, SessionID: r.sessionID}, nil
 }
 
-func (r *runLifecycleState) writePendingPatchTranscript(status string, decision string, note string, undo bool) error {
-	if r.pendingPatchDraft == nil {
-		return nil
-	}
-	desc := strings.TrimSpace(r.pendingPatchDraft.Description)
-	if desc == "" {
-		desc = "Patch applied"
-	}
-	normalized := strings.ToLower(strings.TrimSpace(status))
-	if normalized != "success" && normalized != "reject" {
-		normalized = status
-	}
-	suffix := desc
-	if strings.TrimSpace(suffix) != "" {
-		suffix = " - " + strings.TrimSpace(suffix)
-	}
-	question := fmt.Sprintf("Patcher: %s%s", normalized, suffix)
-	summary := r.pendingPatchDraft.Answer
-	if strings.ToLower(status) == "rejected" || strings.ToLower(status) == "reject" {
-		summary = ""
-	}
-	if strings.ToLower(status) == "success" {
-		question = desc
-		if noteText := transcript.PatchSuccessNoteText(r.notePrompts); noteText != "" {
-			question = desc + "\n\n" + noteText
-		}
-		decision = ""
-	}
-	additional := []string{}
-	if trimmedNote := strings.TrimSpace(note); trimmedNote != "" {
-		additional = append(additional, "Planner review note: "+trimmedNote)
-	}
-	if undo {
-		additional = append(additional, "Planner applied reverse patch to undo the changes.")
-	}
-	if len(additional) > 0 {
-		summary = strings.TrimRight(summary, "\n")
-		if summary != "" {
-			summary += "\n\n"
-		}
-		summary += strings.Join(additional, "\n")
-	}
-	if err := r.recorder.WriteTurn(r.pendingPatchDraft.Step, question, "", nil, summary, decision); err != nil {
-		return err
-	}
-	if strings.ToLower(status) == "success" {
-		baseline, err := patchersvc.EnsureBaseline(r.sessionID, r.repoRoot, time.Now())
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "[full-diff] Failed to ensure baseline: %v\n", err)
-		} else {
-			files := []string(nil)
-			if review := r.plannerProgress.pendingReviewInfo(); review != nil {
-				files = append(files, review.Files...)
-			}
-			if len(files) == 0 {
-				files = append(files, r.plannerProgress.successList()...)
-			}
-			fulldiff.Inject(r.pendingPatchDraft.Step, r.repoRoot, files, r.tr, r.plannerProgress, fulldiff.Options{
-				Verbose:        r.cfg.verbose,
-				Baseline:       baseline,
-				FullDiffNote:   transcript.FullDiffNoteText(r.notePrompts),
-				RecordFullDiff: r.recorder.RecordFullDiff,
-			})
-			if r.trajectoryWriter != nil {
-				r.trajectoryWriter.Emit(r.rootCtx, trajectory.Event{
-					Kind: "transcript_synthetic_full_diff",
-					Payload: map[string]any{
-						"op":    "full_diff",
-						"step":  r.pendingPatchDraft.Step + 1,
-						"files": files,
-					},
-				})
-			}
-			r.userTurnCounter += len(files)
-		}
-	}
-	r.pendingPatchDraft = nil
-	if r.pendingState != nil {
-		r.pendingState.PendingPatchTurn = nil
-	}
-	return nil
-}
+

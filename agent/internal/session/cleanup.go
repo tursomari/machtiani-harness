@@ -24,8 +24,6 @@ const (
 var cleanupPrefixes = []string{
 	"mini-swe-trajectories-",
 	"shell-agent-worktree-",
-	"patcher-mirror-",
-	"patcher-workspace-",
 	"workspace-",
 	"session-",
 }

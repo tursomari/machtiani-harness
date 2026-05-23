@@ -91,7 +91,7 @@ func shouldPreferContentRouting(prompt string) bool {
 	})
 	hasCodeSignal := strings.Contains(trimmed, "`") || containsRoutingPhrase(trimmed, []string{
 		".go", "function", "struct", "method", "symbol", "implementation", "logic", "code path",
-		"definition", "defined", "fallback", "falls back", "model", "file discovery", "orchestrator", "patcher",
+		"definition", "defined", "fallback", "falls back", "model", "file discovery", "orchestrator",
 		"line ", "lines ", "source", "code", "guardrail", "retry", "retries", "planner ask monitor", "flow",
 	})
 	return hasExplainVerb && hasCodeSignal

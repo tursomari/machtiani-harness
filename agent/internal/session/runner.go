@@ -2,10 +2,8 @@ package session
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	pathpkg "path"
 	"path/filepath"
@@ -14,12 +12,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/tursomari/machtiani/agent/internal/conversation"
 	"github.com/tursomari/machtiani/agent/internal/llm"
-	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
-	mctpatcher "github.com/tursomari/machtiani/agent/internal/mct/patcher"
 	"github.com/tursomari/machtiani/agent/internal/mct/readmesync"
-	patchersvc "github.com/tursomari/machtiani/agent/internal/patcher"
 	"github.com/tursomari/machtiani/agent/internal/planner"
 	"github.com/tursomari/machtiani/agent/internal/runner"
 	shellagent "github.com/tursomari/machtiani/agent/internal/shell-agent"
@@ -33,19 +27,14 @@ import (
 const (
 	backgroundQuestionPrompt = "Give me the background of the project."
 	backgroundFallbackAnswer = "No project documentation has been created yet. Please run `mct-agent sync` to generate initial project documentation."
-	patchTranscriptDiffLimit = 0 // zero disables transcript diff truncation
-	patchReviewDisabled      = true
 )
 
 var (
-	readmeHeadCommitFn          = readmesync.HeadCommit
-	readmeCommitForProjectFn    = readmesync.READMECommitForProject
-	readmeCheckoutReadonlyFn    = readmesync.CheckoutReadonlyREADME
-	loadPatchPlanFn             = LoadPatchPlan
-	formatPatchPlanForDisplayFn = formatPatchPlanForDisplay
-	tagFormatPattern            = regexp.MustCompile(`\[(?P<path>[^\[\]|]+?)\s*\|\s*(?P<start>[^:\]]+)\s*:\s*(?P<end>[^\]]+)\]`)
-	rewriteMissingPattern       = regexp.MustCompile(`edit\[(\d+)\]\s+rewrite requires existing file`)
-	workspaceRoot               string
+	readmeHeadCommitFn       = readmesync.HeadCommit
+	readmeCommitForProjectFn = readmesync.READMECommitForProject
+	readmeCheckoutReadonlyFn = readmesync.CheckoutReadonlyREADME
+	tagFormatPattern         = regexp.MustCompile(`\[(?P<path>[^\[\]|]+?)\s*\|\s*(?P<start>[^:\]]+)\s*:\s*(?P<end>[^\]]+)\]`)
+	workspaceRoot            string
 )
 
 func isLocalSessionEnvironment(cfg *llm.Config) bool {
@@ -57,29 +46,9 @@ func isLocalSessionEnvironment(cfg *llm.Config) bool {
 }
 
 type plannerProgressTracker struct {
-	successSet       map[string]struct{}
-	successFiles     []string
-	applied          int
-	forceRepatchHint bool
-	fileDedupSet     map[string]string
-	pendingReview    *planner.PendingReview
-	lastPatchedFile  string
-	patchPlanPending bool
-}
-
-type patchPlanUpdater interface {
-	GeneratePatchPlan(ctx context.Context, goal, transcript string) (*planner.PatchPlan, error)
-	UpdatePatchPlan(ctx context.Context, goal, transcript string, existing *planner.PatchPlan, lastPatchedFile string) (*planner.PatchPlan, error)
-}
-
-type patchPlanNotifier interface {
-	Notify(string)
-}
-
-type patchTranscriptDraft struct {
-	Step        int
-	Description string
-	Answer      string
+	successSet   map[string]struct{}
+	successFiles []string
+	fileDedupSet map[string]string
 }
 
 func newPlannerProgressTracker(existing *PlannerProgressState) *plannerProgressTracker {
@@ -89,10 +58,6 @@ func newPlannerProgressTracker(existing *PlannerProgressState) *plannerProgressT
 	}
 	if existing == nil {
 		return tracker
-	}
-	tracker.applied = existing.AppliedPatches
-	if existing.PendingReview != nil {
-		tracker.pendingReview = existing.PendingReview.Clone()
 	}
 	for _, raw := range existing.SuccessFiles {
 		norm := normalizePlannerPath(raw)
@@ -118,41 +83,6 @@ func normalizePlannerPath(rawPath string) string {
 		return ""
 	}
 	return cleaned
-}
-
-func (p *plannerProgressTracker) setLastPatchedFile(path string) {
-	if p == nil {
-		return
-	}
-	p.lastPatchedFile = normalizePlannerPath(path)
-}
-
-func (p *plannerProgressTracker) getLastPatchedFile() string {
-	if p == nil {
-		return ""
-	}
-	return p.lastPatchedFile
-}
-
-func (p *plannerProgressTracker) needsPatchPlanUpdate() bool {
-	if p == nil {
-		return false
-	}
-	return p.patchPlanPending
-}
-
-func (p *plannerProgressTracker) clearPatchPlanPending() {
-	if p == nil {
-		return
-	}
-	p.patchPlanPending = false
-}
-
-func extractPrimaryPatchTarget(instr mctpatcher.Instructions) string {
-	if len(instr.Edits) == 0 {
-		return ""
-	}
-	return strings.TrimSpace(instr.Edits[0].Path)
 }
 
 func (p *plannerProgressTracker) shouldDeduplicateFile(path string, contentHash string) bool {
@@ -201,7 +131,6 @@ func (p *plannerProgressTracker) recordSuccess(files []string) {
 		p.successSet[norm] = struct{}{}
 		p.successFiles = append(p.successFiles, norm)
 	}
-	p.applied++
 }
 
 func formatGoalText(originalPrompt, taskDescription string) string {
@@ -268,149 +197,6 @@ func writeInitialBackgroundIfNeeded(tr *transcript.Transcript, repoRoot string, 
 	return writeTurn(0, backgroundQuestionPrompt, "", nil, prefillAnswer, "background")
 }
 
-func writePatchPlanTranscriptEntry(tr *transcript.Transcript, recorder *conversationRecorder, plan *PatchPlan, action string) error {
-	if plan == nil {
-		return nil
-	}
-	data, err := json.MarshalIndent(plan, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal patch plan for transcript: %w", err)
-	}
-	label := strings.ToUpper(strings.TrimSpace(action))
-	if label == "" {
-		label = "UPDATE"
-	}
-	var b strings.Builder
-	b.WriteString("\n== PATCH PLAN ")
-	b.WriteString(label)
-	b.WriteString("\n\n")
-	b.Write(data)
-	b.WriteString("\n")
-	block := b.String()
-
-	// Route through the recorder when available so the patch plan is also
-	// captured in conversation.json. The recorder writes the same block to
-	// the transcript and then runs DeduplicatePatchPlan for us.
-	if recorder != nil && recorder.HasConversation() {
-		metaType := "patch_plan_updated"
-		if label == "CREATED" {
-			metaType = "patch_plan_created"
-		}
-		return recorder.recordPatchPlanBlock(0, block, metaType)
-	}
-	if tr == nil {
-		return nil
-	}
-	if err := tr.AppendRaw(block); err != nil {
-		return fmt.Errorf("append patch plan transcript: %w", err)
-	}
-	// Remove older patch plan sections, keeping recent history.
-	if err := tr.DeduplicatePatchPlan(); err != nil {
-		fmt.Fprintf(os.Stderr, "[patch-plan] deduplicate failed: %v\n", err)
-	}
-	return nil
-}
-
-func invokePatchPlanUpdateHook(ctx context.Context, pl patchPlanUpdater, tr *transcript.Transcript, recorder *conversationRecorder, sessionID, goal, transcriptContent, lastPatchedFile string, notifier patchPlanNotifier, allowCreate bool) (*PatchPlan, error) {
-	existing, err := LoadPatchPlan(sessionID)
-	if err != nil {
-		return nil, fmt.Errorf("load patch plan: %w", err)
-	}
-
-	var updated *PatchPlan
-	action := "UPDATED"
-	if existing == nil {
-		if !allowCreate {
-			return nil, nil
-		}
-		action = "CREATED"
-		updated, err = pl.GeneratePatchPlan(ctx, goal, transcriptContent)
-	} else {
-		updated, err = pl.UpdatePatchPlan(ctx, goal, transcriptContent, existing, lastPatchedFile)
-		if err != nil {
-			return nil, fmt.Errorf("generate/update plan: %w", err)
-		}
-		if updated == nil {
-			return existing, nil
-		}
-	}
-	if err != nil {
-		return nil, fmt.Errorf("generate/update plan: %w", err)
-	}
-	if updated == nil {
-		return nil, nil
-	}
-	if err := SavePatchPlan(sessionID, updated); err != nil {
-		return nil, fmt.Errorf("save patch plan: %w", err)
-	}
-	if err := writePatchPlanTranscriptEntry(tr, recorder, updated, action); err != nil {
-		return nil, err
-	}
-	if notifier != nil {
-		total, complete := updated.Progress()
-		status := strings.ToLower(action)
-		notifier.Notify(fmt.Sprintf("Patch plan %s (%d/%d complete)", status, complete, total))
-		if rendered := formatPatchPlanForDisplay(updated); strings.TrimSpace(rendered) != "" {
-			notifier.Notify(rendered)
-		}
-	}
-	return updated, nil
-}
-
-func updatePatchPlanIfNeeded(ctx context.Context, pl patchPlanUpdater, tr *transcript.Transcript, recorder *conversationRecorder, sessionID, goal, transcriptContent, lastPatchedFile string, notifier patchPlanNotifier, progress *plannerProgressTracker) (*PatchPlan, error) {
-	if progress == nil || !progress.needsPatchPlanUpdate() {
-		return nil, nil
-	}
-	updated, err := invokePatchPlanUpdateHook(ctx, pl, tr, recorder, sessionID, goal, transcriptContent, lastPatchedFile, notifier, false)
-	if err != nil {
-		return nil, err
-	}
-	progress.clearPatchPlanPending()
-	return updated, nil
-}
-
-func formatPatchPlanForDisplay(plan *PatchPlan) string {
-	if plan == nil {
-		return ""
-	}
-	total, complete := plan.Progress()
-	var b strings.Builder
-	goal := strings.TrimSpace(plan.Goal)
-	if goal != "" {
-		b.WriteString(goal)
-	}
-	if b.Len() > 0 {
-		b.WriteString("\n")
-	}
-	fmt.Fprintf(&b, "Patch plan status: %d/%d complete", complete, total)
-	for idx, item := range plan.Items {
-		state := "[ ]"
-		if item.Complete {
-			state = "[x]"
-		}
-		desc := strings.TrimSpace(item.Description)
-		if desc == "" {
-			desc = "(no description)"
-		}
-		fmt.Fprintf(&b, "\n  %d. %s %s", idx+1, state, desc)
-	}
-	return b.String()
-}
-
-func (p *plannerProgressTracker) appliedCount() int {
-	if p == nil {
-		return 0
-	}
-	return p.applied
-}
-
-func (p *plannerProgressTracker) noteForceRepatchHint() {
-	if p == nil {
-		return
-	}
-	p.forceRepatchHint = true
-}
-
 func (p *plannerProgressTracker) hasSuccess(path string) bool {
 	if p == nil {
 		return false
@@ -426,74 +212,15 @@ func (p *plannerProgressTracker) successList() []string {
 	return append([]string(nil), p.successFiles...)
 }
 
-func (p *plannerProgressTracker) hasPendingReview() bool {
-	if p == nil {
-		return false
-	}
-	return p.pendingReview != nil
-}
-
-func (p *plannerProgressTracker) pendingReviewInfo() *planner.PendingReview {
-	if p == nil || p.pendingReview == nil {
-		return nil
-	}
-	return p.pendingReview
-}
-
-func (p *plannerProgressTracker) beginPendingReview(review *planner.PendingReview) {
-	if p == nil {
-		return
-	}
-	if review == nil {
-		p.pendingReview = nil
-		return
-	}
-	p.pendingReview = review.Clone()
-}
-
-func (p *plannerProgressTracker) commitPendingReview() *planner.PendingReview {
-	if p == nil || p.pendingReview == nil {
-		return nil
-	}
-	reviewCopy := p.pendingReview.Clone()
-	p.recordSuccess(p.pendingReview.Files)
-	patchedFile := ""
-	if len(p.pendingReview.Files) > 0 {
-		patchedFile = normalizePlannerPath(p.pendingReview.Files[0])
-	}
-	previousFile := normalizePlannerPath(p.lastPatchedFile)
-	if patchedFile != "" {
-		if previousFile != "" && patchedFile != previousFile {
-			p.patchPlanPending = true
-		}
-		p.lastPatchedFile = patchedFile
-	}
-	p.pendingReview = nil
-	return reviewCopy
-}
-
-func (p *plannerProgressTracker) discardPendingReview() *planner.PendingReview {
-	if p == nil || p.pendingReview == nil {
-		return nil
-	}
-	reviewCopy := p.pendingReview.Clone()
-	p.pendingReview = nil
-	return reviewCopy
-}
-
 func (p *plannerProgressTracker) toState() *PlannerProgressState {
 	if p == nil {
 		return nil
 	}
-	if p.applied == 0 && len(p.successFiles) == 0 && p.pendingReview == nil {
+	if len(p.successFiles) == 0 {
 		return nil
 	}
 	state := &PlannerProgressState{
-		SuccessFiles:   append([]string(nil), p.successFiles...),
-		AppliedPatches: p.applied,
-	}
-	if p.pendingReview != nil {
-		state.PendingReview = p.pendingReview.Clone()
+		SuccessFiles: append([]string(nil), p.successFiles...),
 	}
 	return state
 }
@@ -502,13 +229,8 @@ func (p *plannerProgressTracker) snapshot() planner.Progress {
 	if p == nil {
 		return planner.Progress{}
 	}
-	hint := p.forceRepatchHint
-	p.forceRepatchHint = false
 	return planner.Progress{
-		SuccessFiles:        p.successList(),
-		AppliedPatches:      p.appliedCount(),
-		ForceRepatchExample: hint,
-		PendingReview:       p.pendingReview.Clone(),
+		SuccessFiles: p.successList(),
 	}
 }
 
@@ -682,11 +404,7 @@ func runSession(ctx context.Context, opts Options) Result {
 		}
 	}()
 
-	var notePrompts *llm.MCTPromptsConfig
-	if opts.GlobalConfig.Prompts != nil {
-		notePrompts = opts.GlobalConfig.Prompts.MCT
-	}
-	transcriptSetup, err := prepareTranscriptBootstrap(cfg, sessionID, conversationGoal, conversationPath, resumeMode, loadedState, trajectoryWriter, repoRoot, notePrompts, runState)
+	transcriptSetup, err := prepareTranscriptBootstrap(cfg, sessionID, conversationGoal, conversationPath, resumeMode, loadedState, trajectoryWriter, repoRoot, runState)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Error preparing transcript:", err)
 		return Result{ExitCode: 1, Err: err}
@@ -706,7 +424,6 @@ func runSession(ctx context.Context, opts Options) Result {
 	conv := transcriptSetup.conversation
 	interruptedResult := runState.interruptedResult
 	isContextCancelled := runState.isContextCancelled
-	writePendingPatchTranscript := runState.writePendingPatchTranscript
 	fmt.Fprintln(os.Stderr, "Session:", sessionID)
 	if cfg.verbose {
 		fmt.Fprintln(os.Stderr, "mct-agent starting; transcript:", tr.Path())
@@ -750,10 +467,6 @@ func runSession(ctx context.Context, opts Options) Result {
 	if orchPromptOpts != nil {
 		baseOrchMetadata = append([]string(nil), orchPromptOpts.Metadata...)
 	}
-	patcherPromptOpts := promptOptions(
-		describeModel("patcher", models.patcher),
-	)
-
 	shellAgentModel := strings.TrimSpace(cfg.shellAgentModel)
 	if shellAgentModel == "" && strings.TrimSpace(models.shellAgent.alias) != "" && models.shellAgent.usingAlias {
 		shellAgentModel = strings.TrimSpace(models.shellAgent.alias)
@@ -805,43 +518,6 @@ func runSession(ctx context.Context, opts Options) Result {
 	mctResponseDirectives := []string(nil)
 	if cfg.enableTagFormat {
 		mctResponseDirectives = []string{"use_tag_format"}
-	}
-
-	// In full-mode, disable strict patch prompting/apply and rely on full rewrites only.
-	effectiveStrict := cfg.patchStrict && !cfg.patchFull
-
-	var pRunner *runner.PatcherRunner
-	if cfg.patch {
-		patchLogger := log.New(os.Stderr, "[patcher] ", log.LstdFlags)
-		pr := &runner.PatcherRunner{
-			Enabled:   true,
-			Verbose:   cfg.verbose,
-			DryRun:    cfg.dryRun,
-			SessionID: sessionID,
-			Runtime:   models.patcher.toPromptRuntime(),
-			Service: patchersvc.NewService(
-				patchersvc.WithLogger(patchLogger),
-				patchersvc.WithStrictPatchMode(effectiveStrict),
-			),
-			// Apply patches to the host checkout (repoRoot) atomically.
-			// The patcher service operates on WorkspaceRoot (snapshotRepoRoot).
-			RepoRoot:        repoRoot,
-			PersistTmpData:  cfg.persistTmpData,
-			SessionTempRoot: sessionTempRoot,
-			FullMode:        cfg.patchFull,
-			WorkspaceFactory: func(root string) (string, func(), error) {
-				return root, func() {}, nil
-			},
-		}
-		if err := pr.Resolve(); err != nil {
-			if cfg.verbose {
-				fmt.Fprintln(os.Stderr, "[patcher] resolve warning:", err)
-			}
-		}
-		pRunner = pr
-	}
-	if pRunner != nil {
-		defer pRunner.Close()
 	}
 
 	startingTranscript, headerErr := startTranscriptIfNeeded(tr, originalPrompt, taskDescription, sessionID, cfg, resumeMode)
@@ -913,8 +589,6 @@ func runSession(ctx context.Context, opts Options) Result {
 		DryRun:            cfg.dryRun,
 		InternetAccess:    opts.GlobalConfig.Environment != nil && opts.GlobalConfig.Environment.InternetAccess,
 		RequestTimeoutSec: cfg.timeoutPerTurn,
-		PatchEnabled:      cfg.patch,
-		StrictPatchMode:   effectiveStrict,
 		RepoRoot:          repoRoot,
 		SessionID:         sessionID,
 		PlannerOverlay:    plannerOverlay,
@@ -958,28 +632,10 @@ func runSession(ctx context.Context, opts Options) Result {
 			perr       error
 			planCtx    context.Context
 			planCancel context.CancelFunc
-			patchPlan  *PatchPlan
 		)
 		pl.UpdateProgress(plannerProgress.snapshot())
 		planCtx, planCancel = makeTurnContext(rootCtx, cfg.timeoutPerTurn)
 		trFull := tr.Content()
-		// If there is a pending patch diff awaiting review, append it to
-		// the planning context so the planner can decide accept/reject
-		// without adding an extra transcript turn.
-		if runState.pendingPatchDraft != nil {
-			var b strings.Builder
-			b.WriteString(trFull)
-			b.WriteString("\n## Pending Patch Review\n\n")
-			// Mirror transcript structure tersely so the planner has
-			// consistent context shape.
-			line := "Patcher: apply - " + strings.TrimSpace(runState.pendingPatchDraft.Description)
-			b.WriteString(line)
-			b.WriteString("\n\n=== Answer\n\n")
-			b.WriteString(strings.TrimSpace(runState.pendingPatchDraft.Answer))
-			b.WriteString("\n\n")
-			b.WriteString("Planner decision: patch\n")
-			trFull = b.String()
-		}
 		trimmedResumePrompt := strings.TrimSpace(resumePrompt)
 		if trimmedResumePrompt != "" {
 			feedback := trimmedResumePrompt
@@ -1004,77 +660,11 @@ func runSession(ctx context.Context, opts Options) Result {
 				trFull = appendResumePromptContext(trFull, feedback)
 			}
 			turnInfo["resume_prompt"] = true
-			if cfg.patch {
-				if _, err := invokePatchPlanUpdateHook(planCtx, pl, tr, runState.recorder, sessionID, goal, trFull, "", display, true); err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: patch plan hook (goal update) failed: %v\n", err)
-				}
-			}
 		}
 		planCtx = attachTrajectory(planCtx, trajectoryWriter, parentSpanID)
-		patchPlanComplete := false
-		if cfg.patch {
-			if patchPlan == nil {
-				if loadedPlan, err := LoadPatchPlan(sessionID); err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: failed to load patch plan: %v\n", err)
-				} else {
-					patchPlan = loadedPlan
-				}
-			}
-			if patchPlan != nil {
-				totalItems, completedItems := patchPlan.Progress()
-				patchPlanComplete = patchPlan.AllComplete()
-				turnInfo["patch_plan_items"] = totalItems
-				turnInfo["patch_plan_complete_items"] = completedItems
-			}
-		}
-		decision, question, perr = pl.Plan(planCtx, conv, goal, trFull, step, cfg.maxSteps, patchPlan)
+		decision, question, perr = pl.Plan(planCtx, conv, goal, trFull, step, cfg.maxSteps)
 		if trimmedResumePrompt != "" {
 			resumePrompt = ""
-		}
-		if cfg.patch && perr == nil {
-			for decision == planner.DecisionFinalize {
-				if patchPlan == nil {
-					if loadedPlan, err := LoadPatchPlan(sessionID); err != nil {
-						fmt.Fprintf(os.Stderr, "Warning: failed to load patch plan: %v\n", err)
-					} else {
-						patchPlan = loadedPlan
-					}
-				}
-				if patchPlan == nil {
-					break
-				}
-				totalItems, completedItems := patchPlan.Progress()
-				patchPlanComplete = patchPlan.AllComplete()
-				turnInfo["patch_plan_items"] = totalItems
-				turnInfo["patch_plan_complete_items"] = completedItems
-				if patchPlanComplete {
-					break
-				}
-				lastPatched := plannerProgress.getLastPatchedFile()
-				refreshedPlan, err := invokePatchPlanUpdateHook(planCtx, pl, tr, runState.recorder, sessionID, goal, trFull, lastPatched, display, false)
-				if err != nil {
-					perr = err
-					break
-				}
-				if refreshedPlan != nil {
-					patchPlan = refreshedPlan
-				}
-				plannerProgress.clearPatchPlanPending()
-				if patchPlan == nil {
-					break
-				}
-				totalItems, completedItems = patchPlan.Progress()
-				patchPlanComplete = patchPlan.AllComplete()
-				turnInfo["patch_plan_items"] = totalItems
-				turnInfo["patch_plan_complete_items"] = completedItems
-				if patchPlanComplete {
-					break
-				}
-				decision, question, perr = pl.Plan(planCtx, conv, goal, trFull, step, cfg.maxSteps, patchPlan)
-				if perr != nil {
-					break
-				}
-			}
 		}
 		var planCtxErr error
 		if planCtx != nil {
@@ -1158,24 +748,6 @@ func runSession(ctx context.Context, opts Options) Result {
 			excerpt := trajectory.MakeTextExcerpt(question, trajectoryWriter.ExcerptLen())
 			turnInfo = trajectory.MergeExcerptWithPrefix(turnInfo, excerpt, "planner_question")
 		}
-		pendingReview := plannerProgress.pendingReviewInfo()
-		if plannerProgress.hasPendingReview() && decision != planner.DecisionAccept && decision != planner.DecisionReject {
-			errUnexpected := fmt.Errorf("pending patch review requires accept or reject, got %s", decision)
-			fmt.Fprintln(os.Stderr, "Planner error:", errUnexpected)
-			runState.sessionErr = errUnexpected
-			finishTurn(sessTelemetry, turn, turnDecision, "error", turnInfo, errUnexpected)
-			runState.turnsCompleted = runState.userTurnCounter
-			return Result{ExitCode: 1, Err: errUnexpected}
-		}
-		if !plannerProgress.hasPendingReview() && (decision == planner.DecisionAccept || decision == planner.DecisionReject) {
-			errUnexpected := errors.New("planner returned accept/reject without a pending patch review")
-			fmt.Fprintln(os.Stderr, "Planner error:", errUnexpected)
-			runState.sessionErr = errUnexpected
-			finishTurn(sessTelemetry, turn, turnDecision, "error", turnInfo, errUnexpected)
-			runState.turnsCompleted = runState.userTurnCounter
-			return Result{ExitCode: 1, Err: errUnexpected}
-		}
-
 		if decision == planner.DecisionAsk {
 			ctxAsk, cancelAsk := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
 			ctxAsk = attachTrajectory(ctxAsk, trajectoryWriter, parentSpanID)
@@ -1262,7 +834,6 @@ func runSession(ctx context.Context, opts Options) Result {
 			sessionErr:                  &runState.sessionErr,
 			turnsCompleted:              &runState.turnsCompleted,
 			userTurnCounter:             &runState.userTurnCounter,
-			pendingPatchDraft:           &runState.pendingPatchDraft,
 			plannerProgress:             plannerProgress,
 			display:                     display,
 			sessTelemetry:               sessTelemetry,
@@ -1274,45 +845,18 @@ func runSession(ctx context.Context, opts Options) Result {
 			writeTurn:                   writeTurn,
 			interruptedResult:           interruptedResult,
 			isContextCancelled:          isContextCancelled,
-			writePendingPatchTranscript: writePendingPatchTranscript,
 			mctRunner:                   &mctRunner,
-			pRunner:                     pRunner,
 			pl:                          pl,
 			tr:                          tr,
 			recorder:                    runState.recorder,
 			orchPromptOpts:              &orchPromptOpts,
 			baseOrchMetadata:            baseOrchMetadata,
-			patcherPromptOpts:           patcherPromptOpts,
 			mctResponseDirectives:       mctResponseDirectives,
 		}
 
 		switch decision {
-		case planner.DecisionAccept, planner.DecisionReject:
-			outcome := executeReviewDecision(turnEnv, decision, question, pendingReview)
-			shellAgentUsedThisTurn = outcome.shellAgentUsed
-			switch outcome.action {
-			case turnLoopReturn:
-				return outcome.result
-			case turnLoopFinalize:
-				goto Finalize
-			default:
-				goto TurnDone
-			}
-
 		case planner.DecisionAsk:
 			outcome := executeAskDecision(turnEnv, question)
-			shellAgentUsedThisTurn = outcome.shellAgentUsed
-			switch outcome.action {
-			case turnLoopReturn:
-				return outcome.result
-			case turnLoopFinalize:
-				goto Finalize
-			default:
-				goto TurnDone
-			}
-
-		case planner.DecisionPatch:
-			outcome := executePatchDecision(turnEnv, question, patchPlan)
 			shellAgentUsedThisTurn = outcome.shellAgentUsed
 			switch outcome.action {
 			case turnLoopReturn:
@@ -1348,9 +892,6 @@ Finalize:
 		runState.turnsCompleted = countTurns(tr.Content())
 		runState.userTurnCounter = runState.turnsCompleted
 		return interruptedResult(err)
-	}
-	if result := runState.maybeRunPreFinalizePatch(display, patcherPromptOpts, pl, conv, pRunner, parentSpanID); result != nil {
-		return *result
 	}
 	turns := countTurns(tr.Content())
 	ctx, cancelF := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
@@ -1415,49 +956,6 @@ func appendUserInputContext(transcript, prompt string) string {
 	b.WriteString(prompt)
 	b.WriteString("\n")
 	return b.String()
-}
-
-func convertRewriteMissingToCreate(instr mctpatcher.Instructions, valErr *mctpatcher.ValidationError, verbose bool) (mctpatcher.Instructions, []int) {
-	if valErr == nil {
-		return instr, nil
-	}
-	matches := rewriteMissingPattern.FindAllStringSubmatch(valErr.Error(), -1)
-	if len(matches) == 0 {
-		return instr, nil
-	}
-	if len(instr.Edits) == 0 {
-		return instr, nil
-	}
-	edits := make([]mctpatcher.Edit, len(instr.Edits))
-	copy(edits, instr.Edits)
-	changed := make([]int, 0, len(matches))
-	for _, m := range matches {
-		if len(m) < 2 {
-			continue
-		}
-		idx, err := strconv.Atoi(m[1])
-		if err != nil {
-			continue
-		}
-		if idx < 0 || idx >= len(edits) {
-			continue
-		}
-		if edits[idx].Mode != mctpatcher.ModeRewrite {
-			continue
-		}
-		if strings.TrimSpace(edits[idx].NewContent) == "" {
-			continue
-		}
-		edits[idx].Mode = mctpatcher.ModeCreate
-		changed = append(changed, idx)
-	}
-	if len(changed) == 0 {
-		return instr, nil
-	}
-	if verbose {
-		fmt.Fprintf(os.Stderr, "[patcher] auto-fix: switching rewrite->create for edits %v due to missing files\n", changed)
-	}
-	return mctpatcher.Instructions{Metadata: instr.Metadata, Edits: edits}, changed
 }
 
 func loadProjectBackground(repoRoot string) (string, error) {
@@ -1633,132 +1131,4 @@ func normalizeTagPath(path string) string {
 	return filepath.ToSlash(trimmed)
 }
 
-func recordDiscoveryPending(sessionID string, files []string, verbose bool) {
-	if len(files) == 0 || strings.TrimSpace(sessionID) == "" {
-		return
-	}
-	scratch, err := artifacts.SessionScratchDirectory(sessionID)
-	if err != nil {
-		if verbose {
-			fmt.Fprintf(os.Stderr, "[patcher] unable to resolve discovery scratch directory: %v\n", err)
-		}
-		return
-	}
-	dir := filepath.Join(scratch, "file-discovery")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		if verbose {
-			fmt.Fprintf(os.Stderr, "[patcher] unable to create discovery scratch directory: %v\n", err)
-		}
-		return
-	}
-	pendingPath := filepath.Join(dir, "pending.txt")
-	f, err := os.OpenFile(pendingPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		if verbose {
-			fmt.Fprintf(os.Stderr, "[patcher] unable to append discovery pending file: %v\n", err)
-		}
-		return
-	}
-	defer f.Close()
-	for _, rel := range files {
-		norm := strings.TrimSpace(rel)
-		if norm == "" {
-			continue
-		}
-		cleaned := filepath.Clean(norm)
-		if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") || strings.HasPrefix(cleaned, `..`+string(os.PathSeparator)) {
-			continue
-		}
-		canonical := filepath.ToSlash(cleaned)
-		if _, err := fmt.Fprintln(f, canonical); err != nil {
-			if verbose {
-				fmt.Fprintf(os.Stderr, "[patcher] unable to record pending file %s: %v\n", canonical, err)
-			}
-			return
-		}
-	}
 
-}
-
-// appendPatchPlanToFinalAnswer loads the patch plan and appends it to the answer if valid.
-// If the plan does not exist or cannot be loaded/parsed, the original answer is returned.
-func appendPatchPlanToFinalAnswer(answer, sessionID string) string {
-	plan, err := loadPatchPlanFn(sessionID)
-	if err != nil || plan == nil {
-		return answer
-	}
-	rendered := formatPatchPlanForDisplayFn(plan)
-	if strings.TrimSpace(rendered) == "" {
-		return answer
-	}
-	if strings.TrimSpace(answer) == "" {
-		return rendered
-	}
-	return strings.TrimRight(answer, "\n") + "\n\n" + rendered
-}
-
-func appendFinalAnswerExtras(answer, sessionID string, verbose bool) string {
-	answer = appendPatchPlanToFinalAnswer(answer, sessionID)
-	return appendFullDiffsToFinalAnswer(answer, sessionID, verbose)
-}
-
-func appendFullDiffsToFinalAnswer(answer, sessionID string, verbose bool) string {
-	fullDiffs, err := loadFullDiffsForSession(sessionID, verbose)
-	if err != nil || strings.TrimSpace(fullDiffs) == "" {
-		return answer
-	}
-	return appendFullDiffSection(answer, fullDiffs)
-}
-
-func loadFullDiffsForSession(sessionID string, verbose bool) (string, error) {
-	sessionID = strings.TrimSpace(sessionID)
-	if sessionID == "" {
-		return "", nil
-	}
-	conversationPath, err := artifacts.SessionConversationFile(sessionID)
-	if err != nil {
-		return "", err
-	}
-	data, err := os.ReadFile(conversationPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			if verbose {
-				fmt.Fprintf(os.Stderr, "[full-diff] conversation not found at %s\n", conversationPath)
-			}
-			return "", nil
-		}
-		if verbose {
-			fmt.Fprintf(os.Stderr, "[full-diff] read conversation failed: %v\n", err)
-		}
-		return "", err
-	}
-	conv, err := conversation.Unmarshal(data)
-	if err != nil {
-		if verbose {
-			fmt.Fprintf(os.Stderr, "[full-diff] parse conversation failed: %v\n", err)
-		}
-		return "", err
-	}
-	fullDiffs := conversation.ExtractFullDiffs(conv)
-	if verbose && strings.TrimSpace(fullDiffs) == "" {
-		fmt.Fprintln(os.Stderr, "[full-diff] no full diffs found")
-	}
-	return fullDiffs, nil
-}
-
-func appendFullDiffSection(base, fullDiffs string) string {
-	trimmedDiffs := strings.TrimRight(fullDiffs, "\n")
-	if strings.TrimSpace(trimmedDiffs) == "" {
-		return base
-	}
-	const sectionHeader = "# Full Diffs of Patched Files"
-	marker := "\n\n---\n\n" + sectionHeader
-	if idx := strings.Index(base, marker); idx != -1 {
-		base = strings.TrimRight(base[:idx], "\n")
-	}
-	section := marker + "\n\n" + trimmedDiffs
-	if strings.TrimSpace(base) == "" {
-		return strings.TrimLeft(section, "\n")
-	}
-	return strings.TrimRight(base, "\n") + section
-}

@@ -82,7 +82,7 @@ func TestPreflightShellRoutingHeuristicPrefersContentForCodeExplanation(t *testi
 	t.Cleanup(func() { chatWithResolvedFallback = old })
 
 	runtime := ModelRuntime{Resolved: llm.ResolvedModel{Model: "test-model"}}
-	prompt := "Summarize how the patcher falls back to the orchestrator model when unspecified."
+	prompt := "Summarize how the shell agent falls back to the orchestrator model when unspecified."
 
 	shellAgent, reply, err := PreflightShellRouting(context.Background(), runtime, prompt)
 	if err != nil {

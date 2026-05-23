@@ -37,8 +37,8 @@ export OPENAI_MODEL=gpt-4o-mini
 - When the `OPENAI_*` variables are missing the script generates stub credentials, writes a temporary `config.toml`, and forces `--dry-run`.
 - Artifacts land in `test-out-*` directories at the repo root; each case includes stdout, stderr, transcripts, and (for live runs) generated assets.
 - Optional overrides:
-  - `OPENAI_ORCH_MODEL`, `OPENAI_PATCHER_MODEL`, `OPENAI_FILE_DISCOVERY_MODEL` — pick specific remote models per component.
-  - `OPENAI_ORCH_MODEL_ALIAS`, `OPENAI_PATCHER_MODEL_ALIAS`, `OPENAI_FILE_DISCOVERY_MODEL_ALIAS` — supply config aliases when reusing a shared `config.toml`.
+  - `OPENAI_ORCH_MODEL`, `OPENAI_FILE_DISCOVERY_MODEL` — pick specific remote models per component.
+  - `OPENAI_ORCH_MODEL_ALIAS`, `OPENAI_FILE_DISCOVERY_MODEL_ALIAS` — supply config aliases when reusing a shared `config.toml`.
   - `OPENAI_API_KEY`/`BASE_URL`/`MODEL` remain authoritative even when aliases are set.
 
 ### Undici Harness (`tests/run-agent-undici.sh`)
@@ -53,7 +53,7 @@ MODEL_ALIAS=qwen3-coder-plus \
 ./tests/run-agent-undici.sh
 ```
 
-- Builds `mct`, `mct-agent`, `patcher`, and `file-discovery` into an isolated temp PATH; no prior install step required.
+- Builds `mct`, `mct-agent`, and `file-discovery` into an isolated temp PATH; no prior install step required.
 - Defaults to offline stubs unless `DISABLE_MCT_STUBS=true` is exported. Live runs need the `OPENAI_*` variables above plus a valid `MACHTIANI_CONFIG` and `MODEL_ALIAS` that maps to credentials in that config file.
 - Emits artifacts under `tests/artifacts/agent-undici/<case>/`. Preserve the temp workspace by setting `KEEP_AGENT_TMP=true`.
 - Additional knobs mirror the script defaults: `MAX_STEPS`, `TIMEOUT_PER_TURN`, `MCT_LLM_TEST_STUB`, `MCT_README_TEST_STUB`.

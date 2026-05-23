@@ -5,7 +5,7 @@ This repository now houses the full Machtiani toolchain inside a single Go modul
 1) `agent/internal/file-discovery` — the helper binary that performs LLM-guided file discovery using a strict RG> protocol.
 2) `agent` — the orchestrator that drives the loop and links against the internal libraries directly.
 
-Most users only need the `mct-agent` binary. The install script builds `mct-agent` by default and exposes an opt-in flag when you want the standalone `mct`, `file-discovery`, `shell-agent`, and `patcher` binaries. All of these tools now share one configuration source (`.machtiani/config.toml` or `MACHTIANI_CONFIG`).
+Most users only need the `mct-agent` binary. The install script builds `mct-agent` by default and exposes an opt-in flag when you want the standalone `mct`, `file-discovery`, and `shell-agent` binaries. All of these tools now share one configuration source (`.machtiani/config.toml` or `MACHTIANI_CONFIG`).
 
 ## Repo-local `mct-agent` workflow
 
@@ -101,7 +101,7 @@ Run the installer from the repo root to build **mct-agent** into `~/.local/bin`:
 
 Prefer a different prefix? Supply `PREFIX=...` and add the resulting `bin` directory to PATH.
 
-Need the standalone CLIs for development or debugging? Append `--install-peripherals` to also build **mct**, **file-discovery**, **shell-agent**, and **patcher**:
+Need the standalone CLIs for development or debugging? Append `--install-peripherals` to also build **mct**, **file-discovery**, and **shell-agent**:
 
 ```
 ./scripts/install.sh --install-peripherals
@@ -130,7 +130,6 @@ To manually build the additional CLIs, run the block above and then:
 install -m 0755 agent/internal/mct/bin/mct "$BIN_DIR/mct"
 install -m 0755 agent/internal/mct/bin/file-discovery "$BIN_DIR/file-discovery"
 ( cd agent/internal/shell-agent && go build -o "$BIN_DIR/shell-agent" ./cmd/shell-agent )
-( cd agent/internal/patcher && go build -o "$BIN_DIR/patcher" ./cmd/patcher )
 ```
 
 The manual snippets skip the ldflags metadata that the installer uses, so version commands will show `dev`/`unknown` fields—this is expected.
@@ -224,7 +223,6 @@ If you also installed the peripherals, confirm each binary resolves on PATH:
 ```
 mct --help | head -n 1
 file-discovery -version
-patcher --version
 ```
 
 ## Usage
@@ -411,7 +409,7 @@ GOCACHE=$(pwd)/../../.gocache go build -o ~/.local/bin/shell-agent ./cmd/shell-a
 
 If you installed with `--install-peripherals`, the installer already places `shell-agent` alongside the other binaries so you can invoke it directly (`shell-agent --help`).
 
-See `agent/internal/patcher/README.md` for patch workflows and `agent/internal/file-discovery/README.md` for direct `file-discovery` usage.
+See `agent/internal/file-discovery/README.md` for direct `file-discovery` usage.
 
 ## Troubleshooting
 - Command not found
@@ -442,5 +440,5 @@ There is a second evaluation script at scripts/run_eval_head.sh for tasks withou
 ## Uninstall
 Remove the installed binaries (adjust paths to your environment):
 ```
-rm -f ~/.local/bin/mct-agent ~/.local/bin/mct ~/.local/bin/file-discovery ~/.local/bin/patcher
+rm -f ~/.local/bin/mct-agent ~/.local/bin/mct ~/.local/bin/file-discovery ~/.local/bin/shell-agent
 ```

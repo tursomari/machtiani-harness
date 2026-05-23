@@ -174,24 +174,6 @@ func TestSessionTrajectoryDirectoryLocalRepo(t *testing.T) {
 		}
 	})
 }
-
-func TestSessionPatchesDirectoryLocalRepo(t *testing.T) {
-	repoDir := t.TempDir()
-	initGitRepo(t, repoDir)
-
-	withWorkingDir(t, repoDir, func() {
-		const sessionID = "session-patch"
-		dir, err := SessionPatchesDirectory(sessionID)
-		if err != nil {
-			t.Fatalf("SessionPatchesDirectory: %v", err)
-		}
-		expected := filepath.Join(repoDir, ".machtiani", "sessions", sessionID, "artifacts", "patches")
-		if dir != expected {
-			t.Fatalf("expected %s, got %s", expected, dir)
-		}
-	})
-}
-
 func TestSessionConversationFileLocalRepo(t *testing.T) {
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)

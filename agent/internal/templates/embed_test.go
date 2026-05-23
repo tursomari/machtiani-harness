@@ -9,7 +9,6 @@ func TestGetEmbeddedTemplate_KnownKeysLoad(t *testing.T) {
 	keys := []string{
 		"planner.plan_prompt",
 		"planner.plan_system",
-		"planner.plan_patch_rules",
 		"planner.ask_prompt",
 		"planner.ask_mixed_monitor",
 		"planner.finalize_prompt",

@@ -600,7 +600,6 @@ func TestLoadGlobalConfigSupportsTemplateFiles(t *testing.T) {
 	mustWriteFile(t, filepath.Join(root, "templates", "planner", "plan_prompt.tpl"), "plan prompt file")
 	mustWriteFile(t, filepath.Join(root, "templates", "planner", "plan_patch_rules.tpl"), "plan patch rules file")
 	mustWriteFile(t, filepath.Join(root, "templates", "planner", "plan_patch_strict_rules.tpl"), "plan patch strict rules file")
-	mustWriteFile(t, filepath.Join(root, "templates", "planner", "plan_patch_enabled_intro.tpl"), "enabled intro file")
 	mustWriteFile(t, filepath.Join(root, "templates", "planner", "plan_patch_disabled_intro.tpl"), "disabled intro file")
 	mustWriteFile(t, filepath.Join(root, "templates", "planner", "finalize_prompt.tpl"), "finalize prompt file")
 	mustWriteFile(t, filepath.Join(root, "templates", "planner", "review_prompt.tpl"), "review prompt file")
@@ -629,7 +628,6 @@ plan_system_prompt = { file = "templates/planner/plan_system_prompt.tpl" }
 plan_prompt = { file = "templates/planner/plan_prompt.tpl" }
 plan_patch_rules = { file = "templates/planner/plan_patch_rules.tpl" }
 plan_patch_strict_rules = { file = "templates/planner/plan_patch_strict_rules.tpl" }
-plan_patch_enabled_intro = { file = "templates/planner/plan_patch_enabled_intro.tpl" }
 plan_patch_disabled_intro = { file = "templates/planner/plan_patch_disabled_intro.tpl" }
 finalize_prompt = { file = "templates/planner/finalize_prompt.tpl" }
 review_prompt = { file = "templates/planner/review_prompt.tpl" }
@@ -677,18 +675,6 @@ full_diff_note = { file = "templates/mct/full_diff_note.tpl" }
 	}
 	if cfg.Prompts.Planner.PlanPrompt != "plan prompt file" {
 		t.Fatalf("expected planner plan prompt from file, got %q", cfg.Prompts.Planner.PlanPrompt)
-	}
-	if cfg.Prompts.Planner.PlanPatchRules != "plan patch rules file" {
-		t.Fatalf("expected planner patch rules from file, got %q", cfg.Prompts.Planner.PlanPatchRules)
-	}
-	if cfg.Prompts.Planner.PlanPatchStrictRules != "plan patch strict rules file" {
-		t.Fatalf("expected planner strict patch rules from file, got %q", cfg.Prompts.Planner.PlanPatchStrictRules)
-	}
-	if cfg.Prompts.Planner.PlanPatchEnabledIntro != "enabled intro file" {
-		t.Fatalf("expected planner enabled intro from file, got %q", cfg.Prompts.Planner.PlanPatchEnabledIntro)
-	}
-	if cfg.Prompts.Planner.PlanPatchDisabledIntro != "disabled intro file" {
-		t.Fatalf("expected planner disabled intro from file, got %q", cfg.Prompts.Planner.PlanPatchDisabledIntro)
 	}
 	if cfg.Prompts.Planner.FinalizePrompt != "finalize prompt file" {
 		t.Fatalf("expected planner finalize prompt from file, got %q", cfg.Prompts.Planner.FinalizePrompt)
@@ -743,9 +729,6 @@ full_diff_note = { file = "templates/mct/full_diff_note.tpl" }
 	}
 	if cfg.Prompts.MCT.ReadmeSystemTemplate != "readme system" {
 		t.Fatalf("expected readme system template from file, got %q", cfg.Prompts.MCT.ReadmeSystemTemplate)
-	}
-	if cfg.Prompts.MCT.PatchSuccessNote != "patch success note" {
-		t.Fatalf("expected patch success note from file, got %q", cfg.Prompts.MCT.PatchSuccessNote)
 	}
 	if cfg.Prompts.MCT.FullDiffNote != "full diff note" {
 		t.Fatalf("expected full diff note from file, got %q", cfg.Prompts.MCT.FullDiffNote)

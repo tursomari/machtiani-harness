@@ -1,6 +1,5 @@
 # mct-agent — Agent Orchestrator
 
-Agent “composer” that iteratively asks focused questions using the embedded `mct` discovery pipeline and decides when to stop to produce the final answer. It now calls the `mct` packages directly (no external `mct` binary required), parses the retrieved paths and answers in-memory, maintains a running summary, and uses its own LLM for planning and final composition.
 
 ## Requirements
 - Go 1.22+ (when building from source)
@@ -8,7 +7,7 @@ Agent “composer” that iteratively asks focused questions using the embedded 
   - `OPENAI_API_KEY` (required)
   - `OPENAI_BASE_URL` (required)
   - `OPENAI_MODEL` (required)
-- Optional standalone CLIs (`mct`, `file-discovery`, `shell-agent`, `patcher`) are only needed for direct use; install them with `./scripts/install.sh --install-peripherals`.
+- Optional standalone CLIs (`mct`, `file-discovery`, `shell-agent`) are only needed for direct use; install them with `./scripts/install.sh --install-peripherals`.
 
 ## Install
 
@@ -18,7 +17,7 @@ From the repo root, run the installer to build **mct-agent** into `~/.local/bin`
 ./scripts/install.sh
 ```
 
-Need the standalone CLIs too? Append `--install-peripherals` to build **mct**, **file-discovery**, **shell-agent**, and **patcher** alongside `mct-agent`:
+Need the standalone CLIs too? Append `--install-peripherals` to build **mct**, **file-discovery**, and **shell-agent** alongside `mct-agent`:
 
 ```
 ./scripts/install.sh --install-peripherals
@@ -42,7 +41,6 @@ If you built the peripherals, check them too:
 ```
 mct --help | head -n 1
 file-discovery -version
-patcher --version
 ```
 
 ## Quick Start
@@ -90,7 +88,6 @@ Flags:
 - `--openai-base-url string`: Base URL for OpenAI-compatible endpoint
 - `--orch-model string`: Model alias for planner/finalizer turns (alias: `--model`)
 - `--answer-model string`: Model alias for final answer generation (default: `--orch-model`)
-- `--patcher-model string`: Reserved placeholder; patch instructions are generated via the orchestrator model
 - `--file-discovery-model string`: Model alias for file discovery runs (default: orchestration model)
 - `--openai-model string`: Direct upstream model name for orchestrator (deprecated; prefer aliases)
 - `--timeout-per-turn int`: per-turn timeout in seconds (default: 120; set 0 for unlimited)
@@ -123,14 +120,14 @@ mct-agent run "triage regression" \
 
 ## Environment Details
 - Component model selection precedence:
-  - Flags `--orch-model`, `--answer-model`, `--patcher-model`, `--file-discovery-model`
-  - Environment variables `MCT_ORCH_MODEL`, `MCT_ANSWER_MODEL`, `MCT_PATCHER_MODEL`, `MCT_FILE_DISCOVERY_MODEL` (planner also honors `MCT_MODEL` as a legacy alias)
+  - Flags `--orch-model`, `--answer-model`, `--file-discovery-model`
+  - Environment variables `MCT_ORCH_MODEL`, `MCT_ANSWER_MODEL`, `MCT_FILE_DISCOVERY_MODEL` (planner also honors `MCT_MODEL` as a legacy alias)
   - Shared `.machtiani/config.toml` defaults or legacy `--agent-model`
 - `OPENAI_*` resolution controls direct upstream credentials when skipping aliases:
   - Flags `--openai-*` override
   - Then `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL`
   - Legacy envs `AGENT_MODEL_*` accepted as fallback with a deprecation warning
-- The orchestrator and discovery paths resolve their effective model; the patcher flag is a placeholder today and falls back to the orchestrator configuration.
+- The orchestrator and discovery paths resolve their effective model; the shell-agent model falls back to the orchestrator configuration when not specified.
 - `MACHTIANI_SESSION_ID` is generated per run and passed into the discovery service for correlation across artifacts.
 - `MACHTIANI_SHELL_AGENT_MARKER_MAX_AGE` overrides the startup cleanup threshold for shell-agent marker files (Go duration like `30m`, `2h`; default `1h`).
 - `--timeout-per-turn` applies to both the discovery steps and the planner/finalizer LLM calls. Set to `0` to disable the deadline for all per-turn operations.
@@ -146,12 +143,12 @@ mct-agent run "triage regression" \
   - Increase `--timeout-per-turn` (e.g., `--timeout-per-turn=600`) or set `--timeout-per-turn=0` to disable the deadline for discovery and planner steps.
 
 ## Notes
-- The agent links against the `mct` and `patcher` Go packages directly; no external binaries are required for default operation.
+- The agent links against the `mct` Go package directly; no external binaries are required for default operation.
 - Discovery responses are consumed in-memory while the library still persists `.machtiani/sessions/<session-id>/chat/machtiani-response.md` for compatibility.
 - `--dry-run` simulates planning and discovery without making outbound LLM requests.
 - Patch planning is opt-in. Pass `--patch` to enable planner patch requests; without it the agent skips patch instructions entirely.
 - Use `--patch-no-apply` to capture patch diagnostics and transcript turns without touching the working tree.
-- `--patcher-model` is currently informational only; the planner (orchestrator model) generates patch instructions and the runner ignores this alias.
+
 - Shell-agent mode depends on a `shell-agent` binary on PATH (build the bundled version via `cd agent/internal/shell-agent && GOCACHE=$(pwd)/../../.gocache go build -o ~/.local/bin/shell-agent ./cmd/shell-agent`).
 
 ## Testing

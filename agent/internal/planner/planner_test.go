@@ -8,7 +8,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/tursomari/machtiani/agent/internal/conversation"
@@ -34,7 +33,7 @@ func readRepoFile(t *testing.T, rel string) string {
 
 func TestParseDecisionAsk(t *testing.T) {
 	resp := "Decision: ask\nQuestion: What is the structure of the main module?"
-	dec, remainder, preamble := parseDecision(resp, true)
+	dec, remainder, preamble := parseDecision(resp)
 
 	if dec != DecisionAsk {
 		t.Fatalf("expected DecisionAsk, got %q", dec)
@@ -47,58 +46,12 @@ func TestParseDecisionAsk(t *testing.T) {
 	}
 }
 
-func TestParseDecisionPatch(t *testing.T) {
-	jsonPayload := `{"metadata": {"description": "Fix typo"}, "edits": []}`
-	resp := "Decision: patch\n" + jsonPayload
-	dec, remainder, preamble := parseDecision(resp, true)
 
-	if dec != DecisionPatch {
-		t.Fatalf("expected DecisionPatch, got %q", dec)
-	}
-	if !strings.Contains(remainder, "Fix typo") {
-		t.Fatalf("expected JSON payload in remainder, got %q", remainder)
-	}
-	if preamble != "" {
-		t.Fatalf("expected empty preamble, got %q", preamble)
-	}
-}
 
-func TestParseDecisionPatchShorthand(t *testing.T) {
-	resp := "Patch: src/main.go"
-	dec, remainder, preamble := parseDecision(resp, true)
-
-	if dec != DecisionPatch {
-		t.Fatalf("expected DecisionPatch, got %q", dec)
-	}
-	if remainder != "src/main.go" {
-		t.Fatalf("expected shorthand remainder to be patch path, got %q", remainder)
-	}
-	if preamble != "" {
-		t.Fatalf("expected empty preamble, got %q", preamble)
-	}
-}
-
-func TestPlanPatchShorthandRoutesToStrictPatchFlow(t *testing.T) {
-	client := NewClient(ClientConfig{PatchEnabled: true, StrictPatchMode: true, RepoRoot: t.TempDir()})
-	client.chatFn = func(context.Context, []llm.Message) (string, error) {
-		return "Patch: src/main.go", nil
-	}
-	conv := conversation.New("sess-plan", "goal")
-	dec, payload, err := client.Plan(context.Background(), conv, "goal", "transcript", 1, 3, nil)
-	if err != nil {
-		t.Fatalf("Plan returned error: %v", err)
-	}
-	if dec != DecisionAsk {
-		t.Fatalf("expected shorthand to fall back to ask without repo files, got %q", dec)
-	}
-	if payload == "" {
-		t.Fatalf("expected fallback question to be non-empty")
-	}
-}
 
 func TestParseDecisionFinalize(t *testing.T) {
 	resp := "Decision: finalize"
-	dec, remainder, preamble := parseDecision(resp, true)
+	dec, remainder, preamble := parseDecision(resp)
 
 	if dec != DecisionFinalize {
 		t.Fatalf("expected DecisionFinalize, got %q", dec)
@@ -113,7 +66,7 @@ func TestParseDecisionFinalize(t *testing.T) {
 
 func TestParseDecisionFinalizeImplicit(t *testing.T) {
 	resp := "Finalize: HTML converted; verified with git diff."
-	dec, remainder, preamble := parseDecision(resp, true)
+	dec, remainder, preamble := parseDecision(resp)
 
 	if dec != DecisionFinalize {
 		t.Fatalf("expected DecisionFinalize, got %q", dec)
@@ -127,8 +80,8 @@ func TestParseDecisionFinalizeImplicit(t *testing.T) {
 }
 
 func TestPlanRequiresConversation(t *testing.T) {
-	client := NewClient(ClientConfig{PatchEnabled: true})
-	_, _, err := client.Plan(context.Background(), nil, "goal", "transcript", 1, 3, nil)
+	client := NewClient(ClientConfig{})
+	_, _, err := client.Plan(context.Background(), nil, "goal", "transcript", 1, 3)
 	if err == nil {
 		t.Fatalf("expected error when conversation is nil")
 	}
@@ -150,7 +103,7 @@ func TestParseDecisionVariants(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dec, remainder, preamble := parseDecision(tt.resp, true)
+			dec, remainder, preamble := parseDecision(tt.resp)
 			if dec != tt.want {
 				t.Fatalf("parseDecision(%q) = %q, want %q", tt.resp, dec, tt.want)
 			}
@@ -164,30 +117,6 @@ func TestParseDecisionVariants(t *testing.T) {
 	}
 }
 
-func TestParseDecisionAcceptReject(t *testing.T) {
-	tests := []struct {
-		name            string
-		resp            string
-		want            Decision
-		expectRemainder bool
-	}{
-		{name: "AcceptSimple", resp: "Decision: accept\nReason: looks good", want: DecisionAccept, expectRemainder: true},
-		{name: "RejectMixedCase", resp: "Decision: ReJeCt\nReason: undo", want: DecisionReject, expectRemainder: true},
-		{name: "AcceptWithExtra", resp: "Decision: I accept this patch", want: DecisionAccept, expectRemainder: false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			dec, remainder, _ := parseDecision(tt.resp, true)
-			if dec != tt.want {
-				t.Fatalf("parseDecision(%q) = %q, want %q", tt.resp, dec, tt.want)
-			}
-			if (remainder != "") != tt.expectRemainder {
-				t.Fatalf("expected remainder presence %v, got %q", tt.expectRemainder, remainder)
-			}
-		})
-	}
-}
 
 func TestParseDecisionCaseInsensitive(t *testing.T) {
 	tests := []struct {
@@ -196,13 +125,12 @@ func TestParseDecisionCaseInsensitive(t *testing.T) {
 		want Decision
 	}{
 		{name: "UpperAsk", resp: "Decision: ASK\nQuestion: text", want: DecisionAsk},
-		{name: "MixedPatch", resp: "Decision: Patch\n{ }", want: DecisionPatch},
 		{name: "UpperFinalize", resp: "Decision: FINALIZE", want: DecisionFinalize},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dec, _, _ := parseDecision(tt.resp, true)
+			dec, _, _ := parseDecision(tt.resp)
 			if dec != tt.want {
 				t.Fatalf("parseDecision(%q) = %q, want %q", tt.resp, dec, tt.want)
 			}
@@ -212,7 +140,7 @@ func TestParseDecisionCaseInsensitive(t *testing.T) {
 
 func TestParseDecisionMissingDecisionLine(t *testing.T) {
 	resp := "Some random text\nNo decision here"
-	dec, remainder, preamble := parseDecision(resp, true)
+	dec, remainder, preamble := parseDecision(resp)
 
 	if dec != "" {
 		t.Fatalf("expected empty decision for missing 'Decision:' line, got %q", dec)
@@ -226,7 +154,7 @@ func TestParseDecisionMissingDecisionLine(t *testing.T) {
 }
 
 func TestParseDecisionEmptyResponse(t *testing.T) {
-	dec, remainder, preamble := parseDecision("", true)
+	dec, remainder, preamble := parseDecision("")
 
 	if dec != "" {
 		t.Fatalf("expected empty decision for empty response, got %q", dec)
@@ -241,7 +169,7 @@ func TestParseDecisionEmptyResponse(t *testing.T) {
 
 func TestParseDecisionInvalidDecisionType(t *testing.T) {
 	resp := "Decision: unknown\nSome content"
-	dec, remainder, preamble := parseDecision(resp, true)
+	dec, remainder, preamble := parseDecision(resp)
 
 	if dec != "" {
 		t.Fatalf("expected empty decision for invalid type, got %q", dec)
@@ -256,7 +184,7 @@ func TestParseDecisionInvalidDecisionType(t *testing.T) {
 
 func TestParseDecisionPreservesMultilineRemainder(t *testing.T) {
 	resp := "Decision: ask\nQuestion: Part 1\nPart 2\nPart 3"
-	dec, remainder, preamble := parseDecision(resp, true)
+	dec, remainder, preamble := parseDecision(resp)
 
 	if dec != DecisionAsk {
 		t.Fatalf("expected DecisionAsk, got %q", dec)
@@ -271,7 +199,7 @@ func TestParseDecisionPreservesMultilineRemainder(t *testing.T) {
 
 func TestParseDecisionAllowsShortPreamble(t *testing.T) {
 	resp := "Note: quick recap.\nDecision: ask\nQuestion: Summarize the safeguards changes."
-	dec, remainder, preamble := parseDecision(resp, true)
+	dec, remainder, preamble := parseDecision(resp)
 
 	if dec != DecisionAsk {
 		t.Fatalf("expected DecisionAsk with short preamble allowed, got %q", dec)
@@ -284,164 +212,10 @@ func TestParseDecisionAllowsShortPreamble(t *testing.T) {
 	}
 }
 
-func TestReviewPromptIncludesReviewDetails(t *testing.T) {
-	client := NewClient(ClientConfig{})
-	client.UpdateProgress(Progress{
-		PendingReview: &PendingReview{
-			Description:      "Fix login handler",
-			PatchPath:        "/tmp/patch.diff",
-			ReversePatchPath: "/tmp/patch.diff.reverse",
-			Files:            []string{"pkg/auth/login.go"},
-			Sequence:         4,
-			Insertions:       12,
-			Deletions:        3,
-		},
-	})
-	prompt := client.reviewPrompt("Improve auth flow", "Transcript body", 3, 6)
-	for _, substr := range []string{"Accept", "Reject", "Undo patch file", "pkg/auth/login.go", "Patch sequence: 4"} {
-		if !strings.Contains(prompt, substr) {
-			t.Fatalf("expected review prompt to contain %q, got %q", substr, prompt)
-		}
-	}
-}
-
-func TestReviewPromptIncludesPatchDiffPreview(t *testing.T) {
-	client := NewClient(ClientConfig{})
-	patchDir := t.TempDir()
-	patchPath := filepath.Join(patchDir, "change.patch")
-	diff := "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-Old line\n+New line\n"
-	if err := os.WriteFile(patchPath, []byte(diff), 0o644); err != nil {
-		t.Fatalf("write patch: %v", err)
-	}
-	client.UpdateProgress(Progress{
-		PendingReview: &PendingReview{
-			Description: "Doc tweak",
-			PatchPath:   patchPath,
-		},
-	})
-	prompt := client.reviewPrompt("Doc goal", "Transcript body", 2, 4)
-	if !strings.Contains(prompt, "Patch diff preview:") {
-		t.Fatalf("expected diff preview header, got %q", prompt)
-	}
-	if !strings.Contains(prompt, "```diff") {
-		t.Fatalf("expected diff code fence, got %q", prompt)
-	}
-	if !strings.Contains(prompt, "+New line") {
-		t.Fatalf("expected diff content in prompt, got %q", prompt)
-	}
-}
-
-func TestPlanReviewModeParsesAccept(t *testing.T) {
-	client := NewClient(ClientConfig{})
-	client.chatFn = func(context.Context, []llm.Message) (string, error) {
-		return "Decision: accept\nReason: ship it", nil
-	}
-	client.UpdateProgress(Progress{
-		PendingReview: &PendingReview{PatchPath: "patch.diff"},
-	})
-	dec, reason, err := client.Plan(context.Background(), nil, "goal", "transcript", 2, 5, nil)
-	if err != nil {
-		t.Fatalf("Plan returned error: %v", err)
-	}
-	if dec != DecisionAccept {
-		t.Fatalf("expected DecisionAccept, got %q", dec)
-	}
-	if !strings.Contains(reason, "Reason:") {
-		t.Fatalf("expected reason to include explanation, got %q", reason)
-	}
-}
-
-func TestPlanReviewModeDefaultsToAcceptWhenMissingDecision(t *testing.T) {
-	client := NewClient(ClientConfig{})
-	client.chatFn = func(context.Context, []llm.Message) (string, error) {
-		return "Looks great!", nil
-	}
-	client.UpdateProgress(Progress{
-		PendingReview: &PendingReview{PatchPath: "patch.diff"},
-	})
-	dec, note, err := client.Plan(context.Background(), nil, "goal", "transcript", 1, 4, nil)
-	if err != nil {
-		t.Fatalf("Plan returned error: %v", err)
-	}
-	if dec != DecisionAccept {
-		t.Fatalf("expected DecisionAccept fallback, got %q", dec)
-	}
-	if !strings.Contains(strings.ToLower(note), "auto-accepted") {
-		t.Fatalf("expected note to mention auto-accept, got %q", note)
-	}
-}
-
-func TestPlanReviewModeCoercesNonReviewDecisionToAccept(t *testing.T) {
-	client := NewClient(ClientConfig{})
-	client.chatFn = func(context.Context, []llm.Message) (string, error) {
-		return "Decision: ask\nQuestion: what's next?", nil
-	}
-	client.UpdateProgress(Progress{
-		PendingReview: &PendingReview{PatchPath: "patch.diff"},
-	})
-	dec, note, err := client.Plan(context.Background(), nil, "goal", "transcript", 2, 5, nil)
-	if err != nil {
-		t.Fatalf("Plan returned error: %v", err)
-	}
-	if dec != DecisionAccept {
-		t.Fatalf("expected DecisionAccept fallback, got %q", dec)
-	}
-	if !strings.Contains(strings.ToLower(note), "auto-accepted") {
-		t.Fatalf("expected note to mention auto-accept, got %q", note)
-	}
-}
-
-func TestPlanPromptIncludesProgressSection(t *testing.T) {
-	client := NewClient(ClientConfig{})
-	client.UpdateProgress(Progress{
-		SuccessFiles:   []string{"LICENSE", "lib/web/fetch/LICENSE", "LICENSE"},
-		AppliedPatches: 3,
-	})
-	prompt := client.planPrompt(nil, "Update licensing headers", "", 2, 5, nil)
-	if strings.Contains(prompt, "Files already updated successfully this session") {
-		t.Fatalf("expected prompt to omit success files section, got %q", prompt)
-	}
-	if strings.Contains(prompt, "Strict patch successes so far") {
-		t.Fatalf("expected prompt to omit patch success heuristic, got %q", prompt)
-	}
-}
-
-func TestParseDecisionRejectsTooLongPreamble(t *testing.T) {
-	longLine := strings.Repeat("x", maxDecisionPreambleChars+1)
-	resp := longLine + "\nDecision: ask\nQuestion: Should fail"
-	dec, remainder, preamble := parseDecision(resp, true)
-
-	if dec != "" {
-		t.Fatalf("expected empty decision when preamble exceeds limit, got %q", dec)
-	}
-	if remainder != "" {
-		t.Fatalf("expected empty remainder when preamble exceeds limit, got %q", remainder)
-	}
-	if preamble != "" {
-		t.Fatalf("expected empty preamble return when parsing fails, got %q", preamble)
-	}
-}
-
-func TestParseDecisionRejectsTooManyPreambleLines(t *testing.T) {
-	lines := []string{"one", "two", "three", "four"}
-	resp := strings.Join(lines, "\n") + "\nDecision: ask\nQuestion: Should fail"
-	dec, remainder, preamble := parseDecision(resp, true)
-
-	if dec != "" {
-		t.Fatalf("expected empty decision when preamble has too many lines, got %q", dec)
-	}
-	if remainder != "" {
-		t.Fatalf("expected empty remainder when preamble has too many lines, got %q", remainder)
-	}
-	if preamble != "" {
-		t.Fatalf("expected empty preamble return when parsing fails, got %q", preamble)
-	}
-}
-
 func TestParseAskMenuRealisticNoShell(t *testing.T) {
 	resp := strings.TrimSpace(`
 Ask Mode: no-shell
-Ask: How does mct-agent manage context across its orchestrated tools (file-discovery, snippet-discovery, shell-agent, patcher) and the planner, particularly in terms of session state, workspace snapshots, and LLM prompting?
+Ask: How does mct-agent manage context across its orchestrated tools (file-discovery, snippet-discovery, shell-agent) and the planner, particularly in terms of session state, workspace snapshots, and LLM prompting?
 `)
 	mode, ask, err := parseAskMenu(resp)
 	if err != nil {
@@ -730,7 +504,7 @@ func TestPlanAskLoopIntegration(t *testing.T) {
 		return "", nil
 	}
 
-	dec, ask, err := client.Plan(context.Background(), conv, conv.OriginalGoal, transcript, 1, 3, nil)
+	dec, ask, err := client.Plan(context.Background(), conv, conv.OriginalGoal, transcript, 1, 3)
 	if err != nil {
 		t.Fatalf("Plan returned error: %v", err)
 	}
@@ -991,172 +765,14 @@ func TestGenerateAskRetryExhaustionReturnsLastAsk(t *testing.T) {
 	}
 }
 
-func TestParseDecisionPatchDisabled(t *testing.T) {
-	resp := "Decision: patch\n{ }"
-	dec, remainder, preamble := parseDecision(resp, false)
 
-	if dec != DecisionAsk {
-		t.Fatalf("expected ask decision when patch is disabled; got %v", dec)
-	}
-	want := "Question: Considering the current transcript, produce the single next high-signal repository-focused prompt for mct."
-	if remainder != want {
-		t.Fatalf("unexpected remainder. got %q, want %q", remainder, want)
-	}
-	if preamble != "" {
-		t.Fatalf("expected empty preamble, got %q", preamble)
-	}
-}
 
-func TestPlannerRejectsInvalidPatchJSON(t *testing.T) {
-	resp := "Decision: patch\n{this is not valid json}"
-	dec, remainder, preamble := parseDecision(resp, true)
 
-	if dec != DecisionPatch {
-		t.Fatalf("expected DecisionPatch to be parsed despite invalid JSON, got %q", dec)
-	}
-	if !strings.Contains(remainder, "not valid json") {
-		t.Fatalf("expected invalid JSON in remainder, got %q", remainder)
-	}
-	if preamble != "" {
-		t.Fatalf("expected empty preamble, got %q", preamble)
-	}
-}
 
-func TestPlanPromptIncludesMetadata(t *testing.T) {
-	c := NewClient(ClientConfig{DryRun: true, PatchEnabled: true})
-	prompt := c.planPrompt(nil, "goal text", "transcript text", 1, 4, nil)
-	want := []string{"Decision: ask|patch", "Use the conversation above", "Step 1 of 4"}
-	for _, w := range want {
-		if !contains(prompt, w) {
-			t.Fatalf("plan prompt missing %q:\n%s", w, prompt)
-		}
-	}
-	if contains(prompt, "Transcript:") || contains(prompt, "transcript text") {
-		t.Fatalf("plan prompt should rely on conversation projection instead of transcript text:\n%s", prompt)
-	}
-}
 
-func TestPlanPromptAllowsFinalizeWhenPatchPlanComplete(t *testing.T) {
-	c := NewClient(ClientConfig{DryRun: true, PatchEnabled: true})
-	plan := &PatchPlan{Items: []PatchPlanItem{{Description: "update README", Complete: true}}}
-	prompt := c.planPrompt(nil, "goal text", "transcript text", 1, 4, plan)
-	if !strings.Contains(prompt, "Decision: ask|patch|finalize") {
-		t.Fatalf("plan prompt should expose finalize when patch plan is complete:\n%s", prompt)
-	}
-}
 
-func TestPlanPromptBlocksFinalizeWhenPatchPlanIncomplete(t *testing.T) {
-	c := NewClient(ClientConfig{DryRun: true, PatchEnabled: true})
-	plan := &PatchPlan{Items: []PatchPlanItem{{Description: "update README", Complete: false}}}
-	prompt := c.planPrompt(nil, "goal text", "transcript text", 1, 4, plan)
-	if strings.Contains(prompt, "Decision: ask|patch|finalize") {
-		t.Fatalf("plan prompt should hide finalize when patch plan is incomplete:\n%s", prompt)
-	}
-	if !strings.Contains(prompt, "Decision: ask|patch") {
-		t.Fatalf("plan prompt should still expose ask|patch when plan incomplete:\n%s", prompt)
-	}
-}
 
-func TestPlanPromptFromFileGatesFinalize(t *testing.T) {
-	root := t.TempDir()
-	templatePath := filepath.Join(root, "templates", "planner", "plan_prompt.tpl")
-	if err := os.MkdirAll(filepath.Dir(templatePath), 0o755); err != nil {
-		t.Fatalf("mkdir templates: %v", err)
-	}
-	templateContent := strings.TrimSpace(`EXTERNAL TEMPLATE
-<reply-format>
-  <output>
-    {{- if and .PatchEnabled .AllowFinalize }}
-    <line position="1">Decision: ask|patch|finalize</line>
-    {{- else if .PatchEnabled }}
-    <line position="1">Decision: ask|patch</line>
-    {{- else }}
-    <line position="1">Decision: ask</line>
-    {{- end }}
-  </output>
-</reply-format>
-`) + "\n"
-	if err := os.WriteFile(templatePath, []byte(templateContent), 0o644); err != nil {
-		t.Fatalf("write template: %v", err)
-	}
-	configPath := filepath.Join(root, "config.toml")
-	configContent := `listen = "127.0.0.1:0"
 
-[prompts.planner]
-plan_prompt = { file = "templates/planner/plan_prompt.tpl" }
-`
-	if err := os.WriteFile(configPath, []byte(configContent), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-	t.Setenv("MACHTIANI_CONFIG", configPath)
-	llm.ResetConfigForTesting()
-	t.Cleanup(llm.ResetConfigForTesting)
-
-	cfg, _, err := llm.LoadGlobalConfig()
-	if err != nil {
-		t.Fatalf("LoadGlobalConfig: %v", err)
-	}
-	if cfg.Prompts == nil || cfg.Prompts.Planner == nil {
-		t.Fatalf("expected planner prompts from file config")
-	}
-	client := NewClient(ClientConfig{DryRun: true, PatchEnabled: true, Prompts: cfg.Prompts.Planner})
-	plan := &PatchPlan{Items: []PatchPlanItem{{Description: "update README", Complete: false}}}
-	prompt := client.planPrompt(nil, "goal text", "transcript text", 1, 4, plan)
-	if !strings.Contains(prompt, "EXTERNAL TEMPLATE") {
-		t.Fatalf("expected file-based template content in prompt, got:\n%s", prompt)
-	}
-	if strings.Contains(prompt, "Decision: ask|patch|finalize") {
-		t.Fatalf("file-based plan prompt should hide finalize when patch plan is incomplete:\n%s", prompt)
-	}
-	if !strings.Contains(prompt, "Decision: ask|patch") {
-		t.Fatalf("file-based plan prompt should still expose ask|patch when plan incomplete:\n%s", prompt)
-	}
-}
-
-func TestPlanPromptHighlightsPatchShorthand(t *testing.T) {
-	c := NewClient(ClientConfig{DryRun: true, PatchEnabled: true})
-	prompt := c.planPrompt(nil, "goal", "", 2, 5, nil)
-	want := []string{
-		"Patch: <repo-relative filepath>",
-	}
-	for _, w := range want {
-		if !contains(prompt, w) {
-			t.Fatalf("plan prompt missing %q:\n%s", w, prompt)
-		}
-	}
-}
-
-func TestPlanPromptStrictModeDefersPatchDetails(t *testing.T) {
-	c := NewClient(ClientConfig{DryRun: true, PatchEnabled: true, StrictPatchMode: true})
-	prompt := c.planPrompt(nil, "goal", "transcript", 3, 6, nil)
-
-	disallowed := []string{
-		"Strict patch planner flow:",
-		"Patch JSON schema",
-	}
-	for _, bad := range disallowed {
-		if contains(prompt, bad) {
-			t.Fatalf("plan prompt should defer detailed patch guidance and omit %q:\n%s", bad, prompt)
-		}
-	}
-}
-
-func TestPlanPromptDisabledOmitsPatchInstructions(t *testing.T) {
-	c := NewClient(ClientConfig{DryRun: true})
-	prompt := c.planPrompt(nil, "goal", "transcript", 2, 4, nil)
-	if contains(prompt, "Decision: ask|patch|finalize") {
-		t.Fatalf("prompt should not list patch option when patching is disabled:\n%s", prompt)
-	}
-	if !contains(prompt, "Decision: ask|finalize") {
-		t.Fatalf("prompt should list ask|finalize when patching is disabled:\n%s", prompt)
-	}
-	if contains(prompt, "Patch JSON schema") {
-		t.Fatalf("prompt should not include patch schema when patching is disabled:\n%s", prompt)
-	}
-	if !contains(prompt, "Patch requests are disabled for this run") {
-		t.Fatalf("prompt should call out that patch requests are disabled:\n%s", prompt)
-	}
-}
 
 func TestPlanSystemPromptOmitsTranscript(t *testing.T) {
 	client := NewClient(ClientConfig{
@@ -1168,7 +784,7 @@ func TestPlanSystemPromptOmitsTranscript(t *testing.T) {
 	})
 	conv := conversation.New("sess-system", "Finish docs")
 	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask"})
-	prompt := client.planSystemPrompt(conv, "Finish docs", 1, 3, nil)
+	prompt := client.planSystemPrompt(conv, "Finish docs", 1, 3)
 	if strings.Contains(prompt, "Shell system prompt") {
 		t.Fatalf("system prompt should ignore shell template, got %q", prompt)
 	}
@@ -1183,7 +799,7 @@ func TestPlanSystemPromptOmitsTranscript(t *testing.T) {
 func TestPlanSystemPromptOmitsFullFileTagGuidance(t *testing.T) {
 	client := NewClient(ClientConfig{})
 	conv := conversation.New("sess-system", "Finish docs")
-	prompt := client.planSystemPrompt(conv, "Finish docs", 1, 3, nil)
+	prompt := client.planSystemPrompt(conv, "Finish docs", 1, 3)
 	if strings.Contains(prompt, "<full_file") {
 		t.Fatalf("expected system prompt to omit full_file tag guidance, got %q", prompt)
 	}
@@ -1198,7 +814,7 @@ func TestPlanSystemPromptOmitsFullFileTagGuidance(t *testing.T) {
 func TestPlanSystemPromptDefinesAnswerTheUserContract(t *testing.T) {
 	client := NewClient(ClientConfig{})
 	conv := conversation.New("sess-answer-the-user", "Finish docs")
-	prompt := client.planSystemPrompt(conv, "Finish docs", 1, 3, nil)
+	prompt := client.planSystemPrompt(conv, "Finish docs", 1, 3)
 	checks := []string{
 		"A message tagged `answer_the_user` means produce the assistant's actual user-facing reply now, grounded in the conversation so far.",
 		"<ANSWER_THE_USER_BEHAVIOR>",
@@ -1217,7 +833,7 @@ func TestPlanSystemPromptDefinesAnswerTheUserContract(t *testing.T) {
 func TestPlanSystemPromptIncludesPlannerOverlay(t *testing.T) {
 	client := NewClient(ClientConfig{PlannerOverlay: "Focus on security review and threat modeling."})
 	conv := conversation.New("sess-system-overlay", "Finish docs")
-	prompt := client.planSystemPrompt(conv, "Finish docs", 1, 3, nil)
+	prompt := client.planSystemPrompt(conv, "Finish docs", 1, 3)
 	if !strings.Contains(prompt, "<CORE_SAFETY_RULES>") {
 		t.Fatalf("expected core safety rules section, got %q", prompt)
 	}
@@ -1267,15 +883,15 @@ func TestAskPromptPrefersExplanationsOverFullFiles(t *testing.T) {
 }
 
 func TestPlannerHelperMessagesSharePlanPrefix(t *testing.T) {
-	client := NewClient(ClientConfig{PatchEnabled: true})
+	client := NewClient(ClientConfig{})
 	conv := conversation.New("sess-prefix", "Finish docs")
 	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask"})
 	conv.AddMessage("assistant", "Answer: done", map[string]any{"type": "answer", "turn": 1})
 
-	planMessages := client.buildPlanMessages(context.Background(), conv, conv.OriginalGoal, 2, 4, nil)
-	askMessages := client.buildPlannerTaskMessages(context.Background(), conv, conv.OriginalGoal, 2, 4, nil, client.askPrompt(client.buildAskRequest(conv, conv.OriginalGoal, 2, 4), ""))
-	monitorMessages := client.buildPlannerTaskMessages(context.Background(), conv, conv.OriginalGoal, 2, 4, nil, client.askUserDirectedMonitorPrompt("Explain config loading."))
-	mixedMessages := client.buildPlannerTaskMessages(context.Background(), conv, conv.OriginalGoal, 2, 4, nil, client.askMixedMonitorPrompt("Explain config loading and run git diff --stat."))
+	planMessages := client.buildPlanMessages(context.Background(), conv, conv.OriginalGoal, 2, 4)
+	askMessages := client.buildPlannerTaskMessages(context.Background(), conv, conv.OriginalGoal, 2, 4, client.askPrompt(client.buildAskRequest(conv, conv.OriginalGoal, 2, 4), ""))
+	monitorMessages := client.buildPlannerTaskMessages(context.Background(), conv, conv.OriginalGoal, 2, 4, client.askUserDirectedMonitorPrompt("Explain config loading."))
+	mixedMessages := client.buildPlannerTaskMessages(context.Background(), conv, conv.OriginalGoal, 2, 4, client.askMixedMonitorPrompt("Explain config loading and run git diff --stat."))
 
 	messageSets := [][]llm.Message{askMessages, monitorMessages, mixedMessages}
 	for _, messages := range messageSets {
@@ -1297,16 +913,16 @@ func TestPlannerHelperMessagesSharePlanPrefix(t *testing.T) {
 }
 
 func TestPlannerOverlayStaysInSharedSystemPrompt(t *testing.T) {
-	client := NewClient(ClientConfig{PatchEnabled: true, PlannerOverlay: "Prioritize migration safety checks."})
+	client := NewClient(ClientConfig{PlannerOverlay: "Prioritize migration safety checks."})
 	conv := conversation.New("sess-overlay-prefix", "Finish docs")
 	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask"})
 	conv.AddMessage("assistant", "Answer: done", map[string]any{"type": "answer", "turn": 1})
 
-	planMessages := client.buildPlanMessages(context.Background(), conv, conv.OriginalGoal, 2, 4, nil)
+	planMessages := client.buildPlanMessages(context.Background(), conv, conv.OriginalGoal, 2, 4)
 	taskMessages := [][]llm.Message{
-		client.buildPlannerTaskMessages(context.Background(), conv, conv.OriginalGoal, 2, 4, nil, client.askPrompt(client.buildAskRequest(conv, conv.OriginalGoal, 2, 4), "")),
-		client.buildPlannerTaskMessages(context.Background(), conv, conv.OriginalGoal, 2, 4, nil, client.askUserDirectedMonitorPrompt("Explain config loading.")),
-		client.buildPlannerTaskMessages(context.Background(), conv, conv.OriginalGoal, 2, 4, nil, client.askMixedMonitorPrompt("Explain config loading and run git diff --stat.")),
+		client.buildPlannerTaskMessages(context.Background(), conv, conv.OriginalGoal, 2, 4, client.askPrompt(client.buildAskRequest(conv, conv.OriginalGoal, 2, 4), "")),
+		client.buildPlannerTaskMessages(context.Background(), conv, conv.OriginalGoal, 2, 4, client.askUserDirectedMonitorPrompt("Explain config loading.")),
+		client.buildPlannerTaskMessages(context.Background(), conv, conv.OriginalGoal, 2, 4, client.askMixedMonitorPrompt("Explain config loading and run git diff --stat.")),
 	}
 
 	if len(planMessages) == 0 || planMessages[0].Role != "system" {
@@ -1330,11 +946,11 @@ func TestPlannerOverlayStaysInSharedSystemPrompt(t *testing.T) {
 }
 
 func TestBuildPlanMessagesNoGoalUpdate(t *testing.T) {
-	client := NewClient(ClientConfig{PatchEnabled: true})
+	client := NewClient(ClientConfig{})
 	conv := conversation.New("sess-1", "Finish docs")
 	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask"})
 	conv.AddMessage("assistant", "Answer: done", map[string]any{"type": "answer", "turn": 1})
-	messages := client.buildPlanMessages(context.Background(), conv, "Finish docs", 2, 4, nil)
+	messages := client.buildPlanMessages(context.Background(), conv, "Finish docs", 2, 4)
 
 	wantRoles := []string{"system", "user", "assistant", "assistant", "user"}
 	if len(messages) != len(wantRoles) {
@@ -1360,16 +976,16 @@ func TestBuildPlanMessagesNoGoalUpdate(t *testing.T) {
 	if !strings.Contains(messages[4].Content, "Step 2 of 4") {
 		t.Fatalf("step message missing progress: %q", messages[4].Content)
 	}
-	if !strings.Contains(messages[4].Content, "Decision: ask|patch") {
+	if !strings.Contains(messages[4].Content, "Decision: ask|finalize") {
 		t.Fatalf("final planner message missing decision schema: %q", messages[4].Content)
 	}
 }
 
 func TestBuildPlanMessagesUsesConversation(t *testing.T) {
-	client := NewClient(ClientConfig{PatchEnabled: true})
+	client := NewClient(ClientConfig{})
 	conv := conversation.New("sess-2", "Finish docs")
 	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask"})
-	messages := client.buildPlanMessages(context.Background(), conv, "Finish docs", 2, 4, nil)
+	messages := client.buildPlanMessages(context.Background(), conv, "Finish docs", 2, 4)
 	if len(messages) != 4 {
 		t.Fatalf("expected 4 messages, got %d", len(messages))
 	}
@@ -1391,7 +1007,7 @@ func TestBuildPlanMessagesInsertsCacheAnchorMetadata(t *testing.T) {
 	client := NewClient(ClientConfig{Model: model})
 	conv := conversation.New("sess-anchor", "Goal")
 	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask"})
-	client.buildPlanMessages(context.Background(), conv, "Goal", 2, 4, nil)
+	client.buildPlanMessages(context.Background(), conv, "Goal", 2, 4)
 
 	anchors := cacheAnchorIndexes(conv)
 	if len(anchors) != 1 {
@@ -1424,7 +1040,7 @@ func TestBuildPlanMessagesKeepsAnchorStable(t *testing.T) {
 	conv := conversation.New("sess-stable", "Goal")
 	conv.AddMessage("user", llm.CacheAnchorMarkerText, map[string]any{"type": "cache_anchor", llm.CacheAnchorSequenceMetadataKey: 1})
 	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask"})
-	client.buildPlanMessages(context.Background(), conv, "Goal", 2, 4, nil)
+	client.buildPlanMessages(context.Background(), conv, "Goal", 2, 4)
 
 	anchors := cacheAnchorIndexes(conv)
 	if len(anchors) != 1 {
@@ -1451,7 +1067,7 @@ func TestBuildPlanMessagesRotatesCacheAnchor(t *testing.T) {
 		llm.CacheAnchorCachedTokensMetadataKey: 5,
 	})
 	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask"})
-	client.buildPlanMessages(context.Background(), conv, "Goal", 3, 6, nil)
+	client.buildPlanMessages(context.Background(), conv, "Goal", 3, 6)
 
 	anchors := cacheAnchorIndexes(conv)
 	if len(anchors) != 2 {
@@ -1468,13 +1084,13 @@ func TestBuildPlanMessagesRotatesCacheAnchor(t *testing.T) {
 }
 
 func TestFinalizeMessagesReusePlannerSystemPrompt(t *testing.T) {
-	client := NewClient(ClientConfig{PatchEnabled: true, PlannerOverlay: "Prioritize migration safety checks."})
+	client := NewClient(ClientConfig{PlannerOverlay: "Prioritize migration safety checks."})
 	conv := conversation.New("sess-finalize-prefix", "Initial goal")
 	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask"})
 	conv.AddMessage("user", "Updated goal", nil)
 	conv.AddMessage("assistant", "Answer: done", map[string]any{"type": "answer", "turn": 1})
 
-	planMessages := client.buildPlanMessages(context.Background(), conv, "stale goal", 2, 4, nil)
+	planMessages := client.buildPlanMessages(context.Background(), conv, "stale goal", 2, 4)
 	finalizeMessages := client.buildFinalizeMessages(context.Background(), conv, "stale goal")
 	if len(finalizeMessages) != len(planMessages) {
 		t.Fatalf("expected matching message counts, got finalize=%d plan=%d", len(finalizeMessages), len(planMessages))
@@ -1756,122 +1372,4 @@ func cacheAnchorBool(metadata map[string]any, key string) bool {
 	return false
 }
 
-func TestPlanReroutesRewriteToFullMode(t *testing.T) {
-	repoRoot := t.TempDir()
-	relPath := "LICENSE"
-	content := "Original content"
-	if err := os.WriteFile(filepath.Join(repoRoot, relPath), []byte(content), 0o644); err != nil {
-		t.Fatalf("write temp file: %v", err)
-	}
 
-	client := NewClient(ClientConfig{
-		RepoRoot:        repoRoot,
-		PatchEnabled:    true,
-		StrictPatchMode: true,
-	})
-
-	rewriteJSON := `{
-		"edits": [
-			{
-				"path": "LICENSE",
-				"mode": "rewrite",
-				"new_content": "New content"
-			}
-		]
-	}`
-
-	var mu sync.Mutex
-	call := 0
-	client.chatFn = func(_ context.Context, messages []llm.Message) (string, error) {
-		mu.Lock()
-		defer mu.Unlock()
-		call++
-		prompt := renderMessagesForLogging(messages)
-		// 1. Plan prompt
-		if strings.Contains(prompt, "Decision: ask|patch") {
-			return "Decision: patch\n{}", nil
-		}
-		// 2. Strict patch path selection (first attempt)
-		if strings.Contains(prompt, "strict patch path selector") {
-			return `{"path":"LICENSE","reason":"rewrite"}`, nil
-		}
-		// 3, 4, 5. Strict patch generation (first attempt retries)
-		if strings.Contains(prompt, "strict patch planner") {
-			// We return the same rewrite JSON which triggers validation error
-			return rewriteJSON, nil
-		}
-		t.Fatalf("unexpected call %d with prompt: %s", call, prompt)
-		return "", nil
-	}
-
-	conv := conversation.New("sess-plan-rewrite", "goal")
-	dec, payload, err := client.Plan(context.Background(), conv, "goal", "transcript", 1, 5, nil)
-	if err != nil {
-		t.Fatalf("Plan error: %v", err)
-	}
-	if dec != DecisionPatch {
-		t.Fatalf("expected DecisionPatch, got %q", dec)
-	}
-	if !strings.Contains(payload, "rewrite") {
-		t.Fatalf("expected rewrite payload, got %q", payload)
-	}
-	if client.cfg.StrictPatchMode {
-		t.Fatalf("expected StrictPatchMode to be disabled")
-	}
-	if !client.cfg.PatchFull {
-		t.Fatalf("expected PatchFull to be enabled")
-	}
-}
-
-func TestPlanProactivelyBypassesStrictPatchForRewrite(t *testing.T) {
-	client := NewClient(ClientConfig{
-		StrictPatchMode: true,
-		PatchEnabled:    true,
-	})
-
-	rewriteJSON := `{
-		"edits": [
-			{
-				"path": "LICENSE",
-				"mode": "rewrite",
-				"new_content": "New content"
-			}
-		]
-	}`
-
-	var mu sync.Mutex
-	call := 0
-	client.chatFn = func(_ context.Context, messages []llm.Message) (string, error) {
-		mu.Lock()
-		defer mu.Unlock()
-		call++
-		prompt := renderMessagesForLogging(messages)
-		// 1. Plan prompt returns rewrite directly
-		if strings.Contains(prompt, "Decision: ask|patch") {
-			return "Decision: patch\n" + rewriteJSON, nil
-		}
-		t.Fatalf("unexpected call %d with prompt: %s", call, prompt)
-		return "", nil
-	}
-
-	conv := conversation.New("sess-plan-strict", "goal")
-	dec, payload, err := client.Plan(context.Background(), conv, "goal", "transcript", 1, 5, nil)
-	if err != nil {
-		t.Fatalf("Plan error: %v", err)
-	}
-	if dec != DecisionPatch {
-		t.Fatalf("expected DecisionPatch, got %q", dec)
-	}
-	if !strings.Contains(payload, "rewrite") {
-		t.Fatalf("expected rewrite payload, got %q", payload)
-	}
-	if call != 1 {
-		t.Fatalf("expected only 1 call (plan prompt), got %d", call)
-	}
-	if client.cfg.StrictPatchMode {
-		t.Fatalf("expected StrictPatchMode to be disabled")
-	}
-	if !client.cfg.PatchFull {
-		t.Fatalf("expected PatchFull to be enabled")
-	}
-}

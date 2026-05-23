@@ -56,7 +56,6 @@ func (m modelRuntime) displayLabel() string {
 type componentModelRuntimes struct {
 	orchestrator  modelRuntime
 	answer        modelRuntime
-	patcher       modelRuntime
 	fileDiscovery modelRuntime
 	shellAgent    modelRuntime
 }
@@ -66,7 +65,6 @@ type componentModelRuntimes struct {
 type PromptRuntimes struct {
 	Orchestrator  promptsvc.ModelRuntime
 	Answer        promptsvc.ModelRuntime
-	Patcher       promptsvc.ModelRuntime
 	FileDiscovery promptsvc.ModelRuntime
 	ShellAgent    promptsvc.ModelRuntime
 }
@@ -81,7 +79,6 @@ func ResolvePromptRuntimes(cfg Config, global llm.Config, paramPairs, paramJSON 
 	return PromptRuntimes{
 		Orchestrator:  models.orchestrator.toPromptRuntime(),
 		Answer:        models.answer.toPromptRuntime(),
-		Patcher:       models.patcher.toPromptRuntime(),
 		FileDiscovery: models.fileDiscovery.toPromptRuntime(),
 		ShellAgent:    models.shellAgent.toPromptRuntime(),
 	}, nil
@@ -278,25 +275,12 @@ func resolveModelRuntimes(cfg legacyConfig, global llm.Config, paramPairs, param
 
 	applyFallbacks(&primary, []string{
 		cfg.agentModel,
-		cfg.patcherModel,
 		cfg.fileDiscoveryModel,
 		cfg.answerModel,
 		os.Getenv("MCT_MODEL"),
 		os.Getenv("MCT_ORCH_MODEL"),
 		os.Getenv("MCT_ANSWER_MODEL"),
 	}, directBaseURL, directAPIKey, directModel)
-
-	patcher := cloneModelRuntime(primary)
-	patcherAlias := firstNonEmpty(strings.TrimSpace(cfg.patcherModel), strings.TrimSpace(os.Getenv("MCT_PATCHER_MODEL")))
-	if strings.TrimSpace(patcherAlias) != "" {
-		resolved, err := llm.ResolveModelWithOverrides(patcherAlias, apiKeyOverrides)
-		if err != nil {
-			return componentModelRuntimes{}, err
-		}
-		patcher.resolved = resolved
-		patcher.alias = patcherAlias
-		patcher.usingAlias = true
-	}
 
 	fileDiscovery := cloneModelRuntime(primary)
 	fdAlias := firstNonEmpty(strings.TrimSpace(cfg.fileDiscoveryModel), strings.TrimSpace(os.Getenv("MCT_FILE_DISCOVERY_MODEL")))
@@ -309,7 +293,6 @@ func resolveModelRuntimes(cfg legacyConfig, global llm.Config, paramPairs, param
 		fileDiscovery.alias = fdAlias
 		fileDiscovery.usingAlias = true
 	}
-	ensureFallbackToPrimary(&patcher, primary)
 	ensureFallbackToPrimary(&fileDiscovery, primary)
 
 	answer := cloneModelRuntime(primary)
@@ -339,7 +322,6 @@ func resolveModelRuntimes(cfg legacyConfig, global llm.Config, paramPairs, param
 	return componentModelRuntimes{
 		orchestrator:  primary,
 		answer:        answer,
-		patcher:       patcher,
 		fileDiscovery: fileDiscovery,
 		shellAgent:    shellAgent,
 	}, nil

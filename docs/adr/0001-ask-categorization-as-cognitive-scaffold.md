@@ -45,7 +45,7 @@ The current architecture emerged from repeated attempts to make literal routing 
 **Problem: The dual-execution path was unreliable.** Running file-discovery for the no-shell portion and shell-agent for the shell portion of a split ask didn't work well enough. `0d226b7` (Apr 2026) collapsed split asks entirely, removing the `both` ask mode from the template and replacing it with: "If a request would previously have needed both repository understanding and shell work, choose shell and restate it as one combined ask." The telemetry annotation `"routing policy: legacy both ask -> shell agent"` marks this as a deliberate retirement of the split-ask path.
 
 **Problem: The preflight LLM mis-routed explanation asks.** `0aa7bd3` and `065111d` (Apr 2026) added `shouldPreferContentRouting()` to bypass the LLM for common explanation patterns. Test cases reveal specific mis-routings:
-- `"Summarize how the patcher falls back to the orchestrator model when unspecified"` → sent to shell-agent instead of file-discovery
+- `"Summarize how shell-agent falls back to the orchestrator model when unspecified"` → sent to shell-agent instead of file-discovery
 - `"Explain the planner ask monitor guardrail flow in the agent/ directory and when it retries"` → the word "directory" triggered shell routing, treating it as a directory listing request
 
 These fixes were attempts to make literal routing work correctly. But by the time they were committed, `applySingleAskRoutingPolicy` was already overriding all single asks to shell-agent — so the fixes only affected telemetry annotations, not actual execution.

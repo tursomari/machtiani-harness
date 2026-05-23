@@ -11,8 +11,8 @@ usage() {
 Usage: $(basename "$0") [--install-peripherals]
 
 Installs the mct-agent binary by default. Pass --install-peripherals to also
-build and install mct, file-discovery, snippet-discovery, shell-agent, and
-patcher (for development and debugging only; most users should use mct-agent
+build and install mct, file-discovery, snippet-discovery, and shell-agent
+(for development and debugging only; most users should use mct-agent
 directly).
 Environment:
   PREFIX   Destination prefix for the install (default: \$HOME/.local)
@@ -127,19 +127,6 @@ if $INSTALL_PERIPHERALS; then
     go build -buildvcs=true -ldflags "$SNIPPET_LDFLAGS" -o "$BIN_DIR/snippet-discovery" ./cmd/snippet-discovery
   )
 
-  log "Building patcher"
-  PATCHER_COMMIT="$(git_short_commit "$REPO_ROOT/agent/internal/patcher")"
-  PATCHER_DIRTY="$(git_dirty_flag "$REPO_ROOT/agent/internal/patcher")"
-  PATCHER_VERSION="dev-${PATCHER_COMMIT}"
-  if [ "$PATCHER_DIRTY" = "dirty" ]; then
-    PATCHER_VERSION="${PATCHER_VERSION}-dirty"
-  fi
-  PATCHER_LDFLAGS="-X main.Version=${PATCHER_VERSION} -X main.Commit=${PATCHER_COMMIT} -X main.BuiltAt=${BUILD_AT} -X main.Dirty=${PATCHER_DIRTY}"
-  (
-    cd "$REPO_ROOT/agent/internal/patcher"
-    go build -buildvcs=true -ldflags "$PATCHER_LDFLAGS" -o "$BIN_DIR/patcher" ./cmd/patcher
-  )
-
   log "Building shell-agent"
   (
     cd "$REPO_ROOT/agent/internal/shell-agent"
@@ -156,8 +143,6 @@ log "mct-agent --version =>"
 if $INSTALL_PERIPHERALS; then
   log "mct --version =>"
   "$BIN_DIR/mct" --version 2>/dev/null || log "  (mct not executable?)"
-  log "patcher --version =>"
-  "$BIN_DIR/patcher" --version 2>/dev/null || log "  (patcher not executable?)"
   log "file-discovery -version =>"
   "$BIN_DIR/file-discovery" -version 2>/dev/null || log "  (file-discovery not executable?)"
   log "snippet-discovery -version =>"

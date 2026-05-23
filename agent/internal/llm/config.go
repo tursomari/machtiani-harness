@@ -24,7 +24,6 @@ type Config struct {
 	Environment      *EnvironmentConfig         `toml:"environment"`
 	Ignore           *IgnoreConfig              `toml:"ignore"`
 	Workspace        *WorkspaceConfig           `toml:"workspace"`
-	Patcher          *PatcherConfig             `toml:"patcher"`
 	Providers        map[string]ProviderConfig  `toml:"providers"`
 	Models           map[string]ModelDefinition `toml:"models"`
 	Mode *ModeConfig `toml:"mode"`
@@ -56,11 +55,6 @@ type IgnoreConfig struct {
 	GitSyncedOnly bool     `toml:"git_synced_only"`
 }
 
-// PatcherConfig defines how the shell-agent should persist sandbox edits back
-// to the host repository.
-type PatcherConfig struct {
-	Strategy string `toml:"strategy"`
-}
 
 // DebugConfig captures optional debugging toggles.
 type DebugConfig struct {
@@ -109,10 +103,6 @@ type PlannerPromptsConfig struct {
 	AskPrompt              string `toml:"ask_prompt"`
 	PlanSystemPrompt       string `toml:"plan_system_prompt"`
 	PlanPrompt             string `toml:"plan_prompt"`
-	PlanPatchRules         string `toml:"plan_patch_rules"`
-	PlanPatchStrictRules   string `toml:"plan_patch_strict_rules"`
-	PlanPatchEnabledIntro  string `toml:"plan_patch_enabled_intro"`
-	PlanPatchDisabledIntro string `toml:"plan_patch_disabled_intro"`
 	FinalizePrompt         string `toml:"finalize_prompt"`
 	ReviewPrompt           string `toml:"review_prompt"`
 
@@ -123,10 +113,6 @@ type PlannerPromptsConfig struct {
 	askPromptSet              bool `toml:"-"`
 	planSystemPromptSet       bool `toml:"-"`
 	planPromptSet             bool `toml:"-"`
-	planPatchRulesSet         bool `toml:"-"`
-	planPatchStrictRulesSet   bool `toml:"-"`
-	planPatchEnabledIntroSet  bool `toml:"-"`
-	planPatchDisabledIntroSet bool `toml:"-"`
 	finalizePromptSet         bool `toml:"-"`
 	reviewPromptSet           bool `toml:"-"`
 }
@@ -168,7 +154,6 @@ type MCTPromptsConfig struct {
 	ConversationHistoryTemplate string `toml:"conversation_history_template"`
 	ReadmeSystemTemplate        string `toml:"readme_system_template"`
 	ShellAgentContextTemplate   string `toml:"shell_agent_context_template"`
-	PatchSuccessNote            string `toml:"patch_success_note"`
 	FullDiffNote                string `toml:"full_diff_note"`
 
 	shellAgentContextPrefixSet     bool `toml:"-"`
@@ -178,7 +163,6 @@ type MCTPromptsConfig struct {
 	conversationHistoryTemplateSet bool `toml:"-"`
 	readmeSystemTemplateSet        bool `toml:"-"`
 	shellAgentContextTemplateSet   bool `toml:"-"`
-	patchSuccessNoteSet            bool `toml:"-"`
 	fullDiffNoteSet                bool `toml:"-"`
 }
 
@@ -975,42 +959,6 @@ func parsePlannerSection(path, section string, data map[string]any) (*PlannerCon
 		p.PlanPrompt = val
 		p.planPromptSet = true
 	}
-	if raw, ok := data["plan_patch_rules"]; ok {
-		val, err := templateStringFromRaw(path, section, "plan_patch_rules", raw)
-		if err != nil {
-			return nil, nil, err
-		}
-		p := ensurePrompts()
-		p.PlanPatchRules = val
-		p.planPatchRulesSet = true
-	}
-	if raw, ok := data["plan_patch_strict_rules"]; ok {
-		val, err := templateStringFromRaw(path, section, "plan_patch_strict_rules", raw)
-		if err != nil {
-			return nil, nil, err
-		}
-		p := ensurePrompts()
-		p.PlanPatchStrictRules = val
-		p.planPatchStrictRulesSet = true
-	}
-	if raw, ok := data["plan_patch_enabled_intro"]; ok {
-		val, err := templateStringFromRaw(path, section, "plan_patch_enabled_intro", raw)
-		if err != nil {
-			return nil, nil, err
-		}
-		p := ensurePrompts()
-		p.PlanPatchEnabledIntro = val
-		p.planPatchEnabledIntroSet = true
-	}
-	if raw, ok := data["plan_patch_disabled_intro"]; ok {
-		val, err := templateStringFromRaw(path, section, "plan_patch_disabled_intro", raw)
-		if err != nil {
-			return nil, nil, err
-		}
-		p := ensurePrompts()
-		p.PlanPatchDisabledIntro = val
-		p.planPatchDisabledIntroSet = true
-	}
 	if raw, ok := data["finalize_prompt"]; ok {
 		val, err := templateStringFromRaw(path, section, "finalize_prompt", raw)
 		if err != nil {
@@ -1145,14 +1093,6 @@ func parsePromptsSection(path string, data map[string]any) (*PromptsConfig, erro
 			cfg.ShellAgentContextTemplate = val
 			cfg.shellAgentContextTemplateSet = true
 		}
-		if tplRaw, ok := mctRaw["patch_success_note"]; ok {
-			val, err := templateStringFromRaw(path, "prompts.mct", "patch_success_note", tplRaw)
-			if err != nil {
-				return nil, err
-			}
-			cfg.PatchSuccessNote = val
-			cfg.patchSuccessNoteSet = true
-		}
 		if tplRaw, ok := mctRaw["full_diff_note"]; ok {
 			val, err := templateStringFromRaw(path, "prompts.mct", "full_diff_note", tplRaw)
 			if err != nil {
@@ -1161,7 +1101,7 @@ func parsePromptsSection(path string, data map[string]any) (*PromptsConfig, erro
 			cfg.FullDiffNote = val
 			cfg.fullDiffNoteSet = true
 		}
-		if cfg.shellAgentContextPrefixSet || cfg.shellAgentPromptNoticeSet || cfg.headerUserTemplateSet || cfg.headerExistingTemplateSet || cfg.conversationHistoryTemplateSet || cfg.readmeSystemTemplateSet || cfg.shellAgentContextTemplateSet || cfg.patchSuccessNoteSet || cfg.fullDiffNoteSet {
+		if cfg.shellAgentContextPrefixSet || cfg.shellAgentPromptNoticeSet || cfg.headerUserTemplateSet || cfg.headerExistingTemplateSet || cfg.conversationHistoryTemplateSet || cfg.readmeSystemTemplateSet || cfg.shellAgentContextTemplateSet || cfg.fullDiffNoteSet {
 			prompts.MCT = cfg
 		}
 	}
@@ -1235,22 +1175,6 @@ func mergePlannerPromptSources(base, override *PlannerPromptsConfig) *PlannerPro
 	if override.planPromptSet {
 		base.PlanPrompt = override.PlanPrompt
 		base.planPromptSet = true
-	}
-	if override.planPatchRulesSet {
-		base.PlanPatchRules = override.PlanPatchRules
-		base.planPatchRulesSet = true
-	}
-	if override.planPatchStrictRulesSet {
-		base.PlanPatchStrictRules = override.PlanPatchStrictRules
-		base.planPatchStrictRulesSet = true
-	}
-	if override.planPatchEnabledIntroSet {
-		base.PlanPatchEnabledIntro = override.PlanPatchEnabledIntro
-		base.planPatchEnabledIntroSet = true
-	}
-	if override.planPatchDisabledIntroSet {
-		base.PlanPatchDisabledIntro = override.PlanPatchDisabledIntro
-		base.planPatchDisabledIntroSet = true
 	}
 	if override.finalizePromptSet {
 		base.FinalizePrompt = override.FinalizePrompt

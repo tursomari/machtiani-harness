@@ -183,7 +183,6 @@ launch_run() {
       --verbose \
       --model "$STUB_ALIAS" \
       --orch-model "$STUB_ALIAS" \
-      --patcher-model "$STUB_ALIAS" \
       --file-discovery-model "$STUB_ALIAS" \
       -t "$prompt" \
       >"$stdout_file" 2>"$stderr_file"

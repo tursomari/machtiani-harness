@@ -47,8 +47,6 @@ func newSessionTelemetry(writer *trajectory.Writer, sessionID, goal string, cfg 
 			"max_steps":        cfg.maxSteps,
 			"timeout_per_turn": cfg.timeoutPerTurn,
 			"dry_run":          cfg.dryRun,
-			"patch_enabled":    cfg.patch,
-			"patch_no_apply":   cfg.patchNoApply,
 		},
 		"versions": map[string]any{
 			"agent":    build.Version,

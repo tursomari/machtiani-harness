@@ -5,7 +5,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}" )" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 AGENT_SRC_DIR="$REPO_ROOT/agent"
 MCT_SRC_DIR="$REPO_ROOT/agent/internal/mct"
-PATCHER_SRC_DIR="$REPO_ROOT/agent/internal/patcher"
 FILE_DISCOVERY_SRC_DIR="$REPO_ROOT/agent/internal/file-discovery"
 UNDICI_SOURCE="$REPO_ROOT/tests/repositories/undici"
 ARTIFACT_ROOT="$SCRIPT_DIR/artifacts/agent-undici"
@@ -61,7 +60,6 @@ build_go_binary() {
 
 build_go_binary "$MCT_SRC_DIR" "$BIN_DIR/mct" ./cmd/mct
 build_go_binary "$AGENT_SRC_DIR" "$BIN_DIR/mct-agent" ./cmd/mct-agent
-build_go_binary "$PATCHER_SRC_DIR" "$BIN_DIR/patcher" ./cmd/patcher
 build_go_binary "$FILE_DISCOVERY_SRC_DIR" "$BIN_DIR/file-discovery" ./cmd/file-discovery
 export PATH="$BIN_DIR:$PATH"
 hash -r 2>/dev/null || true

@@ -14,7 +14,6 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/conversation"
 	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/parser"
-	"github.com/tursomari/machtiani/agent/internal/patchlog"
 	"github.com/tursomari/machtiani/agent/internal/prompts"
 	"github.com/tursomari/machtiani/agent/internal/templates"
 	"github.com/tursomari/machtiani/agent/internal/trajectory"
@@ -24,10 +23,7 @@ type Decision string
 
 const (
 	DecisionAsk      Decision = "ask"
-	DecisionPatch    Decision = "patch"
 	DecisionFinalize Decision = "finalize"
-	DecisionAccept   Decision = "accept"
-	DecisionReject   Decision = "reject"
 )
 
 type AskMode string
@@ -41,19 +37,11 @@ const (
 const (
 	successFilesPromptLimit = 12
 	progressMaxTrackedFiles = 100
-	reviewDiffPreviewLimit  = 6000
 )
 
 const (
 	askGuardMaxRetries = 1
 	defaultAskFallback = "Considering the current transcript, produce the single next high-signal repository-focused prompt for mct."
-)
-
-const (
-	defaultPlanPatchDisabledIntro = "Patch requests are disabled for this run. Choose Ask to gather information or Finalize when the goal is complete."
-	defaultPlanPatchEnabledIntro  = "Patch requests are enabled. Choose Ask to gather information, Patch to change files, or Finalize when the goal is complete.\nOptional patch shorthand:\nPatch: <repo-relative filepath>\nExample: Patch: src/main.go"
-	defaultPlanPatchRules         = "If patch, return only the JSON payload—no commentary or fences. The patch schema will be provided after you choose Decision: patch."
-	defaultPlanPatchStrictRules   = defaultPlanPatchRules
 )
 
 type ClientConfig struct {
@@ -64,9 +52,6 @@ type ClientConfig struct {
 	DryRun            bool
 	InternetAccess    bool
 	RequestTimeoutSec int
-	PatchEnabled      bool
-	StrictPatchMode   bool
-	PatchFull         bool
 	RepoRoot          string
 	SessionID         string
 	PlannerOverlay    string
@@ -80,10 +65,7 @@ type Client struct {
 }
 
 type Progress struct {
-	SuccessFiles        []string
-	AppliedPatches      int
-	ForceRepatchExample bool
-	PendingReview       *PendingReview
+	SuccessFiles []string
 }
 
 type cacheUsageTracker struct {
@@ -116,48 +98,15 @@ func (t *cacheUsageTracker) UpdateConversation(conv *conversation.Conversation) 
 }
 
 type planTemplateData struct {
-	PatchEnabled      bool
-	StrictPatchMode   bool
-	ForceRepatch      bool
 	SuccessFiles      []string
 	SuccessOverflow   int
-	AppliedPatches    int
-	HasPatchPlan      bool
-	PatchPlanComplete bool
 	AllowFinalize     bool
 	HasTranscript     bool
 	Transcript        string
 	Step              int
 	MaxSteps          int
-	PatchIntro        string
-	PatchRules        string
 	HasPlannerOverlay bool
 	PlannerOverlay    string
-}
-
-type reviewTemplateData struct {
-	HasPending      bool
-	Pending         reviewPendingData
-	SuccessFiles    []string
-	SuccessOverflow int
-	AppliedPatches  int
-	Step            int
-	MaxSteps        int
-}
-
-type reviewPendingData struct {
-	Description    string
-	HasDescription bool
-	Sequence       int
-	Insertions     int
-	Deletions      int
-	HasDiffStats   bool
-	HasFiles       bool
-	Files          []string
-	PatchPath      string
-	UndoPatchPath  string
-	DiffPreview    string
-	HasDiffPreview bool
 }
 
 type finalizeTemplateData struct {
@@ -210,30 +159,6 @@ type UserDirectedAskOutcome struct {
 	Reason        string
 }
 
-// PendingReview captures metadata about the most recent patch awaiting
-// acceptance so the planner can decide whether to keep or undo it.
-type PendingReview struct {
-	PatchPath        string   `json:"patch_path"`
-	ReversePatchPath string   `json:"reverse_patch_path"`
-	Description      string   `json:"description,omitempty"`
-	Files            []string `json:"files,omitempty"`
-	Sequence         int      `json:"sequence,omitempty"`
-	Insertions       int      `json:"insertions,omitempty"`
-	Deletions        int      `json:"deletions,omitempty"`
-}
-
-// Clone returns a deep copy of the pending review metadata.
-func (p *PendingReview) Clone() *PendingReview {
-	if p == nil {
-		return nil
-	}
-	clone := *p
-	if len(p.Files) > 0 {
-		clone.Files = append([]string(nil), p.Files...)
-	}
-	return &clone
-}
-
 func NewClient(cfg ClientConfig) *Client {
 	if cfg.Extras == nil {
 		cfg.Extras = map[string]any{}
@@ -241,8 +166,8 @@ func NewClient(cfg ClientConfig) *Client {
 	return &Client{cfg: cfg}
 }
 
-// UpdateProgress refreshes planner-aware session progress (e.g. prior strict
-// patch successes) so prompts can steer the model away from redundant work.
+// UpdateProgress refreshes planner-aware session progress (e.g. prior
+// success files) so prompts can steer the model away from redundant work.
 func (c *Client) UpdateProgress(progress Progress) {
 	seen := make(map[string]struct{})
 	files := make([]string, 0, len(progress.SuccessFiles))
@@ -261,15 +186,8 @@ func (c *Client) UpdateProgress(progress Progress) {
 			break
 		}
 	}
-	applied := progress.AppliedPatches
-	if applied < 0 {
-		applied = 0
-	}
 	c.progress = Progress{
-		SuccessFiles:        files,
-		AppliedPatches:      applied,
-		ForceRepatchExample: progress.ForceRepatchExample,
-		PendingReview:       progress.PendingReview.Clone(),
+		SuccessFiles: files,
 	}
 }
 
@@ -316,29 +234,22 @@ func successFilesDisplay(files []string, limit int) ([]string, int) {
 }
 
 // Plan decides the next action using only the transcript context.
-func (c *Client) Plan(ctx context.Context, conv *conversation.Conversation, goal string, transcript string, step, maxSteps int, patchPlan *PatchPlan) (Decision, string, error) {
+func (c *Client) Plan(ctx context.Context, conv *conversation.Conversation, goal string, transcript string, step, maxSteps int) (Decision, string, error) {
 	if c.cfg.DryRun {
 		if step < maxSteps {
 			return DecisionAsk, "From the transcript, ask mct for the next most informative repository-focused prompt.", nil
 		}
 		return DecisionFinalize, "", nil
 	}
-	reviewMode := c.progress.PendingReview != nil
+	if conv == nil {
+		return "", "", errors.New("planner: conversation is required")
+	}
 	var (
 		messages  []llm.Message
 		promptLog string
 	)
-	if !reviewMode && conv == nil {
-		return "", "", errors.New("planner: conversation is required")
-	}
-	if reviewMode {
-		prompt := c.reviewPrompt(goal, transcript, step, maxSteps)
-		promptLog = strings.TrimSpace(prompt)
-		messages = []llm.Message{messageWithEstimatedTokens("user", promptLog)}
-	} else {
-		messages = c.buildPlanMessages(ctx, conv, goal, step, maxSteps, patchPlan)
-		promptLog = renderMessagesForLogging(messages)
-	}
+	messages = c.buildPlanMessages(ctx, conv, goal, step, maxSteps)
+	promptLog = renderMessagesForLogging(messages)
 	c.logTokenEstimate(messages)
 	w, hasWriter := trajectory.FromContext(ctx)
 	parentSpan, _ := trajectory.ParentSpanID(ctx)
@@ -360,7 +271,7 @@ func (c *Client) Plan(ctx context.Context, conv *conversation.Conversation, goal
 		chatCtx = trajectory.ContextWithParentSpan(ctx, span.ID)
 	}
 	var usageTracker *cacheUsageTracker
-	if !reviewMode && conv != nil && cacheControlEnabled(c.cfg.Model) {
+	if conv != nil && cacheControlEnabled(c.cfg.Model) {
 		usageTracker = &cacheUsageTracker{}
 		chatCtx = llm.WithCacheUsageObserver(chatCtx, usageTracker.Observe)
 	}
@@ -403,15 +314,7 @@ func (c *Client) Plan(ctx context.Context, conv *conversation.Conversation, goal
 	if c.cfg.Verbose {
 		fmt.Fprintln(os.Stderr, "[planner] model response:", truncateMiddle(strings.TrimSpace(resp), 1800))
 	}
-	dec, q, preamble := parseDecision(resp, c.cfg.PatchEnabled)
-	autoAcceptReview := false
-	if reviewMode {
-		if dec == "" || (dec != DecisionAccept && dec != DecisionReject) {
-			autoAcceptReview = true
-			dec = DecisionAccept
-			q = "Reason: auto-accepted by default review policy"
-		}
-	}
+	dec, q, preamble := parseDecision(resp)
 	if hasWriter {
 		payload := map[string]any{
 			"event_version": 1,
@@ -426,9 +329,6 @@ func (c *Client) Plan(ctx context.Context, conv *conversation.Conversation, goal
 		payload = trajectory.MergeExcerptWithPrefix(payload, trajectory.MakeTextExcerpt(resp, w.ExcerptLen()), "response")
 		if dec != "" {
 			payload["parse"] = map[string]any{"decision": string(dec)}
-		}
-		if autoAcceptReview {
-			payload["auto_accept_review"] = true
 		}
 		if preamble != "" {
 			payload["ignored_preamble"] = trajectory.MakeTextExcerpt(preamble, w.ExcerptLen())
@@ -451,7 +351,7 @@ func (c *Client) Plan(ctx context.Context, conv *conversation.Conversation, goal
 			reportTrajectoryError(emitErr)
 		}
 	}
-	if dec == "" && !reviewMode {
+	if dec == "" {
 		formatPrompt := strings.TrimSpace(c.planFormatErrorTemplate())
 		if formatPrompt != "" {
 			retryMessages := append([]llm.Message(nil), messages...)
@@ -475,7 +375,7 @@ func (c *Client) Plan(ctx context.Context, conv *conversation.Conversation, goal
 			retryResp, retryErr := c.chatMessages(chatCtx, retryMessages)
 			retryDuration := time.Since(retryStart)
 			if retryErr == nil {
-				dec, q, preamble = parseDecision(retryResp, c.cfg.PatchEnabled)
+				dec, q, preamble = parseDecision(retryResp)
 			}
 			if hasWriter {
 				payload := map[string]any{
@@ -523,12 +423,6 @@ func (c *Client) Plan(ctx context.Context, conv *conversation.Conversation, goal
 	if dec == "" {
 		return "", "", errors.New("planner: unable to parse decision from model output")
 	}
-	if reviewMode {
-		if dec != DecisionAccept && dec != DecisionReject {
-			return "", "", errors.New("planner: expected accept or reject decision for pending patch review")
-		}
-		return dec, q, nil
-	}
 	if dec == DecisionAsk {
 		ask, err := c.generateAsk(ctx, conv, goal, transcript, step, maxSteps)
 		if err != nil {
@@ -538,95 +432,6 @@ func (c *Client) Plan(ctx context.Context, conv *conversation.Conversation, goal
 			ask = defaultAskFallback
 		}
 		return DecisionAsk, ask, nil
-	}
-	if dec == DecisionPatch && strings.TrimSpace(q) != "" {
-		trimmed := strings.TrimSpace(q)
-		if !strings.HasPrefix(trimmed, "{") {
-			// Shorthand patch flow: the model selected a target path, not a JSON payload.
-			// Immediately route to strict patch generation with full schema instructions.
-			c.cfg.StrictPatchMode = true
-			strictPayload, err := c.runStrictPatchFlow(ctx, goal, transcript, step, maxSteps, trimmed)
-			if err != nil {
-				dec = DecisionAsk
-				q = strictPatchFallbackQuestion(err)
-			} else {
-				q = strictPayload
-			}
-		}
-	}
-	if dec == DecisionPatch && c.cfg.StrictPatchMode {
-		if !shouldUseStrictPatchMode(q) {
-			if c.cfg.Verbose {
-				fmt.Fprintln(os.Stderr, "[planner] detected rewrite in plan; bypassing strict mode")
-			}
-			c.cfg.StrictPatchMode = false
-			c.cfg.PatchFull = true
-		} else {
-			strictPayload, err := c.runStrictPatchFlow(ctx, goal, transcript, step, maxSteps, q)
-			if err != nil {
-				if isRewriteNotSupportedError(err) {
-					if c.cfg.Verbose {
-						fmt.Fprintln(os.Stderr, "[planner] strict patch rejected rewrite; rerouting to full-mode patch flow")
-					}
-					// Reroute: disable strict mode, enable full mode, and retry.
-					c.cfg.StrictPatchMode = false
-					c.cfg.PatchFull = true
-					// Re-invoke the strict patch flow (which now allows rewrites via PatchFull).
-					strictPayload, err = c.runStrictPatchFlow(ctx, goal, transcript, step, maxSteps, q)
-				}
-			}
-
-			if err != nil {
-				if c.cfg.Verbose {
-					fmt.Fprintln(os.Stderr, "[planner] strict patch failed:", truncateMiddle(err.Error(), 160))
-				}
-				if hasWriter {
-					reason := sanitizeForPrompt(err.Error())
-					payload := map[string]any{
-						"event_version": 1,
-						"model_alias":   c.cfg.Alias,
-						"model_name":    c.cfg.Model.Model,
-						"step":          step,
-						"max_steps":     maxSteps,
-						"parse_ok":      false,
-						"error":         reason,
-					}
-					evt := trajectory.Event{
-						Level:        "warn",
-						Kind:         "planner.strict_patch.error",
-						SpanID:       span.ID,
-						ParentSpanID: parentSpan,
-						Payload:      payload,
-						Err: &trajectory.ErrorInfo{
-							Message:  reason,
-							Category: "strict_patch",
-						},
-					}
-					if emitErr := w.Emit(ctx, evt); emitErr != nil {
-						reportTrajectoryError(emitErr)
-					}
-				}
-				dec = DecisionAsk
-				q = strictPatchFallbackQuestion(err)
-			} else {
-				q = strictPayload
-			}
-		}
-	}
-	if dec == DecisionPatch {
-		meta := patchlog.Metadata{
-			Source: "planner.plan",
-			Model:  strings.TrimSpace(c.cfg.Model.Model),
-			Alias:  strings.TrimSpace(c.cfg.Alias),
-			Step:   step,
-		}
-		if path, err := patchlog.WritePrompt(promptLog, meta); err != nil {
-			if c.cfg.Verbose {
-				fmt.Fprintf(os.Stderr, "[planner] failed to write patch prompt log: %v\n", err)
-			}
-		} else if c.cfg.Verbose {
-			fmt.Fprintf(os.Stderr, "[planner] patch prompt logged to %s\n", path)
-		}
 	}
 	return dec, q, nil
 }
@@ -641,7 +446,7 @@ func (c *Client) generateAsk(ctx context.Context, conv *conversation.Conversatio
 		if strings.TrimSpace(prompt) == "" {
 			return "", errors.New("planner: ask prompt template missing")
 		}
-		resp, err := c.chatPlannerTask(ctx, conv, goal, step, maxSteps, nil, prompt)
+		resp, err := c.chatPlannerTask(ctx, conv, goal, step, maxSteps, prompt)
 		if err != nil {
 			return "", err
 		}
@@ -667,12 +472,23 @@ func (c *Client) generateAsk(ctx context.Context, conv *conversation.Conversatio
 				continue
 			}
 		}
-		return ask, nil
+		monitor, err := c.monitorAskWithPlanner(ctx, conv, goal, ask, step, maxSteps)
+		if err != nil {
+			return ask, nil
+		}
+		if !monitor.HasPatchIntent {
+			return ask, nil
+		}
+		guardrail = buildAskGuardrail(monitor.Reason)
 	}
 	if strings.TrimSpace(lastAsk) != "" {
 		return lastAsk, nil
 	}
 	return defaultAskFallback, nil
+}
+
+func (c *Client) monitorAsk(ctx context.Context, ask string) (askMonitorResult, error) {
+	return c.monitorAskWithPlanner(ctx, nil, "", ask, 0, 0)
 }
 
 func (c *Client) monitorAskMixed(ctx context.Context, ask string) (askMixedMonitorResult, error) {
@@ -707,12 +523,24 @@ func (c *Client) AnalyzeUserDirectedAsk(ctx context.Context, conv *conversation.
 	}, nil
 }
 
+func (c *Client) monitorAskWithPlanner(ctx context.Context, conv *conversation.Conversation, goal string, ask string, step, maxSteps int) (askMonitorResult, error) {
+	prompt := c.askUserDirectedMonitorPrompt(ask)
+	if strings.TrimSpace(prompt) == "" {
+		return askMonitorResult{}, errors.New("planner: ask monitor template missing")
+	}
+	resp, err := c.chatPlannerTask(ctx, conv, goal, step, maxSteps, prompt)
+	if err != nil {
+		return askMonitorResult{}, err
+	}
+	return parseAskMonitorResponse(resp)
+}
+
 func (c *Client) monitorAskMixedWithPlanner(ctx context.Context, conv *conversation.Conversation, goal string, ask string, step, maxSteps int) (askMixedMonitorResult, error) {
 	prompt := c.askMixedMonitorPrompt(ask)
 	if strings.TrimSpace(prompt) == "" {
 		return askMixedMonitorResult{}, errors.New("planner: ask mixed monitor template missing")
 	}
-	resp, err := c.chatPlannerTask(ctx, conv, goal, step, maxSteps, nil, prompt)
+	resp, err := c.chatPlannerTask(ctx, conv, goal, step, maxSteps, prompt)
 	if err != nil {
 		return askMixedMonitorResult{}, err
 	}
@@ -737,7 +565,7 @@ func (c *Client) purifyAskUserDirectedWithPlanner(ctx context.Context, conv *con
 
 func chatPlannerTaskJSONWithFormatRetry[T any](c *Client, ctx context.Context, conv *conversation.Conversation, goal string, step, maxSteps int, finalUserPrompt string, parse func(string) (T, error)) (T, error) {
 	var zero T
-	resp, err := c.chatPlannerTask(ctx, conv, goal, step, maxSteps, nil, finalUserPrompt)
+	resp, err := c.chatPlannerTask(ctx, conv, goal, step, maxSteps, finalUserPrompt)
 	if err != nil {
 		return zero, err
 	}
@@ -749,7 +577,7 @@ func chatPlannerTaskJSONWithFormatRetry[T any](c *Client, ctx context.Context, c
 	if formatPrompt == "" {
 		return zero, err
 	}
-	retryMessages := c.buildPlannerTaskMessages(ctx, conv, goal, step, maxSteps, nil, finalUserPrompt)
+	retryMessages := c.buildPlannerTaskMessages(ctx, conv, goal, step, maxSteps, finalUserPrompt)
 	retryMessages = append(retryMessages, messageWithEstimatedTokens("user", formatPrompt))
 	c.logTokenEstimate(retryMessages)
 	chatCtx := ctx
@@ -768,29 +596,29 @@ func chatPlannerTaskJSONWithFormatRetry[T any](c *Client, ctx context.Context, c
 	return parse(retryResp)
 }
 
-func (c *Client) buildPlanMessages(ctx context.Context, conv *conversation.Conversation, goal string, step, maxSteps int, patchPlan *PatchPlan) []llm.Message {
-	finalUserPrompt := c.planPrompt(conv, strings.TrimSpace(goal), "", step, maxSteps, patchPlan)
-	return c.buildPlannerTaskMessages(ctx, conv, strings.TrimSpace(goal), step, maxSteps, patchPlan, finalUserPrompt)
+func (c *Client) buildPlanMessages(ctx context.Context, conv *conversation.Conversation, goal string, step, maxSteps int) []llm.Message {
+	finalUserPrompt := c.planPrompt(conv, strings.TrimSpace(goal), "", step, maxSteps)
+	return c.buildPlannerTaskMessages(ctx, conv, strings.TrimSpace(goal), step, maxSteps, finalUserPrompt)
 }
 
 func (c *Client) buildFinalizeMessages(ctx context.Context, conv *conversation.Conversation, goal string) []llm.Message {
 	finalUserPrompt := c.finalizePrompt(strings.TrimSpace(goal), "")
-	return c.buildPlannerTaskMessages(ctx, conv, strings.TrimSpace(goal), 0, 0, nil, finalUserPrompt)
+	return c.buildPlannerTaskMessages(ctx, conv, strings.TrimSpace(goal), 0, 0, finalUserPrompt)
 }
 
-func (c *Client) buildPlannerTaskMessages(ctx context.Context, conv *conversation.Conversation, goal string, step, maxSteps int, patchPlan *PatchPlan, finalUserPrompt string) []llm.Message {
-	systemPrompt := strings.TrimSpace(c.planSystemPrompt(conv, strings.TrimSpace(goal), step, maxSteps, patchPlan))
+func (c *Client) buildPlannerTaskMessages(ctx context.Context, conv *conversation.Conversation, goal string, step, maxSteps int, finalUserPrompt string) []llm.Message {
+	systemPrompt := strings.TrimSpace(c.planSystemPrompt(conv, strings.TrimSpace(goal), step, maxSteps))
 	messages := conv.ToChatMessages(systemPrompt)
 	finalMessage := messageWithEstimatedTokens("user", strings.TrimSpace(finalUserPrompt))
 	messages = append(messages, finalMessage)
 	return c.ensurePlanCacheAnchor(ctx, conv, systemPrompt, finalMessage, messages, step)
 }
 
-func (c *Client) chatPlannerTask(ctx context.Context, conv *conversation.Conversation, goal string, step, maxSteps int, patchPlan *PatchPlan, finalUserPrompt string) (string, error) {
+func (c *Client) chatPlannerTask(ctx context.Context, conv *conversation.Conversation, goal string, step, maxSteps int, finalUserPrompt string) (string, error) {
 	if conv == nil {
 		return c.chat(ctx, finalUserPrompt)
 	}
-	messages := c.buildPlannerTaskMessages(ctx, conv, goal, step, maxSteps, patchPlan, finalUserPrompt)
+	messages := c.buildPlannerTaskMessages(ctx, conv, goal, step, maxSteps, finalUserPrompt)
 	c.logTokenEstimate(messages)
 	chatCtx := ctx
 	var usageTracker *cacheUsageTracker
@@ -1209,48 +1037,6 @@ func renderMessagesForLogging(messages []llm.Message) string {
 	return strings.TrimSpace(b.String())
 }
 
-func strictPatchFallbackQuestion(err error) string {
-	reason := sanitizeForPrompt(err.Error())
-	if reason == "" {
-		reason = "strict patch attempt failed"
-	}
-	return "Strict patch attempt failed (" + reason + "). Retrieve the exact numbered snippet for the referenced file so we can regenerate a valid patch."
-}
-
-func isRewriteNotSupportedError(err error) bool {
-	// We check the error string because the error type is defined in strict_patch_planner.go
-	// but we want to avoid circular dependencies if strict_patch_planner.go was in a subpackage.
-	// However, they are in the same package 'planner'.
-	// So we can check the type directly if it's exported.
-	var rewriteErr *ErrRewriteNotSupported
-	return errors.As(err, &rewriteErr)
-}
-
-func shouldUseStrictPatchMode(payloadJSON string) bool {
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(payloadJSON), &payload); err != nil {
-		return true
-	}
-	editsVal, ok := payload["edits"]
-	if !ok {
-		return true
-	}
-	editsSlice, ok := editsVal.([]any)
-	if !ok {
-		return true
-	}
-	for _, edit := range editsSlice {
-		editMap, ok := edit.(map[string]any)
-		if !ok {
-			continue
-		}
-		mode, _ := editMap["mode"].(string)
-		if strings.ToLower(strings.TrimSpace(mode)) == "rewrite" {
-			return false
-		}
-	}
-	return true
-}
 
 // Finalize composes the final answer using the structured conversation on the shared planner thread.
 func (c *Client) Finalize(ctx context.Context, conv *conversation.Conversation, goal string) (string, error) {
@@ -1381,13 +1167,13 @@ func (c *Client) chat(ctx context.Context, prompt string) (string, error) {
 	return c.chatMessages(ctx, []llm.Message{{Role: "user", Content: prompt}})
 }
 
-func (c *Client) planSystemPrompt(conv *conversation.Conversation, goal string, step, maxSteps int, patchPlan *PatchPlan) string {
+func (c *Client) planSystemPrompt(conv *conversation.Conversation, goal string, step, maxSteps int) string {
 	tpl := c.planSystemTemplate()
 	if tpl == "" {
 		fmt.Fprintln(os.Stderr, "[planner] plan system template missing")
 		return ""
 	}
-	data := c.buildPlanTemplateData(conv, goal, "", step, maxSteps, patchPlan)
+	data := c.buildPlanTemplateData(conv, goal, "", step, maxSteps)
 	rendered, err := prompts.Render("planner_plan_system_prompt", tpl, data, nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[planner] plan system template error: %v\n", err)
@@ -1408,13 +1194,13 @@ func (c *Client) planSystemTemplate() string {
 	return ""
 }
 
-func (c *Client) planPrompt(conv *conversation.Conversation, goal string, transcript string, step, maxSteps int, patchPlan *PatchPlan) string {
+func (c *Client) planPrompt(conv *conversation.Conversation, goal string, transcript string, step, maxSteps int) string {
 	tpl := c.planTemplate()
 	if tpl == "" {
 		fmt.Fprintln(os.Stderr, "[planner] plan prompt template missing")
 		return ""
 	}
-	data := c.buildPlanTemplateData(conv, goal, transcript, step, maxSteps, patchPlan)
+	data := c.buildPlanTemplateData(conv, goal, transcript, step, maxSteps)
 	rendered, err := prompts.Render("planner_plan_prompt", tpl, data, nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[planner] plan prompt template error: %v\n", err)
@@ -1547,38 +1333,22 @@ func (c *Client) planTemplate() string {
 	return ""
 }
 
-func (c *Client) buildPlanTemplateData(conv *conversation.Conversation, goal string, transcript string, step, maxSteps int, patchPlan *PatchPlan) planTemplateData {
+func (c *Client) buildPlanTemplateData(conv *conversation.Conversation, goal string, transcript string, step, maxSteps int) planTemplateData {
 	display, overflow := successFilesDisplay(c.progress.SuccessFiles, successFilesPromptLimit)
 	transcriptTrim := strings.TrimSpace(transcript)
-	applied := c.progress.AppliedPatches
-	if applied < 0 {
-		applied = 0
-	}
 	data := planTemplateData{
-		PatchEnabled:    c.cfg.PatchEnabled,
-		StrictPatchMode: c.cfg.StrictPatchMode,
-		ForceRepatch:    c.progress.ForceRepatchExample,
 		SuccessFiles:    display,
 		SuccessOverflow: overflow,
-		AppliedPatches:  applied,
 		HasTranscript:   transcriptTrim != "",
 		Transcript:      transcriptTrim,
 		Step:            step,
 		MaxSteps:        maxSteps,
-		PatchIntro:      c.planPatchIntroText(),
+		AllowFinalize:   true,
 	}
 	if overlay := strings.TrimSpace(c.cfg.PlannerOverlay); overlay != "" {
 		data.HasPlannerOverlay = true
 		data.PlannerOverlay = overlay
 	}
-	if c.cfg.PatchEnabled {
-		data.HasPatchPlan = patchPlan != nil && len(patchPlan.Items) > 0
-		data.PatchPlanComplete = patchPlan != nil && patchPlan.AllComplete()
-		data.AllowFinalize = data.PatchPlanComplete
-	} else {
-		data.AllowFinalize = true
-	}
-	data.PatchRules = c.planPatchRulesText(c.cfg.StrictPatchMode)
 	return data
 }
 
@@ -1589,187 +1359,6 @@ func (c *Client) buildAskRequest(conv *conversation.Conversation, goal string, s
 		fmt.Fprintf(&b, "Planner step: %d of %d.", step, maxSteps)
 	}
 	return strings.TrimSpace(b.String())
-}
-
-func (c *Client) planPatchIntroText() string {
-	if c.cfg.Prompts != nil {
-		if c.cfg.PatchEnabled {
-			if val := strings.TrimSpace(c.cfg.Prompts.PlanPatchEnabledIntro); val != "" {
-				return val
-			}
-		} else {
-			if val := strings.TrimSpace(c.cfg.Prompts.PlanPatchDisabledIntro); val != "" {
-				return val
-			}
-		}
-	}
-	if c.cfg.PatchEnabled {
-		return defaultPlanPatchEnabledIntro
-	}
-	return defaultPlanPatchDisabledIntro
-}
-
-func (c *Client) planPatchRulesText(strict bool) string {
-	if c.cfg.Prompts != nil {
-		if strict {
-			if val := strings.TrimSpace(c.cfg.Prompts.PlanPatchStrictRules); val != "" {
-				return val
-			}
-		} else {
-			if val := strings.TrimSpace(c.cfg.Prompts.PlanPatchRules); val != "" {
-				return val
-			}
-		}
-	}
-	if strict {
-		return defaultPlanPatchStrictRules
-	}
-	return defaultPlanPatchRules
-}
-
-func (c *Client) reviewPrompt(goal string, transcript string, step, maxSteps int) string {
-	if tpl := c.reviewTemplate(); tpl != "" {
-		data := c.buildReviewTemplateData(step, maxSteps)
-		rendered, err := prompts.Render("planner_review_prompt", tpl, data, nil)
-		if err == nil {
-			return rendered
-		}
-		fmt.Fprintf(os.Stderr, "[planner] review prompt template error: %v\n", err)
-	}
-	return c.reviewPromptFallback(goal, transcript, step, maxSteps)
-}
-
-func (c *Client) reviewPromptFallback(goal string, transcript string, step, maxSteps int) string {
-	review := c.progress.PendingReview
-	var b strings.Builder
-	b.WriteString("A patch was just applied. Examine the diff to ensure the change was as intended and that you did not reduplicate or unnecessarily delete anything outside of your intention -- reject if you spot mistakes or risky alterations.\n")
-	b.WriteString("Accept keeps the changes. Reject applies the undo patch to revert them.\n")
-	b.WriteString("Begin your reply immediately with `Decision:`—no leading commentary.\n")
-	b.WriteString("Allowed values: accept or reject (case-insensitive).\n")
-	b.WriteString("Always include a second line formatted `Reason: <brief justification>` that cites why the changes are correct and safe (even if you accept).\n\n")
-	if review != nil {
-		if desc := strings.TrimSpace(review.Description); desc != "" {
-			b.WriteString("Patch summary: " + sanitizeForPrompt(desc) + "\n")
-		}
-		if review.Sequence > 0 {
-			fmt.Fprintf(&b, "Patch sequence: %d\n", review.Sequence)
-		}
-		if review.Insertions != 0 || review.Deletions != 0 {
-			fmt.Fprintf(&b, "Diff stats: +%d / -%d\n", review.Insertions, review.Deletions)
-		}
-		if len(review.Files) > 0 {
-			b.WriteString("Files modified:\n")
-			appendSuccessFilesList(&b, review.Files, len(review.Files))
-		}
-		if path := strings.TrimSpace(review.PatchPath); path != "" {
-			fmt.Fprintf(&b, "Patch file: %s\n", path)
-			if diffPreview, err := loadPatchDiffPreview(path, reviewDiffPreviewLimit); err == nil && strings.TrimSpace(diffPreview) != "" {
-				b.WriteString("\nPatch diff preview:\n")
-				b.WriteString("```diff\n")
-				b.WriteString(diffPreview)
-				b.WriteString("\n```\n")
-			}
-		}
-		if rpath := strings.TrimSpace(review.ReversePatchPath); rpath != "" {
-			fmt.Fprintf(&b, "Undo patch file: %s\n", rpath)
-		}
-		b.WriteString("Use the transcript diff above and any diagnostics to inform your choice.\n\n")
-	}
-
-	appendSuccessFilesSection(&b, c.progress.SuccessFiles, "Files already accepted earlier this session (prefer new work unless necessary):\n", successFilesPromptLimit)
-	if c.progress.AppliedPatches > 0 {
-		fmt.Fprintf(&b, "Strict patch successes so far: %d. Accepting keeps them; rejecting reverts the latest patch only.\n\n", c.progress.AppliedPatches)
-	}
-	b.WriteString(fmt.Sprintf("Step %d of %d. Decide.\n", step, maxSteps))
-	return b.String()
-}
-
-func (c *Client) reviewTemplate() string {
-	if c.cfg.Prompts != nil {
-		if trimmed := strings.TrimSpace(c.cfg.Prompts.ReviewPrompt); trimmed != "" {
-			return trimmed
-		}
-	}
-	return ""
-}
-
-func (c *Client) buildReviewTemplateData(step, maxSteps int) reviewTemplateData {
-	display, overflow := successFilesDisplay(c.progress.SuccessFiles, successFilesPromptLimit)
-	data := reviewTemplateData{
-		SuccessFiles:    display,
-		SuccessOverflow: overflow,
-		Step:            step,
-		MaxSteps:        maxSteps,
-	}
-	applied := c.progress.AppliedPatches
-	if applied > 0 {
-		data.AppliedPatches = applied
-	}
-	review := c.progress.PendingReview
-	if review == nil {
-		return data
-	}
-	data.HasPending = true
-	files := append([]string(nil), review.Files...)
-	patchPath := strings.TrimSpace(review.PatchPath)
-	undoPath := strings.TrimSpace(review.ReversePatchPath)
-	desc := strings.TrimSpace(sanitizeForPrompt(review.Description))
-	pending := reviewPendingData{
-		Description:    desc,
-		HasDescription: desc != "",
-		Sequence:       review.Sequence,
-		Insertions:     review.Insertions,
-		Deletions:      review.Deletions,
-		HasDiffStats:   review.Insertions != 0 || review.Deletions != 0,
-		Files:          files,
-		HasFiles:       len(files) > 0,
-		PatchPath:      patchPath,
-		UndoPatchPath:  undoPath,
-	}
-	if strings.TrimSpace(patchPath) != "" {
-		if preview, err := loadPatchDiffPreview(patchPath, reviewDiffPreviewLimit); err == nil {
-			trimmed := strings.TrimSpace(preview)
-			if trimmed != "" {
-				pending.DiffPreview = trimmed
-				pending.HasDiffPreview = true
-			}
-		} else {
-			fmt.Fprintf(os.Stderr, "[planner] diff preview error: %v\n", err)
-		}
-	}
-	data.Pending = pending
-	return data
-}
-
-func (c *Client) appendForceRepatchExample(b *strings.Builder) {
-	if !c.progress.ForceRepatchExample {
-		return
-	}
-	b.WriteString("If the guard reports `Skipping patch because all target files were already updated earlier this session`, include `metadata.force_repatch: true` on the next patch.\n\n")
-}
-
-func loadPatchDiffPreview(path string, limit int) (string, error) {
-	trimmed := strings.TrimSpace(path)
-	if trimmed == "" {
-		return "", nil
-	}
-	data, err := os.ReadFile(trimmed)
-	if err != nil {
-		return "", err
-	}
-	diff := strings.TrimSpace(string(data))
-	if diff == "" {
-		return "", nil
-	}
-	if limit > 0 && len(diff) > limit {
-		if limit > 3 {
-			diff = diff[:limit-3] + "..."
-		} else {
-			diff = diff[:limit]
-		}
-		diff += "\n\n[diff truncated]"
-	}
-	return diff, nil
 }
 
 func (c *Client) finalizePrompt(goal string, transcript string) string {
@@ -1813,171 +1402,6 @@ func (c *Client) buildFinalizeTemplateData(goal, transcript string) finalizeTemp
 	}
 }
 
-type patchPlanGenerateData struct {
-	Goal       string
-	Transcript string
-}
-
-type patchPlanUpdateData struct {
-	Goal             string
-	ExistingPlanJSON string
-	RecentTranscript string
-	LastPatchedFile  string
-}
-
-// GeneratePatchPlan asks the LLM to propose a plan of file edits based on the goal and transcript.
-// Returns nil when the response cannot be parsed so patch flow can continue without a plan.
-func (c *Client) GeneratePatchPlan(ctx context.Context, goal, transcript string) (*PatchPlan, error) {
-	prompt := c.renderPatchPlanGeneratePrompt(goal, transcript)
-	if prompt == "" {
-		return nil, nil
-	}
-	plan, err := c.requestPatchPlan(ctx, prompt)
-	if err != nil {
-		return nil, err
-	}
-	if plan != nil {
-		return plan, nil
-	}
-	fallback := c.simplifiedPatchPlanGeneratePrompt(goal, transcript)
-	if fallback == "" || fallback == prompt {
-		return nil, nil
-	}
-	return c.requestPatchPlan(ctx, fallback)
-}
-
-// UpdatePatchPlan refreshes an existing plan, marking items complete when appropriate and adding new tasks.
-// Returns nil when the response cannot be parsed so patch flow can continue without a plan.
-func (c *Client) UpdatePatchPlan(ctx context.Context, goal, transcript string, existing *PatchPlan, lastPatchedFile string) (*PatchPlan, error) {
-	dataJSON := ""
-	if existing != nil {
-		if encoded, err := json.MarshalIndent(existing, "", "  "); err == nil {
-			dataJSON = string(encoded)
-		} else {
-			fmt.Fprintf(os.Stderr, "[planner] failed to marshal existing patch plan: %v\n", err)
-		}
-	}
-	prompt := c.renderPatchPlanUpdatePrompt(goal, transcript, dataJSON, lastPatchedFile)
-	if prompt == "" {
-		return nil, nil
-	}
-	plan, err := c.requestPatchPlan(ctx, prompt)
-	if err != nil {
-		return nil, err
-	}
-	if plan != nil {
-		return plan, nil
-	}
-	fallback := c.simplifiedPatchPlanUpdatePrompt(goal, transcript, dataJSON, lastPatchedFile)
-	if fallback == "" || fallback == prompt {
-		return nil, nil
-	}
-	return c.requestPatchPlan(ctx, fallback)
-}
-
-func (c *Client) renderPatchPlanGeneratePrompt(goal, transcript string) string {
-	tpl, err := templates.GetEmbeddedTemplate("planner.patch_plan_generate")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "[planner] patch plan generate template missing: %v\n", err)
-		return ""
-	}
-	data := patchPlanGenerateData{Goal: strings.TrimSpace(goal), Transcript: strings.TrimSpace(transcript)}
-	rendered, err := prompts.Render("planner_patch_plan_generate", tpl, data, nil)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "[planner] patch plan generate template error: %v\n", err)
-		return ""
-	}
-	return rendered
-}
-
-func (c *Client) renderPatchPlanUpdatePrompt(goal, transcript, existingPlanJSON, lastPatchedFile string) string {
-	tpl, err := templates.GetEmbeddedTemplate("planner.patch_plan_update")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "[planner] patch plan update template missing: %v\n", err)
-		return ""
-	}
-	data := patchPlanUpdateData{
-		Goal:             strings.TrimSpace(goal),
-		ExistingPlanJSON: strings.TrimSpace(existingPlanJSON),
-		RecentTranscript: strings.TrimSpace(transcript),
-		LastPatchedFile:  strings.TrimSpace(lastPatchedFile),
-	}
-	rendered, err := prompts.Render("planner_patch_plan_update", tpl, data, nil)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "[planner] patch plan update template error: %v\n", err)
-		return ""
-	}
-	return rendered
-}
-
-func (c *Client) simplifiedPatchPlanGeneratePrompt(goal, transcript string) string {
-	goal = strings.TrimSpace(goal)
-	transcript = strings.TrimSpace(transcript)
-	if goal == "" && transcript == "" {
-		return ""
-	}
-	return fmt.Sprintf("Goal: %s\nTranscript:\n%s\nReturn only JSON patch plan with a goal summary and items describing file edits in format: {\"goal\": \"<intro statement>\", \"items\": [...]}.", goal, transcript)
-}
-
-func (c *Client) simplifiedPatchPlanUpdatePrompt(goal, transcript, existingPlanJSON, lastPatchedFile string) string {
-	goal = strings.TrimSpace(goal)
-	transcript = strings.TrimSpace(transcript)
-	existingPlanJSON = strings.TrimSpace(existingPlanJSON)
-	lastPatchedFile = strings.TrimSpace(lastPatchedFile)
-	if goal == "" && transcript == "" && existingPlanJSON == "" {
-		return ""
-	}
-	var b strings.Builder
-	if goal != "" {
-		fmt.Fprintf(&b, "Goal: %s\n", goal)
-	}
-	if lastPatchedFile != "" {
-		fmt.Fprintf(&b, "Patched file: %s\n", lastPatchedFile)
-	}
-	if existingPlanJSON != "" {
-		b.WriteString("Current plan:\n")
-		b.WriteString(existingPlanJSON)
-		b.WriteString("\n")
-	}
-	if transcript != "" {
-		b.WriteString("Recent transcript:\n")
-		b.WriteString(transcript)
-		b.WriteString("\n")
-	}
-	b.WriteString("Return updated JSON patch plan with the goal preserved or refined and completed items marked in format: {\"goal\": \"<intro statement>\", \"items\": [...]}.")
-	return b.String()
-}
-
-func (c *Client) requestPatchPlan(ctx context.Context, prompt string) (*PatchPlan, error) {
-	resp, err := c.chat(ctx, prompt)
-	if err != nil {
-		return nil, err
-	}
-	plan, err := parsePatchPlan(resp)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "[planner] patch plan parse failed: %v\n", err)
-		return nil, nil
-	}
-	return plan, nil
-}
-
-func parsePatchPlan(raw string) (*PatchPlan, error) {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
-		return nil, errors.New("empty patch plan response")
-	}
-	start := strings.Index(trimmed, "{")
-	end := strings.LastIndex(trimmed, "}")
-	if start != -1 && end != -1 && start < end {
-		trimmed = strings.TrimSpace(trimmed[start : end+1])
-	}
-	var plan PatchPlan
-	if err := json.Unmarshal([]byte(trimmed), &plan); err != nil {
-		return nil, err
-	}
-	return &plan, nil
-}
-
 func truncateMiddle(s string, max int) string {
 	if len(s) <= max {
 		return s
@@ -1986,27 +1410,26 @@ func truncateMiddle(s string, max int) string {
 	return s[:half] + "…" + s[len(s)-half:]
 }
 
+func sanitizeForPrompt(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\r", " ")
+	const maxLen = 2000
+	if len(s) > maxLen {
+		s = s[:maxLen] + "..."
+	}
+	return s
+}
+
 const (
 	maxDecisionPreambleChars = 600
 	maxDecisionPreambleLines = 3
 )
 
-func parseDecision(resp string, patchEnabled bool) (Decision, string, string) {
+func parseDecision(resp string) (Decision, string, string) {
 	trimmed := strings.TrimSpace(resp)
 	if trimmed == "" {
 		return "", "", ""
-	}
-	if patchEnabled {
-		trimmedLower := strings.ToLower(trimmed)
-		if strings.HasPrefix(trimmedLower, "patch:") {
-			path := strings.TrimSpace(trimmed[len("Patch:"):])
-			if path == "" {
-				return "", "", ""
-			}
-			// Shorthand patch requests specify the file path only.
-			// The planner will route to patch-generation with full schema instructions.
-			return DecisionPatch, path, ""
-		}
 	}
 
 	lines := strings.Split(trimmed, "\n")
@@ -2104,28 +1527,23 @@ func parseDecision(resp string, patchEnabled bool) (Decision, string, string) {
 	}
 	var decision Decision
 	switch {
-	case strings.Contains(decisionStr, string(DecisionAccept)):
-		decision = DecisionAccept
-	case strings.Contains(decisionStr, string(DecisionReject)):
-		decision = DecisionReject
 	case decisionWord == string(DecisionAsk) || decisionWord == "question" || decisionWord == "instruction" || decisionWord == "message":
 		decision = DecisionAsk
-	case decisionWord == string(DecisionPatch):
-		decision = DecisionPatch
 	case decisionWord == string(DecisionFinalize):
 		decision = DecisionFinalize
 	default:
 		return "", "", ""
-	}
-	if !patchEnabled && decision == DecisionPatch {
-		// Fallback to a generic ask when patches are disabled to keep the agent progressing.
-		return DecisionAsk, "Question: Considering the current transcript, produce the single next high-signal repository-focused prompt for mct.", strings.Join(preambleLines, "\n")
 	}
 	remainder := strings.TrimSpace(strings.Join(lines[decisionIdx+1:], "\n"))
 	if decision == DecisionAsk && remainder == "" && decisionTail != "" && strings.ToLower(decisionTail) != decisionWord {
 		remainder = decisionTail
 	}
 	return decision, remainder, strings.Join(preambleLines, "\n")
+}
+
+type askMonitorResult struct {
+	HasPatchIntent bool   `json:"has_patch_intent"`
+	Reason         string `json:"reason"`
 }
 
 func parseAskMenu(resp string) (AskMode, string, error) {
@@ -2265,6 +1683,22 @@ func collapseAskSplit(noShell, shell string) string {
 	return strings.TrimSpace(strings.Join(parts, "\n"))
 }
 
+func parseAskMonitorResponse(resp string) (askMonitorResult, error) {
+	jsonBytes, err := parser.ExtractJSONObjectPayload(resp)
+	if err != nil {
+		if strings.TrimSpace(resp) == "" {
+			return askMonitorResult{}, errors.New("empty ask monitor response")
+		}
+		return askMonitorResult{}, err
+	}
+	var result askMonitorResult
+	if err := json.Unmarshal(jsonBytes, &result); err != nil {
+		return askMonitorResult{}, err
+	}
+	result.Reason = strings.TrimSpace(result.Reason)
+	return result, nil
+}
+
 func parseAskMixedMonitorResponse(resp string) (askMixedMonitorResult, error) {
 	jsonBytes, err := parser.ExtractJSONObjectPayload(resp)
 	if err != nil {
@@ -2314,6 +1748,14 @@ func parseAskUserDirectedPurifierResponse(resp string) (askUserDirectedPurifierR
 	result.Context = strings.TrimSpace(result.Context)
 	result.Reason = strings.TrimSpace(result.Reason)
 	return result, nil
+}
+
+func buildAskGuardrail(reason string) string {
+	trimmed := strings.TrimSpace(reason)
+	if trimmed == "" {
+		return "The previous ask included patch intent. Ask is not for changing, updating, deleting, or patching files. Patch must be chosen separately, and you will have another chance to choose Patch after this ask."
+	}
+	return fmt.Sprintf("The previous ask included patch intent (%s). Ask is not for changing, updating, deleting, or patching files. Patch must be chosen separately, and you will have another chance to choose Patch after this ask.", trimmed)
 }
 
 func buildAskMixedGuardrail(reason, rewrite string) string {
