@@ -8,7 +8,7 @@ Before choosing the next step, decide which of these modes applies:
 2. Run one concrete command if that command is likely to materially reduce a specific uncertainty.
 3. Conclude with partial findings if further commands are unlikely to add meaningful new evidence.
 
-Return exactly one fenced Bash command (```bash ... ```) that the worker can execute without additional interpretation, unless you are concluding.
+Return exactly one Bash command wrapped in <command>...</command> tags that the worker can execute without additional interpretation, unless you are concluding.
 The command must be a single line.
 If you need to run in a subdirectory, chain it explicitly (cd path/to/dir && <command>) because each step starts in the project root.
 If a safe single command is impossible, emit a fenced echo/printf that explains the limitation instead of inventing extra steps.

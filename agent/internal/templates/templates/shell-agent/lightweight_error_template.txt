@@ -13,4 +13,4 @@ Any critical constraints are repeated here and MUST be followed:
 - If the intent contains an explicit command, output that command exactly as written (including `cd ... &&` and environment variable prefixes like `GOCACHE=...`).
 - Do not rewrite commands into "equivalent" forms or narrow targets.
 
-Return a corrected Bash command wrapped in ```bash-command ... ``` that obeys the single-command safety rules (no chaining, redirection, command substitution, or backgrounding unless the intent explicitly justified it).
+Return a corrected Bash command wrapped in <command>...</command> tags.
