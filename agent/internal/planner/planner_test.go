@@ -523,61 +523,6 @@ Ask: Explain how session history is loaded, then run ` + "`" + `grep -n "Decisio
 	}
 }
 
-func TestParseAskMonitorResponseJSON(t *testing.T) {
-	resp := "```json\n{\"has_patch_intent\":false,\"reason\":\"analysis-only\"}\n```"
-	monitor, err := parseAskMonitorResponse(resp)
-	if err != nil {
-		t.Fatalf("parseAskMonitorResponse error: %v", err)
-	}
-	if monitor.HasPatchIntent {
-		t.Fatalf("expected no patch intent, got true")
-	}
-	if monitor.Reason != "analysis-only" {
-		t.Fatalf("unexpected reason: %q", monitor.Reason)
-	}
-}
-
-func TestGenerateAskRetriesOnPatchIntent(t *testing.T) {
-	client := NewClient(ClientConfig{})
-	conv := conversation.New("sess-ask", "Investigate planner flow")
-	transcript := "Planner decision: background\n\n== TURN 1\nQuestion: How does mct-agent manage context across its orchestrated tools?"
-
-	var askCalls int
-	var monitorCalls int
-	client.chatFn = func(_ context.Context, messages []llm.Message) (string, error) {
-		content := messages[len(messages)-1].Content
-		if strings.Contains(content, "You are a guard that checks whether an ask mixes no-shell and shell actions.") {
-			return `{"is_mixed":false,"reason":"single ask","rewrite":""}`, nil
-		}
-		if strings.Contains(content, "You are a guard that checks whether an ask is requesting file changes or patches.") {
-			monitorCalls++
-			if monitorCalls == 1 {
-				return `{"has_patch_intent":true,"reason":"requests updating a template"}`, nil
-			}
-			return `{"has_patch_intent":false,"reason":"analysis-only"}`, nil
-		}
-		if strings.Contains(content, "Ask Mode:") && strings.Contains(content, "Ask request:") {
-			askCalls++
-			if askCalls == 1 {
-				return "Ask Mode: no-shell\nAsk: Update planner prompts in agent/internal/templates/templates/planner/plan_prompt.tpl.", nil
-			}
-			return "Ask Mode: no-shell\nAsk: How does mct-agent manage context across its orchestrated tools (file-discovery, snippet-discovery, shell-agent, patcher) and the planner, particularly in terms of session state, workspace snapshots, and LLM prompting?", nil
-		}
-		return "", nil
-	}
-
-	ask, err := client.generateAsk(context.Background(), conv, conv.OriginalGoal, transcript, 1, 3)
-	if err != nil {
-		t.Fatalf("generateAsk error: %v", err)
-	}
-	if strings.Contains(ask, "Update planner prompts") {
-		t.Fatalf("expected patch-intent ask to be rejected, got %q", ask)
-	}
-	if !strings.Contains(ask, "manage context across its orchestrated tools") {
-		t.Fatalf("unexpected ask result: %q", ask)
-	}
-}
-
 func TestGenerateAskRetriesWhenModelReturnsAnswerInsteadOfAsk(t *testing.T) {
 	client := NewClient(ClientConfig{})
 	conv := conversation.New("sess-ask-answer-retry", "Investigate provider flow")
@@ -589,8 +534,6 @@ func TestGenerateAskRetriesWhenModelReturnsAnswerInsteadOfAsk(t *testing.T) {
 		switch {
 		case strings.Contains(content, "You are a guard that checks whether an ask mixes no-shell and shell actions."):
 			return `{"is_mixed":false,"reason":"single ask","rewrite":""}`, nil
-		case strings.Contains(content, "You are a guard that checks whether an ask is requesting file changes or patches."):
-			return `{"has_patch_intent":false,"reason":"analysis-only"}`, nil
 		case strings.Contains(content, "Ask Mode:") && strings.Contains(content, "Ask request:"):
 			askCalls++
 			if askCalls == 1 {
@@ -628,8 +571,6 @@ func TestGenerateAskCollapsesBothModeToSingleAsk(t *testing.T) {
 		case strings.Contains(content, "You are a guard that checks whether an ask mixes no-shell and shell actions."):
 			mixedCalls++
 			return `{"is_mixed":false,"reason":"already split","rewrite":""}`, nil
-		case strings.Contains(content, "You are a guard that checks whether an ask is requesting file changes or patches."):
-			return `{"has_patch_intent":false,"reason":"analysis-only"}`, nil
 		case strings.Contains(content, "Ask Mode:") && strings.Contains(content, "Ask request:"):
 			return strings.TrimSpace(`
 Ask Mode: both
@@ -670,8 +611,6 @@ func TestGenerateAskBothModeSkipsMixedGuardEvenIfSplitReturned(t *testing.T) {
 		case strings.Contains(content, "You are a guard that checks whether an ask mixes no-shell and shell actions."):
 			mixedCalls++
 			return `{"is_mixed":true,"reason":"mixed","rewrite":""}`, nil
-		case strings.Contains(content, "You are a guard that checks whether an ask is requesting file changes or patches."):
-			return `{"has_patch_intent":false,"reason":"analysis-only"}`, nil
 		case strings.Contains(content, "Ask Mode:") && strings.Contains(content, "Ask request:"):
 			return strings.TrimSpace(`
 Ask Mode: both
@@ -713,7 +652,6 @@ Shell: Run git diff --stat to review recent changes.
 	var (
 		askCalls      int
 		mixedCalls    int
-		patchCalls    int
 		guardrailSeen bool
 	)
 	client.chatFn = func(_ context.Context, messages []llm.Message) (string, error) {
@@ -725,9 +663,6 @@ Shell: Run git diff --stat to review recent changes.
 				return fmt.Sprintf(`{"is_mixed":true,"reason":"%s","rewrite":%q}`, mixedReason, rewrite), nil
 			}
 			return `{"is_mixed":false,"reason":"already split","rewrite":""}`, nil
-		case strings.Contains(content, "You are a guard that checks whether an ask is requesting file changes or patches."):
-			patchCalls++
-			return `{"has_patch_intent":false,"reason":"analysis-only"}`, nil
 		case strings.Contains(content, "Ask Mode:") && strings.Contains(content, "Ask request:"):
 			askCalls++
 			if askCalls == 1 {
@@ -765,8 +700,8 @@ Shell: Run ` + "`" + `git diff --stat` + "`" + ` to review recent changes.
 	if !strings.Contains(ask, "Explain config loading.") || !strings.Contains(ask, "git diff --stat") {
 		t.Fatalf("unexpected collapsed ask content: %q", ask)
 	}
-	if askCalls != 2 || mixedCalls != 1 || patchCalls != 1 {
-		t.Fatalf("unexpected call counts ask=%d mixed=%d patch=%d", askCalls, mixedCalls, patchCalls)
+	if askCalls != 2 || mixedCalls != 1 {
+		t.Fatalf("unexpected call counts ask=%d mixed=%d", askCalls, mixedCalls)
 	}
 }
 
@@ -778,7 +713,6 @@ func TestPlanAskLoopIntegration(t *testing.T) {
 	var (
 		planCalls    int
 		askCalls     int
-		monitorCalls int
 	)
 	client.chatFn = func(_ context.Context, messages []llm.Message) (string, error) {
 		content := messages[len(messages)-1].Content
@@ -789,9 +723,6 @@ func TestPlanAskLoopIntegration(t *testing.T) {
 		switch {
 		case strings.Contains(content, "You are a guard that checks whether an ask mixes no-shell and shell actions."):
 			return `{"is_mixed":false,"reason":"single ask","rewrite":""}`, nil
-		case strings.Contains(content, "You are a guard that checks whether an ask is requesting file changes or patches."):
-			monitorCalls++
-			return `{"has_patch_intent":false,"reason":"analysis-only"}`, nil
 		case strings.Contains(content, "Ask Mode:") && strings.Contains(content, "Ask request:"):
 			askCalls++
 			return "Ask Mode: no-shell\nAsk: Explain the ask monitor guardrail and retry behavior.", nil
@@ -809,89 +740,9 @@ func TestPlanAskLoopIntegration(t *testing.T) {
 	if !strings.Contains(ask, "ask monitor guardrail") {
 		t.Fatalf("unexpected ask output: %q", ask)
 	}
-	if planCalls != 1 || askCalls != 1 || monitorCalls != 1 {
-		t.Fatalf("unexpected call counts plan=%d ask=%d monitor=%d", planCalls, askCalls, monitorCalls)
+	if planCalls != 1 || askCalls != 1 {
+		t.Fatalf("unexpected call counts plan=%d ask=%d", planCalls, askCalls)
 	}
-}
-
-func TestGenerateAskMonitorResponseErrorsDoNotBlockAsk(t *testing.T) {
-	cases := []struct {
-		name       string
-		monitorRes string
-	}{
-		{name: "malformed", monitorRes: "not-json"},
-		{name: "empty", monitorRes: "   "},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			client := NewClient(ClientConfig{})
-			conv := conversation.New("sess-ask-monitor-"+tc.name, "Investigate ask monitor failures")
-			transcript := "== TURN 0\nQuestion: Explain the planner ask guardrail."
-
-			var monitorCalls int
-			client.chatFn = func(_ context.Context, messages []llm.Message) (string, error) {
-				content := messages[len(messages)-1].Content
-				switch {
-				case strings.Contains(content, "You are a guard that checks whether an ask mixes no-shell and shell actions."):
-					return `{"is_mixed":false,"reason":"single ask","rewrite":""}`, nil
-				case strings.Contains(content, "You are a guard that checks whether an ask is requesting file changes or patches."):
-					monitorCalls++
-					return tc.monitorRes, nil
-				case strings.Contains(content, "Ask Mode:") && strings.Contains(content, "Ask request:"):
-					return "Ask Mode: no-shell\nAsk: Explain the ask monitor guardrail and retry behavior.", nil
-				}
-				return "", nil
-			}
-
-			ask, err := client.generateAsk(context.Background(), conv, conv.OriginalGoal, transcript, 1, 3)
-			if err != nil {
-				t.Fatalf("generateAsk error: %v", err)
-			}
-			if !strings.Contains(ask, "ask monitor guardrail") {
-				t.Fatalf("unexpected ask output: %q", ask)
-			}
-			if monitorCalls != 1 {
-				t.Fatalf("expected monitor to run once, got %d", monitorCalls)
-			}
-		})
-	}
-}
-
-func TestParseAskMonitorResponseUsesTolerantJSONExtraction(t *testing.T) {
-	t.Run("fenced leading trailing", func(t *testing.T) {
-		resp := "Monitor result:\n```json\n{\"has_patch_intent\": true, \"reason\": \" asks for file edits \"}\n```\nextra"
-		got, err := parseAskMonitorResponse(resp)
-		if err != nil {
-			t.Fatalf("parseAskMonitorResponse error: %v", err)
-		}
-		if !got.HasPatchIntent {
-			t.Fatalf("expected has_patch_intent=true")
-		}
-		if got.Reason != "asks for file edits" {
-			t.Fatalf("unexpected reason: %q", got.Reason)
-		}
-	})
-
-	t.Run("braces inside strings", func(t *testing.T) {
-		resp := `{"has_patch_intent":false,"reason":"mentions {README.md} but is still only a question"}`
-		got, err := parseAskMonitorResponse(resp)
-		if err != nil {
-			t.Fatalf("parseAskMonitorResponse error: %v", err)
-		}
-		if got.HasPatchIntent {
-			t.Fatalf("expected has_patch_intent=false")
-		}
-		if got.Reason == "" {
-			t.Fatalf("expected reason to be preserved")
-		}
-	})
-
-	t.Run("invalid json", func(t *testing.T) {
-		if _, err := parseAskMonitorResponse(`{"has_patch_intent":`); err == nil {
-			t.Fatalf("expected invalid JSON error")
-		}
-	})
 }
 
 func TestParseAskMixedMonitorResponseUsesTolerantJSONExtraction(t *testing.T) {
@@ -1110,21 +961,19 @@ func TestGenerateAskRetryExhaustionReturnsLastAsk(t *testing.T) {
 	transcript := "== TURN 0\nQuestion: Outline retry behavior."
 
 	var askCalls int
-	var monitorCalls int
+	var mixedCalls int
 	client.chatFn = func(_ context.Context, messages []llm.Message) (string, error) {
 		content := messages[len(messages)-1].Content
 		switch {
 		case strings.Contains(content, "You are a guard that checks whether an ask mixes no-shell and shell actions."):
-			return `{"is_mixed":false,"reason":"single ask","rewrite":""}`, nil
-		case strings.Contains(content, "You are a guard that checks whether an ask is requesting file changes or patches."):
-			monitorCalls++
-			return `{"has_patch_intent":true,"reason":"requests updating a file"}`, nil
+			mixedCalls++
+			return `{"is_mixed":true,"reason":"mixed ask","rewrite":""}`, nil
 		case strings.Contains(content, "Ask Mode:") && strings.Contains(content, "Ask request:"):
 			askCalls++
 			if askCalls == 1 {
-				return "Ask Mode: no-shell\nAsk: Update docs in path/to/file.md.", nil
+				return "Ask Mode: no-shell\nAsk: Explain config loading and run git diff --stat.", nil
 			}
-			return "Ask Mode: no-shell\nAsk: Update docs in path/to/other.md.", nil
+			return "Ask Mode: no-shell\nAsk: Summarize retry behavior using evidence from the repo.", nil
 		}
 		return "", nil
 	}
@@ -1133,12 +982,12 @@ func TestGenerateAskRetryExhaustionReturnsLastAsk(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generateAsk error: %v", err)
 	}
-	if ask != "Update docs in path/to/other.md." {
+	if ask != "Summarize retry behavior using evidence from the repo." {
 		t.Fatalf("expected last ask after retries, got %q", ask)
 	}
 	expectedCalls := askGuardMaxRetries + 1
-	if askCalls != expectedCalls || monitorCalls != expectedCalls {
-		t.Fatalf("expected %d ask/monitor calls, got ask=%d monitor=%d", expectedCalls, askCalls, monitorCalls)
+	if askCalls != expectedCalls || mixedCalls != expectedCalls {
+		t.Fatalf("expected %d ask/mixed calls, got ask=%d mixed=%d", expectedCalls, askCalls, mixedCalls)
 	}
 }
 
@@ -1425,7 +1274,7 @@ func TestPlannerHelperMessagesSharePlanPrefix(t *testing.T) {
 
 	planMessages := client.buildPlanMessages(context.Background(), conv, conv.OriginalGoal, 2, 4, nil)
 	askMessages := client.buildPlannerTaskMessages(context.Background(), conv, conv.OriginalGoal, 2, 4, nil, client.askPrompt(client.buildAskRequest(conv, conv.OriginalGoal, 2, 4), ""))
-	monitorMessages := client.buildPlannerTaskMessages(context.Background(), conv, conv.OriginalGoal, 2, 4, nil, client.askMonitorPrompt("Explain config loading."))
+	monitorMessages := client.buildPlannerTaskMessages(context.Background(), conv, conv.OriginalGoal, 2, 4, nil, client.askUserDirectedMonitorPrompt("Explain config loading."))
 	mixedMessages := client.buildPlannerTaskMessages(context.Background(), conv, conv.OriginalGoal, 2, 4, nil, client.askMixedMonitorPrompt("Explain config loading and run git diff --stat."))
 
 	messageSets := [][]llm.Message{askMessages, monitorMessages, mixedMessages}
@@ -1456,7 +1305,7 @@ func TestPlannerOverlayStaysInSharedSystemPrompt(t *testing.T) {
 	planMessages := client.buildPlanMessages(context.Background(), conv, conv.OriginalGoal, 2, 4, nil)
 	taskMessages := [][]llm.Message{
 		client.buildPlannerTaskMessages(context.Background(), conv, conv.OriginalGoal, 2, 4, nil, client.askPrompt(client.buildAskRequest(conv, conv.OriginalGoal, 2, 4), "")),
-		client.buildPlannerTaskMessages(context.Background(), conv, conv.OriginalGoal, 2, 4, nil, client.askMonitorPrompt("Explain config loading.")),
+		client.buildPlannerTaskMessages(context.Background(), conv, conv.OriginalGoal, 2, 4, nil, client.askUserDirectedMonitorPrompt("Explain config loading.")),
 		client.buildPlannerTaskMessages(context.Background(), conv, conv.OriginalGoal, 2, 4, nil, client.askMixedMonitorPrompt("Explain config loading and run git diff --stat.")),
 	}
 

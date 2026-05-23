@@ -11,7 +11,6 @@ func TestGetEmbeddedTemplate_KnownKeysLoad(t *testing.T) {
 		"planner.plan_system",
 		"planner.plan_patch_rules",
 		"planner.ask_prompt",
-		"planner.ask_monitor",
 		"planner.ask_mixed_monitor",
 		"planner.finalize_prompt",
 		"shell_agent.system_template",

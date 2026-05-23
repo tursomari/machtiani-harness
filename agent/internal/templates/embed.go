@@ -23,7 +23,6 @@ var templateMap = map[string]string{
 	"planner.plan_patch_enabled_intro":   "templates/planner/plan_patch_enabled_intro.tpl",
 	"planner.plan_patch_disabled_intro":  "templates/planner/plan_patch_disabled_intro.tpl",
 	"planner.ask_prompt":                 "templates/planner/ask_prompt.tpl",
-	"planner.ask_monitor":                "templates/planner/ask_monitor.tpl",
 	"planner.ask_mixed_monitor":          "templates/planner/ask_mixed_monitor.tpl",
 	"planner.ask_user_directed_monitor":  "templates/planner/ask_user_directed_monitor.tpl",
 	"planner.ask_user_directed_purifier": "templates/planner/ask_user_directed_purifier.tpl",
