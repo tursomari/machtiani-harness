@@ -148,9 +148,6 @@ func prepareRunBootstrap(rootCtx context.Context, opts Options) (*runBootstrap, 
 	cfg := newLegacyConfig(cfgInput)
 	opts.Config = cfgInput
 	applyTrajectoryEnvOverrides(&cfg)
-	if err := cleanupOrphanedTempDirs(cfg.verbose); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to cleanup orphaned temp dirs: %v\n", err)
-	}
 
 	modeInstructions := llm.ModeInstructions{}
 	modeInstructionPath := ""
