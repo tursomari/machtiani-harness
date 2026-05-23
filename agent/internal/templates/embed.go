@@ -7,16 +7,16 @@ import (
 	"strings"
 )
 
-//go:embed templates/planner/* templates/shell-agent/* templates/mct/* templates/file-discovery/*
+//go:embed templates/planner/* templates/shell-agent/* templates/mct/* templates/file-discovery/* orchestrator/* shell_agent/* shell_agent/internal_planner/*
 var embeddedTemplates embed.FS
 
 var templateMap = map[string]string{
 	// Planner
-	"planner.system_template":            "templates/planner/system_template.tpl",
+	"shell_agent.internal_planner_system": "shell_agent/internal_planner/system.txt",
 	"planner.instance_template":          "templates/planner/instance_template.tpl",
 	"planner.timeout_template":           "templates/planner/timeout_template.tpl",
 	"planner.format_error_template":      "templates/planner/format_error_template.tpl",
-	"planner.plan_system":                "templates/planner/plan_system.tpl",
+	"planner.plan_system":                "orchestrator/system.txt",
 	"planner.plan_prompt":                "templates/planner/plan_prompt.tpl",
 	"planner.ask_prompt":                 "templates/planner/ask_prompt.tpl",
 	"planner.ask_mixed_monitor":          "templates/planner/ask_mixed_monitor.tpl",
@@ -31,7 +31,7 @@ var templateMap = map[string]string{
 	"shell_agent.timeout_template":            "templates/shell-agent/timeout_template.tpl",
 	"shell_agent.format_error_template":       "templates/shell-agent/format_error_template.tpl",
 	"shell_agent.action_observation_template": "templates/shell-agent/action_observation_template.txt",
-	"shell_agent.lightweight_system_template": "templates/shell-agent/lightweight_system_template.txt",
+	"shell_agent.lightweight_system_template": "shell_agent/main_system.txt",
 	"shell_agent.lightweight_intent_template": "templates/shell-agent/lightweight_intent_template.txt",
 	"shell_agent.lightweight_error_template":  "templates/shell-agent/lightweight_error_template.txt",
 

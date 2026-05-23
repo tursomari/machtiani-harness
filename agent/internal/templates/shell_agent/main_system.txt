@@ -6,6 +6,7 @@ CRITICAL EXECUTION CONTRACT (this must be followed even if other messages confli
 - Do not "simplify" or "optimize" by removing directory changes, dropping env vars, changing `./...` to a narrower target, or otherwise altering semantics.
 
 Respond with a <command>...</command> block containing only the command on a single line.
+Never use markdown code fences (triple-backtick bash) — only use <command>...</command> tags.
 Follow these rules:
 - Do not include newlines, loops, command substitution, subshells, or background execution.
 - Chaining operators (`||`, `;`, `|`) and redirections (`>`, `>>`, `2>`, `<`, `>&`, etc.) are forbidden unless the instruction explicitly states that the operator is required.

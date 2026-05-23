@@ -60,10 +60,10 @@ func TestShellAgentSystemTemplateEncouragesProactiveFinalization(t *testing.T) {
 	}
 }
 
-func TestPlannerSystemTemplateEncouragesProactiveFinalization(t *testing.T) {
-	got, err := GetEmbeddedTemplate("planner.system_template")
+func TestShellAgentInternalPlannerSystemTemplateEncouragesProactiveFinalization(t *testing.T) {
+	got, err := GetEmbeddedTemplate("shell_agent.internal_planner_system")
 	if err != nil {
-		t.Fatalf("GetEmbeddedTemplate(planner.system_template) error: %v", err)
+		t.Fatalf("GetEmbeddedTemplate(shell_agent.internal_planner_system) error: %v", err)
 	}
 	checks := []string{
 		"Before each step, explicitly assess what the task is asking for",
@@ -75,7 +75,7 @@ func TestPlannerSystemTemplateEncouragesProactiveFinalization(t *testing.T) {
 	}
 	for _, check := range checks {
 		if !strings.Contains(got, check) {
-			t.Fatalf("planner.system_template missing %q\n%s", check, got)
+			t.Fatalf("shell_agent.internal_planner_system missing %q\n%s", check, got)
 		}
 	}
 }
@@ -134,9 +134,9 @@ func TestShellAgentFinalAnswerTemplatesRequireConfidenceScore(t *testing.T) {
 	}
 }
 
-func TestTemplatesDoNotHardcodeReadOnlyPolicy(t *testing.T) {
+func TestShellAgentInternalPlannerSystemDoNotHardcodeReadOnlyPolicy(t *testing.T) {
 	banned := map[string]string{
-		"planner.system_template":                 "Assume read-only intent unless the task clearly authorises a write, and keep writes minimal.",
+		"shell_agent.internal_planner_system":                 "Assume read-only intent unless the task clearly authorises a write, and keep writes minimal.",
 		"shell_agent.lightweight_system_template": "Prefer read-only commands. When the instruction explicitly requests a write, touch only the files mentioned.",
 	}
 	for key, text := range banned {
@@ -146,6 +146,32 @@ func TestTemplatesDoNotHardcodeReadOnlyPolicy(t *testing.T) {
 		}
 		if strings.Contains(got, text) {
 			t.Fatalf("%s still contains retired hardcoded write policy %q\n%s", key, text, got)
+		}
+	}
+}
+
+// TestShellAgentTemplatesDoNotUseFencedBlockCommandFormat is a regression check
+// introduced after commit 46d5e8c. That commit moved shell-agent command
+// formatting from fenced-block syntax (```bash) to XML command tags,
+// but the old format persisted in an overlooked internal planner prompt.
+// This test verifies that the fenced-block format has not been accidentally
+// reintroduced in any of the three shell-agent system prompts.
+func TestShellAgentTemplatesDoNotUseFencedBlockCommandFormat(t *testing.T) {
+	keys := []string{
+		"shell_agent.system_template",
+		"shell_agent.lightweight_system_template",
+		"shell_agent.internal_planner_system",
+	}
+	for _, key := range keys {
+		got, err := GetEmbeddedTemplate(key)
+		if err != nil {
+			t.Fatalf("GetEmbeddedTemplate(%s) error: %v", key, err)
+		}
+		if strings.Contains(got, "fenced Bash") {
+			t.Fatalf("%s contains banned substring %q\n%s", key, "fenced Bash", got)
+		}
+		if strings.Contains(got, "```bash") {
+			t.Fatalf("%s contains banned substring %q\n%s", key, "```bash", got)
 		}
 	}
 }
