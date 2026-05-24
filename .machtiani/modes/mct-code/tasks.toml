@@ -1,0 +1,3 @@
+title = "Code (MCT-Code)"
+system_prompt = "code.txt"
+shell_prompt = "shell-agent-system-prompt.txt"

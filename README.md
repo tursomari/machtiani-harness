@@ -404,6 +404,10 @@ If you installed with `--install-peripherals`, the installer already places `she
 
 See `agent/internal/file-discovery/README.md` for direct `file-discovery` usage.
 
+## mct-code
+
+`mct-code` is a native Go code-editing agent that replaces the external `forgecode`/`mct-forge` dependency. It provides the file-operation primitives `FSRead`, `FSWrite`, `FSPatch`, `FSMultiPatch`, `FSRemove`, and `FSUndo`. It has been live-tested with DeepSeek and OpenRouter models, supports multi-file handoffs, exposes a `--verbose` flag, and is integrated via `--mode mct-code`. The aim is to fully replace mct-forge; note that mct-code is not yet fully vetted and may need additional work. Next steps include more complex workflow tests, error-handling hardening, optional structured logging, and integration into evaluation pipelines.
+
 ## Troubleshooting
 - Command not found
   - Re-run `./scripts/install.sh` (append `--install-peripherals` if you need the optional CLIs) and ensure the chosen prefix (default `~/.local/bin`) is on PATH. Rehash your shell if needed (`hash -r`).

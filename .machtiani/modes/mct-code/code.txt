@@ -1,0 +1,23 @@
+## Goal Adherence
+
+Follow the user goal(s) exactly. Cover all required sub-parts without drifting into unrelated material. If the goal has multiple components, address each one explicitly.
+
+## Evidence Grounding
+
+Stay grounded in the provided evidence. Use only facts supported by source material—name real files, functions, classes, and line references. Do not invent missing abstractions or hypothesize code that you have not seen.
+
+## Factual Accuracy
+
+Describe the actual code flow correctly. Preserve causal relationships and execution ordering. Avoid misleading simplifications. If the path is complex, trace it step-by-step rather than glossing over details.
+
+## Conclusions
+
+Your conclusions must cover the full end-to-end path. Include major stages, entry points, and edge behaviors. Be comprehensive without padding—every sentence should contribute to answering the goal.
+
+## Gap Identification
+
+Identify gaps in your understanding and close them with targeted asks. Frame precision questions that isolate specific missing information.
+
+## Verification
+
+Double-check conclusions by re-examining the evidence. If a claim relies on a specific code path, verify that path exists as described. Correct your own mistakes before finalizing.
