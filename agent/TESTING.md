@@ -5,7 +5,7 @@ Unit Tests
   cd agent
   GOCACHE=$(pwd)/.gocache go test ./...
   ```
-- The explicit `GOCACHE` keeps build artifacts inside the workspace when sandboxed or running in CI environments that restrict `$HOME`.
+- The explicit `GOCACHE` keeps build artifacts inside the workspace when running in CI environments that restrict `$HOME`.
 
 Agent Integration Tests (mct-agent)
 
@@ -48,7 +48,6 @@ Running from Codex or other agents
   ```
 - `TEST_*` takes precedence over `OPENAI_*` inside `agent/tests/run-live.sh`, so the harness can target a live provider without changing the agent's own environment.
 - Run from the repo root with `bash agent/tests/run-live.sh`. The path `agent/tests/run-live.sh` also works directly when the current working directory is already the repo root.
-- In sandboxed agent environments, live mode may need one-time network approval before the harness can reach the configured provider. A DNS/network failure before the first case completes is usually an environment restriction, not a bad `TEST_*` value.
 - Avoid printing secrets while debugging. It is fine to verify that `TEST_API_KEY` is set, but do not echo the full value into logs or transcripts.
 - Helpful debug toggles:
   - `TRACE_TEST_CONFIG=true` prints the generated test config.
@@ -92,7 +91,7 @@ Monitoring a live run
   ```
 
 Interpreting failures
-- Immediate `dial tcp`, DNS, or `Temporary failure in name resolution` errors usually mean the agent sandbox still blocks outbound network access.
+- Immediate `dial tcp`, DNS, or `Temporary failure in name resolution` errors usually mean the environment blocks outbound network access.
 - `llm http error 502` or similar upstream failures can be transient provider errors; the harness may retry and later succeed.
 - If live mode activates and the trajectory shows the expected provider/model values, the `TEST_*` env wiring is working even if a later case fails.
 - A later `shell-agent exited` or `timed out after 300s` failure points to the ask execution path or timeout budget, not to the initial provider config.

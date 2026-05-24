@@ -18,8 +18,6 @@ cd ..
 ```
 
 - No environment variables are required.
-- The explicit `GOCACHE` keeps build artifacts inside the workspace for sandboxed CI environments.
-
 ## Integration Tests
 All integration harnesses default to deterministic stub or dry-run behavior. Export the listed environment variables to invoke live LLM calls.
 

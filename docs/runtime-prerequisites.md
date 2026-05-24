@@ -22,4 +22,4 @@
 ## Platform Notes
 
 - **macOS:** Ships bash 3.2 and BSD sed. The BSD sed `-i` flag requires an explicit empty-string argument (`-i ''`), while GNU sed does not. Any sed invocation using `-i` without the BSD-compatible form will silently produce wrong output on macOS.
-- **Minimal containers (Alpine, distroless):** May lack bash and sed entirely. Shell-agent is non-functional without bash. Phase 3 (production Docker image) must explicitly include all five dependencies.
+

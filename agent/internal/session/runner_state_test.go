@@ -2,7 +2,6 @@ package session
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -239,66 +238,7 @@ func TestPrepareSessionEnvironmentLocalKeepsLockInSessionScratchRoot(t *testing.
 	}
 }
 
-func TestPrepareSessionEnvironmentDockerRepurposesTmpRootToWorkspace(t *testing.T) {
-	workspaceBase := filepath.Join(t.TempDir(), "docker-tmp")
-	repo := setupSessionEnvironmentTestRepo(t, fmt.Sprintf("[environment]\ntype = \"docker\"\ntmp_root = \"%s\"\n", workspaceBase))
 
-	cfg, _, err := llm.LoadGlobalConfig()
-	if err != nil {
-		t.Fatalf("LoadGlobalConfig() error = %v", err)
-	}
-	if cfg.Environment == nil {
-		t.Fatalf("LoadGlobalConfig() environment = nil")
-	}
-	if cfg.Environment.Type != "docker" {
-		t.Fatalf("environment type = %q, want docker", cfg.Environment.Type)
-	}
-	if cfg.Environment.TmpRoot != workspaceBase {
-		t.Fatalf("environment tmp_root = %q, want %q", cfg.Environment.TmpRoot, workspaceBase)
-	}
-
-	const sessionID = "agent-456"
-	bootstrap, err := prepareSessionEnvironment(sessionID, legacyConfig{})
-	if err != nil {
-		t.Fatalf("prepareSessionEnvironment() error = %v", err)
-	}
-
-	wantSessionRoot := filepath.Join(repo, ".machtiani", "tmp", sessionID)
-	wantWorkspaceRoot := filepath.Join(workspaceBase, "workspace-"+sessionID)
-	if !bootstrap.useSnapshotWorkspace {
-		t.Fatalf("useSnapshotWorkspace = false, want true")
-	}
-	if bootstrap.sessionTempRoot != wantSessionRoot {
-		t.Fatalf("sessionTempRoot = %s, want %s", bootstrap.sessionTempRoot, wantSessionRoot)
-	}
-	if bootstrap.workspaceRoot != wantWorkspaceRoot {
-		t.Fatalf("workspaceRoot = %s, want %s", bootstrap.workspaceRoot, wantWorkspaceRoot)
-	}
-	if got := os.Getenv("MACHTIANI_SESSION_TEMP_ROOT"); got != wantSessionRoot {
-		t.Fatalf("MACHTIANI_SESSION_TEMP_ROOT = %s, want %s", got, wantSessionRoot)
-	}
-	if got := os.Getenv("MACHTIANI_TMP_ROOT"); got != wantWorkspaceRoot {
-		t.Fatalf("MACHTIANI_TMP_ROOT = %s, want %s", got, wantWorkspaceRoot)
-	}
-
-	if err := os.MkdirAll(wantWorkspaceRoot, 0o755); err != nil {
-		t.Fatalf("mkdir workspace root: %v", err)
-	}
-	bootstrap.restore()
-
-	if got := os.Getenv("MACHTIANI_SESSION_TEMP_ROOT"); got != "" {
-		t.Fatalf("MACHTIANI_SESSION_TEMP_ROOT after restore = %s, want empty", got)
-	}
-	if got := os.Getenv("MACHTIANI_TMP_ROOT"); got != "" {
-		t.Fatalf("MACHTIANI_TMP_ROOT after restore = %s, want empty", got)
-	}
-	if _, err := os.Stat(wantSessionRoot); !os.IsNotExist(err) {
-		t.Fatalf("expected session scratch root removed after restore, stat err = %v", err)
-	}
-	if _, err := os.Stat(wantWorkspaceRoot); !os.IsNotExist(err) {
-		t.Fatalf("expected workspace root removed after restore, stat err = %v", err)
-	}
-}
 
 func TestPrepareSessionEnvironment_ImplicitSessionID_IgnoresInheritedTempRoot(t *testing.T) {
 	repo := setupSessionEnvironmentTestRepo(t, "[environment]\ntype = \"local\"\n")

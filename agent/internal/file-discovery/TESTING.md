@@ -1,24 +1,3 @@
-Quick Start (Docker)
-
-- Build the test image:
-  `docker build -f tests/Dockerfile -t file-discovery-tests .`
-
-- Build a Linux/amd64 binary on the host (static is safest):
-  `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o ./file-discovery ./cmd/file-discovery`
-  - Optional sanity check: `file ./file-discovery` should show an ELF x86-64 Linux binary.
-
-- Run live integration tests (requires `OPENAI_API_KEY`) with the host-built binary mounted into the container:
-  `docker run --rm \
-    -e OPENAI_API_KEY -e OPENAI_BASE_URL -e OPENAI_MODEL \
-    -v "$PWD/file-discovery:/usr/local/bin/file-discovery:ro" \
-    file-discovery-tests`
-
-- Run flag-focused tests (E2E + unit):
-  `docker run --rm -it --entrypoint /usr/local/bin/run-flags.sh file-discovery-tests`
-
-- Include the slow-command timeout test (adds the e2e_slow_rg tagged test):
-  `docker run --rm -it -e RUN_SLOW=1 --entrypoint /usr/local/bin/run-flags.sh file-discovery-tests`
-
 Flag-Focused Tests
 
 Overview

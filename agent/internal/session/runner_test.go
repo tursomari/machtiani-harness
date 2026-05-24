@@ -23,7 +23,6 @@ func TestIsLocalSessionEnvironment(t *testing.T) {
 		{name: "empty environment type defaults local", cfg: &llm.Config{Environment: &llm.EnvironmentConfig{}}, want: true},
 		{name: "local environment", cfg: &llm.Config{Environment: &llm.EnvironmentConfig{Type: "local"}}, want: true},
 		{name: "case insensitive local environment", cfg: &llm.Config{Environment: &llm.EnvironmentConfig{Type: " LoCaL "}}, want: true},
-		{name: "docker environment", cfg: &llm.Config{Environment: &llm.EnvironmentConfig{Type: "docker"}}, want: false},
 	}
 
 	for _, tt := range tests {

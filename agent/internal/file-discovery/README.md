@@ -229,26 +229,6 @@ When the round cap is reached without a valid final block, the agent performs on
 - Flags to override model/base URL; streaming responses
 - Hardening/sandbox policies (out of scope here)
 
-## Live Integration Tests (Docker)
-- See TESTING.md for details (env vars, assertions, artifacts). This section is the quickest way to run the live tests.
-
-- Quick start (recommended flow):
-  - Build the test image: `docker build -f tests/Dockerfile -t file-discovery-tests .`
-  - Build a Linux/amd64 binary on the host (static is safest):
-    - `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o ./file-discovery ./cmd/file-discovery`
-    - Optional sanity check: `file ./file-discovery` should show an ELF x86-64 Linux binary.
-  - Run the tests with the host-built binary mounted into the container:
-    - `docker run --rm \
-      -e OPENAI_API_KEY="$OPENAI_API_KEY" \
-      -e OPENAI_BASE_URL="$OPENAI_BASE_URL" \
-      -e OPENAI_MODEL="qwen/qwen-plus-2025-07-28" \
-      -v "$PWD/file-discovery:/usr/local/bin/file-discovery:ro" \
-      file-discovery-tests`
-
-The container sets the working directory to `tests/undici` and runs `tests/run-live.sh`.
-
-Note: If you see exit code 127 in the container, the mounted binary is likely built for the wrong OS/arch. Rebuild with the GOOS/GOARCH shown above.
-
 ## Undici Test Suite (Git Submodule)
 - Location: `tests/undici` is a Git submodule pointing to `https://github.com/nodejs/undici.git` (branch `main`).
 - Clone with submodules: `git clone --recurse-submodules <repo>`

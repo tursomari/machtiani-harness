@@ -346,28 +346,21 @@ jq 'select(.level == "error") | {kind, message: .err.message, span: .span_id}' \
 
 These events complement the transcript and final artifact, providing structured telemetry that is easy to diff or feed into downstream tooling.
 
-### Session Temporary Directories, Locks, and Snapshot Workspaces
+### Session Temporary Directories and Locks
 
-Each run uses up to three per-session locations: two scratch-root siblings plus one durable session record.
+Each run uses up to two per-session locations: the scratch root plus one durable session record.
 
 - **Session scratch root:** `<scratch-root>/<session-id>/`
   - In a repo, `<scratch-root>` is usually `.machtiani/tmp/`. Outside a repo it is usually `$HOME/.machtiani/tmp/`.
   - This is the host-local runtime directory that contains `session.lock`, shell-agent marker files, and other ephemeral session artifacts.
   - `session.lock` is created when the run starts, held with an exclusive flock, refreshed every second, and removed when the run exits normally unless `--persist-tmp-data` is set.
-- **Snapshot workspace root:** `<workspace-base>/workspace-<session-id>/`
-  - This exists only for non-`local` environments such as `docker`.
-  - By default `<workspace-base>` is `.machtiani/tmp/`, but `[environment].tmp_root` can move it elsewhere.
-  - The mounted repository is a subdirectory at `<workspace-base>/workspace-<session-id>/repo/`; workspace-level metadata such as manifests can live alongside `repo/`.
 - **Persistent session record:** `.machtiani/sessions/<session-id>/`
   - This durable root holds `session-state.json`, transcripts, trajectories, and other resumable artifacts.
 
-For debugging, the important distinction is that `docker` keeps the live lock in the host-local session scratch root while container work happens in the separate snapshot workspace. Normal edits inside the mounted snapshot repo do not, by themselves, delete `.machtiani/tmp/<session-id>/session.lock`.
-
-The environment variables also diverge during non-`local` runs:
+The environment variable for the session scratch root:
 
 - `MACHTIANI_SESSION_TEMP_ROOT` points at the host-local session scratch root that owns `session.lock`.
-- `MACHTIANI_TMP_ROOT` normally acts as a scratch-root override, but during non-`local` runs it is intentionally repurposed to point at the snapshot workspace root so shell-agent and workspace helpers operate inside the snapshot instead of the lock directory.
-- In `local` mode there is no snapshot workspace, and the runtime uses `MACHTIANI_SESSION_TEMP_ROOT` / normal scratch-root resolution instead.
+- `MACHTIANI_TMP_ROOT` normally acts as a scratch-root override.
 
 Startup cleanup also treats these paths differently:
 

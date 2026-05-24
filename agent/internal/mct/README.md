@@ -107,14 +107,14 @@ mct prompt "Summarize the architecture" \
 - The final LLM answer is still produced by the model defined via `--model` / `--answer-model`, and the combined exchange is saved to the usual session chat file.
 - Ensure `shell-agent` is installed on PATH (see repository root instructions for building it into `~/.local/bin`).
 
-### Git‑Only Discovery Sandbox
+### Git‑Only Discovery Isolated Workspace
 - By default, `mct` creates a temporary workspace containing only Git‑tracked files (committed or staged) and runs `file-discovery` there.
 - This keeps untracked/build artifacts out of scope for privacy and reproducibility, without changing any other tools or your working tree.
 - Behavior can be disabled by setting `MCT_USE_GIT_FILTER=false`.
 - If not in a Git repo, discovery runs in the current directory as before.
  - Tracked files inside initialized Git submodules are included automatically. Uninitialized submodules are skipped without error.
  - Only declared submodules are considered; nested repos that are not configured as submodules are not scanned.
- - Inclusion remains strictly "tracked‑only": untracked files within submodules are not copied into the sandbox.
+ - Inclusion remains strictly "tracked‑only": untracked files within submodules are not copied into the isolated workspace.
 
 ## Configuration
 - Env vars:

@@ -1212,8 +1212,8 @@ func TestBuildFinalizeMessagesForWrapUpRequestUsesAnswerTheUserContract(t *testi
 
 func TestBuildFinalizeMessagesPreservesCleanConversationOrdering(t *testing.T) {
 	client := NewClient(ClientConfig{})
-	conv := conversation.New("sess-clean-order", "Determine if you are running in a docker or local environment. Provide evidence for or against.")
-	conv.AddMessage("assistant", "## Determination: Running inside a Docker container.", map[string]any{"type": "final", "turns": 1, "capped": false})
+	conv := conversation.New("sess-clean-order", "Determine if the session is running in a local environment. Provide evidence for or against.")
+	conv.AddMessage("assistant", "## Determination: Running in a local environment.", map[string]any{"type": "final", "turns": 1, "capped": false})
 	conv.AddMessage("user", "List the last 3 commit messages in the project root and also the gitsubmodule `agent/internal/shell-agent/`.", nil)
 	conv.AddMessage("assistant", "Run `git -C /repo log --oneline -3` for the project root, then `git -C /repo/agent/internal/shell-agent log --oneline -3` for the submodule.", map[string]any{"type": "ask", "turn": 2, "decision": "ask"})
 	conv.AddMessage("assistant", "## Answer\n- Confidence: 100% - Retrieved the last 3 commits for both repositories.", map[string]any{"type": "answer", "turn": 2})
@@ -1249,8 +1249,8 @@ func TestBuildFinalizeMessagesPreservesCleanConversationOrdering(t *testing.T) {
 
 func TestBuildFinalizeMessagesMatchesCleanedSessionWireTranscript(t *testing.T) {
 	client := NewClient(ClientConfig{})
-	conv := conversation.New("sess-clean-wire", "Determine if you are running in a docker or local environment. Provide evidence for or against.")
-	conv.AddMessage("assistant", "## Determination: Running Inside a Docker Container\n\nI am running inside a Docker container.", map[string]any{"type": "final", "turns": 1, "capped": false})
+	conv := conversation.New("sess-clean-wire", "Determine if the session is running in a local environment. Provide evidence for or against.")
+	conv.AddMessage("assistant", "## Determination: Running in a local environment.\n\nThe session is running in a local environment.", map[string]any{"type": "final", "turns": 1, "capped": false})
 	conv.AddMessage("user", "List the last 3 commit messages in the project root and also the gitsubmodule `agent/internal/shell-agent/`.", nil)
 	conv.AddMessage("assistant", "Run `git -C /repo log --oneline -3` for the project root, then `git -C /repo/agent/internal/shell-agent log --oneline -3` for the submodule. Report the 3 commit messages from each location.\n\nI understand that I don't have access to a shell directly. The `shell-agent` will carry out my request and report back with explanation of the results and not necessarily the full output of commands it executes.", map[string]any{"type": "ask", "turn": 2, "decision": "ask"})
 	conv.AddMessage("assistant", "## Answer\n- Confidence: 100% - The project root (`/workspace`) shows these 3 most recent commits: (1) `c8c48c0 Refactor planner prompt layering`, (2) `c442854 chore: untrack a refactor todo.`, (3) `f808483 chore(templates): sync local overrides with embedded defaults`.\n- Confidence: 100% - The submodule (`/workspace/agent/internal/shell-agent`) shows these 3 most recent commits: (1) `1deb3e5 fix: tighten repo-root recursive grep validation`, (2) `2b1cfb9 fix: reject broad recursive grep from repo root`, (3) `0ff19c3 chore: add dockerfile for useful tools for handling documents.`", map[string]any{"type": "answer", "turn": 2})
@@ -1272,8 +1272,8 @@ func TestBuildFinalizeMessagesMatchesCleanedSessionWireTranscript(t *testing.T) 
 		content string
 	}
 	want := []wantMessage{
-		{role: "user", content: "Determine if you are running in a docker or local environment. Provide evidence for or against."},
-		{role: "assistant", content: "## Determination: Running Inside a Docker Container\n\nI am running inside a Docker container."},
+		{role: "user", content: "Determine if the session is running in a local environment. Provide evidence for or against."},
+		{role: "assistant", content: "## Determination: Running in a local environment.\n\nThe session is running in a local environment."},
 		{role: "user", content: "List the last 3 commit messages in the project root and also the gitsubmodule `agent/internal/shell-agent/`."},
 		{role: "assistant", content: "[work_request] Run `git -C /repo log --oneline -3` for the project root, then `git -C /repo/agent/internal/shell-agent log --oneline -3` for the submodule. Report the 3 commit messages from each location.\n\nI understand that I don't have access to a shell directly. The `shell-agent` will carry out my request and report back with explanation of the results and not necessarily the full output of commands it executes."},
 		{role: "assistant", content: "[work_result] ## Answer\n- Confidence: 100% - The project root (`/workspace`) shows these 3 most recent commits: (1) `c8c48c0 Refactor planner prompt layering`, (2) `c442854 chore: untrack a refactor todo.`, (3) `f808483 chore(templates): sync local overrides with embedded defaults`.\n- Confidence: 100% - The submodule (`/workspace/agent/internal/shell-agent`) shows these 3 most recent commits: (1) `1deb3e5 fix: tighten repo-root recursive grep validation`, (2) `2b1cfb9 fix: reject broad recursive grep from repo root`, (3) `0ff19c3 chore: add dockerfile for useful tools for handling documents.`"},
