@@ -16,6 +16,85 @@ import (
 type ToolResult struct {
 	Content string
 	Error   error
+	Before  string
+	After   string
+}
+
+// diffString produces a minimal unified-diff-like output between two strings.
+// It splits both strings into lines, finds the common prefix and common suffix
+// between the two line slices, then produces output with minus lines (removed
+// from a) and plus lines (added in b), with a small context window of 2 lines
+// of common prefix/suffix. If there are no differences, it returns an empty
+// string.
+func diffString(a, b string) string {
+	if a == b {
+		return ""
+	}
+
+	linesA := strings.Split(a, "\n")
+	linesB := strings.Split(b, "\n")
+
+	minLen := len(linesA)
+	if len(linesB) < minLen {
+		minLen = len(linesB)
+	}
+
+	// Find common prefix length.
+	prefixLen := 0
+	for prefixLen < minLen && linesA[prefixLen] == linesB[prefixLen] {
+		prefixLen++
+	}
+
+	// Find common suffix length.
+	suffixLen := 0
+	for suffixLen < minLen-prefixLen &&
+		linesA[len(linesA)-1-suffixLen] == linesB[len(linesB)-1-suffixLen] {
+		suffixLen++
+	}
+
+	// No differences.
+	if prefixLen == len(linesA) && prefixLen == len(linesB) {
+		return ""
+	}
+
+	var out strings.Builder
+	const ctx = 2
+
+	// Context lines from common prefix (up to ctx lines before the diff).
+	ctxStart := prefixLen - ctx
+	if ctxStart < 0 {
+		ctxStart = 0
+	}
+	for i := ctxStart; i < prefixLen; i++ {
+		fmt.Fprintf(&out, " %s\n", linesA[i])
+	}
+
+	// Removed lines (from a).
+	for i := prefixLen; i < len(linesA)-suffixLen; i++ {
+		fmt.Fprintf(&out, "-%s\n", linesA[i])
+	}
+
+	// Added lines (from b).
+	for i := prefixLen; i < len(linesB)-suffixLen; i++ {
+		fmt.Fprintf(&out, "+%s\n", linesB[i])
+	}
+
+	// Context lines from common suffix (up to ctx lines after the diff).
+	suffixEnd := len(linesA) - suffixLen
+	ctxEnd := suffixEnd + ctx
+	if ctxEnd > len(linesA) {
+		ctxEnd = len(linesA)
+	}
+	for i := suffixEnd; i < ctxEnd; i++ {
+		fmt.Fprintf(&out, " %s\n", linesA[i])
+	}
+
+	return strings.TrimRight(out.String(), "\n")
+}
+
+// DiffString is an exported wrapper around diffString.
+func DiffString(a, b string) string {
+	return diffString(a, b)
 }
 
 // ---------------------------------------------------------------------------
@@ -155,8 +234,31 @@ func (s *FsWriteService) Execute(_ context.Context, path, content string, overwr
 		return ToolResult{}, fmt.Errorf("write error: %w", err)
 	}
 
+	// Capture prior content if the file exists.
+	var priorContent string
+	if _, err := os.Stat(path); err == nil {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return ToolResult{}, fmt.Errorf("write pre-read error: %w", err)
+		}
+		priorContent = string(data)
+	}
+
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		return ToolResult{}, fmt.Errorf("write error: %w", err)
+	}
+
 	s.readSvc.MarkRead(path)
-	return ToolResult{Content: fmt.Sprintf("wrote %d bytes to %s", len(content), path)}, nil
+
+	result := ToolResult{
+		Content: fmt.Sprintf("wrote %d bytes to %s", len(content), path),
+		Before:  priorContent,
+		After:   content,
+	}
+	if d := diffString(priorContent, content); d != "" {
+		result.Content += "\n" + d
+	}
+	return result, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -190,10 +292,11 @@ func (s *FsPatchService) Execute(_ context.Context, path, old, new string, repla
 	if err != nil {
 		return ToolResult{}, fmt.Errorf("patch read error: %w", err)
 	}
-	content := string(data)
+	original := string(data)
 
-	s.undo.Push(path, content)
+	s.undo.Push(path, original)
 
+	content := original
 	if !replaceAll {
 		count := strings.Count(content, old)
 		if count == 0 {
@@ -212,7 +315,16 @@ func (s *FsPatchService) Execute(_ context.Context, path, old, new string, repla
 	}
 
 	s.readSvc.MarkRead(path)
-	return ToolResult{Content: fmt.Sprintf("patched %s", path)}, nil
+
+	result := ToolResult{
+		Content: fmt.Sprintf("patched %s", path),
+		Before:  original,
+		After:   content,
+	}
+	if d := diffString(original, content); d != "" {
+		result.Content += "\n" + d
+	}
+	return result, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -247,7 +359,8 @@ func (s *FsMultiPatchService) Execute(_ context.Context, path string, patches []
 	if err != nil {
 		return ToolResult{}, fmt.Errorf("multi-patch read error: %w", err)
 	}
-	snapshot := string(data)
+	original := string(data)
+	snapshot := original
 
 	s.undo.Push(path, snapshot)
 
@@ -264,7 +377,16 @@ func (s *FsMultiPatchService) Execute(_ context.Context, path string, patches []
 	}
 
 	s.readSvc.MarkRead(path)
-	return ToolResult{Content: fmt.Sprintf("applied %d patches to %s", len(patches), path)}, nil
+
+	result := ToolResult{
+		Content: fmt.Sprintf("applied %d patches to %s", len(patches), path),
+		Before:  original,
+		After:   snapshot,
+	}
+	if d := diffString(original, snapshot); d != "" {
+		result.Content += "\n" + d
+	}
+	return result, nil
 }
 
 // ---------------------------------------------------------------------------

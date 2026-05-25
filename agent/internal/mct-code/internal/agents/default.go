@@ -88,6 +88,8 @@ func (a *DefaultAgent) buildSystemPrompt() string {
 	b.WriteString(`You are a coding assistant with access to filesystem tools.
 The workspace is the current working directory. All file paths are relative to this directory unless specified as absolute. When you need to find files, use FSSearch to search the codebase with regex patterns. Use "." as the path to search the entire workspace.
 
+You must respond with tool calls in JSON format inside <command>...</command> tags. Each tool call is a JSON object with "tool" and "args" fields. Example: <command>{"tool":"FSRead","args":{"path":"index.js"}}</command>. Do NOT use XML tags like <function-calls> or <invoke> for tool invocations.
+
 When you need to use a tool, output a JSON object on its own line with the following format:
 {"tool":"ToolName","args":{"arg1":"value1",...}}
 
@@ -102,6 +104,7 @@ Available tools:
 	b.WriteString("- Each tool output must be on its own line.\n")
 	b.WriteString("- Use specialized FS tools for file operations (FSRead, FSPatch, FSWrite, FSSearch, FSMultiPatch, FSRemove, FSUndo). Reserve Shell only for actual system commands (git, npm, docker, etc.) that are not covered by another tool.\n")
 	b.WriteString("- When you are done, respond with a summary of what you did.\n")
+	b.WriteString("- When you make file edits, include a summary of what changed together with the diff output.\n")
 	return b.String()
 }
 
@@ -142,11 +145,22 @@ func (a *DefaultAgent) Run(ctx context.Context, handoffNote string) (string, err
 					fmt.Fprintf(os.Stderr, " -> error: %v\n", tr.Error)
 				} else {
 					fmt.Fprintf(os.Stderr, " -> success (%d bytes)\n", len(tr.Content))
+					if tr.Before != "" && tr.After != "" && tr.Before != tr.After {
+						if d := tools.DiffString(tr.Before, tr.After); d != "" {
+							for _, line := range strings.Split(d, "\n") {
+								fmt.Fprintf(os.Stderr, "\t%s\n", line)
+							}
+						}
+					}
 				}
 			}
 			content := tr.Content
 			if tr.Error != nil {
 				content = fmt.Sprintf("error: %v", tr.Error)
+			} else if tr.Before != "" && tr.After != "" && tr.Before != tr.After {
+				// Ensure the LLM sees the diff. The tool layer should already
+				// include it in Content, but add a note as a safety net.
+				content = tr.Content + "\n(diff available)"
 			}
 			messages = append(messages, llm.Message{Role: "user", Content: content})
 		}

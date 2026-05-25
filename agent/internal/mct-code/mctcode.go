@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/tursomari/machtiani/agent/internal/llm"
@@ -102,6 +103,12 @@ func parseToolCalls(text string) []agents.ToolCall {
 			searchFrom = endIdx + 1
 		}
 	}
+
+	// 3. Fallback: parse XML-style <function-calls> blocks (e.g. from DeepSeek).
+	if len(calls) == 0 {
+		calls = parseXMLFunctionCalls(text)
+	}
+
 	return calls
 }
 
@@ -132,6 +139,141 @@ func findToolJSONStart(s string, from int) int {
 		}
 	}
 	return -1
+}
+
+// parseXMLFunctionCalls is a fallback parser for XML-style <function-calls>
+// blocks that some models (e.g. DeepSeek) return instead of JSON. It extracts
+// <invoke name="ToolName"> elements and their <parameter name="..."> children.
+func parseXMLFunctionCalls(text string) []agents.ToolCall {
+	var calls []agents.ToolCall
+
+	startTag := "<function-calls>"
+	endTag := "</function-calls>"
+	remain := text
+
+	for {
+		start := strings.Index(remain, startTag)
+		if start < 0 {
+			break
+		}
+		start += len(startTag)
+
+		end := strings.Index(remain[start:], endTag)
+		if end < 0 {
+			break
+		}
+		block := remain[start : start+end]
+		remain = remain[start+end+len(endTag):]
+
+		// Extract <invoke name="...">...</invoke> elements within this block.
+		invokeTag := "<invoke "
+		invokeEnd := "</invoke>"
+		searchFrom := 0
+
+		for {
+			invStart := strings.Index(block[searchFrom:], invokeTag)
+			if invStart < 0 {
+				break
+			}
+			invStart += searchFrom
+
+			invEnd := strings.Index(block[invStart:], invokeEnd)
+			if invEnd < 0 {
+				break
+			}
+			invBlock := block[invStart : invStart+invEnd+len(invokeEnd)]
+			searchFrom = invStart + invEnd + len(invokeEnd)
+
+			// Extract tool name from name="..."
+			toolName := extractXMLAttr(invBlock, "name")
+			if toolName == "" {
+				continue
+			}
+
+			// Extract parameters.
+			args := make(map[string]interface{})
+			paramStart := "<parameter "
+			paramEnd := "</parameter>"
+			pSearch := 0
+
+			for {
+				pStart := strings.Index(invBlock[pSearch:], paramStart)
+				if pStart < 0 {
+					break
+				}
+				pStart += pSearch
+
+				pEnd := strings.Index(invBlock[pStart:], paramEnd)
+				if pEnd < 0 {
+					break
+				}
+				pBlock := invBlock[pStart : pStart+pEnd+len(paramEnd)]
+				pSearch = pStart + pEnd + len(paramEnd)
+
+				paramName := extractXMLAttr(pBlock, "name")
+				if paramName == "" {
+					continue
+				}
+
+				// Extract value: everything between > and </parameter>
+				valStart := strings.Index(pBlock, ">")
+				if valStart < 0 {
+					continue
+				}
+				valStart++
+
+				valEnd := strings.LastIndex(pBlock, "</parameter>")
+				if valEnd < 0 || valEnd <= valStart {
+					continue
+				}
+				rawVal := strings.TrimSpace(pBlock[valStart:valEnd])
+
+				// Attempt numeric / boolean conversion for usability downstream.
+				args[paramName] = parseArgValue(rawVal)
+			}
+
+			calls = append(calls, agents.ToolCall{Tool: toolName, Args: args})
+		}
+	}
+
+	return calls
+}
+
+// extractXMLAttr extracts the value of an attribute from an XML-like tag.
+// It searches for name="value" and returns value (with quotes stripped).
+func extractXMLAttr(tag, attrName string) string {
+	needle := attrName + `="`
+	idx := strings.Index(tag, needle)
+	if idx < 0 {
+		return ""
+	}
+	idx += len(needle)
+	end := strings.Index(tag[idx:], `"`)
+	if end < 0 {
+		return ""
+	}
+	return tag[idx : idx+end]
+}
+
+// parseArgValue attempts to parse a string as a number or boolean, falling
+// back to the raw string.
+func parseArgValue(s string) interface{} {
+	if s == "" {
+		return s
+	}
+	// Try boolean first (short string, unambiguous).
+	if b, err := strconv.ParseBool(s); err == nil {
+		return b
+	}
+	// Try integer.
+	if i, err := strconv.ParseInt(s, 10, 64); err == nil {
+		return float64(i)
+	}
+	// Try float.
+	if f, err := strconv.ParseFloat(s, 64); err == nil {
+		return f
+	}
+	return s
 }
 
 // ---------------------------------------------------------------------------
