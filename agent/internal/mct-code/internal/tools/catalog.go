@@ -118,6 +118,62 @@ var FSMultiPatch = Tool{
 	Yields: false,
 }
 
+var FSSearch = Tool{
+	Name:        "FSSearch",
+	Description: "Searches file contents using a regex pattern, with optional filters and output modes.",
+	Schema: map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"pattern": map[string]interface{}{
+				"type":        "string",
+				"description": "Regex pattern to search for in file contents.",
+			},
+			"path": map[string]interface{}{
+				"type":        "string",
+				"description": "File or directory to search, defaults to current working directory.",
+			},
+			"glob": map[string]interface{}{
+				"type":        "string",
+				"description": "Glob pattern to filter files e.g. \"*.js\".",
+			},
+			"file_type": map[string]interface{}{
+				"type":        "string",
+				"description": "File type e.g. \"js\", \"py\", \"go\".",
+			},
+			"output_mode": map[string]interface{}{
+				"type":        "string",
+				"description": "Output mode: \"content\", \"files_with_matches\", or \"count\", defaults to \"files_with_matches\".",
+			},
+			"case_insensitive": map[string]interface{}{
+				"type":        "boolean",
+				"description": "Case insensitive search.",
+			},
+			"show_line_numbers": map[string]interface{}{
+				"type":        "boolean",
+				"description": "Show line numbers in output, defaults to true.",
+			},
+			"before_context": map[string]interface{}{
+				"type":        "integer",
+				"description": "Number of lines to show before each match.",
+			},
+			"after_context": map[string]interface{}{
+				"type":        "integer",
+				"description": "Number of lines to show after each match.",
+			},
+			"context": map[string]interface{}{
+				"type":        "integer",
+				"description": "Number of lines to show before and after each match.",
+			},
+			"head_limit": map[string]interface{}{
+				"type":        "integer",
+				"description": "Limit output to first N entries.",
+			},
+		},
+		"required": []string{"pattern", "path"},
+	},
+	Yields: false,
+}
+
 var FSRemove = Tool{
 	Name:        "FSRemove",
 	Description: "Deletes a file after saving its contents on an undo stack. Requires a prior read.",
@@ -152,5 +208,5 @@ var FSUndo = Tool{
 
 // AllTools returns every tool for use in catalog assembly or system prompts.
 func AllTools() []Tool {
-	return []Tool{FSRead, FSWrite, FSPatch, FSMultiPatch, FSRemove, FSUndo}
+	return []Tool{FSRead, FSWrite, FSPatch, FSMultiPatch, FSSearch, FSRemove, FSUndo}
 }

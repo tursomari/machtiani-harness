@@ -2,9 +2,11 @@ package tools
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -165,12 +167,13 @@ func (s *FsWriteService) Execute(_ context.Context, path, content string, overwr
 // read and enforcing uniqueness when replaceAll is false.
 type FsPatchService struct {
 	readSvc *FsReadService
+	undo    *UndoStack
 	mu      sync.Mutex
 }
 
 // NewFsPatchService creates an FsPatchService.
-func NewFsPatchService(readSvc *FsReadService) *FsPatchService {
-	return &FsPatchService{readSvc: readSvc}
+func NewFsPatchService(readSvc *FsReadService, undo *UndoStack) *FsPatchService {
+	return &FsPatchService{readSvc: readSvc, undo: undo}
 }
 
 // Execute performs a find-and-replace on the file at path. When replaceAll is
@@ -188,6 +191,8 @@ func (s *FsPatchService) Execute(_ context.Context, path, old, new string, repla
 		return ToolResult{}, fmt.Errorf("patch read error: %w", err)
 	}
 	content := string(data)
+
+	s.undo.Push(path, content)
 
 	if !replaceAll {
 		count := strings.Count(content, old)
@@ -219,12 +224,13 @@ func (s *FsPatchService) Execute(_ context.Context, path, old, new string, repla
 // applied.
 type FsMultiPatchService struct {
 	readSvc *FsReadService
+	undo    *UndoStack
 	mu      sync.Mutex
 }
 
 // NewFsMultiPatchService creates an FsMultiPatchService.
-func NewFsMultiPatchService(readSvc *FsReadService) *FsMultiPatchService {
-	return &FsMultiPatchService{readSvc: readSvc}
+func NewFsMultiPatchService(readSvc *FsReadService, undo *UndoStack) *FsMultiPatchService {
+	return &FsMultiPatchService{readSvc: readSvc, undo: undo}
 }
 
 // Execute applies every patch in order to an in-memory copy, then writes the
@@ -242,6 +248,8 @@ func (s *FsMultiPatchService) Execute(_ context.Context, path string, patches []
 		return ToolResult{}, fmt.Errorf("multi-patch read error: %w", err)
 	}
 	snapshot := string(data)
+
+	s.undo.Push(path, snapshot)
 
 	for i, p := range patches {
 		old, newStr := p[0], p[1]
@@ -329,4 +337,139 @@ func (s *FSUndoService) Execute(_ context.Context, path string) (ToolResult, err
 	}
 
 	return ToolResult{Content: fmt.Sprintf("restored %s (%d bytes)", path, len(content))}, nil
+}
+
+// ---------------------------------------------------------------------------
+// FsSearchService
+// ---------------------------------------------------------------------------
+
+// FsSearchService searches file contents by shelling out to ripgrep (rg).
+type FsSearchService struct {
+	mu sync.Mutex
+}
+
+// NewFsSearchService returns a ready-to-use FsSearchService.
+func NewFsSearchService() *FsSearchService {
+	return &FsSearchService{}
+}
+
+// Execute runs rg with the given parameters and returns the output.
+func (s *FsSearchService) Execute(_ context.Context, params map[string]interface{}) (ToolResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	patternRaw, ok := params["pattern"]
+	if !ok {
+		return ToolResult{}, fmt.Errorf("pattern is required")
+	}
+	pattern, ok := patternRaw.(string)
+	if !ok {
+		return ToolResult{}, fmt.Errorf("pattern must be a string")
+	}
+
+	var args []string
+
+	// path (optional, defaults to ".")
+	path := "."
+	if pathRaw, ok := params["path"]; ok {
+		if pathStr, ok := pathRaw.(string); ok {
+			path = pathStr
+		}
+	}
+
+	// glob (optional)
+	if globRaw, ok := params["glob"]; ok {
+		if globStr, ok := globRaw.(string); ok {
+			args = append(args, "--glob", globStr)
+		}
+	}
+
+	// file_type (optional)
+	if ftRaw, ok := params["file_type"]; ok {
+		if ftStr, ok := ftRaw.(string); ok {
+			args = append(args, "--type", ftStr)
+		}
+	}
+
+	// output_mode (optional, defaults to "files_with_matches")
+	outputMode := "files_with_matches"
+	if omRaw, ok := params["output_mode"]; ok {
+		if omStr, ok := omRaw.(string); ok {
+			outputMode = omStr
+		}
+	}
+	switch outputMode {
+	case "files_with_matches":
+		args = append(args, "--files-with-matches")
+	case "count":
+		args = append(args, "--count")
+	}
+
+	// case_insensitive (optional, maps to -i)
+	if ciRaw, ok := params["case_insensitive"]; ok {
+		if ciBool, ok := ciRaw.(bool); ok && ciBool {
+			args = append(args, "-i")
+		}
+	}
+
+	// show_line_numbers (optional bool, maps to -n)
+	if slnRaw, ok := params["show_line_numbers"]; ok {
+		if slnBool, ok := slnRaw.(bool); ok && slnBool {
+			args = append(args, "-n")
+		}
+	}
+
+	// before_context (optional int, maps to -B)
+	if bcRaw, ok := params["before_context"]; ok {
+		if bcFloat, ok := bcRaw.(float64); ok {
+			args = append(args, "-B", fmt.Sprintf("%d", int(bcFloat)))
+		}
+	}
+
+	// after_context (optional int, maps to -A)
+	if acRaw, ok := params["after_context"]; ok {
+		if acFloat, ok := acRaw.(float64); ok {
+			args = append(args, "-A", fmt.Sprintf("%d", int(acFloat)))
+		}
+	}
+
+	// context (optional int, maps to -C)
+	if cRaw, ok := params["context"]; ok {
+		if cFloat, ok := cRaw.(float64); ok {
+			args = append(args, "-C", fmt.Sprintf("%d", int(cFloat)))
+		}
+	}
+
+	// head_limit (optional int)
+	var headLimit int
+	if hlRaw, ok := params["head_limit"]; ok {
+		if hlFloat, ok := hlRaw.(float64); ok {
+			headLimit = int(hlFloat)
+		}
+	}
+
+	args = append(args, pattern, path)
+
+	cmd := exec.Command("rg", args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		// rg exits with 1 when no matches are found — that is not an error.
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+			return ToolResult{Content: ""}, nil
+		}
+		return ToolResult{}, fmt.Errorf("rg error: %w\nstderr: %s", err, stderr.String())
+	}
+
+	output := stdout.String()
+	if headLimit > 0 {
+		lines := strings.Split(output, "\n")
+		if len(lines) > headLimit {
+			output = strings.Join(lines[:headLimit], "\n")
+		}
+	}
+
+	return ToolResult{Content: output}, nil
 }

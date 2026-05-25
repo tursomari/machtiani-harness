@@ -47,6 +47,7 @@ type DefaultAgent struct {
 	removeSvc     *tools.FsRemoveService
 	undoSvc       *tools.FSUndoService
 	undoStack     *tools.UndoStack
+	searchSvc     *tools.FsSearchService
 	verbose       bool
 }
 
@@ -60,6 +61,7 @@ func NewDefaultAgent(
 	removeSvc *tools.FsRemoveService,
 	undoSvc *tools.FSUndoService,
 	undoStack *tools.UndoStack,
+	searchSvc *tools.FsSearchService,
 	verbose bool,
 ) *DefaultAgent {
 	return &DefaultAgent{
@@ -71,6 +73,7 @@ func NewDefaultAgent(
 		removeSvc:     removeSvc,
 		undoSvc:       undoSvc,
 		undoStack:     undoStack,
+		searchSvc:     searchSvc,
 		verbose:       verbose,
 	}
 }
@@ -80,6 +83,7 @@ func NewDefaultAgent(
 func (a *DefaultAgent) buildSystemPrompt() string {
 	var b strings.Builder
 	b.WriteString(`You are a coding assistant with access to filesystem tools.
+The workspace is the current working directory. All file paths are relative to this directory unless specified as absolute. When you need to find files, use FSSearch to search the codebase with regex patterns. Use "." as the path to search the entire workspace.
 
 When you need to use a tool, output a JSON object on its own line with the following format:
 {"tool":"ToolName","args":{"arg1":"value1",...}}
@@ -212,6 +216,14 @@ func (a *DefaultAgent) dispatch(ctx context.Context, tc ToolCall) tools.ToolResu
 	case "FSUndo":
 		path, _ := tc.Args["path"].(string)
 		result, err := a.undoSvc.Execute(ctx, path)
+		if err != nil {
+			return tools.ToolResult{Error: err}
+		}
+		return result
+
+	case "FSSearch":
+		params := tc.Args
+		result, err := a.searchSvc.Execute(ctx, params)
 		if err != nil {
 			return tools.ToolResult{Error: err}
 		}
