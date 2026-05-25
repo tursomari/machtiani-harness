@@ -50,6 +50,7 @@ type DefaultAgent struct {
 	searchSvc     *tools.FsSearchService
 	shellSvc      *tools.ShellService
 	verbose       bool
+	diffs         []string
 }
 
 // NewDefaultAgent creates a DefaultAgent wired to the given LLM and services.
@@ -78,6 +79,7 @@ func NewDefaultAgent(
 		searchSvc:     searchSvc,
 		shellSvc:      shellSvc,
 		verbose:       verbose,
+		diffs:         []string{},
 	}
 }
 
@@ -109,7 +111,7 @@ Available tools:
 }
 
 // Run executes the agent loop: send messages, receive tool calls, dispatch, repeat.
-func (a *DefaultAgent) Run(ctx context.Context, handoffNote string) (string, error) {
+func (a *DefaultAgent) Run(ctx context.Context, handoffNote string) (string, []string, error) {
 	messages := []llm.Message{
 		{Role: "system", Content: a.buildSystemPrompt()},
 		{Role: "user", Content: handoffNote},
@@ -118,7 +120,7 @@ func (a *DefaultAgent) Run(ctx context.Context, handoffNote string) (string, err
 	for {
 		resp, err := a.llmClient.ChatCompletion(ctx, messages)
 		if err != nil {
-			return "", fmt.Errorf("agent: chat error: %w", err)
+			return "", nil, fmt.Errorf("agent: chat error: %w", err)
 		}
 
 		// Append assistant response to message history.
@@ -128,7 +130,7 @@ func (a *DefaultAgent) Run(ctx context.Context, handoffNote string) (string, err
 
 		// No tool calls → we are done.
 		if len(resp.ToolCalls) == 0 {
-			return resp.Content, nil
+			return resp.Content, a.diffs, nil
 		}
 
 		if a.verbose {
@@ -145,22 +147,22 @@ func (a *DefaultAgent) Run(ctx context.Context, handoffNote string) (string, err
 					fmt.Fprintf(os.Stderr, " -> error: %v\n", tr.Error)
 				} else {
 					fmt.Fprintf(os.Stderr, " -> success (%d bytes)\n", len(tr.Content))
-					if tr.Before != "" && tr.After != "" && tr.Before != tr.After {
-						if d := tools.DiffString(tr.Before, tr.After); d != "" {
-							for _, line := range strings.Split(d, "\n") {
-								fmt.Fprintf(os.Stderr, "\t%s\n", line)
-							}
-						}
-					}
 				}
 			}
 			content := tr.Content
 			if tr.Error != nil {
 				content = fmt.Sprintf("error: %v", tr.Error)
 			} else if tr.Before != "" && tr.After != "" && tr.Before != tr.After {
-				// Ensure the LLM sees the diff. The tool layer should already
-				// include it in Content, but add a note as a safety net.
-				content = tr.Content + "\n(diff available)"
+				d := tools.DiffString(tr.Before, tr.After)
+				if d != "" {
+					content = d + "\n\n" + tr.Content
+					a.diffs = append(a.diffs, d)
+				}
+				if a.verbose && d != "" {
+					for _, line := range strings.Split(d, "\n") {
+						fmt.Fprintf(os.Stderr, "\t%s\n", line)
+					}
+				}
 			}
 			messages = append(messages, llm.Message{Role: "user", Content: content})
 		}

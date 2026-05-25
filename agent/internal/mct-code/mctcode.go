@@ -313,11 +313,19 @@ func Run(verbose bool) error {
 	// -- Agent --
 	agent := agents.NewDefaultAgent(client, readSvc, writeSvc, patchSvc, multiPatchSvc, removeSvc, undoSvc, undoStack, searchSvc, shellSvc, verbose)
 
-	answer, err := agent.Run(ctx, handoffNote)
+	answer, diffs, err := agent.Run(ctx, handoffNote)
 	if err != nil {
 		return fmt.Errorf("agent run: %w", err)
 	}
 
 	fmt.Println(answer)
+	if len(diffs) > 0 {
+		fmt.Println()
+		fmt.Println("Changes made:")
+		for _, d := range diffs {
+			fmt.Println(d)
+			fmt.Println()
+		}
+	}
 	return nil
 }

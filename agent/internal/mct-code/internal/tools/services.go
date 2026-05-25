@@ -449,6 +449,19 @@ func (s *FSUndoService) Execute(_ context.Context, path string) (ToolResult, err
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// Read current file content before undoing, so we can report the diff.
+	var beforeContent string
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			beforeContent = "file deleted"
+		} else {
+			return ToolResult{}, fmt.Errorf("undo pre-read error: %w", err)
+		}
+	} else {
+		beforeContent = string(data)
+	}
+
 	content, ok := s.undo.Pop(path)
 	if !ok {
 		return ToolResult{}, fmt.Errorf("nothing to undo for %s", path)
@@ -458,7 +471,15 @@ func (s *FSUndoService) Execute(_ context.Context, path string) (ToolResult, err
 		return ToolResult{}, fmt.Errorf("undo write error: %w", err)
 	}
 
-	return ToolResult{Content: fmt.Sprintf("restored %s (%d bytes)", path, len(content))}, nil
+	result := ToolResult{
+		Content: fmt.Sprintf("restored %s (%d bytes)", path, len(content)),
+		Before:  beforeContent,
+		After:   content,
+	}
+	if d := DiffString(beforeContent, content); d != "" {
+		result.Content += "\n" + d
+	}
+	return result, nil
 }
 
 // ---------------------------------------------------------------------------
