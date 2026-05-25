@@ -206,7 +206,27 @@ var FSUndo = Tool{
 	Yields: false,
 }
 
+var Shell = Tool{
+	Name:        "Shell",
+	Description: "Executes a shell command and returns combined stdout/stderr. IMPORTANT: This tool is for terminal operations (git, npm, docker, etc.). DO NOT use it for file reading, writing, editing, searching, or finding files -- use the specialized FS tools instead.",
+	Schema: map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"command": map[string]interface{}{
+				"type":        "string",
+				"description": "The shell command to execute.",
+			},
+			"cwd": map[string]interface{}{
+				"type":        "string",
+				"description": "Working directory for the command (optional).",
+			},
+		},
+		"required": []string{"command"},
+	},
+	Yields: false,
+}
+
 // AllTools returns every tool for use in catalog assembly or system prompts.
 func AllTools() []Tool {
-	return []Tool{FSRead, FSWrite, FSPatch, FSMultiPatch, FSSearch, FSRemove, FSUndo}
+	return []Tool{FSRead, FSWrite, FSPatch, FSMultiPatch, FSSearch, FSRemove, FSUndo, Shell}
 }

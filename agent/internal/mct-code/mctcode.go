@@ -163,12 +163,13 @@ func Run(verbose bool) error {
 	removeSvc := tools.NewFsRemoveService(readSvc, undoStack)
 	undoSvc := tools.NewFSUndoService(undoStack)
 	searchSvc := tools.NewFsSearchService()
+	shellSvc := tools.NewShellService()
 
 	// -- LLM client --
 	client := &chatClient{modelAlias: modelAlias}
 
 	// -- Agent --
-	agent := agents.NewDefaultAgent(client, readSvc, writeSvc, patchSvc, multiPatchSvc, removeSvc, undoSvc, undoStack, searchSvc, verbose)
+	agent := agents.NewDefaultAgent(client, readSvc, writeSvc, patchSvc, multiPatchSvc, removeSvc, undoSvc, undoStack, searchSvc, shellSvc, verbose)
 
 	answer, err := agent.Run(ctx, handoffNote)
 	if err != nil {

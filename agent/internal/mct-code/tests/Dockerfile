@@ -17,9 +17,11 @@ WORKDIR /build/agent/internal/mct-code
 RUN go build -o /usr/local/bin/mct-code ./cmd/mct-code
 
 WORKDIR /workspace
-COPY tests/repositories/undici ./
+COPY agent/internal/mct-code/tests/test.sh /workspace/test.sh
+COPY agent/internal/mct-code/tests/repositories/undici ./
+COPY .machtiani/config.toml /workspace/.machtiani/config.toml
 
 ENV MCT_DEFAULT_MODEL=deepseek-v4-flash
-ENV MACHTIANI_CONFIG=/build/agent/.machtiani/config.toml
+ENV MACHTIANI_CONFIG=/workspace/.machtiani/config.toml
 
-CMD ["mct-code", "1. Use FSSearch to find which file defines the function request as module.exports.request with content output and show_line_numbers true. 2. Read that file and find the exact line. 3. Summarize what you found. Do not modify any files."]
+CMD ["sh", "-c", "./test.sh"]

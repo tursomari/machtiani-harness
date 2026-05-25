@@ -48,6 +48,7 @@ type DefaultAgent struct {
 	undoSvc       *tools.FSUndoService
 	undoStack     *tools.UndoStack
 	searchSvc     *tools.FsSearchService
+	shellSvc      *tools.ShellService
 	verbose       bool
 }
 
@@ -62,6 +63,7 @@ func NewDefaultAgent(
 	undoSvc *tools.FSUndoService,
 	undoStack *tools.UndoStack,
 	searchSvc *tools.FsSearchService,
+	shellSvc *tools.ShellService,
 	verbose bool,
 ) *DefaultAgent {
 	return &DefaultAgent{
@@ -74,6 +76,7 @@ func NewDefaultAgent(
 		undoSvc:       undoSvc,
 		undoStack:     undoStack,
 		searchSvc:     searchSvc,
+		shellSvc:      shellSvc,
 		verbose:       verbose,
 	}
 }
@@ -97,6 +100,7 @@ Available tools:
 	b.WriteString("\nRules:\n")
 	b.WriteString("- Read a file before modifying it.\n")
 	b.WriteString("- Each tool output must be on its own line.\n")
+	b.WriteString("- Use specialized FS tools for file operations (FSRead, FSPatch, FSWrite, FSSearch, FSMultiPatch, FSRemove, FSUndo). Reserve Shell only for actual system commands (git, npm, docker, etc.) that are not covered by another tool.\n")
 	b.WriteString("- When you are done, respond with a summary of what you did.\n")
 	return b.String()
 }
@@ -228,6 +232,11 @@ func (a *DefaultAgent) dispatch(ctx context.Context, tc ToolCall) tools.ToolResu
 			return tools.ToolResult{Error: err}
 		}
 		return result
+
+	case "Shell":
+		command, _ := tc.Args["command"].(string)
+		cwd, _ := tc.Args["cwd"].(string)
+		return a.shellSvc.Execute(ctx, command, cwd)
 
 	default:
 		return tools.ToolResult{Error: fmt.Errorf("unknown tool: %s", tc.Tool)}

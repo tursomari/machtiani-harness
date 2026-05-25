@@ -340,6 +340,37 @@ func (s *FSUndoService) Execute(_ context.Context, path string) (ToolResult, err
 }
 
 // ---------------------------------------------------------------------------
+// ShellService
+// ---------------------------------------------------------------------------
+
+// ShellService executes shell commands via the system shell.
+type ShellService struct{}
+
+// NewShellService returns a ready-to-use ShellService.
+func NewShellService() *ShellService {
+	return &ShellService{}
+}
+
+// Execute runs a command via sh -c and returns combined stdout/stderr.
+// Errors are embedded in the returned ToolResult.
+func (s *ShellService) Execute(_ context.Context, command, cwd string) ToolResult {
+	cmd := exec.Command("sh", "-c", command)
+	if cwd != "" {
+		cmd.Dir = cwd
+	}
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		output := strings.TrimSpace(stdout.String() + "\n" + stderr.String())
+		return ToolResult{Content: output, Error: fmt.Errorf("shell error: %w\noutput: %s", err, output)}
+	}
+
+	return ToolResult{Content: strings.TrimSpace(stdout.String())}
+}
+
+// ---------------------------------------------------------------------------
 // FsSearchService
 // ---------------------------------------------------------------------------
 
