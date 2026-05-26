@@ -1891,6 +1891,176 @@ EOF
 }
 
 
+run_shell_command_trajectory_live_case() {
+  # --- verbose sub-test ---
+  local case_id="shell-command-trajectory-live"
+  local session_id="test-${case_id}-$(date +%s)"
+  local out_dir="$(pwd)/test-out-${session_id}"
+  mkdir -p "$out_dir"
+  local stdout_file="$out_dir/stdout-${session_id}.txt"
+  local stderr_file="$out_dir/stderr-${session_id}.txt"
+
+  echo "Running sub-test: $case_id (verbose)..." >&2
+  local -a cmd=(
+    timeout 240 "$MCT_AGENT" run
+    --max-steps 3
+    --timeout-per-turn 120
+    --mode live
+  )
+  if ((${#COMMON_AGENT_ARGS[@]})); then
+    cmd+=("${COMMON_AGENT_ARGS[@]}")
+  fi
+  cmd+=(
+    --verbose
+    --model "$TEST_MODEL_ALIAS"
+    --text "Run the command echo hello and report the output."
+  )
+
+  pushd "$REPO_ROOT" >/dev/null
+  set +e
+  "${cmd[@]}" > "$stdout_file" 2> "$stderr_file"
+  local rc=$?
+  set -e
+  popd >/dev/null
+  if [[ $rc -ne 0 ]]; then
+    echo "Failed (rc=$rc): $case_id (verbose)" >&2
+    return 1
+  fi
+
+  local agent_session
+  agent_session=$(grep -m1 '^Session:' "$stderr_file" | awk '{print $2}' || true)
+  if [[ -z "$agent_session" ]]; then
+    echo "Failed to parse session ID from stderr for $case_id (verbose)" >&2
+    return 1
+  fi
+
+  local session_dir="$REPO_ROOT/.machtiani/sessions/$agent_session"
+  if [[ ! -d "$session_dir" ]]; then
+    echo "Session directory missing: $session_dir ($case_id verbose)" >&2
+    return 1
+  fi
+
+  local traj_file="$session_dir/trajectory/agent.jsonl"
+  if [[ ! -f "$traj_file" ]]; then
+    echo "Trajectory file missing: $traj_file ($case_id verbose)" >&2
+    return 1
+  fi
+
+  local shell_count
+  shell_count=$("$PYTHON_BIN" - "$traj_file" <<'PY'
+import json
+import sys
+
+traj_path = sys.argv[1]
+count = 0
+with open(traj_path, 'r') as f:
+    for line in f:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if obj.get("kind") == "shell.command":
+            payload = obj.get("payload", {})
+            if "command" in payload and "return_code" in payload:
+                count += 1
+print(count)
+PY
+  )
+
+  if [[ -z "$shell_count" || "$shell_count" -lt 1 ]]; then
+    echo "Expected at least 1 shell.command event in verbose mode, got $shell_count ($case_id)" >&2
+    return 1
+  fi
+  echo "PASSED: shell-command-trajectory-live case (verbose: $shell_count shell.command events)" >&2
+
+  # --- non-verbose sub-test ---
+  local case_id2="shell-command-trajectory-live"
+  local session_id2="test-${case_id2}-noverbose-$(date +%s)"
+  local out_dir2="$(pwd)/test-out-${session_id2}"
+  mkdir -p "$out_dir2"
+  local stdout_file2="$out_dir2/stdout-${session_id2}.txt"
+  local stderr_file2="$out_dir2/stderr-${session_id2}.txt"
+
+  echo "Running sub-test: $case_id (non-verbose)..." >&2
+  local -a cmd2=(
+    timeout 240 "$MCT_AGENT" run
+    --max-steps 3
+    --timeout-per-turn 120
+    --mode live
+  )
+  if ((${#COMMON_AGENT_ARGS[@]})); then
+    cmd2+=("${COMMON_AGENT_ARGS[@]}")
+  fi
+  cmd2+=(
+    --model "$TEST_MODEL_ALIAS"
+    --text "Run the command echo hello and report the output."
+  )
+
+  pushd "$REPO_ROOT" >/dev/null
+  set +e
+  "${cmd2[@]}" > "$stdout_file2" 2> "$stderr_file2"
+  local rc2=$?
+  set -e
+  popd >/dev/null
+  if [[ $rc2 -ne 0 ]]; then
+    echo "Failed (rc=$rc2): $case_id (non-verbose)" >&2
+    return 1
+  fi
+
+  local agent_session2
+  agent_session2=$(grep -m1 '^Session:' "$stderr_file2" | awk '{print $2}' || true)
+  if [[ -z "$agent_session2" ]]; then
+    echo "Failed to parse session ID from stderr for $case_id (non-verbose)" >&2
+    return 1
+  fi
+
+  local session_dir2="$REPO_ROOT/.machtiani/sessions/$agent_session2"
+  if [[ ! -d "$session_dir2" ]]; then
+    echo "Session directory missing: $session_dir2 ($case_id non-verbose)" >&2
+    return 1
+  fi
+
+  local traj_file2="$session_dir2/trajectory/agent.jsonl"
+  if [[ ! -f "$traj_file2" ]]; then
+    echo "Trajectory file missing: $traj_file2 ($case_id non-verbose)" >&2
+    return 1
+  fi
+
+  local shell_count2
+  shell_count2=$("$PYTHON_BIN" - "$traj_file2" <<'PY'
+import json
+import sys
+
+traj_path = sys.argv[1]
+count = 0
+with open(traj_path, 'r') as f:
+    for line in f:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if obj.get("kind") == "shell.command":
+            payload = obj.get("payload", {})
+            if "command" in payload and "return_code" in payload:
+                count += 1
+print(count)
+PY
+  )
+
+  if [[ -z "$shell_count2" || "$shell_count2" -ne 0 ]]; then
+    echo "Expected 0 shell.command events in non-verbose mode, got $shell_count2 ($case_id)" >&2
+    return 1
+  fi
+  echo "PASSED: shell-command-trajectory-live case (non-verbose: $shell_count2 shell.command events)" >&2
+
+  echo "PASSED: shell-command-trajectory-live case" >&2
+}
 
 
 run_shell_agent_subcommand_live_case() {
@@ -3110,6 +3280,7 @@ else
   run_show_live_case
   run_show_range_live_case
   run_resume_from_conversation_json_case || echo "FAILED (non-fatal): resume-from-conversation-json" >&2
+  run_shell_command_trajectory_live_case
   if shell_agent_available; then
     run_shell_live_case
   else

@@ -4,12 +4,14 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 // ToolResult is returned by every service Execute method.
@@ -487,17 +489,23 @@ func (s *FSUndoService) Execute(_ context.Context, path string) (ToolResult, err
 // ---------------------------------------------------------------------------
 
 // ShellService executes shell commands via the system shell.
-type ShellService struct{}
+type ShellService struct {
+	timeout time.Duration
+	verbose bool
+}
 
 // NewShellService returns a ready-to-use ShellService.
-func NewShellService() *ShellService {
-	return &ShellService{}
+func NewShellService(timeout time.Duration, verbose bool) *ShellService {
+	return &ShellService{timeout: timeout, verbose: verbose}
 }
 
 // Execute runs a command via sh -c and returns combined stdout/stderr.
 // Errors are embedded in the returned ToolResult.
-func (s *ShellService) Execute(_ context.Context, command, cwd string) ToolResult {
-	cmd := exec.Command("sh", "-c", command)
+func (s *ShellService) Execute(ctx context.Context, command, cwd string) ToolResult {
+	ctxWithTimeout, cancel := context.WithTimeout(ctx, s.timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctxWithTimeout, "sh", "-c", command)
 	if cwd != "" {
 		cmd.Dir = cwd
 	}
@@ -506,6 +514,12 @@ func (s *ShellService) Execute(_ context.Context, command, cwd string) ToolResul
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || ctxWithTimeout.Err() == context.DeadlineExceeded {
+			if s.verbose {
+				fmt.Fprintf(os.Stderr, "mct-code: shell command timed out after %v: %s\n", s.timeout, command)
+			}
+			return ToolResult{Error: fmt.Errorf("shell command timed out after %v: %s", s.timeout, command)}
+		}
 		output := strings.TrimSpace(stdout.String() + "\n" + stderr.String())
 		return ToolResult{Content: output, Error: fmt.Errorf("shell error: %w\noutput: %s", err, output)}
 	}
@@ -519,16 +533,18 @@ func (s *ShellService) Execute(_ context.Context, command, cwd string) ToolResul
 
 // FsSearchService searches file contents by shelling out to ripgrep (rg).
 type FsSearchService struct {
-	mu sync.Mutex
+	mu      sync.Mutex
+	timeout time.Duration
+	verbose bool
 }
 
 // NewFsSearchService returns a ready-to-use FsSearchService.
-func NewFsSearchService() *FsSearchService {
-	return &FsSearchService{}
+func NewFsSearchService(timeout time.Duration, verbose bool) *FsSearchService {
+	return &FsSearchService{timeout: timeout, verbose: verbose}
 }
 
 // Execute runs rg with the given parameters and returns the output.
-func (s *FsSearchService) Execute(_ context.Context, params map[string]interface{}) (ToolResult, error) {
+func (s *FsSearchService) Execute(ctx context.Context, params map[string]interface{}) (ToolResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -624,12 +640,22 @@ func (s *FsSearchService) Execute(_ context.Context, params map[string]interface
 
 	args = append(args, pattern, path)
 
-	cmd := exec.Command("rg", args...)
+	ctxWithTimeout, cancel := context.WithTimeout(ctx, s.timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctxWithTimeout, "rg", args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
+		// Check for timeout first.
+		if errors.Is(err, context.DeadlineExceeded) || ctxWithTimeout.Err() == context.DeadlineExceeded {
+			if s.verbose {
+				fmt.Fprintf(os.Stderr, "mct-code: search timed out after %v\n", s.timeout)
+			}
+			return ToolResult{}, fmt.Errorf("search timed out after %v", s.timeout)
+		}
 		// rg exits with 1 when no matches are found — that is not an error.
 		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
 			return ToolResult{Content: ""}, nil

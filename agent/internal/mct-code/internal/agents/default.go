@@ -3,9 +3,12 @@ package agents
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/mct-code/internal/tools"
@@ -51,6 +54,8 @@ type DefaultAgent struct {
 	shellSvc      *tools.ShellService
 	verbose       bool
 	diffs         []string
+	maxIterations int
+	retryAttempts int
 }
 
 // NewDefaultAgent creates a DefaultAgent wired to the given LLM and services.
@@ -66,6 +71,8 @@ func NewDefaultAgent(
 	searchSvc *tools.FsSearchService,
 	shellSvc *tools.ShellService,
 	verbose bool,
+	maxIterations int,
+	retryAttempts int,
 ) *DefaultAgent {
 	return &DefaultAgent{
 		llmClient:     llmClient,
@@ -80,6 +87,8 @@ func NewDefaultAgent(
 		shellSvc:      shellSvc,
 		verbose:       verbose,
 		diffs:         []string{},
+		maxIterations: maxIterations,
+		retryAttempts: retryAttempts,
 	}
 }
 
@@ -90,10 +99,7 @@ func (a *DefaultAgent) buildSystemPrompt() string {
 	b.WriteString(`You are a coding assistant with access to filesystem tools.
 The workspace is the current working directory. All file paths are relative to this directory unless specified as absolute. When you need to find files, use FSSearch to search the codebase with regex patterns. Use "." as the path to search the entire workspace.
 
-You must respond with tool calls in JSON format inside <command>...</command> tags. Each tool call is a JSON object with "tool" and "args" fields. Example: <command>{"tool":"FSRead","args":{"path":"index.js"}}</command>. Do NOT use XML tags like <function-calls> or <invoke> for tool invocations.
-
-When you need to use a tool, output a JSON object on its own line with the following format:
-{"tool":"ToolName","args":{"arg1":"value1",...}}
+Each tool call must be a single-line JSON object on its own line, for example {"tool":"FSRead","args":{"path":"lib/api/api-request.js"}}. Do not wrap the JSON in any XML tags, backticks, or code fences.
 
 Available tools:
 `)
@@ -105,6 +111,8 @@ Available tools:
 	b.WriteString("- Read a file before modifying it.\n")
 	b.WriteString("- Each tool output must be on its own line.\n")
 	b.WriteString("- Use specialized FS tools for file operations (FSRead, FSPatch, FSWrite, FSSearch, FSMultiPatch, FSRemove, FSUndo). Reserve Shell only for actual system commands (git, npm, docker, etc.) that are not covered by another tool.\n")
+	b.WriteString("- The Shell tool MUST NOT be used for file editing, searching, or replacement.\n")
+	b.WriteString("- For every file modification, follow this exact sequence: FSRead the file, then FSPatch to apply the edit, then FSRead again to verify the change was applied correctly.\n")
 	b.WriteString("- When you are done, respond with a summary of what you did.\n")
 	b.WriteString("- When you make file edits, include a summary of what changed together with the diff output.\n")
 	return b.String()
@@ -117,8 +125,17 @@ func (a *DefaultAgent) Run(ctx context.Context, handoffNote string) (string, []s
 		{Role: "user", Content: handoffNote},
 	}
 
+	iter := 0
 	for {
-		resp, err := a.llmClient.ChatCompletion(ctx, messages)
+		iter++
+		if iter > a.maxIterations {
+			if a.verbose {
+				fmt.Fprintf(os.Stderr, "mct-code: max iterations (%d) reached\n", a.maxIterations)
+			}
+			return "", nil, fmt.Errorf("mct-code: max iterations (%d) reached", a.maxIterations)
+		}
+
+		resp, err := a.chatCompletionWithRetry(ctx, messages)
 		if err != nil {
 			return "", nil, fmt.Errorf("agent: chat error: %w", err)
 		}
@@ -128,9 +145,13 @@ func (a *DefaultAgent) Run(ctx context.Context, handoffNote string) (string, []s
 			messages = append(messages, llm.Message{Role: "assistant", Content: resp.Content})
 		}
 
-		// No tool calls → we are done.
+		// No tool calls → check for inline <mct_tool_call> tags as fallback.
 		if len(resp.ToolCalls) == 0 {
-			return resp.Content, a.diffs, nil
+			if parsed := parseMctToolCallsFromContent(resp.Content); len(parsed) > 0 {
+				resp.ToolCalls = parsed
+			} else {
+				return resp.Content, a.diffs, nil
+			}
 		}
 
 		if a.verbose {
@@ -167,6 +188,103 @@ func (a *DefaultAgent) Run(ctx context.Context, handoffNote string) (string, []s
 			messages = append(messages, llm.Message{Role: "user", Content: content})
 		}
 	}
+}
+
+// parseMctToolCallsFromContent scans content for <mct_tool_call>...</mct_tool_call>
+// and <mc_tool_call>...</mc_tool_call> tags, extracting ToolCall values
+// from the JSON inside each tag.
+func parseMctToolCallsFromContent(content string) []ToolCall {
+	var calls []ToolCall
+	calls = append(calls, extractToolCalls(content, "<mct_tool_call>", "</mct_tool_call>")...)
+	calls = append(calls, extractToolCalls(content, "<mc_tool_call>", "</mc_tool_call>")...)
+	return calls
+}
+
+// extractToolCalls is a helper that scans content for the given open/close tags
+// and returns any ToolCall values found.
+func extractToolCalls(content, openTag, closeTag string) []ToolCall {
+	var calls []ToolCall
+	pos := 0
+	for {
+		start := strings.Index(content[pos:], openTag)
+		if start == -1 {
+			break
+		}
+		start += pos + len(openTag)
+		end := strings.Index(content[start:], closeTag)
+		if end == -1 {
+			break
+		}
+		jsonStr := content[start : start+end]
+		var tc ToolCall
+		if err := json.Unmarshal([]byte(jsonStr), &tc); err != nil {
+			pos = start + end + len(closeTag)
+			continue
+		}
+		if tc.Tool == "" {
+			pos = start + end + len(closeTag)
+			continue
+		}
+		calls = append(calls, tc)
+		pos = start + end + len(closeTag)
+	}
+	return calls
+}
+
+// isTransientError returns true if the error is likely transient and retryable.
+func isTransientError(err error) bool {
+	transientSubstrings := []string{
+		"timeout",
+		"connection refused",
+		"connection reset",
+		"broken pipe",
+		"HTTP 429",
+		"HTTP 500",
+		"HTTP 502",
+		"HTTP 503",
+		"HTTP 504",
+		"rate limit",
+		"throttle",
+		"transient",
+	}
+
+	msg := err.Error()
+	for _, substr := range transientSubstrings {
+		if strings.Contains(msg, substr) {
+			return true
+		}
+	}
+
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return true
+	}
+
+	return false
+}
+
+// chatCompletionWithRetry calls the LLM client with retry logic.
+// It retries up to retryAttempts times with exponential backoff for transient errors.
+func (a *DefaultAgent) chatCompletionWithRetry(ctx context.Context, messages []llm.Message) (ChatCompletionResponse, error) {
+	var lastErr error
+	for attempt := 0; attempt < a.retryAttempts; attempt++ {
+		resp, err := a.llmClient.ChatCompletion(ctx, messages)
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+
+		if !isTransientError(err) {
+			return ChatCompletionResponse{}, err
+		}
+
+		backoff := time.Duration(1<<uint(attempt)) * time.Second
+		if a.verbose {
+			fmt.Fprintf(os.Stderr, "mct-code: retrying (attempt %d/%d, backoff %v) due to: %v\n", attempt+1, a.retryAttempts, backoff, err)
+		}
+		time.Sleep(backoff)
+	}
+	return ChatCompletionResponse{}, lastErr
 }
 
 // dispatch routes a tool call to the correct service.

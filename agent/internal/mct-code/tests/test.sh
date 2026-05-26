@@ -1,10 +1,69 @@
 #!/bin/sh
 set -e
+git config --global --add safe.directory "*"
 
 # Save pristine copy of the workspace before any test modifications.
 # Used by tests that need a fresh, unmodified copy of the undici repo.
 PRISTINE_WS=$(mktemp -d)
 cp -a /workspace/. "$PRISTINE_WS"
+
+validate_dispatcher_rename() {
+    local workspace="$1"
+    local fail=0
+
+    # No remaining DispatcherFoundation in lib/dispatcher
+    local remaining
+    remaining=$(grep -rw "DispatcherFoundation" "$workspace/lib/dispatcher" --include="*.js" 2>/dev/null)
+    if [ -n "$remaining" ]; then
+        echo "  FAIL: DispatcherFoundation still present in lib/dispatcher:"
+        echo "$remaining"
+        fail=1
+    else
+        echo "  OK: No remaining DispatcherFoundation in lib/dispatcher"
+    fi
+
+    # DispatcherFoundation appears in exactly the expected 7 files in lib/dispatcher
+    local found_files
+    found_files=$(grep -rlw "DispatcherFoundation" "$workspace/lib/dispatcher" --include="*.js" 2>/dev/null | sed "s|$workspace/||" | sort)
+    local expected_files
+    expected_files=$(printf "%s\n" \
+        "lib/dispatcher/agent.js" \
+        "lib/dispatcher/client.js" \
+        "lib/dispatcher/dispatcher-base.js" \
+        "lib/dispatcher/env-http-proxy-agent.js" \
+        "lib/dispatcher/pool-base.js" \
+        "lib/dispatcher/proxy-agent.js" \
+        "lib/dispatcher/socks5-proxy-agent.js" | sort)
+    if [ "$found_files" != "$expected_files" ]; then
+        echo "  FAIL: DispatcherFoundation not in the expected 7 files."
+        echo "  Expected: $expected_files"
+        echo "  Found:    $found_files"
+        fail=1
+    else
+        echo "  OK: DispatcherFoundation present in all 7 expected files"
+    fi
+
+    # Ensure test/issue-4780.js was also updated (it references DispatcherFoundation outside lib/dispatcher)
+    if ! grep -q "DispatcherFoundation" "$workspace/test/issue-4780.js" 2>/dev/null; then
+        echo "  FAIL: test/issue-4780.js does not contain DispatcherFoundation (it references DispatcherFoundation)"
+        fail=1
+    else
+        echo "  OK: test/issue-4780.js updated"
+    fi
+
+    # Only the expected files should be changed (lib/dispatcher/ + test/issue-4780.js)
+    local changed
+    changed=$(cd "$workspace" && git diff --name-only 2>/dev/null | grep -ve "^lib/dispatcher/" -e "^test/issue-4780.js$")
+    if [ -n "$changed" ]; then
+        echo "  FAIL: Unexpected files were modified outside the expected set:"
+        echo "$changed"
+        fail=1
+    else
+        echo "  OK: Only expected files were changed (lib/dispatcher/*.js + test/issue-4780.js)"
+    fi
+
+    return $fail
+}
 
 test1() {
   echo "=== Test 1: FSSearch discovery ==="
@@ -165,9 +224,53 @@ test4() {
   echo "PASS: Test 4"
 }
 
+test5() {
+    echo "=== Test 5: Multi-file rename (DispatcherFoundation to DispatcherFoundation) ==="
+
+    TEST5_WS=$(mktemp -d)
+    cp -a "$PRISTINE_WS"/. "$TEST5_WS"
+    cd "$TEST5_WS"
+
+    HANDOFF="Rename the class DispatcherFoundation to DispatcherFoundation across the entire codebase. Find every file that mentions DispatcherFoundation, then update each file one at a time until every occurrence has been renamed. Do not summarize until all files have been edited. Once done, confirm that no references to the old name remain anywhere."
+    OUTPUT=$(MCT_DEFAULT_MODEL=deepseek-v4-pro /usr/local/bin/mct-code "$HANDOFF" 2>&1)
+    EXIT_CODE=$?
+
+    FAILED=0
+    if [ "$EXIT_CODE" -ne 0 ]; then
+        echo "FAIL: Test 5 - mct-code exited with code $EXIT_CODE"
+        FAILED=1
+    fi
+
+    if [ -z "$OUTPUT" ]; then
+        echo "FAIL: Test 5 - no output"
+        FAILED=1
+    fi
+
+    if ! echo "$OUTPUT" | grep -q "Changes made:"; then
+        echo "FAIL: Test 5 - output does not contain Changes made: header"
+        FAILED=1
+    fi
+
+    if ! echo "$OUTPUT" | grep -qE "^[+-]"; then
+        echo "FAIL: Test 5 - output does not contain diff lines"
+        FAILED=1
+    fi
+
+    if ! validate_dispatcher_rename "$TEST5_WS"; then
+        FAILED=1
+    fi
+
+    if [ "$FAILED" -eq 1 ]; then
+        return 1
+    fi
+
+    echo "PASS: Test 5"
+}
+
 test1 || echo "Test 1 FAILED"
 test2 || echo "Test 2 FAILED"
 test3 || echo "Test 3 FAILED"
 test4 || echo "Test 4 FAILED"
+test5 || echo "Test 5 FAILED"
 echo "All tests completed"
 exit 0
