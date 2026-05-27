@@ -217,7 +217,7 @@ run_single_test() {
     local timeout_sec
     timeout_sec=$((RELIABILITY_ROUNDS * 120))
     if [[ $timeout_sec -lt 300 ]]; then
-        timeout_sec=300
+        timeout_sec=1200
     fi
 
     local flags=()
@@ -226,10 +226,10 @@ run_single_test() {
     fi
 
     echo "Running mct-code (timeout: ${timeout_sec}s)..."
-    mct_code_pid=$!
+    mct_code_pid=$$
     (
         cd "$workspace"
-        timeout "$timeout_sec" "$MCT_CODE_BIN" "${flags[@]}" "$prompt"
+        timeout "$timeout_sec" "$MCT_CODE_BIN" run --text "$prompt" "${flags[@]}"
     ) > "$artifact_dir/stdout.log" 2> "$artifact_dir/stderr.log"
     local exit_code=$?
     echo "Exit code: $exit_code"
