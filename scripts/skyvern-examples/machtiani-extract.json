@@ -1,0 +1,20 @@
+/*
+ * Task: Navigate machtiani.chat and extract page content and available features.
+ *
+ * This payload instructs Skyvern to:
+ *   1. Load the homepage of https://machtiani.chat
+ *   2. Read all visible content on the page
+ *   3. Extract: (a) what the site does, (b) all navigation links, (c) key features mentioned
+ *   4. Return a structured summary of findings
+ *
+ * Submit with:
+ *   curl -sS -X POST http://localhost:8000/api/v1/tasks \
+ *     -H "Content-Type: application/json" \
+ *     -H "x-api-key: $SKYVERN_API_KEY" \
+ *     -d @scripts/skyvern-examples/machtiani-extract.json
+ */
+{
+  "url": "https://machtiani.chat",
+  "prompt": "Load the homepage, read all visible content, and extract: (1) what the site does, (2) all navigation links, (3) key features mentioned. Return a structured summary.",
+  "engine": "skyvern-1.0"
+}
