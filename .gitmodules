@@ -7,3 +7,6 @@
 [submodule "agent/internal/shell-agent"]
 	path = agent/internal/shell-agent
 	url = https://codeberg.org/cacherevolter/shell-agent
+[submodule "third_party/skyvern"]
+	path = third_party/skyvern
+	url = https://github.com/Skyvern-AI/skyvern

@@ -1,0 +1,3 @@
+title = "Code (Forge + Skyvern)"
+system_prompt = "code.txt"
+shell_prompt = "shell-agent-system-prompt.txt"
