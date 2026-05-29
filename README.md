@@ -17,12 +17,16 @@ If you are using `mct-agent` inside this repository, start with `docs/mct-agent-
 ## Mode System
 The agent now ships with a mode system that supervises multi-step work. When you enable it, a top-level session applies the mode's PlannerOverlay and task guidance, runs the agent loop with the configured mode presets, and finally emits a summary artifact that records the result.
 
-- **Enable it per run** with `mct-agent run --mode <mode> "<goal>"`. For repo-local usage in this repository, follow `docs/mct-agent-runbook.md`. Each configured mode resolves its instructions from `.machtiani/modes/custom-instructions/<mode>/` (or configured overrides), and each non-empty bullet / line or declared task becomes a mode task.
+- **Enable it per run** with `mct-agent run --mode <mode> "<goal>"`. For repo-local usage in this repository, follow `docs/mct-agent-runbook.md`. Each configured mode resolves its instructions from `.machtiani/modes/` (or configured overrides), and each non-empty bullet / line or declared task becomes a mode task.
 - **What happens during a run:** the terminal prints `[mode]` updates as the mode system works through the plan. For every task the session applies the task's PlannerOverlay and records progress to `.machtiani/sessions/<session-id>/mode-plan.json`.
 - **Outputs:** the session transcript collects all turns, and every task contributes its own artifacts under the session directory. The final summary lists the tasks, their status, and where to find the detailed artifacts.
 - **Resume support:** progress is stored in `.machtiani/sessions/<session-id>/mode-plan.json`, so resuming the session continues with the remaining tasks instead of replaying everything from scratch.
 - **Customize instructions** by editing the shipped mode files or pointing elsewhere with `--mode-instruction-dir <dir>`. Use `instruction` for task-local objectives, `description` for metadata/display text, and `system_prompt` for repo/mode planner guidance. You can also configure search paths in `[mode]` within `.machtiani/config.toml` (set `instruction_dir` or per-mode `instruction_file`). The agent looks in the override directory first, then the config entries, and finally falls back to repo-local custom instructions relative to the repo/config.
 - **Optional defaults:** when fewer than two tasks are defined for a mode, the mode system falls back to mode-specific defaults. Set different task files or bullet points if you want a custom workflow.
+- Available modes include code, code-forge, and code-forge-skyvern.
+
+## Sandboxing and Reproducibility
+Sandboxing and environment isolation belong in an external scaffold layer, not inside mct-agent business logic. The agent itself supports only local process execution. For reproducible sandboxed runs, a separate scaffold such as the NixOS QEMU VM defined in the nixlab project or a Docker Compose setup provides the isolation boundary. The skyvern-docker branch preserves a Docker-based Skyvern experiment with VNC streaming as an example of external scaffolding. See shell.nix for a Nix-based Skyvern runtime environment.
 
 ## Prerequisites
 - Go: install Go 1.23+ (to satisfy all internal packages; `mct` builds with 1.22+, `file-discovery` with 1.23).
