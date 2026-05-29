@@ -434,6 +434,10 @@ See the [Testing](#testing) section above or `TESTING.md` for up-to-date command
 
 There is a second evaluation script at scripts/run_eval_head.sh for tasks without a pre-existing ground truth commit. It creates all agent worktrees from HEAD instead of specified commits. Use --mode write (default) to have the judge produce an unscored implementation benchmark, or --mode read-only for evaluation only. Use --judge-model to specify a separate model for the judge. See docs/eval_head.md for full usage and output artifact descriptions.
 
+## Development
+
+For the Docker-based development workflow (incremental builds, A/B comparison of changes, and containerized testing), see [docs/development-workflow.md](docs/development-workflow.md).
+
 ## Uninstall
 Remove the installed binaries (adjust paths to your environment):
 ```

@@ -1,0 +1,50 @@
+# Stage 1: builder
+FROM golang:1.23-bookworm AS builder
+
+# Optional patch to apply for version B builds
+ARG CHANGE_PATCH_B64
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y ripgrep rsync git gcc && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Copy Go module files first for layer caching (dependency downloads are cached
+# as long as go.mod and go.sum don't change)
+COPY --link agent/go.mod agent/go.sum ./
+RUN go mod download
+
+# Copy the full agent source tree
+COPY --link agent/ ./agent/
+
+# Copy the install script
+COPY --link scripts/ ./scripts/
+
+# Copy the .machtiani configuration
+COPY --link .machtiani/ ./.machtiani/
+
+# Optionally apply a change patch for version B builds
+RUN if [ -n "${CHANGE_PATCH_B64}" ]; then echo "${CHANGE_PATCH_B64}" | base64 -d > /tmp/change.patch && git apply /tmp/change.patch; fi
+
+# Build all binaries (mct-agent, mct, file-discovery, snippet-discovery, shell-agent) into /build/bin
+RUN PREFIX=/build ./scripts/install.sh --install-peripherals
+
+# Stage 2: runtime
+FROM debian:bookworm-slim
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y ripgrep rsync && rm -rf /var/lib/apt/lists/*
+
+# Copy built binaries from the builder stage
+COPY --from=builder /build/bin/ /usr/local/bin/
+COPY --link peripherals/mct-forge /usr/local/bin/mct-forge
+
+# Copy the Machtiani configuration
+COPY --from=builder /build/.machtiani/ /.machtiani/
+
+# Point binaries at the config
+ENV MACHTIANI_CONFIG=/.machtiani/config.toml
+
+WORKDIR /workspace
+
+ENTRYPOINT ["bash"]
