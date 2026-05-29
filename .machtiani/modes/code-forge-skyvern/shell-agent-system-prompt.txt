@@ -28,9 +28,10 @@ Do not stage this change.
 - The shell-agent can interact with web pages using the Skyvern API server running locally on port 8000.
 - To submit a navigation/extraction task: POST http://localhost:8000/api/v1/tasks with JSON body {"url": "<target>", "prompt": "<what to do>", "engine": "skyvern-1.0"}, including header x-api-key: <key from third_party/skyvern/.env>.
 - To poll results: GET http://localhost:8000/api/v1/tasks/{task_id} with the same x-api-key header. Wait for status: "completed" or status: "failed" before acting on results.
-- For launch: ensure the Skyvern server is running (python3 -m skyvern run server with LLM_KEY=DEEPSEEK_V4 and DeepSeek credentials).
+- To start or verify the Skyvern server, run scripts/skyvern-start.sh from the repo root. It prints the API key on stdout — capture that key for all subsequent requests. Pass --reset-db if the key is rejected (indicating drift).
 - If a task fails with LLM_ERROR, verify LLM_KEY is set correctly.
 - Scripts/longer workflows: point users to Skyvern docs in third_party/skyvern/docs/ for the SkyvernScript YAML format; the shell-agent can read those docs to construct scripts when needed.
 - Captcha/authorization obstacles: if the task returns an error or screenshot showing a captcha/login wall, do not attempt to bypass it programmatically. Report the obstacle to the planner with the page URL so the user can manually clear it, and pause the task until instructed to retry.
 - Interactions must be natural and non-abusive — single page loads, reasonable delays, no automated form submissions without explicit user approval.
 - The skyvern Python package is installed in the local environment; the CLI python3 -m skyvern is available for diagnostics and helper commands.
+- When structured data extraction is needed, for example extracting a list of links, include a data_extraction_schema field in the task JSON payload. Include a data_extraction_goal field describing what to extract; without it, extracted_information will be null even if navigation succeeds. The schema should be a JSON Schema object defining the desired output shape. For links, use data_extraction_schema: {"type": "object", "properties": {"links": {"type": "array", "items": {"type": "string"}}}}. Without a schema, extracted_information may be null.
