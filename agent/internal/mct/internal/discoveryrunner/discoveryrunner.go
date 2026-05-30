@@ -3,8 +3,6 @@ package discoveryrunner
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -18,33 +16,9 @@ import (
 
 	"github.com/google/uuid"
 	integration "github.com/tursomari/machtiani/agent/internal/file-discovery/integration"
-	gitpkg "github.com/tursomari/machtiani/agent/internal/git"
 	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
-	"github.com/tursomari/machtiani/agent/internal/mct/internal/session"
-	"github.com/tursomari/machtiani/agent/internal/tempdir"
-	"github.com/tursomari/machtiani/agent/internal/workspace"
 )
-
-const symlinkHashPrefix = "symlink:"
-
-// copyFile copies contents from src to dst with perms; best-effort.
-func copyFile(src, dst string, mode os.FileMode) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode.Perm())
-	if err != nil {
-		return err
-	}
-	defer func() { _ = out.Close() }()
-	if _, err := io.Copy(out, in); err != nil {
-		return err
-	}
-	return nil
-}
 
 // Result holds parsed file paths from file-discovery output
 type Result struct {
@@ -335,137 +309,6 @@ func debugf(verbose bool, format string, args ...any) {
 	fmt.Fprintf(os.Stderr, format+"\n", args...)
 }
 
-func syncPathsIntoWorkspace(repoRoot, workspace string, paths []string, verbose bool, tracked map[string]struct{}, cb func(rel string, meta *session.FileMeta, removed bool)) error {
-	for _, raw := range paths {
-		rel := normalizeRepoPath(raw)
-		if rel == "" {
-			continue
-		}
-		src := filepath.Join(repoRoot, filepath.FromSlash(rel))
-		dst := filepath.Join(workspace, filepath.FromSlash(rel))
-
-		fi, err := os.Lstat(src)
-		if err != nil {
-			if os.IsNotExist(err) {
-				if err := os.RemoveAll(dst); err != nil && !os.IsNotExist(err) {
-					debugf(verbose, "mct: failed to remove %s from workspace: %v", rel, err)
-				}
-				if cb != nil {
-					cb(rel, nil, true)
-				}
-				continue
-			}
-			debugf(verbose, "mct: lstat failed for %s: %v", rel, err)
-			continue
-		}
-
-		if fi.IsDir() {
-			if err := os.MkdirAll(dst, 0o755); err != nil && !os.IsExist(err) {
-				debugf(verbose, "mct: mkdir failed for %s: %v", rel, err)
-			}
-			continue
-		}
-
-		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-			debugf(verbose, "mct: mkdir parent failed for %s: %v", rel, err)
-			continue
-		}
-
-		if fi.Mode()&os.ModeSymlink != 0 {
-			target, err := os.Readlink(src)
-			if err != nil {
-				debugf(verbose, "mct: readlink failed for %s: %v", rel, err)
-				continue
-			}
-			if err := os.RemoveAll(dst); err != nil && !os.IsNotExist(err) {
-				debugf(verbose, "mct: remove existing symlink %s: %v", rel, err)
-				continue
-			}
-			if err := os.Symlink(target, dst); err != nil {
-				debugf(verbose, "mct: symlink recreate failed for %s: %v", rel, err)
-				continue
-			}
-			if cb != nil {
-				meta := session.FileMeta{Hash: symlinkHashPrefix + target}
-				if _, ok := tracked[rel]; ok {
-					meta.Tracked = true
-				}
-				cb(rel, &meta, false)
-			}
-			continue
-		}
-
-		if err := os.Remove(dst); err != nil && !os.IsNotExist(err) {
-			debugf(verbose, "mct: remove existing file %s: %v", rel, err)
-		}
-		if err := os.Link(src, dst); err != nil {
-			if err := copyFile(src, dst, fi.Mode()); err != nil {
-				debugf(verbose, "mct: failed to mirror %s: %v", rel, err)
-				continue
-			}
-		}
-		if cb != nil {
-			meta, err := computeFileMeta(src, fi)
-			if err != nil {
-				debugf(verbose, "mct: failed to hash %s: %v", rel, err)
-				continue
-			}
-			if _, ok := tracked[rel]; ok {
-				meta.Tracked = true
-			}
-			cb(rel, &meta, false)
-		}
-	}
-	return nil
-}
-
-func computeFileMeta(path string, fi os.FileInfo) (session.FileMeta, error) {
-	meta := session.FileMeta{
-		Size:    fi.Size(),
-		ModTime: fi.ModTime().UnixNano(),
-	}
-	f, err := os.Open(path)
-	if err != nil {
-		return meta, err
-	}
-	defer f.Close()
-	hash := sha256.New()
-	if _, err := io.Copy(hash, f); err != nil {
-		return meta, err
-	}
-	meta.Hash = hex.EncodeToString(hash.Sum(nil))
-	return meta, nil
-}
-
-func needsSync(repoRoot, rel string, meta session.FileMeta, tracked bool) (bool, error) {
-	src := filepath.Join(repoRoot, filepath.FromSlash(rel))
-	fi, err := os.Lstat(src)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return true, nil
-		}
-		return true, err
-	}
-	if fi.IsDir() {
-		return false, nil
-	}
-	if fi.Mode()&os.ModeSymlink != 0 {
-		target, err := os.Readlink(src)
-		if err != nil {
-			return true, err
-		}
-		expected := symlinkHashPrefix + target
-		if meta.Hash != expected || meta.Tracked != tracked {
-			return true, nil
-		}
-		return false, nil
-	}
-	if meta.Hash == "" || meta.Size != fi.Size() || meta.ModTime != fi.ModTime().UnixNano() || meta.Tracked != tracked {
-		return true, nil
-	}
-	return false, nil
-}
-
 func normalizeRepoPath(in string) string {
 	trimmed := strings.TrimSpace(in)
 	if trimmed == "" {
@@ -546,38 +389,4 @@ func cloneResolvedModels(src []llm.ResolvedModel) []llm.ResolvedModel {
 		out = append(out, llm.CloneResolvedModel(m))
 	}
 	return out
-}
-
-// Thin wrappers to call internal/git without import cycles in helper decl.
-// We keep them here to avoid dragging large git_utils into tests of this package.
-func gitIsRepo(dir string) bool {
-	return gitpkg.IsGitRepo(dir)
-}
-func gitRepoRoot(dir string) (string, error) {
-	return gitpkg.RepoRoot(dir)
-}
-func gitListTracked(dir string) ([]string, error) {
-	return gitpkg.ListTrackedFiles(dir)
-}
-
-func RefreshSyncedWorkspace(sessionID string, changed []string, verbose bool) error {
-	sessionID = strings.TrimSpace(sessionID)
-	if sessionID == "" || len(changed) == 0 {
-		return nil
-	}
-
-	repoRoot, err := gitRepoRoot(".")
-	if err != nil {
-		return fmt.Errorf("resolve repo root: %w", err)
-	}
-	root := strings.TrimSpace(tempdir.SessionRoot())
-	if root == "" {
-		debugf(verbose, "mct: session root missing; skip workspace refresh")
-		return nil
-	}
-	if _, _, err := workspace.EnsureRepoSnapshot(repoRoot, root); err != nil {
-		return fmt.Errorf("refresh discovery snapshot: %w", err)
-	}
-	debugf(verbose, "mct: refreshed discovery snapshot from host (files=%d)", len(changed))
-	return nil
 }

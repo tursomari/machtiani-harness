@@ -17,11 +17,9 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/planner"
 	"github.com/tursomari/machtiani/agent/internal/runner"
 	shellagent "github.com/tursomari/machtiani/agent/internal/shell-agent"
-	"github.com/tursomari/machtiani/agent/internal/tempdir"
 	"github.com/tursomari/machtiani/agent/internal/trajectory"
 	"github.com/tursomari/machtiani/agent/internal/transcript"
 	"github.com/tursomari/machtiani/agent/internal/ui"
-	"github.com/tursomari/machtiani/agent/internal/workspace"
 )
 
 type transcriptTurnWriter func(step int, question, savedPath string, retrieved []string, summary string, decision string) error
@@ -158,14 +156,6 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 		}
 	} else if useShellAgent {
 		question = promptsvc.AppendShellAgentPromptNotice(question, shellNoticePrompts)
-	}
-	if useShellAgent || runSplitShell {
-		if root := strings.TrimSpace(tempdir.SessionRoot()); root != "" {
-			if _, _, err := workspace.EnsureRepoSnapshot(env.repoRoot, root); err != nil {
-				fmt.Fprintln(os.Stderr, "Error: host->snapshot refresh failed:", err)
-				return turnExecutionResult{action: turnLoopReturn, result: Result{ExitCode: 1, Err: err}, shellAgentUsed: shellAgentUsedThisTurn}
-			}
-		}
 	}
 	env.mctRunner.ShellAgent = useShellAgent
 	indicator := "shell"
@@ -496,23 +486,3 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 	return turnExecutionResult{action: turnLoopContinue, shellAgentUsed: shellAgentUsedThisTurn}
 }
 
-func syncTurnWorkspace(cfg legacyConfig, repoRoot string, decision planner.Decision, shellAgentUsed bool) error {
-	shouldSync := false
-	switch decision {
-	case planner.DecisionAsk:
-		if shellAgentUsed {
-			shouldSync = true
-		}
-	}
-	if !shouldSync {
-		return nil
-	}
-	if root := strings.TrimSpace(tempdir.SessionRoot()); root != "" {
-		snapshotRepoRoot := filepath.Join(root, "repo")
-		snapshotDir := filepath.Join(root, "snapshots")
-		if err := workspace.SyncSnapshotToHost(snapshotRepoRoot, repoRoot, snapshotDir); err != nil {
-			return err
-		}
-	}
-	return nil
-}

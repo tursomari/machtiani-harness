@@ -17,11 +17,9 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/planner"
 	"github.com/tursomari/machtiani/agent/internal/runner"
 	shellagent "github.com/tursomari/machtiani/agent/internal/shell-agent"
-	"github.com/tursomari/machtiani/agent/internal/tempdir"
 	"github.com/tursomari/machtiani/agent/internal/trajectory"
 	"github.com/tursomari/machtiani/agent/internal/transcript"
 	"github.com/tursomari/machtiani/agent/internal/ui"
-	"github.com/tursomari/machtiani/agent/internal/workspace"
 )
 
 const (
@@ -34,7 +32,6 @@ var (
 	readmeCommitForProjectFn = readmesync.READMECommitForProject
 	readmeCheckoutReadonlyFn = readmesync.CheckoutReadonlyREADME
 	tagFormatPattern         = regexp.MustCompile(`\[(?P<path>[^\[\]|]+?)\s*\|\s*(?P<start>[^:\]]+)\s*:\s*(?P<end>[^\]]+)\]`)
-	workspaceRoot            string
 )
 
 func isLocalSessionEnvironment(cfg *llm.Config) bool {
@@ -274,8 +271,6 @@ func runSession(ctx context.Context, opts Options) Result {
 		return Result{ExitCode: 1, Err: err}
 	}
 	sessionTempRoot := envBootstrap.sessionTempRoot
-	workspaceRoot = envBootstrap.workspaceRoot
-	useSnapshotWorkspace := envBootstrap.useSnapshotWorkspace
 	var sessLock *sessionLock
 	defer func() {
 		if sessLock != nil {
@@ -298,16 +293,6 @@ func runSession(ctx context.Context, opts Options) Result {
 	if trajErr != nil {
 		fmt.Fprintln(os.Stderr, "Trajectory setup error:", trajErr)
 		return Result{ExitCode: 1, Err: trajErr}
-	}
-	if useSnapshotWorkspace {
-		// Prepare the workspace repo snapshot using the resolved repo root.
-		if _, _, err := workspace.EnsureRepoSnapshot(repoRoot, workspaceRoot); err != nil {
-			fmt.Fprintln(os.Stderr, "Warning: unable to prepare workspace repo snapshot:", err)
-		}
-		if err := tempdir.SetSessionRoot(workspaceRoot); err != nil {
-			fmt.Fprintln(os.Stderr, "Error preparing session temp root:", err)
-			return Result{ExitCode: 1, Err: err}
-		}
 	}
 	if trajectoryWriter != nil {
 		fmt.Fprintln(os.Stderr, "[trajectory] unified stream:", trajectoryWriter.Config().Path)
@@ -607,12 +592,10 @@ func runSession(ctx context.Context, opts Options) Result {
 	}()
 
 	parentSpanID := ""
-	shellAgentUsedThisTurn := false
 	for {
 		if err := rootCtx.Err(); err != nil {
 			return runState.interruptedResult(err)
 		}
-		shellAgentUsedThisTurn = false
 		step := runState.userTurnCounter + 1
 		var turn *turnTelemetry
 		if sessTelemetry != nil {
@@ -857,7 +840,6 @@ func runSession(ctx context.Context, opts Options) Result {
 		switch decision {
 		case planner.DecisionAsk:
 			outcome := executeAskDecision(turnEnv, question)
-			shellAgentUsedThisTurn = outcome.shellAgentUsed
 			switch outcome.action {
 			case turnLoopReturn:
 				return outcome.result
@@ -874,16 +856,6 @@ func runSession(ctx context.Context, opts Options) Result {
 		}
 
 	TurnDone:
-		// Postflight sync: ensure snapshot edits land in the host repo.
-		// Only sync for decisions that may have modified the snapshot:
-		// - DecisionPatch: No sync (patches already applied in workspace, no host changes expected)
-		// - DecisionAccept: No sync (reviews don't modify snapshot)
-		// - DecisionReject: No sync (review discards don't modify snapshot)
-		// - DecisionAsk: Sync only for shell-agent mode (file-discovery doesn't modify snapshot)
-		if err := syncTurnWorkspace(cfg, repoRoot, decision, shellAgentUsedThisTurn); err != nil {
-			fmt.Fprintln(os.Stderr, "Error: snapshot->host sync failed:", err)
-			return Result{ExitCode: 1, Err: err}
-		}
 		continue
 	}
 
