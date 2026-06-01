@@ -175,3 +175,33 @@ func TestShellAgentTemplatesDoNotUseFencedBlockCommandFormat(t *testing.T) {
 		}
 	}
 }
+
+func TestShellAgentSystemTemplateContainsBackgroundStrategy(t *testing.T) {
+	keys := []string{
+		"shell_agent.system_template",
+		"shell_agent.lightweight_system_template",
+	}
+	for _, key := range keys {
+		got, err := GetEmbeddedTemplate(key)
+		if err != nil {
+			t.Fatalf("GetEmbeddedTemplate(%s) error: %v", key, err)
+		}
+		if !strings.Contains(got, "Background Execution Strategy") {
+			t.Fatalf("%s missing %q\n%s", key, "Background Execution Strategy", got)
+		}
+		if !strings.Contains(got, "command < /dev/null > stdout.log 2> stderr.log &") {
+			t.Fatalf("%s missing %q\n%s", key, "command < /dev/null > stdout.log 2> stderr.log &", got)
+		}
+	}
+}
+
+func TestShellAgentLightweightTemplateDoesNotBanBackgroundExecution(t *testing.T) {
+	got, err := GetEmbeddedTemplate("shell_agent.lightweight_system_template")
+	if err != nil {
+		t.Fatalf("GetEmbeddedTemplate(shell_agent.lightweight_system_template) error: %v", err)
+	}
+	banned := "do not include newlines, loops, command substitution, subshells, or background execution"
+	if strings.Contains(strings.ToLower(got), strings.ToLower(banned)) {
+		t.Fatalf("shell_agent.lightweight_system_template contains banned phrase %q\n%s", banned, got)
+	}
+}

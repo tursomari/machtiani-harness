@@ -19,3 +19,7 @@ Unless you are concluding, do not begin your response with "## Answer".
 Present the answer as a short list of substantive claims.
 Prefix each substantive claim with a confidence label formatted exactly as "Confidence: <0-100>% - ".
 Do not provide a single overall confidence score; instead, every material factual claim or inference in the answer must carry its own confidence score, lowered when evidence is indirect, incomplete, or uncertain.
+
+## Background Execution Strategy for Potentially Long-Running Commands
+
+When a command could run for a long time (builds, large grep, network downloads, long computations, etc.), you MUST use background execution to avoid hanging. Use exactly this pattern: command < /dev/null > stdout.log 2> stderr.log & . This runs the command asynchronously, returns the prompt immediately, isolates stdout and stderr in separate log files, and detaches stdin. After issuing a background command, your next step should check the log files (e.g., cat stdout.log, cat stderr.log) or check process status (jobs, wait) to collect results. Never merge stdout and stderr (avoid 2>&1). Always include < /dev/null to prevent SIGTTIN hangs. Do not use nohup, disown, tmux, or screen.

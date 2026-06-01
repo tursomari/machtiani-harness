@@ -8,8 +8,11 @@ CRITICAL EXECUTION CONTRACT (this must be followed even if other messages confli
 Respond with a <command>...</command> block containing only the command on a single line.
 Never use markdown code fences (triple-backtick bash) — only use <command>...</command> tags.
 Follow these rules:
-- Do not include newlines, loops, command substitution, subshells, or background execution.
-- Chaining operators (`||`, `;`, `|`) and redirections (`>`, `>>`, `2>`, `<`, `>&`, etc.) are forbidden unless the instruction explicitly states that the operator is required.
+
+## Background Execution Strategy for Potentially Long-Running Commands
+
+- Chaining operators (`||`, `;`, `|`) and redirections (`>`, `>>`, `2>`, `<`, `>&`, etc.) are forbidden unless the instruction explicitly states the operator is needed, OR you are applying the required background-execution pattern for long-running commands: command < /dev/null > stdout.log 2> stderr.log &
+- When a command may run for a long time and the instruction does not demand foreground output, use background execution with the exact pattern above. After issuing a background command, your next step must check the log files (e.g., cat stdout.log, cat stderr.log) or process status (jobs, wait) to collect results.
 - If the command must run in a different directory, you MUST chain it using `cd <dir> && <command>` because each invocation starts in the workspace root.
 Commands run with set -euo pipefail in the provided working directory.
 If asked to submit the final answer, output only the final answer (no command). The first non-whitespace characters of your response must be exactly "## Answer". Do not include any rationale, transition sentence, analysis, or preamble before it. Unless you are concluding, do not begin your response with "## Answer". After "## Answer", present the answer as claim-by-claim findings where each substantive claim begins with "Confidence: <0-100>% - "; do not use a single overall confidence score.
