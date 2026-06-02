@@ -1724,7 +1724,7 @@ run_show_live_case() {
   local case_id="routing-show-live"
 
   run_happy_case "$case_id" 2 \
-    "Explain the purpose and structure of agent/internal/workspace/repo_snapshot.go." \
+    "Explain the purpose and structure of agent/internal/session/runner.go." \
     "(?s)(?=.*\\[mct:shell\\])(?!.*\\[mct:show\\])" \
     1 \
     "${DEFAULT_MODEL_ARGS[@]}"
@@ -1734,7 +1734,7 @@ run_show_range_live_case() {
   local case_id="routing-show-range-live"
 
   run_happy_case "$case_id" 2 \
-    "Explain what agent/internal/workspace/repo_snapshot.go is doing around lines 10-20." \
+    "Explain what agent/internal/session/runner.go is doing around lines 10-20." \
     "(?s)(?=.*\\[mct:shell\\])(?!.*\\[mct:show\\])" \
     1 \
     "${DEFAULT_MODEL_ARGS[@]}"
@@ -1905,7 +1905,7 @@ run_shell_command_trajectory_live_case() {
     timeout 240 "$MCT_AGENT" run
     --max-steps 3
     --timeout-per-turn 120
-    --mode live
+    --mode code
   )
   if ((${#COMMON_AGENT_ARGS[@]})); then
     cmd+=("${COMMON_AGENT_ARGS[@]}")
@@ -1989,7 +1989,7 @@ PY
     timeout 240 "$MCT_AGENT" run
     --max-steps 3
     --timeout-per-turn 120
-    --mode live
+    --mode code
   )
   if ((${#COMMON_AGENT_ARGS[@]})); then
     cmd2+=("${COMMON_AGENT_ARGS[@]}")
