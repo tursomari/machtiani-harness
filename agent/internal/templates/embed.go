@@ -7,12 +7,11 @@ import (
 	"strings"
 )
 
-//go:embed templates/planner/* templates/shell-agent/* templates/mct/* templates/file-discovery/* orchestrator/* shell_agent/* shell_agent/internal_planner/*
+//go:embed templates/planner/* templates/shell-agent/* templates/mct/* templates/file-discovery/* orchestrator/* shell_agent/*
 var embeddedTemplates embed.FS
 
 var templateMap = map[string]string{
 	// Planner
-	"shell_agent.internal_planner_system": "shell_agent/internal_planner/system.txt",
 	"planner.instance_template":          "templates/planner/instance_template.tpl",
 	"planner.timeout_template":           "templates/planner/timeout_template.tpl",
 	"planner.format_error_template":      "templates/planner/format_error_template.tpl",
