@@ -168,12 +168,21 @@ func (t *TerminalDisplay) EndSession() {
 		if t.closed {
 			return
 		}
+		t.resetTerminalLocked()
 		t.closed = true
 		t.stopTimerLocked()
 		if t.manager != nil {
 			t.manager.UnregisterDisplay(t.id)
 		}
 	})
+}
+
+func (t *TerminalDisplay) resetTerminalLocked() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	fmt.Fprint(t.out, ansiRestoreCursor)
+	fmt.Fprint(t.out, ansiClearLine)
+	fmt.Fprint(t.out, ansiReset)
 }
 
 // Notify prints an informational line within the current session timeline.
@@ -718,6 +727,7 @@ func (t *TerminalDisplay) stopTimerLocked() {
 }
 
 func (t *TerminalDisplay) timerLoop(ticker *time.Ticker, stop <-chan struct{}) {
+	defer t.resetTerminalLocked()
 	for {
 		select {
 		case <-ticker.C:
