@@ -22,8 +22,9 @@ import (
 type Decision string
 
 const (
-	DecisionAsk      Decision = "ask"
-	DecisionFinalize Decision = "finalize"
+	DecisionAskWorker   Decision = "ask_worker"
+	DecisionAnswerUser  Decision = "answer_user"
+	DecisionAskUser     Decision = "ask_user"
 )
 
 type AskMode string
@@ -237,9 +238,9 @@ func successFilesDisplay(files []string, limit int) ([]string, int) {
 func (c *Client) Plan(ctx context.Context, conv *conversation.Conversation, goal string, transcript string, step, maxSteps int) (Decision, string, error) {
 	if c.cfg.DryRun {
 		if step < maxSteps {
-			return DecisionAsk, "From the transcript, ask mct for the next most informative repository-focused prompt.", nil
+			return DecisionAskWorker, "From the transcript, ask mct for the next most informative repository-focused prompt.", nil
 		}
-		return DecisionFinalize, "", nil
+		return DecisionAnswerUser, "", nil
 	}
 	if conv == nil {
 		return "", "", errors.New("planner: conversation is required")
@@ -423,7 +424,7 @@ func (c *Client) Plan(ctx context.Context, conv *conversation.Conversation, goal
 	if dec == "" {
 		return "", "", errors.New("planner: unable to parse decision from model output")
 	}
-	if dec == DecisionAsk {
+	if dec == DecisionAskWorker {
 		ask, err := c.generateAsk(ctx, conv, goal, transcript, step, maxSteps)
 		if err != nil {
 			return "", "", err
@@ -431,7 +432,7 @@ func (c *Client) Plan(ctx context.Context, conv *conversation.Conversation, goal
 		if strings.TrimSpace(ask) == "" {
 			ask = defaultAskFallback
 		}
-		return DecisionAsk, ask, nil
+		return DecisionAskWorker, ask, nil
 	}
 	return dec, q, nil
 }
@@ -1485,7 +1486,7 @@ func parseDecision(resp string) (Decision, string, string) {
 						remainder = tail
 					}
 				}
-				return DecisionFinalize, remainder, strings.Join(preambleLines, "\n")
+				return DecisionAnswerUser, remainder, strings.Join(preambleLines, "\n")
 			case strings.HasPrefix(lower, "ask:"),
 				strings.HasPrefix(lower, "question:"),
 				strings.HasPrefix(lower, "instruction:"),
@@ -1503,7 +1504,7 @@ func parseDecision(resp string) (Decision, string, string) {
 						remainder = tail
 					}
 				}
-				return DecisionAsk, remainder, strings.Join(preambleLines, "\n")
+				return DecisionAskWorker, remainder, strings.Join(preambleLines, "\n")
 			}
 		}
 		return "", "", ""
@@ -1527,15 +1528,17 @@ func parseDecision(resp string) (Decision, string, string) {
 	}
 	var decision Decision
 	switch {
-	case decisionWord == string(DecisionAsk) || decisionWord == "question" || decisionWord == "instruction" || decisionWord == "message":
-		decision = DecisionAsk
-	case decisionWord == string(DecisionFinalize):
-		decision = DecisionFinalize
+	case decisionWord == string(DecisionAskWorker) || decisionWord == "ask_worker" || decisionWord == "question" || decisionWord == "instruction" || decisionWord == "message":
+		decision = DecisionAskWorker
+	case decisionWord == string(DecisionAnswerUser) || decisionWord == "answer_user" || decisionWord == "finalize":
+		decision = DecisionAnswerUser
+	case decisionWord == string(DecisionAskUser) || decisionWord == "ask_user":
+		decision = DecisionAskUser
 	default:
 		return "", "", ""
 	}
 	remainder := strings.TrimSpace(strings.Join(lines[decisionIdx+1:], "\n"))
-	if decision == DecisionAsk && remainder == "" && decisionTail != "" && strings.ToLower(decisionTail) != decisionWord {
+	if decision == DecisionAskWorker && remainder == "" && decisionTail != "" && strings.ToLower(decisionTail) != decisionWord {
 		remainder = decisionTail
 	}
 	return decision, remainder, strings.Join(preambleLines, "\n")
@@ -1753,9 +1756,9 @@ func parseAskUserDirectedPurifierResponse(resp string) (askUserDirectedPurifierR
 func buildAskGuardrail(reason string) string {
 	trimmed := strings.TrimSpace(reason)
 	if trimmed == "" {
-		return "The previous ask included patch intent. Ask is not for changing, updating, deleting, or patching files. Patch must be chosen separately, and you will have another chance to choose Patch after this ask."
+		return "The previous ask included patch intent. AskWorker is not for editing files."
 	}
-	return fmt.Sprintf("The previous ask included patch intent (%s). Ask is not for changing, updating, deleting, or patching files. Patch must be chosen separately, and you will have another chance to choose Patch after this ask.", trimmed)
+	return fmt.Sprintf("The previous ask included patch intent (%s). AskWorker is not for editing files.", trimmed)
 }
 
 func buildAskMixedGuardrail(reason, rewrite string) string {
