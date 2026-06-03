@@ -32,6 +32,10 @@ func runShellAgentLibrary(ctx context.Context, task string, opts RunOptions) (co
 	}
 	messages = append(messages, llm.Message{Role: "user", Content: instPrompt})
 
+	if lib.FewShotVariant == "user" && lib.TurnIndex < 3 {
+		messages = append(messages, llm.Message{Role: "user", Content: shellagent.FewShotShellAgentExamples})
+	}
+
 	req := shellagent.Request{
 		PreconstructedMessages: messages,
 		Config:                 lib.Config,

@@ -227,7 +227,11 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 			}
 			if env.mctRunner.ShellAgentLibrary != nil {
 				conv := env.recorder.Conversation()
-				prebuilt, err := shellagent.BuildShellAgentMessages(conv.ToLLMMessages(), env.mctRunner.ShellAgentLibrary.Prompts, env.mctRunner.ShellAgentLibrary.ExtraInstructions)
+				extraInstr := env.mctRunner.ShellAgentLibrary.ExtraInstructions
+				if env.step < 3 && env.mctRunner.ShellAgentLibrary.FewShotVariant == "system" {
+					extraInstr = extraInstr + "\n" + shellagent.FewShotShellAgentExamples
+				}
+				prebuilt, err := shellagent.BuildShellAgentMessages(conv.ToLLMMessages(), env.mctRunner.ShellAgentLibrary.Prompts, extraInstr)
 				if err != nil && env.cfg.verbose {
 					fmt.Fprintln(os.Stderr, "shell-agent library: build prebuilt messages:", err)
 				}
@@ -237,6 +241,8 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 						Env:               env.mctRunner.ShellAgentLibrary.Env,
 						Config:            env.mctRunner.ShellAgentLibrary.Config,
 						Prompts:           env.mctRunner.ShellAgentLibrary.Prompts,
+						FewShotVariant:    env.mctRunner.ShellAgentLibrary.FewShotVariant,
+						TurnIndex:         env.step,
 						PrebuiltMessages:  prebuilt,
 					}
 				}
@@ -378,7 +384,11 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 	}
 	if useShellAgent && env.mctRunner.ShellAgentLibrary != nil {
 		conv := env.recorder.Conversation()
-		prebuilt, err := shellagent.BuildShellAgentMessages(conv.ToLLMMessages(), env.mctRunner.ShellAgentLibrary.Prompts, env.mctRunner.ShellAgentLibrary.ExtraInstructions)
+		extraInstr := env.mctRunner.ShellAgentLibrary.ExtraInstructions
+		if env.step < 3 && env.mctRunner.ShellAgentLibrary.FewShotVariant == "system" {
+			extraInstr = extraInstr + "\n" + shellagent.FewShotShellAgentExamples
+		}
+		prebuilt, err := shellagent.BuildShellAgentMessages(conv.ToLLMMessages(), env.mctRunner.ShellAgentLibrary.Prompts, extraInstr)
 		if err != nil && env.cfg.verbose {
 			fmt.Fprintln(os.Stderr, "shell-agent library: build prebuilt messages:", err)
 		}
@@ -388,6 +398,8 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 				Env:              env.mctRunner.ShellAgentLibrary.Env,
 				Config:           env.mctRunner.ShellAgentLibrary.Config,
 				Prompts:          env.mctRunner.ShellAgentLibrary.Prompts,
+				FewShotVariant:   env.mctRunner.ShellAgentLibrary.FewShotVariant,
+				TurnIndex:        env.step,
 				PrebuiltMessages: prebuilt,
 			}
 		}

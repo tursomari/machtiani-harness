@@ -72,6 +72,13 @@ type ShellAgentLibraryConfig struct {
 	// prompt layer appends the instance prompt and passes the complete
 	// array to shellagent.Run.
 	PrebuiltMessages []llm.Message
+
+	// FewShotVariant controls the few-shot injection variant:
+	// "none", "system", or "user".
+	FewShotVariant string
+
+	// TurnIndex is the current turn number (0-based) for per-turn injection logic.
+	TurnIndex int
 }
 
 // Result captures the outcome of a prompt execution.
