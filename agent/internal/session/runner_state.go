@@ -501,9 +501,10 @@ func (c *conversationRecorder) WriteTurn(step int, question, savedPath string, r
 		return c.tr.WriteTurn(step, question, savedPath, retrieved, summary, decision)
 	}
 	c.conversation.AddMessage("assistant", question, map[string]any{
-		"type":     "work_request",
-		"turn":     step,
-		"decision": decision,
+		"type":                  "work_request",
+		"turn":                  step,
+		"decision":              decision,
+		"shell_agent_session_id": fmt.Sprintf("%s/shell-agent/%d", c.sessionID, step),
 	})
 	c.conversation.AddMessage("assistant", summary, map[string]any{
 		"type":            "work_result",
