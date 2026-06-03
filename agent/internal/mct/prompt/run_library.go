@@ -25,16 +25,17 @@ func runShellAgentLibrary(ctx context.Context, task string, opts RunOptions) (co
 	messages := make([]llm.Message, 0, len(lib.PrebuiltMessages)+1)
 	messages = append(messages, lib.PrebuiltMessages...)
 
+	extraVars := map[string]interface{}{}
+	if lib.FewShotVariant == "instance" && lib.TurnIndex < 3 {
+		extraVars["ShowFewShot"] = true
+	}
 	// Render and append the instance prompt.
-	instPrompt, err := shellagent.RenderInstancePrompt(lib.Prompts, task, lib.Config, lib.Env, nil)
+	instPrompt, err := shellagent.RenderInstancePrompt(lib.Prompts, task, lib.Config, lib.Env, extraVars)
 	if err != nil {
 		return "", "", "", fmt.Errorf("render instance prompt: %w", err)
 	}
 	messages = append(messages, llm.Message{Role: "user", Content: instPrompt})
 
-	if lib.FewShotVariant == "user" && lib.TurnIndex < 3 {
-		messages = append(messages, llm.Message{Role: "user", Content: shellagent.FewShotShellAgentExamples})
-	}
 
 	req := shellagent.Request{
 		PreconstructedMessages: messages,
