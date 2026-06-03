@@ -851,6 +851,43 @@ func runSession(ctx context.Context, opts Options) Result {
 
 		case planner.DecisionAnswerUser:
 			goto Finalize
+		case planner.DecisionAskUser:
+			ctxAsk, cancelAsk := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
+			ctxAsk = attachTrajectory(ctxAsk, trajectoryWriter, parentSpanID)
+			userDirected, uerr := pl.AnalyzeUserDirectedAsk(ctxAsk, conv, goal, question, step, cfg.maxSteps)
+			var ctxAskErr error
+			if ctxAsk != nil {
+				ctxAskErr = ctxAsk.Err()
+			}
+			if cancelAsk != nil {
+				cancelAsk()
+			}
+			switch {
+			case uerr == nil && userDirected.ShouldSuspend:
+				turnInfo["ask_user_directed"] = true
+				turnInfo["suspended"] = true
+				turnInfo["suspension_kind"] = "user-directed-ask"
+				if strings.TrimSpace(userDirected.Reason) != "" {
+					turnInfo["suspension_reason"] = trimTo(userDirected.Reason, 200)
+				}
+				if trajectoryWriter != nil {
+					turnInfo = trajectory.MergeExcerptWithPrefix(turnInfo, trajectory.MakeTextExcerpt(userDirected.Question, trajectoryWriter.ExcerptLen()), "suspension_question")
+				}
+				result, suspendErr := runState.suspendForUserInput(display, userDirected.Question, userDirected.Context, userDirected.Reason, userDirected.OriginalAsk)
+				if suspendErr != nil {
+					runState.sessionErr = suspendErr
+					finishTurn(sessTelemetry, turn, turnDecision, "error", turnInfo, suspendErr)
+					runState.turnsCompleted = runState.userTurnCounter
+					return Result{ExitCode: 1, Err: suspendErr}
+				}
+				finishTurn(sessTelemetry, turn, turnDecision, "suspended", turnInfo, nil)
+				return result
+			case uerr != nil && (isContextCancelled(uerr) || isContextCancelled(ctxAskErr)):
+				return interruptedResult(uerr)
+			case uerr != nil && cfg.verbose:
+				fmt.Fprintf(os.Stderr, "Warning: user-directed ask analysis failed: %v\n", uerr)
+			}
+			goto Finalize
 		default:
 			goto Finalize
 		}
