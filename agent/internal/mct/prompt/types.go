@@ -40,6 +40,7 @@ type RunOptions struct {
 	Readme                  *ReadmeOptions
 	ShellAgent              bool
 	ShellAgentModel         string
+	ShellAgentSessionID     string // ShellAgentSessionID is the sub-session ID passed to the shell-agent for recoverability (format: <parent-session-id>/shell-agent/<turn>).
 	GlobalConfigPath        string
 	PersistTmpData          bool
 	SessionTempRoot         string

@@ -45,6 +45,7 @@ func runShellAgentLibrary(ctx context.Context, task string, opts RunOptions) (co
 		Env:                    lib.Env,
 		Verbose:                opts.Verbose,
 		MaxInputTokens:         opts.MaxInputTokens,
+		SessionID:              opts.ShellAgentSessionID,
 	}
 
 	result, runErr := shellagent.Run(ctx, req)
