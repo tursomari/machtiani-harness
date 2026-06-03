@@ -1472,7 +1472,7 @@ func parseDecision(resp string) (Decision, string, string) {
 			}
 			lower := strings.ToLower(line)
 			switch {
-			case strings.HasPrefix(lower, "finalize:"):
+			case strings.HasPrefix(lower, "answer_user:"):
 				parts := strings.SplitN(line, ":", 2)
 				remainder := ""
 				if len(parts) == 2 {
@@ -1487,10 +1487,7 @@ func parseDecision(resp string) (Decision, string, string) {
 					}
 				}
 				return DecisionAnswerUser, remainder, strings.Join(preambleLines, "\n")
-			case strings.HasPrefix(lower, "ask:"),
-				strings.HasPrefix(lower, "question:"),
-				strings.HasPrefix(lower, "instruction:"),
-				strings.HasPrefix(lower, "message:"):
+			case strings.HasPrefix(lower, "ask_worker:"):
 				parts := strings.SplitN(line, ":", 2)
 				remainder := ""
 				if len(parts) == 2 {
@@ -1528,9 +1525,9 @@ func parseDecision(resp string) (Decision, string, string) {
 	}
 	var decision Decision
 	switch {
-	case decisionWord == string(DecisionAskWorker) || decisionWord == "ask_worker" || decisionWord == "ask" || decisionWord == "question" || decisionWord == "instruction" || decisionWord == "message":
+	case decisionWord == string(DecisionAskWorker) || decisionWord == "ask_worker":
 		decision = DecisionAskWorker
-	case decisionWord == string(DecisionAnswerUser) || decisionWord == "answer_user" || decisionWord == "finalize":
+	case decisionWord == string(DecisionAnswerUser) || decisionWord == "answer_user":
 		decision = DecisionAnswerUser
 	case decisionWord == string(DecisionAskUser) || decisionWord == "ask_user":
 		decision = DecisionAskUser

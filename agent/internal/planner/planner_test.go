@@ -32,7 +32,7 @@ func readRepoFile(t *testing.T, rel string) string {
 }
 
 func TestParseDecisionAskWorker(t *testing.T) {
-	resp := "Decision: ask\nQuestion: What is the structure of the main module?"
+	resp := "Decision: ask_worker\nQuestion: What is the structure of the main module?"
 	dec, remainder, preamble := parseDecision(resp)
 
 	if dec != DecisionAskWorker {
@@ -50,7 +50,7 @@ func TestParseDecisionAskWorker(t *testing.T) {
 
 
 func TestParseDecisionAnswerUser(t *testing.T) {
-	resp := "Decision: finalize"
+	resp := "Decision: answer_user"
 	dec, remainder, preamble := parseDecision(resp)
 
 	if dec != DecisionAnswerUser {
@@ -65,7 +65,7 @@ func TestParseDecisionAnswerUser(t *testing.T) {
 }
 
 func TestParseDecisionAnswerUserImplicit(t *testing.T) {
-	resp := "Finalize: HTML converted; verified with git diff."
+	resp := "answer_user: HTML converted; verified with git diff."
 	dec, remainder, preamble := parseDecision(resp)
 
 	if dec != DecisionAnswerUser {
@@ -94,11 +94,11 @@ func TestParseDecisionVariants(t *testing.T) {
 		want       Decision
 		wantSubstr string
 	}{
-		{name: "InstructionVariant", resp: "Decision: instruction\nInstruction: Examine the database schema.", want: DecisionAskWorker, wantSubstr: "database schema"},
-		{name: "InstructionInline", resp: "Decision: Instruction: Examine the database schema.", want: DecisionAskWorker, wantSubstr: "database schema"},
-		{name: "QuestionVariant", resp: "Decision: question\nQuestion: What modules exist?", want: DecisionAskWorker, wantSubstr: "What modules"},
-		{name: "MessageVariant", resp: "Decision: message\nMessage: Review the API endpoints.", want: DecisionAskWorker, wantSubstr: "API endpoints"},
-		{name: "AskImplicit", resp: "Ask: Summarize the config loading flow.", want: DecisionAskWorker, wantSubstr: "config loading"},
+		{name: "InstructionVariant", resp: "Decision: ask_worker\nInstruction: Examine the database schema.", want: DecisionAskWorker, wantSubstr: "database schema"},
+		{name: "InstructionInline", resp: "Decision: ask_worker: Examine the database schema.", want: DecisionAskWorker, wantSubstr: "database schema"},
+		{name: "QuestionVariant", resp: "Decision: ask_worker\nQuestion: What modules exist?", want: DecisionAskWorker, wantSubstr: "What modules"},
+		{name: "MessageVariant", resp: "Decision: ask_worker\nMessage: Review the API endpoints.", want: DecisionAskWorker, wantSubstr: "API endpoints"},
+		{name: "AskImplicit", resp: "ask_worker: Summarize the config loading flow.", want: DecisionAskWorker, wantSubstr: "config loading"},
 	}
 
 	for _, tt := range tests {
@@ -124,8 +124,8 @@ func TestParseDecisionCaseInsensitive(t *testing.T) {
 		resp string
 		want Decision
 	}{
-		{name: "UpperAsk", resp: "Decision: ASK\nQuestion: text", want: DecisionAskWorker},
-		{name: "UpperFinalize", resp: "Decision: FINALIZE", want: DecisionAnswerUser},
+		{name: "UpperAsk", resp: "Decision: ASK_WORKER\nQuestion: text", want: DecisionAskWorker},
+		{name: "UpperFinalize", resp: "Decision: ANSWER_USER", want: DecisionAnswerUser},
 	}
 
 	for _, tt := range tests {
@@ -183,7 +183,7 @@ func TestParseDecisionInvalidDecisionType(t *testing.T) {
 }
 
 func TestParseDecisionPreservesMultilineRemainder(t *testing.T) {
-	resp := "Decision: ask\nQuestion: Part 1\nPart 2\nPart 3"
+	resp := "Decision: ask_worker\nQuestion: Part 1\nPart 2\nPart 3"
 	dec, remainder, preamble := parseDecision(resp)
 
 	if dec != DecisionAskWorker {
@@ -198,7 +198,7 @@ func TestParseDecisionPreservesMultilineRemainder(t *testing.T) {
 }
 
 func TestParseDecisionAllowsShortPreamble(t *testing.T) {
-	resp := "Note: quick recap.\nDecision: ask\nQuestion: Summarize the safeguards changes."
+	resp := "Note: quick recap.\nDecision: ask_worker\nQuestion: Summarize the safeguards changes."
 	dec, remainder, preamble := parseDecision(resp)
 
 	if dec != DecisionAskWorker {
@@ -492,7 +492,7 @@ func TestPlanAskLoopIntegration(t *testing.T) {
 		content := messages[len(messages)-1].Content
 		if strings.Contains(content, "Decision menu") && strings.Contains(content, "This step is decision-only") {
 			planCalls++
-			return "Decision: ask", nil
+			return "Decision: ask_worker", nil
 		}
 		switch {
 		case strings.Contains(content, "You are a guard that checks whether an ask mixes no-shell and shell actions."):
@@ -783,7 +783,7 @@ func TestPlanSystemPromptOmitsTranscript(t *testing.T) {
 		},
 	})
 	conv := conversation.New("sess-system", "Finish docs")
-	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask"})
+	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask_worker"})
 	prompt := client.planSystemPrompt(conv, "Finish docs", 1, 3)
 	if strings.Contains(prompt, "Shell system prompt") {
 		t.Fatalf("system prompt should ignore shell template, got %q", prompt)
@@ -857,7 +857,7 @@ func TestPlanSystemPromptIncludesPlannerOverlay(t *testing.T) {
 func TestBuildAskRequestOmitsTranscript(t *testing.T) {
 	client := NewClient(ClientConfig{})
 	conv := conversation.New("sess-ask-request", "Investigate planner flow")
-	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask"})
+	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask_worker"})
 	request := client.buildAskRequest(conv, conv.OriginalGoal, 2, 4)
 	if strings.Contains(request, "Transcript:") {
 		t.Fatalf("ask request should omit transcript label, got %q", request)
@@ -885,7 +885,7 @@ func TestAskPromptPrefersExplanationsOverFullFiles(t *testing.T) {
 func TestPlannerHelperMessagesSharePlanPrefix(t *testing.T) {
 	client := NewClient(ClientConfig{})
 	conv := conversation.New("sess-prefix", "Finish docs")
-	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask"})
+	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask_worker"})
 	conv.AddMessage("assistant", "Answer: done", map[string]any{"type": "answer", "turn": 1})
 
 	planMessages := client.buildPlanMessages(context.Background(), conv, conv.OriginalGoal, 2, 4)
@@ -915,7 +915,7 @@ func TestPlannerHelperMessagesSharePlanPrefix(t *testing.T) {
 func TestPlannerOverlayStaysInSharedSystemPrompt(t *testing.T) {
 	client := NewClient(ClientConfig{PlannerOverlay: "Prioritize migration safety checks."})
 	conv := conversation.New("sess-overlay-prefix", "Finish docs")
-	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask"})
+	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask_worker"})
 	conv.AddMessage("assistant", "Answer: done", map[string]any{"type": "answer", "turn": 1})
 
 	planMessages := client.buildPlanMessages(context.Background(), conv, conv.OriginalGoal, 2, 4)
@@ -948,7 +948,7 @@ func TestPlannerOverlayStaysInSharedSystemPrompt(t *testing.T) {
 func TestBuildPlanMessagesNoGoalUpdate(t *testing.T) {
 	client := NewClient(ClientConfig{})
 	conv := conversation.New("sess-1", "Finish docs")
-	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask"})
+	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask_worker"})
 	conv.AddMessage("assistant", "Answer: done", map[string]any{"type": "answer", "turn": 1})
 	messages := client.buildPlanMessages(context.Background(), conv, "Finish docs", 2, 4)
 
@@ -984,7 +984,7 @@ func TestBuildPlanMessagesNoGoalUpdate(t *testing.T) {
 func TestBuildPlanMessagesUsesConversation(t *testing.T) {
 	client := NewClient(ClientConfig{})
 	conv := conversation.New("sess-2", "Finish docs")
-	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask"})
+	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask_worker"})
 	messages := client.buildPlanMessages(context.Background(), conv, "Finish docs", 2, 4)
 	if len(messages) != 4 {
 		t.Fatalf("expected 4 messages, got %d", len(messages))
@@ -1006,7 +1006,7 @@ func TestBuildPlanMessagesInsertsCacheAnchorMetadata(t *testing.T) {
 	}
 	client := NewClient(ClientConfig{Model: model})
 	conv := conversation.New("sess-anchor", "Goal")
-	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask"})
+	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask_worker"})
 	client.buildPlanMessages(context.Background(), conv, "Goal", 2, 4)
 
 	anchors := cacheAnchorIndexes(conv)
@@ -1039,7 +1039,7 @@ func TestBuildPlanMessagesKeepsAnchorStable(t *testing.T) {
 	client := NewClient(ClientConfig{Model: model})
 	conv := conversation.New("sess-stable", "Goal")
 	conv.AddMessage("user", llm.CacheAnchorMarkerText, map[string]any{"type": "cache_anchor", llm.CacheAnchorSequenceMetadataKey: 1})
-	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask"})
+	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask_worker"})
 	client.buildPlanMessages(context.Background(), conv, "Goal", 2, 4)
 
 	anchors := cacheAnchorIndexes(conv)
@@ -1066,7 +1066,7 @@ func TestBuildPlanMessagesRotatesCacheAnchor(t *testing.T) {
 		llm.CacheAnchorSequenceMetadataKey:     1,
 		llm.CacheAnchorCachedTokensMetadataKey: 5,
 	})
-	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask"})
+	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask_worker"})
 	client.buildPlanMessages(context.Background(), conv, "Goal", 3, 6)
 
 	anchors := cacheAnchorIndexes(conv)
@@ -1086,7 +1086,7 @@ func TestBuildPlanMessagesRotatesCacheAnchor(t *testing.T) {
 func TestFinalizeMessagesReusePlannerSystemPrompt(t *testing.T) {
 	client := NewClient(ClientConfig{PlannerOverlay: "Prioritize migration safety checks."})
 	conv := conversation.New("sess-finalize-prefix", "Initial goal")
-	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask"})
+	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask_worker"})
 	conv.AddMessage("user", "Updated goal", nil)
 	conv.AddMessage("assistant", "Answer: done", map[string]any{"type": "answer", "turn": 1})
 
@@ -1125,7 +1125,7 @@ func TestFinalizeMessagesReusePlannerSystemPrompt(t *testing.T) {
 func TestFinalizeDoesNotPersistEphemeralRequest(t *testing.T) {
 	client := NewClient(ClientConfig{PlannerOverlay: "Focus on migration safety."})
 	conv := conversation.New("sess-finalize-ephemeral", "Initial goal")
-	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask"})
+	conv.AddMessage("assistant", "Question: start", map[string]any{"type": "ask", "turn": 1, "decision": "ask_worker"})
 	before := len(conv.Messages)
 	var captured []llm.Message
 	client.chatFn = func(_ context.Context, messages []llm.Message) (string, error) {
@@ -1215,11 +1215,11 @@ func TestBuildFinalizeMessagesPreservesCleanConversationOrdering(t *testing.T) {
 	conv := conversation.New("sess-clean-order", "Determine if the session is running in a local environment. Provide evidence for or against.")
 	conv.AddMessage("assistant", "## Determination: Running in a local environment.", map[string]any{"type": "final", "turns": 1, "capped": false})
 	conv.AddMessage("user", "List the last 3 commit messages in the project root and also the gitsubmodule `agent/internal/shell-agent/`.", nil)
-	conv.AddMessage("assistant", "Run `git -C /repo log --oneline -3` for the project root, then `git -C /repo/agent/internal/shell-agent log --oneline -3` for the submodule.", map[string]any{"type": "ask", "turn": 2, "decision": "ask"})
+	conv.AddMessage("assistant", "Run `git -C /repo log --oneline -3` for the project root, then `git -C /repo/agent/internal/shell-agent log --oneline -3` for the submodule.", map[string]any{"type": "ask", "turn": 2, "decision": "ask_worker"})
 	conv.AddMessage("assistant", "## Answer\n- Confidence: 100% - Retrieved the last 3 commits for both repositories.", map[string]any{"type": "answer", "turn": 2})
 	conv.AddMessage("assistant", "Revised Goal: List the last 3 commit messages for the project root and the `agent/internal/shell-agent/` submodule.", map[string]any{"type": "final", "turns": 2, "capped": false})
 	conv.AddMessage("user", "list any untracked files or modified tracked files in project root and in git submoodule", nil)
-	conv.AddMessage("assistant", "Run `git -C /workspace status --short` for the project root, then `git -C /workspace/agent/internal/shell-agent status --short` for the submodule.", map[string]any{"type": "ask", "turn": 3, "decision": "ask"})
+	conv.AddMessage("assistant", "Run `git -C /workspace status --short` for the project root, then `git -C /workspace/agent/internal/shell-agent status --short` for the submodule.", map[string]any{"type": "ask", "turn": 3, "decision": "ask_worker"})
 	conv.AddMessage("assistant", "## Answer\n- Confidence: 100% - Reported modified and untracked files for the project root and submodule.", map[string]any{"type": "answer", "turn": 3})
 
 	messages := client.buildFinalizeMessages(context.Background(), conv, "stale goal")
@@ -1252,11 +1252,11 @@ func TestBuildFinalizeMessagesMatchesCleanedSessionWireTranscript(t *testing.T) 
 	conv := conversation.New("sess-clean-wire", "Determine if the session is running in a local environment. Provide evidence for or against.")
 	conv.AddMessage("assistant", "## Determination: Running in a local environment.\n\nThe session is running in a local environment.", map[string]any{"type": "final", "turns": 1, "capped": false})
 	conv.AddMessage("user", "List the last 3 commit messages in the project root and also the gitsubmodule `agent/internal/shell-agent/`.", nil)
-	conv.AddMessage("assistant", "Run `git -C /repo log --oneline -3` for the project root, then `git -C /repo/agent/internal/shell-agent log --oneline -3` for the submodule. Report the 3 commit messages from each location.\n\nI understand that I don't have access to a shell directly. The `shell-agent` will carry out my request and report back with explanation of the results and not necessarily the full output of commands it executes.", map[string]any{"type": "ask", "turn": 2, "decision": "ask"})
+	conv.AddMessage("assistant", "Run `git -C /repo log --oneline -3` for the project root, then `git -C /repo/agent/internal/shell-agent log --oneline -3` for the submodule. Report the 3 commit messages from each location.\n\nI understand that I don't have access to a shell directly. The `shell-agent` will carry out my request and report back with explanation of the results and not necessarily the full output of commands it executes.", map[string]any{"type": "ask", "turn": 2, "decision": "ask_worker"})
 	conv.AddMessage("assistant", "## Answer\n- Confidence: 100% - The project root (`/workspace`) shows these 3 most recent commits: (1) `c8c48c0 Refactor planner prompt layering`, (2) `c442854 chore: untrack a refactor todo.`, (3) `f808483 chore(templates): sync local overrides with embedded defaults`.\n- Confidence: 100% - The submodule (`/workspace/agent/internal/shell-agent`) shows these 3 most recent commits: (1) `1deb3e5 fix: tighten repo-root recursive grep validation`, (2) `2b1cfb9 fix: reject broad recursive grep from repo root`, (3) `0ff19c3 chore: add dockerfile for useful tools for handling documents.`", map[string]any{"type": "answer", "turn": 2})
 	conv.AddMessage("assistant", "Revised Goal: List the last 3 commit messages for the project root and the `agent/internal/shell-agent/` submodule.\n\n## Last 3 Commits — Project Root (`/workspace`)\n\n| # | Hash | Message |\n|---|---|---|\n| 1 | `c8c48c0` | Refactor planner prompt layering |\n| 2 | `c442854` | chore: untrack a refactor todo. |\n| 3 | `f808483` | chore(templates): sync local overrides with embedded defaults |\n\n## Last 3 Commits — Submodule (`agent/internal/shell-agent/`)\n\n| # | Hash | Message |\n|---|---|---|\n| 1 | `1deb3e5` | fix: tighten repo-root recursive grep validation |\n| 2 | `2b1cfb9` | fix: reject broad recursive grep from repo root |\n| 3 | `0ff19c3` | chore: add dockerfile for useful tools for handling documents. |\n\nNo gaps or uncertainty remain — both commit histories were retrieved directly from `git log` in the respective directories.", map[string]any{"type": "final", "turns": 2, "capped": false})
 	conv.AddMessage("user", "list any untracked files or modified tracked files in project root and in git submoodule", nil)
-	conv.AddMessage("assistant", "Run `git -C /workspace status --short` for the project root, then `git -C /workspace/agent/internal/shell-agent status --short` for the submodule. Report any untracked or modified files found in each location.\n\nI understand that I don't have access to a shell directly. The `shell-agent` will carry out my request and report back with explanation of the results and not necessarily the full output of commands it executes.", map[string]any{"type": "ask", "turn": 3, "decision": "ask"})
+	conv.AddMessage("assistant", "Run `git -C /workspace status --short` for the project root, then `git -C /workspace/agent/internal/shell-agent status --short` for the submodule. Report any untracked or modified files found in each location.\n\nI understand that I don't have access to a shell directly. The `shell-agent` will carry out my request and report back with explanation of the results and not necessarily the full output of commands it executes.", map[string]any{"type": "ask", "turn": 3, "decision": "ask_worker"})
 	conv.AddMessage("assistant", "## Answer\n- Confidence: 100% - The project root (`/workspace`) has the following modified/untracked files: `README.md` (staged modification), `agent/internal/llm/config.go` (unstaged modification), `agent/internal/session/runner_state.go` (unstaged modification), `agent/internal/session/runner_state_test.go` (unstaged modification), `agent/internal/shell-agent` (submodule pointer modified), and `.git.hydrated/` (untracked directory).\n- Confidence: 100% - The submodule (`/workspace/agent/internal/shell-agent`) has one modified file: `internal/environments/tempdir.go` (unstaged modification).", map[string]any{"type": "answer", "turn": 3})
 
 	messages := client.buildFinalizeMessages(context.Background(), conv, "stale goal")
