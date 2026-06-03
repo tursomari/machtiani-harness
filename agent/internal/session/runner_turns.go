@@ -27,9 +27,10 @@ type transcriptTurnWriter func(step int, question, savedPath string, retrieved [
 type turnLoopAction string
 
 const (
-	turnLoopContinue turnLoopAction = "continue"
-	turnLoopFinalize turnLoopAction = "finalize"
+	turnLoopAskWorker turnLoopAction = "ask_worker"
+	turnLoopAnswerUser turnLoopAction = "answer_user"
 	turnLoopReturn   turnLoopAction = "return"
+	turnLoopAskUser  turnLoopAction = "ask_user"
 )
 
 type turnExecutionResult struct {
@@ -368,11 +369,10 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 		*env.turnsCompleted = *env.userTurnCounter
 		finishTurn(env.sessTelemetry, env.turn, env.turnDecision, "success", env.turnInfo, nil)
 		if *env.userTurnCounter == env.cfg.maxSteps {
-			return turnExecutionResult{action: turnLoopFinalize, shellAgentUsed: shellAgentUsedThisTurn}
+			return turnExecutionResult{action: turnLoopAnswerUser, shellAgentUsed: shellAgentUsedThisTurn}
 		}
-		return turnExecutionResult{action: turnLoopContinue, shellAgentUsed: shellAgentUsedThisTurn}
+		return turnExecutionResult{action: turnLoopAskWorker, shellAgentUsed: shellAgentUsedThisTurn}
 	}
-
 	input := runner.PromptInput{
 		Prompt:             question,
 		Mode:               "default",
@@ -493,8 +493,8 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 	*env.turnsCompleted = *env.userTurnCounter
 	finishTurn(env.sessTelemetry, env.turn, env.turnDecision, "success", env.turnInfo, nil)
 	if *env.userTurnCounter == env.cfg.maxSteps {
-		return turnExecutionResult{action: turnLoopFinalize, shellAgentUsed: shellAgentUsedThisTurn}
+		return turnExecutionResult{action: turnLoopAnswerUser, shellAgentUsed: shellAgentUsedThisTurn}
 	}
-	return turnExecutionResult{action: turnLoopContinue, shellAgentUsed: shellAgentUsedThisTurn}
+	return turnExecutionResult{action: turnLoopAskWorker, shellAgentUsed: shellAgentUsedThisTurn}
 }
 

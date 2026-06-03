@@ -731,7 +731,7 @@ func runSession(ctx context.Context, opts Options) Result {
 			excerpt := trajectory.MakeTextExcerpt(question, trajectoryWriter.ExcerptLen())
 			turnInfo = trajectory.MergeExcerptWithPrefix(turnInfo, excerpt, "planner_question")
 		}
-		if decision == planner.DecisionAsk {
+		if decision == planner.DecisionAskWorker {
 			ctxAsk, cancelAsk := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
 			ctxAsk = attachTrajectory(ctxAsk, trajectoryWriter, parentSpanID)
 			userDirected, uerr := pl.AnalyzeUserDirectedAsk(ctxAsk, conv, goal, question, step, cfg.maxSteps)
@@ -769,7 +769,7 @@ func runSession(ctx context.Context, opts Options) Result {
 			}
 		}
 
-		if decision == planner.DecisionFinalize {
+		if decision == planner.DecisionAnswerUser {
 			ctx, cancelF := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
 			ctx = attachTrajectory(ctx, trajectoryWriter, parentSpanID)
 			answer, ferr := pl.Finalize(ctx, conv, goal)
@@ -838,18 +838,18 @@ func runSession(ctx context.Context, opts Options) Result {
 		}
 
 		switch decision {
-		case planner.DecisionAsk:
+		case planner.DecisionAskWorker:
 			outcome := executeAskDecision(turnEnv, question)
 			switch outcome.action {
 			case turnLoopReturn:
 				return outcome.result
-			case turnLoopFinalize:
+			case turnLoopAnswerUser:
 				goto Finalize
 			default:
 				goto TurnDone
 			}
 
-		case planner.DecisionFinalize:
+		case planner.DecisionAnswerUser:
 			goto Finalize
 		default:
 			goto Finalize
