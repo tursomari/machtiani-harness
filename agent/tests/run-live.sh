@@ -3295,6 +3295,7 @@ fi  # $# -eq 0 guard
 # function in the TESTS array.
 
 declare -A TESTS=(
+  ["test_local_tmp_root_unset_live"]="test_local_tmp_root_unset_live"
   ["test_code_no_forge"]="test_code_no_forge"
   ["test_code_forge_initial"]="test_code_forge_initial"
   ["test_code_forge_resume_with_mode"]="test_code_forge_resume_with_mode"
