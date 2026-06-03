@@ -1528,7 +1528,7 @@ func parseDecision(resp string) (Decision, string, string) {
 	}
 	var decision Decision
 	switch {
-	case decisionWord == string(DecisionAskWorker) || decisionWord == "ask_worker" || decisionWord == "question" || decisionWord == "instruction" || decisionWord == "message":
+	case decisionWord == string(DecisionAskWorker) || decisionWord == "ask_worker" || decisionWord == "ask" || decisionWord == "question" || decisionWord == "instruction" || decisionWord == "message":
 		decision = DecisionAskWorker
 	case decisionWord == string(DecisionAnswerUser) || decisionWord == "answer_user" || decisionWord == "finalize":
 		decision = DecisionAnswerUser

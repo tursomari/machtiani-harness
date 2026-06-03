@@ -31,12 +31,12 @@ func readRepoFile(t *testing.T, rel string) string {
 	return string(data)
 }
 
-func TestParseDecisionAsk(t *testing.T) {
+func TestParseDecisionAskWorker(t *testing.T) {
 	resp := "Decision: ask\nQuestion: What is the structure of the main module?"
 	dec, remainder, preamble := parseDecision(resp)
 
-	if dec != DecisionAsk {
-		t.Fatalf("expected DecisionAsk, got %q", dec)
+	if dec != DecisionAskWorker {
+		t.Fatalf("expected DecisionAskWorker, got %q", dec)
 	}
 	if !strings.Contains(remainder, "What is the structure") {
 		t.Fatalf("expected question in remainder, got %q", remainder)
@@ -49,12 +49,12 @@ func TestParseDecisionAsk(t *testing.T) {
 
 
 
-func TestParseDecisionFinalize(t *testing.T) {
+func TestParseDecisionAnswerUser(t *testing.T) {
 	resp := "Decision: finalize"
 	dec, remainder, preamble := parseDecision(resp)
 
-	if dec != DecisionFinalize {
-		t.Fatalf("expected DecisionFinalize, got %q", dec)
+	if dec != DecisionAnswerUser {
+		t.Fatalf("expected DecisionAnswerUser, got %q", dec)
 	}
 	if remainder != "" {
 		t.Fatalf("expected empty remainder for finalize, got %q", remainder)
@@ -64,12 +64,12 @@ func TestParseDecisionFinalize(t *testing.T) {
 	}
 }
 
-func TestParseDecisionFinalizeImplicit(t *testing.T) {
+func TestParseDecisionAnswerUserImplicit(t *testing.T) {
 	resp := "Finalize: HTML converted; verified with git diff."
 	dec, remainder, preamble := parseDecision(resp)
 
-	if dec != DecisionFinalize {
-		t.Fatalf("expected DecisionFinalize, got %q", dec)
+	if dec != DecisionAnswerUser {
+		t.Fatalf("expected DecisionAnswerUser, got %q", dec)
 	}
 	if !strings.Contains(remainder, "HTML converted") {
 		t.Fatalf("expected remainder to include message, got %q", remainder)
@@ -94,11 +94,11 @@ func TestParseDecisionVariants(t *testing.T) {
 		want       Decision
 		wantSubstr string
 	}{
-		{name: "InstructionVariant", resp: "Decision: instruction\nInstruction: Examine the database schema.", want: DecisionAsk, wantSubstr: "database schema"},
-		{name: "InstructionInline", resp: "Decision: Instruction: Examine the database schema.", want: DecisionAsk, wantSubstr: "database schema"},
-		{name: "QuestionVariant", resp: "Decision: question\nQuestion: What modules exist?", want: DecisionAsk, wantSubstr: "What modules"},
-		{name: "MessageVariant", resp: "Decision: message\nMessage: Review the API endpoints.", want: DecisionAsk, wantSubstr: "API endpoints"},
-		{name: "AskImplicit", resp: "Ask: Summarize the config loading flow.", want: DecisionAsk, wantSubstr: "config loading"},
+		{name: "InstructionVariant", resp: "Decision: instruction\nInstruction: Examine the database schema.", want: DecisionAskWorker, wantSubstr: "database schema"},
+		{name: "InstructionInline", resp: "Decision: Instruction: Examine the database schema.", want: DecisionAskWorker, wantSubstr: "database schema"},
+		{name: "QuestionVariant", resp: "Decision: question\nQuestion: What modules exist?", want: DecisionAskWorker, wantSubstr: "What modules"},
+		{name: "MessageVariant", resp: "Decision: message\nMessage: Review the API endpoints.", want: DecisionAskWorker, wantSubstr: "API endpoints"},
+		{name: "AskImplicit", resp: "Ask: Summarize the config loading flow.", want: DecisionAskWorker, wantSubstr: "config loading"},
 	}
 
 	for _, tt := range tests {
@@ -124,8 +124,8 @@ func TestParseDecisionCaseInsensitive(t *testing.T) {
 		resp string
 		want Decision
 	}{
-		{name: "UpperAsk", resp: "Decision: ASK\nQuestion: text", want: DecisionAsk},
-		{name: "UpperFinalize", resp: "Decision: FINALIZE", want: DecisionFinalize},
+		{name: "UpperAsk", resp: "Decision: ASK\nQuestion: text", want: DecisionAskWorker},
+		{name: "UpperFinalize", resp: "Decision: FINALIZE", want: DecisionAnswerUser},
 	}
 
 	for _, tt := range tests {
@@ -186,8 +186,8 @@ func TestParseDecisionPreservesMultilineRemainder(t *testing.T) {
 	resp := "Decision: ask\nQuestion: Part 1\nPart 2\nPart 3"
 	dec, remainder, preamble := parseDecision(resp)
 
-	if dec != DecisionAsk {
-		t.Fatalf("expected DecisionAsk, got %q", dec)
+	if dec != DecisionAskWorker {
+		t.Fatalf("expected DecisionAskWorker, got %q", dec)
 	}
 	if !strings.Contains(remainder, "Part 1") || !strings.Contains(remainder, "Part 2") || !strings.Contains(remainder, "Part 3") {
 		t.Fatalf("expected multiline remainder preserved, got %q", remainder)
@@ -201,8 +201,8 @@ func TestParseDecisionAllowsShortPreamble(t *testing.T) {
 	resp := "Note: quick recap.\nDecision: ask\nQuestion: Summarize the safeguards changes."
 	dec, remainder, preamble := parseDecision(resp)
 
-	if dec != DecisionAsk {
-		t.Fatalf("expected DecisionAsk with short preamble allowed, got %q", dec)
+	if dec != DecisionAskWorker {
+		t.Fatalf("expected DecisionAskWorker with short preamble allowed, got %q", dec)
 	}
 	if preamble != "Note: quick recap." {
 		t.Fatalf("expected preamble to be returned, got %q", preamble)
@@ -508,8 +508,8 @@ func TestPlanAskLoopIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Plan returned error: %v", err)
 	}
-	if dec != DecisionAsk {
-		t.Fatalf("expected DecisionAsk, got %q", dec)
+	if dec != DecisionAskWorker {
+		t.Fatalf("expected DecisionAskWorker, got %q", dec)
 	}
 	if !strings.Contains(ask, "ask monitor guardrail") {
 		t.Fatalf("unexpected ask output: %q", ask)
@@ -976,7 +976,7 @@ func TestBuildPlanMessagesNoGoalUpdate(t *testing.T) {
 	if !strings.Contains(messages[4].Content, "Step 2 of 4") {
 		t.Fatalf("step message missing progress: %q", messages[4].Content)
 	}
-	if !strings.Contains(messages[4].Content, "Decision: ask|finalize") {
+	if !strings.Contains(messages[4].Content, "Decision: ask_worker|ask_user|answer_user") {
 		t.Fatalf("final planner message missing decision schema: %q", messages[4].Content)
 	}
 }
