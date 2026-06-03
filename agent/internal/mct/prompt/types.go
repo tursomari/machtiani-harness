@@ -74,7 +74,7 @@ type ShellAgentLibraryConfig struct {
 	PrebuiltMessages []llm.Message
 
 	// FewShotVariant controls the few-shot injection variant:
-	// "none", "system", or "user".
+	// Default is "instance". Valid values are: "off", "none", "system", "instance".
 	FewShotVariant string
 
 	// TurnIndex is the current turn number (0-based) for per-turn injection logic.
