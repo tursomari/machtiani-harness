@@ -218,6 +218,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 				MaxInputTokens:       env.cfg.maxInputTokens,
 				ShellAgent:           true,
 				ShellAgentModel:      strings.TrimSpace(env.mctRunner.ShellAgentModel),
+				ShellAgentSessionID:  fmt.Sprintf("%s/shell-agent/%d", env.sessionID, env.step),
 				GlobalConfigPath:     env.mctRunner.GlobalConfigPath,
 				PersistTmpData:       env.mctRunner.PersistTmpData,
 				SessionTempRoot:      env.mctRunner.SessionTempRoot,
