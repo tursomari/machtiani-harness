@@ -214,7 +214,7 @@ port_path = sys.argv[2]
 
 counts = {
     "plan": 0,
-    "ask": 0,
+    "ask_worker": 0,
     "monitor": 0,
     "mixed_monitor": 0,
     "user_directed_monitor": 0,
@@ -255,11 +255,11 @@ class Handler(BaseHTTPRequestHandler):
             counts["plan"] += 1
             counts["last_plan_content"] = content
             if "Use the safer fix that preserves behavior." in content:
-                reply = "Decision: finalize\nFinalize: Proceed with the safer fix and summarize the chosen direction."
+                reply = "Decision: answer_user\nFinalize: Proceed with the safer fix and summarize the chosen direction."
             else:
-                reply = "Decision: ask"
+                reply = "Decision: ask_worker"
         elif "You are generating the next Ask for mct." in content:
-            counts["ask"] += 1
+            counts["plan"] += 1
             if "tradeoff I prefer" in content:
                 reply = "Ask Mode: no-shell\nAsk: Ask the user whether they want the safer fix that preserves behavior or the faster fix that may slightly change behavior before you continue."
             elif "Guardrail:" in content:
@@ -474,7 +474,7 @@ def get(key):
     return int(data.get(key, 0))
 
 plan = get("plan")
-ask = get("ask")
+ask_worker = get("ask_worker")
 monitor = get("monitor")
 mixed = get("mixed_monitor")
 
@@ -1232,12 +1232,14 @@ run_happy_case() {
     if [[ -n "$harness_input" ]]; then
       MACHTIANI_TMP_ROOT="$scratch_root" \
       MACHTIANI_SESSION_TEMP_ROOT="$session_temp_root" \
-        MACHTIANI_SHELL_AGENT_MARKER_MAX_AGE="$marker_max_age" \
+      MACHTIANI_SHELL_AGENT_MARKER_MAX_AGE="$marker_max_age" \
+      MINISWE_FINAL_DIR="$marker_dir" \
         "${cmd[@]}" < <(printf '%b' "$harness_input") > "$stdout_file" 2> "$stderr_file"
     else
       MACHTIANI_TMP_ROOT="$scratch_root" \
       MACHTIANI_SESSION_TEMP_ROOT="$session_temp_root" \
-        MACHTIANI_SHELL_AGENT_MARKER_MAX_AGE="$marker_max_age" \
+      MACHTIANI_SHELL_AGENT_MARKER_MAX_AGE="$marker_max_age" \
+      MINISWE_FINAL_DIR="$marker_dir" \
         "${cmd[@]}" > "$stdout_file" 2> "$stderr_file"
     fi
   else
@@ -1836,6 +1838,7 @@ EOF
     MACHTIANI_CONFIG="$local_config" \
       MACHTIANI_SESSION_TEMP_ROOT="$session_temp_root" \
       MACHTIANI_SHELL_AGENT_MARKER_MAX_AGE="$marker_max_age" \
+      MINISWE_FINAL_DIR="$marker_dir" \
       "${cmd[@]}" > "$stdout_file" 2> "$stderr_file"
   else
     MACHTIANI_CONFIG="$local_config" \
@@ -3295,7 +3298,7 @@ fi  # $# -eq 0 guard
 # function in the TESTS array.
 
 declare -A TESTS=(
-  ["test_local_tmp_root_unset_live"]="test_local_tmp_root_unset_live"
+  ["test_local_tmp_root_unset_live"]="run_local_tmp_root_unset_live_case"
   ["test_code_no_forge"]="test_code_no_forge"
   ["test_code_forge_initial"]="test_code_forge_initial"
   ["test_code_forge_resume_with_mode"]="test_code_forge_resume_with_mode"

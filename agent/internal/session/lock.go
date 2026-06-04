@@ -28,12 +28,23 @@ func acquireSessionLock(sessionID, sessionRoot string) (*sessionLock, error) {
 		return nil, fmt.Errorf("open session lock %s: %w", lockPath, err)
 	}
 
-	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		file.Close()
-		if errors.Is(err, syscall.EWOULDBLOCK) {
-			return nil, fmt.Errorf("session already active for %s", lockPath)
+	var lockErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		lockErr = syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if lockErr == nil {
+			break
 		}
-		return nil, fmt.Errorf("lock session file %s: %w", lockPath, err)
+		if !errors.Is(lockErr, syscall.EWOULDBLOCK) {
+			file.Close()
+			return nil, fmt.Errorf("lock session file %s: %w", lockPath, lockErr)
+		}
+		if attempt < 2 {
+			time.Sleep(time.Duration(100*(1<<attempt)) * time.Millisecond)
+		}
+	}
+	if lockErr != nil {
+		file.Close()
+		return nil, fmt.Errorf("session already active for %s", lockPath)
 	}
 
 	if err := initialiseLockFile(file, sessionID); err != nil {
