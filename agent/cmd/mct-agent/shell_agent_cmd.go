@@ -22,6 +22,7 @@ func handleShellAgentCommand(args []string) int {
 	var apiKeyFlags multiString
 	verbose := fs.BoolP("verbose", "v", false, "verbose agent logging")
 	maxInputTokens := fs.Int("max-input-tokens", 0, "maximum number of tokens allowed in constructed prompts (0 disables truncation)")
+	maxCommandOutputBytes := fs.Int("max-command-output-bytes", 65536, "maximum bytes of shell command output captured per step (default 64KB)")
 	modelFlag := fs.String("model", "", "Model alias defined in .machtiani/config.toml")
 	promptFile := fs.StringP("file", "f", "", "Read task from file (mutually exclusive with --text)")
 	var promptText string
@@ -99,6 +100,14 @@ func handleShellAgentCommand(args []string) int {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
+	}
+
+	// Apply max-command-output-bytes flag to override config file value.
+	if *maxCommandOutputBytes > 0 {
+		if globalCfg.Environment == nil {
+			globalCfg.Environment = &llm.EnvironmentConfig{}
+		}
+		globalCfg.Environment.MaxCommandOutputBytes = *maxCommandOutputBytes
 	}
 
 	// Build the shell-agent library (model + environment) once.

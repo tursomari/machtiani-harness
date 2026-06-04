@@ -487,6 +487,7 @@ func configureSessionFlags(fs *pflag.FlagSet, cfg *session.Config, paramFlags, p
 	fs.BoolVar(&cfg.DryRun, "dry-run", false, "print intended mct calls; don't execute")
 	fs.BoolVarP(&cfg.Verbose, "verbose", "v", false, "verbose agent logging")
 	fs.BoolVar(&cfg.PersistTmpData, "persist-tmp-data", false, "keep temporary data (worktrees, trajectories) after execution; startup orphan cleanup always runs")
+	fs.IntVar(&cfg.MaxCommandOutputBytes, "max-command-output-bytes", 65536, "maximum bytes of shell command output captured per step (default 64KB)")
 	fs.BoolVar(&cfg.ShellAgent, "shell-agent", false, "Enable shell-agent mode: invoke shell-agent subprocess binary for task execution")
 	fs.StringVar(&cfg.ShellAgentModel, "shell-agent-model", "", "Model alias override for shell-agent subprocesses (default: config)")
 	fs.StringVar(&cfg.FinalFile, "final-file", "", "path to write final answer-only artifact (default: .machtiani/sessions/<sessionID>/chat/agent-final-answer.md)")

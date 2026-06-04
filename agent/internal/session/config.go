@@ -17,6 +17,7 @@ type Config struct {
 	DryRun                  bool
 	Verbose                 bool
 	PersistTmpData          bool
+	MaxCommandOutputBytes   int
 	FinalFile               string
 	TranscriptFile          string
 	FileDiscoveryTrajectory string
@@ -83,6 +84,7 @@ type legacyConfig struct {
 	dryRun                  bool
 	verbose                 bool
 	persistTmpData          bool
+	maxCommandOutputBytes   int
 	finalFile               string
 	transcriptFile          string
 	fileDiscoveryTrajectory string
@@ -135,6 +137,7 @@ func newLegacyConfig(cfg Config) legacyConfig {
 		shellAgentModel:         cfg.ShellAgentModel,
 		apiKeyOverrides:         llm.CopyAPIKeyOverridesForRuntime(cfg.APIKeyOverrides),
 		persistTmpData:          cfg.PersistTmpData,
+		maxCommandOutputBytes:   cfg.MaxCommandOutputBytes,
 		enableTagFormat:         cfg.EnableTagFormat,
 		sessionID:               cfg.SessionID,
 		promptText:              cfg.PromptText,

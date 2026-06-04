@@ -179,7 +179,8 @@ type ModelConfig struct {
 // [environment] section of the unified configuration.
 type EnvironmentConfig struct {
 	Type             string            `toml:"type"`
-	Timeout          int               `toml:"timeout"`
+	Timeout               int               `toml:"timeout"`
+	MaxCommandOutputBytes int               `toml:"max_command_output_bytes"`
 	CWD              string            `toml:"cwd"`
 	InternetAccess   bool              `toml:"internet_access"`
 	EnvVars          map[string]string `toml:"env_vars"`
@@ -1237,6 +1238,9 @@ func parseEnvironmentSection(path string, data map[string]any) (*EnvironmentConf
 	}
 	if v, ok := toInt(data["timeout"]); ok {
 		env.Timeout = v
+	}
+	if v, ok := toInt(data["max_command_output_bytes"]); ok {
+		env.MaxCommandOutputBytes = v
 	}
 	if v, ok := data["cwd"].(string); ok {
 		env.CWD = v

@@ -489,6 +489,12 @@ func runSession(ctx context.Context, opts Options) Result {
 	// once. The planner may dynamically decide to use the shell-agent
 	// even without an explicit --shell-agent flag (e.g. "Ask" routing),
 	// so the library is always built when possible.
+	if cfg.maxCommandOutputBytes > 0 {
+		if opts.GlobalConfig.Environment == nil {
+			opts.GlobalConfig.Environment = &llm.EnvironmentConfig{}
+		}
+		opts.GlobalConfig.Environment.MaxCommandOutputBytes = cfg.maxCommandOutputBytes
+	}
 	lib, libErr := shellagent.BuildLibrary(&opts.GlobalConfig, opts.APIKeyOverrides, cfg.persistTmpData, shellAgentModel)
 	if libErr != nil {
 		// Non-fatal: the library is a prerequisite only when the
