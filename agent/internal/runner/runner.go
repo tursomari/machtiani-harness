@@ -53,6 +53,10 @@ type PromptInput struct {
 	// prompt layer calls shellagent.Run directly instead of spawning
 	// a subprocess.
 	ShellAgentLibrary *promptsvc.ShellAgentLibraryConfig
+
+	// ShellAgentSessionID is the session ID to pass to the shell-agent
+	// library for in-process execution.
+	ShellAgentSessionID string
 }
 
 func (r *Runner) Resolve() error {
@@ -177,6 +181,7 @@ func (r *Runner) RunPrompt(ctx context.Context, sessionID string, in PromptInput
 		ResponseDirectives:      append([]string(nil), in.ResponseDirectives...),
 		Prompts:                 mctPrompts,
 		ShellAgentLibrary:       in.ShellAgentLibrary,
+		ShellAgentSessionID:     in.ShellAgentSessionID,
 	})
 	if useMarkdown && ms != nil {
 		_ = ms.Flush()

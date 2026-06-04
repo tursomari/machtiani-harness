@@ -55,8 +55,13 @@ type transcriptBootstrap struct {
 func prepareRunBootstrap(rootCtx context.Context, opts Options) (*runBootstrap, Result, bool) {
 	inputPrompt := strings.TrimSpace(opts.Goal)
 	if inputPrompt == "" {
-		fmt.Fprintln(os.Stderr, "Error: empty issue/question provided")
-		return nil, Result{ExitCode: 2, Err: errors.New("empty goal")}, false
+		// When continuing a session, the goal is loaded from saved session state.
+		if opts.Config.SessionID != "" && opts.Config.Continue {
+			// OK - goal will come from saved session state further down.
+		} else {
+			fmt.Fprintln(os.Stderr, "Error: empty issue/question provided")
+			return nil, Result{ExitCode: 2, Err: errors.New("empty goal")}, false
+		}
 	}
 
 	originalPrompt := opts.OriginalPrompt
@@ -383,15 +388,16 @@ func newRunLifecycleState(rootCtx context.Context, cfg legacyConfig, sessionID, 
 
 
 type conversationRecorder struct {
-	tr                   *transcript.Transcript
-	sessionID            string
-	conversationGoal     string
-	conversationPath     string
-	resumeMode           bool
-	loadedState          *SessionState
-	conversation         *conversation.Conversation
-	conversationRendered string
-	conversationJSON     string
+	tr                           *transcript.Transcript
+	sessionID                    string
+	conversationGoal             string
+	conversationPath             string
+	resumeMode                   bool
+	loadedState                  *SessionState
+	conversation                 *conversation.Conversation
+	conversationRendered         string
+	conversationJSON             string
+	continueShellAgentSessionID  string
 }
 
 var errConversationTranscriptDesync = errors.New("conversation transcript desync")
@@ -500,11 +506,15 @@ func (c *conversationRecorder) WriteTurn(step int, question, savedPath string, r
 		}
 		return c.tr.WriteTurn(step, question, savedPath, retrieved, summary, decision)
 	}
+	shellAgentSessionID := fmt.Sprintf("%s/shell-agent/%d", c.sessionID, step)
+	if c.continueShellAgentSessionID != "" {
+		shellAgentSessionID = c.continueShellAgentSessionID
+	}
 	c.conversation.AddMessage("assistant", question, map[string]any{
 		"type":                  "work_request",
 		"turn":                  step,
 		"decision":              decision,
-		"shell_agent_session_id": fmt.Sprintf("%s/shell-agent/%d", c.sessionID, step),
+		"shell_agent_session_id": shellAgentSessionID,
 	})
 	c.conversation.AddMessage("assistant", summary, map[string]any{
 		"type":            "work_result",
