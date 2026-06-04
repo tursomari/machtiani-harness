@@ -178,8 +178,6 @@ func (t *TerminalDisplay) EndSession() {
 }
 
 func (t *TerminalDisplay) resetTerminalLocked() {
-	t.mu.Lock()
-	defer t.mu.Unlock()
 	fmt.Fprint(t.out, ansiRestoreCursor)
 	fmt.Fprint(t.out, ansiClearLine)
 	fmt.Fprint(t.out, ansiReset)
@@ -727,7 +725,7 @@ func (t *TerminalDisplay) stopTimerLocked() {
 }
 
 func (t *TerminalDisplay) timerLoop(ticker *time.Ticker, stop <-chan struct{}) {
-	defer t.resetTerminalLocked()
+	defer func() { t.mu.Lock(); t.resetTerminalLocked(); t.mu.Unlock() }()
 	for {
 		select {
 		case <-ticker.C:
