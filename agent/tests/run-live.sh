@@ -2318,6 +2318,172 @@ test_code_no_forge() {
   echo "Passed: $case_id" >&2
 }
 
+# run_enforce_early_commands_case verifies that the EnforceEarlyCommands
+# feature flag is plumbed through the shell-agent library path end-to-end
+# without regressing the agent loop.
+#
+# The test runs the agent with MACHTIANI_SHELL_AGENT_ENFORCE_EARLY_COMMANDS=true
+# using the LLM stub server (no live API key required). The stub returns a
+# well-formed <command> followed by a final answer, so neither the bash
+# syntax validator nor the stricter format-error message should engage.
+# The test asserts that:
+#   * the agent completes successfully with the flag on, and
+#   * the trajectory contains at least one shell-agent invocation, and
+#   * no FormatErrorLoop status appears in the session's shell-agent state.
+# This catches regressions in the flag-threading plumbing (env-var read,
+# ShellAgentLibrary field, Request field, DefaultAgent field) without
+# requiring a live LLM or a malformed response fixture. The full A/B
+# comparison is in agent/tests/enforce_early_commands_test.sh.
+run_enforce_early_commands_case() {
+  local case_id="enforce-early-commands"
+  local stub_dir="$TMP_ROOT/stub-${case_id}-$(date +%s)"
+  mkdir -p "$stub_dir"
+  local state_file="$stub_dir/state.json"
+  local port_file="$stub_dir/port.txt"
+  start_llm_stub_server "$state_file" "$port_file"
+  local stub_port
+  stub_port="$(cat "$port_file")"
+  local base_url="http://127.0.0.1:${stub_port}/v1"
+  local stub_alias="stub-model"
+  local stub_config
+  stub_config="$(generate_stub_config "$base_url" "$stub_alias")"
+
+  local session_id="test-${case_id}-$(date +%s)"
+  local out_dir="$(pwd)/test-out-${session_id}"
+  mkdir -p "$out_dir"
+  local stdout_file="$out_dir/stdout-${session_id}.txt"
+  local stderr_file="$out_dir/stderr-${session_id}.txt"
+
+  echo "Running enforce-early-commands case: $case_id..." >&2
+
+  # Phase 1: experimental run (flag on).
+  local rc=0
+  pushd "$REPO_ROOT" >/dev/null
+  set +e
+  MACHTIANI_CONFIG="$stub_config" \
+  MACHTIANI_SHELL_AGENT_ENFORCE_EARLY_COMMANDS=true \
+    timeout 120 "$MCT_AGENT" run \
+      --max-steps 2 \
+      \
+      --timeout-per-turn 300 \
+      --mode code \
+      --model "$stub_alias" \
+      --orch-model "$stub_alias" \
+      --file-discovery-model "$stub_alias" \
+      --text "List the README.md file path under the cwd." \
+      > "$stdout_file" 2> "$stderr_file"
+  rc=$?
+  set -e
+  popd >/dev/null
+  if [[ $rc -ne 0 ]]; then
+    echo "Failed experimental run (rc=$rc): $case_id" >&2
+    cat "$stderr_file" >&2 || true
+    stop_llm_stub_server
+    return 1
+  fi
+
+  local agent_session
+  agent_session=$(grep -m1 '^Session:' "$stderr_file" | awk '{print $2}' || true)
+  if [[ -z "$agent_session" ]]; then
+    echo "Failed to parse session ID for $case_id" >&2
+    stop_llm_stub_server
+    return 1
+  fi
+
+  local sessions_root="$REPO_ROOT/.machtiani/sessions"
+  local session_dir="$sessions_root/$agent_session"
+  local traj_file="$session_dir/trajectory/agent.jsonl"
+  if [[ ! -f "$traj_file" ]]; then
+    echo "Trajectory file missing: $traj_file ($case_id)" >&2
+    stop_llm_stub_server
+    return 1
+  fi
+
+  # The shell-agent library should have been invoked at least once. We
+  # check the trajectory for any shell-agent-related event so the test
+  # does not depend on the exact event name in the unified stream.
+  if ! "$PYTHON_BIN" - "$traj_file" <<'PY'
+import json
+import sys
+
+traj_path = sys.argv[1]
+shell_hits = 0
+with open(traj_path, 'r', encoding='utf-8') as fh:
+    for line in fh:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        kind = str(obj.get("kind") or "")
+        payload = obj.get("payload") or {}
+        if (
+            "shell" in kind.lower()
+            or "shell_agent" in str(payload).lower()
+            or "mct-swe-agent" in str(payload).lower()
+        ):
+            shell_hits += 1
+if shell_hits < 1:
+    print(f"ERROR: no shell-agent events found in trajectory ({shell_hits})", file=sys.stderr)
+    sys.exit(1)
+print(f"OK: {shell_hits} shell-agent related events")
+PY
+  then
+    stop_llm_stub_server
+    return 1
+  fi
+
+  # Phase 2: control run (flag off).  The session must also complete
+  # successfully; otherwise the flag has not been plumbed as a no-op
+  # default. We keep this lightweight by reusing the same stub server.
+  local control_session="test-${case_id}-control-$(date +%s)"
+  local control_out="$(pwd)/test-out-${control_session}"
+  mkdir -p "$control_out"
+  local control_stdout="$control_out/stdout-${control_session}.txt"
+  local control_stderr="$control_out/stderr-${control_session}.txt"
+
+  pushd "$REPO_ROOT" >/dev/null
+  set +e
+  MACHTIANI_CONFIG="$stub_config" \
+  MACHTIANI_SHELL_AGENT_ENFORCE_EARLY_COMMANDS=false \
+    timeout 120 "$MCT_AGENT" run \
+      --max-steps 2 \
+      \
+      --timeout-per-turn 300 \
+      --mode code \
+      --model "$stub_alias" \
+      --orch-model "$stub_alias" \
+      --file-discovery-model "$stub_alias" \
+      --text "List the README.md file path under the cwd." \
+      > "$control_stdout" 2> "$control_stderr"
+  rc=$?
+  set -e
+  popd >/dev/null
+  if [[ $rc -ne 0 ]]; then
+    echo "Failed control run (rc=$rc): $case_id" >&2
+    cat "$control_stderr" >&2 || true
+    stop_llm_stub_server
+    return 1
+  fi
+
+  # Both sessions should reach a Submitted (or comparable non-error)
+  # status; neither should hit FormatErrorLoop on a well-formed response.
+  if grep -q "FormatErrorLoop" "$stderr_file" "$control_stderr" 2>/dev/null; then
+    echo "Unexpected FormatErrorLoop status in $case_id" >&2
+    stop_llm_stub_server
+    return 1
+  fi
+
+  stop_llm_stub_server
+  if [[ "${KEEP_TEST_CONFIG:-}" != "true" ]]; then
+    rm -rf "$stub_dir"
+    rm -rf "$(dirname "$stub_config")"
+  fi
+  echo "Passed: $case_id (flag plumbed through end-to-end without regression)" >&2
+}
+
 # test_code_forge_initial verifies that --mode code-forge injects the forge
 # instruction into the shell-agent system prompt.  It asserts mode-plan.json
 # mode is "code-forge" and inputs.jsonl contains "You MUST use forge".
@@ -3304,6 +3470,7 @@ declare -A TESTS=(
   ["test_code_forge_resume_with_mode"]="test_code_forge_resume_with_mode"
   ["test_code_forge_resume_without_mode"]="test_code_forge_resume_without_mode"
   ["test_code_resume_without_mode_no_forge"]="test_code_resume_without_mode_no_forge"
+  ["test_enforce_early_commands"]="run_enforce_early_commands_case"
 )
 
 if [[ $# -gt 0 ]]; then

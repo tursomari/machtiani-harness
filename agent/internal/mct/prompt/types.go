@@ -80,6 +80,14 @@ type ShellAgentLibraryConfig struct {
 
 	// TurnIndex is the current turn number (0-based) for per-turn injection logic.
 	TurnIndex int
+
+	// EnforceEarlyCommands, when true, opts the work_request into the
+	// stricter early-turn behaviour: the shell-agent library emits a
+	// turn-specific format-error message and runs `bash -n` against
+	// extracted commands when PlannerTurn < 3. The flag defaults to
+	// false so existing sessions keep the relaxed behaviour until a
+	// caller explicitly opts in.
+	EnforceEarlyCommands bool
 }
 
 // Result captures the outcome of a prompt execution.

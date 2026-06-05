@@ -253,13 +253,14 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 				}
 				if err == nil {
 					shellOpts.ShellAgentLibrary = &promptsvc.ShellAgentLibraryConfig{
-						Model:             env.mctRunner.ShellAgentLibrary.Model,
-						Env:               env.mctRunner.ShellAgentLibrary.Env,
-						Config:            env.mctRunner.ShellAgentLibrary.Config,
-						Prompts:           env.mctRunner.ShellAgentLibrary.Prompts,
-						FewShotVariant:    env.mctRunner.ShellAgentLibrary.FewShotVariant,
-						TurnIndex:         env.step,
-						PrebuiltMessages:  prebuilt,
+						Model:                env.mctRunner.ShellAgentLibrary.Model,
+						Env:                  env.mctRunner.ShellAgentLibrary.Env,
+						Config:               env.mctRunner.ShellAgentLibrary.Config,
+						Prompts:              env.mctRunner.ShellAgentLibrary.Prompts,
+						FewShotVariant:       env.mctRunner.ShellAgentLibrary.FewShotVariant,
+						TurnIndex:            env.step,
+						EnforceEarlyCommands: env.mctRunner.ShellAgentLibrary.EnforceEarlyCommands,
+						PrebuiltMessages:     prebuilt,
 					}
 				}
 			}
@@ -409,13 +410,14 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 		}
 		if err == nil {
 			input.ShellAgentLibrary = &promptsvc.ShellAgentLibraryConfig{
-				Model:            env.mctRunner.ShellAgentLibrary.Model,
-				Env:              env.mctRunner.ShellAgentLibrary.Env,
-				Config:           env.mctRunner.ShellAgentLibrary.Config,
-				Prompts:          env.mctRunner.ShellAgentLibrary.Prompts,
-				FewShotVariant:   env.mctRunner.ShellAgentLibrary.FewShotVariant,
-				TurnIndex:        env.step,
-				PrebuiltMessages: prebuilt,
+				Model:                env.mctRunner.ShellAgentLibrary.Model,
+				Env:                  env.mctRunner.ShellAgentLibrary.Env,
+				Config:               env.mctRunner.ShellAgentLibrary.Config,
+				Prompts:              env.mctRunner.ShellAgentLibrary.Prompts,
+				FewShotVariant:       env.mctRunner.ShellAgentLibrary.FewShotVariant,
+				TurnIndex:            env.step,
+				EnforceEarlyCommands: env.mctRunner.ShellAgentLibrary.EnforceEarlyCommands,
+				PrebuiltMessages:     prebuilt,
 			}
 		}
 	}
