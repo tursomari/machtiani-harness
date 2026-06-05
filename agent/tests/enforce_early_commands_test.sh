@@ -59,9 +59,17 @@ run_session() {
   local rc=$?
 
   local sid
-  sid=$(grep -oP "session-id: \K[^\"]+" "$stderr_log" 2>/dev/null | head -1 || true)
+  # Try several known formats (stderr emits "Session: <id>" and
+  # "[trajectory] unified stream: <path>").
+  sid=$(grep -oE "Session: agent-[0-9TZ]+-[0-9]+" "$stderr_log" 2>/dev/null \
+        | head -1 | awk '{print $2}' || true)
   if [[ -z "$sid" ]]; then
-    sid=$(grep -oP "session_id[:\"]+\K[^\",}]+" "$stderr_log" 2>/dev/null | head -1 || true)
+    sid=$(grep -oE "/sessions/(agent-[0-9TZ]+-[0-9]+)/trajectory" "$stderr_log" 2>/dev/null \
+          | head -1 | awk -F/ '{print $3}' || true)
+  fi
+  if [[ -z "$sid" ]]; then
+    sid=$(grep -oE "session[-_]?id[=:]? *\"?([A-Za-z0-9_-]+)\"?" "$stderr_log" 2>/dev/null \
+          | head -1 | sed -E 's/.*["]?([A-Za-z0-9_-]+)"?$/\1/' || true)
   fi
 
   echo "Exit code: $rc"
@@ -83,23 +91,44 @@ run_session() {
 analyze_trajectory() {
   local label="$1"
   local traj="$2"
-  local format_errors=0
-  local command_emits=0
-  local early_turn_messages=0
-  local tot_shell_turns=0
+  local planner_responses=0
+  local planner_requests=0
+  local turn_starts=0
+  local turn_ends=0
+  local llm_errors=0
+  local early_turn_msgs=0
+  local fmt_err_refs=0
+  local total_events=0
 
   if [[ -f "$traj" ]]; then
-    format_errors=$(grep -c "FormatError" "$traj" 2>/dev/null || echo 0)
-    command_emits=$(grep -c "<command>" "$traj" 2>/dev/null || echo 0)
-    early_turn_messages=$(grep -c "On this early step, you MUST respond with EXACTLY" "$traj" 2>/dev/null || echo 0)
-    tot_shell_turns=$(grep -c "shell.agent" "$traj" 2>/dev/null || echo 0)
+    # Count each pattern in a single pass; use grep -c which prints the
+    # match count and exits 0 when found, 1 when none (we suppress the
+    # exit-code so set -e doesn't trip; we just want the count).
+    total_events=$(wc -l < "$traj" | tr -d ' ')
+    planner_responses=$(grep -c '"kind":"planner.response"' "$traj" 2>/dev/null) || planner_responses=0
+    planner_requests=$(grep -c '"kind":"planner.request"'  "$traj" 2>/dev/null) || planner_requests=0
+    turn_starts=$(grep -c '"kind":"agent.turn.start"'    "$traj" 2>/dev/null) || turn_starts=0
+    turn_ends=$(grep -c '"kind":"agent.turn.end"'        "$traj" 2>/dev/null) || turn_ends=0
+    llm_errors=$(grep -c '"kind":"llm.request.error"'     "$traj" 2>/dev/null) || llm_errors=0
+    early_turn_msgs=$(grep -c 'On this early step'         "$traj" 2>/dev/null) || early_turn_msgs=0
+    fmt_err_refs=$(grep -c 'FormatError'                   "$traj" 2>/dev/null) || fmt_err_refs=0
+    # grep -c returns "0" with newline; strip.
+    planner_responses=$(printf '%s' "$planner_responses" | tr -d '\n')
+    planner_requests=$(printf '%s' "$planner_requests" | tr -d '\n')
+    turn_starts=$(printf '%s' "$turn_starts" | tr -d '\n')
+    turn_ends=$(printf '%s' "$turn_ends" | tr -d '\n')
+    llm_errors=$(printf '%s' "$llm_errors" | tr -d '\n')
+    early_turn_msgs=$(printf '%s' "$early_turn_msgs" | tr -d '\n')
+    fmt_err_refs=$(printf '%s' "$fmt_err_refs" | tr -d '\n')
   fi
 
   echo "--- Analysis for $label ---"
-  echo "  FormatError events:        $format_errors"
-  echo "  command emits:             $command_emits"
-  echo "  early-turn message emits:  $early_turn_messages"
-  echo "  Shell-agent events:        $tot_shell_turns"
+  echo "  total events:                $total_events"
+  echo "  planner.requests / .response: $planner_requests / $planner_responses"
+  echo "  agent.turn.start / .end:     $turn_starts / $turn_ends"
+  echo "  llm.request.error:           $llm_errors"
+  echo "  early-turn message emits:    $early_turn_msgs"
+  echo "  FormatError refs (any):      $fmt_err_refs"
   echo ""
 }
 
@@ -110,4 +139,19 @@ echo ""
 echo "=== Results ==="
 analyze_trajectory "control"      "$OUT_DIR/control/trajectory.jsonl"
 analyze_trajectory "experimental" "$OUT_DIR/experimental/trajectory.jsonl"
+
+# Side-by-side comparison.
+ctrl_traj="$OUT_DIR/control/trajectory.jsonl"
+exp_traj="$OUT_DIR/experimental/trajectory.jsonl"
+if [[ -f "$ctrl_traj" && -f "$exp_traj" ]]; then
+  echo "=== A/B comparison ==="
+  ctrl_lines=$(wc -l < "$ctrl_traj" | tr -d ' ')
+  exp_lines=$(wc -l < "$exp_traj" | tr -d ' ')
+  echo "  Trajectory length: control=$ctrl_lines experimental=$exp_lines"
+  if [[ "$ctrl_lines" == "$exp_lines" ]]; then
+    echo "  OK: identical trajectory length (no extra retries caused by enforcement)"
+  else
+    echo "  NOTE: trajectory lengths differ (expected: identical or experimental slightly shorter)"
+  fi
+fi
 echo "Done. Full output in $OUT_DIR"
