@@ -3442,6 +3442,7 @@ else
     echo "Skipping local tmp-root live case: shell-agent not found on PATH." >&2
   fi
   run_shell_agent_subcommand_live_case
+  run_enforce_early_commands_case
   run_snippet_discovery_tightness_live_case
   run_menu_flow_live_case
   run_mode_live_case
