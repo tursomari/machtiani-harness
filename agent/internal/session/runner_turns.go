@@ -389,6 +389,10 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 		}
 		return turnExecutionResult{action: turnLoopAskWorker, shellAgentUsed: shellAgentUsedThisTurn}
 	}
+	shellAgentSessionID := fmt.Sprintf("%s/shell-agent/%d", env.sessionID, env.step)
+	if continueSessionID != "" {
+		shellAgentSessionID = continueSessionID
+	}
 	input := runner.PromptInput{
 		Prompt:             question,
 		Mode:               "default",
@@ -396,6 +400,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 		OnStreamHeader:     stream.OnChunk,
 		OnStreamToken:      stream.OnChunk,
 		MaxInputTokens:     env.cfg.maxInputTokens,
+		ShellAgentSessionID: shellAgentSessionID,
 		ResponseDirectives: append([]string(nil), env.mctResponseDirectives...),
 	}
 	if useShellAgent && env.mctRunner.ShellAgentLibrary != nil {
