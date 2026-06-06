@@ -1857,14 +1857,18 @@ func shouldRetry(err error) bool {
 	if err == nil {
 		return false
 	}
+	// Provider-side timeouts arrive wrapped in UnreachableHostError and are
+	// transient/retryable, so check UnreachableHostError before the bare
+	// DeadlineExceeded check below (which covers our own per-turn context
+	// deadline and should not be retried).
+	var ue *UnreachableHostError
+	if errors.As(err, &ue) {
+		return true
+	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
 	if errors.Is(err, ErrNoChoices) {
-		return true
-	}
-	var ue *UnreachableHostError
-	if errors.As(err, &ue) {
 		return true
 	}
 	var httpErr *HTTPResponseError
