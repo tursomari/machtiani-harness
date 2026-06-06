@@ -1751,6 +1751,9 @@ func nonStreamRetryBackoff(attempt int) time.Duration {
 func performStream(req *http.Request, onToken func(string)) (string, *responseUsage, error) {
 	resp, err := streamingHTTPClient.Do(req)
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return "", nil, &ProviderTimeoutError{URL: req.URL.String(), Err: err}
+		}
 		return "", nil, &UnreachableHostError{URL: req.URL.String(), Err: err}
 	}
 	defer resp.Body.Close()
@@ -1808,6 +1811,9 @@ func performStream(req *http.Request, onToken func(string)) (string, *responseUs
 func performNonStream(req *http.Request) (string, *responseUsage, error) {
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return "", nil, &ProviderTimeoutError{URL: req.URL.String(), Err: err}
+		}
 		return "", nil, &UnreachableHostError{URL: req.URL.String(), Err: err}
 	}
 	defer resp.Body.Close()
@@ -1863,6 +1869,10 @@ func shouldRetry(err error) bool {
 	// deadline and should not be retried).
 	var ue *UnreachableHostError
 	if errors.As(err, &ue) {
+		return true
+	}
+	var pte *ProviderTimeoutError
+	if errors.As(err, &pte) {
 		return true
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {

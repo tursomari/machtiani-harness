@@ -25,6 +25,27 @@ func (e *UnreachableHostError) Unwrap() error {
 	return e.Err
 }
 
+// ProviderTimeoutError wraps a context.DeadlineExceeded-style timeout that
+// occurs inside the LLM provider client (not our own per-turn context deadline).
+type ProviderTimeoutError struct {
+	URL string
+	Err error
+}
+
+func (e *ProviderTimeoutError) Error() string {
+	if e == nil {
+		return ""
+	}
+	return fmt.Sprintf("llm provider timeout %s: %v", e.URL, e.Err)
+}
+
+func (e *ProviderTimeoutError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
 // HTTPResponseError wraps non-successful HTTP responses from the LLM endpoint.
 type HTTPResponseError struct {
 	URL    string
