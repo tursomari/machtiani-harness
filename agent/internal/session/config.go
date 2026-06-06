@@ -40,7 +40,6 @@ type Config struct {
 	PromptText            string
 	Mode                  string
 	ModeInstructionDir    string
-	Continue              bool
 }
 
 type BuildInfo struct {
@@ -108,7 +107,6 @@ type legacyConfig struct {
 	promptText              string
 	mode                    string
 	modeInstructionDir      string
-	shouldContinue          bool
 }
 
 func newLegacyConfig(cfg Config) legacyConfig {
@@ -145,6 +143,5 @@ func newLegacyConfig(cfg Config) legacyConfig {
 		promptText:              cfg.PromptText,
 		mode:                    cfg.Mode,
 		modeInstructionDir:      cfg.ModeInstructionDir,
-		shouldContinue:          cfg.Continue,
 	}
 }

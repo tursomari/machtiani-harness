@@ -73,16 +73,6 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 	if env == nil {
 		return turnExecutionResult{}
 	}
-	continueSessionID := ""
-	if env.cfg.shouldContinue && env.recorder != nil && env.recorder.HasConversation() {
-		continueSessionID = resumeShellAgentSessionID(env.recorder.Conversation())
-		if continueSessionID != "" {
-			fmt.Fprintf(os.Stderr, "resuming shell-agent session: %s\n", continueSessionID)
-		}
-	}
-	if env.recorder != nil {
-		env.recorder.continueShellAgentSessionID = continueSessionID
-	}
 	if question == "" {
 		errEmpty := errors.New("planner returned empty question")
 		fmt.Fprintln(os.Stderr, "Planner returned empty question for 'ask' decision")
@@ -217,9 +207,6 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 			ctxShell = attachTrajectory(ctxShell, env.trajectoryWriter, env.parentSpanID)
 			shellCancel = cancelShell
 			shellAgentSessionID := fmt.Sprintf("%s/shell-agent/%d", env.sessionID, env.step)
-			if continueSessionID != "" {
-				shellAgentSessionID = continueSessionID
-			}
 			shellOpts := promptsvc.RunOptions{
 				Prompt:               shellAskTrimmed,
 				Mode:                 "answer-only",
@@ -390,9 +377,6 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 		return turnExecutionResult{action: turnLoopAskWorker, shellAgentUsed: shellAgentUsedThisTurn}
 	}
 	shellAgentSessionID := fmt.Sprintf("%s/shell-agent/%d", env.sessionID, env.step)
-	if continueSessionID != "" {
-		shellAgentSessionID = continueSessionID
-	}
 	input := runner.PromptInput{
 		Prompt:             question,
 		Mode:               "default",

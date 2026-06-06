@@ -171,8 +171,7 @@ func handleRunCommand(args []string) int {
 		return 2
 	}
 
-	// Validate goal input: exactly one of --text or --file is required,
-	// unless continuing a session where the goal will be loaded from saved state.
+	// Validate goal input: exactly one of --text or --file is required.
 	hasText := strings.TrimSpace(cfg.PromptText) != ""
 	hasFile := strings.TrimSpace(*promptFile) != ""
 	if hasText && hasFile {
@@ -180,13 +179,8 @@ func handleRunCommand(args []string) int {
 		return 2
 	}
 	if !hasText && !hasFile {
-		// When continuing a session, the goal is loaded from saved session state.
-		if cfg.SessionID != "" && cfg.Continue {
-			// OK - goal will come from saved session state.
-		} else {
-			fmt.Fprintln(os.Stderr, "Error: one of --text or --file is required")
-			return 2
-		}
+		fmt.Fprintln(os.Stderr, "Error: one of --text or --file is required")
+		return 2
 	}
 
 	var goal string
@@ -211,8 +205,7 @@ func handleRunCommand(args []string) int {
 		fmt.Fprintln(os.Stderr, "Error: unexpected positional arguments for 'run' command. Use -t or --file to specify the prompt.")
 		return 2
 	}
-	// When continuing a session, an empty goal is fine — it will be loaded from saved state.
-	if goal == "" && !(cfg.SessionID != "" && cfg.Continue) {
+	if goal == "" {
 		fmt.Fprintln(os.Stderr, "Error: goal is empty. Provide non-empty content via -t or --file.")
 		return 2
 	}
@@ -512,7 +505,6 @@ func configureSessionFlags(fs *pflag.FlagSet, cfg *session.Config, paramFlags, p
 	fs.StringVar(&cfg.OpenAIBaseURL, "openai-base-url", "", "OpenAI-compatible base URL (overrides env, deprecated)")
 	fs.StringVar(&cfg.OpenAIModel, "openai-model", "", "Direct upstream model name (deprecated; prefer --model)")
 	fs.StringVar(&cfg.SessionID, "session-id", "", "Existing session identifier to resume")
-	fs.BoolVar(&cfg.Continue, "continue", false, "Resume execution from the most recent session")
 	fs.BoolVar(&cfg.EnableTagFormat, "enable-tag-format", false, "Enable tag-format response directives and validation (experimental)")
 	fs.StringVar(&cfg.Mode, "mode", "", "Operating mode")
 	fs.StringVar(&cfg.ModeInstructionDir, "mode-instruction-dir", "", "Directory containing mode custom instructions (overrides config)")

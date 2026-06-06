@@ -55,13 +55,8 @@ type transcriptBootstrap struct {
 func prepareRunBootstrap(rootCtx context.Context, opts Options) (*runBootstrap, Result, bool) {
 	inputPrompt := strings.TrimSpace(opts.Goal)
 	if inputPrompt == "" {
-		// When continuing a session, the goal is loaded from saved session state.
-		if opts.Config.SessionID != "" && opts.Config.Continue {
-			// OK - goal will come from saved session state further down.
-		} else {
-			fmt.Fprintln(os.Stderr, "Error: empty issue/question provided")
-			return nil, Result{ExitCode: 2, Err: errors.New("empty goal")}, false
-		}
+		fmt.Fprintln(os.Stderr, "Error: empty issue/question provided")
+		return nil, Result{ExitCode: 2, Err: errors.New("empty goal")}, false
 	}
 
 	originalPrompt := opts.OriginalPrompt
@@ -397,7 +392,6 @@ type conversationRecorder struct {
 	conversation                 *conversation.Conversation
 	conversationRendered         string
 	conversationJSON             string
-	continueShellAgentSessionID  string
 }
 
 var errConversationTranscriptDesync = errors.New("conversation transcript desync")
@@ -507,9 +501,6 @@ func (c *conversationRecorder) WriteTurn(step int, question, savedPath string, r
 		return c.tr.WriteTurn(step, question, savedPath, retrieved, summary, decision)
 	}
 	shellAgentSessionID := fmt.Sprintf("%s/shell-agent/%d", c.sessionID, step)
-	if c.continueShellAgentSessionID != "" {
-		shellAgentSessionID = c.continueShellAgentSessionID
-	}
 	c.conversation.AddMessage("assistant", question, map[string]any{
 		"type":                  "work_request",
 		"turn":                  step,
