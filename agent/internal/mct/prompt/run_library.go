@@ -9,6 +9,8 @@ import (
 	shellagent "github.com/tursomari/machtiani/agent/internal/shell-agent"
 )
 
+var shellAgentRun = shellagent.Run
+
 // runShellAgentLibrary executes the shell-agent in-process using the
 // pre-built message array and library configuration from opts.
 //
@@ -36,7 +38,6 @@ func runShellAgentLibrary(ctx context.Context, task string, opts RunOptions) (co
 	}
 	messages = append(messages, llm.Message{Role: "user", Content: instPrompt})
 
-
 	req := shellagent.Request{
 		PreconstructedMessages: messages,
 		Config:                 lib.Config,
@@ -50,11 +51,24 @@ func runShellAgentLibrary(ctx context.Context, task string, opts RunOptions) (co
 		EnforceEarlyCommands:   lib.EnforceEarlyCommands,
 	}
 
-	result, runErr := shellagent.Run(ctx, req)
+	result, runErr := shellAgentRun(ctx, req)
 	if runErr != nil {
 		return "", "", "", runErr
 	}
+	if result.Error != nil {
+		return "", "", "", fmt.Errorf("shell-agent failed: %w", result.Error)
+	}
 
 	answer := strings.TrimSpace(result.Answer)
+	if result.ExitStatus != "Submitted" {
+		if result.ExitStatus == "" {
+			return "", "", "", fmt.Errorf("shell-agent exited without final answer")
+		}
+		return "", "", "", fmt.Errorf("shell-agent exited without final answer: %s", result.ExitStatus)
+	}
+	if answer == "" {
+		return "", "", "", fmt.Errorf("shell-agent submitted an empty final answer")
+	}
+
 	return "", answer, "", nil
 }

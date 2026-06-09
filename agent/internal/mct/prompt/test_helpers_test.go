@@ -1,6 +1,9 @@
 package prompt
 
-import "github.com/tursomari/machtiani/agent/internal/llm"
+import (
+	"github.com/tursomari/machtiani/agent/internal/llm"
+	"github.com/tursomari/machtiani/agent/internal/shell-agent/pkg/minisweagent"
+)
 
 func testPromptsConfig() *llm.MCTPromptsConfig {
 	return &llm.MCTPromptsConfig{
@@ -24,5 +27,17 @@ Current Request:
 {{end}}[stderr]
 {{.Stderr}}{{end}}`,
 		ReadmeSystemTemplate: "Test README system prompt.",
+	}
+}
+
+func testShellAgentLibraryConfig() *ShellAgentLibraryConfig {
+	return &ShellAgentLibraryConfig{
+		Config: &minisweagent.ShellAgentConfig{},
+		Prompts: &minisweagent.PromptsConfig{
+			ShellAgent: &minisweagent.ShellAgentPromptsConfig{
+				InstanceTemplate: "{{.Task}}",
+			},
+		},
+		PrebuiltMessages: []llm.Message{{Role: "system", Content: "test shell-agent system prompt"}},
 	}
 }

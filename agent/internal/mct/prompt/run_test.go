@@ -2,6 +2,7 @@ package prompt
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,7 +10,116 @@ import (
 
 	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/discoveryrunner"
+	shellagent "github.com/tursomari/machtiani/agent/internal/shell-agent"
 )
+
+func TestRunUsesShellAgentSubmittedAnswerWithoutChatFallback(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MACHTIANI_SESSION_ID", "test-shell-agent-submitted")
+
+	origShellAgentRun := shellAgentRun
+	shellAgentRun = func(ctx context.Context, req shellagent.Request) (shellagent.Result, error) {
+		if len(req.PreconstructedMessages) == 0 {
+			t.Fatalf("expected preconstructed shell-agent messages")
+		}
+		return shellagent.Result{ExitStatus: "Submitted", Answer: "\nfinal shell answer\n"}, nil
+	}
+	t.Cleanup(func() { shellAgentRun = origShellAgentRun })
+
+	origChat := chatStreamWithRuntime
+	chatStreamWithRuntime = func(ctx context.Context, model llm.ResolvedModel, fallbackAliases []string, fallbackModels []llm.ResolvedModel, extra map[string]any, messages []llm.Message, onToken func(string)) (string, error) {
+		t.Fatalf("did not expect normal chat fallback after shell-agent final answer")
+		return "", nil
+	}
+	t.Cleanup(func() { chatStreamWithRuntime = origChat })
+
+	res, err := Run(context.Background(), RunOptions{
+		Prompt:            "Investigate the issue.",
+		Mode:              "default",
+		Runtime:           ModelRuntime{Resolved: llm.ResolvedModel{Model: "planner-model"}},
+		ShellAgent:        true,
+		ShellAgentLibrary: testShellAgentLibraryConfig(),
+		Prompts:           testPromptsConfig(),
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if res.Assistant != "final shell answer" {
+		t.Fatalf("expected trimmed shell-agent answer, got %q", res.Assistant)
+	}
+	if !res.ShellAgentUsed {
+		t.Fatalf("expected ShellAgentUsed to be true")
+	}
+}
+
+func TestRunPropagatesShellAgentResultErrorWithoutChatFallback(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MACHTIANI_SESSION_ID", "test-shell-agent-result-error")
+
+	origShellAgentRun := shellAgentRun
+	shellAgentRun = func(ctx context.Context, req shellagent.Request) (shellagent.Result, error) {
+		return shellagent.Result{Error: errors.New("connection reset by peer")}, nil
+	}
+	t.Cleanup(func() { shellAgentRun = origShellAgentRun })
+
+	origChat := chatStreamWithRuntime
+	chatStreamWithRuntime = func(ctx context.Context, model llm.ResolvedModel, fallbackAliases []string, fallbackModels []llm.ResolvedModel, extra map[string]any, messages []llm.Message, onToken func(string)) (string, error) {
+		t.Fatalf("did not expect normal chat fallback after shell-agent error")
+		return "", nil
+	}
+	t.Cleanup(func() { chatStreamWithRuntime = origChat })
+
+	res, err := Run(context.Background(), RunOptions{
+		Prompt:            "Investigate the issue.",
+		Mode:              "default",
+		Runtime:           ModelRuntime{Resolved: llm.ResolvedModel{Model: "planner-model"}},
+		ShellAgent:        true,
+		ShellAgentLibrary: testShellAgentLibraryConfig(),
+		Prompts:           testPromptsConfig(),
+	})
+	if err == nil {
+		t.Fatalf("expected Run() to return shell-agent error")
+	}
+	if !strings.Contains(err.Error(), "connection reset by peer") {
+		t.Fatalf("expected shell-agent error to propagate, got %v", err)
+	}
+	if res.Assistant != "" {
+		t.Fatalf("expected no assistant fallback output, got %q", res.Assistant)
+	}
+}
+
+func TestRunRejectsEmptyShellAgentSubmittedAnswerWithoutChatFallback(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MACHTIANI_SESSION_ID", "test-shell-agent-empty-submitted")
+
+	origShellAgentRun := shellAgentRun
+	shellAgentRun = func(ctx context.Context, req shellagent.Request) (shellagent.Result, error) {
+		return shellagent.Result{ExitStatus: "Submitted", Answer: " \n\t "}, nil
+	}
+	t.Cleanup(func() { shellAgentRun = origShellAgentRun })
+
+	origChat := chatStreamWithRuntime
+	chatStreamWithRuntime = func(ctx context.Context, model llm.ResolvedModel, fallbackAliases []string, fallbackModels []llm.ResolvedModel, extra map[string]any, messages []llm.Message, onToken func(string)) (string, error) {
+		t.Fatalf("did not expect normal chat fallback after empty shell-agent submission")
+		return "", nil
+	}
+	t.Cleanup(func() { chatStreamWithRuntime = origChat })
+
+	_, err := Run(context.Background(), RunOptions{
+		Prompt:            "Investigate the issue.",
+		Mode:              "default",
+		Runtime:           ModelRuntime{Resolved: llm.ResolvedModel{Model: "planner-model"}},
+		ShellAgent:        true,
+		ShellAgentLibrary: testShellAgentLibraryConfig(),
+		Prompts:           testPromptsConfig(),
+	})
+	if err == nil {
+		t.Fatalf("expected Run() to reject empty shell-agent final answer")
+	}
+	if !strings.Contains(err.Error(), "empty final answer") {
+		t.Fatalf("expected empty final answer error, got %v", err)
+	}
+}
 
 func TestRunUsesAnswerRuntime(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
