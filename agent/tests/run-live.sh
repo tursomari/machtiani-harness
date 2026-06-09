@@ -290,7 +290,7 @@ class Handler(BaseHTTPRequestHandler):
         elif "You classify user requests for a developer assistant" in content:
             counts["preflight"] += 1
             reply = "content"
-        elif "You are the planning layer for the Machtiani shell agent." in content:
+        elif "You are the action-execution layer of the Machtiani shell agent." in content:
             counts["shell_agent"] += 1
             counts["last_shell_agent_content"] = content
             if "You MUST use forge" in content:

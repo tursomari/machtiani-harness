@@ -40,6 +40,7 @@ func runShellAgentLibrary(ctx context.Context, task string, opts RunOptions) (co
 
 	req := shellagent.Request{
 		PreconstructedMessages: messages,
+		Task:                   task,
 		Config:                 lib.Config,
 		Prompts:                lib.Prompts,
 		Model:                  lib.Model,

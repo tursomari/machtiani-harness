@@ -22,6 +22,9 @@ func TestRunUsesShellAgentSubmittedAnswerWithoutChatFallback(t *testing.T) {
 		if len(req.PreconstructedMessages) == 0 {
 			t.Fatalf("expected preconstructed shell-agent messages")
 		}
+		if req.Task != "Investigate the issue." {
+			t.Fatalf("expected shell-agent request task to match prompt, got %q", req.Task)
+		}
 		return shellagent.Result{ExitStatus: "Submitted", Answer: "\nfinal shell answer\n"}, nil
 	}
 	t.Cleanup(func() { shellAgentRun = origShellAgentRun })
