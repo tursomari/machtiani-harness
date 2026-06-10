@@ -18,7 +18,7 @@ Arguments:
                          generated from that ref to HEAD via "git diff".
 
 Options:
-  --cmd <command>        Command to run inside each container (bash -c).
+  --cmd <command>        Command to run inside each container (sh -c).
                          Default: verify all built binaries report version/help.
   --no-run               Skip running containers; only build both images.
   --parse-results      Parse per-test-case PASS/FAIL from each container output
@@ -260,7 +260,7 @@ docker run --rm \
     -e MACHTIANI_WORKSPACE_DEBUG=${MACHTIANI_WORKSPACE_DEBUG:-} \
     ${ENV_FLAGS[@]} \
     "$CONTROL_IMAGE" \
-    bash -c "$COMMAND; echo \$? > /output/exit_code" > "$CONTROL_OUT/stdout.log" 2> "$CONTROL_OUT/stderr.log" || CONTROL_RC=$?
+    sh -c "$COMMAND; echo \$? > /output/exit_code" > "$CONTROL_OUT/stdout.log" 2> "$CONTROL_OUT/stderr.log" || CONTROL_RC=$?
 set -e
 
 # Recover exit code from marker file; fall back to docker rc
@@ -295,7 +295,7 @@ docker run --rm \
     -e MACHTIANI_WORKSPACE_DEBUG=${MACHTIANI_WORKSPACE_DEBUG:-} \
     ${ENV_FLAGS[@]} \
     "$TREATMENT_IMAGE" \
-    bash -c "$COMMAND; echo \$? > /output/exit_code" > "$TREATMENT_OUT/stdout.log" 2> "$TREATMENT_OUT/stderr.log" || TREATMENT_RC=$?
+    sh -c "$COMMAND; echo \$? > /output/exit_code" > "$TREATMENT_OUT/stdout.log" 2> "$TREATMENT_OUT/stderr.log" || TREATMENT_RC=$?
 set -e
 
 if [[ -f "$TREATMENT_OUT/exit_code" ]]; then
