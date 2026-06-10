@@ -36,17 +36,19 @@ RUN PREFIX=/build ./scripts/install.sh --install-peripherals
 FROM debian:bookworm-slim
 
 # Install runtime dependencies
-RUN apt-get update && apt-get install -y ripgrep rsync && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y ripgrep rsync bash && rm -rf /var/lib/apt/lists/*
 
 # Copy built binaries from the builder stage
 COPY --from=builder /build/bin/ /usr/local/bin/
 COPY --link peripherals/mct-forge /usr/local/bin/mct-forge
 
 # Copy the Machtiani configuration
-COPY --from=builder /build/.machtiani/ /.machtiani/
+COPY --from=builder /build/.machtiani/ /workspace/.machtiani/
 
 # Point binaries at the config
-ENV MACHTIANI_CONFIG=/.machtiani/config.toml
+ENV MACHTIANI_CONFIG=/workspace/.machtiani/config.toml
+
+ENV REPO_ROOT=/workspace
 
 WORKDIR /workspace
 
