@@ -32,7 +32,11 @@ RUN if [ -n "${CHANGE_PATCH_B64}" ]; then \
       echo "${CHANGE_PATCH_B64}" | base64 -d > /tmp/change.patch && \
       # Remove the undici submodule gitlink (whose .git/modules/... entry is \
       # broken in the build context) to avoid breaking gits path resolution. \
-      rm -rf agent/internal/file-discovery/tests/undici && \
+      # Remove all submodule gitlinks (their .git/modules/... entries are \
+      # broken in the build context because .git/modules/ is excluded by \
+      # .dockerignore). This prevents gits path resolution from landing on \
+      # them and breaking checkout. \
+      find . -name .git -type f -o -name .git -type l 2>/dev/null | xargs -r rm -f && \
       # Revert patched files to HEAD~1 so the patch applies cleanly. \
       files=$(grep -E "^diff --git a/" /tmp/change.patch | sed -E "s|^diff --git a/||; s| b/.*||" | sort -u) && \
       for f in $files; do git -C /build checkout HEAD~1 -- "$f" || true; done && \
