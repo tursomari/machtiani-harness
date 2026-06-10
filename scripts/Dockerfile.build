@@ -52,6 +52,8 @@ FROM debian:bookworm-slim
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y ripgrep rsync bash python3 git && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /usr/local/go /usr/local/go
+ENV PATH=/usr/local/go/bin:$PATH
 
 # Copy built binaries from the builder stage
 COPY --from=builder /build/bin/ /usr/local/bin/
