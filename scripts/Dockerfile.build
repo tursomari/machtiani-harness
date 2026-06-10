@@ -41,6 +41,14 @@ RUN if [ -n "${CHANGE_PATCH_B64}" ]; then \
       files=$(grep -E "^diff --git a/" /tmp/change.patch | sed -E "s|^diff --git a/||; s| b/.*||" | sort -u) && \
       for f in $files; do git -C /build checkout HEAD~1 -- "$f" || true; done && \
       git apply /tmp/change.patch && \
+      # Commit the patched tree so the embedded commit hash matches HEAD.
+      # install.sh embeds $(git_short_commit) into the binary via -ldflags.
+      # check_bin at runtime compares the embedded commit against HEAD, so
+      # without this commit the embedded commit (old HEAD) would not match
+      # the runtime repo HEAD (same old HEAD but with a dirty tree), and
+      # check_bin hard-exits on "binary clean vs repo dirty" or
+      # "binary dirty vs repo clean" mismatches. The commit normalizes
+      # both commit and dirty state to "clean at the new HEAD".
       git -c user.email=builder@local -c user.name=builder commit -am "treatment patch"; \
     fi
 
@@ -52,6 +60,11 @@ FROM debian:bookworm-slim
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y ripgrep rsync bash python3 git && rm -rf /var/lib/apt/lists/*
+# Copy the Go toolchain from the builder stage (golang:1.23-bookworm) so
+# tests that shell out to `go build` (e.g. the snippet-discovery-tight-
+# readme test in agent/tests/run-live.sh) work in the runtime container.
+# Using the same Go version as the builder guarantees the runtime
+# `go` matches what built the binaries.
 COPY --from=builder /usr/local/go /usr/local/go
 ENV PATH=/usr/local/go/bin:$PATH
 
