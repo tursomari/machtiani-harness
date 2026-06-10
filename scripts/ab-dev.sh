@@ -21,6 +21,10 @@ Options:
   --cmd <command>        Command to run inside each container (bash -c).
                          Default: verify all built binaries report version/help.
   --no-run               Skip running containers; only build both images.
+  --env KEY=VALUE       Forward KEY=VALUE into both containers via docker
+                        run -e. May be specified multiple times. If --env
+                        is not used, all TEST_* env vars from the host
+                        are forwarded automatically.
 
 Output:
   Container output is collected under /tmp/mct-ab-output/control/ and
@@ -64,6 +68,8 @@ INPUT=""
 COMMAND="$DEFAULT_COMMAND"
 NO_RUN=false
 
+EXTRA_ENV=()
+ENV_EXPLICIT=false
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --cmd)
@@ -76,6 +82,11 @@ while [[ $# -gt 0 ]]; do
             ;;
         --help|-h)
             usage
+            ;;
+        --env)
+            EXTRA_ENV+=("$2")
+            ENV_EXPLICIT=true
+            shift 2
             ;;
         -*)
             echo "Error: unknown option: $1" >&2
@@ -96,6 +107,13 @@ done
 if [[ -z "${INPUT:-}" ]]; then
     echo "Error: <patch-file|git-ref> argument is required" >&2
     usage
+fi
+
+# Default: forward all TEST_* env vars from host when --env not specified
+if [[ "$ENV_EXPLICIT" == false ]]; then
+    while IFS= read -r var; do
+        EXTRA_ENV+=("$var=${!var}")
+    done < <(compgen -v TEST_)
 fi
 
 # ----------------------------------------------------------------------------
@@ -205,6 +223,14 @@ fi
 
 echo ""
 echo "============================================================"
+# Build docker -e flags from EXTRA_ENV
+ENV_FLAGS=()
+for kv in "${EXTRA_ENV[@]}"; do
+    ENV_FLAGS+=(-e "$kv")
+done
+if [[ ${#ENV_FLAGS[@]} -gt 0 ]]; then
+    echo "[env] Forwarding ${#ENV_FLAGS[@]} env var(s) into containers: ${EXTRA_ENV[*]}"
+fi
 echo "  Step 3 — Run control container"
 echo "============================================================"
 
@@ -224,6 +250,7 @@ docker run --rm \
     --volume "$CONTROL_OUT:/output:rw" \
     $FORGE_MOUNT \
     -e MACHTIANI_WORKSPACE_DEBUG=${MACHTIANI_WORKSPACE_DEBUG:-} \
+    ${ENV_FLAGS[@]} \
     "$CONTROL_IMAGE" \
     bash -c "$COMMAND; echo \$? > /output/exit_code" > "$CONTROL_OUT/stdout.log" 2> "$CONTROL_OUT/stderr.log" || CONTROL_RC=$?
 set -e
@@ -258,6 +285,7 @@ docker run --rm \
     --volume "$TREATMENT_OUT:/output:rw" \
     $FORGE_MOUNT \
     -e MACHTIANI_WORKSPACE_DEBUG=${MACHTIANI_WORKSPACE_DEBUG:-} \
+    ${ENV_FLAGS[@]} \
     "$TREATMENT_IMAGE" \
     bash -c "$COMMAND; echo \$? > /output/exit_code" > "$TREATMENT_OUT/stdout.log" 2> "$TREATMENT_OUT/stderr.log" || TREATMENT_RC=$?
 set -e
