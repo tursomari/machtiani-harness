@@ -23,8 +23,11 @@ COPY --link scripts/ ./scripts/
 # Copy the .machtiani configuration
 COPY --link .machtiani/ ./.machtiani/
 
+# Copy .git so git apply and install.sh ldflag embedding (git_short_commit, git_dirty_flag) can run
+COPY --link .git/ ./.git/
+
 # Optionally apply a change patch for version B builds
-RUN if [ -n "${CHANGE_PATCH_B64}" ]; then echo "${CHANGE_PATCH_B64}" | base64 -d > /tmp/change.patch && git apply /tmp/change.patch; fi
+RUN if [ -n "${CHANGE_PATCH_B64}" ]; then echo "${CHANGE_PATCH_B64}" | base64 -d > /tmp/change.patch && git apply /tmp/change.patch && git -c user.email=builder@local -c user.name=builder commit -am "treatment patch"; fi
 
 # Build all binaries (mct-agent, mct, file-discovery, snippet-discovery, shell-agent) into /build/bin
 RUN PREFIX=/build ./scripts/install.sh --install-peripherals
