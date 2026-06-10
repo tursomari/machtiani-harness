@@ -69,10 +69,17 @@ ENV REPO_ROOT=/workspace
 WORKDIR /workspace
 
 RUN git config --global --add safe.directory /workspace && \
+    git config --global --add safe.directory /workspace/.machtiani/artifacts/readme && \
     git config --global user.email "ab@local" && \
     git config --global user.name "ab" && \
     git init -b main && \
     git add -A && \
-    git commit -m "initial" --allow-empty
+    git commit -m "initial" --allow-empty && \
+    HEAD_HASH=$(git rev-parse HEAD) && \
+    if [ -d /workspace/.machtiani/artifacts/readme/.git ]; then \
+      git -C /workspace/.machtiani/artifacts/readme config user.email "ab@local" && \
+      git -C /workspace/.machtiani/artifacts/readme config user.name "ab" && \
+      git -C /workspace/.machtiani/artifacts/readme tag -f "oid-${HEAD_HASH}" HEAD; \
+    fi
 
 ENTRYPOINT ["/bin/sh"]
