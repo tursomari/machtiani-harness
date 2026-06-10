@@ -94,7 +94,7 @@ fi
 AGENT_LDFLAGS="-X main.Version=${AGENT_VERSION} -X main.Commit=${AGENT_COMMIT} -X main.BuiltAt=${BUILD_AT} -X main.Dirty=${AGENT_DIRTY}"
 (
   cd "$REPO_ROOT/agent"
-  go build -buildvcs=true -ldflags "$AGENT_LDFLAGS" -o "$BIN_DIR/mct-agent" ./cmd/mct-agent
+  go build -buildvcs=false -ldflags "$AGENT_LDFLAGS" -o "$BIN_DIR/mct-agent" ./cmd/mct-agent
 )
 
 if $INSTALL_PERIPHERALS; then
@@ -124,13 +124,13 @@ if $INSTALL_PERIPHERALS; then
   SNIPPET_LDFLAGS="-X main.version=${SNIPPET_VERSION} -X main.commit=${SNIPPET_COMMIT} -X main.builtAt=${BUILD_AT} -X main.dirty=${SNIPPET_DIRTY}"
   (
     cd "$REPO_ROOT/agent/internal/snippet-discovery"
-    go build -buildvcs=true -ldflags "$SNIPPET_LDFLAGS" -o "$BIN_DIR/snippet-discovery" ./cmd/snippet-discovery
+    go build -buildvcs=false -ldflags "$SNIPPET_LDFLAGS" -o "$BIN_DIR/snippet-discovery" ./cmd/snippet-discovery
   )
 
   log "Building shell-agent"
   (
     cd "$REPO_ROOT/agent/internal/shell-agent"
-    go build -buildvcs=true -o "$BIN_DIR/shell-agent" ./cmd/shell-agent
+    go build -buildvcs=false -o "$BIN_DIR/shell-agent" ./cmd/shell-agent
   )
 fi
 

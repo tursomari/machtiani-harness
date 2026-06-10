@@ -61,20 +61,20 @@ if [ "$RELEASE" = true ]; then
   LD_FLAGS=$(run_generate_ldflags --release "https://machtiani2.p.rapidapi.com https://machtiani2.p.rapidapi.com")
 
   # Build for macOS (Intel)
-  GOOS=darwin GOARCH=amd64 go build -buildvcs=true -ldflags "$LD_FLAGS" -o machtiani-darwin-amd64 ./cmd/mct
+  GOOS=darwin GOARCH=amd64 go build -buildvcs=false -ldflags "$LD_FLAGS" -o machtiani-darwin-amd64 ./cmd/mct
 
   # Build for macOS (Apple Silicon)
-  GOOS=darwin GOARCH=arm64 go build -buildvcs=true -ldflags "$LD_FLAGS" -o machtiani-darwin-arm64 ./cmd/mct
+  GOOS=darwin GOARCH=arm64 go build -buildvcs=false -ldflags "$LD_FLAGS" -o machtiani-darwin-arm64 ./cmd/mct
 
   # Build for Linux (x86_64)
-  GOOS=linux GOARCH=amd64 go build -buildvcs=true -ldflags "$LD_FLAGS" -o machtiani-linux-amd64 ./cmd/mct
+  GOOS=linux GOARCH=amd64 go build -buildvcs=false -ldflags "$LD_FLAGS" -o machtiani-linux-amd64 ./cmd/mct
 
 else
   # Generate ldflags (dev mode)
   LD_FLAGS=$(run_generate_ldflags)
 
   # Build the main application with ldflags
-  go build -buildvcs=true -ldflags "$LD_FLAGS" -o "$BIN_DIR/mct" ./cmd/mct
+  go build -buildvcs=false -ldflags "$LD_FLAGS" -o "$BIN_DIR/mct" ./cmd/mct
 
   # Build local file-discovery helper (internal copy)
   FD_COMMIT=$(git -C ../file-discovery rev-parse --short=12 HEAD 2>/dev/null || echo unknown)
@@ -105,8 +105,8 @@ else
   FD_GOCACHE="$(pwd)/.gocache"
   # Try to respect a local GOCACHE if present
   if [ -d .gocache ]; then
-    (cd ../file-discovery && GOCACHE="$FD_GOCACHE" go build -buildvcs=true -ldflags "$FD_LDFLAGS" -o "$FD_OUTPUT" ./cmd/file-discovery)
+    (cd ../file-discovery && GOCACHE="$FD_GOCACHE" go build -buildvcs=false -ldflags "$FD_LDFLAGS" -o "$FD_OUTPUT" ./cmd/file-discovery)
   else
-    (cd ../file-discovery && go build -buildvcs=true -ldflags "$FD_LDFLAGS" -o "$FD_OUTPUT" ./cmd/file-discovery)
+    (cd ../file-discovery && go build -buildvcs=false -ldflags "$FD_LDFLAGS" -o "$FD_OUTPUT" ./cmd/file-discovery)
   fi
 fi

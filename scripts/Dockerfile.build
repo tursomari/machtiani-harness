@@ -1,5 +1,6 @@
 # Stage 1: builder
 FROM golang:1.23-bookworm AS builder
+ENV GOFLAGS=-buildvcs=auto
 
 # Optional patch to apply for version B builds
 ARG CHANGE_PATCH_B64
