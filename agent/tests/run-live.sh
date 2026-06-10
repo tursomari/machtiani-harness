@@ -653,7 +653,11 @@ check_bin() {
 }
 
 echo "== Preflight: verifying mct-agent binary ==" >&2
-check_bin MCT_AGENT_BIN mct-agent "$REPO_ROOT/agent" "--version"
+if [ -n "${MCT_AGENT_BIN:-}" ]; then
+  echo "Using MCT_AGENT_BIN from environment: $MCT_AGENT_BIN" >&2
+else
+  check_bin MCT_AGENT_BIN mct-agent "$REPO_ROOT/agent" "--version"
+fi
 echo "Preflight OK" >&2
 
 echo >&2
