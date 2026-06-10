@@ -28,6 +28,10 @@ Options:
                         run -e. May be specified multiple times. If --env
                         is not used, all TEST_* env vars from the host
                         are forwarded automatically.
+  --control-commit <ref> Check out the specified commit before building the
+                        control image, then restore HEAD afterward. When not
+                        given, the control image is built from the current
+                        working tree (default).
 
 Output:
   Container output is collected under /tmp/mct-ab-output/control/ and
@@ -71,6 +75,7 @@ INPUT=""
 COMMAND="$DEFAULT_COMMAND"
 NO_RUN=false
 PARSE_RESULTS=false
+CONTROL_COMMIT=""
 
 EXTRA_ENV=()
 ENV_EXPLICIT=false
@@ -94,6 +99,10 @@ while [[ $# -gt 0 ]]; do
         --env)
             EXTRA_ENV+=("$2")
             ENV_EXPLICIT=true
+            shift 2
+            ;;
+        --control-commit)
+            CONTROL_COMMIT="$2"
             shift 2
             ;;
         -*)
@@ -180,6 +189,22 @@ else
 fi
 
 # ----------------------------------------------------------------------------
+# Control-commit checkout (if requested)
+# ----------------------------------------------------------------------------
+if [[ -n "${CONTROL_COMMIT:-}" ]]; then
+    ORIG_HEAD="$(git -C "$REPO_ROOT" rev-parse HEAD)"
+    echo "[control] Using control commit: $CONTROL_COMMIT (original HEAD was $ORIG_HEAD)"
+
+    restore_head() {
+        echo "[control] Restoring original HEAD ($ORIG_HEAD)"
+        git -C "$REPO_ROOT" checkout "$ORIG_HEAD" 2>/dev/null || true
+    }
+    trap 'restore_head; cleanup_patch' EXIT
+
+    git -C "$REPO_ROOT" checkout --detach "$CONTROL_COMMIT"
+fi
+
+# ----------------------------------------------------------------------------
 # Build the control image (version A, no patch)
 # ----------------------------------------------------------------------------
 echo ""
@@ -195,6 +220,13 @@ DOCKER_BUILDKIT=1 docker build \
     "$REPO_ROOT"
 
 echo "[build:control] Image built: $CONTROL_IMAGE"
+
+# Restore HEAD now that the control image is built
+if [[ -n "${CONTROL_COMMIT:-}" ]]; then
+    echo "[control] Restoring original HEAD ($ORIG_HEAD)"
+    git -C "$REPO_ROOT" checkout "$ORIG_HEAD"
+    trap cleanup_patch EXIT
+fi
 
 # ----------------------------------------------------------------------------
 # Build the treatment image (version B, with the change applied)
