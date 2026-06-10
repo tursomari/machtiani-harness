@@ -1,0 +1,21 @@
+# Machtiani runtime state - large session artifacts and caches
+/.machtiani/sessions/
+/.machtiani/tmp/
+/.machtiani/artifacts/
+/.machtiani/issues/
+
+# Git internals - submodule data, lost-found objects, and worktree metadata (multi-GB)
+/.git/modules/
+/.git/lost-found/
+/.git/worktrees/
+
+# Third-party submodules
+/third_party/
+
+# Plan and notes markdown files at the repository root
+/docker-ab-testing-action-plan*.md
+/*.md
+
+# Stray test output logs at the repository root
+/stdout.log
+/stderr.log
