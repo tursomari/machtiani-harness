@@ -260,7 +260,7 @@ docker run --rm \
     -e MACHTIANI_WORKSPACE_DEBUG=${MACHTIANI_WORKSPACE_DEBUG:-} \
     ${ENV_FLAGS[@]} \
     "$CONTROL_IMAGE" \
-    sh -c "$COMMAND; echo \$? > /output/exit_code" > "$CONTROL_OUT/stdout.log" 2> "$CONTROL_OUT/stderr.log" || CONTROL_RC=$?
+    -c "$COMMAND; echo \$? > /output/exit_code" > "$CONTROL_OUT/stdout.log" 2> "$CONTROL_OUT/stderr.log" || CONTROL_RC=$?
 set -e
 
 # Recover exit code from marker file; fall back to docker rc
@@ -295,7 +295,7 @@ docker run --rm \
     -e MACHTIANI_WORKSPACE_DEBUG=${MACHTIANI_WORKSPACE_DEBUG:-} \
     ${ENV_FLAGS[@]} \
     "$TREATMENT_IMAGE" \
-    sh -c "$COMMAND; echo \$? > /output/exit_code" > "$TREATMENT_OUT/stdout.log" 2> "$TREATMENT_OUT/stderr.log" || TREATMENT_RC=$?
+    -c "$COMMAND; echo \$? > /output/exit_code" > "$TREATMENT_OUT/stdout.log" 2> "$TREATMENT_OUT/stderr.log" || TREATMENT_RC=$?
 set -e
 
 if [[ -f "$TREATMENT_OUT/exit_code" ]]; then
