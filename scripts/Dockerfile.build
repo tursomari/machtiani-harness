@@ -34,7 +34,7 @@ RUN if [ -n "${CHANGE_PATCH_B64}" ]; then \
       # so the patch applies cleanly on top of the base state, not HEAD. \
       files=$(grep -E "^diff --git a/" /tmp/change.patch | sed -E "s|^diff --git a/||; s| b/.*||" | sort -u) && \
       echo "Reverting to HEAD~1 for patched paths:" && echo "$files" && \
-      for f in $files; do git -C /build checkout HEAD~1 -- "$f" || true; done && \
+      for f in $files; do git -C /build checkout HEAD~1 -- "/build/$f" || true; done && \
       git apply /tmp/change.patch && \
       git -c user.email=builder@local -c user.name=builder commit -am "treatment patch"; \
     fi
