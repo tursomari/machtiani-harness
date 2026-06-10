@@ -44,6 +44,7 @@ COPY --link peripherals/mct-forge /usr/local/bin/mct-forge
 
 # Copy the Machtiani configuration
 COPY --from=builder /build/.machtiani/ /workspace/.machtiani/
+COPY --link --from=builder /build/agent/ /workspace/agent/
 
 # Point binaries at the config
 ENV MACHTIANI_CONFIG=/workspace/.machtiani/config.toml
