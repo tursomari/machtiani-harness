@@ -30,6 +30,7 @@ COPY --link .git/ ./.git/
 # Optionally apply a change patch for version B builds
 RUN if [ -n "${CHANGE_PATCH_B64}" ]; then \
       echo "${CHANGE_PATCH_B64}" | base64 -d > /tmp/change.patch && \
+      git read-tree HEAD~1 && \
       git apply --3way /tmp/change.patch; \
     fi
 
