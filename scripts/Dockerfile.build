@@ -30,8 +30,14 @@ COPY --link .git/ ./.git/
 # Optionally apply a change patch for version B builds
 RUN if [ -n "${CHANGE_PATCH_B64}" ]; then \
       echo "${CHANGE_PATCH_B64}" | base64 -d > /tmp/change.patch && \
-      git read-tree HEAD~1 && \
-      git apply --3way /tmp/change.patch; \
+      # Remove the undici submodule gitlink (whose .git/modules/... entry is \
+      # broken in the build context) to avoid breaking gits path resolution. \
+      rm -rf agent/internal/file-discovery/tests/undici && \
+      # Revert patched files to HEAD~1 so the patch applies cleanly. \
+      files=$(grep -E "^diff --git a/" /tmp/change.patch | sed -E "s|^diff --git a/||; s| b/.*||" | sort -u) && \
+      for f in $files; do git -C /build checkout HEAD~1 -- "$f" || true; done && \
+      git apply /tmp/change.patch && \
+      git -c user.email=builder@local -c user.name=builder commit -am "treatment patch"; \
     fi
 
 # Build all binaries (mct-agent, mct, file-discovery, snippet-discovery, shell-agent) into /build/bin
