@@ -46,9 +46,6 @@ func TestParseDecisionAskWorker(t *testing.T) {
 	}
 }
 
-
-
-
 func TestParseDecisionAnswerUser(t *testing.T) {
 	resp := "Decision: answer_user"
 	dec, remainder, preamble := parseDecision(resp)
@@ -116,7 +113,6 @@ func TestParseDecisionVariants(t *testing.T) {
 		})
 	}
 }
-
 
 func TestParseDecisionCaseInsensitive(t *testing.T) {
 	tests := []struct {
@@ -248,11 +244,11 @@ Ask: Run ` + "`" + `grep -n "Decision:" agent/internal/planner/planner.go` + "`"
 
 func TestParseAskMenuRejectsFreeformAnswer(t *testing.T) {
 	resp := strings.TrimSpace(`
-## Answer
-
+<answer>
 Confidence: 100% - The planner chose ask.
 
 Confidence: 100% - The model then answered instead of asking.
+</answer>
 `)
 	_, _, err := parseAskMenu(resp)
 	if err == nil {
@@ -311,7 +307,7 @@ func TestGenerateAskRetriesWhenModelReturnsAnswerInsteadOfAsk(t *testing.T) {
 		case strings.Contains(content, "Ask Mode:") && strings.Contains(content, "Ask request:"):
 			askCalls++
 			if askCalls == 1 {
-				return "## Answer\n\nConfidence: 100% - Here is the final explanation.\n\nConfidence: 100% - It is complete.", nil
+				return "<answer>\nConfidence: 100% - Here is the final explanation.\n\nConfidence: 100% - It is complete.\n</answer>", nil
 			}
 			return "Ask Mode: no-shell\nAsk: Explain how provider events flow from CodexAppServerManager to the orchestration layer.", nil
 		}
@@ -322,7 +318,7 @@ func TestGenerateAskRetriesWhenModelReturnsAnswerInsteadOfAsk(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generateAsk error: %v", err)
 	}
-	if strings.HasPrefix(strings.TrimSpace(ask), "## Answer") {
+	if strings.HasPrefix(strings.TrimSpace(ask), "<answer>") {
 		t.Fatalf("expected answer-like output to be rejected, got %q", ask)
 	}
 	if !strings.Contains(ask, "provider events flow") {
@@ -485,8 +481,8 @@ func TestPlanAskLoopIntegration(t *testing.T) {
 	transcript := "== TURN 0\nQuestion: Summarize ask monitor guardrails."
 
 	var (
-		planCalls    int
-		askCalls     int
+		planCalls int
+		askCalls  int
 	)
 	client.chatFn = func(_ context.Context, messages []llm.Message) (string, error) {
 		content := messages[len(messages)-1].Content
@@ -764,15 +760,6 @@ func TestGenerateAskRetryExhaustionReturnsLastAsk(t *testing.T) {
 		t.Fatalf("expected %d ask/mixed calls, got ask=%d mixed=%d", expectedCalls, askCalls, mixedCalls)
 	}
 }
-
-
-
-
-
-
-
-
-
 
 func TestPlanSystemPromptOmitsTranscript(t *testing.T) {
 	client := NewClient(ClientConfig{
@@ -1216,11 +1203,11 @@ func TestBuildFinalizeMessagesPreservesCleanConversationOrdering(t *testing.T) {
 	conv.AddMessage("assistant", "## Determination: Running in a local environment.", map[string]any{"type": "final", "turns": 1, "capped": false})
 	conv.AddMessage("user", "List the last 3 commit messages in the project root and also the gitsubmodule `agent/internal/shell-agent/`.", nil)
 	conv.AddMessage("assistant", "Run `git -C /repo log --oneline -3` for the project root, then `git -C /repo/agent/internal/shell-agent log --oneline -3` for the submodule.", map[string]any{"type": "ask", "turn": 2, "decision": "ask_worker"})
-	conv.AddMessage("assistant", "## Answer\n- Confidence: 100% - Retrieved the last 3 commits for both repositories.", map[string]any{"type": "answer", "turn": 2})
+	conv.AddMessage("assistant", "- Confidence: 100% - Retrieved the last 3 commits for both repositories.", map[string]any{"type": "answer", "turn": 2})
 	conv.AddMessage("assistant", "Revised Goal: List the last 3 commit messages for the project root and the `agent/internal/shell-agent/` submodule.", map[string]any{"type": "final", "turns": 2, "capped": false})
 	conv.AddMessage("user", "list any untracked files or modified tracked files in project root and in git submoodule", nil)
 	conv.AddMessage("assistant", "Run `git -C /workspace status --short` for the project root, then `git -C /workspace/agent/internal/shell-agent status --short` for the submodule.", map[string]any{"type": "ask", "turn": 3, "decision": "ask_worker"})
-	conv.AddMessage("assistant", "## Answer\n- Confidence: 100% - Reported modified and untracked files for the project root and submodule.", map[string]any{"type": "answer", "turn": 3})
+	conv.AddMessage("assistant", "- Confidence: 100% - Reported modified and untracked files for the project root and submodule.", map[string]any{"type": "answer", "turn": 3})
 
 	messages := client.buildFinalizeMessages(context.Background(), conv, "stale goal")
 	if len(messages) != 11 {
@@ -1253,11 +1240,11 @@ func TestBuildFinalizeMessagesMatchesCleanedSessionWireTranscript(t *testing.T) 
 	conv.AddMessage("assistant", "## Determination: Running in a local environment.\n\nThe session is running in a local environment.", map[string]any{"type": "final", "turns": 1, "capped": false})
 	conv.AddMessage("user", "List the last 3 commit messages in the project root and also the gitsubmodule `agent/internal/shell-agent/`.", nil)
 	conv.AddMessage("assistant", "Run `git -C /repo log --oneline -3` for the project root, then `git -C /repo/agent/internal/shell-agent log --oneline -3` for the submodule. Report the 3 commit messages from each location.\n\nI understand that I don't have access to a shell directly. The `shell-agent` will carry out my request and report back with explanation of the results and not necessarily the full output of commands it executes.", map[string]any{"type": "ask", "turn": 2, "decision": "ask_worker"})
-	conv.AddMessage("assistant", "## Answer\n- Confidence: 100% - The project root (`/workspace`) shows these 3 most recent commits: (1) `c8c48c0 Refactor planner prompt layering`, (2) `c442854 chore: untrack a refactor todo.`, (3) `f808483 chore(templates): sync local overrides with embedded defaults`.\n- Confidence: 100% - The submodule (`/workspace/agent/internal/shell-agent`) shows these 3 most recent commits: (1) `1deb3e5 fix: tighten repo-root recursive grep validation`, (2) `2b1cfb9 fix: reject broad recursive grep from repo root`, (3) `0ff19c3 chore: add dockerfile for useful tools for handling documents.`", map[string]any{"type": "answer", "turn": 2})
+	conv.AddMessage("assistant", "- Confidence: 100% - The project root (`/workspace`) shows these 3 most recent commits: (1) `c8c48c0 Refactor planner prompt layering`, (2) `c442854 chore: untrack a refactor todo.`, (3) `f808483 chore(templates): sync local overrides with embedded defaults`.\n- Confidence: 100% - The submodule (`/workspace/agent/internal/shell-agent`) shows these 3 most recent commits: (1) `1deb3e5 fix: tighten repo-root recursive grep validation`, (2) `2b1cfb9 fix: reject broad recursive grep from repo root`, (3) `0ff19c3 chore: add dockerfile for useful tools for handling documents.`", map[string]any{"type": "answer", "turn": 2})
 	conv.AddMessage("assistant", "Revised Goal: List the last 3 commit messages for the project root and the `agent/internal/shell-agent/` submodule.\n\n## Last 3 Commits — Project Root (`/workspace`)\n\n| # | Hash | Message |\n|---|---|---|\n| 1 | `c8c48c0` | Refactor planner prompt layering |\n| 2 | `c442854` | chore: untrack a refactor todo. |\n| 3 | `f808483` | chore(templates): sync local overrides with embedded defaults |\n\n## Last 3 Commits — Submodule (`agent/internal/shell-agent/`)\n\n| # | Hash | Message |\n|---|---|---|\n| 1 | `1deb3e5` | fix: tighten repo-root recursive grep validation |\n| 2 | `2b1cfb9` | fix: reject broad recursive grep from repo root |\n| 3 | `0ff19c3` | chore: add dockerfile for useful tools for handling documents. |\n\nNo gaps or uncertainty remain — both commit histories were retrieved directly from `git log` in the respective directories.", map[string]any{"type": "final", "turns": 2, "capped": false})
 	conv.AddMessage("user", "list any untracked files or modified tracked files in project root and in git submoodule", nil)
 	conv.AddMessage("assistant", "Run `git -C /workspace status --short` for the project root, then `git -C /workspace/agent/internal/shell-agent status --short` for the submodule. Report any untracked or modified files found in each location.\n\nI understand that I don't have access to a shell directly. The `shell-agent` will carry out my request and report back with explanation of the results and not necessarily the full output of commands it executes.", map[string]any{"type": "ask", "turn": 3, "decision": "ask_worker"})
-	conv.AddMessage("assistant", "## Answer\n- Confidence: 100% - The project root (`/workspace`) has the following modified/untracked files: `README.md` (staged modification), `agent/internal/llm/config.go` (unstaged modification), `agent/internal/session/runner_state.go` (unstaged modification), `agent/internal/session/runner_state_test.go` (unstaged modification), `agent/internal/shell-agent` (submodule pointer modified), and `.git.hydrated/` (untracked directory).\n- Confidence: 100% - The submodule (`/workspace/agent/internal/shell-agent`) has one modified file: `internal/environments/tempdir.go` (unstaged modification).", map[string]any{"type": "answer", "turn": 3})
+	conv.AddMessage("assistant", "- Confidence: 100% - The project root (`/workspace`) has the following modified/untracked files: `README.md` (staged modification), `agent/internal/llm/config.go` (unstaged modification), `agent/internal/session/runner_state.go` (unstaged modification), `agent/internal/session/runner_state_test.go` (unstaged modification), `agent/internal/shell-agent` (submodule pointer modified), and `.git.hydrated/` (untracked directory).\n- Confidence: 100% - The submodule (`/workspace/agent/internal/shell-agent`) has one modified file: `internal/environments/tempdir.go` (unstaged modification).", map[string]any{"type": "answer", "turn": 3})
 
 	messages := client.buildFinalizeMessages(context.Background(), conv, "stale goal")
 	if len(messages) != 11 {
@@ -1276,11 +1263,11 @@ func TestBuildFinalizeMessagesMatchesCleanedSessionWireTranscript(t *testing.T) 
 		{role: "assistant", content: "## Determination: Running in a local environment.\n\nThe session is running in a local environment."},
 		{role: "user", content: "List the last 3 commit messages in the project root and also the gitsubmodule `agent/internal/shell-agent/`."},
 		{role: "assistant", content: "[work_request] Run `git -C /repo log --oneline -3` for the project root, then `git -C /repo/agent/internal/shell-agent log --oneline -3` for the submodule. Report the 3 commit messages from each location.\n\nI understand that I don't have access to a shell directly. The `shell-agent` will carry out my request and report back with explanation of the results and not necessarily the full output of commands it executes."},
-		{role: "assistant", content: "[work_result] ## Answer\n- Confidence: 100% - The project root (`/workspace`) shows these 3 most recent commits: (1) `c8c48c0 Refactor planner prompt layering`, (2) `c442854 chore: untrack a refactor todo.`, (3) `f808483 chore(templates): sync local overrides with embedded defaults`.\n- Confidence: 100% - The submodule (`/workspace/agent/internal/shell-agent`) shows these 3 most recent commits: (1) `1deb3e5 fix: tighten repo-root recursive grep validation`, (2) `2b1cfb9 fix: reject broad recursive grep from repo root`, (3) `0ff19c3 chore: add dockerfile for useful tools for handling documents.`"},
+		{role: "assistant", content: "[work_result] - Confidence: 100% - The project root (`/workspace`) shows these 3 most recent commits: (1) `c8c48c0 Refactor planner prompt layering`, (2) `c442854 chore: untrack a refactor todo.`, (3) `f808483 chore(templates): sync local overrides with embedded defaults`.\n- Confidence: 100% - The submodule (`/workspace/agent/internal/shell-agent`) shows these 3 most recent commits: (1) `1deb3e5 fix: tighten repo-root recursive grep validation`, (2) `2b1cfb9 fix: reject broad recursive grep from repo root`, (3) `0ff19c3 chore: add dockerfile for useful tools for handling documents.`"},
 		{role: "assistant", content: "Revised Goal: List the last 3 commit messages for the project root and the `agent/internal/shell-agent/` submodule.\n\n## Last 3 Commits — Project Root (`/workspace`)\n\n| # | Hash | Message |\n|---|---|---|\n| 1 | `c8c48c0` | Refactor planner prompt layering |\n| 2 | `c442854` | chore: untrack a refactor todo. |\n| 3 | `f808483` | chore(templates): sync local overrides with embedded defaults |\n\n## Last 3 Commits — Submodule (`agent/internal/shell-agent/`)\n\n| # | Hash | Message |\n|---|---|---|\n| 1 | `1deb3e5` | fix: tighten repo-root recursive grep validation |\n| 2 | `2b1cfb9` | fix: reject broad recursive grep from repo root |\n| 3 | `0ff19c3` | chore: add dockerfile for useful tools for handling documents. |\n\nNo gaps or uncertainty remain — both commit histories were retrieved directly from `git log` in the respective directories."},
 		{role: "user", content: "list any untracked files or modified tracked files in project root and in git submoodule"},
 		{role: "assistant", content: "[work_request] Run `git -C /workspace status --short` for the project root, then `git -C /workspace/agent/internal/shell-agent status --short` for the submodule. Report any untracked or modified files found in each location.\n\nI understand that I don't have access to a shell directly. The `shell-agent` will carry out my request and report back with explanation of the results and not necessarily the full output of commands it executes."},
-		{role: "assistant", content: "[work_result] ## Answer\n- Confidence: 100% - The project root (`/workspace`) has the following modified/untracked files: `README.md` (staged modification), `agent/internal/llm/config.go` (unstaged modification), `agent/internal/session/runner_state.go` (unstaged modification), `agent/internal/session/runner_state_test.go` (unstaged modification), `agent/internal/shell-agent` (submodule pointer modified), and `.git.hydrated/` (untracked directory).\n- Confidence: 100% - The submodule (`/workspace/agent/internal/shell-agent`) has one modified file: `internal/environments/tempdir.go` (unstaged modification)."},
+		{role: "assistant", content: "[work_result] - Confidence: 100% - The project root (`/workspace`) has the following modified/untracked files: `README.md` (staged modification), `agent/internal/llm/config.go` (unstaged modification), `agent/internal/session/runner_state.go` (unstaged modification), `agent/internal/session/runner_state_test.go` (unstaged modification), `agent/internal/shell-agent` (submodule pointer modified), and `.git.hydrated/` (untracked directory).\n- Confidence: 100% - The submodule (`/workspace/agent/internal/shell-agent`) has one modified file: `internal/environments/tempdir.go` (unstaged modification)."},
 		{role: "user", content: answerTheUserPrompt},
 	}
 
@@ -1371,5 +1358,3 @@ func cacheAnchorBool(metadata map[string]any, key string) bool {
 	}
 	return false
 }
-
-

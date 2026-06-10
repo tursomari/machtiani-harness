@@ -114,6 +114,25 @@ func TestShellAgentFinalAnswerTemplatesRequireConfidenceScore(t *testing.T) {
 	}
 }
 
+func TestShellAgentTemplatesUseAnswerTagsForFinalization(t *testing.T) {
+	keys := []string{
+		"shell_agent.system_template",
+		"shell_agent.instance_template",
+		"shell_agent.lightweight_system_template",
+		"shell_agent.lightweight_intent_template",
+		"shell_agent.format_error_template",
+	}
+	for _, key := range keys {
+		got, err := GetEmbeddedTemplate(key)
+		if err != nil {
+			t.Fatalf("GetEmbeddedTemplate(%s) error: %v", key, err)
+		}
+		if !strings.Contains(got, "<answer>") || !strings.Contains(got, "</answer>") {
+			t.Fatalf("%s missing answer tag finalization contract\n%s", key, got)
+		}
+	}
+}
+
 // TestShellAgentTemplatesDoNotUseFencedBlockCommandFormat is a regression check
 // introduced after commit 46d5e8c. That commit moved shell-agent command
 // formatting from fenced-block syntax (```bash) to XML command tags,

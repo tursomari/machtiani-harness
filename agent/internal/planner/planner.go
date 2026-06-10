@@ -22,9 +22,9 @@ import (
 type Decision string
 
 const (
-	DecisionAskWorker   Decision = "ask_worker"
-	DecisionAnswerUser  Decision = "answer_user"
-	DecisionAskUser     Decision = "ask_user"
+	DecisionAskWorker  Decision = "ask_worker"
+	DecisionAnswerUser Decision = "answer_user"
+	DecisionAskUser    Decision = "ask_user"
 )
 
 type AskMode string
@@ -1038,7 +1038,6 @@ func renderMessagesForLogging(messages []llm.Message) string {
 	return strings.TrimSpace(b.String())
 }
 
-
 // Finalize composes the final answer using the structured conversation on the shared planner thread.
 func (c *Client) Finalize(ctx context.Context, conv *conversation.Conversation, goal string) (string, error) {
 	if c.cfg.DryRun {
@@ -1612,7 +1611,8 @@ func looksLikeAnswerInsteadOfAsk(ask string) bool {
 		return false
 	}
 	switch {
-	case strings.HasPrefix(trimmed, "## answer"),
+	case strings.HasPrefix(trimmed, "<answer>"),
+		strings.Contains(trimmed, "<answer>") && strings.Contains(trimmed, "</answer>"),
 		strings.HasPrefix(trimmed, "answer:"),
 		strings.HasPrefix(trimmed, "final answer"),
 		strings.HasPrefix(trimmed, "== conclusion"):

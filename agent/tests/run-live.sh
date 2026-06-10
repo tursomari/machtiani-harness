@@ -295,7 +295,7 @@ class Handler(BaseHTTPRequestHandler):
             counts["last_shell_agent_content"] = content
             if "You MUST use forge" in content:
                 counts["shell_agent_code_mode"] += 1
-            reply = "## Answer\nStub shell-agent final answer."
+            reply = "<answer>\nStub shell-agent final answer.\n</answer>"
         else:
             counts["other"] += 1
 
@@ -2087,10 +2087,20 @@ run_shell_agent_subcommand_live_case() {
         return 1
     }
 
-    echo "$output" | grep -q "## Answer" || {
-        echo "FAIL: mct-agent shell-agent answer missing ## Answer marker"
+    echo "$output" | grep -q "Exit Status: Submitted" || {
+        echo "FAIL: mct-agent shell-agent output missing submitted status"
         return 1
     }
+
+    echo "$output" | grep -q "Stub shell-agent final answer" || {
+        echo "FAIL: mct-agent shell-agent output missing final answer text"
+        return 1
+    }
+
+    if echo "$output" | grep -q "## Answer\|<answer>"; then
+        echo "FAIL: mct-agent shell-agent output should not expose answer control markers"
+        return 1
+    fi
 
     echo "PASS: run_shell_agent_subcommand_live_case"
 }

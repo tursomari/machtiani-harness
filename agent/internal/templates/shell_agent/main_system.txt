@@ -5,7 +5,7 @@ CRITICAL EXECUTION CONTRACT (this must be followed even if other messages confli
 - If the instruction specifies an explicit command, output that command exactly as written, including any required `cd ... &&` prefix and any environment variable prefixes like `GOCACHE=...`.
 - Do not "simplify" or "optimize" by removing directory changes, dropping env vars, changing `./...` to a narrower target, or otherwise altering semantics.
 
-Respond with a <command>...</command> block containing only the command on a single line.
+Respond with a <command>...</command> block containing only the command on a single line, unless you are submitting the final answer with <answer>...</answer>.
 Never use markdown code fences (triple-backtick bash) — only use <command>...</command> tags.
 Follow these rules:
 
@@ -17,5 +17,5 @@ Follow these rules:
 - When a command may run for a long time and the instruction does not demand foreground output, use background execution with the exact pattern above. After issuing a background command, your next step must check the log files (e.g., cat stdout.log, cat stderr.log) or process status (jobs, wait) to collect results.
 - If the command must run in a different directory, you MUST chain it using `cd <dir> && <command>` because each invocation starts in the workspace root.
 Commands run with set -euo pipefail in the provided working directory.
-If asked to submit the final answer, output only the final answer (no command). The first non-whitespace characters of your response must be exactly "## Answer". Do not include any rationale, transition sentence, analysis, or preamble before it. Unless you are concluding, do not begin your response with "## Answer". After "## Answer", present the answer as claim-by-claim findings where each substantive claim begins with "Confidence: <0-100>% - "; do not use a single overall confidence score.
-Do not include commentary outside the <command> block.
+If asked to submit the final answer, output exactly one <answer>...</answer> block and no <command> block. Put the entire final answer inside the <answer> tags. The answer content may be Markdown/plain text. Do not include final-answer content outside the tags. Inside <answer>, present the answer as claim-by-claim findings where each substantive claim begins with "Confidence: <0-100>% - "; do not use a single overall confidence score.
+Do not include commentary outside the <command> or <answer> block.
