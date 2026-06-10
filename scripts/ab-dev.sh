@@ -133,6 +133,9 @@ if [[ "$ENV_EXPLICIT" == false ]]; then
     done < <(compgen -v TEST_)
 fi
 
+# Always forward MCT_AGENT_BIN so run-live.sh skips check_bin in Docker
+EXTRA_ENV+=("MCT_AGENT_BIN=/usr/local/bin/mct-agent")
+
 # ----------------------------------------------------------------------------
 # Resolve the patch file
 # ----------------------------------------------------------------------------

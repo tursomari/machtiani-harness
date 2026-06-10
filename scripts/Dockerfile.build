@@ -68,4 +68,11 @@ ENV REPO_ROOT=/workspace
 
 WORKDIR /workspace
 
+RUN git config --global --add safe.directory /workspace && \
+    git config --global user.email "ab@local" && \
+    git config --global user.name "ab" && \
+    git init -b main && \
+    git add -A && \
+    git commit -m "initial" --allow-empty
+
 ENTRYPOINT ["/bin/sh"]
