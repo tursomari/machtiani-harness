@@ -1,8 +1,14 @@
 # Machtiani runtime state - large session artifacts and caches
 /.machtiani/sessions/
 /.machtiani/tmp/
-/.machtiani/artifacts/
 /.machtiani/issues/
+# Allow the internal readme repo at .machtiani/artifacts/readme/ since
+# mct-agent run preflight requires a git tag in it for the current HEAD.
+# Other artifacts/ contents (e.g. generated reports) remain excluded by
+# the broad /artifacts/ pattern.
+/.machtiani/artifacts/*
+!/.machtiani/artifacts/readme/
+!/.machtiani/artifacts/readme/**
 
 # Git internals - submodule data, lost-found objects, and worktree metadata (multi-GB)
 /.git/modules/
