@@ -7,7 +7,7 @@ set -euo pipefail
 
 usage() {
     cat <<'EOF'
-Usage: ab-dev.sh [--cmd <command>] [--no-run] <patch-file|git-ref>
+Usage: ab-dev.sh [--cmd <command>] [--no-run] [--parse-results] <patch-file|git-ref>
 
 Build two Docker images (control and treatment) from scripts/Dockerfile.build
 and optionally run a command inside each container to compare outputs.
@@ -21,6 +21,9 @@ Options:
   --cmd <command>        Command to run inside each container (bash -c).
                          Default: verify all built binaries report version/help.
   --no-run               Skip running containers; only build both images.
+  --parse-results      Parse per-test-case PASS/FAIL from each container output
+                        and print a side-by-side comparison table instead of
+                        diff -u.
   --env KEY=VALUE       Forward KEY=VALUE into both containers via docker
                         run -e. May be specified multiple times. If --env
                         is not used, all TEST_* env vars from the host
@@ -67,6 +70,7 @@ echo "=== Done ==="
 INPUT=""
 COMMAND="$DEFAULT_COMMAND"
 NO_RUN=false
+PARSE_RESULTS=false
 
 EXTRA_ENV=()
 ENV_EXPLICIT=false
@@ -78,6 +82,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --no-run)
             NO_RUN=true
+            shift
+            ;;
+        --parse-results)
+            PARSE_RESULTS=true
             shift
             ;;
         --help|-h)
@@ -306,22 +314,143 @@ echo "============================================================"
 echo "  Step 5 — Diff outputs"
 echo "============================================================"
 
-# Compare stdout
-echo ""
-echo "--- stdout diff (control vs treatment) ---"
-if diff -u "$CONTROL_OUT/stdout.log" "$TREATMENT_OUT/stdout.log"; then
-    STDOUT_SAME=true
-else
-    STDOUT_SAME=false
-fi
+# Compare outputs
+run_raw_diff() {
+    echo ""
+    echo "--- stdout diff (control vs treatment) ---"
+    if diff -u "$CONTROL_OUT/stdout.log" "$TREATMENT_OUT/stdout.log"; then
+        STDOUT_SAME=true
+    else
+        STDOUT_SAME=false
+    fi
 
-# Compare stderr
-echo ""
-echo "--- stderr diff (control vs treatment) ---"
-if diff -u "$CONTROL_OUT/stderr.log" "$TREATMENT_OUT/stderr.log"; then
+    echo ""
+    echo "--- stderr diff (control vs treatment) ---"
+    if diff -u "$CONTROL_OUT/stderr.log" "$TREATMENT_OUT/stderr.log"; then
+        STDERR_SAME=true
+    else
+        STDERR_SAME=false
+    fi
+}
+
+run_result_comparison() {
+    local control_tsv="$OUTPUT_BASE/control.tsv"
+    local treatment_tsv="$OUTPUT_BASE/treatment.tsv"
+    local parse_failed=false
+
+    set +e
+    "$REPO_ROOT/agent/tests/ab-live.sh" --tsv-out "$control_tsv" "$CONTROL_OUT"
+    local control_parse_rc=$?
+    "$REPO_ROOT/agent/tests/ab-live.sh" --tsv-out "$treatment_tsv" "$TREATMENT_OUT"
+    local treatment_parse_rc=$?
+    set -e
+
+    if [[ "$control_parse_rc" -ne 0 || "$treatment_parse_rc" -ne 0 ]]; then
+        parse_failed=true
+    fi
+
+    if [[ "$parse_failed" == true ]]; then
+        echo "[ab-dev.sh] WARNING: result parsing failed; falling back to raw diff -u." >&2
+        run_raw_diff
+        return 0
+    fi
+
+    declare -a control_order=()
+    declare -a treatment_only_order=()
+    declare -A control_status=()
+    declare -A treatment_status=()
+    declare -A seen_case=()
+
+    local case_id status detail
+    while IFS=$'\t' read -r case_id status detail || [[ -n "${case_id:-}" ]]; do
+        if [[ "$case_id" == "case_id" && "$status" == "status" ]]; then
+            continue
+        fi
+        if [[ -z "$case_id" ]]; then
+            continue
+        fi
+        if [[ -z "${control_status[$case_id]+set}" ]]; then
+            control_order+=("$case_id")
+            seen_case[$case_id]=1
+        fi
+        control_status[$case_id]="$status"
+    done < "$control_tsv"
+
+    while IFS=$'\t' read -r case_id status detail || [[ -n "${case_id:-}" ]]; do
+        if [[ "$case_id" == "case_id" && "$status" == "status" ]]; then
+            continue
+        fi
+        if [[ -z "$case_id" ]]; then
+            continue
+        fi
+        treatment_status[$case_id]="$status"
+        if [[ -z "${seen_case[$case_id]+set}" ]]; then
+            treatment_only_order+=("$case_id")
+            seen_case[$case_id]=1
+        fi
+    done < "$treatment_tsv"
+
+    local comparison_changed=false
+    local regression_seen=false
+
+    echo ""
+    echo "--- per-test-case comparison (control vs treatment) ---"
+    printf 'case_id\tcontrol_status\ttreatment_status\tdelta\n'
+
+    compare_case() {
+        local id="$1"
+        local control="${control_status[$id]:-}"
+        local treatment="${treatment_status[$id]:-}"
+        local delta
+
+        if [[ -z "$control" ]]; then
+            delta="NEW"
+        elif [[ -z "$treatment" ]]; then
+            delta="MISSING"
+        elif [[ "$control" == "$treatment" ]]; then
+            delta="SAME"
+        elif [[ "$control" == "PASS" && "$treatment" == "FAIL" ]]; then
+            delta="REGRESSION"
+        elif [[ "$control" == "FAIL" && "$treatment" == "PASS" ]]; then
+            delta="FIX"
+        elif [[ "$control" == "PASS" ]]; then
+            delta="REGRESSION"
+        elif [[ "$treatment" == "PASS" ]]; then
+            delta="FIX"
+        else
+            delta="REGRESSION"
+        fi
+
+        if [[ "$delta" != "SAME" ]]; then
+            comparison_changed=true
+        fi
+        if [[ "$delta" == "REGRESSION" ]]; then
+            regression_seen=true
+        fi
+
+        printf '%s\t%s\t%s\t%s\n' "$id" "${control:-}" "${treatment:-}" "$delta"
+    }
+
+    local id
+    for id in "${control_order[@]}"; do
+        compare_case "$id"
+    done
+    for id in "${treatment_only_order[@]}"; do
+        compare_case "$id"
+    done
+
+    if [[ "$comparison_changed" == true || "$regression_seen" == true ]]; then
+        STDOUT_SAME=false
+    else
+        STDOUT_SAME=true
+    fi
     STDERR_SAME=true
+}
+
+if [[ "$PARSE_RESULTS" == true ]]; then
+    run_result_comparison
 else
-    STDERR_SAME=false
+    run_raw_diff
 fi
 
 # ----------------------------------------------------------------------------
