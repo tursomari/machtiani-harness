@@ -68,4 +68,4 @@ ENV REPO_ROOT=/workspace
 
 WORKDIR /workspace
 
-ENTRYPOINT ["bash"]
+ENTRYPOINT ["/bin/sh"]
