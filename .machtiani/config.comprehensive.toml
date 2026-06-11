@@ -78,7 +78,7 @@ step_limit = 10
 # cost_limit caps the total spend for shell-agent per session (0 = unlimited).
 cost_limit = 0.0
 # finalize_remaining_steps: when set, finalize after this many remaining steps.
-finalize_remaining_steps = 0
+finalize_remaining_steps = 1  # Inject a "wrap up now" prompt once remaining LLM calls (step_limit - calls so far) drop to this value or below, giving the model a chance to produce a final answer before the hard step_limit cap.
 
 # Prompt templates (override defaults):
 # system_template = "..."
