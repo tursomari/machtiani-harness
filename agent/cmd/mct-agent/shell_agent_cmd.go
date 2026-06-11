@@ -170,5 +170,6 @@ func handleShellAgentCommand(args []string) int {
 	}
 
 	fmt.Println(result.Answer)
+	fmt.Printf("Exit Status: %s\n", result.ExitStatus)
 	return 0
 }
