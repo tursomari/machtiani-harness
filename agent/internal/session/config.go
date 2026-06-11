@@ -34,6 +34,11 @@ type Config struct {
 	OpenAIModel           string
 	ShellAgent            bool
 	ShellAgentModel       string
+	// AnswerTag overrides the final-answer tag name used by the
+	// shell-agent parser and the prompt templates. Empty input is
+	// normalised to "answer" downstream; validation of the tag name
+	// happens at the CLI boundary in agent/cmd/mct-agent.
+	AnswerTag             string
 	APIKeyOverrides       map[string]string
 	SessionID             string
 	EnableTagFormat       bool
@@ -101,6 +106,9 @@ type legacyConfig struct {
 	openAIModel             string
 	shellAgent              bool
 	shellAgentModel         string
+	// answerTag is propagated alongside ShellAgentModel. The legacy
+	// config struct mirrors Config.AnswerTag (see above).
+	answerTag               string
 	apiKeyOverrides         map[string]string
 	enableTagFormat         bool
 	sessionID               string
@@ -135,6 +143,7 @@ func newLegacyConfig(cfg Config) legacyConfig {
 		openAIModel:             cfg.OpenAIModel,
 		shellAgent:              cfg.ShellAgent,
 		shellAgentModel:         cfg.ShellAgentModel,
+		answerTag:               cfg.AnswerTag,
 		apiKeyOverrides:         llm.CopyAPIKeyOverridesForRuntime(cfg.APIKeyOverrides),
 		persistTmpData:          cfg.PersistTmpData,
 		maxCommandOutputBytes:   cfg.MaxCommandOutputBytes,

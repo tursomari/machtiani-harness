@@ -88,6 +88,15 @@ type ShellAgentLibraryConfig struct {
 	// false so existing sessions keep the relaxed behaviour until a
 	// caller explicitly opts in.
 	EnforceEarlyCommands bool
+
+	// AnswerTag is the final-answer tag name baked into the
+	// shell-agent prompt templates and used by the parser to extract
+	// the answer block. The default is "answer"; callers can
+	// override it via the --answer-tag CLI flag. The prompt layer
+	// passes the value through to shellagent.Run / RenderSystemPrompt
+	// / RenderInstancePrompt / parseXMLAnswer so the renderer and
+	// parser stay in sync.
+	AnswerTag string
 }
 
 // Result captures the outcome of a prompt execution.

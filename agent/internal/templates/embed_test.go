@@ -127,8 +127,15 @@ func TestShellAgentTemplatesUseAnswerTagsForFinalization(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetEmbeddedTemplate(%s) error: %v", key, err)
 		}
-		if !strings.Contains(got, "<answer>") || !strings.Contains(got, "</answer>") {
-			t.Fatalf("%s missing answer tag finalization contract\n%s", key, got)
+		// Templates may use either the {{.AnswerTag}} parameter
+		// (which defaults to "answer" when no override is supplied) or
+		// the literal <answer> tag while the parameterization work is
+		// in progress. Accept either form so the guardrail still
+		// catches accidental removal of the finalization contract.
+		hasParam := strings.Contains(got, "{{.AnswerTag}}")
+		hasLiteral := strings.Contains(got, "<answer>") && strings.Contains(got, "</answer>")
+		if !hasParam && !hasLiteral {
+			t.Fatalf("%s missing answer tag finalization contract (no {{.AnswerTag}} and no <answer>)\n%s", key, got)
 		}
 	}
 }

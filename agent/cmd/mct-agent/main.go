@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/mct/readmesync"
+	shellagent "github.com/tursomari/machtiani/agent/internal/shell-agent"
 	"github.com/tursomari/machtiani/agent/internal/session"
 	"github.com/tursomari/machtiani/agent/internal/ui"
 )
@@ -168,6 +169,13 @@ func handleRunCommand(args []string) int {
 	}
 	if cfg.MaxInputTokens < 0 {
 		fmt.Fprintln(os.Stderr, "Error: --max-input-tokens must be zero or positive")
+		return 2
+	}
+	// Validate --answer-tag at the CLI boundary. The value is normalised
+	// to "answer" downstream if empty; the validation here catches
+	// malformed input from the user.
+	if err := shellagent.ValidateAnswerTag(cfg.AnswerTag); err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
 		return 2
 	}
 
@@ -490,6 +498,7 @@ func configureSessionFlags(fs *pflag.FlagSet, cfg *session.Config, paramFlags, p
 	fs.IntVar(&cfg.MaxCommandOutputBytes, "max-command-output-bytes", 65536, "maximum bytes of shell command output captured per step (default 64KB)")
 	fs.BoolVar(&cfg.ShellAgent, "shell-agent", false, "Enable shell-agent mode: invoke shell-agent subprocess binary for task execution")
 	fs.StringVar(&cfg.ShellAgentModel, "shell-agent-model", "", "Model alias override for shell-agent subprocesses (default: config)")
+	fs.StringVar(&cfg.AnswerTag, "answer-tag", "", `Override the final-answer tag name used by the shell-agent parser and prompt templates. Must not contain "<", ">", "/", "{{", or "}}". Empty input keeps the default ("answer").`)
 	fs.StringVar(&cfg.FinalFile, "final-file", "", "path to write final answer-only artifact (default: .machtiani/sessions/<sessionID>/chat/agent-final-answer.md)")
 	fs.StringVar(&cfg.TranscriptFile, "transcript-file", "", "path to write transcript file (default: .machtiani/sessions/<sessionID>/chat/agent-transcript.adoc)")
 	fs.StringVar(&cfg.FileDiscoveryTrajectory, "file-discovery-trajectory", "", "path to write file-discovery trajectory JSONL (default: auto-named under session artifacts)")

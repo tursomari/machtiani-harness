@@ -28,6 +28,7 @@ func handleShellAgentCommand(args []string) int {
 	var promptText string
 	fs.StringVarP(&promptText, "text", "t", "", "Task text (mutually exclusive with --file)")
 	fs.Var(&apiKeyFlags, "api-key", "Provider-specific API key override in provider:key format (repeatable)")
+	answerTag := fs.String("answer-tag", "", `Override the final-answer tag name used by the parser and prompt templates. Must not contain "<", ">", "/", "{{", or "}}". Empty input keeps the default ("answer").`)
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: mct-agent shell-agent --text \"<task>\" | --file <path> [flags]\n\n")
 		fmt.Fprintln(os.Stderr, "Flags:")
@@ -110,21 +111,29 @@ func handleShellAgentCommand(args []string) int {
 		globalCfg.Environment.MaxCommandOutputBytes = *maxCommandOutputBytes
 	}
 
+	// Validate --answer-tag before plumbing it into the shell-agent
+	// library. The value is normalised to "answer" downstream if empty;
+	// the validation here catches malformed input from the user.
+	if err := shellagent.ValidateAnswerTag(*answerTag); err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		return 2
+	}
+
 	// Build the shell-agent library (model + environment) once.
-	lib, err := shellAgentBuildLibFn(&globalCfg, apiOverrides, false, "")
+	lib, err := shellAgentBuildLibFn(&globalCfg, apiOverrides, false, "", *answerTag)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error building shell-agent library: %v\n", err)
 		return 1
 	}
 
 	// Render prompts.
-	sysPrompt, err := shellagent.RenderSystemPrompt(lib.Prompts, nil)
+	sysPrompt, err := shellagent.RenderSystemPrompt(lib.Prompts, nil, *answerTag)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error rendering system prompt: %v\n", err)
 		return 1
 	}
 
-	instPrompt, err := shellagent.RenderInstancePrompt(lib.Prompts, task, lib.Config, lib.Env, nil)
+	instPrompt, err := shellagent.RenderInstancePrompt(lib.Prompts, task, lib.Config, lib.Env, nil, *answerTag)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error rendering instance prompt: %v\n", err)
 		return 1
@@ -145,6 +154,7 @@ func handleShellAgentCommand(args []string) int {
 		Prompts:                lib.Prompts,
 		Verbose:                *verbose,
 		MaxInputTokens:         *maxInputTokens,
+		AnswerTag:              *answerTag,
 	}
 
 	// Run the shell-agent loop.

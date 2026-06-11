@@ -40,7 +40,7 @@ func TestShellAgentTextFlag(t *testing.T) {
 		shellAgentRunFn = origRun
 	})
 
-	shellAgentBuildLibFn = func(global *llm.Config, apiKeyOverrides map[string]string, persistTmpData bool, modelAlias string) (*shellagent.ShellAgentLibrary, error) {
+	shellAgentBuildLibFn = func(global *llm.Config, apiKeyOverrides map[string]string, persistTmpData bool, modelAlias string, answerTag string) (*shellagent.ShellAgentLibrary, error) {
 		return stubLibrary(), nil
 	}
 
@@ -92,7 +92,7 @@ func TestShellAgentFileFlag(t *testing.T) {
 		shellAgentRunFn = origRun
 	})
 
-	shellAgentBuildLibFn = func(global *llm.Config, apiKeyOverrides map[string]string, persistTmpData bool, modelAlias string) (*shellagent.ShellAgentLibrary, error) {
+	shellAgentBuildLibFn = func(global *llm.Config, apiKeyOverrides map[string]string, persistTmpData bool, modelAlias string, answerTag string) (*shellagent.ShellAgentLibrary, error) {
 		return stubLibrary(), nil
 	}
 
@@ -127,7 +127,7 @@ func TestShellAgentFileShorthand(t *testing.T) {
 		shellAgentRunFn = origRun
 	})
 
-	shellAgentBuildLibFn = func(global *llm.Config, apiKeyOverrides map[string]string, persistTmpData bool, modelAlias string) (*shellagent.ShellAgentLibrary, error) {
+	shellAgentBuildLibFn = func(global *llm.Config, apiKeyOverrides map[string]string, persistTmpData bool, modelAlias string, answerTag string) (*shellagent.ShellAgentLibrary, error) {
 		return stubLibrary(), nil
 	}
 
@@ -244,7 +244,7 @@ func TestShellAgentModelFlagPropagation(t *testing.T) {
 	})
 
 	var receivedGlobal *llm.Config
-	shellAgentBuildLibFn = func(global *llm.Config, apiKeyOverrides map[string]string, persistTmpData bool, modelAlias string) (*shellagent.ShellAgentLibrary, error) {
+	shellAgentBuildLibFn = func(global *llm.Config, apiKeyOverrides map[string]string, persistTmpData bool, modelAlias string, answerTag string) (*shellagent.ShellAgentLibrary, error) {
 		receivedGlobal = global
 		return stubLibrary(), nil
 	}
@@ -275,7 +275,7 @@ func TestShellAgentVerboseFlagPropagation(t *testing.T) {
 		shellAgentRunFn = origRun
 	})
 
-	shellAgentBuildLibFn = func(global *llm.Config, apiKeyOverrides map[string]string, persistTmpData bool, modelAlias string) (*shellagent.ShellAgentLibrary, error) {
+	shellAgentBuildLibFn = func(global *llm.Config, apiKeyOverrides map[string]string, persistTmpData bool, modelAlias string, answerTag string) (*shellagent.ShellAgentLibrary, error) {
 		return stubLibrary(), nil
 	}
 
@@ -304,7 +304,7 @@ func TestShellAgentMaxInputTokensPropagation(t *testing.T) {
 		shellAgentRunFn = origRun
 	})
 
-	shellAgentBuildLibFn = func(global *llm.Config, apiKeyOverrides map[string]string, persistTmpData bool, modelAlias string) (*shellagent.ShellAgentLibrary, error) {
+	shellAgentBuildLibFn = func(global *llm.Config, apiKeyOverrides map[string]string, persistTmpData bool, modelAlias string, answerTag string) (*shellagent.ShellAgentLibrary, error) {
 		return stubLibrary(), nil
 	}
 
@@ -348,7 +348,7 @@ func TestShellAgentBuildLibraryError(t *testing.T) {
 		shellAgentRunFn = origRun
 	})
 
-	shellAgentBuildLibFn = func(global *llm.Config, apiKeyOverrides map[string]string, persistTmpData bool, modelAlias string) (*shellagent.ShellAgentLibrary, error) {
+	shellAgentBuildLibFn = func(global *llm.Config, apiKeyOverrides map[string]string, persistTmpData bool, modelAlias string, answerTag string) (*shellagent.ShellAgentLibrary, error) {
 		return nil, errors.New("build library failed")
 	}
 
@@ -379,7 +379,7 @@ func TestShellAgentRunError(t *testing.T) {
 		shellAgentRunFn = origRun
 	})
 
-	shellAgentBuildLibFn = func(global *llm.Config, apiKeyOverrides map[string]string, persistTmpData bool, modelAlias string) (*shellagent.ShellAgentLibrary, error) {
+	shellAgentBuildLibFn = func(global *llm.Config, apiKeyOverrides map[string]string, persistTmpData bool, modelAlias string, answerTag string) (*shellagent.ShellAgentLibrary, error) {
 		return stubLibrary(), nil
 	}
 
@@ -409,7 +409,7 @@ func TestShellAgentRunResultError(t *testing.T) {
 		shellAgentRunFn = origRun
 	})
 
-	shellAgentBuildLibFn = func(global *llm.Config, apiKeyOverrides map[string]string, persistTmpData bool, modelAlias string) (*shellagent.ShellAgentLibrary, error) {
+	shellAgentBuildLibFn = func(global *llm.Config, apiKeyOverrides map[string]string, persistTmpData bool, modelAlias string, answerTag string) (*shellagent.ShellAgentLibrary, error) {
 		return stubLibrary(), nil
 	}
 

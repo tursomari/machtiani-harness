@@ -32,7 +32,7 @@ func runShellAgentLibrary(ctx context.Context, task string, opts RunOptions) (co
 		extraVars["ShowFewShot"] = true
 	}
 	// Render and append the instance prompt.
-	instPrompt, err := shellagent.RenderInstancePrompt(lib.Prompts, task, lib.Config, lib.Env, extraVars)
+	instPrompt, err := shellagent.RenderInstancePrompt(lib.Prompts, task, lib.Config, lib.Env, extraVars, lib.AnswerTag)
 	if err != nil {
 		return "", "", "", fmt.Errorf("render instance prompt: %w", err)
 	}
@@ -50,6 +50,7 @@ func runShellAgentLibrary(ctx context.Context, task string, opts RunOptions) (co
 		SessionID:              opts.ShellAgentSessionID,
 		PlannerTurn:            lib.TurnIndex,
 		EnforceEarlyCommands:   lib.EnforceEarlyCommands,
+		AnswerTag:              lib.AnswerTag,
 	}
 
 	result, runErr := shellAgentRun(ctx, req)
