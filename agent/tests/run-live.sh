@@ -2092,10 +2092,17 @@ run_shell_agent_subcommand_live_case() {
         return 1
     }
 
-    echo "$output" | grep -q "Stub shell-agent final answer" || {
-        echo "FAIL: mct-agent shell-agent output missing final answer text"
-        return 1
-    }
+    if [[ -n "${TEST_STUB_SERVER:-}" ]]; then
+        echo "$output" | grep -q "Stub shell-agent final answer" || {
+            echo "FAIL: mct-agent shell-agent output missing final answer text (stub mode)"
+            return 1
+        }
+    else
+        if [[ -z "$(echo "$output" | grep -v '^Exit Status:' | tr -d '[:space:]')" ]]; then
+            echo "FAIL: mct-agent shell-agent output missing final answer text (live mode)"
+            return 1
+        fi
+    fi
 
     if echo "$output" | grep -q "## Answer\|<answer>"; then
         echo "FAIL: mct-agent shell-agent output should not expose answer control markers"
