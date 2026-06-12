@@ -22,7 +22,9 @@ func (r *runLifecycleState) completeSession(display *ui.TerminalDisplay, answer 
 	presentFinalAnswer(display, finalAnswer)
 	display.EndSession()
 	r.turnsCompleted = turnsCompleted
-	r.transition(StateSuccess)
+	if err := r.transition(StateSuccess); err != nil {
+		return err
+	}
 	// Mark the mode-plan task as complete (no-op if no mode-plan exists).
 	if err := CompleteModePlanTask(r.sessionID); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to update mode plan task status: %v\n", err)

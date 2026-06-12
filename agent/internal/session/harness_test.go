@@ -294,3 +294,54 @@ func TestStateTransitionValidation(t *testing.T) {
 		})
 	}
 }
+
+// TestStateTransitionTable tests all 16 possible state transitions using the
+// SessionStatus.Transition method. Legal transitions: error→interrupted,
+// error→success, error→suspended_user_input, suspended_user_input→error.
+// All other combinations must return ErrInvalidStateTransition.
+func TestStateTransitionTable(t *testing.T) {
+	tests := []struct {
+		from        SessionStatus
+		to          SessionStatus
+		expectError bool
+	}{
+		// From StateError
+		{StateError, StateError, true},
+		{StateError, StateInterrupted, false},
+		{StateError, StateSuccess, false},
+		{StateError, StateSuspendedUserInput, false},
+		// From StateSuspendedUserInput
+		{StateSuspendedUserInput, StateError, false},
+		{StateSuspendedUserInput, StateInterrupted, true},
+		{StateSuspendedUserInput, StateSuccess, true},
+		{StateSuspendedUserInput, StateSuspendedUserInput, true},
+		// From StateInterrupted
+		{StateInterrupted, StateError, true},
+		{StateInterrupted, StateInterrupted, true},
+		{StateInterrupted, StateSuccess, true},
+		{StateInterrupted, StateSuspendedUserInput, true},
+		// From StateSuccess
+		{StateSuccess, StateError, true},
+		{StateSuccess, StateInterrupted, true},
+		{StateSuccess, StateSuccess, true},
+		{StateSuccess, StateSuspendedUserInput, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.from.String()+"→"+tt.to.String(), func(t *testing.T) {
+			err := tt.from.Transition(tt.to)
+			if tt.expectError {
+				if err == nil {
+					t.Fatalf("expected error for %s→%s, got nil", tt.from, tt.to)
+				}
+				if !errors.Is(err, ErrInvalidStateTransition) {
+					t.Fatalf("expected ErrInvalidStateTransition for %s→%s, got %v", tt.from, tt.to, err)
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("unexpected error for %s→%s: %v", tt.from, tt.to, err)
+				}
+			}
+		})
+	}
+}

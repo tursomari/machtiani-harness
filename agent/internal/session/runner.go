@@ -539,7 +539,10 @@ func runSession(ctx context.Context, opts Options) Result {
 		if handled {
 			// handled=true means error during mode configuration.
 			runState.sessionErr = fmt.Errorf("mode configuration failed")
-			runState.transition(StateError)
+			if err := runState.transition(StateError); err != nil {
+				fmt.Fprintf(os.Stderr, "transition to StateError failed: %v\n", err)
+				return Result{ExitCode: 1, Err: err}
+			}
 			runState.pendingState = &SessionState{
 				SessionID:       sessionID,
 				Goal:            goal,

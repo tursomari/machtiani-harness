@@ -835,7 +835,9 @@ func (r *runLifecycleState) suspendForUserInput(display *ui.TerminalDisplay, que
 	}
 	r.sessionErr = nil
 	r.turnsCompleted = r.userTurnCounter
-	r.transition(StateSuspendedUserInput)
+	if err := r.transition(StateSuspendedUserInput); err != nil {
+		return Result{}, err
+	}
 	r.suspendedUserInput = &SuspendedUserInputState{
 		Kind:        "user-directed-ask",
 		Question:    strings.TrimSpace(question),
