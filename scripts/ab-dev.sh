@@ -209,7 +209,7 @@ if [[ -n "${CONTROL_COMMIT:-}" ]]; then
         --exclude='.git/modules/' \
         --exclude='.machtiani/sessions/' \
         --exclude='.machtiani/tmp/' \
-        --exclude='.machtiani/issues/'
+        --exclude='.machtiani/issues/' \
         --exclude='third_party/' \
         "$REPO_ROOT/" "$CONTROL_CTX/"
 
