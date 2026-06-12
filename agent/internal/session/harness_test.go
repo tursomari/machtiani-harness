@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -293,6 +294,82 @@ func TestStateTransitionValidation(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestOriginalGoalDoubleInterrupt verifies that OriginalGoal is preserved
+// across a suspend/resume cycle. After a session is suspended and then
+// resumed with a loaded state that carries the first goal but an empty
+// OriginalGoal, the resumed runLifecycleState's baseSessionState must have
+// OriginalGoal set to the first goal.
+func TestOriginalGoalDoubleInterrupt(t *testing.T) {
+	t.Run("suspend and resume restores original goal", func(t *testing.T) {
+		ctx := context.Background()
+		cfg := newLegacyConfig(Config{})
+		sessionID := "original-goal-double-interrupt-test"
+
+		firstGoal := "Fix all lint issues in the project"
+		firstOriginalPrompt := "Fix all lint issues"
+
+		// Step 1: Create the initial runLifecycleState.
+		r1 := newRunLifecycleState(ctx, cfg, sessionID, firstGoal, firstOriginalPrompt, "", "", "", nil)
+
+		// Step 2: Simulate a suspend by transitioning to suspended_user_input.
+		if err := r1.transition(StateSuspendedUserInput); err != nil {
+			t.Fatalf("transition to suspended_user_input: %v", err)
+		}
+
+		// Step 3: Build a loadedState that represents the suspended
+		// session. It has the first goal but an empty OriginalGoal
+		// (mimicking a session that was created fresh and then
+		// suspended, where OriginalGoal was never explicitly set).
+		loadedState := &SessionState{
+			SessionID:      sessionID,
+			Goal:           firstGoal,
+			OriginalGoal:   "",
+			OriginalPrompt: firstOriginalPrompt,
+			Status:         string(StateSuspendedUserInput),
+		}
+
+		// Step 4: Resume with a new goal. The loaded state carries the
+		// first goal but no OriginalGoal, so the fallback logic in
+		// newRunLifecycleState should derive OriginalGoal from the
+		// loaded state's Goal.
+		secondGoal := "Also update comments"
+		secondOriginalPrompt := firstOriginalPrompt
+		r2 := newRunLifecycleState(ctx, cfg, sessionID, secondGoal, secondOriginalPrompt, "", "", "", loadedState)
+
+		// Step 5: Verify that OriginalGoal on the resumed state equals
+		// the first goal.
+		base := r2.baseSessionState()
+		if base.OriginalGoal != firstGoal {
+			t.Errorf("OriginalGoal mismatch: got %q, want %q", base.OriginalGoal, firstGoal)
+		}
+	})
+
+	t.Run("resume with explicit OriginalGoal in loaded state", func(t *testing.T) {
+		ctx := context.Background()
+		cfg := newLegacyConfig(Config{})
+		sessionID := "original-goal-explicit-test"
+
+		firstGoal := "Fix all lint issues"
+		firstOriginalGoal := "Fix all lint issues in the entire project"
+
+		loadedState := &SessionState{
+			SessionID:      sessionID,
+			Goal:           firstGoal,
+			OriginalGoal:   firstOriginalGoal,
+			OriginalPrompt: firstGoal,
+			Status:         string(StateSuspendedUserInput),
+		}
+
+		secondGoal := "Also update comments"
+		r2 := newRunLifecycleState(ctx, cfg, sessionID, secondGoal, firstGoal, "", "", "", loadedState)
+
+		base := r2.baseSessionState()
+		if base.OriginalGoal != firstOriginalGoal {
+			t.Errorf("OriginalGoal mismatch: got %q, want %q", base.OriginalGoal, firstOriginalGoal)
+		}
+	})
 }
 
 // TestStateTransitionTable tests all 16 possible state transitions using the

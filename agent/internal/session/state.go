@@ -20,6 +20,7 @@ var ErrSessionStateNotFound = errors.New("session state not found")
 type SessionState struct {
 	SessionID          string                   `json:"session_id"`
 	Goal               string                   `json:"goal"`
+	OriginalGoal       string                   `json:"original_goal,omitempty"`
 	OriginalPrompt     string                   `json:"original_prompt,omitempty"`
 	TaskDescription    string                   `json:"task_description,omitempty"`
 	PlannerOverlay     string                   `json:"planner_overlay,omitempty"`

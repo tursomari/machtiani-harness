@@ -87,6 +87,9 @@ func prepareRunBootstrap(rootCtx context.Context, opts Options) (*runBootstrap, 
 		loadedState = state
 		resumePrompt = strings.TrimSpace(inputPrompt)
 
+		if loadedState != nil && loadedState.OriginalGoal == "" {
+			loadedState.OriginalGoal = loadedState.Goal
+		}
 		if storedGoal := strings.TrimSpace(state.Goal); storedGoal != "" {
 			goal = storedGoal
 		}
@@ -364,12 +367,19 @@ func newRunLifecycleState(rootCtx context.Context, cfg legacyConfig, sessionID, 
 	if loadedState != nil {
 		plannerProgress = newPlannerProgressTracker(loadedState.PlannerProgress)
 	}
+	originalGoalVal := originalPrompt
+	if loadedState != nil && loadedState.OriginalGoal != "" {
+		originalGoalVal = loadedState.OriginalGoal
+	} else if loadedState != nil && loadedState.Goal != "" {
+		originalGoalVal = loadedState.Goal
+	}
 	return &runLifecycleState{
 		rootCtx:             rootCtx,
 		cfg:                 cfg,
 		sessionID:           sessionID,
 		goal:                goal,
 		originalPrompt:      originalPrompt,
+		originalGoal:        originalGoalVal,
 		taskDescription:     taskDescription,
 		plannerOverlay:      plannerOverlay,
 		modeInstructionPath: modeInstructionPath,
@@ -651,6 +661,7 @@ type runLifecycleState struct {
 	sessionID           string
 	goal                string
 	originalPrompt      string
+	originalGoal        string
 	taskDescription     string
 	plannerOverlay      string
 	modeInstructionPath string
@@ -752,6 +763,7 @@ func (r *runLifecycleState) baseSessionState() SessionState {
 		SessionID:       r.sessionID,
 		Goal:            r.goal,
 		OriginalPrompt:  r.originalPrompt,
+		OriginalGoal:    r.originalGoal,
 		TaskDescription: r.taskDescription,
 		PlannerOverlay:  r.plannerOverlay,
 		Status:          r.sessionStatus,
