@@ -680,13 +680,22 @@ func (r *runLifecycleState) clearSuspendedUserInput() {
 	}
 }
 
+func (r *runLifecycleState) transition(target SessionStatus) error {
+	err := SessionStatus(r.sessionStatus).Transition(target)
+	if err != nil {
+		return err
+	}
+	r.sessionStatus = string(target)
+	return nil
+}
+
 func (r *runLifecycleState) interruptedResult(err error) Result {
 	r.interrupted = true
 	if err == nil {
 		err = context.Canceled
 	}
 	r.sessionErr = err
-	r.sessionStatus = "interrupted"
+	r.transition(StateInterrupted)
 	r.turnsCompleted = r.userTurnCounter
 	return Result{ExitCode: 130, Status: r.sessionStatus, Turns: r.turnsCompleted, SessionID: r.sessionID, Err: err}
 }
@@ -826,7 +835,7 @@ func (r *runLifecycleState) suspendForUserInput(display *ui.TerminalDisplay, que
 	}
 	r.sessionErr = nil
 	r.turnsCompleted = r.userTurnCounter
-	r.sessionStatus = "suspended_user_input"
+	r.transition(StateSuspendedUserInput)
 	r.suspendedUserInput = &SuspendedUserInputState{
 		Kind:        "user-directed-ask",
 		Question:    strings.TrimSpace(question),
