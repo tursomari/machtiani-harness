@@ -1,9 +1,23 @@
 package session
 
+// Package session manages agent run lifecycle, state persistence, session
+// locking, transcript generation, and turn processing.
+//
+// Locking contract: session directories are protected by an advisory file lock
+// (flock) on the session.lock file within each session scratch directory.
+// Acquisition uses LOCK_EX | LOCK_NB with 3 attempts and exponential backoff
+// (100ms, then 200ms). The lock file content is "session_id=<id>\npid=<pid>\n".
+// A lock file whose recorded PID is dead is considered stale and may be
+// pruned by cleanup logic (see cleanup.go). cleanupOrphanedSessionDirs
+// preserves active sessions (those holding an exclusive flock on the lock
+// file) and removes orphaned ones.
+
 import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"path/filepath"
 	"syscall"
 	"time"
@@ -47,6 +61,15 @@ func acquireSessionLock(sessionID, sessionRoot string) (*sessionLock, error) {
 		return nil, fmt.Errorf("session already active for %s", lockPath)
 	}
 
+	// Validate that any prior PID recorded in the lock file is not still
+	// alive. This guards against PID reuse races where the kernel released
+	// a stale flock but the recorded PID now belongs to a different process.
+	if err := validateLockPID(file); err != nil {
+		syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+		file.Close()
+		return nil, fmt.Errorf("session lock PID validation failed for %s: %w", lockPath, err)
+	}
+
 	if err := initialiseLockFile(file, sessionID); err != nil {
 		syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
 		file.Close()
@@ -79,6 +102,44 @@ func initialiseLockFile(file *os.File, sessionID string) error {
 	now := time.Now()
 	if err := os.Chtimes(file.Name(), now, now); err != nil {
 		return fmt.Errorf("touch session lock: %w", err)
+	}
+	return nil
+}
+
+// validateLockPID checks that the PID recorded in the lock file (if any)
+// does not belong to a running process other than ourselves. If the lock
+// file does not exist, the recorded PID is malformed, or the PID is dead,
+// it returns nil. If the PID belongs to a running process other than
+// os.Getpid(), it returns an error.
+func validateLockPID(file *os.File) error {
+	data, err := os.ReadFile(file.Name())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read lock file: %w", err)
+	}
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		if !strings.HasPrefix(line, "pid=") {
+			continue
+		}
+		pidStr := strings.TrimPrefix(line, "pid=")
+		pid, parseErr := strconv.Atoi(strings.TrimSpace(pidStr))
+		if parseErr != nil {
+			return nil
+		}
+		if pid == os.Getpid() {
+			return nil
+		}
+		process, findErr := os.FindProcess(pid)
+		if findErr != nil {
+			return nil
+		}
+		if signalErr := process.Signal(syscall.Signal(0)); signalErr != nil {
+			return nil
+		}
+		return fmt.Errorf("lock file PID %d is still alive (conflicting process)", pid)
 	}
 	return nil
 }
