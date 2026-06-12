@@ -39,7 +39,7 @@ RUN if [ -n "${CHANGE_PATCH_B64}" ]; then \
       find . -name .git -type f -o -name .git -type l 2>/dev/null | xargs -r rm -f && \
       # Revert patched files to HEAD~1 so the patch applies cleanly. \
       files=$(grep -E "^diff --git a/" /tmp/change.patch | sed -E "s|^diff --git a/||; s| b/.*||" | sort -u) && \
-      for f in $files; do git -C /build checkout HEAD~1 -- "$f" || true; done && \
+      for f in $files; do git -C /build checkout HEAD~1 -- "$f" 2>/dev/null || rm -f "/build/$f"; done && \
       git apply /tmp/change.patch && \
       # Commit the patched tree so the embedded commit hash matches HEAD.
       # install.sh embeds $(git_short_commit) into the binary via -ldflags.

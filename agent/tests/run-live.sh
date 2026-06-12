@@ -674,6 +674,8 @@ ORCH_MODEL_ALIAS=""
 FILE_DISCOVERY_MODEL_ALIAS=""
 TMP_ROOT="$SCRIPT_DIR/tmp"
 mkdir -p "$TMP_ROOT"
+# Remove stale shell-agent marker files from prior crashed runs (older than 1 hour)
+find agent/tests/tmp -name "mct-swe-agent-finale-*.txt" -mmin +60 -delete 2>/dev/null || true
 CONFIG_ROOT="$(mktemp -d "$TMP_ROOT/config.XXXXXX")"
 TEST_CONFIG_FILE=""
 
@@ -1776,6 +1778,11 @@ run_local_tmp_root_unset_live_case() {
 Run this exact command and report the exact output token only: `python3 -c 'import os; print("MCT_LOCAL_TMP_ROOT=" + (os.environ.get("MACHTIANI_TMP_ROOT") or "UNSET"))'`
 EOF
 )
+
+  if [[ "$LIVE_MODE" != true ]]; then
+    echo "Skipping $case_id: requires live mode (TEST_API_KEY/TEST_BASE_URL/TEST_MODEL set)" >&2
+    return 0
+  fi
 
   cleanup_case_root() {
     if [[ -n "$local_config" && "${KEEP_TEST_CONFIG:-}" != "true" ]]; then
