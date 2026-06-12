@@ -192,19 +192,26 @@ else
 fi
 
 # ----------------------------------------------------------------------------
-# Control-commit checkout (if requested)
+# Control-commit checkout (if requested) — uses temp-dir copy, never touches host
 # ----------------------------------------------------------------------------
 if [[ -n "${CONTROL_COMMIT:-}" ]]; then
     ORIG_HEAD="$(git -C "$REPO_ROOT" rev-parse HEAD)"
     echo "[control] Using control commit: $CONTROL_COMMIT (original HEAD was $ORIG_HEAD)"
 
-    restore_head() {
-        echo "[control] Restoring original HEAD ($ORIG_HEAD)"
-        git -C "$REPO_ROOT" checkout "$ORIG_HEAD" 2>/dev/null || true
-    }
-    trap 'restore_head; cleanup_patch' EXIT
+    CONTROL_CTX="$(mktemp -d -t mct-control-ctxt.XXXXXX)"
+    cleanup_control_ctx() { rm -rf "$CONTROL_CTX"; cleanup_patch; }
+    trap cleanup_control_ctx EXIT
 
-    git -C "$REPO_ROOT" checkout --detach "$CONTROL_COMMIT"
+    echo "[control] Copying repo to temp build context: $CONTROL_CTX"
+    rsync -a --exclude=.git/worktrees/ --exclude=.git/lost-found/ \
+        "$REPO_ROOT/" "$CONTROL_CTX/"
+
+    echo "[control] Checking out control commit in temp context"
+    git -C "$CONTROL_CTX" checkout -f "$CONTROL_COMMIT"
+
+    build_context="$CONTROL_CTX"
+else
+    build_context="$REPO_ROOT"
 fi
 
 # ----------------------------------------------------------------------------
@@ -215,21 +222,14 @@ echo "============================================================"
 echo "  Step 1 — Build control image (version A, no patch)"
 echo "============================================================"
 
-echo "[build:control] Building $CONTROL_IMAGE from $REPO_ROOT..."
+echo "[build:control] Building $CONTROL_IMAGE from $build_context..."
 
 DOCKER_BUILDKIT=1 docker build \
     -f "$DOCKERFILE" \
     -t "$CONTROL_IMAGE" \
-    "$REPO_ROOT"
+    "$build_context"
 
 echo "[build:control] Image built: $CONTROL_IMAGE"
-
-# Restore HEAD now that the control image is built
-if [[ -n "${CONTROL_COMMIT:-}" ]]; then
-    echo "[control] Restoring original HEAD ($ORIG_HEAD)"
-    git -C "$REPO_ROOT" checkout "$ORIG_HEAD"
-    trap cleanup_patch EXIT
-fi
 
 # ----------------------------------------------------------------------------
 # Build the treatment image (version B, with the change applied)
