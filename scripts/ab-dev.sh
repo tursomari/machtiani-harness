@@ -203,7 +203,15 @@ if [[ -n "${CONTROL_COMMIT:-}" ]]; then
     trap cleanup_control_ctx EXIT
 
     echo "[control] Copying repo to temp build context: $CONTROL_CTX"
-    rsync -a --exclude=.git/worktrees/ --exclude=.git/lost-found/ \
+    rsync -a \
+        --exclude='.git/worktrees/' \
+        --exclude='.git/lost-found/' \
+        --exclude='.git/modules/' \
+        --exclude='.machtiani/sessions/' \
+        --exclude='.machtiani/tmp/' \
+        --exclude='.machtiani/issues/' \
+        --exclude='.machtiani/artifacts/' \
+        --exclude='third_party/' \
         "$REPO_ROOT/" "$CONTROL_CTX/"
 
     echo "[control] Checking out control commit in temp context"
