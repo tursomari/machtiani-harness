@@ -24,7 +24,7 @@ echo "ORIG_HEAD=$ORIG_HEAD"
 ab_rc=0
 (
   cd "$REPO_ROOT"
-  scripts/ab-dev.sh --control-commit HEAD~1 --no-run
+  scripts/ab-dev.sh HEAD~1 --control-commit HEAD~1 --no-run
 ) || ab_rc=$?
 
 if [[ "$ab_rc" -ne 0 ]]; then
