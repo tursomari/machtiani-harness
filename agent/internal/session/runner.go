@@ -605,7 +605,7 @@ func runSession(ctx context.Context, opts Options) Result {
 		if err := rootCtx.Err(); err != nil {
 			return runState.interruptedResult(err)
 		}
-		step := runState.userTurnCounter + 1
+		step := runState.turnsCompleted + 1
 		var turn *turnTelemetry
 		if sessTelemetry != nil {
 			turn = sessTelemetry.StartTurn(step, cfg.maxSteps)
@@ -640,7 +640,7 @@ func runSession(ctx context.Context, opts Options) Result {
 				fmt.Fprintln(os.Stderr, "Transcript write error:", err)
 				runState.sessionErr = err
 				finishTurn(sessTelemetry, turn, "user-feedback", "error", turnInfo, err)
-				runState.turnsCompleted = runState.userTurnCounter
+				
 				return Result{ExitCode: 1, Err: err}
 			}
 			if resumeSuspendedInput != nil {
@@ -673,7 +673,7 @@ func runSession(ctx context.Context, opts Options) Result {
 				fmt.Fprintf(os.Stderr, "Planner error: timed out after %ds. Increase --timeout-per-turn or set 0 for unlimited.\n", cfg.timeoutPerTurn)
 				runState.sessionErr = perr
 				finishTurn(sessTelemetry, turn, "planner", "error", turnInfo, perr)
-				runState.turnsCompleted = runState.userTurnCounter
+				
 				return Result{ExitCode: 1, Err: perr}
 			}
 			perrStr := strings.ToLower(perr.Error())
@@ -709,25 +709,25 @@ func runSession(ctx context.Context, opts Options) Result {
 					}
 					runState.sessionErr = ferr
 					finishTurn(sessTelemetry, turn, "finalize", "error", turnInfo, ferr)
-					runState.turnsCompleted = runState.userTurnCounter
+					
 					return Result{ExitCode: 1, Err: ferr}
 				}
-				if err := runState.completeSession(display, answer, step, runState.userTurnCounter, true); err != nil {
+				if err := runState.completeSession(display, answer, step, runState.turnsCompleted, true); err != nil {
 					fmt.Fprintln(os.Stderr, "Final file write error:", err)
 					finishTurn(sessTelemetry, turn, "finalize", "error", turnInfo, err)
-					runState.turnsCompleted = runState.userTurnCounter
+					
 					return Result{ExitCode: 1, Err: err}
 				}
 				sessionClosed = true
 				turnDecision = "finalize"
 				turnInfo["finalized"] = true
 				finishTurn(sessTelemetry, turn, turnDecision, "success", turnInfo, nil)
-				return Result{ExitCode: 0, Status: runState.sessionStatus, Turns: runState.userTurnCounter, SessionID: sessionID}
+				return Result{ExitCode: 0, Status: runState.sessionStatus, Turns: runState.turnsCompleted, SessionID: sessionID}
 			}
 			fmt.Fprintln(os.Stderr, "Planner error:", perr)
 			runState.sessionErr = perr
 			finishTurn(sessTelemetry, turn, "planner", "error", turnInfo, perr)
-			runState.turnsCompleted = runState.userTurnCounter
+			
 			return Result{ExitCode: 1, Err: perr}
 		}
 
@@ -766,7 +766,7 @@ func runSession(ctx context.Context, opts Options) Result {
 				if suspendErr != nil {
 					runState.sessionErr = suspendErr
 					finishTurn(sessTelemetry, turn, turnDecision, "error", turnInfo, suspendErr)
-					runState.turnsCompleted = runState.userTurnCounter
+					
 					return Result{ExitCode: 1, Err: suspendErr}
 				}
 				finishTurn(sessTelemetry, turn, turnDecision, "suspended", turnInfo, nil)
@@ -800,20 +800,20 @@ func runSession(ctx context.Context, opts Options) Result {
 				}
 				runState.sessionErr = ferr
 				finishTurn(sessTelemetry, turn, "finalize", "error", turnInfo, ferr)
-				runState.turnsCompleted = runState.userTurnCounter
+				
 				return Result{ExitCode: 1, Err: ferr}
 			}
-			if err := runState.completeSession(display, answer, step, runState.userTurnCounter, false); err != nil {
+			if err := runState.completeSession(display, answer, step, runState.turnsCompleted, false); err != nil {
 				fmt.Fprintln(os.Stderr, "Final file write error:", err)
 				finishTurn(sessTelemetry, turn, "finalize", "error", turnInfo, err)
-				runState.turnsCompleted = runState.userTurnCounter
+				
 				return Result{ExitCode: 1, Err: err}
 			}
 			sessionClosed = true
 			turnDecision = "finalize"
 			turnInfo["finalized"] = true
 			finishTurn(sessTelemetry, turn, turnDecision, "success", turnInfo, nil)
-			return Result{ExitCode: 0, Status: runState.sessionStatus, Turns: runState.userTurnCounter, SessionID: sessionID}
+			return Result{ExitCode: 0, Status: runState.sessionStatus, Turns: runState.turnsCompleted, SessionID: sessionID}
 		}
 
 		turnEnv := &runTurnEnv{
@@ -825,7 +825,7 @@ func runSession(ctx context.Context, opts Options) Result {
 			step:                        step,
 			sessionErr:                  &runState.sessionErr,
 			turnsCompleted:              &runState.turnsCompleted,
-			userTurnCounter:             &runState.userTurnCounter,
+			
 			plannerProgress:             plannerProgress,
 			display:                     display,
 			sessTelemetry:               sessTelemetry,
@@ -886,7 +886,7 @@ func runSession(ctx context.Context, opts Options) Result {
 				if suspendErr != nil {
 					runState.sessionErr = suspendErr
 					finishTurn(sessTelemetry, turn, turnDecision, "error", turnInfo, suspendErr)
-					runState.turnsCompleted = runState.userTurnCounter
+					
 					return Result{ExitCode: 1, Err: suspendErr}
 				}
 				finishTurn(sessTelemetry, turn, turnDecision, "suspended", turnInfo, nil)
@@ -908,7 +908,7 @@ func runSession(ctx context.Context, opts Options) Result {
 Finalize:
 	if err := rootCtx.Err(); err != nil {
 		runState.turnsCompleted = countTurns(tr.Content())
-		runState.userTurnCounter = runState.turnsCompleted
+		
 		return interruptedResult(err)
 	}
 	turns := countTurns(tr.Content())
@@ -925,7 +925,7 @@ Finalize:
 	if ferr != nil {
 		if isContextCancelled(ferr) || isContextCancelled(finalCtxErr) {
 			runState.turnsCompleted = turns
-			runState.userTurnCounter = turns
+			
 			return interruptedResult(ferr)
 		}
 		fmt.Fprintln(os.Stderr, "Finalizer error:", ferr)

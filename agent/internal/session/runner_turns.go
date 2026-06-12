@@ -48,7 +48,6 @@ type runTurnEnv struct {
 	step                        int
 	sessionErr                  *error
 	turnsCompleted              *int
-	userTurnCounter             *int
 	plannerProgress             *plannerProgressTracker
 	display                     *ui.TerminalDisplay
 	sessTelemetry               *sessionTelemetry
@@ -78,7 +77,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 		fmt.Fprintln(os.Stderr, "Planner returned empty question for 'ask' decision")
 		*env.sessionErr = errEmpty
 		finishTurn(env.sessTelemetry, env.turn, env.turnDecision, "error", env.turnInfo, errEmpty)
-		*env.turnsCompleted = *env.userTurnCounter
+		
 		return turnExecutionResult{action: turnLoopReturn, result: Result{ExitCode: 1, Err: errEmpty}}
 	}
 	if env.cfg.verbose {
@@ -306,7 +305,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 				stream.Abort(msg)
 				*env.sessionErr = merr
 				finishTurn(env.sessTelemetry, env.turn, env.turnDecision, "error", env.turnInfo, merr)
-				*env.turnsCompleted = *env.userTurnCounter
+				
 				return turnExecutionResult{action: turnLoopReturn, result: Result{ExitCode: 1, Err: merr}, shellAgentUsed: shellAgentUsedThisTurn}
 			}
 		}
@@ -369,10 +368,10 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 			return turnExecutionResult{action: turnLoopReturn, result: Result{ExitCode: 1, Err: err}, shellAgentUsed: shellAgentUsedThisTurn}
 		}
 		env.turnInfo["retrieved_count"] = len(retrieved)
-		*env.userTurnCounter++
-		*env.turnsCompleted = *env.userTurnCounter
+		*env.turnsCompleted++
+		
 		finishTurn(env.sessTelemetry, env.turn, env.turnDecision, "success", env.turnInfo, nil)
-		if *env.userTurnCounter == env.cfg.maxSteps {
+		if *env.turnsCompleted == env.cfg.maxSteps {
 			return turnExecutionResult{action: turnLoopAnswerUser, shellAgentUsed: shellAgentUsedThisTurn}
 		}
 		return turnExecutionResult{action: turnLoopAskWorker, shellAgentUsed: shellAgentUsedThisTurn}
@@ -437,7 +436,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 		stream.Abort(msg)
 		*env.sessionErr = merr
 		finishTurn(env.sessTelemetry, env.turn, env.turnDecision, "error", env.turnInfo, merr)
-		*env.turnsCompleted = *env.userTurnCounter
+		
 		return turnExecutionResult{action: turnLoopReturn, result: Result{ExitCode: 1, Err: merr}, shellAgentUsed: shellAgentUsedThisTurn}
 	}
 	savedPath := strings.TrimSpace(result.SavedPath)
@@ -497,10 +496,10 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 	for k, v := range askInfo {
 		env.turnInfo[k] = v
 	}
-	*env.userTurnCounter++
-	*env.turnsCompleted = *env.userTurnCounter
+	*env.turnsCompleted++
+	
 	finishTurn(env.sessTelemetry, env.turn, env.turnDecision, "success", env.turnInfo, nil)
-	if *env.userTurnCounter == env.cfg.maxSteps {
+	if *env.turnsCompleted == env.cfg.maxSteps {
 		return turnExecutionResult{action: turnLoopAnswerUser, shellAgentUsed: shellAgentUsedThisTurn}
 	}
 	return turnExecutionResult{action: turnLoopAskWorker, shellAgentUsed: shellAgentUsedThisTurn}

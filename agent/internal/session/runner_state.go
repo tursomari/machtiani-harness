@@ -377,7 +377,6 @@ func newRunLifecycleState(rootCtx context.Context, cfg legacyConfig, sessionID, 
 		suspendedUserInput:  loadedStateSuspendedInput(loadedState),
 		sessionStatus:       "error",
 		turnsCompleted:      turnsCompleted,
-		userTurnCounter:     turnsCompleted,
 	}
 }
 
@@ -664,7 +663,6 @@ type runLifecycleState struct {
 	sessionStatus       string
 	sessionErr          error
 	turnsCompleted      int
-	userTurnCounter     int
 	interrupted         bool
 	pendingState        *SessionState
 	suspendedUserInput  *SuspendedUserInputState
@@ -696,7 +694,6 @@ func (r *runLifecycleState) interruptedResult(err error) Result {
 	}
 	r.sessionErr = err
 	r.transition(StateInterrupted)
-	r.turnsCompleted = r.userTurnCounter
 	return Result{ExitCode: 130, Status: r.sessionStatus, Turns: r.turnsCompleted, SessionID: r.sessionID, Err: err}
 }
 
@@ -834,7 +831,6 @@ func (r *runLifecycleState) suspendForUserInput(display *ui.TerminalDisplay, que
 		display.EndSession()
 	}
 	r.sessionErr = nil
-	r.turnsCompleted = r.userTurnCounter
 	if err := r.transition(StateSuspendedUserInput); err != nil {
 		return Result{}, err
 	}
