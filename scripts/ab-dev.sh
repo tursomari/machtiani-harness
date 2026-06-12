@@ -303,6 +303,7 @@ docker run --rm \
     $FORGE_MOUNT \
     -e MACHTIANI_WORKSPACE_DEBUG=${MACHTIANI_WORKSPACE_DEBUG:-} \
     ${ENV_FLAGS[@]} \
+    --entrypoint /bin/bash \
     "$CONTROL_IMAGE" \
     -c "$COMMAND; echo \$? > /output/exit_code" > "$CONTROL_OUT/stdout.log" 2> "$CONTROL_OUT/stderr.log" || CONTROL_RC=$?
 set -e
@@ -338,6 +339,7 @@ docker run --rm \
     $FORGE_MOUNT \
     -e MACHTIANI_WORKSPACE_DEBUG=${MACHTIANI_WORKSPACE_DEBUG:-} \
     ${ENV_FLAGS[@]} \
+    --entrypoint /bin/bash \
     "$TREATMENT_IMAGE" \
     -c "$COMMAND; echo \$? > /output/exit_code" > "$TREATMENT_OUT/stdout.log" 2> "$TREATMENT_OUT/stderr.log" || TREATMENT_RC=$?
 set -e
