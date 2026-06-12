@@ -1,5 +1,6 @@
 #!/bin/bash
 set -euo pipefail
+unset MACHTIANI_SESSION_ID
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${REPO_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
