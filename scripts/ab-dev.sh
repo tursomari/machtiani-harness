@@ -255,6 +255,7 @@ DOCKER_BUILDKIT=1 docker build \
     -f "$DOCKERFILE" \
     -t "$TREATMENT_IMAGE" \
     --build-arg "CHANGE_PATCH_B64=$PATCH_B64" \
+    --build-arg "CHANGE_PATCH_BASE=$INPUT" \
     "$REPO_ROOT"
 
 echo "[build:treatment] Image built: $TREATMENT_IMAGE"
