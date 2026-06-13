@@ -1,1 +1,1 @@
-Your response did not use an accepted format. Respond with exactly one <command>...</command> block containing the Bash command to execute, or exactly one <{{.AnswerTag}}>...</{{.AnswerTag}}> block if you are concluding.
+Your response did not use an accepted format. Respond with exactly one <{{.CommandTag}}>...</{{.CommandTag}}> block containing the Bash command to execute, or exactly one <{{.AnswerTag}}>...</{{.AnswerTag}}> block if you are concluding.
