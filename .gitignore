@@ -28,3 +28,4 @@ tests/repositories/
 Plan.md
 .machtiani/sessions/
 .machtiani/artifacts/
+.machtiani/tmp/
