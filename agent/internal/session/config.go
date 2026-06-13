@@ -40,6 +40,9 @@ type Config struct {
 	// happens at the CLI boundary in agent/cmd/mct-agent.
 	AnswerTag             string
 	APIKeyOverrides       map[string]string
+	// CommandTag overrides the command tag name used by the
+	// shell-agent parser and prompt templates. Defaults to "command".
+	CommandTag string
 	SessionID             string
 	EnableTagFormat       bool
 	PromptText            string
@@ -109,6 +112,7 @@ type legacyConfig struct {
 	// answerTag is propagated alongside ShellAgentModel. The legacy
 	// config struct mirrors Config.AnswerTag (see above).
 	answerTag               string
+	commandTag              string
 	apiKeyOverrides         map[string]string
 	enableTagFormat         bool
 	sessionID               string
@@ -144,6 +148,7 @@ func newLegacyConfig(cfg Config) legacyConfig {
 		shellAgent:              cfg.ShellAgent,
 		shellAgentModel:         cfg.ShellAgentModel,
 		answerTag:               cfg.AnswerTag,
+		commandTag:              cfg.CommandTag,
 		apiKeyOverrides:         llm.CopyAPIKeyOverridesForRuntime(cfg.APIKeyOverrides),
 		persistTmpData:          cfg.PersistTmpData,
 		maxCommandOutputBytes:   cfg.MaxCommandOutputBytes,

@@ -97,6 +97,7 @@ type ShellAgentLibraryConfig struct {
 	// / RenderInstancePrompt / parseXMLAnswer so the renderer and
 	// parser stay in sync.
 	AnswerTag string
+	CommandTag string
 }
 
 // Result captures the outcome of a prompt execution.
