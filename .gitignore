@@ -26,3 +26,4 @@ peripherals/
 tests/repositories/
 .machtiani/config.toml
 Plan.md
+.machtiani/sessions/
