@@ -120,20 +120,20 @@ func handleShellAgentCommand(args []string) int {
 	}
 
 	// Build the shell-agent library (model + environment) once.
-	lib, err := shellAgentBuildLibFn(&globalCfg, apiOverrides, false, "", *answerTag)
+	lib, err := shellAgentBuildLibFn(&globalCfg, apiOverrides, false, "", *answerTag, "command")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error building shell-agent library: %v\n", err)
 		return 1
 	}
 
 	// Render prompts.
-	sysPrompt, err := shellagent.RenderSystemPrompt(lib.Prompts, nil, *answerTag)
+	sysPrompt, err := shellagent.RenderSystemPrompt(lib.Prompts, nil, *answerTag, "command")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error rendering system prompt: %v\n", err)
 		return 1
 	}
 
-	instPrompt, err := shellagent.RenderInstancePrompt(lib.Prompts, task, lib.Config, lib.Env, nil, *answerTag)
+	instPrompt, err := shellagent.RenderInstancePrompt(lib.Prompts, task, lib.Config, lib.Env, nil, *answerTag, "command")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error rendering instance prompt: %v\n", err)
 		return 1

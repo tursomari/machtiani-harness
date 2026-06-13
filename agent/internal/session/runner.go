@@ -495,7 +495,7 @@ func runSession(ctx context.Context, opts Options) Result {
 		}
 		opts.GlobalConfig.Environment.MaxCommandOutputBytes = cfg.maxCommandOutputBytes
 	}
-	lib, libErr := shellagent.BuildLibrary(&opts.GlobalConfig, opts.APIKeyOverrides, cfg.persistTmpData, shellAgentModel, cfg.answerTag)
+	lib, libErr := shellagent.BuildLibrary(&opts.GlobalConfig, opts.APIKeyOverrides, cfg.persistTmpData, shellAgentModel, cfg.answerTag, cfg.commandTag)
 	if libErr != nil {
 		// Non-fatal: the library is a prerequisite only when the
 		// planner actually delegates to the shell-agent. If it's
