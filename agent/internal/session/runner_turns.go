@@ -233,7 +233,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 				if env.step < 3 && env.mctRunner.ShellAgentLibrary.FewShotVariant == "system" {
 					extraInstr = extraInstr + "\n" + shellagent.FewShotShellAgentExamples
 				}
-				prebuilt, err := shellagent.BuildShellAgentMessages(conv.ToLLMMessages(), env.mctRunner.ShellAgentLibrary.Prompts, extraInstr, env.mctRunner.ShellAgentLibrary.AnswerTag)
+				prebuilt, err := shellagent.BuildShellAgentMessages(conv.ToLLMMessages(), env.mctRunner.ShellAgentLibrary.Prompts, extraInstr, env.mctRunner.ShellAgentLibrary.AnswerTag, env.mctRunner.ShellAgentLibrary.CommandTag)
 				if err != nil && env.cfg.verbose {
 					fmt.Fprintln(os.Stderr, "shell-agent library: build prebuilt messages:", err)
 				}
@@ -393,7 +393,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 		if env.step < 3 && env.mctRunner.ShellAgentLibrary.FewShotVariant == "system" {
 			extraInstr = extraInstr + "\n" + shellagent.FewShotShellAgentExamples
 		}
-		prebuilt, err := shellagent.BuildShellAgentMessages(conv.ToLLMMessages(), env.mctRunner.ShellAgentLibrary.Prompts, extraInstr, env.mctRunner.ShellAgentLibrary.AnswerTag)
+		prebuilt, err := shellagent.BuildShellAgentMessages(conv.ToLLMMessages(), env.mctRunner.ShellAgentLibrary.Prompts, extraInstr, env.mctRunner.ShellAgentLibrary.AnswerTag, env.mctRunner.ShellAgentLibrary.CommandTag)
 		if err != nil && env.cfg.verbose {
 			fmt.Fprintln(os.Stderr, "shell-agent library: build prebuilt messages:", err)
 		}
