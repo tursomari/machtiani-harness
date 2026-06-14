@@ -179,6 +179,26 @@ func handleRunCommand(args []string) int {
 		return 2
 	}
 
+	// Mutual exclusion: --tag and --answer-tag cannot both be set.
+	if cfg.CommandTag != "" && cfg.AnswerTag != "" {
+		fmt.Fprintln(os.Stderr, "Error: --tag and --answer-tag are mutually exclusive")
+		return 2
+	}
+
+	// Compose effective answer and command tags from the raw flags.
+	effectiveAnswerTag, effectiveCommandTag, err := shellagent.ComposeEffectiveTags(cfg.AnswerTag, cfg.CommandTag)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		return 2
+	}
+	cfg.AnswerTag = effectiveAnswerTag
+	cfg.CommandTag = effectiveCommandTag
+
+	// Default command tag to "command" if still empty.
+	if cfg.CommandTag == "" {
+		cfg.CommandTag = "command"
+	}
+
 	// Validate goal input: exactly one of --text or --file is required.
 	hasText := strings.TrimSpace(cfg.PromptText) != ""
 	hasFile := strings.TrimSpace(*promptFile) != ""
@@ -499,6 +519,7 @@ func configureSessionFlags(fs *pflag.FlagSet, cfg *session.Config, paramFlags, p
 	fs.BoolVar(&cfg.ShellAgent, "shell-agent", false, "Enable shell-agent mode: invoke shell-agent subprocess binary for task execution")
 	fs.StringVar(&cfg.ShellAgentModel, "shell-agent-model", "", "Model alias override for shell-agent subprocesses (default: config)")
 	fs.StringVar(&cfg.AnswerTag, "answer-tag", "", `Override the final-answer tag name used by the shell-agent parser and prompt templates. Must not contain "<", ">", "/", "{{", or "}}". Empty input keeps the default ("answer").`)
+	fs.StringVar(&cfg.CommandTag, "tag", "", "single suffix for both answer and command tags (e.g. --tag foo produces answer-foo and command-foo)")
 	fs.StringVar(&cfg.FinalFile, "final-file", "", "path to write final answer-only artifact (default: .machtiani/sessions/<sessionID>/chat/agent-final-answer.md)")
 	fs.StringVar(&cfg.TranscriptFile, "transcript-file", "", "path to write transcript file (default: .machtiani/sessions/<sessionID>/chat/agent-transcript.adoc)")
 	fs.StringVar(&cfg.FileDiscoveryTrajectory, "file-discovery-trajectory", "", "path to write file-discovery trajectory JSONL (default: auto-named under session artifacts)")

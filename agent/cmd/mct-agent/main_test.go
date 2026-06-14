@@ -759,3 +759,128 @@ func TestEmptyGoalError(t *testing.T) {
 		t.Fatalf("expected 'Provide non-empty content via -t or --file' in stderr, got: %q", stderr)
 	}
 }
+
+// --- Tests for --tag flag behavior on mct-agent run ---
+
+func TestRunCommandTagFlagSetsBothTags(t *testing.T) {
+	origHead := readmeHeadCommitFn
+	origCommit := readmeCommitForProjectFn
+	origSession := sessionRunFn
+	t.Cleanup(func() {
+		readmeHeadCommitFn = origHead
+		readmeCommitForProjectFn = origCommit
+		sessionRunFn = origSession
+	})
+
+	prepareTestConfig(t)
+
+	readmeHeadCommitFn = func() (string, error) {
+		return "abcdef123456", nil
+	}
+	readmeCommitForProjectFn = func(string) (string, error) {
+		return "deadbeef", nil
+	}
+
+	var received session.Options
+	sessionRunFn = func(ctx context.Context, opts session.Options) session.Result {
+		received = opts
+		return session.Result{ExitCode: 0}
+	}
+
+	exitCode := handleRunCommand([]string{"--tag", "foo", "-t", "task"})
+	if exitCode != 0 {
+		t.Fatalf("expected exit code 0, got %d", exitCode)
+	}
+	if received.Config.AnswerTag != "answer-foo" {
+		t.Fatalf("expected AnswerTag 'answer-foo', got %q", received.Config.AnswerTag)
+	}
+	if received.Config.CommandTag != "command-foo" {
+		t.Fatalf("expected CommandTag 'command-foo', got %q", received.Config.CommandTag)
+	}
+}
+
+func TestRunCommandTagAndAnswerTagMutuallyExclusive(t *testing.T) {
+	prepareTestConfig(t)
+
+	var exitCode int
+	stderr := captureStderr(t, func() {
+		exitCode = handleRunCommand([]string{"--tag", "foo", "--answer-tag", "bar", "-t", "task"})
+	})
+	if exitCode != 2 {
+		t.Fatalf("expected exit code 2, got %d", exitCode)
+	}
+	if !strings.Contains(stderr, "mutually exclusive") {
+		t.Fatalf("expected 'mutually exclusive' in stderr, got: %q", stderr)
+	}
+}
+
+func TestRunCommandDefaultCommandTag(t *testing.T) {
+	origHead := readmeHeadCommitFn
+	origCommit := readmeCommitForProjectFn
+	origSession := sessionRunFn
+	t.Cleanup(func() {
+		readmeHeadCommitFn = origHead
+		readmeCommitForProjectFn = origCommit
+		sessionRunFn = origSession
+	})
+
+	prepareTestConfig(t)
+
+	readmeHeadCommitFn = func() (string, error) {
+		return "abcdef123456", nil
+	}
+	readmeCommitForProjectFn = func(string) (string, error) {
+		return "deadbeef", nil
+	}
+
+	var received session.Options
+	sessionRunFn = func(ctx context.Context, opts session.Options) session.Result {
+		received = opts
+		return session.Result{ExitCode: 0}
+	}
+
+	exitCode := handleRunCommand([]string{"-t", "task"})
+	if exitCode != 0 {
+		t.Fatalf("expected exit code 0, got %d", exitCode)
+	}
+	if received.Config.CommandTag != "command" {
+		t.Fatalf("expected CommandTag 'command', got %q", received.Config.CommandTag)
+	}
+}
+
+func TestRunCommandAnswerTagAlone(t *testing.T) {
+	origHead := readmeHeadCommitFn
+	origCommit := readmeCommitForProjectFn
+	origSession := sessionRunFn
+	t.Cleanup(func() {
+		readmeHeadCommitFn = origHead
+		readmeCommitForProjectFn = origCommit
+		sessionRunFn = origSession
+	})
+
+	prepareTestConfig(t)
+
+	readmeHeadCommitFn = func() (string, error) {
+		return "abcdef123456", nil
+	}
+	readmeCommitForProjectFn = func(string) (string, error) {
+		return "deadbeef", nil
+	}
+
+	var received session.Options
+	sessionRunFn = func(ctx context.Context, opts session.Options) session.Result {
+		received = opts
+		return session.Result{ExitCode: 0}
+	}
+
+	exitCode := handleRunCommand([]string{"--answer-tag", "bar", "-t", "task"})
+	if exitCode != 0 {
+		t.Fatalf("expected exit code 0, got %d", exitCode)
+	}
+	if received.Config.AnswerTag != "bar" {
+		t.Fatalf("expected AnswerTag 'bar', got %q", received.Config.AnswerTag)
+	}
+	if received.Config.CommandTag != "command" {
+		t.Fatalf("expected CommandTag 'command', got %q", received.Config.CommandTag)
+	}
+}
