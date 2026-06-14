@@ -51,6 +51,7 @@ func runShellAgentLibrary(ctx context.Context, task string, opts RunOptions) (co
 		PlannerTurn:            lib.TurnIndex,
 		EnforceEarlyCommands:   lib.EnforceEarlyCommands,
 		AnswerTag:              lib.AnswerTag,
+		CommandTag:             lib.CommandTag,
 	}
 
 	result, runErr := shellAgentRun(ctx, req)
