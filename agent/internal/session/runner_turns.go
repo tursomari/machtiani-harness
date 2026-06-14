@@ -231,7 +231,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 				conv := env.recorder.Conversation()
 				extraInstr := env.mctRunner.ShellAgentLibrary.ExtraInstructions
 				if env.step < 3 && env.mctRunner.ShellAgentLibrary.FewShotVariant == "system" {
-					extraInstr = extraInstr + "\n" + shellagent.FewShotShellAgentExamples
+					extraInstr = extraInstr + "\n" + shellagent.FewShotShellAgentExamples(env.mctRunner.ShellAgentLibrary.CommandTag)
 				}
 				prebuilt, err := shellagent.BuildShellAgentMessages(conv.ToLLMMessages(), env.mctRunner.ShellAgentLibrary.Prompts, extraInstr, env.mctRunner.ShellAgentLibrary.AnswerTag, env.mctRunner.ShellAgentLibrary.CommandTag)
 				if err != nil && env.cfg.verbose {
@@ -247,6 +247,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 						TurnIndex:            env.step,
 						EnforceEarlyCommands: env.mctRunner.ShellAgentLibrary.EnforceEarlyCommands,
 						AnswerTag:            env.mctRunner.ShellAgentLibrary.AnswerTag,
+						CommandTag:           env.mctRunner.ShellAgentLibrary.CommandTag,
 						PrebuiltMessages:     prebuilt,
 					}
 				}
@@ -391,7 +392,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 		conv := env.recorder.Conversation()
 		extraInstr := env.mctRunner.ShellAgentLibrary.ExtraInstructions
 		if env.step < 3 && env.mctRunner.ShellAgentLibrary.FewShotVariant == "system" {
-			extraInstr = extraInstr + "\n" + shellagent.FewShotShellAgentExamples
+			extraInstr = extraInstr + "\n" + shellagent.FewShotShellAgentExamples(env.mctRunner.ShellAgentLibrary.CommandTag)
 		}
 		prebuilt, err := shellagent.BuildShellAgentMessages(conv.ToLLMMessages(), env.mctRunner.ShellAgentLibrary.Prompts, extraInstr, env.mctRunner.ShellAgentLibrary.AnswerTag, env.mctRunner.ShellAgentLibrary.CommandTag)
 		if err != nil && env.cfg.verbose {
@@ -407,6 +408,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 				TurnIndex:            env.step,
 				EnforceEarlyCommands: env.mctRunner.ShellAgentLibrary.EnforceEarlyCommands,
 				AnswerTag:            env.mctRunner.ShellAgentLibrary.AnswerTag,
+				CommandTag:           env.mctRunner.ShellAgentLibrary.CommandTag,
 				PrebuiltMessages:     prebuilt,
 			}
 		}
