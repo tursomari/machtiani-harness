@@ -29,6 +29,7 @@ func handleShellAgentCommand(args []string) int {
 	fs.StringVarP(&promptText, "text", "t", "", "Task text (mutually exclusive with --file)")
 	fs.Var(&apiKeyFlags, "api-key", "Provider-specific API key override in provider:key format (repeatable)")
 	answerTag := fs.String("answer-tag", "", `Override the final-answer tag name used by the parser and prompt templates. Must not contain "<", ">", "/", "{{", or "}}". Empty input keeps the default ("answer").`)
+	tagSuffix := fs.String("tag", "", "single suffix for both answer and command tags (e.g. --tag foo produces answer-foo and command-foo)")
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: mct-agent shell-agent --text \"<task>\" | --file <path> [flags]\n\n")
 		fmt.Fprintln(os.Stderr, "Flags:")
@@ -119,21 +120,34 @@ func handleShellAgentCommand(args []string) int {
 		return 2
 	}
 
+	// --tag and --answer-tag are mutually exclusive.
+	if *tagSuffix != "" && *answerTag != "" {
+		fmt.Fprintln(os.Stderr, "Error: --tag and --answer-tag are mutually exclusive")
+		return 2
+	}
+
+	// Compose effective tags from flags.
+	effectiveAnswerTag, effectiveCommandTag, err := shellagent.ComposeEffectiveTags(*answerTag, *tagSuffix)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		return 2
+	}
+
 	// Build the shell-agent library (model + environment) once.
-	lib, err := shellAgentBuildLibFn(&globalCfg, apiOverrides, false, "", *answerTag, "command")
+	lib, err := shellAgentBuildLibFn(&globalCfg, apiOverrides, false, "", effectiveAnswerTag, effectiveCommandTag)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error building shell-agent library: %v\n", err)
 		return 1
 	}
 
 	// Render prompts.
-	sysPrompt, err := shellagent.RenderSystemPrompt(lib.Prompts, nil, *answerTag, "command")
+	sysPrompt, err := shellagent.RenderSystemPrompt(lib.Prompts, nil, effectiveAnswerTag, effectiveCommandTag)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error rendering system prompt: %v\n", err)
 		return 1
 	}
 
-	instPrompt, err := shellagent.RenderInstancePrompt(lib.Prompts, task, lib.Config, lib.Env, nil, *answerTag, "command")
+	instPrompt, err := shellagent.RenderInstancePrompt(lib.Prompts, task, lib.Config, lib.Env, nil, effectiveAnswerTag, effectiveCommandTag)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error rendering instance prompt: %v\n", err)
 		return 1
@@ -154,7 +168,8 @@ func handleShellAgentCommand(args []string) int {
 		Prompts:                lib.Prompts,
 		Verbose:                *verbose,
 		MaxInputTokens:         *maxInputTokens,
-		AnswerTag:              *answerTag,
+		AnswerTag:              effectiveAnswerTag,
+		CommandTag:             effectiveCommandTag,
 	}
 
 	// Run the shell-agent loop.

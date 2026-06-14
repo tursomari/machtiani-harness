@@ -485,3 +485,129 @@ func TestPrintUsageIncludesShellAgent(t *testing.T) {
 		t.Fatalf("expected 'shell-agent' in usage output, got %q", stderr)
 	}
 }
+
+func TestShellAgentTagFlagSetsBothTags(t *testing.T) {
+	prepareTestConfig(t)
+
+	origBuild := shellAgentBuildLibFn
+	origRun := shellAgentRunFn
+	t.Cleanup(func() {
+		shellAgentBuildLibFn = origBuild
+		shellAgentRunFn = origRun
+	})
+
+	shellAgentBuildLibFn = func(global *llm.Config, apiKeyOverrides map[string]string, persistTmpData bool, modelAlias string, answerTag string, commandTag string) (*shellagent.ShellAgentLibrary, error) {
+		return stubLibrary(), nil
+	}
+
+	var capturedReq shellagent.Request
+	shellAgentRunFn = func(ctx context.Context, req shellagent.Request) (shellagent.Result, error) {
+		capturedReq = req
+		return shellagent.Result{Answer: "done", ExitStatus: "Submitted"}, nil
+	}
+
+	var exitCode int
+	stdout := captureStdout(t, func() {
+		exitCode = handleShellAgentCommand([]string{"--text", "test task", "--tag", "foo"})
+	})
+
+	if exitCode != 0 {
+		t.Fatalf("expected exit code 0, got %d", exitCode)
+	}
+	if capturedReq.AnswerTag != "answer-foo" {
+		t.Fatalf("expected AnswerTag 'answer-foo', got %q", capturedReq.AnswerTag)
+	}
+	if capturedReq.CommandTag != "command-foo" {
+		t.Fatalf("expected CommandTag 'command-foo', got %q", capturedReq.CommandTag)
+	}
+	_ = stdout
+}
+
+func TestShellAgentTagAndAnswerTagMutuallyExclusive(t *testing.T) {
+	prepareTestConfig(t)
+
+	var exitCode int
+	stderr := captureStderr(t, func() {
+		exitCode = handleShellAgentCommand([]string{"--text", "test task", "--tag", "foo", "--answer-tag", "bar"})
+	})
+	if exitCode != 2 {
+		t.Fatalf("expected exit code 2, got %d", exitCode)
+	}
+	if !strings.Contains(stderr, "mutually exclusive") && !strings.Contains(stderr, "conflict") && !strings.Contains(stderr, "Error") {
+		t.Fatalf("expected error about mutually exclusive flags in stderr, got %q", stderr)
+	}
+}
+
+func TestShellAgentDefaultCommandTag(t *testing.T) {
+	prepareTestConfig(t)
+
+	origBuild := shellAgentBuildLibFn
+	origRun := shellAgentRunFn
+	t.Cleanup(func() {
+		shellAgentBuildLibFn = origBuild
+		shellAgentRunFn = origRun
+	})
+
+	shellAgentBuildLibFn = func(global *llm.Config, apiKeyOverrides map[string]string, persistTmpData bool, modelAlias string, answerTag string, commandTag string) (*shellagent.ShellAgentLibrary, error) {
+		return stubLibrary(), nil
+	}
+
+	var capturedReq shellagent.Request
+	shellAgentRunFn = func(ctx context.Context, req shellagent.Request) (shellagent.Result, error) {
+		capturedReq = req
+		return shellagent.Result{Answer: "done", ExitStatus: "Submitted"}, nil
+	}
+
+	var exitCode int
+	stdout := captureStdout(t, func() {
+		exitCode = handleShellAgentCommand([]string{"--text", "test task"})
+	})
+
+	if exitCode != 0 {
+		t.Fatalf("expected exit code 0, got %d", exitCode)
+	}
+	if capturedReq.AnswerTag != "answer" {
+		t.Fatalf("expected AnswerTag 'answer', got %q", capturedReq.AnswerTag)
+	}
+	if capturedReq.CommandTag != "command" {
+		t.Fatalf("expected CommandTag 'command', got %q", capturedReq.CommandTag)
+	}
+	_ = stdout
+}
+
+func TestShellAgentAnswerTagAlone(t *testing.T) {
+	prepareTestConfig(t)
+
+	origBuild := shellAgentBuildLibFn
+	origRun := shellAgentRunFn
+	t.Cleanup(func() {
+		shellAgentBuildLibFn = origBuild
+		shellAgentRunFn = origRun
+	})
+
+	shellAgentBuildLibFn = func(global *llm.Config, apiKeyOverrides map[string]string, persistTmpData bool, modelAlias string, answerTag string, commandTag string) (*shellagent.ShellAgentLibrary, error) {
+		return stubLibrary(), nil
+	}
+
+	var capturedReq shellagent.Request
+	shellAgentRunFn = func(ctx context.Context, req shellagent.Request) (shellagent.Result, error) {
+		capturedReq = req
+		return shellagent.Result{Answer: "done", ExitStatus: "Submitted"}, nil
+	}
+
+	var exitCode int
+	stdout := captureStdout(t, func() {
+		exitCode = handleShellAgentCommand([]string{"--text", "test task", "--answer-tag", "bar"})
+	})
+
+	if exitCode != 0 {
+		t.Fatalf("expected exit code 0, got %d", exitCode)
+	}
+	if capturedReq.AnswerTag != "bar" {
+		t.Fatalf("expected AnswerTag 'bar', got %q", capturedReq.AnswerTag)
+	}
+	if capturedReq.CommandTag != "command" {
+		t.Fatalf("expected CommandTag 'command', got %q", capturedReq.CommandTag)
+	}
+	_ = stdout
+}
