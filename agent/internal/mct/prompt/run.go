@@ -19,12 +19,14 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/session"
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/utils"
 	"github.com/tursomari/machtiani/agent/internal/prompts"
+	shellagent "github.com/tursomari/machtiani/agent/internal/shell-agent"
 	"github.com/tursomari/machtiani/agent/internal/templates"
 )
 
 var (
 	chatStreamWithRuntime  = llm.ChatStreamWithResolvedFallback
 	discoveryRunnerRun     = discoveryrunner.Run
+	shellAgentRun          = shellagent.Run
 )
 
 const defaultShellAgentPromptNotice = "I understand that I don't have access to a shell directly. The `shell-agent` will carry out my request and report back with explanation of the results and not necessarily the full output of commands it executes."
@@ -163,12 +165,27 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 				opts.ShellAgentModel = candidate
 			}
 		}
-		if opts.ShellAgentLibrary == nil {
-			return res, fmt.Errorf("shell-agent library is required when shell-agent mode is enabled")
+		if opts.ShellAgentRequest == nil {
+			return res, fmt.Errorf("shell-agent request is required when shell-agent mode is enabled")
 		}
-		_, verbatimBlock, _, shellErr := runShellAgentLibrary(ctx, opts.Prompt, opts)
+		req := *opts.ShellAgentRequest
+		req.Task = opts.Prompt
+		result, shellErr := shellAgentRun(ctx, req)
 		if shellErr != nil {
 			return res, shellErr
+		}
+		if result.Error != nil {
+			return res, fmt.Errorf("shell-agent failed: %w", result.Error)
+		}
+		if result.ExitStatus != "Submitted" {
+			if result.ExitStatus == "" {
+				return res, fmt.Errorf("shell-agent exited without final answer")
+			}
+			return res, fmt.Errorf("shell-agent exited without final answer: %s", result.ExitStatus)
+		}
+		verbatimBlock := strings.TrimSpace(result.Answer)
+		if verbatimBlock == "" {
+			return res, fmt.Errorf("shell-agent submitted an empty final answer")
 		}
 		shellAgentUsed = true
 		shellAgentOutput = verbatimBlock

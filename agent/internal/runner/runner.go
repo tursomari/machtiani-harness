@@ -47,12 +47,10 @@ type PromptInput struct {
 	MaxInputTokens     int
 	ResponseDirectives []string
 
-	// ShellAgentLibrary, when non-nil, carries the pre-built message
-	// prefix and live objects for the in-process shell-agent library
-	// path. When set alongside ShellAgent=true on the Runner, the
-	// prompt layer calls shellagent.Run directly instead of spawning
-	// a subprocess.
-	ShellAgentLibrary *promptsvc.ShellAgentLibraryConfig
+	// ShellAgentRequest, when non-nil, carries a pre-built shellagent.Request
+	// constructed by the session layer. The prompt layer passes it directly to
+	// shellagent.Run instead of constructing a ShellAgentLibraryConfig.
+	ShellAgentRequest *shellagent.Request
 
 	// ShellAgentSessionID is the session ID to pass to the shell-agent
 	// library for in-process execution.
@@ -180,7 +178,7 @@ func (r *Runner) RunPrompt(ctx context.Context, sessionID string, in PromptInput
 		SessionTempRoot:         r.SessionTempRoot,
 		ResponseDirectives:      append([]string(nil), in.ResponseDirectives...),
 		Prompts:                 mctPrompts,
-		ShellAgentLibrary:       in.ShellAgentLibrary,
+		ShellAgentRequest:       in.ShellAgentRequest,
 		ShellAgentSessionID:     in.ShellAgentSessionID,
 	})
 	if useMarkdown && ms != nil {

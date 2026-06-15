@@ -41,7 +41,7 @@ func TestRunUsesShellAgentSubmittedAnswerWithoutChatFallback(t *testing.T) {
 		Mode:              "default",
 		Runtime:           ModelRuntime{Resolved: llm.ResolvedModel{Model: "planner-model"}},
 		ShellAgent:        true,
-		ShellAgentLibrary: testShellAgentLibraryConfig(),
+		ShellAgentRequest: testShellAgentRequest(),
 		Prompts:           testPromptsConfig(),
 	})
 	if err != nil {
@@ -77,7 +77,7 @@ func TestRunPropagatesShellAgentResultErrorWithoutChatFallback(t *testing.T) {
 		Mode:              "default",
 		Runtime:           ModelRuntime{Resolved: llm.ResolvedModel{Model: "planner-model"}},
 		ShellAgent:        true,
-		ShellAgentLibrary: testShellAgentLibraryConfig(),
+		ShellAgentRequest: testShellAgentRequest(),
 		Prompts:           testPromptsConfig(),
 	})
 	if err == nil {
@@ -113,7 +113,7 @@ func TestRunRejectsEmptyShellAgentSubmittedAnswerWithoutChatFallback(t *testing.
 		Mode:              "default",
 		Runtime:           ModelRuntime{Resolved: llm.ResolvedModel{Model: "planner-model"}},
 		ShellAgent:        true,
-		ShellAgentLibrary: testShellAgentLibraryConfig(),
+		ShellAgentRequest: testShellAgentRequest(),
 		Prompts:           testPromptsConfig(),
 	})
 	if err == nil {

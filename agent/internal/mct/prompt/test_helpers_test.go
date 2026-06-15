@@ -2,6 +2,7 @@ package prompt
 
 import (
 	"github.com/tursomari/machtiani/agent/internal/llm"
+	shellagent "github.com/tursomari/machtiani/agent/internal/shell-agent"
 	"github.com/tursomari/machtiani/agent/internal/shell-agent/pkg/minisweagent"
 )
 
@@ -30,14 +31,18 @@ Current Request:
 	}
 }
 
-func testShellAgentLibraryConfig() *ShellAgentLibraryConfig {
-	return &ShellAgentLibraryConfig{
+func testShellAgentRequest() *shellagent.Request {
+	return &shellagent.Request{
 		Config: &minisweagent.ShellAgentConfig{},
 		Prompts: &minisweagent.PromptsConfig{
 			ShellAgent: &minisweagent.ShellAgentPromptsConfig{
 				InstanceTemplate: "{{.Task}}",
 			},
 		},
-		PrebuiltMessages: []llm.Message{{Role: "system", Content: "test shell-agent system prompt"}},
+		AnswerTag:              "answer",
+		CommandTag:             "command",
+		PreconstructedMessages: []llm.Message{{Role: "system", Content: "test shell-agent system prompt"}},
+		Verbose:                false,
+		EnforceEarlyCommands:   false,
 	}
 }

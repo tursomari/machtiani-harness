@@ -2,7 +2,7 @@ package prompt
 
 import (
 	"github.com/tursomari/machtiani/agent/internal/llm"
-	"github.com/tursomari/machtiani/agent/internal/shell-agent/pkg/minisweagent"
+	shellagent "github.com/tursomari/machtiani/agent/internal/shell-agent"
 )
 
 // ModelRuntime captures the resolved model configuration used for LLM calls
@@ -41,16 +41,15 @@ type RunOptions struct {
 	ShellAgent              bool
 	ShellAgentModel         string
 	ShellAgentSessionID     string // ShellAgentSessionID is the sub-session ID passed to the shell-agent for recoverability (format: <parent-session-id>/shell-agent/<turn>).
+
+	// ShellAgentRequest, when set alongside ShellAgent=true, carries a pre-built shellagent.Request
+	// constructed by the session layer. The prompt layer passes it directly to shellagent.Run.
+	ShellAgentRequest *shellagent.Request
 	GlobalConfigPath        string
 	PersistTmpData          bool
 	SessionTempRoot         string
 	ResponseDirectives      []string
 	Prompts                 *llm.MCTPromptsConfig
-
-	// ShellAgentLibrary enables the in-process library path. When set
-	// alongside ShellAgent=true, the prompt layer calls shellagent.Run
-	// directly instead of spawning a subprocess.
-	ShellAgentLibrary *ShellAgentLibraryConfig
 }
 
 // ReadmeOptions configure optional internal README management hooks.
@@ -59,46 +58,6 @@ type ReadmeOptions struct {
 	ProjectCommitSHA string
 }
 
-// ShellAgentLibraryConfig holds the live objects needed for the in-process
-// shell-agent library path. When set on RunOptions, the prompt layer calls
-// shellagent.Run directly instead of spawning a subprocess.
-type ShellAgentLibraryConfig struct {
-	Model   minisweagent.Model
-	Env     minisweagent.Environment
-	Config  *minisweagent.ShellAgentConfig
-	Prompts *minisweagent.PromptsConfig
-
-	// PrebuiltMessages, when non-nil, carries the pre-built message
-	// prefix (system prompt + planner conversation messages). The
-	// prompt layer appends the instance prompt and passes the complete
-	// array to shellagent.Run.
-	PrebuiltMessages []llm.Message
-
-	// FewShotVariant controls the few-shot injection variant:
-	// Default is "instance". Valid values are: "off", "none", "system", "instance".
-	FewShotVariant string
-
-	// TurnIndex is the current turn number (0-based) for per-turn injection logic.
-	TurnIndex int
-
-	// EnforceEarlyCommands, when true, opts the work_request into the
-	// stricter early-turn behaviour: the shell-agent library emits a
-	// turn-specific format-error message and runs `bash -n` against
-	// extracted commands when PlannerTurn < 3. The flag defaults to
-	// false so existing sessions keep the relaxed behaviour until a
-	// caller explicitly opts in.
-	EnforceEarlyCommands bool
-
-	// AnswerTag is the final-answer tag name baked into the
-	// shell-agent prompt templates and used by the parser to extract
-	// the answer block. The default is "answer"; callers can
-	// override it via the --answer-tag CLI flag. The prompt layer
-	// passes the value through to shellagent.Run / RenderSystemPrompt
-	// / RenderInstancePrompt / parseXMLAnswer so the renderer and
-	// parser stay in sync.
-	AnswerTag string
-	CommandTag string
-}
 
 // Result captures the outcome of a prompt execution.
 type Result struct {

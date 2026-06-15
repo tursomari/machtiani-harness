@@ -227,29 +227,16 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 			if env.mctRunner.Prompts != nil {
 				shellOpts.Prompts = env.mctRunner.Prompts.MCT
 			}
+			var req shellagent.Request
 			if env.mctRunner.ShellAgentLibrary != nil {
-				conv := env.recorder.Conversation()
-				extraInstr := env.mctRunner.ShellAgentLibrary.ExtraInstructions
-				if env.step < 3 && env.mctRunner.ShellAgentLibrary.FewShotVariant == "system" {
-					extraInstr = extraInstr + "\n" + shellagent.FewShotShellAgentExamples(env.mctRunner.ShellAgentLibrary.CommandTag)
-				}
-				prebuilt, err := shellagent.BuildShellAgentMessages(conv.ToLLMMessages(), env.mctRunner.ShellAgentLibrary.Prompts, extraInstr, env.mctRunner.ShellAgentLibrary.AnswerTag, env.mctRunner.ShellAgentLibrary.CommandTag)
-				if err != nil && env.cfg.verbose {
-					fmt.Fprintln(os.Stderr, "shell-agent library: build prebuilt messages:", err)
-				}
+				tc := &TurnContext{TurnIndex: env.step, Conversation: env.recorder, ShellAgentLib: env.mctRunner.ShellAgentLibrary}
+				var err error
+				req, err = tc.buildShellAgentRequest(shellAskTrimmed, shellAgentSessionID, env.cfg.verbose, env.cfg.maxInputTokens)
 				if err == nil {
-					shellOpts.ShellAgentLibrary = &promptsvc.ShellAgentLibraryConfig{
-						Model:                env.mctRunner.ShellAgentLibrary.Model,
-						Env:                  env.mctRunner.ShellAgentLibrary.Env,
-						Config:               env.mctRunner.ShellAgentLibrary.Config,
-						Prompts:              env.mctRunner.ShellAgentLibrary.Prompts,
-						FewShotVariant:       env.mctRunner.ShellAgentLibrary.FewShotVariant,
-						TurnIndex:            env.step,
-						EnforceEarlyCommands: env.mctRunner.ShellAgentLibrary.EnforceEarlyCommands,
-						AnswerTag:            env.mctRunner.ShellAgentLibrary.AnswerTag,
-						CommandTag:           env.mctRunner.ShellAgentLibrary.CommandTag,
-						PrebuiltMessages:     prebuilt,
-					}
+					shellOpts.ShellAgentRequest = &req
+				}
+				if err != nil && env.cfg.verbose {
+					fmt.Fprintln(os.Stderr, "shell-agent library: build request:", err)
 				}
 			}
 			go func() {
@@ -257,7 +244,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 				if shellCancel != nil {
 					defer shellCancel()
 				}
-				shellResult, shellErr = promptsvc.RunShellAgentOnly(ctxShell, shellOpts)
+				shellResult, shellErr = promptsvc.RunShellAgentOnly(ctxShell, shellOpts, req)
 			}()
 		}
 
@@ -389,28 +376,13 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 		ResponseDirectives: append([]string(nil), env.mctResponseDirectives...),
 	}
 	if useShellAgent && env.mctRunner.ShellAgentLibrary != nil {
-		conv := env.recorder.Conversation()
-		extraInstr := env.mctRunner.ShellAgentLibrary.ExtraInstructions
-		if env.step < 3 && env.mctRunner.ShellAgentLibrary.FewShotVariant == "system" {
-			extraInstr = extraInstr + "\n" + shellagent.FewShotShellAgentExamples(env.mctRunner.ShellAgentLibrary.CommandTag)
-		}
-		prebuilt, err := shellagent.BuildShellAgentMessages(conv.ToLLMMessages(), env.mctRunner.ShellAgentLibrary.Prompts, extraInstr, env.mctRunner.ShellAgentLibrary.AnswerTag, env.mctRunner.ShellAgentLibrary.CommandTag)
-		if err != nil && env.cfg.verbose {
-			fmt.Fprintln(os.Stderr, "shell-agent library: build prebuilt messages:", err)
-		}
+		tc := &TurnContext{TurnIndex: env.step, Conversation: env.recorder, ShellAgentLib: env.mctRunner.ShellAgentLibrary}
+		req, err := tc.buildShellAgentRequest(question, shellAgentSessionID, env.cfg.verbose, env.cfg.maxInputTokens)
 		if err == nil {
-			input.ShellAgentLibrary = &promptsvc.ShellAgentLibraryConfig{
-				Model:                env.mctRunner.ShellAgentLibrary.Model,
-				Env:                  env.mctRunner.ShellAgentLibrary.Env,
-				Config:               env.mctRunner.ShellAgentLibrary.Config,
-				Prompts:              env.mctRunner.ShellAgentLibrary.Prompts,
-				FewShotVariant:       env.mctRunner.ShellAgentLibrary.FewShotVariant,
-				TurnIndex:            env.step,
-				EnforceEarlyCommands: env.mctRunner.ShellAgentLibrary.EnforceEarlyCommands,
-				AnswerTag:            env.mctRunner.ShellAgentLibrary.AnswerTag,
-				CommandTag:           env.mctRunner.ShellAgentLibrary.CommandTag,
-				PrebuiltMessages:     prebuilt,
-			}
+			input.ShellAgentRequest = &req
+		}
+		if err != nil && env.cfg.verbose {
+			fmt.Fprintln(os.Stderr, "shell-agent library: build request:", err)
 		}
 	}
 	ctx2, cancel2 := makeTurnContext(env.rootCtx, env.cfg.timeoutPerTurn)
@@ -507,3 +479,76 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 	return turnExecutionResult{action: turnLoopAskWorker, shellAgentUsed: shellAgentUsedThisTurn}
 }
 
+
+// TurnContext bundles turn-scoped data for shell-agent request construction.
+type TurnContext struct {
+	TurnIndex    int
+	Conversation *conversationRecorder
+	ShellAgentLib *shellagent.ShellAgentLibrary
+}
+
+// buildShellAgentRequest constructs a shellagent.Request from the TurnContext
+// and explicit turn parameters, encoding the ExtraInstructions / FewShot /
+// BuildShellAgentMessages / RenderInstancePrompt pipeline.
+func (tc *TurnContext) buildShellAgentRequest(task string, sessionID string, verbose bool, maxInputTokens int) (shellagent.Request, error) {
+	extraInstr := tc.ShellAgentLib.ExtraInstructions
+	if tc.ShellAgentLib.FewShotVariant == "system" && tc.TurnIndex < 3 {
+		extraInstr += "\n" + shellagent.FewShotShellAgentExamples(tc.ShellAgentLib.CommandTag)
+	}
+
+	conv := tc.Conversation.Conversation()
+	prebuilt, err := shellagent.BuildShellAgentMessages(
+		conv.ToLLMMessages(),
+		tc.ShellAgentLib.Prompts,
+		extraInstr,
+		tc.ShellAgentLib.AnswerTag,
+		tc.ShellAgentLib.CommandTag,
+	)
+	if err != nil {
+		return shellagent.Request{}, err
+	}
+
+	messages := make([]llm.Message, len(prebuilt))
+	copy(messages, prebuilt)
+
+	extraVars := map[string]interface{}{}
+	if tc.ShellAgentLib.FewShotVariant == "instance" && tc.TurnIndex < 3 {
+		extraVars["ShowFewShot"] = true
+	}
+
+	instPrompt, err := shellagent.RenderInstancePrompt(
+		tc.ShellAgentLib.Prompts,
+		task,
+		tc.ShellAgentLib.Config,
+		tc.ShellAgentLib.Env,
+		extraVars,
+		tc.ShellAgentLib.AnswerTag,
+		tc.ShellAgentLib.CommandTag,
+	)
+	if err != nil {
+		return shellagent.Request{}, err
+	}
+
+	messages = append(messages, llm.Message{
+		Role: "user",
+		Content: instPrompt,
+	})
+
+	req := shellagent.Request{
+		PreconstructedMessages: messages,
+		Task:                   task,
+		Config:                 tc.ShellAgentLib.Config,
+		Prompts:                tc.ShellAgentLib.Prompts,
+		Model:                  tc.ShellAgentLib.Model,
+		Env:                    tc.ShellAgentLib.Env,
+		Verbose:                verbose,
+		MaxInputTokens:         maxInputTokens,
+		SessionID:              sessionID,
+		PlannerTurn:            tc.TurnIndex,
+		EnforceEarlyCommands:   tc.ShellAgentLib.EnforceEarlyCommands,
+		AnswerTag:              tc.ShellAgentLib.AnswerTag,
+		CommandTag:             tc.ShellAgentLib.CommandTag,
+	}
+
+	return req, nil
+}

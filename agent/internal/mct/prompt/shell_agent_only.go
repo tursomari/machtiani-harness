@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	shellagent "github.com/tursomari/machtiani/agent/internal/shell-agent"
 )
 
 // ShellAgentOnlyResult captures the shell-agent output when running without the chat model.
@@ -17,7 +19,7 @@ type ShellAgentOnlyResult struct {
 
 // RunShellAgentOnly runs the shell agent on the prompt and returns its output
 // without invoking the chat model or mutating session history.
-func RunShellAgentOnly(ctx context.Context, opts RunOptions) (ShellAgentOnlyResult, error) {
+func RunShellAgentOnly(ctx context.Context, opts RunOptions, req shellagent.Request) (ShellAgentOnlyResult, error) {
 	var res ShellAgentOnlyResult
 
 	if err := validateMCTPromptsConfig(opts.Prompts); err != nil {
@@ -52,13 +54,27 @@ func RunShellAgentOnly(ctx context.Context, opts RunOptions) (ShellAgentOnlyResu
 		}
 	}
 
-	if opts.ShellAgentLibrary == nil {
-		return res, fmt.Errorf("shell-agent library is required when shell-agent mode is enabled")
+	if req.PreconstructedMessages == nil || len(req.PreconstructedMessages) == 0 {
+		return res, fmt.Errorf("shell-agent request has no preconstructed messages")
 	}
-	contextBlock, verbatimBlock, _, err := runShellAgentLibrary(ctx, opts.Prompt, opts)
+	result, err := shellagent.Run(ctx, req)
 	if err != nil {
 		return res, err
 	}
+	if result.Error != nil {
+		return res, fmt.Errorf("shell-agent failed: %w", result.Error)
+	}
+	if result.ExitStatus != "Submitted" {
+		if result.ExitStatus == "" {
+			return res, fmt.Errorf("shell-agent exited without final answer")
+		}
+		return res, fmt.Errorf("shell-agent exited without final answer: %s", result.ExitStatus)
+	}
+	verbatimBlock := strings.TrimSpace(result.Answer)
+	if verbatimBlock == "" {
+		return res, fmt.Errorf("shell-agent submitted an empty final answer")
+	}
+	contextBlock := ""
 	res.Context = strings.TrimSpace(contextBlock)
 	res.Verbatim = strings.TrimSpace(verbatimBlock)
 	res.Summary = strings.TrimSpace(res.Verbatim)
