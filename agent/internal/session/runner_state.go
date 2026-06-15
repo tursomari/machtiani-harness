@@ -821,6 +821,16 @@ func (r *runLifecycleState) persistSessionState() {
 	}
 }
 
+// checkpointTurn saves both conversation.json and session-state.json
+// in a single coordinated call, providing a consistent persistence point
+// at turn boundaries.
+func (r *runLifecycleState) checkpointTurn() {
+	if r.recorder != nil {
+		r.recorder.EnsureSaved()
+	}
+	r.persistSessionState()
+}
+
 func formatUserInputRequestContent(question, context string) string {
 	question = strings.TrimSpace(question)
 	context = strings.TrimSpace(context)

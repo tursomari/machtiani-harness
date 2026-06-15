@@ -402,7 +402,7 @@ func runSession(ctx context.Context, opts Options) Result {
 	rootCtx = llm.WithTranscript(rootCtx, tr)
 	_ = transcriptSetup.recorder // recorder is accessed via runState.recorder
 	defer func() {
-		runState.persistSessionState()
+		runState.checkpointTurn()
 	}()
 	writeTurn := transcriptSetup.writeTurn
 	appendConversationRaw := transcriptSetup.appendConversationRaw
