@@ -1,10 +1,14 @@
 package llm
 
 import (
+	"context"
 	"errors"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -13,6 +17,16 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
 }
+
+type fakeNetError struct {
+	msg       string
+	timeout   bool
+	temporary bool
+}
+
+func (e *fakeNetError) Error() string   { return e.msg }
+func (e *fakeNetError) Timeout() bool   { return e.timeout }
+func (e *fakeNetError) Temporary() bool { return e.temporary }
 
 func TestExecuteStreamUnreachableHostError(t *testing.T) {
 	originalClient := streamingHTTPClient
@@ -157,5 +171,67 @@ func TestExecuteOnceHTTPResponseError(t *testing.T) {
 	}
 	if he.URL != "http://example.com/chat" {
 		t.Fatalf("unexpected URL: %s", he.URL)
+	}
+}
+
+func TestShouldRetry_NetworkErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "bare ECONNRESET",
+			err:  &net.OpError{Op: "read", Net: "tcp", Err: syscall.ECONNRESET},
+			want: true,
+		},
+		{
+			name: "bare ECONNREFUSED",
+			err:  &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED},
+			want: true,
+		},
+		{
+			name: "url.Error wrapping net.OpError",
+			err: &url.Error{
+				Op:  "Get",
+				URL: "http://example.com",
+				Err: &net.OpError{Op: "read", Net: "tcp", Err: syscall.ECONNRESET},
+			},
+			want: true,
+		},
+		{
+			name: "broken pipe (EPIPE)",
+			err:  &net.OpError{Op: "write", Net: "tcp", Err: syscall.EPIPE},
+			want: true,
+		},
+		{
+			name: "net.Error timeout",
+			err:  &fakeNetError{msg: "dummy timeout", timeout: true, temporary: true},
+			want: true,
+		},
+		{
+			name: "context.Canceled",
+			err:  context.Canceled,
+			want: false,
+		},
+		{
+			name: "context.DeadlineExceeded",
+			err:  context.DeadlineExceeded,
+			want: false,
+		},
+		{
+			name: "HTTPResponseError 400",
+			err:  &HTTPResponseError{Status: 400},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := shouldRetry(tt.err)
+			if got != tt.want {
+				t.Errorf("shouldRetry() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
