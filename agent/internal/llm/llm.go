@@ -1893,6 +1893,10 @@ func shouldRetry(err error) bool {
 	if isAmbiguousProtocolError(err) {
 		return true
 	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return true
+	}
 	return false
 }
 
