@@ -94,7 +94,7 @@ The phases are ordered by dependency: the adapter must exist before it can be te
 
 **Goal**: Establish A/B regression testing so future mct-agent changes can be validated against the deep-swe baseline.
 
-- ☐ 5.1 Build control and treatment Docker images using `scripts/Dockerfile.build` (control at known-good commit, treatment at new commit).
+- ☑ 5.1 Create scripts/ab-deep-swe.sh — builds control and treatment mct-agent binaries via git archive + go build, runs pier run twice, compares reward.json with embedded Python (no Docker image building needed; adapter uses upload_file)
 - ☐ 5.2 Use `scripts/ab-dev.sh` to run both images on a single deep-swe task, forwarding `TEST_*` env vars via `--env`.
 - ☐ 5.3 Compare `reward.json` outputs from both images; produce a structured comparison table showing pass/fail per task.
 - ☐ 5.4 Extend to the full 113-task suite for comprehensive regression detection.
@@ -185,7 +185,7 @@ The phases are ordered by dependency: the adapter must exist before it can be te
 | Phase 2: Single-Task Smoke Test | COMPLETE |
 | Phase 3: Configuration Tuning | COMPLETE |
 | Phase 4: Full 113-Task Benchmark | COMPLETE |
-| Phase 5: A/B Regression Testing | PENDING |
+| Phase 5: A/B Regression Testing | IN PROGRESS |
 
 ## Note
 
