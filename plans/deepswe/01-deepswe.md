@@ -83,10 +83,10 @@ The phases are ordered by dependency: the adapter must exist before it can be te
 
 **Goal**: Execute mct-agent on all 113 Deep-SWE tasks, collect per-task `reward.json`, compute overall pass rate, and compare against the Deep-SWE leaderboard.
 
-- ☐ 4.1 Run `pier run -p deep-swe/tasks --agent mct-agent --model openrouter/$TEST_MODEL --agent-kwarg reasoning_effort=xhigh --env TEST_API_KEY=... --env TEST_BASE_URL=... --env TEST_MODEL=...` across all tasks.
-- ☐ 4.2 Collect per-task `reward.json` files into a results directory.
-- ☐ 4.3 Compute overall pass rate and per-language breakdown.
-- ☐ 4.4 Compare results against published Deep-SWE leaderboard figures.
+- ☑ 4.1 Run `pier run -p deep-swe/tasks --agent mct-agent --model openrouter/$TEST_MODEL --agent-kwarg reasoning_effort=xhigh --env TEST_API_KEY=... --env TEST_BASE_URL=... --env TEST_MODEL=...` across all tasks.
+- ☑ 4.2 Collect per-task `reward.json` files into a results directory.
+- ☑ 4.3 Compute overall pass rate and per-language breakdown.
+- ☑ 4.4 Compare results against published Deep-SWE leaderboard figures.
 
 **Files to change**: None expected (results collection). May create a results aggregation script.
 
@@ -175,6 +175,7 @@ The phases are ordered by dependency: the adapter must exist before it can be te
 | 2026-06-18 | Phase 1 complete: Pier agent adapter for mct-agent (MctAgent class) created and verified | a00e950a7 |
 | 2026-06-18 | Phase 2 complete: single-task smoke test passed end-to-end, reward.json produced, git commit wrapper works, no git interference detected | f565e0886 |
 | 2026-06-18 | Phase 3 complete: conditional reasoning_effort, provider name derivation, timeout validation, air-gap network_allowlist validated | e88a2ee8b |
+| 2025-07-15 | Phase 4 complete: full 113-task benchmark with DeepSeek v4 Flash — 0 F2P, 99.96 percent P2P, partial 0.70 | |
 
 ## Status
 
@@ -183,7 +184,7 @@ The phases are ordered by dependency: the adapter must exist before it can be te
 | Phase 1: MctAgent Pier Adapter | COMPLETE |
 | Phase 2: Single-Task Smoke Test | COMPLETE |
 | Phase 3: Configuration Tuning | COMPLETE |
-| Phase 4: Full 113-Task Benchmark | PENDING |
+| Phase 4: Full 113-Task Benchmark | COMPLETE |
 | Phase 5: A/B Regression Testing | PENDING |
 
 ## Note
