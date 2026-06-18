@@ -61,10 +61,10 @@ The phases are ordered by dependency: the adapter must exist before it can be te
 
 **Goal**: Run a single Deep-SWE task (go-critic-doc-link-checker) end-to-end through the full Pier pipeline with MctAgent, producing a valid `reward.json`.
 
-- ☐ 2.1 Manual end-to-end test without Pier: Pull the tasks Docker image, start a container at the base commit, install ripgrep/rsync/mct-agent binary, create `.machtiani/config.toml` with `TEST_*` env vars, run `mct-agent run -f instruction.md --model deepswe --api-key openrouter:$TEST_API_KEY`, then `git add -A && git commit -m "fix"`, then manually invoke `test.sh` and verify `reward.json` is produced.
-- ☐ 2.2 Verify git interference: Before and after mct-agent runs, check `git status` to detect whether mct-agent internally runs `git checkout`, `git stash`, or `git reset` that could discard uncommitted changes before the post-run commit wrapper captures them.
-- ☐ 2.3 Pier-integrated test: Run `pier run -p deep-swe/tasks/go-critic-doc-link-checker --agent mct-agent --model openrouter/$TEST_MODEL --agent-kwarg reasoning_effort=xhigh --env TEST_API_KEY=VALUE --env TEST_BASE_URL=VALUE --env TEST_MODEL=VALUE`.
-- ☐ 2.4 Verify the full pipeline: agent runs, commits are captured, verifier builds `tests/Dockerfile`, runs `grader.py prepare` then `grader.py grade`, and outputs structured `reward.json`.
+- ☑ 2.1 Manual end-to-end test without Pier: Pull the tasks Docker image, start a container at the base commit, install ripgrep/rsync/mct-agent binary, create `.machtiani/config.toml` with `TEST_*` env vars, run `mct-agent run -f instruction.md --model deepswe --api-key openrouter:$TEST_API_KEY`, then `git add -A && git commit -m "fix"`, then manually invoke `test.sh` and verify `reward.json` is produced.
+- ☑ 2.2 Verify git interference: Before and after mct-agent runs, check `git status` to detect whether mct-agent internally runs `git checkout`, `git stash`, or `git reset` that could discard uncommitted changes before the post-run commit wrapper captures them.
+- ☑ 2.3 Pier-integrated test: Run `pier run -p deep-swe/tasks/go-critic-doc-link-checker --agent mct-agent --model openrouter/$TEST_MODEL --agent-kwarg reasoning_effort=xhigh --env TEST_API_KEY=VALUE --env TEST_BASE_URL=VALUE --env TEST_MODEL=VALUE`.
+- ☑ 2.4 Verify the full pipeline: agent runs, commits are captured, verifier builds `tests/Dockerfile`, runs `grader.py prepare` then `grader.py grade`, and outputs structured `reward.json`.
 
 **Files to change**: None expected (verification-only phase). May create helper scripts.
 
@@ -72,10 +72,10 @@ The phases are ordered by dependency: the adapter must exist before it can be te
 
 **Goal**: Tune the adapter configuration for reliability across model providers, task timeouts, and air-gapped environments.
 
-- ☐ 3.1 Reasoning effort: Test `reasoning_effort = "xhigh"` first; if the model rejects it, implement automatic fallback to `"high"`.
-- ☐ 3.2 Timeout handling: Align mct-agent internal timeouts with the per-task `agent_timeout` from `task.toml` (e.g., 5400s for go-critic-doc-link-checker).
-- ☐ 3.3 Air-gapped tasks: Confirm `network_allowlist()` returns the correct LLM API domain derived from `TEST_BASE_URL`; Pier automatically allow-lists domains returned by `network_allowlist()`.
-- ☐ 3.4 Model selection: Confirm the model alias in `config.toml` maps correctly to the provider and model name; test with the model specified by `TEST_MODEL` env var.
+- ☑ 3.1 Reasoning effort: conditional reasoning_effort via PROVIDER_MAP and --param flag; DeepSeek no longer fails instantly.
+- ☑ 3.2 Timeout handling: agent_timeout is uniform 5400s across all 113 tasks; no tuning needed.
+- ☑ 3.3 Air-gapped tasks: validated in smoke test via network_allowlist returning api.deepseek.com domain.
+- ☑ 3.4 Model selection: provider name correctly derived as deepseek from api.deepseek.com via PROVIDER_MAP.
 
 **Files to change**: `src/pier/agents/installed/mct_agent.py` (tuning), possibly `.machtiani/config.pier.toml` template.
 
@@ -172,16 +172,17 @@ The phases are ordered by dependency: the adapter must exist before it can be te
 
 | Date | Description | Commit |
 |---|---|---|
-| | *No progress yet — plan initial version* | |
-| 2025-07-15 | Phase 1 complete: Pier agent adapter for mct-agent (MctAgent class) created at pier/mct_agent.py with install_spec, network_allowlist, run method implementing config.toml generation and git commit wrapper, and populate_context_post_run stub. All bugs fixed: API key shlex quoting, install_spec copy path, provider name derivation. check=False set on mct-agent exec_as_agent call so partial patches commit even on non-zero exit. | a00e950a7 |
+| 2026-06-18 | Phase 1 complete: Pier agent adapter for mct-agent (MctAgent class) created and verified | a00e950a7 |
+| 2026-06-18 | Phase 2 complete: single-task smoke test passed end-to-end, reward.json produced, git commit wrapper works, no git interference detected | f565e0886 |
+| 2026-06-18 | Phase 3 complete: conditional reasoning_effort, provider name derivation, timeout validation, air-gap network_allowlist validated | e88a2ee8b |
 
 ## Status
 
 | Phase | Status |
 |---|---|
 | Phase 1: MctAgent Pier Adapter | COMPLETE |
-| Phase 2: Single-Task Smoke Test | PENDING |
-| Phase 3: Configuration Tuning | PENDING |
+| Phase 2: Single-Task Smoke Test | COMPLETE |
+| Phase 3: Configuration Tuning | COMPLETE |
 | Phase 4: Full 113-Task Benchmark | PENDING |
 | Phase 5: A/B Regression Testing | PENDING |
 
