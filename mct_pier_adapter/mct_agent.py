@@ -48,13 +48,6 @@ class MctAgent(BaseInstalledAgent):
         context: AgentContext,
     ) -> None:
         """Run mct-agent on the task, then commit all changes."""
-        # Write the task instruction to a file.
-        await self.exec_as_agent(
-            environment,
-            "python3 -c \"import pathlib, os; pathlib.Path('/app/instruction.md').write_text(os.environ['MCT_INSTRUCTION'])\"",
-            env={"MCT_INSTRUCTION": instruction},
-        )
-
         # Build config.toml from environment variables.
         test_model = os.environ.get("TEST_MODEL", "")
         test_base_url = os.environ.get("TEST_BASE_URL", "https://openrouter.ai/api/v1")
@@ -75,11 +68,17 @@ class MctAgent(BaseInstalledAgent):
             'reasoning_effort = "xhigh"\n'
         )
 
+        # Write instruction.md and config.toml in a single step.
         await self.exec_as_agent(
             environment,
-            "python3 -c \"import pathlib, os; pathlib.Path('/app/.machtiani/config.toml').write_text(os.environ['MCT_CONFIG'])\"",
-            env={"MCT_CONFIG": config_toml},
+            "python3 -c \"import pathlib, os; "
+            "pathlib.Path('/app/instruction.md').write_text(os.environ['MCT_INSTRUCTION']); "
+            "pathlib.Path('/app/.machtiani').mkdir(parents=True, exist_ok=True); "
+            "pathlib.Path('/app/.machtiani/config.toml').write_text(os.environ['MCT_CONFIG'])\"",
+            env={"MCT_INSTRUCTION": instruction, "MCT_CONFIG": config_toml},
         )
+
+        await self.exec_as_agent(environment, "mkdir -p /app/.machtiani")
 
         # Run mct-agent.
         provider_key = f"{provider}:{test_api_key}"
