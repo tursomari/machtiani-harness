@@ -40,11 +40,8 @@ class MctAgent(BaseInstalledAgent):
     def network_allowlist(self) -> NetworkAllowlist:
         base_url = os.environ.get("TEST_BASE_URL", "")
         if base_url:
-            domains = allowlist_from_urls([base_url])
-        else:
-            domains = ["openrouter.ai"]
-        # Deduplicate and return.
-        return NetworkAllowlist(domains=list(set(domains)))
+            return allowlist_from_urls([base_url])
+        return NetworkAllowlist(domains=["openrouter.ai"])
 
     @with_prompt_template
     async def run(
