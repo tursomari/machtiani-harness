@@ -17,6 +17,14 @@ class MctAgent(BaseInstalledAgent):
     the model patch via ``git diff base_commit HEAD``.
     """
 
+    PROVIDER_MAP = {
+        "api.deepseek.com": "deepseek",
+        "openrouter.ai": "openrouter",
+        "api.openai.com": "openai",
+    }
+
+    REASONING_PROVIDERS = {"openrouter", "openai"}
+
     @staticmethod
     def name() -> str:
         return "mct-agent"
@@ -31,6 +39,17 @@ class MctAgent(BaseInstalledAgent):
     def network_allowlist(self) -> NetworkAllowlist:
         base_url = os.environ.get("TEST_BASE_URL", "")
         if base_url:
+            parsed = urlparse(base_url)
+            hostname = parsed.hostname
+            if hostname and hostname in self.PROVIDER_MAP:
+                provider = self.PROVIDER_MAP[hostname]
+            elif hostname and "." in hostname:
+                parts = hostname.split(".")
+                parts.reverse()
+                stem = parts[1] if len(parts) >= 2 else parts[0]
+                provider = stem
+            else:
+                provider = "openrouter"
             return allowlist_from_urls([base_url], default_domains=["github.com"])
         return NetworkAllowlist(domains=["openrouter.ai", "github.com"])
 
@@ -55,7 +74,18 @@ class MctAgent(BaseInstalledAgent):
 
         parsed = urlparse(test_base_url)
         hostname = parsed.hostname
-        provider = hostname.split(".")[0] if hostname else "openrouter"
+
+        def get_provider(hostname, fallback):
+            if hostname and hostname in self.PROVIDER_MAP:
+                return self.PROVIDER_MAP[hostname]
+            if hostname and "." in hostname:
+                parts = hostname.split(".")
+                parts.reverse()
+                stem = parts[1] if len(parts) >= 2 else parts[0]
+                return stem
+            return fallback
+
+        provider = get_provider(hostname, "openrouter")
 
         config_toml = (
             'default_model = "deepswe"\n\n'
@@ -63,9 +93,7 @@ class MctAgent(BaseInstalledAgent):
             f'base_url = "{test_base_url}"\n\n'
             '[models.deepswe]\n'
             f'provider = "{provider}"\n'
-            f'model = "{test_model}"\n\n'
-            '[models.deepswe.params]\n'
-            'reasoning_effort = "xhigh"\n'
+            f'model = "{test_model}"\n'
         )
 
         # Write instruction.md and config.toml in a single step.
@@ -83,6 +111,8 @@ class MctAgent(BaseInstalledAgent):
         # Run mct-agent.
         provider_key = f"{provider}:{test_api_key}"
         cmd = f"mct-agent run -f /app/instruction.md --model deepswe --api-key {shlex.quote(provider_key)}"
+        if provider in self.REASONING_PROVIDERS:
+            cmd += " --param reasoning_effort=xhigh"
         try:
             await self.exec_as_agent(environment, cmd)
         except NonZeroAgentExitCodeError:
