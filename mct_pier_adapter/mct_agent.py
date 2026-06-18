@@ -6,7 +6,7 @@ from pier.agents.installed.base import BaseInstalledAgent, with_prompt_template
 from pier.agents.network import allowlist_from_urls
 from pier.environments.base import BaseEnvironment
 from pier.models.agent.context import AgentContext
-from pier.models.agent.install import AgentInstallSpec, InstallStep
+from pier.models.agent.install import AgentInstallSpec
 from pier.models.agent.network import NetworkAllowlist
 
 
@@ -24,24 +24,22 @@ class MctAgent(BaseInstalledAgent):
     def install_spec(self) -> AgentInstallSpec:
         return AgentInstallSpec(
             agent_name="mct-agent",
-            steps=[
-                InstallStep(
-                    user="root",
-                    run="apt-get update && apt-get install -y ripgrep rsync",
-                ),
-                InstallStep(
-                    user="agent",
-                    run="chmod +x /usr/local/bin/mct-agent",
-                ),
-            ],
+            steps=[],
             verification_command="mct-agent --help",
         )
 
     def network_allowlist(self) -> NetworkAllowlist:
         base_url = os.environ.get("TEST_BASE_URL", "")
         if base_url:
-            return allowlist_from_urls([base_url])
-        return NetworkAllowlist(domains=["openrouter.ai"])
+            return allowlist_from_urls([base_url], default_domains=["github.com"])
+        return NetworkAllowlist(domains=["openrouter.ai", "github.com"])
+
+    async def setup(self, environment: BaseEnvironment) -> None:
+        await super().setup(environment)
+        await self.exec_as_root(
+            environment,
+            "cd /tmp && git clone --depth 1 https://github.com/tursomari/mchtiani.git mchtiani && cd mchtiani/agent && go build -o /usr/local/bin/mct-agent ./cmd/mct-agent && rm -rf /tmp/mchtiani",
+        )
 
     @with_prompt_template
     async def run(
