@@ -2,7 +2,7 @@ import os
 import shlex
 from urllib.parse import urlparse
 
-from pier.agents.installed.base import BaseInstalledAgent, with_prompt_template
+from pier.agents.installed.base import BaseInstalledAgent, NonZeroAgentExitCodeError, with_prompt_template
 from pier.agents.network import allowlist_from_urls
 from pier.environments.base import BaseEnvironment
 from pier.models.agent.context import AgentContext
@@ -83,7 +83,10 @@ class MctAgent(BaseInstalledAgent):
         # Run mct-agent.
         provider_key = f"{provider}:{test_api_key}"
         cmd = f"mct-agent run -f /app/instruction.md --model deepswe --api-key {shlex.quote(provider_key)}"
-        result = await self.exec_as_agent(environment, cmd, check=False)
+        try:
+            await self.exec_as_agent(environment, cmd)
+        except NonZeroAgentExitCodeError:
+            pass
         # Continue even if mct-agent exits non-zero; the verifier will judge.
 
         # Commit all changes so the Pier verifier can capture the model patch.
