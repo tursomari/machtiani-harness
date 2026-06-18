@@ -69,6 +69,9 @@ echo "[setup] Preparing ${OUTPUT_BASE}"
 rm -rf "${OUTPUT_BASE}"
 mkdir -p "${CONTROL_OUT}" "${TREATMENT_OUT}"
 
+declare -a WORKTREES=()
+trap 'for w in "${WORKTREES[@]}"; do git -C "${REPO_ROOT}" worktree remove --force "$w" 2>/dev/null || true; done' EXIT
+
 CONTROL_BIN="${CONTROL_OUT}/mct-agent"
 TREATMENT_BIN="${TREATMENT_OUT}/mct-agent"
 
@@ -78,25 +81,32 @@ TREATMENT_BIN="${TREATMENT_OUT}/mct-agent"
 build_agent() {
     local commit="$1" output_path="$2" label="$3"
 
-    echo "[build:${label}] Building mct-agent at '${commit}' -> ${output_path}"
+    echo "[build:${label}] Building mct-agent at ${commit} -> ${output_path}"
 
     if ! git -C "${REPO_ROOT}" rev-parse --verify "${commit}" >/dev/null 2>&1; then
-        echo "Error: commit '${commit}' does not exist in the repository." >&2
+        echo "Error: commit ${commit} does not exist in the repository." >&2
         exit 1
     fi
 
-    local tmpdir
-    tmpdir="$(mktemp -d /tmp/mct-ab-build-XXXXXXXX)"
+    local worktree_dir
+    worktree_dir="$(mktemp -d /tmp/mct-ab-worktree-XXXXXXXX)"
+    WORKTREES+=("${worktree_dir}")
 
-    git -C "${REPO_ROOT}" archive --format=tar "${commit}" -- agent/ | \
-        tar -C "${tmpdir}" -xf -
+    git -C "${REPO_ROOT}" worktree add --detach "${worktree_dir}" "${commit}"
 
-    if [[ ! -d "${tmpdir}/agent/cmd/mct-agent" ]]; then
-        echo "Error: agent/cmd/mct-agent not found at commit '${commit}'." >&2
-        rm -rf "${tmpdir}"; exit 1
+    if ! git -C "${worktree_dir}" submodule update --init --recursive; then
+        echo "Error: submodule update failed for commit ${commit}" >&2
+        exit 1
     fi
-    ( cd "${tmpdir}/agent" && go build -o "${output_path}" ./cmd/mct-agent )
-    rm -rf "${tmpdir}"
+
+    if [[ ! -d "${worktree_dir}/agent/cmd/mct-agent" ]]; then
+        echo "Error: agent/cmd/mct-agent not found at commit ${commit}." >&2
+        exit 1
+    fi
+
+    ( cd "${worktree_dir}/agent" && go build -o "${output_path}" ./cmd/mct-agent )
+
+    git -C "${REPO_ROOT}" worktree remove --force "${worktree_dir}" 2>/dev/null || true
 
     if [[ ! -x "${output_path}" ]]; then
         echo "Error: build did not produce an executable at ${output_path}" >&2
