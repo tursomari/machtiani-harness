@@ -90,15 +90,23 @@ class MctAgent(BaseInstalledAgent):
         # Continue even if mct-agent exits non-zero; the verifier will judge.
 
         # Commit all changes so the Pier verifier can capture the model patch.
-        await self.exec_as_agent(
-            environment,
-            'git config user.email agent@machtiani.com && git config user.name mct-agent',
-            check=False,
-        )
-        await self.exec_as_agent(environment, "git add -A", check=False)
-        await self.exec_as_agent(
-            environment, 'git commit -m "fix" --allow-empty || true', check=False
-        )
+        try:
+            await self.exec_as_agent(
+                environment,
+                'git config user.email agent@machtiani.com && git config user.name mct-agent',
+            )
+        except NonZeroAgentExitCodeError:
+            pass
+        try:
+            await self.exec_as_agent(environment, "git add -A")
+        except NonZeroAgentExitCodeError:
+            pass
+        try:
+            await self.exec_as_agent(
+                environment, 'git commit -m "fix" --allow-empty',
+            )
+        except NonZeroAgentExitCodeError:
+            pass
 
     def populate_context_post_run(self, context: AgentContext) -> None:
         """Minimal stub – no trajectory parsing needed for grading."""
