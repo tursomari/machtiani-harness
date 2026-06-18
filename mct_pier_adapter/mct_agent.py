@@ -6,7 +6,7 @@ from pier.agents.installed.base import BaseInstalledAgent, with_prompt_template
 from pier.agents.network import allowlist_from_urls
 from pier.environments.base import BaseEnvironment
 from pier.models.agent.context import AgentContext
-from pier.models.agent.install import AgentInstallSpec
+from pier.models.agent.install import AgentInstallSpec, InstallStep
 from pier.models.agent.network import NetworkAllowlist
 
 
@@ -24,7 +24,7 @@ class MctAgent(BaseInstalledAgent):
     def install_spec(self) -> AgentInstallSpec:
         return AgentInstallSpec(
             agent_name="mct-agent",
-            steps=[],
+            steps=[InstallStep(user="root", run="apt-get update && apt-get install -y ripgrep rsync")],
             verification_command="mct-agent --help",
         )
 
