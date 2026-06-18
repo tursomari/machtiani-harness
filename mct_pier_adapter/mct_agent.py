@@ -30,8 +30,8 @@ class MctAgent(BaseInstalledAgent):
                     run="apt-get update && apt-get install -y ripgrep rsync",
                 ),
                 InstallStep(
-                    user="agent",
-                    run="cp /opt/mct-agent/mct-agent /usr/local/bin/mct-agent && chmod +x /usr/local/bin/mct-agent",
+                    user="root",
+                    run="cd /tmp && git clone --depth 1 https://github.com/tursomari/mchtiani.git mchtiani && cd mchtiani/agent && go build -o /usr/local/bin/mct-agent ./cmd/mct-agent && rm -rf /tmp/mchtiani",
                 ),
             ],
             verification_command="mct-agent --help",
