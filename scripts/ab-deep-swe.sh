@@ -94,8 +94,15 @@ build_agent() {
 
     git -C "${REPO_ROOT}" worktree add --detach "${worktree_dir}" "${commit}"
 
-    cp -r "${REPO_ROOT}/agent/internal/shell-agent" "${worktree_dir}/agent/internal/shell-agent"
-    cp -r "${REPO_ROOT}/agent/internal/file-discovery/tests/undici" "${worktree_dir}/agent/internal/file-discovery/tests/undici"
+    # Remove submodule placeholder directories from worktree
+    rm -rf "${worktree_dir}/agent/internal/shell-agent"
+    rm -rf "${worktree_dir}/agent/internal/file-discovery/tests/undici"
+    # Copy submodule contents from main worktree
+    cp -a "${REPO_ROOT}/agent/internal/shell-agent" "${worktree_dir}/agent/internal/shell-agent"
+    cp -a "${REPO_ROOT}/agent/internal/file-discovery/tests/undici" "${worktree_dir}/agent/internal/file-discovery/tests/undici"
+    # Remove any .git metadata to prevent Go module confusion
+    find "${worktree_dir}/agent/internal/shell-agent" -name ".git" -type f -delete 2>/dev/null || true
+    find "${worktree_dir}/agent/internal/file-discovery/tests/undici" -name ".git" -type f -delete 2>/dev/null || true
 
     if [[ ! -d "${worktree_dir}/agent/cmd/mct-agent" ]]; then
         echo "Error: agent/cmd/mct-agent not found at commit ${commit}." >&2
