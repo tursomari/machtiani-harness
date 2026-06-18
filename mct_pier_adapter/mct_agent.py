@@ -36,10 +36,9 @@ class MctAgent(BaseInstalledAgent):
 
     async def setup(self, environment: BaseEnvironment) -> None:
         await super().setup(environment)
-        await self.exec_as_root(
-            environment,
-            "cd /tmp && git clone --depth 1 https://github.com/tursomari/mchtiani.git mchtiani && cd mchtiani/agent && go build -o /usr/local/bin/mct-agent ./cmd/mct-agent && rm -rf /tmp/mchtiani",
-        )
+        local_path = os.environ.get("MCT_AGENT_BINARY", "./agent/bin/mct-agent")
+        await environment.upload_file(local_path, "/usr/local/bin/mct-agent")
+        await self.exec_as_root(environment, "chmod +x /usr/local/bin/mct-agent")
 
     @with_prompt_template
     async def run(
