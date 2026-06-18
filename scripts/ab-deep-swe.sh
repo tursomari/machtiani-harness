@@ -94,10 +94,8 @@ build_agent() {
 
     git -C "${REPO_ROOT}" worktree add --detach "${worktree_dir}" "${commit}"
 
-    if ! git -C "${worktree_dir}" submodule update --init --recursive; then
-        echo "Error: submodule update failed for commit ${commit}" >&2
-        exit 1
-    fi
+    cp -r "${REPO_ROOT}/agent/internal/shell-agent" "${worktree_dir}/agent/internal/shell-agent"
+    cp -r "${REPO_ROOT}/agent/internal/file-discovery/tests/undici" "${worktree_dir}/agent/internal/file-discovery/tests/undici"
 
     if [[ ! -d "${worktree_dir}/agent/cmd/mct-agent" ]]; then
         echo "Error: agent/cmd/mct-agent not found at commit ${commit}." >&2
