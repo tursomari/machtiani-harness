@@ -59,6 +59,21 @@ class MctAgent(BaseInstalledAgent):
         await environment.upload_file(local_path, "/usr/local/bin/mct-agent")
         await self.exec_as_root(environment, "chmod +x /usr/local/bin/mct-agent")
 
+        # Upload forge binary for code-forge mode.
+        forge_binary = os.path.expanduser(os.environ.get("MCT_FORGE_BINARY", "~/.local/bin/forge"))
+        await environment.upload_file(forge_binary, "/usr/local/bin/forge")
+        await self.exec_as_root(environment, "chmod +x /usr/local/bin/forge")
+
+        # Upload mct-forge wrapper.
+        forge_wrapper = os.path.expanduser(os.environ.get("MCT_FORGE_WRAPPER", "peripherals/mct-forge"))
+        await environment.upload_file(forge_wrapper, "/usr/local/bin/mct-forge")
+        await self.exec_as_root(environment, "chmod +x /usr/local/bin/mct-forge")
+
+        # Upload forge home directory.
+        forge_home = os.path.expanduser(os.environ.get("MCT_FORGE_HOME", "~/.forge"))
+        await self.exec_as_root(environment, "mkdir -p /root/.forge")
+        await environment.upload_dir(forge_home, "/root/.forge/")
+
     @with_prompt_template
     async def run(
         self,
@@ -70,7 +85,7 @@ class MctAgent(BaseInstalledAgent):
 
         # Step 0: Create the /app/.machtiani/ directory.
         try:
-            await self.exec_as_agent(environment, "mkdir -p /app/.machtiani/modes/code-forge")
+            await self.exec_as_agent(environment, "mkdir -p /app/.machtiani/modes/code-forge /root/.forge")
         except NonZeroAgentExitCodeError:
             raise RuntimeError("Failed to create /app/.machtiani/ directory")
 
@@ -116,13 +131,14 @@ class MctAgent(BaseInstalledAgent):
 
         run_cmd = (
             f"mct-agent run"
-            f" -f /app/instruction.md"
             f" --mode {shlex.quote(mode)}"
             f" --max-steps {shlex.quote(max_steps)}"
             f" --timeout-per-turn {shlex.quote(timeout_per_turn)}"
             f" --model {shlex.quote(model)}"
             f" --shell-agent-model {shlex.quote(shell_agent_model)}"
             f" --max-input-tokens {shlex.quote(max_input_tokens)}"
+            f" --tag now"
+            f" -f /app/instruction.md"
         )
         try:
             await self.exec_as_agent(environment, run_cmd)
@@ -144,6 +160,24 @@ class MctAgent(BaseInstalledAgent):
         try:
             await self.exec_as_agent(
                 environment, 'git commit -m "fix" --allow-empty',
+            )
+        except NonZeroAgentExitCodeError:
+            pass
+
+        # Step 8: Copy sessions directory to host-visible logs directory.
+        try:
+            await self.exec_as_agent(
+                environment,
+                "mkdir -p /logs/agent && cp -r /app/.machtiani/sessions /logs/agent/sessions 2>/dev/null || true",
+            )
+        except NonZeroAgentExitCodeError:
+            pass
+
+        # Step 9: Copy git working tree to host-visible logs directory.
+        try:
+            await self.exec_as_agent(
+                environment,
+                "mkdir -p /logs/agent/repo && cp -a /app/. /logs/agent/repo/ 2>/dev/null || true",
             )
         except NonZeroAgentExitCodeError:
             pass
