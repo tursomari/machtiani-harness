@@ -93,17 +93,52 @@ No `--api-key` flag — keys come from the uploaded config.toml automatically vi
 
 **Files to change**: `mct_pier_adapter/mct_agent.py`
 
+### Phase A2: Forge Integration
+
+**Goal**: Integrate the `forge` binary and `mct-forge` wrapper into the Pier container so that `--mode code-forge` can execute forge commands successfully. The Phase B smoke test revealed that forge was not available in the container, causing mct-forge commands to fail silently.
+
+- ☐ A2.1 In `setup()`, upload the forge binary from `MCT_FORGE_BINARY` env var (defaulting to `~/.local/bin/forge`) to `/usr/local/bin/forge` and `chmod +x`.
+- ☐ A2.2 Upload the `mct-forge` wrapper from `MCT_FORGE_WRAPPER` env var (defaulting to `peripherals/mct-forge`) to `/usr/local/bin/mct-forge` and `chmod +x`.
+- ☐ A2.3 Upload the `~/.forge` directory from `MCT_FORGE_HOME` env var (defaulting to `~/.forge`) to `/root/.forge`.
+- ☐ A2.4 Ensure `/root/.forge` exists before upload by running `mkdir -p /root/.forge`.
+- ☐ A2.5 Update `install_spec()` if forge needs any system dependencies.
+- ☐ A2.6 Verification gate: `go build ./...` and `go test ./...` pass and Python syntax check on the adapter passes.
+
+**Files to change**: `mct_pier_adapter/mct_agent.py`
+
 ### Phase B: Single-Task Smoke Test
 
-**Goal**: Run a single Deep-SWE task (go-critic-doc-link-checker) end-to-end with the reconfigured adapter, verifying sync completes, agent runs with `--mode code-forge`, git commit is captured, and `reward.json` is produced.
+**Goal**: Re-run the go-critic-doc-link-checker task with forge properly integrated. The original Phase B smoke test completed with F2P 0.667 but revealed forge was not available in the container, causing mct-forge commands to fail silently.
+
+> **Note**: The original Phase B smoke test completed with F2P 0.667 but revealed forge was not available in the container, causing mct-forge commands to fail silently. The phase goal is now to re-run the go-critic-doc-link-checker task with forge properly integrated.
 
 - ☑ B.1 Build the mct-agent binary: `cd agent && go build -o ../agent/bin/mct-agent ./cmd/mct-agent`
 - ☑ B.2 Verify the host config has the required model definitions: confirm `[models.deepseek-v4-pro]` and `[providers.deepseek]` with `api_key` exist in `.machtiani/config.toml`.
 - ☑ B.3 Run Pier on a single task: `pier run -p ~/projects/deep-swe/tasks/go-critic-doc-link-checker --agent-import-path mct_pier_adapter.mct_agent:MctAgent --ae MCT_AGENT_BINARY=$(pwd)/agent/bin/mct-agent --n-concurrent 1`
-- ☑ B.4 Verify: sync completes (check trial log for "Readme synced for commit"), agent runs with `--mode code-forge` (check command in trial log), git commit captured, `reward.json` produced.
-- ☑ B.5 If sync fails on all 10 retries, diagnose: check network allowlisting, config.toml upload, and model resolution inside the container.
+- ☐ B.4 After the task run, extract `.machtiani/sessions/` from the container to the host job directory, for example by adding a post-run step in `populate_context_post_run` or using a Pier hook.
+- ☐ B.5 Verify that session transcripts show mct-forge commands executed successfully with no `command not found` errors.
+- ☑ B.6 Verify: sync completes (check trial log for "Readme synced for commit"), agent runs with `--mode code-forge` (check command in trial log), git commit captured, `reward.json` produced.
+- ☑ B.7 If sync fails on all 10 retries, diagnose: check network allowlisting, config.toml upload, and model resolution inside the container.
 
 **Files to change**: None expected (verification-only phase).
+
+### Phase B2: 3-Task Validation
+
+**Goal**: Validate forge integration across 3 different Deep-SWE tasks before scaling up.
+
+- ☐ B2.1 Run 3 different Deep-SWE tasks with forge enabled.
+- ☐ B2.2 Extract session data for all tasks.
+- ☐ B2.3 Verify forge commands succeeded in all session logs.
+- ☐ B2.4 Only proceed if all 3 tasks show forge working.
+
+### Phase B3: 10-Task Validation
+
+**Goal**: Validate forge integration at scale across 10 tasks before the full benchmark.
+
+- ☐ B3.1 Run 10 tasks with forge enabled.
+- ☐ B3.2 Extract session data for all tasks.
+- ☐ B3.3 Verify forge commands succeeded across all session logs.
+- ☐ B3.4 Only proceed if all 10 tasks show forge working.
 
 ### Phase C: Full 113-Task Benchmark
 
@@ -139,6 +174,17 @@ No `--api-key` flag — keys come from the uploaded config.toml automatically vi
 | Air-gapped task with `network_allowlist()` returning all provider domains | mct-agent reaches all LLM APIs; sync and run both succeed |
 | Air-gapped task with missing provider domain in allowlist | mct-agent fails with network errors; task fails |
 | `git add -A && git commit -m "fix" --allow-empty` after agent run | All modifications committed; Pier captures diff via `git diff base_commit HEAD` |
+
+## Testing Discipline
+
+- Never run more than 10 tasks until 3-task validation (Phase B2) passes.
+- Never run the full 113-task benchmark until 10-task validation (Phase B3) passes.
+- Always run Pier in background and poll the logs every 60 seconds.
+- Always extract `.machtiani/sessions/` from the container to the host before container cleanup.
+
+## Session Data Extraction
+
+The adapter should copy `/app/.machtiani/sessions/` to the host job directory, possibly using `populate_context_post_run` or a cleanup hook, so that session transcripts and trajectories are preserved for analysis after the container exits.
 
 ## Checkpoint Invariants
 
@@ -181,6 +227,7 @@ No `--api-key` flag — keys come from the uploaded config.toml automatically vi
 
 | Date | Description | Commit |
 |---|---|---|
+| 2026-06-27 | Phase B smoke test completed with F2P 0.667 but revealed forge binary not available in container; mode code-forge loaded overlay but mct-forge commands failed silently; Phase A2 needed for forge integration | — |
 | 2026-06-27 | Phase B: Single-task smoke test passed — F2P 0.667 on go-critic-doc-link-checker, sync succeeded, agent ran with --mode code-forge, reward.json produced | 8f5d44a5f |
 | 2026-06-27 | Phase A: Rewrote Pier adapter — upload host config/modes, sync with retries, production CLI flags, config.toml-based network allowlist | 2a5ce8f4f |
 
@@ -189,9 +236,10 @@ No `--api-key` flag — keys come from the uploaded config.toml automatically vi
 | Phase | Status |
 |---|---|
 | Phase A: Update Pier Adapter | COMPLETE |
-| Phase B: Single-Task Smoke Test | COMPLETE |
-| Phase C: Full 113-Task Benchmark | PENDING |
-| Phase D: A/B Regression Testing | PENDING |
+| Phase A2: Forge Integration | PENDING |
+| Phase B: Single-Task Smoke Test | PENDING |
+| Phase C: Full 113-Task Benchmark | PENDING — only proceed after Phase B3 passes |
+| Phase D: A/B Regression Testing | PENDING — only proceed after Phase B3 passes |
 
 ## Baseline Comparison
 
