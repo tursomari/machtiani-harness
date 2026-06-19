@@ -3,7 +3,6 @@ import shlex
 from urllib.parse import urlparse
 
 from pier.agents.installed.base import BaseInstalledAgent, NonZeroAgentExitCodeError, with_prompt_template
-from pier.agents.network import allowlist_from_urls
 from pier.environments.base import BaseEnvironment
 from pier.models.agent.context import AgentContext
 from pier.models.agent.install import AgentInstallSpec, InstallStep
@@ -17,14 +16,6 @@ class MctAgent(BaseInstalledAgent):
     the model patch via ``git diff base_commit HEAD``.
     """
 
-    PROVIDER_MAP = {
-        "api.deepseek.com": "deepseek",
-        "openrouter.ai": "openrouter",
-        "api.openai.com": "openai",
-    }
-
-    REASONING_PROVIDERS = {"openrouter", "openai"}
-
     @staticmethod
     def name() -> str:
         return "mct-agent"
@@ -37,21 +28,30 @@ class MctAgent(BaseInstalledAgent):
         )
 
     def network_allowlist(self) -> NetworkAllowlist:
-        base_url = os.environ.get("TEST_BASE_URL", "")
-        if base_url:
-            parsed = urlparse(base_url)
-            hostname = parsed.hostname
-            if hostname and hostname in self.PROVIDER_MAP:
-                provider = self.PROVIDER_MAP[hostname]
-            elif hostname and "." in hostname:
-                parts = hostname.split(".")
-                parts.reverse()
-                stem = parts[1] if len(parts) >= 2 else parts[0]
-                provider = stem
-            else:
-                provider = "openrouter"
-            return allowlist_from_urls([base_url], default_domains=["github.com"])
-        return NetworkAllowlist(domains=["openrouter.ai", "github.com"])
+        domains_env = os.environ.get("MCT_NETWORK_DOMAINS", "")
+        if domains_env:
+            domains = [d.strip() for d in domains_env.split(",") if d.strip()]
+            return NetworkAllowlist(domains=domains)
+
+        try:
+            import tomllib
+            with open(".machtiani/config.toml", "rb") as f:
+                config = tomllib.load(f)
+            domains = []
+            for section, values in config.items():
+                if section.startswith("providers.") and isinstance(values, dict):
+                    base_url = values.get("base_url", "")
+                    if base_url:
+                        parsed = urlparse(base_url)
+                        hostname = parsed.hostname
+                        if hostname:
+                            domains.append(hostname)
+            if domains:
+                return NetworkAllowlist(domains=domains)
+        except (FileNotFoundError, OSError, ValueError, tomllib.TOMLDecodeError):
+            pass
+
+        return NetworkAllowlist(domains=["api.deepseek.com", "api.deepinfra.com", "openrouter.ai"])
 
     async def setup(self, environment: BaseEnvironment) -> None:
         await super().setup(environment)
@@ -67,59 +67,69 @@ class MctAgent(BaseInstalledAgent):
         context: AgentContext,
     ) -> None:
         """Run mct-agent on the task, then commit all changes."""
-        # Build config.toml from environment variables.
-        test_model = os.environ.get("TEST_MODEL", "")
-        test_base_url = os.environ.get("TEST_BASE_URL", "https://openrouter.ai/api/v1")
-        test_api_key = os.environ.get("TEST_API_KEY", "")
 
-        parsed = urlparse(test_base_url)
-        hostname = parsed.hostname
+        # Step 0: Create the /app/.machtiani/ directory.
+        try:
+            await self.exec_as_agent(environment, "mkdir -p /app/.machtiani/modes/code-forge")
+        except NonZeroAgentExitCodeError:
+            raise RuntimeError("Failed to create /app/.machtiani/ directory")
 
-        def get_provider(hostname, fallback):
-            if hostname and hostname in self.PROVIDER_MAP:
-                return self.PROVIDER_MAP[hostname]
-            if hostname and "." in hostname:
-                parts = hostname.split(".")
-                parts.reverse()
-                stem = parts[1] if len(parts) >= 2 else parts[0]
-                return stem
-            return fallback
+        # Step 2: Upload the host config.toml.
+        await environment.upload_file("./.machtiani/config.toml", "/app/.machtiani/config.toml")
 
-        provider = get_provider(hostname, "openrouter")
+        # Step 3: Upload the host mode directory.
+        await environment.upload_dir("./.machtiani/modes/code-forge/", "/app/.machtiani/modes/code-forge/")
 
-        config_toml = (
-            'default_model = "deepswe"\n\n'
-            f"[providers.{provider}]\n"
-            f'base_url = "{test_base_url}"\n\n'
-            '[models.deepswe]\n'
-            f'provider = "{provider}"\n'
-            f'model = "{test_model}"\n'
-        )
-
-        # Write instruction.md and config.toml in a single step.
+        # Step 4: Write the instruction text to /app/instruction.md.
         await self.exec_as_agent(
             environment,
             "python3 -c \"import pathlib, os; "
-            "pathlib.Path('/app/instruction.md').write_text(os.environ['MCT_INSTRUCTION']); "
-            "pathlib.Path('/app/.machtiani').mkdir(parents=True, exist_ok=True); "
-            "pathlib.Path('/app/.machtiani/config.toml').write_text(os.environ['MCT_CONFIG'])\"",
-            env={"MCT_INSTRUCTION": instruction, "MCT_CONFIG": config_toml},
+            "pathlib.Path('/app/instruction.md').write_text(os.environ['MCT_INSTRUCTION'])\"",
+            env={"MCT_INSTRUCTION": instruction},
         )
 
-        await self.exec_as_agent(environment, "mkdir -p /app/.machtiani")
+        # Step 5: Run mct-agent sync with retries.
+        import asyncio
+        sync_model = os.environ.get("MCT_SYNC_MODEL", "deepseek-v4-pro")
+        max_input_tokens = os.environ.get("MCT_MAX_INPUT_TOKENS", "800000")
+        sync_cmd = (
+            f"mct-agent sync"
+            f" --model {shlex.quote(sync_model)}"
+            f" --max-input-tokens {shlex.quote(max_input_tokens)}"
+        )
+        for i in range(10):
+            try:
+                await self.exec_as_agent(environment, sync_cmd)
+                break
+            except NonZeroAgentExitCodeError:
+                if i == 9:
+                    raise RuntimeError("sync failed after 10 retries")
+                await asyncio.sleep(2 ** i)
 
-        # Run mct-agent.
-        provider_key = f"{provider}:{test_api_key}"
-        cmd = f"mct-agent run -f /app/instruction.md --model deepswe --api-key {shlex.quote(provider_key)}"
-        if provider in self.REASONING_PROVIDERS:
-            cmd += " --param reasoning_effort=xhigh"
+        # Step 6: Run mct-agent run.
+        mode = os.environ.get("MCT_MODE", "code-forge")
+        max_steps = os.environ.get("MCT_MAX_STEPS", "1000")
+        timeout_per_turn = os.environ.get("MCT_TIMEOUT_PER_TURN", "0")
+        model = os.environ.get("MCT_MODEL", "deepseek-v4-pro")
+        shell_agent_model = os.environ.get("MCT_SHELL_AGENT_MODEL", "deepseek-v4-pro")
+        max_input_tokens = os.environ.get("MCT_MAX_INPUT_TOKENS", "800000")
+
+        run_cmd = (
+            f"mct-agent run"
+            f" -f /app/instruction.md"
+            f" --mode {shlex.quote(mode)}"
+            f" --max-steps {shlex.quote(max_steps)}"
+            f" --timeout-per-turn {shlex.quote(timeout_per_turn)}"
+            f" --model {shlex.quote(model)}"
+            f" --shell-agent-model {shlex.quote(shell_agent_model)}"
+            f" --max-input-tokens {shlex.quote(max_input_tokens)}"
+        )
         try:
-            await self.exec_as_agent(environment, cmd)
+            await self.exec_as_agent(environment, run_cmd)
         except NonZeroAgentExitCodeError:
             pass
-        # Continue even if mct-agent exits non-zero; the verifier will judge.
 
-        # Commit all changes so the Pier verifier can capture the model patch.
+        # Step 7: Commit all changes so the Pier verifier can capture the model patch.
         try:
             await self.exec_as_agent(
                 environment,
@@ -139,5 +149,5 @@ class MctAgent(BaseInstalledAgent):
             pass
 
     def populate_context_post_run(self, context: AgentContext) -> None:
-        """Minimal stub – no trajectory parsing needed for grading."""
+        """Minimal stub - no trajectory parsing needed for grading."""
         pass
