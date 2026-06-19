@@ -97,12 +97,14 @@ No `--api-key` flag — keys come from the uploaded config.toml automatically vi
 
 **Goal**: Integrate the `forge` binary and `mct-forge` wrapper into the Pier container so that `--mode code-forge` can execute forge commands successfully. The Phase B smoke test revealed that forge was not available in the container, causing mct-forge commands to fail silently.
 
-- ☐ A2.1 In `setup()`, upload the forge binary from `MCT_FORGE_BINARY` env var (defaulting to `~/.local/bin/forge`) to `/usr/local/bin/forge` and `chmod +x`.
-- ☐ A2.2 Upload the `mct-forge` wrapper from `MCT_FORGE_WRAPPER` env var (defaulting to `peripherals/mct-forge`) to `/usr/local/bin/mct-forge` and `chmod +x`.
-- ☐ A2.3 Upload the `~/.forge` directory from `MCT_FORGE_HOME` env var (defaulting to `~/.forge`) to `/root/.forge`.
-- ☐ A2.4 Ensure `/root/.forge` exists before upload by running `mkdir -p /root/.forge`.
-- ☐ A2.5 Update `install_spec()` if forge needs any system dependencies.
-- ☐ A2.6 Verification gate: `go build ./...` and `go test ./...` pass and Python syntax check on the adapter passes.
+- ☑ A2.1 In `setup()`, upload the forge binary from `MCT_FORGE_BINARY` env var (defaulting to `~/.local/bin/forge`) to `/usr/local/bin/forge` and `chmod +x`.
+- ☑ A2.2 Upload the `mct-forge` wrapper from `MCT_FORGE_WRAPPER` env var (defaulting to `peripherals/mct-forge`) to `/usr/local/bin/mct-forge` and `chmod +x`.
+- ☑ A2.3 Upload the `~/.forge` directory from `MCT_FORGE_HOME` env var (defaulting to `~/.forge`) to `/root/.forge`.
+- ☑ A2.4 Ensure `/root/.forge` exists before upload by running `mkdir -p /root/.forge`.
+- ☑ A2.5 Update `install_spec()` if forge needs any system dependencies.
+- ☑ A2.6 Verification gate: `go build ./...` and `go test ./...` pass and Python syntax check on the adapter passes.
+
+> **Note**: Session data extraction was added in Step 8 of run(), copying /app/.machtiani/sessions/ to /logs/agent/sessions/ on the host-visible mount. Also added mkdir -p for /root/.forge and /app/.machtiani/modes/code-forge before uploads.
 
 **Files to change**: `mct_pier_adapter/mct_agent.py`
 
@@ -227,6 +229,7 @@ The adapter should copy `/app/.machtiani/sessions/` to the host job directory, p
 
 | Date | Description | Commit |
 |---|---|---|
+| 2026-06-27 | Phase A2: Forge integration — upload forge binary, mct-forge wrapper, and ~/.forge directory to container; added session data extraction step to copy sessions/ to host logs mount | 9c1829084 |
 | 2026-06-27 | Phase B smoke test completed with F2P 0.667 but revealed forge binary not available in container; mode code-forge loaded overlay but mct-forge commands failed silently; Phase A2 needed for forge integration | — |
 | 2026-06-27 | Phase B: Single-task smoke test passed — F2P 0.667 on go-critic-doc-link-checker, sync succeeded, agent ran with --mode code-forge, reward.json produced | 8f5d44a5f |
 | 2026-06-27 | Phase A: Rewrote Pier adapter — upload host config/modes, sync with retries, production CLI flags, config.toml-based network allowlist | 2a5ce8f4f |
@@ -236,7 +239,7 @@ The adapter should copy `/app/.machtiani/sessions/` to the host job directory, p
 | Phase | Status |
 |---|---|
 | Phase A: Update Pier Adapter | COMPLETE |
-| Phase A2: Forge Integration | PENDING |
+| Phase A2: Forge Integration | COMPLETE |
 | Phase B: Single-Task Smoke Test | PENDING |
 | Phase C: Full 113-Task Benchmark | PENDING — only proceed after Phase B3 passes |
 | Phase D: A/B Regression Testing | PENDING — only proceed after Phase B3 passes |
