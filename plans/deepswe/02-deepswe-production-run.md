@@ -73,10 +73,10 @@ No `--api-key` flag — keys come from the uploaded config.toml automatically vi
 
 **Goal**: Rewrite `mct_pier_adapter/mct_agent.py` to upload the host config, run sync with retries, invoke mct-agent with production flags, and parse provider domains from config.toml.
 
-- ☐ A.1 Replace `_generate_config()` with config upload: in `run()`, use `environment.upload_file()` to copy the host `.machtiani/config.toml` to `/app/.machtiani/config.toml`. Source path: `./.machtiani/config.toml` relative to the repo root (the directory where `pier run` is executed).
-- ☐ A.2 Upload `.machtiani/modes/code-forge/` directory: use `environment.upload_dir()` to copy the host `.machtiani/modes/code-forge/` to `/app/.machtiani/modes/code-forge/`. Verify the directory contains `code.txt`, `shell-agent-system-prompt.txt`, and `tasks.toml`.
-- ☐ A.3 Add `mct-agent sync` step: after uploading config and modes, run `mct-agent sync --model deepseek-v4-pro --max-input-tokens 800000` via `self.exec_as_agent()`. Check exit code: 0 = success, non-zero = retry. Retry up to 10 times with exponential backoff (1s, 2s, 4s, 8s, 16s, 32s, 64s, 128s, 256s, 512s). If all 10 attempts fail, raise an exception to fail the task (do not proceed to `mct-agent run`).
-- ☐ A.4 Update `mct-agent run` invocation: construct the command from env vars with defaults:
+- ☑ A.1 Replace `_generate_config()` with config upload: in `run()`, use `environment.upload_file()` to copy the host `.machtiani/config.toml` to `/app/.machtiani/config.toml`. Source path: `./.machtiani/config.toml` relative to the repo root (the directory where `pier run` is executed).
+- ☑ A.2 Upload `.machtiani/modes/code-forge/` directory: use `environment.upload_dir()` to copy the host `.machtiani/modes/code-forge/` to `/app/.machtiani/modes/code-forge/`. Verify the directory contains `code.txt`, `shell-agent-system-prompt.txt`, and `tasks.toml`.
+- ☑ A.3 Add `mct-agent sync` step: after uploading config and modes, run `mct-agent sync --model deepseek-v4-pro --max-input-tokens 800000` via `self.exec_as_agent()`. Check exit code: 0 = success, non-zero = retry. Retry up to 10 times with exponential backoff (1s, 2s, 4s, 8s, 16s, 32s, 64s, 128s, 256s, 512s). If all 10 attempts fail, raise an exception to fail the task (do not proceed to `mct-agent run`).
+- ☑ A.4 Update `mct-agent run` invocation: construct the command from env vars with defaults:
   - `MCT_MODE` (default: `code-forge`)
   - `MCT_MAX_STEPS` (default: `1000`)
   - `MCT_TIMEOUT_PER_TURN` (default: `0`)
@@ -86,10 +86,10 @@ No `--api-key` flag — keys come from the uploaded config.toml automatically vi
   - `MCT_SYNC_MODEL` (default: `deepseek-v4-pro`)
   - Remove `--api-key` from the command entirely.
   - Remove all `TEST_MODEL`/`TEST_BASE_URL`/`TEST_API_KEY` generation logic.
-- ☐ A.5 Update `network_allowlist()`: parse the uploaded config.toml for all `[providers.<name>]` sections with `base_url` fields, extract hostnames, and return them in the allowlist. Fallback: `MCT_NETWORK_DOMAINS` env var (comma-separated) for explicit override. Last resort fallback: `["api.deepseek.com", "api.deepinfra.com", "openrouter.ai"]`.
-- ☐ A.6 Update `install_spec()`: keep the existing apt-get step for ripgrep/rsync. The binary upload via `environment.upload_file()` in `setup()` remains unchanged.
-- ☐ A.7 Remove all `TEST_MODEL`/`TEST_BASE_URL`/`TEST_API_KEY` references from the adapter. These env vars are no longer used for config generation. The only env vars the adapter reads are `MCT_*` flags and `MCT_AGENT_BINARY`.
-- ☐ A.8 Verification gate: `cd agent && go build ./... && go test ./...` passes. Python syntax check on the adapter. Import check (ast.parse).
+- ☑ A.5 Update `network_allowlist()`: parse the uploaded config.toml for all `[providers.<name>]` sections with `base_url` fields, extract hostnames, and return them in the allowlist. Fallback: `MCT_NETWORK_DOMAINS` env var (comma-separated) for explicit override. Last resort fallback: `["api.deepseek.com", "api.deepinfra.com", "openrouter.ai"]`.
+- ☑ A.6 Update `install_spec()`: keep the existing apt-get step for ripgrep/rsync. The binary upload via `environment.upload_file()` in `setup()` remains unchanged.
+- ☑ A.7 Remove all `TEST_MODEL`/`TEST_BASE_URL`/`TEST_API_KEY` references from the adapter. These env vars are no longer used for config generation. The only env vars the adapter reads are `MCT_*` flags and `MCT_AGENT_BINARY`.
+- ☑ A.8 Verification gate: `cd agent && go build ./... && go test ./...` passes. Python syntax check on the adapter. Import check (ast.parse).
 
 **Files to change**: `mct_pier_adapter/mct_agent.py`
 
@@ -181,13 +181,13 @@ No `--api-key` flag — keys come from the uploaded config.toml automatically vi
 
 | Date | Description | Commit |
 |---|---|---|
-| | *No progress yet — plan initial version* | |
+| 2026-06-27 | Phase A: Rewrote Pier adapter — upload host config/modes, sync with retries, production CLI flags, config.toml-based network allowlist | 2a5ce8f4f |
 
 ## Status
 
 | Phase | Status |
 |---|---|
-| Phase A: Update Pier Adapter | PENDING |
+| Phase A: Update Pier Adapter | COMPLETE |
 | Phase B: Single-Task Smoke Test | PENDING |
 | Phase C: Full 113-Task Benchmark | PENDING |
 | Phase D: A/B Regression Testing | PENDING |
