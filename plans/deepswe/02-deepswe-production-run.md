@@ -97,11 +97,11 @@ No `--api-key` flag — keys come from the uploaded config.toml automatically vi
 
 **Goal**: Run a single Deep-SWE task (go-critic-doc-link-checker) end-to-end with the reconfigured adapter, verifying sync completes, agent runs with `--mode code-forge`, git commit is captured, and `reward.json` is produced.
 
-- ☐ B.1 Build the mct-agent binary: `cd agent && go build -o ../agent/bin/mct-agent ./cmd/mct-agent`
-- ☐ B.2 Verify the host config has the required model definitions: confirm `[models.deepseek-v4-pro]` and `[providers.deepseek]` with `api_key` exist in `.machtiani/config.toml`.
-- ☐ B.3 Run Pier on a single task: `pier run -p ~/projects/deep-swe/tasks/go-critic-doc-link-checker --agent-import-path mct_pier_adapter.mct_agent:MctAgent --ae MCT_AGENT_BINARY=$(pwd)/agent/bin/mct-agent --n-concurrent 1`
-- ☐ B.4 Verify: sync completes (check trial log for "Readme synced for commit"), agent runs with `--mode code-forge` (check command in trial log), git commit captured, `reward.json` produced.
-- ☐ B.5 If sync fails on all 10 retries, diagnose: check network allowlisting, config.toml upload, and model resolution inside the container.
+- ☑ B.1 Build the mct-agent binary: `cd agent && go build -o ../agent/bin/mct-agent ./cmd/mct-agent`
+- ☑ B.2 Verify the host config has the required model definitions: confirm `[models.deepseek-v4-pro]` and `[providers.deepseek]` with `api_key` exist in `.machtiani/config.toml`.
+- ☑ B.3 Run Pier on a single task: `pier run -p ~/projects/deep-swe/tasks/go-critic-doc-link-checker --agent-import-path mct_pier_adapter.mct_agent:MctAgent --ae MCT_AGENT_BINARY=$(pwd)/agent/bin/mct-agent --n-concurrent 1`
+- ☑ B.4 Verify: sync completes (check trial log for "Readme synced for commit"), agent runs with `--mode code-forge` (check command in trial log), git commit captured, `reward.json` produced.
+- ☑ B.5 If sync fails on all 10 retries, diagnose: check network allowlisting, config.toml upload, and model resolution inside the container.
 
 **Files to change**: None expected (verification-only phase).
 
@@ -181,6 +181,7 @@ No `--api-key` flag — keys come from the uploaded config.toml automatically vi
 
 | Date | Description | Commit |
 |---|---|---|
+| 2026-06-27 | Phase B: Single-task smoke test passed — F2P 0.667 on go-critic-doc-link-checker, sync succeeded, agent ran with --mode code-forge, reward.json produced | 8f5d44a5f |
 | 2026-06-27 | Phase A: Rewrote Pier adapter — upload host config/modes, sync with retries, production CLI flags, config.toml-based network allowlist | 2a5ce8f4f |
 
 ## Status
@@ -188,7 +189,7 @@ No `--api-key` flag — keys come from the uploaded config.toml automatically vi
 | Phase | Status |
 |---|---|
 | Phase A: Update Pier Adapter | COMPLETE |
-| Phase B: Single-Task Smoke Test | PENDING |
+| Phase B: Single-Task Smoke Test | COMPLETE |
 | Phase C: Full 113-Task Benchmark | PENDING |
 | Phase D: A/B Regression Testing | PENDING |
 
