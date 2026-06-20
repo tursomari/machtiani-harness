@@ -2978,6 +2978,133 @@ test_code_resume_without_mode_no_forge() {
   echo "Passed: $case_id" >&2
 }
 
+# test_finalize_reminder verifies that the shell-agent respects
+# finalize_remaining_steps by issuing a reminder when remaining steps
+# fall at or below the threshold.
+test_finalize_reminder() {
+  local case_id="finalize-reminder"
+
+  if [[ "$LIVE_MODE" != true ]]; then
+    echo "Skipping $case_id (needs LIVE_MODE=true)" >&2
+    return 0
+  fi
+
+  local config_root
+  config_root="$(mktemp -d "$TMP_ROOT/config-finalize.XXXXXX")"
+  cp -R "$(dirname "$TEST_CONFIG_FILE")" "$config_root/"
+
+  local local_config="$config_root/.machtiani/config.toml"
+  "$PYTHON_BIN" - "$local_config" <<'PY'
+import pathlib
+import re
+import sys
+
+path = pathlib.Path(sys.argv[1])
+lines = path.read_text(encoding="utf-8").splitlines()
+
+def replace_section_key(src_lines, section_name, key, value):
+    out = []
+    in_section = False
+    found_section = False
+    wrote_key = False
+    for line in src_lines:
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            if in_section and not wrote_key:
+                out.append(f"{key} = {value}")
+                wrote_key = True
+            in_section = stripped == f"[{section_name}]"
+            if in_section:
+                found_section = True
+            out.append(line)
+            continue
+        if in_section and re.match(rf"^\s*{re.escape(key)}\s*=", line):
+            out.append(f"{key} = {value}")
+            wrote_key = True
+            continue
+        out.append(line)
+    if in_section and not wrote_key:
+        out.append(f"{key} = {value}")
+    if not found_section:
+        if out and out[-1] != "":
+            out.append("")
+        out.extend([f"[{section_name}]", f"{key} = {value}"])
+    return out
+
+lines = replace_section_key(lines, "shell-agent", "step_limit", "10")
+lines = replace_section_key(lines, "shell-agent", "finalize_remaining_steps", "6")
+path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+PY
+
+  local session_id="test-${case_id}-$(date +%s)"
+  local out_dir="$(pwd)/test-out-${session_id}"
+  mkdir -p "$out_dir"
+  local stdout_file="$out_dir/stdout-${session_id}.txt"
+  local stderr_file="$out_dir/stderr-${session_id}.txt"
+
+  echo "Running finalize-reminder case..." >&2
+
+  local rc=0
+  pushd "$REPO_ROOT" >/dev/null
+  set +e
+  MACHTIANI_CONFIG="$local_config" \
+  timeout 600 "$MCT_AGENT" run \
+    --max-steps 15 \
+    --timeout-per-turn 300 \
+    "${DEFAULT_MODEL_ARGS[@]}" \
+    --text "Investigate the repository structure: find the main Go package for the mct-agent binary, list its key source files, and identify what Go version is required in go.mod. Report your findings step by step." \
+    > "$stdout_file" 2> "$stderr_file"
+  rc=$?
+  set -e
+  popd >/dev/null
+
+  if [[ $rc -ne 0 ]]; then
+    echo "Failed run (rc=$rc): $case_id" >&2
+    cat "$stderr_file" >&2 || true
+    rm -rf "$config_root"
+    return 1
+  fi
+
+  local agent_session
+  agent_session=$(grep -m1 '^Session:' "$stderr_file" | awk '{print $2}' || true)
+  if [[ -z "$agent_session" ]]; then
+    echo "Failed to parse session ID from stderr for $case_id" >&2
+    rm -rf "$config_root"
+    return 1
+  fi
+
+  local sessions_root="$REPO_ROOT/.machtiani/sessions"
+  local session_dir="$sessions_root/$agent_session"
+  if [[ ! -d "$session_dir" ]]; then
+    echo "Session directory missing: $session_dir" >&2
+    rm -rf "$config_root"
+    return 1
+  fi
+
+  local chat_dir="$session_dir/chat"
+  if [[ ! -d "$chat_dir" ]]; then
+    echo "Chat directory missing: $chat_dir" >&2
+    rm -rf "$config_root"
+    return 1
+  fi
+
+  local final_path="$chat_dir/agent-final-answer.md"
+  if [[ ! -s "$final_path" ]]; then
+    echo "Missing final artifact in session directory: $final_path" >&2
+    rm -rf "$config_root"
+    return 1
+  fi
+
+  if grep -qF "LimitsExceeded" "$stdout_file"; then
+    echo "Unexpected 'LimitsExceeded' in stdout for $case_id" >&2
+    rm -rf "$config_root"
+    return 1
+  fi
+
+  rm -rf "$config_root"
+  echo "Passed: $case_id" >&2
+}
+
 run_resume_from_conversation_json_case() {
   local case_id="resume-from-conversation-json"
   local session_id="test-${case_id}-$(date +%s)"
@@ -3500,6 +3627,7 @@ declare -A TESTS=(
   ["test_code_forge_resume_with_mode"]="test_code_forge_resume_with_mode"
   ["test_code_forge_resume_without_mode"]="test_code_forge_resume_without_mode"
   ["test_code_resume_without_mode_no_forge"]="test_code_resume_without_mode_no_forge"
+  ["test_finalize_reminder"]="test_finalize_reminder"
   ["test_enforce_early_commands"]="run_enforce_early_commands_case"
 )
 
@@ -3542,6 +3670,7 @@ if [[ "$LIVE_MODE" == true ]]; then
   test_code_forge_resume_with_mode
   test_code_forge_resume_without_mode
   test_code_resume_without_mode_no_forge
+  test_finalize_reminder
 fi
 
 run_happy_case "models-per-component" 3 \
