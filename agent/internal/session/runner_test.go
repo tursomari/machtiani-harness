@@ -285,7 +285,7 @@ func TestStartTranscriptIfNeededChildIncludesBackgroundWhenRequested(t *testing.
 	if !started {
 		t.Fatalf("expected transcript to start")
 	}
-	if err := writeInitialBackgroundIfNeeded(tr, ".", cfg, started, nil); err != nil {
+	if err := writeInitialBackgroundIfNeeded(tr, ".", cfg, started, nil, os.Stderr); err != nil {
 		t.Fatalf("writeInitialBackgroundIfNeeded error: %v", err)
 	}
 	content := tr.Content()

@@ -4,14 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
+	"io"
 	"strings"
 
 	"github.com/tursomari/machtiani/agent/internal/trajectory/listener"
 	"github.com/tursomari/machtiani/agent/internal/ui"
 )
 
-func startLLMCacheDiagnosticsLogger(display *ui.TerminalDisplay, path string) (context.CancelFunc, <-chan struct{}, error) {
+func startLLMCacheDiagnosticsLogger(display ui.SessionDisplay, path string, diagWriter io.Writer) (context.CancelFunc, <-chan struct{}, error) {
 	sub, err := listener.New(path)
 	if err != nil {
 		return nil, nil, err
@@ -22,7 +22,7 @@ func startLLMCacheDiagnosticsLogger(display *ui.TerminalDisplay, path string) (c
 		FollowFromLatest: true,
 		Kinds:            []string{"llm.cache.injected"},
 		ErrorHandler: func(err error) {
-			fmt.Fprintf(os.Stderr, "[trajectory] cache diagnostics listener error: %v\n", err)
+			fmt.Fprintf(diagWriter, "[trajectory] cache diagnostics listener error: %v\n", err)
 		},
 	}
 	go func() {
@@ -34,7 +34,7 @@ func startLLMCacheDiagnosticsLogger(display *ui.TerminalDisplay, path string) (c
 			return nil
 		})
 		if err != nil && !errors.Is(err, context.Canceled) {
-			fmt.Fprintf(os.Stderr, "[trajectory] cache diagnostics listener stopped: %v\n", err)
+			fmt.Fprintf(diagWriter, "[trajectory] cache diagnostics listener stopped: %v\n", err)
 		}
 	}()
 	return cancel, done, nil

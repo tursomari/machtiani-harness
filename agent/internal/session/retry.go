@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -13,7 +13,7 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/ui"
 )
 
-func startLLMRetryLogger(display *ui.TerminalDisplay, path string) (context.CancelFunc, <-chan struct{}, error) {
+func startLLMRetryLogger(display ui.SessionDisplay, path string, diagWriter io.Writer) (context.CancelFunc, <-chan struct{}, error) {
 	sub, err := listener.New(path)
 	if err != nil {
 		return nil, nil, err
@@ -24,7 +24,7 @@ func startLLMRetryLogger(display *ui.TerminalDisplay, path string) (context.Canc
 		FollowFromLatest: true,
 		Kinds:            []string{"llm.retry"},
 		ErrorHandler: func(err error) {
-			fmt.Fprintf(os.Stderr, "[trajectory] retry listener error: %v\n", err)
+			fmt.Fprintf(diagWriter, "[trajectory] retry listener error: %v\n", err)
 		},
 	}
 	go func() {
@@ -36,7 +36,7 @@ func startLLMRetryLogger(display *ui.TerminalDisplay, path string) (context.Canc
 			return nil
 		})
 		if err != nil && !errors.Is(err, context.Canceled) {
-			fmt.Fprintf(os.Stderr, "[trajectory] retry listener stopped: %v\n", err)
+			fmt.Fprintf(diagWriter, "[trajectory] retry listener stopped: %v\n", err)
 		}
 	}()
 	return cancel, done, nil

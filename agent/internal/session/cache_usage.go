@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
+	"io"
 	"strconv"
 	"strings"
 
@@ -13,7 +13,7 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/ui"
 )
 
-func startLLMCacheUsageLogger(display *ui.TerminalDisplay, path string) (context.CancelFunc, <-chan struct{}, error) {
+func startLLMCacheUsageLogger(display ui.SessionDisplay, path string, diagWriter io.Writer) (context.CancelFunc, <-chan struct{}, error) {
 	sub, err := listener.New(path)
 	if err != nil {
 		return nil, nil, err
@@ -24,7 +24,7 @@ func startLLMCacheUsageLogger(display *ui.TerminalDisplay, path string) (context
 		FollowFromLatest: true,
 		Kinds:            []string{"llm.cache.usage"},
 		ErrorHandler: func(err error) {
-			fmt.Fprintf(os.Stderr, "[trajectory] cache usage listener error: %v\n", err)
+			fmt.Fprintf(diagWriter, "[trajectory] cache usage listener error: %v\n", err)
 		},
 	}
 	go func() {
@@ -36,7 +36,7 @@ func startLLMCacheUsageLogger(display *ui.TerminalDisplay, path string) (context
 			return nil
 		})
 		if err != nil && !errors.Is(err, context.Canceled) {
-			fmt.Fprintf(os.Stderr, "[trajectory] cache usage listener stopped: %v\n", err)
+			fmt.Fprintf(diagWriter, "[trajectory] cache usage listener stopped: %v\n", err)
 		}
 	}()
 	return cancel, done, nil

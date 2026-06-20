@@ -7,7 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
+	"io"
 	"path/filepath"
 	"strings"
 
@@ -49,7 +49,8 @@ type runTurnEnv struct {
 	sessionErr                  *error
 	turnsCompleted              *int
 	plannerProgress             *plannerProgressTracker
-	display                     *ui.TerminalDisplay
+	display                     ui.SessionDisplay
+	diagWriter                  io.Writer
 	sessTelemetry               *sessionTelemetry
 	turn                        *turnTelemetry
 	turnDecision                string
@@ -74,14 +75,14 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 	}
 	if question == "" {
 		errEmpty := errors.New("planner returned empty question")
-		fmt.Fprintln(os.Stderr, "Planner returned empty question for 'ask' decision")
+		fmt.Fprintln(env.diagWriter, "Planner returned empty question for 'ask' decision")
 		*env.sessionErr = errEmpty
 		finishTurn(env.sessTelemetry, env.turn, env.turnDecision, "error", env.turnInfo, errEmpty)
 		
 		return turnExecutionResult{action: turnLoopReturn, result: Result{ExitCode: 1, Err: errEmpty}}
 	}
 	if env.cfg.verbose {
-		fmt.Fprintln(os.Stderr, "Question:", question)
+		fmt.Fprintln(env.diagWriter, "Question:", question)
 	}
 	noShellAsk, shellAsk, hasSplitAsk := splitAskLines(question)
 	collapsedLegacyBothAsk := false
@@ -111,7 +112,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 		useShellAgent, preflightReply, preflightErr = promptsvc.PreflightShellRouting(ctxPre, env.mctRunner.Runtime, preflightQuestion)
 		cancelPre()
 		if preflightErr != nil && env.cfg.verbose {
-			fmt.Fprintln(os.Stderr, "Preflight routing error:", preflightErr)
+			fmt.Fprintln(env.diagWriter, "Preflight routing error:", preflightErr)
 		}
 		routeLabel := "shell"
 		routeExplanation := "shell reply — run commands in the shell"
@@ -236,7 +237,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 					shellOpts.ShellAgentRequest = &req
 				}
 				if err != nil && env.cfg.verbose {
-					fmt.Fprintln(os.Stderr, "shell-agent library: build request:", err)
+					fmt.Fprintln(env.diagWriter, "shell-agent library: build request:", err)
 				}
 			}
 			go func() {
@@ -286,9 +287,9 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 				msg := merr.Error()
 				if errors.Is(ctx2Err, context.DeadlineExceeded) || strings.Contains(strings.ToLower(merr.Error()), "signal: killed") {
 					msg = fmt.Sprintf("timed out after %ds", env.cfg.timeoutPerTurn)
-					fmt.Fprintf(os.Stderr, "mct prompt error: %s. Try increasing --timeout-per-turn or set 0 for unlimited.\n", msg)
+					fmt.Fprintf(env.diagWriter, "mct prompt error: %s. Try increasing --timeout-per-turn or set 0 for unlimited.\n", msg)
 				} else {
-					fmt.Fprintln(os.Stderr, "mct prompt error:", merr)
+					fmt.Fprintln(env.diagWriter, "mct prompt error:", merr)
 				}
 				stream.Abort(msg)
 				*env.sessionErr = merr
@@ -316,13 +317,13 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 			retrieved = nil
 		} else if runNoShell {
 			if result.SaveError != nil {
-				fmt.Fprintln(os.Stderr, "Warning: failed to save chat transcript:", result.SaveError)
+				fmt.Fprintln(env.diagWriter, "Warning: failed to save chat transcript:", result.SaveError)
 			}
 			savedPath = strings.TrimSpace(result.SavedPath)
 			if savedPath == "" {
 				chatDir, err := artifacts.SessionChatDirectory(env.sessionID)
 				if err != nil {
-					fmt.Fprintln(os.Stderr, "Failed to resolve chat directory:", err)
+					fmt.Fprintln(env.diagWriter, "Failed to resolve chat directory:", err)
 					stream.Abort("failed to save chat transcript")
 					return turnExecutionResult{action: turnLoopReturn, result: Result{ExitCode: 1, Err: err}, shellAgentUsed: shellAgentUsedThisTurn}
 				}
@@ -341,7 +342,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 				env.turnInfo[k] = v
 			}
 			for _, warn := range warnings {
-				fmt.Fprintf(os.Stderr, "[tag-format] %s\n", warn)
+				fmt.Fprintf(env.diagWriter, "[tag-format] %s\n", warn)
 			}
 		}
 		stream.Complete(fullAns)
@@ -350,7 +351,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 			transcriptQuestion = transcriptQuestion + "\n\n" + block
 		}
 		if err := env.writeTurn(env.step, transcriptQuestion, savedPath, retrieved, fullAns, "ask"); err != nil {
-			fmt.Fprintln(os.Stderr, "Transcript write error:", err)
+			fmt.Fprintln(env.diagWriter, "Transcript write error:", err)
 			*env.sessionErr = err
 			finishTurn(env.sessTelemetry, env.turn, env.turnDecision, "error", env.turnInfo, err)
 			return turnExecutionResult{action: turnLoopReturn, result: Result{ExitCode: 1, Err: err}, shellAgentUsed: shellAgentUsedThisTurn}
@@ -382,7 +383,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 			input.ShellAgentRequest = &req
 		}
 		if err != nil && env.cfg.verbose {
-			fmt.Fprintln(os.Stderr, "shell-agent library: build request:", err)
+			fmt.Fprintln(env.diagWriter, "shell-agent library: build request:", err)
 		}
 	}
 	ctx2, cancel2 := makeTurnContext(env.rootCtx, env.cfg.timeoutPerTurn)
@@ -403,9 +404,9 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 		msg := merr.Error()
 		if errors.Is(ctx2Err, context.DeadlineExceeded) || strings.Contains(strings.ToLower(merr.Error()), "signal: killed") {
 			msg = fmt.Sprintf("timed out after %ds", env.cfg.timeoutPerTurn)
-			fmt.Fprintf(os.Stderr, "mct prompt error: %s. Try increasing --timeout-per-turn or set 0 for unlimited.\n", msg)
+			fmt.Fprintf(env.diagWriter, "mct prompt error: %s. Try increasing --timeout-per-turn or set 0 for unlimited.\n", msg)
 		} else {
-			fmt.Fprintln(os.Stderr, "mct prompt error:", merr)
+			fmt.Fprintln(env.diagWriter, "mct prompt error:", merr)
 		}
 		stream.Abort(msg)
 		*env.sessionErr = merr
@@ -421,12 +422,12 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 		retrieved = nil
 	} else {
 		if result.SaveError != nil {
-			fmt.Fprintln(os.Stderr, "Warning: failed to save chat transcript:", result.SaveError)
+			fmt.Fprintln(env.diagWriter, "Warning: failed to save chat transcript:", result.SaveError)
 		}
 		if savedPath == "" {
 			chatDir, err := artifacts.SessionChatDirectory(env.sessionID)
 			if err != nil {
-				fmt.Fprintln(os.Stderr, "Failed to resolve chat directory:", err)
+				fmt.Fprintln(env.diagWriter, "Failed to resolve chat directory:", err)
 				stream.Abort("failed to save chat transcript")
 				return turnExecutionResult{action: turnLoopReturn, result: Result{ExitCode: 1, Err: err}, shellAgentUsed: shellAgentUsedThisTurn}
 			}
@@ -445,7 +446,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 			env.turnInfo[k] = v
 		}
 		for _, warn := range warnings {
-			fmt.Fprintf(os.Stderr, "[tag-format] %s\n", warn)
+			fmt.Fprintf(env.diagWriter, "[tag-format] %s\n", warn)
 		}
 	}
 	stream.Complete(fullAns)
@@ -454,7 +455,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 		transcriptQuestion = transcriptQuestion + "\n\n" + block
 	}
 	if err := env.writeTurn(env.step, transcriptQuestion, savedPath, retrieved, fullAns, "ask"); err != nil {
-		fmt.Fprintln(os.Stderr, "Transcript write error:", err)
+		fmt.Fprintln(env.diagWriter, "Transcript write error:", err)
 		*env.sessionErr = err
 		finishTurn(env.sessTelemetry, env.turn, env.turnDecision, "error", env.turnInfo, err)
 		return turnExecutionResult{action: turnLoopReturn, result: Result{ExitCode: 1, Err: err}, shellAgentUsed: shellAgentUsedThisTurn}

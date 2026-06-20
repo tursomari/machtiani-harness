@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -47,9 +48,10 @@ type modeContext struct {
 	ResumePrompt    string
 	Config          legacyConfig
 	Options         Options
-	Display         *ui.TerminalDisplay
+	Display         ui.SessionDisplay
 	InstructionPath string
 	Instruction     llm.ModeInstructions
+	DiagWriter      io.Writer
 }
 
 // modeConfigResult captures the configuration applied by applyMode()
@@ -74,7 +76,7 @@ func applyMode(ctx *modeContext) (modeConfigResult, bool) {
 
 	plan, err := loadOrCreateModePlan(ctx.SessionID, ctx.Goal, mode, ctx.InstructionPath, ctx.Instruction)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading mode plan: %v\n", err)
+		fmt.Fprintf(ctx.DiagWriter, "Error loading mode plan: %v\n", err)
 		return modeConfigResult{Plan: plan}, true
 	}
 
@@ -90,7 +92,7 @@ func applyMode(ctx *modeContext) (modeConfigResult, bool) {
 	// Configure the session for the single task.
 	updatedPlan, err := configureModePlan(ctx, plan)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error configuring mode plan: %v\n", err)
+		fmt.Fprintf(ctx.DiagWriter, "Error configuring mode plan: %v\n", err)
 		return modeConfigResult{Plan: updatedPlan}, true
 	}
 

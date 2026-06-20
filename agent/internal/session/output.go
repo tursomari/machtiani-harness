@@ -2,6 +2,7 @@ package session
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,7 +12,7 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/ui"
 )
 
-func writeFinalAnswer(sessionID, answer, finalFileFlag string, verbose bool, dryRun bool) error {
+func writeFinalAnswer(sessionID, answer, finalFileFlag string, verbose bool, dryRun bool, diagWriter io.Writer) error {
 	if dryRun {
 		return nil
 	}
@@ -30,19 +31,19 @@ func writeFinalAnswer(sessionID, answer, finalFileFlag string, verbose bool, dry
 		return err
 	}
 	if verbose {
-		fmt.Fprintln(os.Stderr, "Final answer saved:", path)
+		fmt.Fprintln(diagWriter, "Final answer saved:", path)
 	}
 	return nil
 }
 
-func presentFinalAnswer(display *ui.TerminalDisplay, answer string) {
+func presentFinalAnswer(display ui.SessionDisplay, answer string, diagWriter io.Writer) {
 	rendered, fallback, err := renderWithGlow(answer)
 	if fallback {
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "[warning] markdown render failed; showing plain text:", err)
+			fmt.Fprintln(diagWriter, "[warning] markdown render failed; showing plain text:", err)
 		}
 	} else if err != nil {
-		fmt.Fprintln(os.Stderr, "[warning] markdown render warning:", err)
+		fmt.Fprintln(diagWriter, "[warning] markdown render warning:", err)
 	}
 	if strings.TrimSpace(rendered) == "" {
 		rendered = strings.TrimSpace(answer)

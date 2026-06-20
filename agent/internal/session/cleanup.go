@@ -3,6 +3,7 @@ package session
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,7 +34,7 @@ var sessionDirPrefixes = []string{
 	"session-",
 }
 
-func cleanupOrphanedTempDirs(verbose bool) error {
+func cleanupOrphanedTempDirs(verbose bool, diagWriter io.Writer) error {
 	now := time.Now()
 
 	var errs []error
@@ -47,10 +48,10 @@ func cleanupOrphanedTempDirs(verbose bool) error {
 			if trimmed == "" {
 				continue
 			}
-			if err := cleanupOrphanedSessionDirs(trimmed, verbose); err != nil {
+			if err := cleanupOrphanedSessionDirs(trimmed, verbose, diagWriter); err != nil {
 				errs = append(errs, err)
 			}
-			if err := cleanupOrphanedTempDirsInternal(trimmed, now, defaultCleanupAge, verbose); err != nil {
+			if err := cleanupOrphanedTempDirsInternal(trimmed, now, defaultCleanupAge, verbose, diagWriter); err != nil {
 				errs = append(errs, err)
 			}
 		}
@@ -58,10 +59,10 @@ func cleanupOrphanedTempDirs(verbose bool) error {
 
 	// Remove legacy session directories under /tmp/mct for backwards compatibility.
 	legacySessionRoot := filepath.Join(os.TempDir(), "mct")
-	if err := cleanupOrphanedSessionDirs(legacySessionRoot, verbose); err != nil {
+	if err := cleanupOrphanedSessionDirs(legacySessionRoot, verbose, diagWriter); err != nil {
 		errs = append(errs, err)
 	}
-	if err := cleanupOrphanedTempDirsInternal(os.TempDir(), now, defaultCleanupAge, verbose); err != nil {
+	if err := cleanupOrphanedTempDirsInternal(os.TempDir(), now, defaultCleanupAge, verbose, diagWriter); err != nil {
 		errs = append(errs, err)
 	}
 	if len(errs) > 0 {
@@ -70,8 +71,8 @@ func cleanupOrphanedTempDirs(verbose bool) error {
 	return nil
 }
 
-func cleanupStaleShellAgentMarkers(root string, maxAge time.Duration, verbose bool) error {
-	return cleanupStaleShellAgentMarkersAt(root, time.Now(), maxAge, verbose)
+func cleanupStaleShellAgentMarkers(root string, maxAge time.Duration, verbose bool, diagWriter io.Writer) error {
+	return cleanupStaleShellAgentMarkersAt(root, time.Now(), maxAge, verbose, diagWriter)
 }
 
 func shellAgentMarkerMaxAge() (time.Duration, error) {
@@ -89,7 +90,7 @@ func shellAgentMarkerMaxAge() (time.Duration, error) {
 	return parsed, nil
 }
 
-func cleanupStaleShellAgentMarkersAt(root string, now time.Time, maxAge time.Duration, verbose bool) error {
+func cleanupStaleShellAgentMarkersAt(root string, now time.Time, maxAge time.Duration, verbose bool, diagWriter io.Writer) error {
 	if strings.TrimSpace(root) == "" {
 		return nil
 	}
@@ -115,7 +116,7 @@ func cleanupStaleShellAgentMarkersAt(root string, now time.Time, maxAge time.Dur
 		}
 		info, infoErr := entry.Info()
 		if infoErr != nil {
-			warnCleanupError(filepath.Join(markerDir, name), infoErr)
+			warnCleanupError(filepath.Join(markerDir, name), infoErr, diagWriter)
 			errs = append(errs, fmt.Errorf("stat %s: %w", filepath.Join(markerDir, name), infoErr))
 			continue
 		}
@@ -124,18 +125,18 @@ func cleanupStaleShellAgentMarkersAt(root string, now time.Time, maxAge time.Dur
 		}
 		path := filepath.Join(markerDir, name)
 		if removeErr := os.Remove(path); removeErr != nil {
-			warnCleanupError(path, removeErr)
+			warnCleanupError(path, removeErr, diagWriter)
 			errs = append(errs, fmt.Errorf("remove %s: %w", path, removeErr))
 			continue
 		}
 		if verbose {
-			fmt.Fprintf(os.Stderr, "[cleanup] removed stale marker file: %s\n", path)
+			fmt.Fprintf(diagWriter, "[cleanup] removed stale marker file: %s\n", path)
 		}
 	}
 
 	if entries, dirErr := os.ReadDir(markerDir); dirErr == nil && len(entries) == 0 {
 		if removeErr := os.Remove(markerDir); removeErr != nil && !os.IsNotExist(removeErr) {
-			warnCleanupError(markerDir, removeErr)
+			warnCleanupError(markerDir, removeErr, diagWriter)
 			errs = append(errs, fmt.Errorf("remove marker dir %s: %w", markerDir, removeErr))
 		}
 	}
@@ -146,7 +147,7 @@ func cleanupStaleShellAgentMarkersAt(root string, now time.Time, maxAge time.Dur
 	return nil
 }
 
-func cleanupOrphanedTempDirsInternal(tempDir string, now time.Time, maxAge time.Duration, verbose bool) error {
+func cleanupOrphanedTempDirsInternal(tempDir string, now time.Time, maxAge time.Duration, verbose bool, diagWriter io.Writer) error {
 	entries, err := os.ReadDir(tempDir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -169,7 +170,7 @@ func cleanupOrphanedTempDirsInternal(tempDir string, now time.Time, maxAge time.
 		path := filepath.Join(tempDir, name)
 		info, infoErr := entry.Info()
 		if infoErr != nil {
-			warnCleanupError(path, infoErr)
+			warnCleanupError(path, infoErr, diagWriter)
 			errs = append(errs, fmt.Errorf("stat %s: %w", path, infoErr))
 			continue
 		}
@@ -178,7 +179,7 @@ func cleanupOrphanedTempDirsInternal(tempDir string, now time.Time, maxAge time.
 		}
 		orphaned, orphanErr := shouldRemoveCandidate(path)
 		if orphanErr != nil {
-			warnCleanupError(path, orphanErr)
+			warnCleanupError(path, orphanErr, diagWriter)
 			errs = append(errs, fmt.Errorf("inspect %s: %w", path, orphanErr))
 			continue
 		}
@@ -186,12 +187,12 @@ func cleanupOrphanedTempDirsInternal(tempDir string, now time.Time, maxAge time.
 			continue
 		}
 		if removeErr := os.RemoveAll(path); removeErr != nil {
-			warnCleanupError(path, removeErr)
+			warnCleanupError(path, removeErr, diagWriter)
 			errs = append(errs, fmt.Errorf("remove %s: %w", path, removeErr))
 			continue
 		}
 		if verbose {
-			fmt.Fprintf(os.Stderr, "[cleanup] removed orphaned temp dir: %s\n", path)
+			fmt.Fprintf(diagWriter, "[cleanup] removed orphaned temp dir: %s\n", path)
 		}
 	}
 
@@ -201,7 +202,7 @@ func cleanupOrphanedTempDirsInternal(tempDir string, now time.Time, maxAge time.
 	return nil
 }
 
-func cleanupOrphanedSessionDirs(root string, verbose bool) error {
+func cleanupOrphanedSessionDirs(root string, verbose bool, diagWriter io.Writer) error {
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -233,16 +234,16 @@ func cleanupOrphanedSessionDirs(root string, verbose bool) error {
 			if os.IsNotExist(openErr) {
 				removalReason := "missing lock file"
 				if removeErr := os.RemoveAll(sessionPath); removeErr != nil {
-					warnCleanupError(sessionPath, removeErr)
+					warnCleanupError(sessionPath, removeErr, diagWriter)
 					errs = append(errs, fmt.Errorf("remove %s: %w", sessionPath, removeErr))
 					continue
 				}
 				if verbose {
-					fmt.Fprintf(os.Stderr, "[cleanup] removed orphaned session dir: %s (%s)\n", sessionPath, removalReason)
+					fmt.Fprintf(diagWriter, "[cleanup] removed orphaned session dir: %s (%s)\n", sessionPath, removalReason)
 				}
 				continue
 			}
-			warnCleanupError(lockPath, openErr)
+			warnCleanupError(lockPath, openErr, diagWriter)
 			errs = append(errs, fmt.Errorf("open %s: %w", lockPath, openErr))
 			continue
 		}
@@ -254,7 +255,7 @@ func cleanupOrphanedSessionDirs(root string, verbose bool) error {
 				f.Close()
 				continue
 			}
-			warnCleanupError(lockPath, flockErr)
+			warnCleanupError(lockPath, flockErr, diagWriter)
 			errs = append(errs, fmt.Errorf("lock %s: %w", lockPath, flockErr))
 			f.Close()
 			continue
@@ -267,12 +268,12 @@ func cleanupOrphanedSessionDirs(root string, verbose bool) error {
 
 		removalReason := "orphaned lock file"
 		if err := os.RemoveAll(sessionPath); err != nil {
-			warnCleanupError(sessionPath, err)
+			warnCleanupError(sessionPath, err, diagWriter)
 			errs = append(errs, fmt.Errorf("remove %s: %w", sessionPath, err))
 			continue
 		}
 		if verbose {
-			fmt.Fprintf(os.Stderr, "[cleanup] removed orphaned session dir: %s (%s)\n", sessionPath, removalReason)
+			fmt.Fprintf(diagWriter, "[cleanup] removed orphaned session dir: %s (%s)\n", sessionPath, removalReason)
 		}
 	}
 
@@ -282,8 +283,8 @@ func cleanupOrphanedSessionDirs(root string, verbose bool) error {
 	return nil
 }
 
-func warnCleanupError(path string, err error) {
-	fmt.Fprintf(os.Stderr, "[cleanup] warning: %s: %v\n", path, err)
+func warnCleanupError(path string, err error, diagWriter io.Writer) {
+	fmt.Fprintf(diagWriter, "[cleanup] warning: %s: %v\n", path, err)
 }
 
 func hasCleanupPrefix(name string) bool {

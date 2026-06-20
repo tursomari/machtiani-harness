@@ -4,14 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
+	"io"
 	"strings"
 
 	"github.com/tursomari/machtiani/agent/internal/trajectory/listener"
 	"github.com/tursomari/machtiani/agent/internal/ui"
 )
 
-func startShellActionStreamer(display *ui.TerminalDisplay, path string) (context.CancelFunc, <-chan struct{}, error) {
+func startShellActionStreamer(display ui.SessionDisplay, path string, diagWriter io.Writer) (context.CancelFunc, <-chan struct{}, error) {
 	sub, err := listener.New(path)
 	if err != nil {
 		return nil, nil, err
@@ -22,7 +22,7 @@ func startShellActionStreamer(display *ui.TerminalDisplay, path string) (context
 		FollowFromLatest: true,
 		Kinds:            []string{"shell-agent.action"},
 		ErrorHandler: func(err error) {
-			fmt.Fprintf(os.Stderr, "[trajectory] shell agent listener error: %v\n", err)
+			fmt.Fprintf(diagWriter, "[trajectory] shell agent listener error: %v\n", err)
 		},
 	}
 	go func() {
@@ -35,7 +35,7 @@ func startShellActionStreamer(display *ui.TerminalDisplay, path string) (context
 			return nil
 		})
 		if err != nil && !errors.Is(err, context.Canceled) {
-			fmt.Fprintf(os.Stderr, "[trajectory] shell agent listener stopped: %v\n", err)
+			fmt.Fprintf(diagWriter, "[trajectory] shell agent listener stopped: %v\n", err)
 		}
 	}()
 	return cancel, done, nil

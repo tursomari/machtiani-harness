@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -52,10 +53,10 @@ type transcriptBootstrap struct {
 	appendConversationRaw func(role, content, metaType string) error
 }
 
-func prepareRunBootstrap(rootCtx context.Context, opts Options) (*runBootstrap, Result, bool) {
+func prepareRunBootstrap(rootCtx context.Context, opts Options, diagWriter io.Writer) (*runBootstrap, Result, bool) {
 	inputPrompt := strings.TrimSpace(opts.Goal)
 	if inputPrompt == "" {
-		fmt.Fprintln(os.Stderr, "Error: empty issue/question provided")
+		fmt.Fprintln(diagWriter, "Error: empty issue/question provided")
 		return nil, Result{ExitCode: 2, Err: errors.New("empty goal")}, false
 	}
 
@@ -77,10 +78,10 @@ func prepareRunBootstrap(rootCtx context.Context, opts Options) (*runBootstrap, 
 		state, err := LoadSessionState(sessionID)
 		if err != nil {
 			if errors.Is(err, ErrSessionStateNotFound) {
-				fmt.Fprintf(os.Stderr, "Error: no saved session found for %s.\n", sessionID)
+				fmt.Fprintf(diagWriter, "Error: no saved session found for %s.\n", sessionID)
 				return nil, Result{ExitCode: 2, Err: err}, false
 			}
-			fmt.Fprintln(os.Stderr, "Error loading session state:", err)
+			fmt.Fprintln(diagWriter, "Error loading session state:", err)
 			return nil, Result{ExitCode: 1, Err: err}, false
 		}
 		resumeMode = true
@@ -117,7 +118,7 @@ func prepareRunBootstrap(rootCtx context.Context, opts Options) (*runBootstrap, 
 		goal = resumePrompt
 	}
 	if goal == "" {
-		fmt.Fprintln(os.Stderr, "Error: unable to determine session goal")
+		fmt.Fprintln(diagWriter, "Error: unable to determine session goal")
 		return nil, Result{ExitCode: 1, Err: errors.New("missing session goal")}, false
 	}
 	if strings.TrimSpace(originalPrompt) == "" {
@@ -143,7 +144,7 @@ func prepareRunBootstrap(rootCtx context.Context, opts Options) (*runBootstrap, 
 
 	conversationPath, err := artifacts.SessionConversationFile(sessionID)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "Error resolving conversation path:", err)
+		fmt.Fprintln(diagWriter, "Error resolving conversation path:", err)
 		return nil, Result{ExitCode: 1, Err: err}, false
 	}
 
@@ -157,7 +158,7 @@ func prepareRunBootstrap(rootCtx context.Context, opts Options) (*runBootstrap, 
 	if strings.TrimSpace(cfg.mode) != "" {
 		doc, err := llm.LoadModeInstructions(cfg.mode, cfg.modeInstructionDir, opts.GlobalConfig, opts.GlobalConfigPath)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "Error loading mode instructions:", err)
+			fmt.Fprintln(diagWriter, "Error loading mode instructions:", err)
 			return nil, Result{ExitCode: 1, Err: err}, false
 		}
 		modeInstructions = doc
@@ -193,7 +194,7 @@ func loadedStateSuspendedInput(state *SessionState) *SuspendedUserInputState {
 	return state.SuspendedUserInput.Clone()
 }
 
-func prepareSessionEnvironment(sessionID string, cfg legacyConfig) (*sessionEnvironmentBootstrap, error) {
+func prepareSessionEnvironment(sessionID string, cfg legacyConfig, diagWriter io.Writer) (*sessionEnvironmentBootstrap, error) {
 	origSessionTempRootRaw := os.Getenv("MACHTIANI_SESSION_TEMP_ROOT")
 	origSessionTempRoot := strings.TrimSpace(origSessionTempRootRaw)
 	origTmpRootRaw := os.Getenv("MACHTIANI_TMP_ROOT")
@@ -227,33 +228,33 @@ func prepareSessionEnvironment(sessionID string, cfg legacyConfig) (*sessionEnvi
 	// to "workspace root".
 	if useSnapshotWorkspace {
 		if err := os.Setenv("MACHTIANI_TMP_ROOT", workspaceRoot); err != nil {
-			fmt.Fprintln(os.Stderr, "Warning: unable to export tmp root:", err)
+			fmt.Fprintln(diagWriter, "Warning: unable to export tmp root:", err)
 		}
 	} else if err := os.Unsetenv("MACHTIANI_TMP_ROOT"); err != nil {
-		fmt.Fprintln(os.Stderr, "Warning: unable to clear tmp root:", err)
+		fmt.Fprintln(diagWriter, "Warning: unable to clear tmp root:", err)
 	}
 	if err := os.Setenv("MACHTIANI_SESSION_TEMP_ROOT", sessionTempRoot); err != nil {
-		fmt.Fprintln(os.Stderr, "Warning: unable to export session temp root:", err)
+		fmt.Fprintln(diagWriter, "Warning: unable to export session temp root:", err)
 	}
 
 	markerMaxAge, markerMaxAgeErr := shellAgentMarkerMaxAge()
 	if markerMaxAgeErr != nil {
-		fmt.Fprintf(os.Stderr, "Warning: %v; using default %s\n", markerMaxAgeErr, defaultShellAgentMarkerMaxAge)
+		fmt.Fprintf(diagWriter, "Warning: %v; using default %s\n", markerMaxAgeErr, defaultShellAgentMarkerMaxAge)
 	}
-	if err := cleanupStaleShellAgentMarkers(sessionTempRoot, markerMaxAge, cfg.verbose); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to cleanup shell-agent markers: %v\n", err)
+	if err := cleanupStaleShellAgentMarkers(sessionTempRoot, markerMaxAge, cfg.verbose, diagWriter); err != nil {
+		fmt.Fprintf(diagWriter, "Warning: failed to cleanup shell-agent markers: %v\n", err)
 	}
 
 	cleanupSessionRoot := origSessionTempRoot == ""
 	restore := func() {
 		if strings.TrimSpace(workspaceRoot) != "" && !cfg.persistTmpData {
 			if err := os.RemoveAll(workspaceRoot); err != nil && cfg.verbose {
-				fmt.Fprintf(os.Stderr, "Warning: failed to cleanup workspace root %s: %v\n", workspaceRoot, err)
+				fmt.Fprintf(diagWriter, "Warning: failed to cleanup workspace root %s: %v\n", workspaceRoot, err)
 			}
 		}
 		if cleanupSessionRoot && !cfg.persistTmpData {
 			if err := os.RemoveAll(sessionTempRoot); err != nil && cfg.verbose {
-				fmt.Fprintf(os.Stderr, "Warning: failed to cleanup session temp root %s: %v\n", sessionTempRoot, err)
+				fmt.Fprintf(diagWriter, "Warning: failed to cleanup session temp root %s: %v\n", sessionTempRoot, err)
 			}
 		}
 		tempdir.ClearSessionRoot()
@@ -277,8 +278,8 @@ func prepareSessionEnvironment(sessionID string, cfg legacyConfig) (*sessionEnvi
 	}, nil
 }
 
-func prepareTranscriptBootstrap(cfg legacyConfig, sessionID, conversationGoal, conversationPath string, resumeMode bool, loadedState *SessionState, trajectoryWriter *trajectory.Writer, repoRoot string, runState *runLifecycleState) (*transcriptBootstrap, error) {
-	resumeTranscript := loadResumeTranscript(cfg, loadedState, resumeMode, sessionID)
+func prepareTranscriptBootstrap(cfg legacyConfig, sessionID, conversationGoal, conversationPath string, resumeMode bool, loadedState *SessionState, trajectoryWriter *trajectory.Writer, repoRoot string, runState *runLifecycleState, diagWriter io.Writer) (*transcriptBootstrap, error) {
+	resumeTranscript := loadResumeTranscript(cfg, loadedState, resumeMode, sessionID, diagWriter)
 	tr, err := transcript.NewWithPath(cfg.transcriptFile, sessionID)
 	if err != nil {
 		return nil, err
@@ -323,35 +324,35 @@ func prepareTranscriptBootstrap(cfg legacyConfig, sessionID, conversationGoal, c
 // by reading conversation.json from disk and rendering it. The on-disk
 // conversation is authoritative; when the file is missing we return empty
 // string and let the subsequent recorder Load() handle the error path.
-func loadResumeTranscript(cfg legacyConfig, loadedState *SessionState, resumeMode bool, sessionID string) string {
+func loadResumeTranscript(cfg legacyConfig, loadedState *SessionState, resumeMode bool, sessionID string, diagWriter io.Writer) string {
 	if !resumeMode || loadedState == nil {
 		return ""
 	}
 	convPath, err := artifacts.SessionConversationFile(sessionID)
 	if err != nil {
 		if cfg.verbose {
-			fmt.Fprintf(os.Stderr, "Warning: failed to resolve conversation path for resume: %v\n", err)
+			fmt.Fprintf(diagWriter, "Warning: failed to resolve conversation path for resume: %v\n", err)
 		}
 		return ""
 	}
 	data, err := os.ReadFile(convPath)
 	if err != nil {
 		if cfg.verbose && !errors.Is(err, os.ErrNotExist) {
-			fmt.Fprintf(os.Stderr, "Warning: failed to read conversation for resume (%s): %v\n", convPath, err)
+			fmt.Fprintf(diagWriter, "Warning: failed to read conversation for resume (%s): %v\n", convPath, err)
 		}
 		return ""
 	}
 	conv, err := conversation.Unmarshal(data)
 	if err != nil {
 		if cfg.verbose {
-			fmt.Fprintf(os.Stderr, "Warning: failed to decode conversation for resume: %v\n", err)
+			fmt.Fprintf(diagWriter, "Warning: failed to decode conversation for resume: %v\n", err)
 		}
 		return ""
 	}
 	rendered, err := conv.ToTranscript()
 	if err != nil {
 		if cfg.verbose {
-			fmt.Fprintf(os.Stderr, "Warning: failed to render transcript for resume: %v\n", err)
+			fmt.Fprintf(diagWriter, "Warning: failed to render transcript for resume: %v\n", err)
 		}
 		return ""
 	}
@@ -721,31 +722,54 @@ func (r *runLifecycleState) isContextCancelled(err error) bool {
 	return false
 }
 
-func (r *runLifecycleState) printResumeHint(header string, turns int) {
-	fmt.Fprintf(os.Stdout, "%s\nSession ID: %s\nTurns completed: %d\nGoal so far: %q\n\n", header, r.sessionID, turns, r.goal)
-	fmt.Fprintf(os.Stdout, "To continue, provide your next instruction, for example:\n  mct-agent run \"<next instruction>\" --session-id %s\n", r.sessionID)
-	fmt.Fprintln(os.Stdout)
-}
-
-func (r *runLifecycleState) printUserInputHint(question, context string) {
-	fmt.Fprintln(os.Stdout, "=== USER INPUT NEEDED ===")
-	fmt.Fprintf(os.Stdout, "Session ID: %s\n", r.sessionID)
-	if strings.TrimSpace(context) != "" {
-		fmt.Fprintf(os.Stdout, "%s\n\n", strings.TrimSpace(context))
+func (r *runLifecycleState) printResumeHint(display ui.SessionDisplay, header string, turns int) {
+	if display != nil {
+		display.WriteString(header)
+		display.WriteString(fmt.Sprintf("Session ID: %s", r.sessionID))
+		display.WriteString(fmt.Sprintf("Turns completed: %d", turns))
+		display.WriteString(fmt.Sprintf("Goal so far: %q", r.goal))
+		display.WriteString("")
+		display.WriteString(fmt.Sprintf("To continue, provide your next instruction, for example:\n  mct-agent run \"<next instruction>\" --session-id %s", r.sessionID))
+		display.WriteString("")
+	} else {
+		fmt.Fprintf(os.Stdout, "%s\nSession ID: %s\nTurns completed: %d\nGoal so far: %q\n\n", header, r.sessionID, turns, r.goal)
+		fmt.Fprintf(os.Stdout, "To continue, provide your next instruction, for example:\n  mct-agent run \"<next instruction>\" --session-id %s\n", r.sessionID)
+		fmt.Fprintln(os.Stdout)
 	}
-	fmt.Fprintf(os.Stdout, "%s\n\n", strings.TrimSpace(question))
-	fmt.Fprintf(os.Stdout, "To continue, answer with:\n  mct-agent run \"<your answer>\" --session-id %s\n", r.sessionID)
-	fmt.Fprintln(os.Stdout)
 }
 
-func (r *runLifecycleState) applyPlannerProgress(state *SessionState) {
+func (r *runLifecycleState) printUserInputHint(display ui.SessionDisplay, question, context string) {
+	if display != nil {
+		display.WriteString("=== USER INPUT NEEDED ===")
+		display.WriteString(fmt.Sprintf("Session ID: %s", r.sessionID))
+		if strings.TrimSpace(context) != "" {
+			display.WriteString(strings.TrimSpace(context))
+			display.WriteString("")
+		}
+		display.WriteString(strings.TrimSpace(question))
+		display.WriteString("")
+		display.WriteString(fmt.Sprintf("To continue, answer with:\n  mct-agent run \"<your answer>\" --session-id %s", r.sessionID))
+		display.WriteString("")
+	} else {
+		fmt.Fprintln(os.Stdout, "=== USER INPUT NEEDED ===")
+		fmt.Fprintf(os.Stdout, "Session ID: %s\n", r.sessionID)
+		if strings.TrimSpace(context) != "" {
+			fmt.Fprintf(os.Stdout, "%s\n\n", strings.TrimSpace(context))
+		}
+		fmt.Fprintf(os.Stdout, "%s\n\n", strings.TrimSpace(question))
+		fmt.Fprintf(os.Stdout, "To continue, answer with:\n  mct-agent run \"<your answer>\" --session-id %s\n", r.sessionID)
+		fmt.Fprintln(os.Stdout)
+	}
+}
+
+func (r *runLifecycleState) applyPlannerProgress(state *SessionState, diagWriter io.Writer) {
 	if state == nil {
 		return
 	}
 	state.PlannerProgress = r.plannerProgress.toState()
 	if state.PlannerProgress != nil {
 		if err := UpdateModePlanProgress(r.sessionID, state.PlannerProgress); err != nil && r.cfg.verbose {
-			fmt.Fprintf(os.Stderr, "Warning: failed to update mode plan progress for %s: %v\n", r.sessionID, err)
+			fmt.Fprintf(diagWriter, "Warning: failed to update mode plan progress for %s: %v\n", r.sessionID, err)
 		}
 	}
 }
@@ -775,7 +799,7 @@ func (r *runLifecycleState) baseSessionState() SessionState {
 	return state
 }
 
-func (r *runLifecycleState) hydrateState(state *SessionState) {
+func (r *runLifecycleState) hydrateState(state *SessionState, diagWriter io.Writer) {
 	if state == nil {
 		return
 	}
@@ -796,10 +820,10 @@ func (r *runLifecycleState) hydrateState(state *SessionState) {
 	if state.SuspendedUserInput == nil && r.suspendedUserInput != nil {
 		state.SuspendedUserInput = r.suspendedUserInput.Clone()
 	}
-	r.applyPlannerProgress(state)
+	r.applyPlannerProgress(state, diagWriter)
 }
 
-func (r *runLifecycleState) persistSessionState() {
+func (r *runLifecycleState) persistSessionState(display ui.SessionDisplay, diagWriter io.Writer) {
 	sid := strings.TrimSpace(r.sessionID)
 	if sid == "" {
 		return
@@ -809,26 +833,26 @@ func (r *runLifecycleState) persistSessionState() {
 	if r.pendingState != nil {
 		state = *r.pendingState
 	}
-	r.hydrateState(&state)
+	r.hydrateState(&state, diagWriter)
 
 	if err := SaveSessionState(state); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to save session state for %s: %v\n", sid, err)
+		fmt.Fprintf(diagWriter, "Warning: failed to save session state for %s: %v\n", sid, err)
 		return
 	}
 
 	if r.interrupted {
-		r.printResumeHint("=== SESSION INTERRUPTED ===", r.turnsCompleted)
+		r.printResumeHint(display, "=== SESSION INTERRUPTED ===", r.turnsCompleted)
 	}
 }
 
 // checkpointTurn saves both conversation.json and session-state.json
 // in a single coordinated call, providing a consistent persistence point
 // at turn boundaries.
-func (r *runLifecycleState) checkpointTurn() {
+func (r *runLifecycleState) checkpointTurn(display ui.SessionDisplay, diagWriter io.Writer) {
 	if r.recorder != nil {
 		r.recorder.EnsureSaved()
 	}
-	r.persistSessionState()
+	r.persistSessionState(display, diagWriter)
 }
 
 func formatUserInputRequestContent(question, context string) string {
@@ -840,7 +864,7 @@ func formatUserInputRequestContent(question, context string) string {
 	return question + "\n\nContext:\n" + context
 }
 
-func (r *runLifecycleState) suspendForUserInput(display *ui.TerminalDisplay, question, context, reason, originalAsk string) (Result, error) {
+func (r *runLifecycleState) suspendForUserInput(display ui.SessionDisplay, diagWriter io.Writer, question, context, reason, originalAsk string) (Result, error) {
 	question = strings.TrimSpace(question)
 	if question == "" {
 		return Result{}, errors.New("user input question required")
@@ -865,8 +889,8 @@ func (r *runLifecycleState) suspendForUserInput(display *ui.TerminalDisplay, que
 	}
 	state := r.baseSessionState()
 	r.pendingState = &state
-	r.hydrateState(r.pendingState)
-	r.printUserInputHint(question, context)
+	r.hydrateState(r.pendingState, diagWriter)
+	r.printUserInputHint(display, question, context)
 	return Result{ExitCode: 0, Status: r.sessionStatus, Turns: r.turnsCompleted, SessionID: r.sessionID}, nil
 }
 

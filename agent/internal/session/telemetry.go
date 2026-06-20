@@ -3,21 +3,22 @@ package session
 import (
 	"context"
 	"fmt"
-	"os"
+	"io"
 	"time"
 
 	"github.com/tursomari/machtiani/agent/internal/trajectory"
 )
 
 type sessionTelemetry struct {
-	writer    *trajectory.Writer
-	sessionID string
-	span      trajectory.Span
-	started   time.Time
-	repoRoot  string
-	goal      string
-	cfg       legacyConfig
-	build     BuildInfo
+	writer     *trajectory.Writer
+	sessionID  string
+	span       trajectory.Span
+	started    time.Time
+	repoRoot   string
+	goal       string
+	cfg        legacyConfig
+	build      BuildInfo
+	diagWriter io.Writer
 }
 
 type turnTelemetry struct {
@@ -27,19 +28,20 @@ type turnTelemetry struct {
 	started  time.Time
 }
 
-func newSessionTelemetry(writer *trajectory.Writer, sessionID, goal string, cfg legacyConfig, repoRoot string, build BuildInfo) *sessionTelemetry {
+func newSessionTelemetry(writer *trajectory.Writer, sessionID, goal string, cfg legacyConfig, repoRoot string, build BuildInfo, diagWriter io.Writer) *sessionTelemetry {
 	if writer == nil {
 		return nil
 	}
 	st := &sessionTelemetry{
-		writer:    writer,
-		sessionID: sessionID,
-		span:      writer.StartSpan(""),
-		started:   time.Now(),
-		repoRoot:  repoRoot,
-		goal:      goal,
-		cfg:       cfg,
-		build:     build,
+		writer:     writer,
+		sessionID:  sessionID,
+		span:       writer.StartSpan(""),
+		started:    time.Now(),
+		repoRoot:   repoRoot,
+		goal:       goal,
+		cfg:        cfg,
+		build:      build,
+		diagWriter: diagWriter,
 	}
 	payload := map[string]any{
 		"event_version": 1,
@@ -61,7 +63,7 @@ func newSessionTelemetry(writer *trajectory.Writer, sessionID, goal string, cfg 
 	payload = trajectory.MergeExcerptWithPrefix(payload, trajectory.MakeTextExcerpt(goal, writer.ExcerptLen()), "goal")
 	evt := trajectory.Event{Kind: "agent.session.start", SpanID: st.span.ID, Payload: payload}
 	if err := writer.Emit(context.Background(), evt); err != nil {
-		fmt.Fprintf(os.Stderr, "[trajectory] session start emit error: %v\n", err)
+		fmt.Fprintf(st.diagWriter, "[trajectory] session start emit error: %v\n", err)
 	}
 	return st
 }
@@ -86,7 +88,7 @@ func (st *sessionTelemetry) StartTurn(step, maxSteps int) *turnTelemetry {
 	}
 	evt := trajectory.Event{Kind: "agent.turn.start", SpanID: tt.span.ID, ParentSpanID: st.span.ID, Payload: payload}
 	if err := st.writer.Emit(context.Background(), evt); err != nil {
-		fmt.Fprintf(os.Stderr, "[trajectory] turn start emit error: %v\n", err)
+		fmt.Fprintf(st.diagWriter, "[trajectory] turn start emit error: %v\n", err)
 	}
 	return tt
 }
@@ -117,7 +119,7 @@ func (st *sessionTelemetry) EndTurn(tt *turnTelemetry, decision string, status s
 		event.Err = &trajectory.ErrorInfo{Message: err.Error(), Category: "unknown"}
 	}
 	if emitErr := st.writer.Emit(context.Background(), event); emitErr != nil {
-		fmt.Fprintf(os.Stderr, "[trajectory] turn end emit error: %v\n", emitErr)
+		fmt.Fprintf(st.diagWriter, "[trajectory] turn end emit error: %v\n", emitErr)
 	}
 }
 
@@ -141,7 +143,7 @@ func (st *sessionTelemetry) Finish(status string, turns int, err error) {
 		event.Err = &trajectory.ErrorInfo{Message: err.Error(), Category: "unknown"}
 	}
 	if emitErr := st.writer.Emit(context.Background(), event); emitErr != nil {
-		fmt.Fprintf(os.Stderr, "[trajectory] session end emit error: %v\n", emitErr)
+		fmt.Fprintf(st.diagWriter, "[trajectory] session end emit error: %v\n", emitErr)
 	}
 	_ = st.writer.Close()
 }

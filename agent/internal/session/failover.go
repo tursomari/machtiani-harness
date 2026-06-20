@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
+	"io"
 	"strings"
 	"sync"
 
@@ -242,7 +242,7 @@ func isFallbackAttempt(payload map[string]any) bool {
 	}
 }
 
-func startLLMFailoverLogger(display *ui.TerminalDisplay, path string) (context.CancelFunc, <-chan struct{}, error) {
+func startLLMFailoverLogger(display ui.SessionDisplay, path string, diagWriter io.Writer) (context.CancelFunc, <-chan struct{}, error) {
 	sub, err := listener.New(path)
 	if err != nil {
 		return nil, nil, err
@@ -254,7 +254,7 @@ func startLLMFailoverLogger(display *ui.TerminalDisplay, path string) (context.C
 		FollowFromLatest: true,
 		Kinds:            []string{"llm.failover.start", "llm.failover.result", "llm.failover.resolve_error", "llm.request.end"},
 		ErrorHandler: func(err error) {
-			fmt.Fprintf(os.Stderr, "[trajectory] failover listener error: %v\n", err)
+			fmt.Fprintf(diagWriter, "[trajectory] failover listener error: %v\n", err)
 		},
 	}
 	go func() {
@@ -266,7 +266,7 @@ func startLLMFailoverLogger(display *ui.TerminalDisplay, path string) (context.C
 			return nil
 		})
 		if err != nil && !errors.Is(err, context.Canceled) {
-			fmt.Fprintf(os.Stderr, "[trajectory] failover listener stopped: %v\n", err)
+			fmt.Fprintf(diagWriter, "[trajectory] failover listener stopped: %v\n", err)
 		}
 	}()
 	return cancel, done, nil

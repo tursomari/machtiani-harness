@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	pathpkg "path"
 	"path/filepath"
@@ -175,16 +176,16 @@ func restoreTranscriptFromConversation(tr *transcript.Transcript, conversationRe
 	return nil
 }
 
-func writeInitialBackgroundIfNeeded(tr *transcript.Transcript, repoRoot string, cfg legacyConfig, startingTranscript bool, writeTurn func(step int, question, savedPath string, retrieved []string, summary string, decision string) error) error {
+func writeInitialBackgroundIfNeeded(tr *transcript.Transcript, repoRoot string, cfg legacyConfig, startingTranscript bool, writeTurn func(step int, question, savedPath string, retrieved []string, summary string, decision string) error, diagWriter io.Writer) error {
 	if tr == nil || !startingTranscript {
 		return nil
 	}
 	prefillAnswer := backgroundFallbackAnswer
 	if backgroundText, err := loadProjectBackground(repoRoot); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: unable to load project background; falling back to sync prompt: %v\n", err)
+		fmt.Fprintf(diagWriter, "Warning: unable to load project background; falling back to sync prompt: %v\n", err)
 	} else {
 		if cfg.verbose {
-			fmt.Fprintf(os.Stderr, "Loaded internal README background (%d bytes).\n", len(backgroundText))
+			fmt.Fprintf(diagWriter, "Loaded internal README background (%d bytes).\n", len(backgroundText))
 		}
 		prefillAnswer = backgroundText
 	}
@@ -244,7 +245,11 @@ func runSession(ctx context.Context, opts Options) Result {
 	}
 	rootCtx := ctx
 	timerMgr := opts.ProcessTimerManager
-	bootstrap, earlyResult, ok := prepareRunBootstrap(rootCtx, opts)
+	diagWriter := io.Writer(os.Stderr)
+	if opts.Diagnostics != nil {
+		diagWriter = opts.Diagnostics
+	}
+	bootstrap, earlyResult, ok := prepareRunBootstrap(rootCtx, opts, diagWriter)
 	if !ok {
 		return earlyResult
 	}
@@ -265,9 +270,9 @@ func runSession(ctx context.Context, opts Options) Result {
 	modeInstructionPath := bootstrap.modeInstructionPath
 	runState := bootstrap.runState
 	plannerProgress := runState.plannerProgress
-	envBootstrap, err := prepareSessionEnvironment(sessionID, cfg)
+	envBootstrap, err := prepareSessionEnvironment(sessionID, cfg, diagWriter)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "Error preparing session environment:", err)
+		fmt.Fprintln(diagWriter, "Error preparing session environment:", err)
 		return Result{ExitCode: 1, Err: err}
 	}
 	sessionTempRoot := envBootstrap.sessionTempRoot
@@ -275,7 +280,7 @@ func runSession(ctx context.Context, opts Options) Result {
 	defer func() {
 		if sessLock != nil {
 			if err := sessLock.Close(); err != nil {
-				fmt.Fprintf(os.Stderr, "[session-lock] warning: failed to release lock: %v\n", err)
+				fmt.Fprintf(diagWriter, "[session-lock] warning: failed to release lock: %v\n", err)
 			}
 		}
 		if envBootstrap.restore != nil {
@@ -284,21 +289,24 @@ func runSession(ctx context.Context, opts Options) Result {
 	}()
 	lock, lockErr := acquireSessionLock(sessionID, sessionTempRoot)
 	if lockErr != nil {
-		fmt.Fprintln(os.Stderr, "Error acquiring session lock:", lockErr)
+		fmt.Fprintln(diagWriter, "Error acquiring session lock:", lockErr)
 		return Result{ExitCode: 1, Err: lockErr}
 	}
 	sessLock = lock
 
 	trajectoryWriter, repoRoot, trajErr := newTrajectoryWriter(cfg, sessionID)
 	if trajErr != nil {
-		fmt.Fprintln(os.Stderr, "Trajectory setup error:", trajErr)
+		fmt.Fprintln(diagWriter, "Trajectory setup error:", trajErr)
 		return Result{ExitCode: 1, Err: trajErr}
 	}
 	if trajectoryWriter != nil {
-		fmt.Fprintln(os.Stderr, "[trajectory] unified stream:", trajectoryWriter.Config().Path)
+		fmt.Fprintln(diagWriter, "[trajectory] unified stream:", trajectoryWriter.Config().Path)
 	}
 
-	display := ui.NewTerminalDisplay(os.Stdout, timerMgr, sessionID)
+	display := opts.Display
+	if display == nil {
+		display = ui.NewTerminalDisplay(os.Stdout, timerMgr, sessionID)
+	}
 	var failoverCancel context.CancelFunc
 	var failoverDone <-chan struct{}
 	var retryCancel context.CancelFunc
@@ -310,38 +318,38 @@ func runSession(ctx context.Context, opts Options) Result {
 	var shellActionCancel context.CancelFunc
 	var shellActionDone <-chan struct{}
 	if trajectoryWriter != nil {
-		cancel, done, err := startLLMFailoverLogger(display, trajectoryWriter.Config().Path)
+		cancel, done, err := startLLMFailoverLogger(display, trajectoryWriter.Config().Path, diagWriter)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "[trajectory] failover listener setup error: %v\n", err)
+			fmt.Fprintf(diagWriter, "[trajectory] failover listener setup error: %v\n", err)
 		} else {
 			failoverCancel = cancel
 			failoverDone = done
 		}
-		cancel, done, err = startLLMRetryLogger(display, trajectoryWriter.Config().Path)
+		cancel, done, err = startLLMRetryLogger(display, trajectoryWriter.Config().Path, diagWriter)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "[trajectory] retry listener setup error: %v\n", err)
+			fmt.Fprintf(diagWriter, "[trajectory] retry listener setup error: %v\n", err)
 		} else {
 			retryCancel = cancel
 			retryDone = done
 		}
-		cancel, done, err = startLLMCacheUsageLogger(display, trajectoryWriter.Config().Path)
+		cancel, done, err = startLLMCacheUsageLogger(display, trajectoryWriter.Config().Path, diagWriter)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "[trajectory] cache usage listener setup error: %v\n", err)
+			fmt.Fprintf(diagWriter, "[trajectory] cache usage listener setup error: %v\n", err)
 		} else {
 			cacheUsageCancel = cancel
 			cacheUsageDone = done
 		}
-		cancel, done, err = startLLMCacheDiagnosticsLogger(display, trajectoryWriter.Config().Path)
+		cancel, done, err = startLLMCacheDiagnosticsLogger(display, trajectoryWriter.Config().Path, diagWriter)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "[trajectory] cache diagnostics listener setup error: %v\n", err)
+			fmt.Fprintf(diagWriter, "[trajectory] cache diagnostics listener setup error: %v\n", err)
 		} else {
 			cacheDiagnosticsCancel = cancel
 			cacheDiagnosticsDone = done
 		}
 		// Start shell-agent action streamer to surface shell actions in real-time
-		cancel, done, err = startShellActionStreamer(display, trajectoryWriter.Config().Path)
+		cancel, done, err = startShellActionStreamer(display, trajectoryWriter.Config().Path, diagWriter)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "[trajectory] shell action listener setup error: %v\n", err)
+			fmt.Fprintf(diagWriter, "[trajectory] shell action listener setup error: %v\n", err)
 		} else {
 			shellActionCancel = cancel
 			shellActionDone = done
@@ -380,7 +388,7 @@ func runSession(ctx context.Context, opts Options) Result {
 		}
 	}()
 
-	sessTelemetry := newSessionTelemetry(trajectoryWriter, sessionID, goal, cfg, repoRoot, opts.Build)
+	sessTelemetry := newSessionTelemetry(trajectoryWriter, sessionID, goal, cfg, repoRoot, opts.Build, diagWriter)
 	defer func() {
 		if sessTelemetry != nil {
 			sessTelemetry.Finish(runState.sessionStatus, runState.turnsCompleted, runState.sessionErr)
@@ -389,9 +397,9 @@ func runSession(ctx context.Context, opts Options) Result {
 		}
 	}()
 
-	transcriptSetup, err := prepareTranscriptBootstrap(cfg, sessionID, conversationGoal, conversationPath, resumeMode, loadedState, trajectoryWriter, repoRoot, runState)
+	transcriptSetup, err := prepareTranscriptBootstrap(cfg, sessionID, conversationGoal, conversationPath, resumeMode, loadedState, trajectoryWriter, repoRoot, runState, diagWriter)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "Error preparing transcript:", err)
+		fmt.Fprintln(diagWriter, "Error preparing transcript:", err)
 		return Result{ExitCode: 1, Err: err}
 	}
 	tr := transcriptSetup.transcript
@@ -402,26 +410,26 @@ func runSession(ctx context.Context, opts Options) Result {
 	rootCtx = llm.WithTranscript(rootCtx, tr)
 	_ = transcriptSetup.recorder // recorder is accessed via runState.recorder
 	defer func() {
-		runState.checkpointTurn()
+		runState.checkpointTurn(display, diagWriter)
 	}()
 	writeTurn := transcriptSetup.writeTurn
 	appendConversationRaw := transcriptSetup.appendConversationRaw
 	conv := transcriptSetup.conversation
 	interruptedResult := runState.interruptedResult
 	isContextCancelled := runState.isContextCancelled
-	fmt.Fprintln(os.Stderr, "Session:", sessionID)
+	fmt.Fprintln(diagWriter, "Session:", sessionID)
 	if cfg.verbose {
-		fmt.Fprintln(os.Stderr, "mct-agent starting; transcript:", tr.Path())
+		fmt.Fprintln(diagWriter, "mct-agent starting; transcript:", tr.Path())
 	}
 
 
 	trajectoryPath, err := resolveFileDiscoveryTrajectory(cfg, sessionID)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "File-discovery setup error:", err)
+		fmt.Fprintln(diagWriter, "File-discovery setup error:", err)
 		return Result{ExitCode: 1, Err: err}
 	}
 	if cfg.verbose && strings.TrimSpace(trajectoryPath) != "" {
-		fmt.Fprintln(os.Stderr, "File discovery trajectory:", trajectoryPath)
+		fmt.Fprintln(diagWriter, "File discovery trajectory:", trajectoryPath)
 	}
 
 	paramPairs := append([]string(nil), opts.ParamPairs...)
@@ -430,13 +438,13 @@ func runSession(ctx context.Context, opts Options) Result {
 	models, err := resolveModelRuntimes(cfg, opts.GlobalConfig, paramPairs, paramJSONVals, opts.APIKeyOverrides)
 	if err != nil {
 		if miss, ok := err.(*missingConfigError); ok {
-			fmt.Fprintln(os.Stderr, "Missing model config: set:")
+			fmt.Fprintln(diagWriter, "Missing model config: set:")
 			for _, item := range miss.items {
-				fmt.Fprintln(os.Stderr, " - ", item)
+				fmt.Fprintln(diagWriter, " - ", item)
 			}
 			return Result{ExitCode: 2, Err: err}
 		}
-		fmt.Fprintln(os.Stderr, "Model resolution error:", err)
+		fmt.Fprintln(diagWriter, "Model resolution error:", err)
 		return Result{ExitCode: 1, Err: err}
 	}
 	metaLines := []string{
@@ -480,7 +488,7 @@ func runSession(ctx context.Context, opts Options) Result {
 		Prompts:                 opts.GlobalConfig.Prompts,
 	}
 	if err := mctRunner.Resolve(); err != nil {
-		fmt.Fprintln(os.Stderr, "mct resolution error:", err)
+		fmt.Fprintln(diagWriter, "mct resolution error:", err)
 		return Result{ExitCode: 1, Err: err}
 	}
 
@@ -500,7 +508,7 @@ func runSession(ctx context.Context, opts Options) Result {
 		// Non-fatal: the library is a prerequisite only when the
 		// planner actually delegates to the shell-agent. If it's
 		// never used the warning is harmless.
-		fmt.Fprintln(os.Stderr, "shell-agent library init warning:", libErr)
+		fmt.Fprintln(diagWriter, "shell-agent library init warning:", libErr)
 	} else {
 		lib.ExtraInstructions = modeInstructions.ShellInstruction
 		mctRunner.ShellAgentLibrary = lib
@@ -513,12 +521,12 @@ func runSession(ctx context.Context, opts Options) Result {
 
 	startingTranscript, headerErr := startTranscriptIfNeeded(tr, originalPrompt, taskDescription, sessionID, cfg, resumeMode)
 	if headerErr != nil {
-		fmt.Fprintln(os.Stderr, "Error writing transcript header:", headerErr)
+		fmt.Fprintln(diagWriter, "Error writing transcript header:", headerErr)
 		return Result{ExitCode: 1, Err: headerErr}
 	}
 
-	if err := writeInitialBackgroundIfNeeded(tr, repoRoot, cfg, startingTranscript, writeTurn); err != nil {
-		fmt.Fprintln(os.Stderr, "Transcript write error:", err)
+	if err := writeInitialBackgroundIfNeeded(tr, repoRoot, cfg, startingTranscript, writeTurn, diagWriter); err != nil {
+		fmt.Fprintln(diagWriter, "Transcript write error:", err)
 		runState.sessionErr = err
 		return Result{ExitCode: 1, Err: err}
 	}
@@ -534,13 +542,14 @@ func runSession(ctx context.Context, opts Options) Result {
 			Display:         display,
 			InstructionPath: modeInstructionPath,
 			Instruction:     modeInstructions,
+			DiagWriter:      diagWriter,
 		}
 		result, handled := applyMode(&modeCtx)
 		if handled {
 			// handled=true means error during mode configuration.
 			runState.sessionErr = fmt.Errorf("mode configuration failed")
 			if err := runState.transition(StateError); err != nil {
-				fmt.Fprintf(os.Stderr, "transition to StateError failed: %v\n", err)
+				fmt.Fprintf(diagWriter, "transition to StateError failed: %v\n", err)
 				return Result{ExitCode: 1, Err: err}
 			}
 			runState.pendingState = &SessionState{
@@ -552,7 +561,7 @@ func runSession(ctx context.Context, opts Options) Result {
 				TurnsCompleted:  runState.turnsCompleted,
 				Modes:           modesFromPlan(result.Plan),
 			}
-			runState.hydrateState(runState.pendingState)
+			runState.hydrateState(runState.pendingState, diagWriter)
 			return Result{ExitCode: 1, Status: runState.sessionStatus, Turns: runState.turnsCompleted, SessionID: sessionID, Err: runState.sessionErr}
 		}
 		// applyMode configured the session (PlannerOverlay, mode
@@ -591,7 +600,11 @@ func runSession(ctx context.Context, opts Options) Result {
 
 	display.StartSession(goal)
 	if resumeMode {
-		fmt.Fprintf(os.Stdout, "Resuming session %s (completed %d of %d turns)\n", sessionID, runState.turnsCompleted, cfg.maxSteps)
+		if display != nil {
+			display.WriteString("Resuming session " + sessionID + " ...")
+		} else {
+			fmt.Fprintf(os.Stdout, "Resuming session %s ...\n", sessionID)
+		}
 	}
 	sessionClosed := false
 	defer func() {
@@ -637,7 +650,7 @@ func runSession(ctx context.Context, opts Options) Result {
 			}
 			resumePrompt = feedback
 			if err := appendConversationRaw("user", feedback, metaType); err != nil {
-				fmt.Fprintln(os.Stderr, "Transcript write error:", err)
+				fmt.Fprintln(diagWriter, "Transcript write error:", err)
 				runState.sessionErr = err
 				finishTurn(sessTelemetry, turn, "user-feedback", "error", turnInfo, err)
 				
@@ -670,7 +683,7 @@ func runSession(ctx context.Context, opts Options) Result {
 				return interruptedResult(perr)
 			}
 			if errors.Is(planCtxErr, context.DeadlineExceeded) {
-				fmt.Fprintf(os.Stderr, "Planner error: timed out after %ds. Increase --timeout-per-turn or set 0 for unlimited.\n", cfg.timeoutPerTurn)
+				fmt.Fprintf(diagWriter, "Planner error: timed out after %ds. Increase --timeout-per-turn or set 0 for unlimited.\n", cfg.timeoutPerTurn)
 				runState.sessionErr = perr
 				finishTurn(sessTelemetry, turn, "planner", "error", turnInfo, perr)
 				
@@ -678,7 +691,7 @@ func runSession(ctx context.Context, opts Options) Result {
 			}
 			perrStr := strings.ToLower(perr.Error())
 			if strings.Contains(perrStr, "unable to parse decision from model output") {
-				fmt.Fprintln(os.Stderr, "Planner error:", perr)
+				fmt.Fprintln(diagWriter, "Planner error:", perr)
 				turnDecision = "planner"
 				turnInfo["is_retry"] = true
 				turnInfo["retry_reason"] = "planner_parse_error"
@@ -686,8 +699,8 @@ func runSession(ctx context.Context, opts Options) Result {
 				continue
 			}
 			if strings.Contains(perrStr, "deadline exceeded") || strings.Contains(perrStr, "timeout") || strings.Contains(perrStr, "temporary") || strings.Contains(perrStr, "no choices") {
-				fmt.Fprintln(os.Stderr, "Planner warning:", perr)
-				fmt.Fprintln(os.Stderr, "Falling back to finalizing with current transcript.")
+				fmt.Fprintln(diagWriter, "Planner warning:", perr)
+				fmt.Fprintln(diagWriter, "Falling back to finalizing with current transcript.")
 				ctxF, cancelF := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
 				ctxF = attachTrajectory(ctxF, trajectoryWriter, parentSpanID)
 				answer, ferr := pl.Finalize(ctxF, conv, goal)
@@ -703,17 +716,17 @@ func runSession(ctx context.Context, opts Options) Result {
 						return interruptedResult(ferr)
 					}
 					if errors.Is(ctxFErr, context.DeadlineExceeded) {
-						fmt.Fprintf(os.Stderr, "Finalizer error: timed out after %ds. Increase --timeout-per-turn or set 0 for unlimited.\n", cfg.timeoutPerTurn)
+						fmt.Fprintf(diagWriter, "Finalizer error: timed out after %ds. Increase --timeout-per-turn or set 0 for unlimited.\n", cfg.timeoutPerTurn)
 					} else {
-						fmt.Fprintln(os.Stderr, "Finalizer error:", ferr)
+						fmt.Fprintln(diagWriter, "Finalizer error:", ferr)
 					}
 					runState.sessionErr = ferr
 					finishTurn(sessTelemetry, turn, "finalize", "error", turnInfo, ferr)
 					
 					return Result{ExitCode: 1, Err: ferr}
 				}
-				if err := runState.completeSession(display, answer, step, runState.turnsCompleted, true); err != nil {
-					fmt.Fprintln(os.Stderr, "Final file write error:", err)
+				if err := runState.completeSession(display, diagWriter, answer, step, runState.turnsCompleted, true); err != nil {
+					fmt.Fprintln(diagWriter, "Final file write error:", err)
 					finishTurn(sessTelemetry, turn, "finalize", "error", turnInfo, err)
 					
 					return Result{ExitCode: 1, Err: err}
@@ -724,7 +737,7 @@ func runSession(ctx context.Context, opts Options) Result {
 				finishTurn(sessTelemetry, turn, turnDecision, "success", turnInfo, nil)
 				return Result{ExitCode: 0, Status: runState.sessionStatus, Turns: runState.turnsCompleted, SessionID: sessionID}
 			}
-			fmt.Fprintln(os.Stderr, "Planner error:", perr)
+			fmt.Fprintln(diagWriter, "Planner error:", perr)
 			runState.sessionErr = perr
 			finishTurn(sessTelemetry, turn, "planner", "error", turnInfo, perr)
 			
@@ -732,7 +745,7 @@ func runSession(ctx context.Context, opts Options) Result {
 		}
 
 		if cfg.verbose {
-			fmt.Fprintf(os.Stderr, "Step %d decision: %s\n", step, decision)
+			fmt.Fprintf(diagWriter, "Step %d decision: %s\n", step, decision)
 		}
 		turnDecision = string(decision)
 		turnInfo["planner_decision"] = string(decision)
@@ -762,7 +775,7 @@ func runSession(ctx context.Context, opts Options) Result {
 				if trajectoryWriter != nil {
 					turnInfo = trajectory.MergeExcerptWithPrefix(turnInfo, trajectory.MakeTextExcerpt(userDirected.Question, trajectoryWriter.ExcerptLen()), "suspension_question")
 				}
-				result, suspendErr := runState.suspendForUserInput(display, userDirected.Question, userDirected.Context, userDirected.Reason, userDirected.OriginalAsk)
+				result, suspendErr := runState.suspendForUserInput(display, diagWriter, userDirected.Question, userDirected.Context, userDirected.Reason, userDirected.OriginalAsk)
 				if suspendErr != nil {
 					runState.sessionErr = suspendErr
 					finishTurn(sessTelemetry, turn, turnDecision, "error", turnInfo, suspendErr)
@@ -774,7 +787,7 @@ func runSession(ctx context.Context, opts Options) Result {
 			case uerr != nil && (isContextCancelled(uerr) || isContextCancelled(ctxAskErr)):
 				return interruptedResult(uerr)
 			case uerr != nil && cfg.verbose:
-				fmt.Fprintf(os.Stderr, "Warning: user-directed ask analysis failed: %v\n", uerr)
+				fmt.Fprintf(diagWriter, "Warning: user-directed ask analysis failed: %v\n", uerr)
 			}
 		}
 
@@ -794,17 +807,17 @@ func runSession(ctx context.Context, opts Options) Result {
 					return interruptedResult(ferr)
 				}
 				if errors.Is(finalizeCtxErr, context.DeadlineExceeded) {
-					fmt.Fprintf(os.Stderr, "Finalizer error: timed out after %ds. Increase --timeout-per-turn or set 0 for unlimited.\n", cfg.timeoutPerTurn)
+					fmt.Fprintf(diagWriter, "Finalizer error: timed out after %ds. Increase --timeout-per-turn or set 0 for unlimited.\n", cfg.timeoutPerTurn)
 				} else {
-					fmt.Fprintln(os.Stderr, "Finalizer error:", ferr)
+					fmt.Fprintln(diagWriter, "Finalizer error:", ferr)
 				}
 				runState.sessionErr = ferr
 				finishTurn(sessTelemetry, turn, "finalize", "error", turnInfo, ferr)
 				
 				return Result{ExitCode: 1, Err: ferr}
 			}
-			if err := runState.completeSession(display, answer, step, runState.turnsCompleted, false); err != nil {
-				fmt.Fprintln(os.Stderr, "Final file write error:", err)
+			if err := runState.completeSession(display, diagWriter, answer, step, runState.turnsCompleted, false); err != nil {
+				fmt.Fprintln(diagWriter, "Final file write error:", err)
 				finishTurn(sessTelemetry, turn, "finalize", "error", turnInfo, err)
 				
 				return Result{ExitCode: 1, Err: err}
@@ -828,6 +841,7 @@ func runSession(ctx context.Context, opts Options) Result {
 			
 			plannerProgress:             plannerProgress,
 			display:                     display,
+			diagWriter:                  diagWriter,
 			sessTelemetry:               sessTelemetry,
 			turn:                        turn,
 			turnDecision:                turnDecision,
@@ -882,7 +896,7 @@ func runSession(ctx context.Context, opts Options) Result {
 				if trajectoryWriter != nil {
 					turnInfo = trajectory.MergeExcerptWithPrefix(turnInfo, trajectory.MakeTextExcerpt(userDirected.Question, trajectoryWriter.ExcerptLen()), "suspension_question")
 				}
-				result, suspendErr := runState.suspendForUserInput(display, userDirected.Question, userDirected.Context, userDirected.Reason, userDirected.OriginalAsk)
+				result, suspendErr := runState.suspendForUserInput(display, diagWriter, userDirected.Question, userDirected.Context, userDirected.Reason, userDirected.OriginalAsk)
 				if suspendErr != nil {
 					runState.sessionErr = suspendErr
 					finishTurn(sessTelemetry, turn, turnDecision, "error", turnInfo, suspendErr)
@@ -894,7 +908,7 @@ func runSession(ctx context.Context, opts Options) Result {
 			case uerr != nil && (isContextCancelled(uerr) || isContextCancelled(ctxAskErr)):
 				return interruptedResult(uerr)
 			case uerr != nil && cfg.verbose:
-				fmt.Fprintf(os.Stderr, "Warning: user-directed ask analysis failed: %v\n", uerr)
+				fmt.Fprintf(diagWriter, "Warning: user-directed ask analysis failed: %v\n", uerr)
 			}
 			goto Finalize
 		default:
@@ -928,13 +942,13 @@ Finalize:
 			
 			return interruptedResult(ferr)
 		}
-		fmt.Fprintln(os.Stderr, "Finalizer error:", ferr)
+		fmt.Fprintln(diagWriter, "Finalizer error:", ferr)
 		runState.sessionErr = ferr
 		runState.turnsCompleted = turns
 		return Result{ExitCode: 1, Err: ferr}
 	}
-	if err := runState.completeSession(display, answer, turns, turns, turns >= cfg.maxSteps); err != nil {
-		fmt.Fprintln(os.Stderr, "Final file write error:", err)
+	if err := runState.completeSession(display, diagWriter, answer, turns, turns, turns >= cfg.maxSteps); err != nil {
+		fmt.Fprintln(diagWriter, "Final file write error:", err)
 		runState.turnsCompleted = turns
 		return Result{ExitCode: 1, Err: err}
 	}
