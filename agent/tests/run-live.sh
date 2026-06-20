@@ -3593,7 +3593,7 @@ if [[ "$LIVE_MODE" != true ]]; then
   :
 else
   if shell_agent_available; then
-#    run_local_tmp_root_unset_live_case || true
+    :
   else
     echo "Skipping local tmp-root live case: shell-agent not found on PATH." >&2
   fi
