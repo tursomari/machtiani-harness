@@ -47,7 +47,7 @@ func TestCleanupRemovesOldMatchingDir(t *testing.T) {
 		t.Fatalf("chtimes marker: %v", err)
 	}
 
-	if err := cleanupOrphanedTempDirsInternal(tempDir, now, 24*time.Hour, false); err != nil {
+	if err := cleanupOrphanedTempDirsInternal(tempDir, now, 24*time.Hour, false, os.Stderr); err != nil {
 		t.Fatalf("cleanup: %v", err)
 	}
 
@@ -69,7 +69,7 @@ func TestCleanupSkipsRecentDir(t *testing.T) {
 		t.Fatalf("chtimes target: %v", err)
 	}
 
-	if err := cleanupOrphanedTempDirsInternal(tempDir, now, 24*time.Hour, false); err != nil {
+	if err := cleanupOrphanedTempDirsInternal(tempDir, now, 24*time.Hour, false, os.Stderr); err != nil {
 		t.Fatalf("cleanup: %v", err)
 	}
 
@@ -98,7 +98,7 @@ func TestCleanupRemovesOldWorkspaceDir(t *testing.T) {
 		t.Fatalf("chtimes marker: %v", err)
 	}
 
-	if err := cleanupOrphanedTempDirsInternal(tempDir, now, 24*time.Hour, false); err != nil {
+	if err := cleanupOrphanedTempDirsInternal(tempDir, now, 24*time.Hour, false, os.Stderr); err != nil {
 		t.Fatalf("cleanup: %v", err)
 	}
 
@@ -124,7 +124,7 @@ func TestCleanupRemovesStaleShellAgentMarker(t *testing.T) {
 		t.Fatalf("chtimes marker: %v", err)
 	}
 
-	if err := cleanupStaleShellAgentMarkersAt(root, now, time.Hour, false); err != nil {
+	if err := cleanupStaleShellAgentMarkersAt(root, now, time.Hour, false, os.Stderr); err != nil {
 		t.Fatalf("cleanup markers: %v", err)
 	}
 
@@ -150,7 +150,7 @@ func TestCleanupSkipsRecentShellAgentMarker(t *testing.T) {
 		t.Fatalf("chtimes marker: %v", err)
 	}
 
-	if err := cleanupStaleShellAgentMarkersAt(root, now, time.Hour, false); err != nil {
+	if err := cleanupStaleShellAgentMarkersAt(root, now, time.Hour, false, os.Stderr); err != nil {
 		t.Fatalf("cleanup markers: %v", err)
 	}
 
@@ -179,7 +179,7 @@ func TestCleanupSkipsLockProtectedDir(t *testing.T) {
 		t.Fatalf("chtimes lock: %v", err)
 	}
 
-	if err := cleanupOrphanedTempDirsInternal(tempDir, now, 24*time.Hour, false); err != nil {
+	if err := cleanupOrphanedTempDirsInternal(tempDir, now, 24*time.Hour, false, os.Stderr); err != nil {
 		t.Fatalf("cleanup: %v", err)
 	}
 
@@ -201,7 +201,7 @@ func TestCleanupIgnoresNonMatchingPrefix(t *testing.T) {
 		t.Fatalf("chtimes target: %v", err)
 	}
 
-	if err := cleanupOrphanedTempDirsInternal(tempDir, now, 24*time.Hour, false); err != nil {
+	if err := cleanupOrphanedTempDirsInternal(tempDir, now, 24*time.Hour, false, os.Stderr); err != nil {
 		t.Fatalf("cleanup: %v", err)
 	}
 
@@ -218,7 +218,7 @@ func TestCleanupSessionDirsRemovesDirWithoutLock(t *testing.T) {
 		t.Fatalf("mkdir session: %v", err)
 	}
 
-	if err := cleanupOrphanedSessionDirs(root, false); err != nil {
+	if err := cleanupOrphanedSessionDirs(root, false, os.Stderr); err != nil {
 		t.Fatalf("cleanup session dirs: %v", err)
 	}
 
@@ -241,7 +241,7 @@ func TestCleanupSessionDirsRemovesStaleLock(t *testing.T) {
 		t.Fatalf("write lock: %v", err)
 	}
 
-	if err := cleanupOrphanedSessionDirs(root, false); err != nil {
+	if err := cleanupOrphanedSessionDirs(root, false, os.Stderr); err != nil {
 		t.Fatalf("cleanup session dirs: %v", err)
 	}
 
@@ -271,7 +271,7 @@ func TestCleanupSessionDirsSkipsFreshLock(t *testing.T) {
 		f.Close()
 	}()
 
-	if err := cleanupOrphanedSessionDirs(root, false); err != nil {
+	if err := cleanupOrphanedSessionDirs(root, false, os.Stderr); err != nil {
 		t.Fatalf("cleanup session dirs: %v", err)
 	}
 
@@ -306,7 +306,7 @@ func TestCleanupSessionDirsSkipsWorkspaceForActiveSession(t *testing.T) {
 		f.Close()
 	}()
 
-	if err := cleanupOrphanedSessionDirs(root, false); err != nil {
+	if err := cleanupOrphanedSessionDirs(root, false, os.Stderr); err != nil {
 		t.Fatalf("cleanup session dirs: %v", err)
 	}
 
@@ -409,7 +409,7 @@ func TestCleanupSessionDirsSkipsLockHeldByChildProcess(t *testing.T) {
 	}
 
 	// Run cleanup.
-	if err := cleanupOrphanedSessionDirs(root, false); err != nil {
+	if err := cleanupOrphanedSessionDirs(root, false, os.Stderr); err != nil {
 		t.Fatalf("cleanup session dirs: %v", err)
 	}
 
@@ -495,7 +495,7 @@ func TestCleanupOrphanedTempDirsPreservesNearbySessions(t *testing.T) {
 	// returns only the global HOME-based root.
 	work := t.TempDir()
 	withWorkingDir(t, work, func() {
-		if err := cleanupOrphanedTempDirs(false); err != nil {
+		if err := cleanupOrphanedTempDirs(false, os.Stderr); err != nil {
 			t.Fatalf("cleanupOrphanedTempDirs: %v", err)
 		}
 	})
@@ -523,7 +523,7 @@ func TestCleanupOrphanedTempDirsTargetsScratchRoot(t *testing.T) {
 	}
 
 	withWorkingDir(t, work, func() {
-		if err := cleanupOrphanedTempDirs(false); err != nil {
+		if err := cleanupOrphanedTempDirs(false, os.Stderr); err != nil {
 			t.Fatalf("cleanupOrphanedTempDirs: %v", err)
 		}
 	})

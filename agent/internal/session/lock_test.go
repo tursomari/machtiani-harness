@@ -112,7 +112,7 @@ func TestCleanupSkipsActiveSessionLock(t *testing.T) {
 	}
 
 	// Run cleanup on the parent directory. The active session must be preserved.
-	if err := cleanupOrphanedSessionDirs(root, false); err != nil {
+	if err := cleanupOrphanedSessionDirs(root, false, os.Stderr); err != nil {
 		t.Fatalf("cleanup session dirs: %v", err)
 	}
 
@@ -138,7 +138,7 @@ func TestCleanupRemovesStaleSessionLock(t *testing.T) {
 	}
 
 	// Run cleanup. The stale session must be removed.
-	if err := cleanupOrphanedSessionDirs(root, false); err != nil {
+	if err := cleanupOrphanedSessionDirs(root, false, os.Stderr); err != nil {
 		t.Fatalf("cleanup session dirs: %v", err)
 	}
 

@@ -21,7 +21,7 @@ func TestOfflineLLMProducesTrajectoryEvidence(t *testing.T) {
 		t.Fatalf("trajectory: %v", err)
 	}
 	cfg := legacyConfig{trajectoryExcerpt: 128}
-	sess := newSessionTelemetry(writer, sessionID, "offline goal", cfg, "", BuildInfo{})
+	sess := newSessionTelemetry(writer, sessionID, "offline goal", cfg, "", BuildInfo{}, os.Stderr)
 	if sess == nil {
 		t.Fatalf("expected session telemetry")
 	}

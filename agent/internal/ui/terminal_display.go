@@ -204,6 +204,14 @@ func (t *TerminalDisplay) Notify(message string) {
 	})
 }
 
+// WriteString writes a raw string to the user-facing output without any
+// formatting or prefix, followed by a newline.
+func (t *TerminalDisplay) WriteString(s string) {
+	t.withLock(func() {
+		fmt.Fprintln(t.out, s)
+	})
+}
+
 // RenderModePlan prints the initial overview of planned mode tasks.
 func (t *TerminalDisplay) RenderModePlan(tasks []ModeTaskDisplay) {
 	if len(tasks) == 0 {

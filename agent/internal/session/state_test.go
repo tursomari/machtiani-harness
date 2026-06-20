@@ -397,7 +397,7 @@ func TestPersistSessionStateNormalExit(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 
-	runState.persistSessionState()
+	runState.persistSessionState(nil, os.Stderr)
 
 	loaded, err := LoadSessionState(sessionID)
 	if err != nil {
@@ -450,7 +450,7 @@ func TestPersistSessionStateInterrupted(t *testing.T) {
 		done <- data
 	}()
 
-	runState.persistSessionState()
+	runState.persistSessionState(nil, os.Stderr)
 
 	w.Close()
 	stdout := string(<-done)
@@ -515,7 +515,7 @@ func TestPersistSessionStatePendingStateOverride(t *testing.T) {
 		_ = os.RemoveAll(overrideDir)
 	})
 
-	runState.persistSessionState()
+	runState.persistSessionState(nil, os.Stderr)
 
 	// The saved state should reflect the pendingState override.
 	// Since pendingState.SessionID is "override-id", the file was saved
@@ -556,7 +556,7 @@ func TestPersistSessionStateEmptySessionID(t *testing.T) {
 	}
 
 	// Should not panic and should not create any file.
-	runState.persistSessionState()
+	runState.persistSessionState(nil, os.Stderr)
 
 	// Verify no session-state.json was created in the sessions root.
 	sessionsDir, err := artifacts.SessionsRoot()
@@ -620,7 +620,7 @@ func TestPersistSessionStateSaveFailure(t *testing.T) {
 	}()
 
 	// Should not panic.
-	runState.persistSessionState()
+	runState.persistSessionState(nil, os.Stderr)
 
 	w.Close()
 	stderr := string(<-done)

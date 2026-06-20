@@ -10,6 +10,7 @@ type SessionDisplay interface {
 	RenderModePlan(tasks []ModeTaskDisplay)
 	UpdateModeTaskStatus(index int, title string, status string)
 	Notify(message string)
+	WriteString(s string)
 }
 
 var _ SessionDisplay = (*TerminalDisplay)(nil)

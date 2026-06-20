@@ -183,7 +183,7 @@ func TestRunLifecycleStateSuspendForUserInput(t *testing.T) {
 	runState.recorder = recorder
 	runState.tr = tr
 
-	result, err := runState.suspendForUserInput(nil, "Do you want the safer fix?", "The safer fix preserves behavior.", "tradeoff choice", "Original mixed ask")
+	result, err := runState.suspendForUserInput(nil, os.Stderr, "Do you want the safer fix?", "The safer fix preserves behavior.", "tradeoff choice", "Original mixed ask")
 	if err != nil {
 		t.Fatalf("suspendForUserInput: %v", err)
 	}
@@ -206,7 +206,7 @@ func TestPrepareSessionEnvironmentLocalKeepsLockInSessionScratchRoot(t *testing.
 	repo := setupSessionEnvironmentTestRepo(t, "[environment]\ntype = \"local\"\n")
 
 	const sessionID = "agent-123"
-	bootstrap, err := prepareSessionEnvironment(sessionID, legacyConfig{})
+	bootstrap, err := prepareSessionEnvironment(sessionID, legacyConfig{}, os.Stderr)
 	if err != nil {
 		t.Fatalf("prepareSessionEnvironment() error = %v", err)
 	}
@@ -258,7 +258,7 @@ func TestPrepareSessionEnvironment_ImplicitSessionID_IgnoresInheritedTempRoot(t 
 	_ = os.Unsetenv("MACHTIANI_SESSION_TEMP_ROOT")
 
 	const sessionID = "agent-implicit"
-	bootstrap, err := prepareSessionEnvironment(sessionID, cfg)
+	bootstrap, err := prepareSessionEnvironment(sessionID, cfg, os.Stderr)
 	if err != nil {
 		t.Fatalf("prepareSessionEnvironment() error = %v", err)
 	}
@@ -287,7 +287,7 @@ func TestPrepareSessionEnvironment_ExplicitTempRootHonoredWhenNotChildProcess(t 
 	t.Setenv("MACHTIANI_SESSION_TEMP_ROOT", "/tmp/explicit-temp-root")
 
 	const sessionID = "agent-explicit"
-	bootstrap, err := prepareSessionEnvironment(sessionID, legacyConfig{})
+	bootstrap, err := prepareSessionEnvironment(sessionID, legacyConfig{}, os.Stderr)
 	if err != nil {
 		t.Fatalf("prepareSessionEnvironment() error = %v", err)
 	}
