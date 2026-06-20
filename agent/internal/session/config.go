@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"io"
 
 	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/ui"
@@ -72,6 +73,8 @@ type Options struct {
 	APIKeyOverrides     map[string]string
 	Context             context.Context
 	ProcessTimerManager *ui.ProcessTimerManager
+	Display             ui.SessionDisplay
+	Diagnostics         io.Writer
 }
 
 type Result struct {

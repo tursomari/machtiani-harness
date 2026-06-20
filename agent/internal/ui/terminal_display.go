@@ -34,7 +34,7 @@ type TerminalDisplay struct {
 	closed    bool
 	hasPrompt bool
 	width     int
-	current   *PromptStream
+	current   *TerminalPromptStream
 
 	timerEnabled    bool
 	timerStart      time.Time
@@ -46,8 +46,8 @@ type TerminalDisplay struct {
 	id           string
 }
 
-// PromptStream coordinates streaming tokens for a single prompt turn.
-type PromptStream struct {
+// TerminalPromptStream coordinates streaming tokens for a single prompt turn.
+type TerminalPromptStream struct {
 	display        *TerminalDisplay
 	buffer         strings.Builder
 	actionBuffer   strings.Builder
@@ -102,8 +102,8 @@ func (t *TerminalDisplay) StartSession(goal string) {
 }
 
 // BeginPrompt prepares the stream for a prompt/question block.
-func (t *TerminalDisplay) BeginPrompt(prompt string, opts *PromptOptions) *PromptStream {
-	stream := &PromptStream{display: t}
+func (t *TerminalDisplay) BeginPrompt(prompt string, opts *PromptOptions) PromptStream {
+	stream := &TerminalPromptStream{display: t}
 	t.withLock(func() {
 		if !t.started {
 			t.started = true
@@ -242,7 +242,7 @@ func (t *TerminalDisplay) UpdateModeTaskStatus(index int, title, status string) 
 }
 
 // OnChunk ingests a header/token chunk while streaming.
-func (s *PromptStream) OnChunk(chunk string) {
+func (s *TerminalPromptStream) OnChunk(chunk string) {
 	s.display.withLock(func() {
 		if s.done {
 			return
@@ -253,7 +253,7 @@ func (s *PromptStream) OnChunk(chunk string) {
 }
 
 // Complete flushes the stream and prints a condensed summary.
-func (s *PromptStream) Complete(finalText string) {
+func (s *TerminalPromptStream) Complete(finalText string) {
 	s.display.withLock(func() {
 		if s.done {
 			return
@@ -285,7 +285,7 @@ func (s *PromptStream) Complete(finalText string) {
 }
 
 // Abort stops the stream and prints an error line.
-func (s *PromptStream) Abort(message string) {
+func (s *TerminalPromptStream) Abort(message string) {
 	s.display.withLock(func() {
 		if s.done {
 			return
@@ -304,7 +304,7 @@ func (s *PromptStream) Abort(message string) {
 
 // OnActionChunk ingests a fully formatted shell-agent action line while streaming.
 // This is called when a shell-agent action event should be surfaced in the TUI.
-func (s *PromptStream) OnActionChunk(line string) {
+func (s *TerminalPromptStream) OnActionChunk(line string) {
 	s.display.withLock(func() {
 		if s.done {
 			return
@@ -321,7 +321,7 @@ func (s *PromptStream) OnActionChunk(line string) {
 }
 
 // StreamAction surfaces a fully formatted shell-agent action line into the current
-// PromptStream if one is active. If no stream is active, it falls back to a plain
+// TerminalPromptStream if one is active. If no stream is active, it falls back to a plain
 // notification line.
 func (t *TerminalDisplay) StreamAction(line string) {
 	clean := strings.TrimSpace(line)
@@ -346,7 +346,7 @@ func (t *TerminalDisplay) StreamAction(line string) {
 
 // renderCurrentWithActionsLocked combines LLM output and shell-agent actions,
 // maintaining the last promptContentLines worth of content across both sources.
-func (s *PromptStream) renderCurrentWithActionsLocked() {
+func (s *TerminalPromptStream) renderCurrentWithActionsLocked() {
 	llmText := s.buffer.String()
 	actionText := s.actionBuffer.String()
 
@@ -376,7 +376,7 @@ func (s *PromptStream) renderCurrentWithActionsLocked() {
 	s.printLinesLocked(lines)
 }
 
-func (s *PromptStream) renderCurrentLocked() {
+func (s *TerminalPromptStream) renderCurrentLocked() {
 	current := s.buffer.String()
 	lines := lastNLines(current, promptContentLines)
 	if len(lines) == 0 {
@@ -401,7 +401,7 @@ func (s *PromptStream) renderCurrentLocked() {
 	s.printLinesLocked(lines)
 }
 
-func (s *PromptStream) printLinesLocked(lines []string) {
+func (s *TerminalPromptStream) printLinesLocked(lines []string) {
 	if len(lines) > promptContentLines {
 		lines = lines[len(lines)-promptContentLines:]
 	}
@@ -425,7 +425,7 @@ func (s *PromptStream) printLinesLocked(lines []string) {
 
 // clearPreviousLinesLocked rewinds the terminal cursor and removes the prior
 // preview block so we can redraw the sliding window in place.
-func (s *PromptStream) clearPreviousLinesLocked() {
+func (s *TerminalPromptStream) clearPreviousLinesLocked() {
 	if !s.started || s.linesPrinted == 0 {
 		return
 	}
@@ -445,7 +445,7 @@ func (s *PromptStream) clearPreviousLinesLocked() {
 	fmt.Fprint(s.display.out, "\r")
 }
 
-func (s *PromptStream) flushLineLocked() {
+func (s *TerminalPromptStream) flushLineLocked() {
 	if !s.started || s.done {
 		return
 	}
@@ -482,7 +482,7 @@ func (t *TerminalDisplay) printNotificationLineLocked(message string) {
 	t.renderTimerLocked()
 }
 
-func (s *PromptStream) writeSanitizedLinesLocked(lines []string) {
+func (s *TerminalPromptStream) writeSanitizedLinesLocked(lines []string) {
 	if len(lines) == 0 {
 		s.started = false
 		s.linesPrinted = 0
@@ -506,7 +506,7 @@ func (s *PromptStream) writeSanitizedLinesLocked(lines []string) {
 	s.renderedLines = append(s.renderedLines[:0], lines...)
 }
 
-func (s *PromptStream) interruptWithNotificationLocked(lines []string) bool {
+func (s *TerminalPromptStream) interruptWithNotificationLocked(lines []string) bool {
 	if s == nil || s.done || !s.started || s.linesPrinted == 0 || len(lines) == 0 {
 		return false
 	}

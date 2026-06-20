@@ -8,12 +8,13 @@ import (
 	"testing"
 )
 
-func TestPromptStreamCompleteShowsLastLinesWithBlankHeader(t *testing.T) {
+func TestTerminalPromptStreamCompleteShowsLastLinesWithBlankHeader(t *testing.T) {
 	var buf bytes.Buffer
 	display := newTestDisplay(&buf)
 	display.width = 120
 	display.StartSession("Primary goal")
 	stream := display.BeginPrompt("What is concurrency?", nil)
+	ts := stream.(*TerminalPromptStream)
 
 	answer := strings.Join([]string{
 		"Line1",
@@ -26,33 +27,34 @@ func TestPromptStreamCompleteShowsLastLinesWithBlankHeader(t *testing.T) {
 	stream.Complete(answer)
 
 	expected := []string{"", "Line1", "Line2", "Line3", "Line4", "Line5", "Line6", "", ""}
-	if !slicesEqual(stream.renderedLines, expected) {
-		t.Fatalf("expected last five lines %v, got %v", expected, stream.renderedLines)
+	if !slicesEqual(ts.renderedLines, expected) {
+		t.Fatalf("expected last five lines %v, got %v", expected, ts.renderedLines)
 	}
 }
 
-func TestPromptStreamCompleteTruncatesLongLine(t *testing.T) {
+func TestTerminalPromptStreamCompleteTruncatesLongLine(t *testing.T) {
 	var buf bytes.Buffer
 	display := newTestDisplay(&buf)
 	display.width = 20
 	display.StartSession("Primary goal")
 	stream := display.BeginPrompt("Explain goroutines", nil)
+	ts := stream.(*TerminalPromptStream)
 
 	answer := "Goroutines are lightweight managed threads in Go that scale."
 	stream.Complete(answer)
 
-	if len(stream.renderedLines) != promptWindowLines {
-		t.Fatalf("expected %d preview lines, got %v", promptWindowLines, stream.renderedLines)
+	if len(ts.renderedLines) != promptWindowLines {
+		t.Fatalf("expected %d preview lines, got %v", promptWindowLines, ts.renderedLines)
 	}
 	var preview string
-	for _, line := range stream.renderedLines {
+	for _, line := range ts.renderedLines {
 		if strings.TrimSpace(line) != "" {
 			preview = line
 			break
 		}
 	}
 	if preview == "" {
-		t.Fatalf("did not capture preview line in output: %v", stream.renderedLines)
+		t.Fatalf("did not capture preview line in output: %v", ts.renderedLines)
 	}
 	if len([]rune(promptFirstLinePrefix+preview)) > display.width {
 		t.Fatalf("preview exceeds width: got %q (len=%d) width=%d", preview, len([]rune(promptFirstLinePrefix+preview)), display.width)
@@ -62,28 +64,30 @@ func TestPromptStreamCompleteTruncatesLongLine(t *testing.T) {
 	}
 }
 
-func TestPromptStreamCompleteShowsAllLinesWhenFewerThanWindow(t *testing.T) {
+func TestTerminalPromptStreamCompleteShowsAllLinesWhenFewerThanWindow(t *testing.T) {
 	var buf bytes.Buffer
 	display := newTestDisplay(&buf)
 	display.width = 120
 	display.StartSession("Primary goal")
 	stream := display.BeginPrompt("Explain channels", nil)
+	ts := stream.(*TerminalPromptStream)
 
 	answer := strings.Join([]string{"Line1", "Line2", "Line3"}, "\n")
 	stream.Complete(answer)
 
 	expected := []string{"", "Line1", "Line2", "Line3", "", "", "", "", ""}
-	if !slicesEqual(stream.renderedLines, expected) {
-		t.Fatalf("expected all lines %v, got %v", expected, stream.renderedLines)
+	if !slicesEqual(ts.renderedLines, expected) {
+		t.Fatalf("expected all lines %v, got %v", expected, ts.renderedLines)
 	}
 }
 
-func TestPromptStreamOnChunkSlidingWindow(t *testing.T) {
+func TestTerminalPromptStreamOnChunkSlidingWindow(t *testing.T) {
 	var buf bytes.Buffer
 	display := newTestDisplay(&buf)
 	display.width = 120
 	display.StartSession("Primary goal")
 	stream := display.BeginPrompt("Explain select", nil)
+	ts := stream.(*TerminalPromptStream)
 
 	chunks := []string{
 		"Line1\nLine2\nLine3\nLine4\nLine5\n",
@@ -94,8 +98,8 @@ func TestPromptStreamOnChunkSlidingWindow(t *testing.T) {
 	}
 
 	expected := []string{"", "Line1", "Line2", "Line3", "Line4", "Line5", "Line6", "", ""}
-	if !slicesEqual(stream.renderedLines, expected) {
-		t.Fatalf("expected sliding window %v, got %v", expected, stream.renderedLines)
+	if !slicesEqual(ts.renderedLines, expected) {
+		t.Fatalf("expected sliding window %v, got %v", expected, ts.renderedLines)
 	}
 }
 
