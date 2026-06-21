@@ -268,6 +268,58 @@ func TestFileDiscoveryTrajectoryPath(t *testing.T) {
 	})
 }
 
+func TestShellAgentTrajectoryPathLocalRepo(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+
+	subdir := filepath.Join(repoDir, "nested")
+	if err := os.MkdirAll(subdir, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", subdir, err)
+	}
+
+	withWorkingDir(t, subdir, func() {
+		const sessionID = "session-abc"
+		const turn = 3
+		path, err := ShellAgentTrajectoryPath(sessionID, turn)
+		if err != nil {
+			t.Fatalf("ShellAgentTrajectoryPath: %v", err)
+		}
+		expected := filepath.Join(repoDir, ".machtiani", "sessions", sessionID, "shell-agent", "3", "trajectory.json")
+		if path != expected {
+			t.Fatalf("expected %s, got %s", expected, path)
+		}
+	})
+}
+
+func TestShellAgentStatePathLocalRepo(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+
+	subdir := filepath.Join(repoDir, "nested")
+	if err := os.MkdirAll(subdir, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", subdir, err)
+	}
+
+	withWorkingDir(t, subdir, func() {
+		const sessionID = "session-abc"
+		const turn = 3
+		path, err := ShellAgentStatePath(sessionID, turn)
+		if err != nil {
+			t.Fatalf("ShellAgentStatePath: %v", err)
+		}
+		expected := filepath.Join(repoDir, ".machtiani", "sessions", sessionID, "shell-agent", "3", "state.json")
+		if path != expected {
+			t.Fatalf("expected %s, got %s", expected, path)
+		}
+	})
+}
+
 func initGitRepo(t *testing.T, dir string) {
 	t.Helper()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
