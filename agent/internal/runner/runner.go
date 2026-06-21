@@ -197,6 +197,8 @@ func (r *Runner) RunPrompt(ctx context.Context, sessionID string, in PromptInput
 				"retrieved_count":        0,
 				"discovered_paths_count": 0,
 				"max_input_tokens":       in.MaxInputTokens,
+				"shell_agent_used":       false,
+				"shell_agent_cancelled":  false,
 			}
 			if in.MaxInputTokens == 0 {
 				delete(payload, "max_input_tokens")
@@ -252,6 +254,12 @@ func (r *Runner) RunPrompt(ctx context.Context, sessionID string, in PromptInput
 		}
 		payload["file_discovery_used"] = res.FileDiscoveryRan
 		payload["shell_agent_used"] = res.ShellAgentUsed
+		if res.ShellAgentCancelled {
+			payload["shell_agent_cancelled"] = res.ShellAgentCancelled
+		}
+		if strings.TrimSpace(res.ShellAgentTrajectoryPath) != "" {
+			payload["shell_agent_trajectory_path"] = strings.TrimSpace(res.ShellAgentTrajectoryPath)
+		}
 		if retrieved > 0 && retrieved <= 10 {
 			payload["retrieved_paths"] = append([]string(nil), res.RetrievedFiles...)
 		}

@@ -155,6 +155,7 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 
 	shellAgentUsed := false
 	shellAgentOutput := ""
+	shellAgentTrajectoryPath := ""
 	if opts.ShellAgent {
 		if strings.TrimSpace(opts.ShellAgentModel) == "" {
 			candidate := strings.TrimSpace(opts.Runtime.Alias)
@@ -174,21 +175,32 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 		if shellErr != nil {
 			return res, shellErr
 		}
+		shellAgentTrajectoryPath = result.TrajectoryPath
 		if result.Error != nil {
+			res.ShellAgentTrajectoryPath = shellAgentTrajectoryPath
 			return res, fmt.Errorf("shell-agent failed: %w", result.Error)
 		}
 		if result.ExitStatus != "Submitted" {
+			res.ShellAgentCancelled = true
+			res.ShellAgentTrajectoryPath = shellAgentTrajectoryPath
 			if result.ExitStatus == "" {
-				return res, fmt.Errorf("shell-agent exited without final answer")
+				return res, nil
 			}
-			return res, fmt.Errorf("shell-agent exited without final answer: %s", result.ExitStatus)
+			shellAgentUsed = true
+			shellAgentOutput = result.Answer
+			return res, nil
 		}
 		verbatimBlock := strings.TrimSpace(result.Answer)
 		if verbatimBlock == "" {
+			res.ShellAgentTrajectoryPath = shellAgentTrajectoryPath
 			return res, fmt.Errorf("shell-agent submitted an empty final answer")
 		}
 		shellAgentUsed = true
 		shellAgentOutput = verbatimBlock
+		res.ShellAgentCancelled = false
+		if shellAgentTrajectoryPath != "" {
+			res.ShellAgentTrajectoryPath = shellAgentTrajectoryPath
+		}
 	}
 
 	header, err := buildHeader(combined, opts.Prompts)

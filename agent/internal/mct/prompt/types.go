@@ -71,5 +71,7 @@ type Result struct {
 	SaveError        error
 	TrajectoryPath   string
 	FileDiscoveryRan bool
-	ShellAgentUsed   bool
+	ShellAgentUsed            bool
+	ShellAgentCancelled       bool   // ShellAgentCancelled indicates the shell-agent run was interrupted or did not complete normally.
+	ShellAgentTrajectoryPath  string // ShellAgentTrajectoryPath is the filesystem path to the shell-agent session trajectory directory.
 }
