@@ -138,6 +138,7 @@ class MctAgent(BaseInstalledAgent):
             f" --shell-agent-model {shlex.quote(shell_agent_model)}"
             f" --max-input-tokens {shlex.quote(max_input_tokens)}"
             f" --tag now"
+            f" --persist-tmp-data"
             f" -f /app/instruction.md"
         )
         try:
@@ -178,6 +179,15 @@ class MctAgent(BaseInstalledAgent):
             await self.exec_as_agent(
                 environment,
                 "mkdir -p /logs/agent/repo && cp -a /app/. /logs/agent/repo/ 2>/dev/null || true",
+            )
+        except NonZeroAgentExitCodeError:
+            pass
+
+        # Step 10: Copy persisted temp data to host-visible logs directory.
+        try:
+            await self.exec_as_agent(
+                environment,
+                "mkdir -p /logs/agent/tmp-data && (cp -r /tmp/mct-agent /logs/agent/tmp-data/ 2>/dev/null; cp -r /app/.machtiani/tmp-data /logs/agent/tmp-data/ 2>/dev/null; true)",
             )
         except NonZeroAgentExitCodeError:
             pass
