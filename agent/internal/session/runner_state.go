@@ -402,6 +402,8 @@ type conversationRecorder struct {
 	conversation                 *conversation.Conversation
 	conversationRendered         string
 	conversationJSON             string
+	shellAgentTrajectoryPath     string
+	shellAgentResumable          bool
 }
 
 var errConversationTranscriptDesync = errors.New("conversation transcript desync")
@@ -415,6 +417,11 @@ func newConversationRecorder(tr *transcript.Transcript, sessionID, conversationG
 		resumeMode:       resumeMode,
 		loadedState:      loadedState,
 	}
+}
+
+func (c *conversationRecorder) SetShellAgentMetadata(trajectoryPath string, resumable bool) {
+	c.shellAgentTrajectoryPath = trajectoryPath
+	c.shellAgentResumable = resumable
 }
 
 func (c *conversationRecorder) Load() error {
@@ -512,16 +519,20 @@ func (c *conversationRecorder) WriteTurn(step int, question, savedPath string, r
 	}
 	shellAgentSessionID := fmt.Sprintf("%s/shell-agent/%d", c.sessionID, step)
 	c.conversation.AddMessage("assistant", question, map[string]any{
-		"type":                  "work_request",
-		"turn":                  step,
-		"decision":              decision,
-		"shell_agent_session_id": shellAgentSessionID,
+		"type":                        "work_request",
+		"turn":                        step,
+		"decision":                    decision,
+		"shell_agent_session_id":       shellAgentSessionID,
+		"shell_agent_trajectory_path": c.shellAgentTrajectoryPath,
+		"shell_agent_resumable":       c.shellAgentResumable,
 	})
 	c.conversation.AddMessage("assistant", summary, map[string]any{
-		"type":            "work_result",
-		"turn":            step,
-		"retrieved_files": retrieved,
-		"chat_path":       savedPath,
+		"type":                        "work_result",
+		"turn":                        step,
+		"retrieved_files":             retrieved,
+		"chat_path":                   savedPath,
+		"shell_agent_trajectory_path": c.shellAgentTrajectoryPath,
+		"shell_agent_resumable":       c.shellAgentResumable,
 	})
 	rendered, delta, err := c.renderDelta()
 	if errors.Is(err, errConversationTranscriptDesync) {

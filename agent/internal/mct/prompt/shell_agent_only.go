@@ -15,6 +15,7 @@ type ShellAgentOnlyResult struct {
 	Context        string
 	Verbatim       string
 	TrajectoryPath string
+	Cancelled      bool
 }
 
 // RunShellAgentOnly runs the shell agent on the prompt and returns its output
@@ -61,14 +62,14 @@ func RunShellAgentOnly(ctx context.Context, opts RunOptions, req shellagent.Requ
 	if err != nil {
 		return res, err
 	}
+	res.TrajectoryPath = result.TrajectoryPath
 	if result.Error != nil {
 		return res, fmt.Errorf("shell-agent failed: %w", result.Error)
 	}
 	if result.ExitStatus != "Submitted" {
-		if result.ExitStatus == "" {
-			return res, fmt.Errorf("shell-agent exited without final answer")
-		}
-		return res, fmt.Errorf("shell-agent exited without final answer: %s", result.ExitStatus)
+		res.Summary = strings.TrimSpace(result.Answer)
+		res.Cancelled = true
+		return res, nil
 	}
 	verbatimBlock := strings.TrimSpace(result.Answer)
 	if verbatimBlock == "" {

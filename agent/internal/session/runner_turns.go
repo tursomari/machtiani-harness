@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -305,7 +306,16 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 		if shellErr != nil {
 			env.turnInfo["shell_agent_error"] = trimTo(shellErr.Error(), 200)
 		}
-		if strings.TrimSpace(shellResult.TrajectoryPath) != "" {
+		if shellResult.Cancelled {
+			if strings.TrimSpace(shellResult.TrajectoryPath) != "" {
+				env.turnInfo["shell_agent_trajectory"] = trimTo(shellResult.TrajectoryPath, 200)
+			}
+			env.turnInfo["shell_agent_cancelled"] = true
+			resumePath := filepath.Join(os.TempDir(), env.sessionID+"-resume.json")
+			if _, err := os.Stat(resumePath); err == nil {
+				env.recorder.SetShellAgentMetadata(shellResult.TrajectoryPath, true)
+			}
+		} else if strings.TrimSpace(shellResult.TrajectoryPath) != "" {
 			env.turnInfo["shell_agent_trajectory"] = trimTo(shellResult.TrajectoryPath, 200)
 		}
 
@@ -313,8 +323,6 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 		lastAnswer := ""
 		var retrieved []string
 		if env.cfg.dryRun {
-			lastAnswer = "[dry-run] mct would have produced a chat response here."
-			retrieved = nil
 		} else if runNoShell {
 			if result.SaveError != nil {
 				fmt.Fprintln(env.diagWriter, "Warning: failed to save chat transcript:", result.SaveError)
@@ -414,6 +422,15 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 		
 		return turnExecutionResult{action: turnLoopReturn, result: Result{ExitCode: 1, Err: merr}, shellAgentUsed: shellAgentUsedThisTurn}
 	}
+
+	if strings.TrimSpace(result.ShellAgentTrajectoryPath) != "" {
+		env.turnInfo["shell_agent_trajectory"] = trimTo(result.ShellAgentTrajectoryPath, 200)
+	}
+	if result.ShellAgentCancelled {
+		env.recorder.SetShellAgentMetadata(result.ShellAgentTrajectoryPath, true)
+		env.turnInfo["shell_agent_cancelled"] = true
+	}
+
 	savedPath := strings.TrimSpace(result.SavedPath)
 	lastAnswer := ""
 	var retrieved []string
