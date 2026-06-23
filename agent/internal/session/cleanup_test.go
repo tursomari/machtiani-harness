@@ -1,10 +1,12 @@
 package session
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -530,5 +532,92 @@ func TestCleanupOrphanedTempDirsTargetsScratchRoot(t *testing.T) {
 
 	if _, err := os.Stat(sessionPath); !os.IsNotExist(err) {
 		t.Fatalf("expected session directory removed, got err=%v", err)
+	}
+}
+
+func TestCleanupTempDirsDiagWriterCapturesVerboseMessage(t *testing.T) {
+	tempDir := t.TempDir()
+	now := time.Now()
+
+	target := filepath.Join(tempDir, "mini-swe-trajectories-diag")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	marker := filepath.Join(target, "marker.txt")
+	if err := os.WriteFile(marker, []byte("ok"), 0o644); err != nil {
+		t.Fatalf("write marker: %v", err)
+	}
+	old := now.Add(-48 * time.Hour)
+	if err := os.Chtimes(target, old, old); err != nil {
+		t.Fatalf("chtimes target: %v", err)
+	}
+	if err := os.Chtimes(marker, old, old); err != nil {
+		t.Fatalf("chtimes marker: %v", err)
+	}
+
+	var diagBuf bytes.Buffer
+	if err := cleanupOrphanedTempDirsInternal(tempDir, now, 24*time.Hour, true, &diagBuf); err != nil {
+		t.Fatalf("cleanup: %v", err)
+	}
+
+	output := diagBuf.String()
+	if !strings.Contains(output, "[cleanup] removed orphaned temp dir:") {
+		t.Fatalf("expected verbose removal message in diagWriter, got: %s", output)
+	}
+	if !strings.Contains(output, target) {
+		t.Fatalf("expected path %s in diagWriter, got: %s", target, output)
+	}
+}
+
+func TestCleanupSessionDirsDiagWriterCapturesVerboseMessage(t *testing.T) {
+	tempDir := t.TempDir()
+	root := filepath.Join(tempDir, ".machtiani", "tmp")
+	sessionPath := filepath.Join(root, "session-diag-test")
+	if err := os.MkdirAll(sessionPath, 0o755); err != nil {
+		t.Fatalf("mkdir session: %v", err)
+	}
+
+	var diagBuf bytes.Buffer
+	if err := cleanupOrphanedSessionDirs(root, true, &diagBuf); err != nil {
+		t.Fatalf("cleanup session dirs: %v", err)
+	}
+
+	output := diagBuf.String()
+	if !strings.Contains(output, "[cleanup] removed orphaned session dir:") {
+		t.Fatalf("expected verbose removal message in diagWriter, got: %s", output)
+	}
+	if !strings.Contains(output, sessionPath) {
+		t.Fatalf("expected path %s in diagWriter, got: %s", sessionPath, output)
+	}
+}
+
+func TestCleanupShellAgentMarkersDiagWriterCapturesVerboseMessage(t *testing.T) {
+	root := t.TempDir()
+	now := time.Now()
+
+	markerDir := filepath.Join(root, "shell-agent", "markers")
+	if err := os.MkdirAll(markerDir, 0o755); err != nil {
+		t.Fatalf("mkdir marker dir: %v", err)
+	}
+	markerPath := filepath.Join(markerDir, "mct-swe-agent-finale-diag.txt")
+	if err := os.WriteFile(markerPath, []byte("done"), 0o644); err != nil {
+		t.Fatalf("write marker: %v", err)
+	}
+	old := now.Add(-2 * time.Hour)
+	if err := os.Chtimes(markerPath, old, old); err != nil {
+		t.Fatalf("chtimes marker: %v", err)
+	}
+
+	var diagBuf bytes.Buffer
+	if err := cleanupStaleShellAgentMarkersAt(root, now, time.Hour, true, &diagBuf); err != nil {
+		t.Fatalf("cleanup markers: %v", err)
+	}
+
+	output := diagBuf.String()
+	if !strings.Contains(output, "[cleanup] removed stale marker file:") {
+		t.Fatalf("expected verbose removal message in diagWriter, got: %s", output)
+	}
+	if !strings.Contains(output, markerPath) {
+		t.Fatalf("expected path %s in diagWriter, got: %s", markerPath, output)
 	}
 }

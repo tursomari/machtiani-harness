@@ -30,7 +30,10 @@ type SessionState struct {
 	Modes              []string                 `json:"modes,omitempty"`
 	ModeInstructionDir string                   `json:"mode_instruction_dir,omitempty"`
 	PlannerProgress    *PlannerProgressState    `json:"planner_progress,omitempty"`
-	SuspendedUserInput *SuspendedUserInputState `json:"suspended_user_input,omitempty"`
+	SuspendedUserInput          *SuspendedUserInputState `json:"suspended_user_input,omitempty"`
+	ShellAgentResumable         bool                     `json:"shell_agent_resumable"`
+	ShellAgentTrajectoryPath    string                   `json:"shell_agent_trajectory_path"`
+	ShellAgentInterruptStep     int                      `json:"shell_agent_interrupt_step"`
 }
 
 type SuspendedUserInputState struct {

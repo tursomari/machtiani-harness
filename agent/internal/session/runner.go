@@ -268,6 +268,9 @@ func runSession(ctx context.Context, opts Options) Result {
 	loadedState := bootstrap.loadedState
 	modeInstructions := bootstrap.modeInstructions
 	modeInstructionPath := bootstrap.modeInstructionPath
+	resumableShellAgent := bootstrap.resumableShellAgent
+	resumableShellAgentTrajectoryPath := bootstrap.resumableShellAgentTrajectoryPath
+	_ = resumableShellAgentTrajectoryPath
 	runState := bootstrap.runState
 	plannerProgress := runState.plannerProgress
 	envBootstrap, err := prepareSessionEnvironment(sessionID, cfg, diagWriter)
@@ -584,26 +587,31 @@ func runSession(ctx context.Context, opts Options) Result {
 	if opts.GlobalConfig.Prompts != nil {
 		plannerPrompts = opts.GlobalConfig.Prompts.Planner
 	}
-	pl := planner.NewClient(planner.ClientConfig{
-		Model:             models.orchestrator.resolved,
-		Extras:            models.orchestrator.extras,
-		Alias:             models.orchestrator.alias,
-		Verbose:           cfg.verbose,
-		DryRun:            cfg.dryRun,
-		InternetAccess:    opts.GlobalConfig.Environment != nil && opts.GlobalConfig.Environment.InternetAccess,
-		RequestTimeoutSec: cfg.timeoutPerTurn,
-		RepoRoot:          repoRoot,
-		SessionID:         sessionID,
-		PlannerOverlay:    plannerOverlay,
-		Prompts:           plannerPrompts,
-	})
+	var pl Planner
+	if opts.PlannerOverride != nil {
+		pl = opts.PlannerOverride
+	} else {
+		pl = planner.NewClient(planner.ClientConfig{
+			Model:             models.orchestrator.resolved,
+			Extras:            models.orchestrator.extras,
+			Alias:             models.orchestrator.alias,
+			Verbose:           cfg.verbose,
+			DryRun:            cfg.dryRun,
+			InternetAccess:    opts.GlobalConfig.Environment != nil && opts.GlobalConfig.Environment.InternetAccess,
+			RequestTimeoutSec: cfg.timeoutPerTurn,
+			RepoRoot:          repoRoot,
+			SessionID:         sessionID,
+			PlannerOverlay:    plannerOverlay,
+			Prompts:           plannerPrompts,
+		})
+	}
 
 	display.StartSession(goal)
 	if resumeMode {
 		if display != nil {
 			display.WriteString("Resuming session " + sessionID + " ...")
 		} else {
-			fmt.Fprintf(os.Stdout, "Resuming session %s ...\n", sessionID)
+			fmt.Fprintf(diagWriter, "Resuming session %s ...\n", sessionID)
 		}
 	}
 	sessionClosed := false
@@ -666,8 +674,19 @@ func runSession(ctx context.Context, opts Options) Result {
 			}
 			turnInfo["resume_prompt"] = true
 		}
+		if resumableShellAgent && step == loadedState.TurnsCompleted+1 {
+			recoveredQuestion := ExtractResumableWorkRequestQuestion(conv)
+			if recoveredQuestion != "" {
+				decision = planner.DecisionAskWorker
+				question = recoveredQuestion
+				resumableShellAgent = false
+				perr = nil
+				goto PostPlan
+			}
+		}
 		planCtx = attachTrajectory(planCtx, trajectoryWriter, parentSpanID)
 		decision, question, perr = pl.Plan(planCtx, conv, goal, trFull, step, cfg.maxSteps)
+	PostPlan:
 		if trimmedResumePrompt != "" {
 			resumePrompt = ""
 		}
@@ -842,6 +861,9 @@ func runSession(ctx context.Context, opts Options) Result {
 			plannerProgress:             plannerProgress,
 			display:                     display,
 			diagWriter:                  diagWriter,
+			hasNewInput:                 bootstrap.hasNewInput,
+			isResumingTurn:              resumableShellAgent,
+			shellAgentInterruptStep:     bootstrap.shellAgentInterruptStep,
 			sessTelemetry:               sessTelemetry,
 			turn:                        turn,
 			turnDecision:                turnDecision,

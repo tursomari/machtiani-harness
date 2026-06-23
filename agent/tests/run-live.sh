@@ -2978,6 +2978,168 @@ test_code_resume_without_mode_no_forge() {
   echo "Passed: $case_id" >&2
 }
 
+# test_shell_agent_step_counter_resume proves step-level resume deterministically.
+# It starts a shell-agent session, interrupts with SIGINT, extracts the saved
+# step_counter and messages from the resume checkpoint, then resumes and
+# verifies the resume stdout is non-empty.
+test_shell_agent_step_counter_resume() {
+  local case_id="shell-agent-step-counter-resume"
+  if [[ "$LIVE_MODE" != true ]]; then
+    echo "Skipping $case_id (LIVE_MODE not true)" >&2
+    return 0
+  fi
+
+  local session_id="test-${case_id}-$(date +%s)"
+  local out_dir="$(pwd)/test-out-${session_id}"
+  mkdir -p "$out_dir"
+  local stdout_init="$out_dir/stdout-init-${session_id}.txt"
+  local stderr_init="$out_dir/stderr-init-${session_id}.txt"
+  local stdout_resume="$out_dir/stdout-resume-${session_id}.txt"
+  local stderr_resume="$out_dir/stderr-resume-${session_id}.txt"
+  local resume_file=""
+  local saved_step=""
+  local saved_msgs_len=""
+  local resume_start_step=""
+  local expected_step=""
+  local INTERRUPT_STEP=1
+  local rc=0
+
+  # Clean up stale session locks from previous runs
+  find "$REPO_ROOT/.machtiani/tmp" -name "session.lock" -delete 2>/dev/null || true
+  # Clean stale resume files from /tmp
+  find /tmp -maxdepth 1 -name "agent-*-resume.json" -delete 2>/dev/null || true
+
+  echo "Running shell-agent-step-counter-resume case (phase 1: interrupt step)..." >&2
+
+  pushd "$REPO_ROOT" >/dev/null
+  set +e
+  # timeout kills the process after checkpoint to prevent cleanup from deleting the resume file
+  timeout 45s "$MCT_AGENT" run \
+    --max-steps 5 \
+    --mode test-blocking \
+    --model "$TEST_MODEL_ALIAS" \
+    --orch-model "$TEST_MODEL_ALIAS" \
+    --file-discovery-model "$TEST_MODEL_ALIAS" \
+    --shell-agent-interrupt-step $INTERRUPT_STEP \
+    --text "Run a bash command to read agent/internal/session/state.go, then after that command completes, run a second bash command to read agent/internal/session/config.go. Use separate command blocks." \
+    > "$stdout_init" 2> "$stderr_init"
+  rc=$?
+  set -e
+  popd >/dev/null
+
+  if [[ $rc -ne 0 && $rc -ne 124 ]]; then
+    echo "FAIL: initial run failed (rc=$rc): $case_id" >&2
+    cat "$stderr_init" >&2 || true
+    return 1
+  fi
+
+  local agent_session
+  agent_session=$(grep -m1 "^Session:" "$stderr_init" | awk "{print \$2}" || true)
+  if [[ -z "$agent_session" ]]; then
+    echo "Failed to parse session ID for $case_id" >&2
+    cat "$stderr_init" >&2 || true
+    return 1
+  fi
+  echo "Captured session ID: $agent_session" >&2
+
+  local sessions_root="$REPO_ROOT/.machtiani/sessions"
+  local session_dir="$sessions_root/$agent_session"
+  local shell_agent_dir="$session_dir/shell-agent"
+
+  # Look for resume file: first in /tmp/${agent_session}-resume.json
+  resume_file="/tmp/${agent_session}-resume.json"
+  if [[ ! -s "$resume_file" ]]; then
+    # Fallback: check sessions_dir/agent_session/shell-agent/*-resume.json
+    if [[ -d "$shell_agent_dir" ]]; then
+      resume_file=$(find "$shell_agent_dir" -name "*-resume.json" 2>/dev/null | head -1)
+    fi
+  fi
+
+  if [[ -z "$resume_file" || ! -s "$resume_file" ]]; then
+    echo "FAIL: resume file not found after interrupt" >&2
+    return 1
+  fi
+
+  # Extract saved_step from resume_state.step_counter using python3
+  saved_step=$("$PYTHON_BIN" - "$resume_file" <<'PY'
+import json, sys
+with open(sys.argv[1]) as f:
+    data = json.load(f)
+try:
+    step = data['resume_state']['step_counter']
+except (KeyError, TypeError):
+    step = 0
+print(step)
+PY
+  )
+  if [[ -z "$saved_step" ]]; then
+    echo "FAIL: could not extract step_counter from resume file $resume_file" >&2
+    return 1
+  fi
+
+  # Assert saved_step equals $INTERRUPT_STEP
+  if [[ "$saved_step" -ne "$INTERRUPT_STEP" ]]; then
+    echo "FAIL: saved step_counter is $saved_step, expected $INTERRUPT_STEP" >&2
+    return 1
+  fi
+  echo "Evidence: saved step_counter from resume file: $saved_step" >&2
+
+  # Extract messages array length using python3
+  saved_msgs_len=$("$PYTHON_BIN" - "$resume_file" <<'PY'
+import json, sys
+with open(sys.argv[1]) as f:
+    data = json.load(f)
+try:
+    msgs = data.get('messages', [])
+    length = len(msgs)
+except Exception:
+    length = 0
+print(length)
+PY
+  )
+  if [[ -z "$saved_msgs_len" || "$saved_msgs_len" -le 0 ]]; then
+    echo "FAIL: messages array is empty or missing in resume file $resume_file" >&2
+    return 1
+  fi
+  echo "Evidence: messages array length: $saved_msgs_len" >&2
+
+  cp "${resume_file}" "${resume_file}.bak"
+
+  echo "Running shell-agent-step-counter-resume case (phase 2: resume)..." >&2
+
+  pushd "$REPO_ROOT" >/dev/null
+  set +e
+  timeout 300s "$MCT_AGENT" run \
+    --max-steps 3 \
+    --session-id "$agent_session" \
+    --mode test-blocking \
+    --model "$TEST_MODEL_ALIAS" \
+    --orch-model "$TEST_MODEL_ALIAS" \
+    --file-discovery-model "$TEST_MODEL_ALIAS" \
+    > "$stdout_resume" 2> "$stderr_resume"
+  rc=$?
+  set -e
+  popd >/dev/null
+
+  if [[ $rc -ne 0 ]]; then
+    echo "FAIL: resume run (rc=$rc): $case_id" >&2
+    cat "$stderr_resume" >&2 || true
+    return 1
+  fi
+
+  # Assert resume stdout is non-empty
+  if [[ ! -s "$stdout_resume" ]]; then
+    echo "FAIL: resume stdout is empty" >&2
+    return 1
+  fi
+
+  if [[ "${KEEP_TEST_CONFIG:-}" != "true" ]]; then
+    rm -rf "$out_dir"
+  fi
+
+  echo "Passed: $case_id (step-level resume: saved_step=$saved_step)" >&2
+}
+
 # test_finalize_reminder verifies that the shell-agent respects
 # finalize_remaining_steps by issuing a reminder when remaining steps
 # fall at or below the threshold.
@@ -3628,6 +3790,7 @@ declare -A TESTS=(
   ["test_code_forge_resume_without_mode"]="test_code_forge_resume_without_mode"
   ["test_code_resume_without_mode_no_forge"]="test_code_resume_without_mode_no_forge"
   ["test_finalize_reminder"]="test_finalize_reminder"
+  ["test_shell_agent_step_counter_resume"]="test_shell_agent_step_counter_resume"
   ["test_enforce_early_commands"]="run_enforce_early_commands_case"
 )
 
@@ -3671,6 +3834,7 @@ if [[ "$LIVE_MODE" == true ]]; then
   test_code_forge_resume_without_mode
   test_code_resume_without_mode_no_forge
   test_finalize_reminder
+  test_shell_agent_step_counter_resume
 fi
 
 run_happy_case "models-per-component" 3 \

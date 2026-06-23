@@ -5,6 +5,7 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,9 +16,9 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
 	promptsvc "github.com/tursomari/machtiani/agent/internal/mct/prompt"
-	"github.com/tursomari/machtiani/agent/internal/planner"
 	"github.com/tursomari/machtiani/agent/internal/runner"
 	shellagent "github.com/tursomari/machtiani/agent/internal/shell-agent"
+	"github.com/tursomari/machtiani/agent/internal/shell-agent/pkg/minisweagent"
 	"github.com/tursomari/machtiani/agent/internal/trajectory"
 	"github.com/tursomari/machtiani/agent/internal/transcript"
 	"github.com/tursomari/machtiani/agent/internal/ui"
@@ -52,6 +53,9 @@ type runTurnEnv struct {
 	plannerProgress             *plannerProgressTracker
 	display                     ui.SessionDisplay
 	diagWriter                  io.Writer
+	hasNewInput                 bool // from Options; propagated to TurnContext for ResumeAttempt
+	isResumingTurn              bool // set when resumableShellAgent is true; triggers TUI replay
+	shellAgentInterruptStep     int
 	sessTelemetry               *sessionTelemetry
 	turn                        *turnTelemetry
 	turnDecision                string
@@ -62,7 +66,7 @@ type runTurnEnv struct {
 	interruptedResult           func(error) Result
 	isContextCancelled          func(error) bool
 	mctRunner                   *runner.Runner
-	pl                          *planner.Client
+	pl                          Planner
 	tr                          *transcript.Transcript
 	recorder                    *conversationRecorder
 	orchPromptOpts              **ui.PromptOptions
@@ -190,6 +194,9 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 		orchPromptOpts = *env.orchPromptOpts
 	}
 	stream := env.display.BeginPrompt(question, orchPromptOpts)
+	if env.isResumingTurn {
+		replayShellAgentActions(env.display, env.diagWriter, env.sessionID, env.step)
+	}
 	if runSplitShell {
 		runNoShell := true
 
@@ -204,10 +211,15 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 		if shellAskTrimmed == "" {
 			close(shellDone)
 		} else {
+			env.recorder.SetShellAgentMetadata("", true)
+			trajPath := fmt.Sprintf("%s/shell-agent/%d", env.sessionID, env.step)
+			if err := env.recorder.PreWriteTurn(env.step, shellAskTrimmed, trajPath); err != nil {
+				fmt.Fprintf(env.diagWriter, "Warning: pre-write work_request for shell-agent: %v\n", err)
+			}
 			ctxShell, cancelShell := makeTurnContext(env.rootCtx, env.cfg.timeoutPerTurn)
 			ctxShell = attachTrajectory(ctxShell, env.trajectoryWriter, env.parentSpanID)
 			shellCancel = cancelShell
-			shellAgentSessionID := fmt.Sprintf("%s/shell-agent/%d", env.sessionID, env.step)
+			sasID := fmt.Sprintf("%s/shell-agent/%d", env.sessionID, env.step)
 			shellOpts := promptsvc.RunOptions{
 				Prompt:               shellAskTrimmed,
 				Mode:                 "answer-only",
@@ -220,7 +232,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 				MaxInputTokens:       env.cfg.maxInputTokens,
 				ShellAgent:           true,
 				ShellAgentModel:      strings.TrimSpace(env.mctRunner.ShellAgentModel),
-				ShellAgentSessionID:  shellAgentSessionID,
+				ShellAgentSessionID:  sasID,
 				GlobalConfigPath:     env.mctRunner.GlobalConfigPath,
 				PersistTmpData:       env.mctRunner.PersistTmpData,
 				SessionTempRoot:      env.mctRunner.SessionTempRoot,
@@ -231,9 +243,9 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 			}
 			var req shellagent.Request
 			if env.mctRunner.ShellAgentLibrary != nil {
-				tc := &TurnContext{TurnIndex: env.step, Conversation: env.recorder, ShellAgentLib: env.mctRunner.ShellAgentLibrary}
+				tc := &TurnContext{TurnIndex: env.step, Conversation: env.recorder, ShellAgentLib: env.mctRunner.ShellAgentLibrary, HasNewInput: env.hasNewInput, ShellAgentInterruptStep: env.shellAgentInterruptStep}
 				var err error
-				req, err = tc.buildShellAgentRequest(shellAskTrimmed, shellAgentSessionID, env.cfg.verbose, env.cfg.maxInputTokens)
+				req, err = tc.buildShellAgentRequest(shellAskTrimmed, env.sessionID, env.cfg.verbose, env.cfg.maxInputTokens)
 				if err == nil {
 					shellOpts.ShellAgentRequest = &req
 				}
@@ -373,7 +385,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 		}
 		return turnExecutionResult{action: turnLoopAskWorker, shellAgentUsed: shellAgentUsedThisTurn}
 	}
-	shellAgentSessionID := fmt.Sprintf("%s/shell-agent/%d", env.sessionID, env.step)
+	sasID := fmt.Sprintf("%s/shell-agent/%d", env.sessionID, env.step)
 	input := runner.PromptInput{
 		Prompt:             question,
 		Mode:               "default",
@@ -381,18 +393,23 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 		OnStreamHeader:     func(s string) { stream.OnChunk(s) },
 		OnStreamToken:      func(s string) { stream.OnChunk(s) },
 		MaxInputTokens:     env.cfg.maxInputTokens,
-		ShellAgentSessionID: shellAgentSessionID,
+		ShellAgentSessionID: sasID,
 		ResponseDirectives: append([]string(nil), env.mctResponseDirectives...),
 	}
 	if useShellAgent && env.mctRunner.ShellAgentLibrary != nil {
-		tc := &TurnContext{TurnIndex: env.step, Conversation: env.recorder, ShellAgentLib: env.mctRunner.ShellAgentLibrary}
-		req, err := tc.buildShellAgentRequest(question, shellAgentSessionID, env.cfg.verbose, env.cfg.maxInputTokens)
+		tc := &TurnContext{TurnIndex: env.step, Conversation: env.recorder, ShellAgentLib: env.mctRunner.ShellAgentLibrary, HasNewInput: env.hasNewInput, ShellAgentInterruptStep: env.shellAgentInterruptStep}
+		req, err := tc.buildShellAgentRequest(question, env.sessionID, env.cfg.verbose, env.cfg.maxInputTokens)
 		if err == nil {
 			input.ShellAgentRequest = &req
 		}
 		if err != nil && env.cfg.verbose {
 			fmt.Fprintln(env.diagWriter, "shell-agent library: build request:", err)
 		}
+	}
+	env.recorder.SetShellAgentMetadata("", true)
+	trajPath := fmt.Sprintf("%s/shell-agent/%d", env.sessionID, env.step)
+	if err := env.recorder.PreWriteTurn(env.step, question, trajPath); err != nil {
+		fmt.Fprintf(env.diagWriter, "Warning: pre-write work_request for shell-agent: %v\n", err)
 	}
 	ctx2, cancel2 := makeTurnContext(env.rootCtx, env.cfg.timeoutPerTurn)
 	ctx2 = attachTrajectory(ctx2, env.trajectoryWriter, env.parentSpanID)
@@ -489,6 +506,9 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 		env.turnInfo[k] = v
 	}
 	*env.turnsCompleted++
+	if strings.TrimSpace(result.ShellAgentTrajectoryPath) != "" {
+		env.recorder.SetShellAgentMetadata(result.ShellAgentTrajectoryPath, false)
+	}
 	
 	finishTurn(env.sessTelemetry, env.turn, env.turnDecision, "success", env.turnInfo, nil)
 	if *env.turnsCompleted == env.cfg.maxSteps {
@@ -500,9 +520,11 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 
 // TurnContext bundles turn-scoped data for shell-agent request construction.
 type TurnContext struct {
+	HasNewInput  bool // from Options; determines ResumeAttempt on shellagent.Request
 	TurnIndex    int
 	Conversation *conversationRecorder
 	ShellAgentLib *shellagent.ShellAgentLibrary
+	ShellAgentInterruptStep int
 }
 
 // buildShellAgentRequest constructs a shellagent.Request from the TurnContext
@@ -566,7 +588,64 @@ func (tc *TurnContext) buildShellAgentRequest(task string, sessionID string, ver
 		EnforceEarlyCommands:   tc.ShellAgentLib.EnforceEarlyCommands,
 		AnswerTag:              tc.ShellAgentLib.AnswerTag,
 		CommandTag:             tc.ShellAgentLib.CommandTag,
+		// ResumeAttempt is true when no new CLI input was provided, false when -t or -f were given.
+		ResumeAttempt: !tc.HasNewInput,
+		InterruptStep: tc.ShellAgentInterruptStep,
 	}
 
 	return req, nil
+}
+
+// replayShellAgentActions replays shell-agent command steps from a saved
+// resume file into the TUI display so the user sees what happened before
+// the interrupt when resuming.
+func replayShellAgentActions(display ui.SessionDisplay, diagWriter io.Writer, sessionID string, step int) error {
+	resumePath := filepath.Join(os.TempDir(), sessionID+"-resume.json")
+
+	// Load the resume file as a raw trajectory (avoid importing internal/run).
+	data, err := os.ReadFile(resumePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		fmt.Fprintf(diagWriter, "Warning: unable to load shell-agent resume state for replay: %v\n", err)
+		return nil
+	}
+
+	var traj struct {
+		Messages []minisweagent.Message `json:"messages"`
+	}
+	if err := json.Unmarshal(data, &traj); err != nil {
+		fmt.Fprintf(diagWriter, "Warning: unable to parse shell-agent resume state for replay: %v\n", err)
+		return nil
+	}
+
+	cmdSteps := 0
+	for _, msg := range traj.Messages {
+		if msg.Role == "assistant" && strings.Contains(msg.Content, "<command") {
+			cmdSteps++
+		}
+	}
+
+	if cmdSteps == 0 {
+		return nil
+	}
+
+	cmdIndex := 0
+	for _, msg := range traj.Messages {
+		switch msg.Role {
+		case "assistant":
+			if strings.Contains(msg.Content, "<command") {
+				cmdIndex++
+				line := fmt.Sprintf("[shell step %d/%d cmd %d] %s", cmdIndex, cmdSteps, cmdIndex, strings.TrimSpace(msg.Content))
+				display.StreamAction(line)
+			}
+		case "tool", "user":
+			if trimmed := strings.TrimSpace(msg.Content); trimmed != "" {
+				display.StreamAction(trimmed)
+			}
+		}
+	}
+
+	return nil
 }

@@ -1,9 +1,9 @@
 package session
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -440,21 +440,11 @@ func TestPersistSessionStateInterrupted(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 
-	// Capture stdout to verify the resume hint is printed.
-	origStdout := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-	done := make(chan []byte)
-	go func() {
-		data, _ := io.ReadAll(r)
-		done <- data
-	}()
+	// Capture diagWriter output to verify the resume hint is printed.
+	var diagBuf bytes.Buffer
+	runState.persistSessionState(nil, &diagBuf)
 
-	runState.persistSessionState(nil, os.Stderr)
-
-	w.Close()
-	stdout := string(<-done)
-	os.Stdout = origStdout
+	stdout := diagBuf.String()
 
 	// Verify state file exists and is loadable.
 	loaded, err := LoadSessionState(sessionID)
@@ -609,24 +599,12 @@ func TestPersistSessionStateSaveFailure(t *testing.T) {
 		interrupted:    false,
 	}
 
-	// Capture stderr to verify the warning is printed.
-	origStderr := os.Stderr
-	r, w, _ := os.Pipe()
-	os.Stderr = w
-	done := make(chan []byte)
-	go func() {
-		data, _ := io.ReadAll(r)
-		done <- data
-	}()
+	// Inject a bytes.Buffer as the diagWriter to capture the warning directly.
+	var diagBuf bytes.Buffer
+	runState.persistSessionState(nil, &diagBuf)
 
-	// Should not panic.
-	runState.persistSessionState(nil, os.Stderr)
-
-	w.Close()
-	stderr := string(<-done)
-	os.Stderr = origStderr
-
-	if !strings.Contains(stderr, "Warning: failed to save session state") {
-		t.Fatalf("expected save failure warning in stderr, got: %s", stderr)
+	output := diagBuf.String()
+	if !strings.Contains(output, "Warning: failed to save session state") {
+		t.Fatalf("expected save failure warning in diagWriter, got: %s", output)
 	}
 }

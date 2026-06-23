@@ -49,6 +49,7 @@ type Config struct {
 	PromptText            string
 	Mode                  string
 	ModeInstructionDir    string
+	ShellAgentInterruptStep int
 }
 
 type BuildInfo struct {
@@ -75,6 +76,9 @@ type Options struct {
 	ProcessTimerManager *ui.ProcessTimerManager
 	Display             ui.SessionDisplay
 	Diagnostics         io.Writer
+	PlannerOverride     Planner
+	HasNewInput         bool // true when -t/-f provided on resume (shell-agent starts fresh, no resume attempt)
+	ShellAgentInterruptStep int  // > 0 triggers deterministic interrupt after this many shell-agent steps
 }
 
 type Result struct {

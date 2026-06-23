@@ -32,7 +32,7 @@ func (r *runLifecycleState) completeSession(display ui.SessionDisplay, diagWrite
 	state := r.baseSessionState()
 	r.pendingState = &state
 	r.hydrateState(r.pendingState, diagWriter)
-	r.printResumeHint(display, "=== SESSION COMPLETE ===", r.turnsCompleted)
+	r.printResumeHint(display, diagWriter, "=== SESSION COMPLETE ===", r.turnsCompleted)
 	return nil
 }
 

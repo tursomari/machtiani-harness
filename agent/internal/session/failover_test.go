@@ -1,6 +1,9 @@
 package session
 
 import (
+	"bytes"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/tursomari/machtiani/agent/internal/trajectory"
@@ -86,5 +89,25 @@ func TestFailoverLogTrackerSuppressesDuplicates(t *testing.T) {
 	msg = tracker.process(endEvent)
 	if msg == "" {
 		t.Fatalf("expected recovery message")
+	}
+}
+
+func TestStartLLMFailoverLoggerDiagWriterCapturesListenerError(t *testing.T) {
+	// Use a non-existent trajectory file path so Subscribe fails immediately.
+	missingPath := filepath.Join(t.TempDir(), "does-not-exist.jsonl")
+
+	var diagBuf bytes.Buffer
+	cancel, done, err := startLLMFailoverLogger(&mockDisplay{}, missingPath, &diagBuf)
+	if err != nil {
+		t.Fatalf("startLLMFailoverLogger: %v", err)
+	}
+	defer cancel()
+
+	// Wait for the goroutine to exit.
+	<-done
+
+	output := diagBuf.String()
+	if !strings.Contains(output, "[trajectory] failover listener stopped") {
+		t.Fatalf("expected listener stopped message in diagWriter, got: %s", output)
 	}
 }

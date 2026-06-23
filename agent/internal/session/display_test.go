@@ -68,7 +68,8 @@ func TestSessionRunWithCustomDiagnosticsCapturesOutput(t *testing.T) {
 
 // mockDisplay is a no-op implementation of ui.SessionDisplay used for testing.
 type mockDisplay struct {
-	startedGoal string
+	startedGoal   string
+	streamActions []string
 }
 
 func (m *mockDisplay) StartSession(goal string)              { m.startedGoal = goal }
@@ -77,7 +78,9 @@ func (m *mockDisplay) BeginPrompt(_ string, _ *ui.PromptOptions) ui.PromptStream
 	return &mockPromptStream{}
 }
 func (m *mockDisplay) ShowFinal(_ string)                                    {}
-func (m *mockDisplay) StreamAction(_ string)                                 {}
+func (m *mockDisplay) StreamAction(line string) {
+	m.streamActions = append(m.streamActions, line)
+}
 func (m *mockDisplay) RenderModePlan(_ []ui.ModeTaskDisplay)                 {}
 func (m *mockDisplay) UpdateModeTaskStatus(_ int, _ string, _ string)        {}
 func (m *mockDisplay) Notify(_ string)                                       {}

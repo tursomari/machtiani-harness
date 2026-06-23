@@ -11,6 +11,7 @@ import (
 
 	"github.com/tursomari/machtiani/agent/internal/conversation"
 	"github.com/tursomari/machtiani/agent/internal/llm"
+	"github.com/tursomari/machtiani/agent/internal/planner"
 	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
 	"github.com/tursomari/machtiani/agent/internal/runner"
 	"github.com/tursomari/machtiani/agent/internal/tempdir"
@@ -18,6 +19,13 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/transcript"
 	"github.com/tursomari/machtiani/agent/internal/ui"
 )
+
+type Planner interface {
+	Plan(ctx context.Context, conv *conversation.Conversation, goal string, transcript string, step, maxSteps int) (planner.Decision, string, error)
+	Finalize(ctx context.Context, conv *conversation.Conversation, goal string) (string, error)
+	UpdateProgress(progress planner.Progress)
+	AnalyzeUserDirectedAsk(ctx context.Context, conv *conversation.Conversation, goal, ask string, step, maxSteps int) (planner.UserDirectedAskOutcome, error)
+}
 
 type runBootstrap struct {
 	opts                 Options
@@ -32,10 +40,14 @@ type runBootstrap struct {
 	conversationPath     string
 	resumeMode           bool
 	loadedState          *SessionState
-	resumeSuspendedInput *SuspendedUserInputState
-	modeInstructions     llm.ModeInstructions
-	modeInstructionPath  string
-	runState             *runLifecycleState
+	resumeSuspendedInput              *SuspendedUserInputState
+	modeInstructions                  llm.ModeInstructions
+	modeInstructionPath               string
+	runState                          *runLifecycleState
+	resumableShellAgent               bool
+	resumableShellAgentTrajectoryPath string
+	hasNewInput                     bool // from Options; determines shell-agent ResumeAttempt
+	shellAgentInterruptStep         int  // from Options; deterministic interrupt step for shell agent
 }
 
 type sessionEnvironmentBootstrap struct {
@@ -54,8 +66,11 @@ type transcriptBootstrap struct {
 }
 
 func prepareRunBootstrap(rootCtx context.Context, opts Options, diagWriter io.Writer) (*runBootstrap, Result, bool) {
+	cfgInput := opts.Config
+	sessionID := strings.TrimSpace(cfgInput.SessionID)
+
 	inputPrompt := strings.TrimSpace(opts.Goal)
-	if inputPrompt == "" {
+	if inputPrompt == "" && sessionID == "" {
 		fmt.Fprintln(diagWriter, "Error: empty issue/question provided")
 		return nil, Result{ExitCode: 2, Err: errors.New("empty goal")}, false
 	}
@@ -67,9 +82,6 @@ func prepareRunBootstrap(rootCtx context.Context, opts Options, diagWriter io.Wr
 	taskDescription := opts.TaskDescription
 	plannerOverlay := opts.PlannerOverlay
 	goal := inputPrompt
-
-	cfgInput := opts.Config
-	sessionID := strings.TrimSpace(cfgInput.SessionID)
 	resumeMode := false
 	var loadedState *SessionState
 	resumePrompt := ""
@@ -165,9 +177,9 @@ func prepareRunBootstrap(rootCtx context.Context, opts Options, diagWriter io.Wr
 		modeInstructionPath = doc.Path
 	}
 
-	runState := newRunLifecycleState(rootCtx, cfg, sessionID, goal, originalPrompt, taskDescription, plannerOverlay, modeInstructionPath, loadedState)
+	runState := newRunLifecycleState(rootCtx, cfg, sessionID, goal, originalPrompt, taskDescription, plannerOverlay, modeInstructionPath, opts.ShellAgentInterruptStep, loadedState)
 
-	return &runBootstrap{
+	bootstrap := &runBootstrap{
 		opts:                 opts,
 		cfg:                  cfg,
 		sessionID:            sessionID,
@@ -184,7 +196,15 @@ func prepareRunBootstrap(rootCtx context.Context, opts Options, diagWriter io.Wr
 		modeInstructions:     modeInstructions,
 		modeInstructionPath:  modeInstructionPath,
 		runState:             runState,
-	}, Result{}, true
+		shellAgentInterruptStep: opts.ShellAgentInterruptStep,
+	}
+	if loadedState != nil && loadedState.ShellAgentResumable {
+		bootstrap.resumableShellAgent = true
+		bootstrap.resumableShellAgentTrajectoryPath = loadedState.ShellAgentTrajectoryPath
+		bootstrap.hasNewInput = opts.HasNewInput
+		fmt.Fprintf(diagWriter, "resumable shell-agent work request detected for session %s at %s\n", sessionID, loadedState.ShellAgentTrajectoryPath)
+	}
+	return bootstrap, Result{}, true
 }
 
 func loadedStateSuspendedInput(state *SessionState) *SuspendedUserInputState {
@@ -359,7 +379,7 @@ func loadResumeTranscript(cfg legacyConfig, loadedState *SessionState, resumeMod
 	return rendered
 }
 
-func newRunLifecycleState(rootCtx context.Context, cfg legacyConfig, sessionID, goal, originalPrompt, taskDescription, plannerOverlay, modeInstructionPath string, loadedState *SessionState) *runLifecycleState {
+func newRunLifecycleState(rootCtx context.Context, cfg legacyConfig, sessionID, goal, originalPrompt, taskDescription, plannerOverlay, modeInstructionPath string, interruptStep int, loadedState *SessionState) *runLifecycleState {
 	turnsCompleted := 0
 	if loadedState != nil && loadedState.TurnsCompleted > 0 {
 		turnsCompleted = loadedState.TurnsCompleted
@@ -386,8 +406,9 @@ func newRunLifecycleState(rootCtx context.Context, cfg legacyConfig, sessionID, 
 		modeInstructionPath: modeInstructionPath,
 		plannerProgress:     plannerProgress,
 		suspendedUserInput:  loadedStateSuspendedInput(loadedState),
-		sessionStatus:       "error",
-		turnsCompleted:      turnsCompleted,
+		sessionStatus:           "error",
+		turnsCompleted:          turnsCompleted,
+		shellAgentInterruptStep: interruptStep,
 	}
 }
 
@@ -422,6 +443,36 @@ func newConversationRecorder(tr *transcript.Transcript, sessionID, conversationG
 func (c *conversationRecorder) SetShellAgentMetadata(trajectoryPath string, resumable bool) {
 	c.shellAgentTrajectoryPath = trajectoryPath
 	c.shellAgentResumable = resumable
+}
+
+func (c *conversationRecorder) PreWriteTurn(step int, question string, shellAgentTrajectoryPath string) error {
+	if c.conversation == nil {
+		return nil
+	}
+	shellAgentSessionID := fmt.Sprintf("%s/shell-agent/%d", c.sessionID, step)
+	c.conversation.AddMessage("assistant", question, map[string]any{
+		"type":                        "work_request",
+		"turn":                        step,
+		"decision":                    "ask",
+		"shell_agent_session_id":       shellAgentSessionID,
+		"shell_agent_trajectory_path": shellAgentTrajectoryPath,
+		"shell_agent_resumable":       true,
+	})
+	rendered, delta, err := c.renderDelta()
+	if errors.Is(err, errConversationTranscriptDesync) {
+		c.conversationRendered = rendered
+		return c.Save()
+	}
+	if err != nil {
+		return err
+	}
+	if delta != "" && c.tr != nil {
+		if err := c.tr.AppendBlock(delta); err != nil {
+			return err
+		}
+	}
+	c.conversationRendered = rendered
+	return c.Save()
 }
 
 func (c *conversationRecorder) Load() error {
@@ -511,7 +562,7 @@ func (c *conversationRecorder) renderDelta() (string, string, error) {
 }
 
 func (c *conversationRecorder) WriteTurn(step int, question, savedPath string, retrieved []string, summary string, decision string) error {
-	if c.conversation == nil || c.tr == nil {
+	if c.conversation == nil {
 		if c.tr == nil {
 			return nil
 		}
@@ -536,8 +587,10 @@ func (c *conversationRecorder) WriteTurn(step int, question, savedPath string, r
 	})
 	rendered, delta, err := c.renderDelta()
 	if errors.Is(err, errConversationTranscriptDesync) {
-		if err := c.tr.WriteTurn(step, question, savedPath, retrieved, summary, decision); err != nil {
-			return err
+		if c.tr != nil {
+			if err := c.tr.WriteTurn(step, question, savedPath, retrieved, summary, decision); err != nil {
+				return err
+			}
 		}
 		c.conversationRendered = rendered
 		return c.Save()
@@ -545,7 +598,7 @@ func (c *conversationRecorder) WriteTurn(step int, question, savedPath string, r
 	if err != nil {
 		return err
 	}
-	if delta != "" {
+	if delta != "" && c.tr != nil {
 		if err := c.tr.AppendBlock(delta); err != nil {
 			return err
 		}
@@ -667,6 +720,114 @@ func (c *conversationRecorder) appendRawToTranscript(role, content, metaType str
 	}
 }
 
+// HasResumableShellAgentWorkRequest returns true when the conversation
+// contains at least one work_request message with shell_agent_resumable set
+// to true that has no corresponding work_result message for the same turn.
+func HasResumableShellAgentWorkRequest(conv *conversation.Conversation) bool {
+	if conv == nil {
+		return false
+	}
+	for i := len(conv.Messages) - 1; i >= 0; i-- {
+		msg := conv.Messages[i]
+		if msgMetaType(msg.Metadata) != "work_request" {
+			continue
+		}
+		if !msgMetaBool(msg.Metadata["shell_agent_resumable"]) {
+			continue
+		}
+		turn := msgTurn(msg)
+		if turn < 0 {
+			continue
+		}
+		hasResult := false
+		for j := i + 1; j < len(conv.Messages); j++ {
+			nxt := conv.Messages[j]
+			if msgMetaType(nxt.Metadata) != "work_result" {
+				continue
+			}
+			if msgTurn(nxt) == turn {
+				hasResult = true
+				break
+			}
+		}
+		if !hasResult {
+			return true
+		}
+	}
+	return false
+}
+
+// ExtractResumableWorkRequestQuestion returns the Content of a work_request
+// message that has the metadata field shell_agent_resumable set to true and
+// no corresponding work_result for the same turn. If none is found it returns
+// an empty string.
+func ExtractResumableWorkRequestQuestion(conv *conversation.Conversation) string {
+	if conv == nil {
+		return ""
+	}
+	for i := len(conv.Messages) - 1; i >= 0; i-- {
+		msg := conv.Messages[i]
+		if msgMetaType(msg.Metadata) != "work_request" {
+			continue
+		}
+		if !msgMetaBool(msg.Metadata["shell_agent_resumable"]) {
+			continue
+		}
+		turn := msgTurn(msg)
+		if turn < 0 {
+			continue
+		}
+		hasResult := false
+		for j := i + 1; j < len(conv.Messages); j++ {
+			nxt := conv.Messages[j]
+			if msgMetaType(nxt.Metadata) != "work_result" {
+				continue
+			}
+			if msgTurn(nxt) == turn {
+				hasResult = true
+				break
+			}
+		}
+		if !hasResult {
+			return msg.Content
+		}
+	}
+	return ""
+}
+
+func msgMetaType(meta map[string]any) string {
+	if meta == nil {
+		return ""
+	}
+	v, ok := meta["type"]
+	if !ok {
+		return ""
+	}
+	s, ok := v.(string)
+	if !ok {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(s))
+}
+
+func msgTurn(msg conversation.Message) int {
+	if msg.Turn != nil {
+		return *msg.Turn
+	}
+	return -1
+}
+
+func msgMetaBool(val any) bool {
+	switch v := val.(type) {
+	case bool:
+		return v
+	case string:
+		return strings.ToLower(strings.TrimSpace(v)) == "true"
+	}
+	return false
+}
+
+
 type runLifecycleState struct {
 	rootCtx             context.Context
 	cfg                 legacyConfig
@@ -688,7 +849,8 @@ type runLifecycleState struct {
 	turnsCompleted      int
 	interrupted         bool
 	pendingState        *SessionState
-	suspendedUserInput  *SuspendedUserInputState
+	suspendedUserInput     *SuspendedUserInputState
+	shellAgentInterruptStep int
 }
 
 func (r *runLifecycleState) clearSuspendedUserInput() {
@@ -733,7 +895,7 @@ func (r *runLifecycleState) isContextCancelled(err error) bool {
 	return false
 }
 
-func (r *runLifecycleState) printResumeHint(display ui.SessionDisplay, header string, turns int) {
+func (r *runLifecycleState) printResumeHint(display ui.SessionDisplay, diagWriter io.Writer, header string, turns int) {
 	if display != nil {
 		display.WriteString(header)
 		display.WriteString(fmt.Sprintf("Session ID: %s", r.sessionID))
@@ -743,13 +905,13 @@ func (r *runLifecycleState) printResumeHint(display ui.SessionDisplay, header st
 		display.WriteString(fmt.Sprintf("To continue, provide your next instruction, for example:\n  mct-agent run \"<next instruction>\" --session-id %s", r.sessionID))
 		display.WriteString("")
 	} else {
-		fmt.Fprintf(os.Stdout, "%s\nSession ID: %s\nTurns completed: %d\nGoal so far: %q\n\n", header, r.sessionID, turns, r.goal)
-		fmt.Fprintf(os.Stdout, "To continue, provide your next instruction, for example:\n  mct-agent run \"<next instruction>\" --session-id %s\n", r.sessionID)
-		fmt.Fprintln(os.Stdout)
+		fmt.Fprintf(diagWriter, "%s\nSession ID: %s\nTurns completed: %d\nGoal so far: %q\n\n", header, r.sessionID, turns, r.goal)
+		fmt.Fprintf(diagWriter, "To continue, provide your next instruction, for example:\n  mct-agent run \"<next instruction>\" --session-id %s\n", r.sessionID)
+		fmt.Fprintln(diagWriter)
 	}
 }
 
-func (r *runLifecycleState) printUserInputHint(display ui.SessionDisplay, question, context string) {
+func (r *runLifecycleState) printUserInputHint(display ui.SessionDisplay, diagWriter io.Writer, question, context string) {
 	if display != nil {
 		display.WriteString("=== USER INPUT NEEDED ===")
 		display.WriteString(fmt.Sprintf("Session ID: %s", r.sessionID))
@@ -762,14 +924,14 @@ func (r *runLifecycleState) printUserInputHint(display ui.SessionDisplay, questi
 		display.WriteString(fmt.Sprintf("To continue, answer with:\n  mct-agent run \"<your answer>\" --session-id %s", r.sessionID))
 		display.WriteString("")
 	} else {
-		fmt.Fprintln(os.Stdout, "=== USER INPUT NEEDED ===")
-		fmt.Fprintf(os.Stdout, "Session ID: %s\n", r.sessionID)
+		fmt.Fprintln(diagWriter, "=== USER INPUT NEEDED ===")
+		fmt.Fprintf(diagWriter, "Session ID: %s\n", r.sessionID)
 		if strings.TrimSpace(context) != "" {
-			fmt.Fprintf(os.Stdout, "%s\n\n", strings.TrimSpace(context))
+			fmt.Fprintf(diagWriter, "%s\n\n", strings.TrimSpace(context))
 		}
-		fmt.Fprintf(os.Stdout, "%s\n\n", strings.TrimSpace(question))
-		fmt.Fprintf(os.Stdout, "To continue, answer with:\n  mct-agent run \"<your answer>\" --session-id %s\n", r.sessionID)
-		fmt.Fprintln(os.Stdout)
+		fmt.Fprintf(diagWriter, "%s\n\n", strings.TrimSpace(question))
+		fmt.Fprintf(diagWriter, "To continue, answer with:\n  mct-agent run \"<your answer>\" --session-id %s\n", r.sessionID)
+		fmt.Fprintln(diagWriter)
 	}
 }
 
@@ -807,6 +969,11 @@ func (r *runLifecycleState) baseSessionState() SessionState {
 	if r.suspendedUserInput != nil {
 		state.SuspendedUserInput = r.suspendedUserInput.Clone()
 	}
+	if r.recorder != nil {
+		state.ShellAgentResumable = r.recorder.shellAgentResumable
+		state.ShellAgentTrajectoryPath = r.recorder.shellAgentTrajectoryPath
+	}
+	state.ShellAgentInterruptStep = r.shellAgentInterruptStep
 	return state
 }
 
@@ -852,7 +1019,7 @@ func (r *runLifecycleState) persistSessionState(display ui.SessionDisplay, diagW
 	}
 
 	if r.interrupted {
-		r.printResumeHint(display, "=== SESSION INTERRUPTED ===", r.turnsCompleted)
+		r.printResumeHint(display, diagWriter, "=== SESSION INTERRUPTED ===", r.turnsCompleted)
 	}
 }
 
@@ -901,7 +1068,7 @@ func (r *runLifecycleState) suspendForUserInput(display ui.SessionDisplay, diagW
 	state := r.baseSessionState()
 	r.pendingState = &state
 	r.hydrateState(r.pendingState, diagWriter)
-	r.printUserInputHint(display, question, context)
+	r.printUserInputHint(display, diagWriter, question, context)
 	return Result{ExitCode: 0, Status: r.sessionStatus, Turns: r.turnsCompleted, SessionID: r.sessionID}, nil
 }
 

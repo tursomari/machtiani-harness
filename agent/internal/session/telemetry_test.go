@@ -1,6 +1,7 @@
 package session
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -98,5 +99,31 @@ func TestOfflineLLMProducesTrajectoryEvidence(t *testing.T) {
 	}
 	if !retrySeen {
 		t.Fatalf("expected llm.retry event")
+	}
+}
+
+func TestSessionTelemetryDiagWriterCapturesEmitError(t *testing.T) {
+	sessionID := "test-telemetry-diag"
+	path := filepath.Join(t.TempDir(), "agent.jsonl")
+	writer, err := trajectory.New(trajectory.Config{SessionID: sessionID, Path: path, Component: "agent", ExcerptLen: 128})
+	if err != nil {
+		t.Fatalf("trajectory: %v", err)
+	}
+
+	// Close the writer so subsequent Emit calls fail.
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+
+	var diagBuf bytes.Buffer
+	cfg := legacyConfig{trajectoryExcerpt: 128}
+	sess := newSessionTelemetry(writer, sessionID, "diag goal", cfg, "", BuildInfo{}, &diagBuf)
+	if sess == nil {
+		t.Fatalf("expected session telemetry")
+	}
+
+	output := diagBuf.String()
+	if !strings.Contains(output, "[trajectory] session start emit error") {
+		t.Fatalf("expected emit error in diagWriter, got: %s", output)
 	}
 }

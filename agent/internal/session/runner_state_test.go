@@ -179,7 +179,7 @@ func TestRunLifecycleStateSuspendForUserInput(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 
-	runState := newRunLifecycleState(context.Background(), legacyConfig{}, "suspend-user-input", "Goal", "Goal", "", "", "", nil)
+	runState := newRunLifecycleState(context.Background(), legacyConfig{}, "suspend-user-input", "Goal", "Goal", "", "", "", 0, nil)
 	runState.recorder = recorder
 	runState.tr = tr
 

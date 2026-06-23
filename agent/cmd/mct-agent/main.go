@@ -199,16 +199,19 @@ func handleRunCommand(args []string) int {
 		cfg.CommandTag = "command"
 	}
 
-	// Validate goal input: exactly one of --text or --file is required.
+	// Validate goal input: --text and --file are mutually exclusive.
+	// When not resuming a session, exactly one of --text or --file is required.
 	hasText := strings.TrimSpace(cfg.PromptText) != ""
 	hasFile := strings.TrimSpace(*promptFile) != ""
 	if hasText && hasFile {
 		fmt.Fprintln(os.Stderr, "Error: --text and --file are mutually exclusive")
 		return 2
 	}
-	if !hasText && !hasFile {
-		fmt.Fprintln(os.Stderr, "Error: one of --text or --file is required")
-		return 2
+	if cfg.SessionID == "" {
+		if !hasText && !hasFile {
+			fmt.Fprintln(os.Stderr, "Error: one of --text or --file is required")
+			return 2
+		}
 	}
 
 	var goal string
@@ -233,7 +236,7 @@ func handleRunCommand(args []string) int {
 		fmt.Fprintln(os.Stderr, "Error: unexpected positional arguments for 'run' command. Use -t or --file to specify the prompt.")
 		return 2
 	}
-	if goal == "" {
+	if goal == "" && cfg.SessionID == "" {
 		fmt.Fprintln(os.Stderr, "Error: goal is empty. Provide non-empty content via -t or --file.")
 		return 2
 	}
@@ -271,10 +274,11 @@ func handleRunCommand(args []string) int {
 			BuiltAt: BuiltAt,
 			Dirty:   Dirty,
 		},
-		GlobalConfig:        globalCfg,
-		GlobalConfigPath:    configPath,
-		APIKeyOverrides:     apiOverrides,
-		ProcessTimerManager: globalTimerMgr,
+		GlobalConfig:            globalCfg,
+		GlobalConfigPath:        configPath,
+		APIKeyOverrides:         apiOverrides,
+		ProcessTimerManager:     globalTimerMgr,
+		ShellAgentInterruptStep: cfg.ShellAgentInterruptStep,
 	}
 	opts.Config.APIKeyOverrides = llm.CopyAPIKeyOverridesForRuntime(apiOverrides)
 
@@ -536,6 +540,7 @@ func configureSessionFlags(fs *pflag.FlagSet, cfg *session.Config, paramFlags, p
 	fs.StringVar(&cfg.OpenAIModel, "openai-model", "", "Direct upstream model name (deprecated; prefer --model)")
 	fs.StringVar(&cfg.SessionID, "session-id", "", "Existing session identifier to resume")
 	fs.BoolVar(&cfg.EnableTagFormat, "enable-tag-format", false, "Enable tag-format response directives and validation (experimental)")
+	fs.IntVar(&cfg.ShellAgentInterruptStep, "shell-agent-interrupt-step", 0, "deterministic interrupt after this many shell-agent steps (0 = disabled)")
 	fs.StringVar(&cfg.Mode, "mode", "", "Operating mode")
 	fs.StringVar(&cfg.ModeInstructionDir, "mode-instruction-dir", "", "Directory containing mode custom instructions (overrides config)")
 	fs.StringVarP(&cfg.PromptText, "text", "t", "", "prompt text (alternative to positional argument)")
