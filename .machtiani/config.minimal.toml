@@ -1,18 +1,27 @@
 # Minimal Machtiani configuration — enough to get started.
-# Copy to .machtiani/config.toml and adjust the model alias and provider.
+# Copy to .machtiani/config.toml or generate with: mct-agent init ...
 # For full documentation of every section and field, see config.comprehensive.toml.
 
-default_model = "foo"
+default_model = "default"
 
-[providers.openrouter]
-base_url = "https://openrouter.ai/api/v1"
-api_key = "${OPENROUTER_API_KEY}"
+[planner]
+step_limit = 110
 
-[models.foo]
-provider = "openrouter"
-model = "openai/gpt-5-nano"
+[shell-agent]
+finalize_remaining_steps = 10
+
+[providers.default]
+base_url = "https://api.example.com/v1"
+api_key = "<your-api-key>"
+
+[models.default]
+provider = "default"
+model = "<your-model>"
+
+[models.default.params.reasoning]
+effort = "medium"
 
 [environment]
 type = "local"
-timeout = 30
-internet_access = true
+timeout = 9999
+cwd = "."

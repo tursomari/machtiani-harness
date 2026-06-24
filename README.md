@@ -138,6 +138,19 @@ install -m 0755 agent/internal/mct/bin/file-discovery "$BIN_DIR/file-discovery"
 
 The manual snippets skip the ldflags metadata that the installer uses, so version commands will show `dev`/`unknown` fields—this is expected.
 
+## Quick Start
+
+Initialize a minimal configuration:
+```
+mct-agent init --provider-url https://api.example.com/v1 --api-key sk-xxx --model my-model
+```
+Then adjust settings as needed:
+```
+mct-agent config provider url https://api.example.com/v1
+mct-agent config provider reasoning high
+mct-agent config show
+```
+
 ## Global Configuration (.machtiani/config.toml)
 All binaries now read a unified TOML configuration. By default `mct-agent`, `mct`, and `shell-agent` look for:
 
