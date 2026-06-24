@@ -2022,6 +2022,29 @@ func toStringMap(v any) (map[string]any, bool) {
 	}
 }
 
+func DefaultMinimalConfig() Config {
+	return Config{
+		Listen:       "127.0.0.1:8042",
+		DefaultModel: "",
+		Planner:      &PlannerConfig{StepLimit: 110},
+		ShellAgent:   &ShellAgentConfig{FinalizeRemainingSteps: 10},
+		Environment: &EnvironmentConfig{
+			Type:           "local",
+			Timeout:        9999,
+			CWD:            ".",
+			InternetAccess: true,
+		},
+		Model:      nil,
+		Debug:      nil,
+		Prompts:    nil,
+		Ignore:     nil,
+		Workspace:  nil,
+		Mode:       nil,
+		Providers:  nil,
+		Models:     nil,
+	}
+}
+
 func NewDirectModel(baseURL, apiKey, model string) (ResolvedModel, error) {
 	base := strings.TrimSpace(baseURL)
 	key := strings.TrimSpace(apiKey)

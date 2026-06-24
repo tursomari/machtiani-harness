@@ -735,6 +735,102 @@ full_diff_note = { file = "templates/mct/full_diff_note.tpl" }
 	}
 }
 
+func TestDefaultMinimalConfig(t *testing.T) {
+	cfg := DefaultMinimalConfig()
+
+	if cfg.Listen != "127.0.0.1:8042" {
+		t.Fatalf("expected Listen 127.0.0.1:8042, got %q", cfg.Listen)
+	}
+	if cfg.DefaultModel != "" {
+		t.Fatalf("expected DefaultModel \"\", got %q", cfg.DefaultModel)
+	}
+
+	if cfg.Planner == nil {
+		t.Fatal("expected Planner to be non-nil")
+	} else {
+		if cfg.Planner.StepLimit != 110 {
+			t.Fatalf("expected Planner.StepLimit 110, got %d", cfg.Planner.StepLimit)
+		}
+		if cfg.Planner.CostLimit != 0 {
+			t.Fatalf("expected Planner.CostLimit 0, got %v", cfg.Planner.CostLimit)
+		}
+	}
+
+	if cfg.ShellAgent == nil {
+		t.Fatal("expected ShellAgent to be non-nil")
+	} else {
+		if cfg.ShellAgent.FinalizeRemainingSteps != 10 {
+			t.Fatalf("expected ShellAgent.FinalizeRemainingSteps 10, got %d", cfg.ShellAgent.FinalizeRemainingSteps)
+		}
+		if cfg.ShellAgent.LightweightMaxAttempts != 0 {
+			t.Fatalf("expected ShellAgent.LightweightMaxAttempts 0, got %d", cfg.ShellAgent.LightweightMaxAttempts)
+		}
+		if cfg.ShellAgent.StepLimit != 0 {
+			t.Fatalf("expected ShellAgent.StepLimit 0, got %d", cfg.ShellAgent.StepLimit)
+		}
+		if cfg.ShellAgent.CostLimit != 0.0 {
+			t.Fatalf("expected ShellAgent.CostLimit 0.0, got %v", cfg.ShellAgent.CostLimit)
+		}
+	}
+
+	if cfg.Environment == nil {
+		t.Fatal("expected Environment to be non-nil")
+	} else {
+		if cfg.Environment.Type != "local" {
+			t.Fatalf("expected Environment.Type local, got %q", cfg.Environment.Type)
+		}
+		if cfg.Environment.Timeout != 9999 {
+			t.Fatalf("expected Environment.Timeout 9999, got %d", cfg.Environment.Timeout)
+		}
+		if cfg.Environment.CWD != "." {
+			t.Fatalf("expected Environment.CWD \".\", got %q", cfg.Environment.CWD)
+		}
+		if !cfg.Environment.InternetAccess {
+			t.Fatal("expected Environment.InternetAccess true")
+		}
+		if cfg.Environment.MaxCommandOutputBytes != 0 {
+			t.Fatalf("expected Environment.MaxCommandOutputBytes 0, got %d", cfg.Environment.MaxCommandOutputBytes)
+		}
+		if cfg.Environment.Runtime != "" {
+			t.Fatalf("expected Environment.Runtime \"\", got %q", cfg.Environment.Runtime)
+		}
+		if cfg.Environment.TrajectoryDir != "" {
+			t.Fatalf("expected Environment.TrajectoryDir \"\", got %q", cfg.Environment.TrajectoryDir)
+		}
+		if cfg.Environment.DockerfilePath != "" {
+			t.Fatalf("expected Environment.DockerfilePath \"\", got %q", cfg.Environment.DockerfilePath)
+		}
+		if cfg.Environment.TmpRoot != "" {
+			t.Fatalf("expected Environment.TmpRoot \"\", got %q", cfg.Environment.TmpRoot)
+		}
+	}
+
+	if cfg.Model != nil {
+		t.Fatalf("expected Model to be nil, got %+v", cfg.Model)
+	}
+	if cfg.Debug != nil {
+		t.Fatalf("expected Debug to be nil, got %+v", cfg.Debug)
+	}
+	if cfg.Prompts != nil {
+		t.Fatalf("expected Prompts to be nil, got %+v", cfg.Prompts)
+	}
+	if cfg.Ignore != nil {
+		t.Fatalf("expected Ignore to be nil, got %+v", cfg.Ignore)
+	}
+	if cfg.Workspace != nil {
+		t.Fatalf("expected Workspace to be nil, got %+v", cfg.Workspace)
+	}
+	if cfg.Mode != nil {
+		t.Fatalf("expected Mode to be nil, got %+v", cfg.Mode)
+	}
+	if cfg.Providers != nil {
+		t.Fatalf("expected Providers to be nil, got %+v", cfg.Providers)
+	}
+	if cfg.Models != nil {
+		t.Fatalf("expected Models to be nil, got %+v", cfg.Models)
+	}
+}
+
 func mustWriteFile(t *testing.T, path string, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
