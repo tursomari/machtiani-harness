@@ -203,6 +203,7 @@ func handleRunCommand(args []string) int {
 	// When not resuming a session, exactly one of --text or --file is required.
 	hasText := strings.TrimSpace(cfg.PromptText) != ""
 	hasFile := strings.TrimSpace(*promptFile) != ""
+	var hasNewInput bool
 	if hasText && hasFile {
 		fmt.Fprintln(os.Stderr, "Error: --text and --file are mutually exclusive")
 		return 2
@@ -224,6 +225,14 @@ func handleRunCommand(args []string) int {
 		goal = strings.TrimSpace(string(data))
 	} else {
 		goal = strings.TrimSpace(cfg.PromptText)
+	}
+
+	if cfg.SessionID != "" {
+		hasText := strings.TrimSpace(cfg.PromptText) != ""
+		hasFile := strings.TrimSpace(*promptFile) != ""
+		if hasText || hasFile {
+			hasNewInput = true
+		}
 	}
 
 	apiOverrides, err := llm.ParseAPIKeyOverrides(*apiKeyFlags)
@@ -279,6 +288,7 @@ func handleRunCommand(args []string) int {
 		APIKeyOverrides:         apiOverrides,
 		ProcessTimerManager:     globalTimerMgr,
 		ShellAgentInterruptStep: cfg.ShellAgentInterruptStep,
+		HasNewInput:            hasNewInput,
 	}
 	opts.Config.APIKeyOverrides = llm.CopyAPIKeyOverridesForRuntime(apiOverrides)
 

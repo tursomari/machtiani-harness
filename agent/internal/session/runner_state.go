@@ -198,10 +198,11 @@ func prepareRunBootstrap(rootCtx context.Context, opts Options, diagWriter io.Wr
 		runState:             runState,
 		shellAgentInterruptStep: opts.ShellAgentInterruptStep,
 	}
-	if loadedState != nil && loadedState.ShellAgentResumable {
+	bootstrap.hasNewInput = opts.HasNewInput
+
+	if loadedState != nil && loadedState.ShellAgentResumable && !opts.HasNewInput {
 		bootstrap.resumableShellAgent = true
 		bootstrap.resumableShellAgentTrajectoryPath = loadedState.ShellAgentTrajectoryPath
-		bootstrap.hasNewInput = opts.HasNewInput
 		fmt.Fprintf(diagWriter, "resumable shell-agent work request detected for session %s at %s\n", sessionID, loadedState.ShellAgentTrajectoryPath)
 	}
 	return bootstrap, Result{}, true
