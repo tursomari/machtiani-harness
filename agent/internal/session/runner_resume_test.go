@@ -25,6 +25,7 @@ import (
 // and asserts the work request is detected as resumable.
 func TestResumeDetectsInterruptedWorkRequest(t *testing.T) {
 	conv := conversation.New("test-session-resume-detect", "Test goal for resume detection")
+	conv.ShellAgentResumable = true
 
 	conv.AddMessage("assistant", "Run a background check on the project", map[string]any{
 		"type":                        "work_request",
@@ -136,6 +137,7 @@ func (m *mockPlanner) AnalyzeUserDirectedAsk(ctx context.Context, conv *conversa
 // matches the interrupted turn.
 func TestResumeSkipsWorkRequestWhenResumable(t *testing.T) {
 	conv := conversation.New("test-session-resume-skip", "Test goal for resume skip")
+	conv.ShellAgentResumable = true
 
 	conv.AddMessage("assistant", "Run a background check on the project", map[string]any{
 		"type":                        "work_request",
@@ -512,43 +514,6 @@ func TestExtractResumableWorkRequestQuestionFromTopLevelField(t *testing.T) {
 	}
 }
 
-// TestExtractResumableWorkRequestQuestionMetadataFallback verifies that when
-// ShellAgentResumable is false (the top-level field), the function falls
-// back to scanning per-message metadata.
-func TestExtractResumableWorkRequestQuestionMetadataFallback(t *testing.T) {
-	conv := conversation.New("test-resume-metadata-fallback", "Test goal")
-
-	// ShellAgentResumable is false (zero value) – leave it as is.
-
-	conv.AddMessage("assistant", "Run a background check on the project", map[string]any{
-		"type":                        "work_request",
-		"turn":                        1,
-		"decision":                    "ask_worker",
-		"shell_agent_session_id":       "test-resume-metadata-fallback/shell-agent/1",
-		"shell_agent_trajectory_path": "/tmp/test-path",
-		"shell_agent_resumable":       true,
-	})
-
-	// No work_result for turn 1.
-
-	data, err := conv.Marshal()
-	if err != nil {
-		t.Fatalf("failed to marshal conversation: %v", err)
-	}
-	loaded, err := conversation.Unmarshal(data)
-	if err != nil {
-		t.Fatalf("failed to unmarshal conversation: %v", err)
-	}
-
-	if !HasResumableShellAgentWorkRequest(loaded) {
-		t.Fatal("expected HasResumableShellAgentWorkRequest to return true via metadata fallback")
-	}
-
-	question := ExtractResumableWorkRequestQuestion(loaded)
-	if question != "Run a background check on the project" {
-		t.Fatalf("expected ExtractResumableWorkRequestQuestion to return 'Run a background check on the project' via metadata fallback, got %q", question)
-	}
-}
 
 // TestPrepareRunBootstrapFromConversation verifies end-to-end bootstrap from a
 // Conversation with top-level fields without requiring a session-state.json
@@ -838,108 +803,4 @@ func TestResumeEndToEndWithoutSessionStateJSON(t *testing.T) {
 	}
 }
 
-// TestResumeBackwardCompatWithSessionStateJSON verifies backward
-// compatibility: when a legacy session-state.json is present on disk and
-// conversation.json has NO top-level resumability fields, prepareRunBootstrap
-// loads state from session-state.json.
-func TestResumeBackwardCompatWithSessionStateJSON(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Setenv("HOME", tmpDir)
-	oldWd, _ := os.Getwd()
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatalf("chdir: %v", err)
-	}
-	defer os.Chdir(oldWd)
 
-	sessionID := fmt.Sprintf("test-bwd-compat-%d", time.Now().UnixNano())
-
-	dir, err := artifacts.SessionDirectory(sessionID)
-	if err != nil {
-		t.Fatalf("failed to resolve session directory: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = RemoveSessionState(sessionID)
-		_ = os.RemoveAll(dir)
-	})
-
-	// Write a legacy session-state.json to disk via SaveSessionState.
-	legacyState := SessionState{
-		SessionID:      sessionID,
-		Goal:           "Backward compat goal from session-state",
-		OriginalGoal:   "Backward compat original goal",
-		OriginalPrompt: "Backward compat original prompt",
-		TurnsCompleted: 4,
-		Status:         "interrupted",
-	}
-	if err := SaveSessionState(legacyState); err != nil {
-		t.Fatalf("SaveSessionState: %v", err)
-	}
-
-	// Verify session-state.json exists on disk.
-	statePath := filepath.Join(dir, "session-state.json")
-	if _, err := os.Stat(statePath); os.IsNotExist(err) {
-		t.Fatalf("session-state.json should exist after SaveSessionState")
-	}
-
-	// Write a bare conversation.json that has NO top-level resumability
-	// fields populated – just what conversation.New produces (SessionID,
-	// OriginalGoal, empty Messages, CreatedAt, UpdatedAt). The Goal field
-	// is intentionally empty so that loadOrMigrateSessionState falls
-	// through to LoadSessionState.
-	convPath, err := artifacts.SessionConversationFile(sessionID)
-	if err != nil {
-		t.Fatalf("SessionConversationFile: %v", err)
-	}
-	if err := os.MkdirAll(filepath.Dir(convPath), 0o755); err != nil {
-		t.Fatalf("mkdir conv dir: %v", err)
-	}
-	bareConv := conversation.New(sessionID, "Backward compat original goal")
-	data, err := bareConv.Marshal()
-	if err != nil {
-		t.Fatalf("Marshal bare conversation: %v", err)
-	}
-	if err := os.WriteFile(convPath, data, 0o644); err != nil {
-		t.Fatalf("WriteFile bare conversation: %v", err)
-	}
-
-	opts := Options{
-		Config: Config{
-			SessionID: sessionID,
-		},
-		Goal:            "Backward compat goal from session-state",
-		PlannerOverride: &mockPlanner{},
-	}
-
-	bootstrap, _, ok := prepareRunBootstrap(context.Background(), opts, io.Discard)
-	if !ok {
-		t.Fatal("prepareRunBootstrap returned not ok")
-	}
-	if bootstrap == nil {
-		t.Fatal("expected non-nil bootstrap")
-	}
-	if bootstrap.loadedState == nil {
-		t.Fatal("expected non-nil loadedState in bootstrap")
-	}
-
-	loaded := bootstrap.loadedState
-
-	// Verify loadedState matches the legacy session-state.json fields.
-	if loaded.SessionID != legacyState.SessionID {
-		t.Fatalf("SessionID mismatch: got %q want %q", loaded.SessionID, legacyState.SessionID)
-	}
-	if loaded.Goal != legacyState.Goal {
-		t.Fatalf("Goal mismatch: got %q want %q", loaded.Goal, legacyState.Goal)
-	}
-	if loaded.OriginalGoal != legacyState.OriginalGoal {
-		t.Fatalf("OriginalGoal mismatch: got %q want %q", loaded.OriginalGoal, legacyState.OriginalGoal)
-	}
-	if loaded.OriginalPrompt != legacyState.OriginalPrompt {
-		t.Fatalf("OriginalPrompt mismatch: got %q want %q", loaded.OriginalPrompt, legacyState.OriginalPrompt)
-	}
-	if loaded.TurnsCompleted != legacyState.TurnsCompleted {
-		t.Fatalf("TurnsCompleted mismatch: got %d want %d", loaded.TurnsCompleted, legacyState.TurnsCompleted)
-	}
-	if loaded.Status != legacyState.Status {
-		t.Fatalf("Status mismatch: got %q want %q", loaded.Status, legacyState.Status)
-	}
-}

@@ -30,14 +30,24 @@ func TestHasNewInputPropagatesToTurnContext(t *testing.T) {
 	defer os.Chdir(oldWd)
 
 	sessionID := fmt.Sprintf("test-has-new-input-%d", time.Now().UnixNano())
-	state := SessionState{
-		SessionID:          sessionID,
-		Goal:               "test goal",
-		ShellAgentResumable: true,
-		ShellAgentTrajectoryPath: "/tmp/dummy",
+	conv := conversation.New(sessionID, "test goal")
+	conv.Goal = "test goal"
+	conv.ShellAgentResumable = true
+	conv.ShellAgentTrajectoryPath = "/tmp/dummy"
+
+	convPath, err := artifacts.SessionConversationFile(sessionID)
+	if err != nil {
+		t.Fatalf("SessionConversationFile: %v", err)
 	}
-	if err := SaveSessionState(state); err != nil {
-		t.Fatalf("SaveSessionState: %v", err)
+	if err := os.MkdirAll(filepath.Dir(convPath), 0o755); err != nil {
+		t.Fatalf("mkdir conv dir: %v", err)
+	}
+	data, err := conv.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal conversation: %v", err)
+	}
+	if err := os.WriteFile(convPath, data, 0o644); err != nil {
+		t.Fatalf("WriteFile conversation: %v", err)
 	}
 	t.Cleanup(func() {
 		_ = RemoveSessionState(sessionID)
@@ -120,14 +130,24 @@ func TestResumableShellAgentFalseWhenHasNewInput(t *testing.T) {
 	defer os.Chdir(oldWd)
 
 	sessionID := fmt.Sprintf("test-resumable-false-hni-%d", time.Now().UnixNano())
-	state := SessionState{
-		SessionID:                sessionID,
-		Goal:                     "test goal",
-		ShellAgentResumable:      true,
-		ShellAgentTrajectoryPath: "/tmp/dummy",
+	conv := conversation.New(sessionID, "test goal")
+	conv.Goal = "test goal"
+	conv.ShellAgentResumable = true
+	conv.ShellAgentTrajectoryPath = "/tmp/dummy"
+
+	convPath, err := artifacts.SessionConversationFile(sessionID)
+	if err != nil {
+		t.Fatalf("SessionConversationFile: %v", err)
 	}
-	if err := SaveSessionState(state); err != nil {
-		t.Fatalf("SaveSessionState: %v", err)
+	if err := os.MkdirAll(filepath.Dir(convPath), 0o755); err != nil {
+		t.Fatalf("mkdir conv dir: %v", err)
+	}
+	data, err := conv.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal conversation: %v", err)
+	}
+	if err := os.WriteFile(convPath, data, 0o644); err != nil {
+		t.Fatalf("WriteFile conversation: %v", err)
 	}
 	t.Cleanup(func() {
 		_ = RemoveSessionState(sessionID)
@@ -174,6 +194,9 @@ func TestResumeWithNewInputSetsHasNewInput(t *testing.T) {
 
 	// Create a conversation with an interrupted work_request.
 	conv := conversation.New(sessionID, "test goal")
+	conv.Goal = "test goal"
+	conv.ShellAgentResumable = true
+	conv.ShellAgentTrajectoryPath = "/tmp/dummy"
 	conv.AddMessage("assistant", "Run a background check on the project", map[string]any{
 		"type":                        "work_request",
 		"turn":                        1,
@@ -197,17 +220,6 @@ func TestResumeWithNewInputSetsHasNewInput(t *testing.T) {
 	}
 	if err := os.WriteFile(convPath, data, 0o644); err != nil {
 		t.Fatalf("WriteFile conversation: %v", err)
-	}
-
-	// Create and save a SessionState with ShellAgentResumable: true.
-	state := SessionState{
-		SessionID:                sessionID,
-		Goal:                     "test goal",
-		ShellAgentResumable:      true,
-		ShellAgentTrajectoryPath: "/tmp/dummy",
-	}
-	if err := SaveSessionState(state); err != nil {
-		t.Fatalf("SaveSessionState: %v", err)
 	}
 	t.Cleanup(func() {
 		_ = RemoveSessionState(sessionID)

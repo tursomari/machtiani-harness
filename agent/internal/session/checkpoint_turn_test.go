@@ -57,7 +57,7 @@ func TestCheckpointTurn_callsBothPersistMethods(t *testing.T) {
 	}
 
 	// Verify session-state.json is NOT created.
-	statePath := filepath.Join(dir, sessionStateFile)
+	statePath := filepath.Join(dir, "session-state.json")
 	if _, err := os.Stat(statePath); !os.IsNotExist(err) {
 		t.Fatalf("session-state.json unexpectedly exists after first checkpointTurn")
 	}

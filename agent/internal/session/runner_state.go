@@ -97,10 +97,6 @@ func prepareRunBootstrap(rootCtx context.Context, opts Options, diagWriter io.Wr
 		}
 		state, err := loadOrMigrateSessionState(conv, sessionID)
 		if err != nil {
-			if errors.Is(err, ErrSessionStateNotFound) {
-				fmt.Fprintf(diagWriter, "Error: no saved session found for %s.\n", sessionID)
-				return nil, Result{ExitCode: 2, Err: err}, false
-			}
 			fmt.Fprintln(diagWriter, "Error loading session state:", err)
 			return nil, Result{ExitCode: 1, Err: err}, false
 		}
@@ -760,37 +756,7 @@ func HasResumableShellAgentWorkRequest(conv *conversation.Conversation) bool {
 	if conv == nil {
 		return false
 	}
-	if conv.ShellAgentResumable {
-		return true
-	}
-	for i := len(conv.Messages) - 1; i >= 0; i-- {
-		msg := conv.Messages[i]
-		if msgMetaType(msg.Metadata) != "work_request" {
-			continue
-		}
-		if !msgMetaBool(msg.Metadata["shell_agent_resumable"]) {
-			continue
-		}
-		turn := msgTurn(msg)
-		if turn < 0 {
-			continue
-		}
-		hasResult := false
-		for j := i + 1; j < len(conv.Messages); j++ {
-			nxt := conv.Messages[j]
-			if msgMetaType(nxt.Metadata) != "work_result" {
-				continue
-			}
-			if msgTurn(nxt) == turn {
-				hasResult = true
-				break
-			}
-		}
-		if !hasResult {
-			return true
-		}
-	}
-	return false
+	return conv.ShellAgentResumable
 }
 
 // ExtractResumableWorkRequestQuestion returns the Content of a work_request
@@ -825,34 +791,6 @@ func ExtractResumableWorkRequestQuestion(conv *conversation.Conversation) string
 			if !hasResult {
 				return msg.Content
 			}
-		}
-		return ""
-	}
-	for i := len(conv.Messages) - 1; i >= 0; i-- {
-		msg := conv.Messages[i]
-		if msgMetaType(msg.Metadata) != "work_request" {
-			continue
-		}
-		if !msgMetaBool(msg.Metadata["shell_agent_resumable"]) {
-			continue
-		}
-		turn := msgTurn(msg)
-		if turn < 0 {
-			continue
-		}
-		hasResult := false
-		for j := i + 1; j < len(conv.Messages); j++ {
-			nxt := conv.Messages[j]
-			if msgMetaType(nxt.Metadata) != "work_result" {
-				continue
-			}
-			if msgTurn(nxt) == turn {
-				hasResult = true
-				break
-			}
-		}
-		if !hasResult {
-			return msg.Content
 		}
 	}
 	return ""
@@ -1083,9 +1021,7 @@ func (r *runLifecycleState) persistSessionState(display ui.SessionDisplay, diagW
 	}
 }
 
-// checkpointTurn saves both conversation.json and session-state.json
-// in a single coordinated call, providing a consistent persistence point
-// at turn boundaries.
+// checkpointTurn saves conversation.json.
 func (r *runLifecycleState) checkpointTurn(display ui.SessionDisplay, diagWriter io.Writer) {
 	if r.recorder != nil {
 		r.recorder.EnsureSaved()

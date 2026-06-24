@@ -358,7 +358,7 @@ func persistModePlan(sessionID string, plan modePlanState) error {
 }
 
 func UpdateModePlanProgress(sessionID string, progress *conversation.PlannerProgressState) error {
-	// PlannerProgress is now stored only in session-state.json; mode-plan.json
+	// PlannerProgress is now stored only in conversation.json; mode-plan.json
 	// no longer carries a redundant copy. Kept as a no-op to preserve the
 	// call-site surface across the codebase.
 	_ = sessionID

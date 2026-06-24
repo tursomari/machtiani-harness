@@ -33,15 +33,25 @@ func TestForkSessionActiveSource(t *testing.T) {
 	defer os.Chdir(oldWd)
 
 	sourceID := fmt.Sprintf("test-fork-active-%s", runner.GenerateSessionID())
-	state := SessionState{
-		SessionID:      sourceID,
-		Goal:           "Test goal",
-		OriginalPrompt: "Test prompt",
-		Status:         "active",
-		TurnsCompleted: 1,
+
+	conv := conversation.New(sourceID, "Test goal")
+	conv.Goal = "Test goal"
+	conv.OriginalPrompt = "Test prompt"
+	conv.Status = "active"
+	conv.TurnsCompleted = 1
+	marshaled, err := conv.Marshal()
+	if err != nil {
+		t.Fatalf("marshal conversation: %v", err)
 	}
-	if err := SaveSessionState(state); err != nil {
-		t.Fatalf("SaveSessionState: %v", err)
+	convPath, err := artifacts.SessionConversationFile(sourceID)
+	if err != nil {
+		t.Fatalf("SessionConversationFile: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(convPath), 0o755); err != nil {
+		t.Fatalf("mkdir conv dir: %v", err)
+	}
+	if err := os.WriteFile(convPath, marshaled, 0o644); err != nil {
+		t.Fatalf("write conversation: %v", err)
 	}
 
 	scratchDir, err := artifacts.SessionScratchDirectory(sourceID)
@@ -72,19 +82,13 @@ func TestForkSessionSuccess(t *testing.T) {
 	defer os.Chdir(oldWd)
 
 	sourceID := fmt.Sprintf("test-fork-source-%s", runner.GenerateSessionID())
-	state := SessionState{
-		SessionID:       sourceID,
-		Goal:            "Original goal",
-		OriginalPrompt:  "Original prompt",
-		TaskDescription: "Test task",
-		Status:          "completed",
-		TurnsCompleted:  3,
-	}
-	if err := SaveSessionState(state); err != nil {
-		t.Fatalf("SaveSessionState: %v", err)
-	}
 
 	conv := conversation.New(sourceID, "Original goal")
+	conv.Goal = "Original goal"
+	conv.OriginalPrompt = "Original prompt"
+	conv.TaskDescription = "Test task"
+	conv.Status = "completed"
+	conv.TurnsCompleted = 3
 	conv.AddMessage("assistant", "Hello", nil)
 
 	marshaled, err := conv.Marshal()
@@ -138,19 +142,23 @@ func TestForkSessionSuccess(t *testing.T) {
 		t.Fatalf("forked conversation messages: got %d want 2", len(forkedConv.Messages))
 	}
 
-	// Verify source session state is unmodified.
-	sourceState, err := LoadSessionState(sourceID)
+	// Verify source conversation state from disk.
+	reloadedConvData, err := os.ReadFile(convPath)
 	if err != nil {
-		t.Fatalf("LoadSessionState source: %v", err)
+		t.Fatalf("read source conversation: %v", err)
 	}
-	if sourceState.SessionID != sourceID {
-		t.Fatalf("source state session ID: got %s want %s", sourceState.SessionID, sourceID)
+	reloadedConv, err := conversation.Unmarshal(reloadedConvData)
+	if err != nil {
+		t.Fatalf("unmarshal source conversation: %v", err)
 	}
-	if sourceState.Goal != "Original goal" {
-		t.Fatalf("source state goal modified: got %q want %q", sourceState.Goal, "Original goal")
+	if reloadedConv.Goal != "Original goal" {
+		t.Fatalf("source goal: got %q want %q", reloadedConv.Goal, "Original goal")
 	}
-	if sourceState.TurnsCompleted != 3 {
-		t.Fatalf("source state turns completed modified: got %d want 3", sourceState.TurnsCompleted)
+	if reloadedConv.OriginalGoal != "Original goal" {
+		t.Fatalf("source original goal: got %q want %q", reloadedConv.OriginalGoal, "Original goal")
+	}
+	if reloadedConv.TurnsCompleted != 3 {
+		t.Fatalf("source turns completed: got %d want 3", reloadedConv.TurnsCompleted)
 	}
 
 	// Verify source conversation is unmodified.
@@ -191,21 +199,14 @@ func TestForkSessionSkipsLockFiles(t *testing.T) {
 	defer os.Chdir(oldWd)
 
 	sourceID := fmt.Sprintf("test-fork-locks-%s", runner.GenerateSessionID())
-	state := SessionState{
-		SessionID:      sourceID,
-		Goal:           "Lock test goal",
-		OriginalPrompt: "Lock test prompt",
-		Status:         "completed",
-		TurnsCompleted: 1,
-	}
-	if err := SaveSessionState(state); err != nil {
-		t.Fatalf("SaveSessionState: %v", err)
-	}
 
 	// Write a lock file inside the source session directory.
 	srcDir, err := artifacts.SessionDirectory(sourceID)
 	if err != nil {
 		t.Fatalf("SessionDirectory: %v", err)
+	}
+	if err := os.MkdirAll(srcDir, 0o755); err != nil {
+		t.Fatalf("mkdir srcDir: %v", err)
 	}
 	lockPath := filepath.Join(srcDir, "session.lock")
 	if err := os.WriteFile(lockPath, []byte("fake lock content"), 0o644); err != nil {
@@ -214,6 +215,10 @@ func TestForkSessionSkipsLockFiles(t *testing.T) {
 
 	// Create a minimal conversation file (required by ForkSession).
 	conv := conversation.New(sourceID, "Lock test goal")
+	conv.Goal = "Lock test goal"
+	conv.OriginalPrompt = "Lock test prompt"
+	conv.Status = "completed"
+	conv.TurnsCompleted = 1
 	marshaled, err := conv.Marshal()
 	if err != nil {
 		t.Fatalf("marshal conversation: %v", err)
