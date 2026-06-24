@@ -572,15 +572,18 @@ func handleConfigCommand(args []string) int {
 		fmt.Fprintln(os.Stderr, "Usage: mct-agent config <subcommand>")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Subcommands:")
-		fmt.Fprintln(os.Stderr, "  check    Validate configuration")
+		fmt.Fprintln(os.Stderr, "  check      Validate configuration")
+		fmt.Fprintln(os.Stderr, "  provider   Configure provider settings")
 		return 2
 	}
 	switch args[0] {
 	case "check":
 		return handleConfigCheckCommand(args[1:])
+	case "provider":
+		return handleConfigProviderCommand(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown config subcommand: %s\n", args[0])
-		fmt.Fprintln(os.Stderr, "Usage: mct-agent config check")
+		fmt.Fprintln(os.Stderr, "Usage: mct-agent config <check|provider>")
 		return 2
 	}
 }
