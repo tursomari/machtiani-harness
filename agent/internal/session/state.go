@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
+	"github.com/tursomari/machtiani/agent/internal/conversation"
 )
 
 const sessionStateFile = "session-state.json"
@@ -29,45 +30,14 @@ type SessionState struct {
 	UpdatedAt          time.Time                `json:"updated_at"`
 	Modes              []string                 `json:"modes,omitempty"`
 	ModeInstructionDir string                   `json:"mode_instruction_dir,omitempty"`
-	PlannerProgress    *PlannerProgressState    `json:"planner_progress,omitempty"`
-	SuspendedUserInput          *SuspendedUserInputState `json:"suspended_user_input,omitempty"`
+	PlannerProgress    *conversation.PlannerProgressState    `json:"planner_progress,omitempty"`
+	SuspendedUserInput  *conversation.SuspendedUserInputState `json:"suspended_user_input,omitempty"`
 	ShellAgentResumable         bool                     `json:"shell_agent_resumable"`
 	ShellAgentTrajectoryPath    string                   `json:"shell_agent_trajectory_path"`
 	ShellAgentInterruptStep     int                      `json:"shell_agent_interrupt_step"`
 }
 
-type SuspendedUserInputState struct {
-	Kind        string `json:"kind,omitempty"`
-	Question    string `json:"question,omitempty"`
-	Context     string `json:"context,omitempty"`
-	Reason      string `json:"reason,omitempty"`
-	OriginalAsk string `json:"original_ask,omitempty"`
-}
 
-// PlannerProgressState captures planner-visible progress across turns so
-// retries avoid re-targeting files that were already processed successfully.
-type PlannerProgressState struct {
-	SuccessFiles   []string `json:"success_files,omitempty"`
-}
-
-func (s *SuspendedUserInputState) Clone() *SuspendedUserInputState {
-	if s == nil {
-		return nil
-	}
-	clone := *s
-	return &clone
-}
-
-func (p *PlannerProgressState) Clone() *PlannerProgressState {
-	if p == nil {
-		return nil
-	}
-	clone := &PlannerProgressState{}
-	if len(p.SuccessFiles) > 0 {
-		clone.SuccessFiles = append([]string(nil), p.SuccessFiles...)
-	}
-	return clone
-}
 
 func SaveSessionState(state SessionState) error {
 	state.SessionID = strings.TrimSpace(state.SessionID)
@@ -131,6 +101,31 @@ func LoadSessionState(sessionID string) (*SessionState, error) {
 	migrateLegacyConversationJSON(sessionID, data)
 
 	return &state, nil
+}
+
+func loadOrMigrateSessionState(conv *conversation.Conversation, sessionID string) (*SessionState, error) {
+	if conv != nil && conv.Goal != "" {
+		ss := SessionState{
+			SessionID:                  conv.SessionID,
+			Goal:                       conv.Goal,
+			OriginalGoal:               conv.OriginalGoal,
+			OriginalPrompt:             conv.OriginalPrompt,
+			ShellAgentResumable:        conv.ShellAgentResumable,
+			ShellAgentTrajectoryPath:   conv.ShellAgentTrajectoryPath,
+			ShellAgentInterruptStep:    conv.ShellAgentInterruptStep,
+			TurnsCompleted:             conv.TurnsCompleted,
+			SuspendedUserInput:         conv.SuspendedUserInput,
+			PlannerProgress:            conv.PlannerProgress,
+			Modes:                      conv.Modes,
+			ModeInstructionDir:         conv.ModeInstructionDir,
+			PlannerOverlay:             conv.PlannerOverlay,
+			TaskDescription:            conv.TaskDescription,
+			Status:                     conv.Status,
+			UpdatedAt:                  conv.UpdatedAt,
+		}
+		return &ss, nil
+	}
+	return LoadSessionState(sessionID)
 }
 
 // migrateLegacyConversationJSON inspects the raw session-state.json bytes for a

@@ -22,7 +22,53 @@ type Conversation struct {
 	OriginalGoal string    `json:"original_goal"`
 	Messages     []Message `json:"messages"`
 	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	UpdatedAt                 time.Time                 `json:"updated_at"`
+	ShellAgentResumable       bool                      `json:"shell_agent_resumable"`
+	ShellAgentTrajectoryPath  string                    `json:"shell_agent_trajectory_path,omitempty"`
+	ShellAgentInterruptStep   int                       `json:"shell_agent_interrupt_step,omitempty"`
+	TurnsCompleted            int                       `json:"turns_completed"`
+	Goal                      string                    `json:"goal"`
+	OriginalPrompt            string                    `json:"original_prompt,omitempty"`
+	SuspendedUserInput        *SuspendedUserInputState  `json:"suspended_user_input,omitempty"`
+	PlannerProgress           *PlannerProgressState     `json:"planner_progress,omitempty"`
+	Modes                     []string                  `json:"modes,omitempty"`
+	ModeInstructionDir        string                    `json:"mode_instruction_dir,omitempty"`
+	PlannerOverlay            string                    `json:"planner_overlay,omitempty"`
+	TaskDescription           string                    `json:"task_description,omitempty"`
+	Status                    string                    `json:"status,omitempty"`
+}
+
+type SuspendedUserInputState struct {
+	Kind        string `json:"kind,omitempty"`
+	Question    string `json:"question,omitempty"`
+	Context     string `json:"context,omitempty"`
+	Reason      string `json:"reason,omitempty"`
+	OriginalAsk string `json:"original_ask,omitempty"`
+}
+
+func (s *SuspendedUserInputState) Clone() *SuspendedUserInputState {
+	if s == nil {
+		return nil
+	}
+	clone := *s
+	return &clone
+}
+
+// PlannerProgressState captures planner-visible progress across turns so
+// retries avoid re-targeting files that were already processed successfully.
+type PlannerProgressState struct {
+	SuccessFiles []string `json:"success_files,omitempty"`
+}
+
+func (p *PlannerProgressState) Clone() *PlannerProgressState {
+	if p == nil {
+		return nil
+	}
+	clone := &PlannerProgressState{}
+	if len(p.SuccessFiles) > 0 {
+		clone.SuccessFiles = append([]string(nil), p.SuccessFiles...)
+	}
+	return clone
 }
 
 const (

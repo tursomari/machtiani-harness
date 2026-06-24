@@ -115,31 +115,7 @@ func TestForkSessionSuccess(t *testing.T) {
 		t.Fatalf("expected new session ID to differ from source, got %s", newID)
 	}
 
-	// Verify forked state.
-	forkedState, err := LoadSessionState(newID)
-	if err != nil {
-		t.Fatalf("LoadSessionState forked: %v", err)
-	}
-	if forkedState.SessionID != newID {
-		t.Fatalf("forked state session ID: got %s want %s", forkedState.SessionID, newID)
-	}
-	if forkedState.Goal != "Original goal" {
-		t.Fatalf("forked state goal: got %q want %q", forkedState.Goal, "Original goal")
-	}
-	if forkedState.OriginalPrompt != "Original prompt" {
-		t.Fatalf("forked state original prompt: got %q want %q", forkedState.OriginalPrompt, "Original prompt")
-	}
-	if forkedState.TaskDescription != "Test task" {
-		t.Fatalf("forked state task description: got %q want %q", forkedState.TaskDescription, "Test task")
-	}
-	if forkedState.Status != "completed" {
-		t.Fatalf("forked state status: got %q want %q", forkedState.Status, "completed")
-	}
-	if forkedState.TurnsCompleted != 3 {
-		t.Fatalf("forked state turns completed: got %d want 3", forkedState.TurnsCompleted)
-	}
-
-	// Verify forked conversation.
+	// Verify forked conversation.json.
 	forkedConvPath, err := artifacts.SessionConversationFile(newID)
 	if err != nil {
 		t.Fatalf("SessionConversationFile forked: %v", err)

@@ -26,7 +26,15 @@ func ForkSession(sourceSessionID string) (string, error) {
 		return "", fmt.Errorf("cannot fork session %s: session is currently active", sourceSessionID)
 	}
 
-	sourceState, err := LoadSessionState(sourceSessionID)
+	// Load conversation if available for migration from per-message
+	// metadata to top-level fields.
+	var forkedConv *conversation.Conversation
+	if convPath, convPathErr := artifacts.SessionConversationFile(sourceSessionID); convPathErr == nil {
+		if data, readErr := os.ReadFile(convPath); readErr == nil {
+			forkedConv, _ = conversation.Unmarshal(data)
+		}
+	}
+	sourceState, err := loadOrMigrateSessionState(forkedConv, sourceSessionID)
 	if err != nil {
 		return "", fmt.Errorf("load source session state: %w", err)
 	}
@@ -99,10 +107,6 @@ func ForkSession(sourceSessionID string) (string, error) {
 	}
 
 	sourceState.SessionID = newSessionID
-
-	if err := SaveSessionState(*sourceState); err != nil {
-		return "", fmt.Errorf("save forked session state: %w", err)
-	}
 
 	convPath, err := artifacts.SessionConversationFile(newSessionID)
 	if err != nil {

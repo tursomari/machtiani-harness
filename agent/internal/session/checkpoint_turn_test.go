@@ -56,10 +56,10 @@ func TestCheckpointTurn_callsBothPersistMethods(t *testing.T) {
 		t.Fatalf("conversation.json does not exist after first checkpointTurn: %v", err)
 	}
 
-	// Verify session-state.json exists.
+	// Verify session-state.json is NOT created.
 	statePath := filepath.Join(dir, sessionStateFile)
-	if _, err := os.Stat(statePath); err != nil {
-		t.Fatalf("session-state.json does not exist after first checkpointTurn: %v", err)
+	if _, err := os.Stat(statePath); !os.IsNotExist(err) {
+		t.Fatalf("session-state.json unexpectedly exists after first checkpointTurn")
 	}
 
 	// Second call: both files should still exist.
@@ -68,8 +68,8 @@ func TestCheckpointTurn_callsBothPersistMethods(t *testing.T) {
 	if _, err := os.Stat(convPath); err != nil {
 		t.Fatalf("conversation.json does not exist after second checkpointTurn: %v", err)
 	}
-	if _, err := os.Stat(statePath); err != nil {
-		t.Fatalf("session-state.json does not exist after second checkpointTurn: %v", err)
+	if _, err := os.Stat(statePath); !os.IsNotExist(err) {
+		t.Fatalf("session-state.json unexpectedly exists after second checkpointTurn")
 	}
 }
 
@@ -123,7 +123,7 @@ func TestCheckpointTurnDiagWriterCapturesSaveFailure(t *testing.T) {
 	runState.checkpointTurn(nil, &diagBuf)
 
 	output := diagBuf.String()
-	if !strings.Contains(output, "Warning: failed to save session state") {
-		t.Fatalf("expected save failure warning in diagWriter, got: %s", output)
+	if !strings.Contains(output, "session-state.json persistence disabled; using conversation.json") {
+		t.Fatalf("expected deprecation message in diagWriter, got: %s", output)
 	}
 }

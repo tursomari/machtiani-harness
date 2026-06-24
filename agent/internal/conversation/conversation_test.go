@@ -1,6 +1,7 @@
 package conversation
 
 import (
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -348,5 +349,193 @@ func TestToChatMessagesSkipsBookkeepingTypes(t *testing.T) {
 	}
 	if messages[0].Content != "Goal" {
 		t.Fatalf("unexpected message content: %q", messages[0].Content)
+	}
+}
+
+func TestSuspendedUserInputStateRoundTrip(t *testing.T) {
+	original := &SuspendedUserInputState{
+		Kind:        "user-directed-ask",
+		Question:    "Do you want the safer fix?",
+		Context:     "The safer fix preserves behavior.",
+		Reason:      "Testing round-trip",
+		OriginalAsk: "What fix do you want?",
+	}
+
+	data, err := json.MarshalIndent(original, "", "  ")
+	if err != nil {
+		t.Fatalf("json.MarshalIndent returned error: %v", err)
+	}
+
+	var restored SuspendedUserInputState
+	if err := json.Unmarshal(data, &restored); err != nil {
+		t.Fatalf("json.Unmarshal returned error: %v", err)
+	}
+
+	if original.Kind != restored.Kind {
+		t.Fatalf("Kind mismatch: got %q want %q", restored.Kind, original.Kind)
+	}
+	if original.Question != restored.Question {
+		t.Fatalf("Question mismatch: got %q want %q", restored.Question, original.Question)
+	}
+	if original.Context != restored.Context {
+		t.Fatalf("Context mismatch: got %q want %q", restored.Context, original.Context)
+	}
+	if original.Reason != restored.Reason {
+		t.Fatalf("Reason mismatch: got %q want %q", restored.Reason, original.Reason)
+	}
+	if original.OriginalAsk != restored.OriginalAsk {
+		t.Fatalf("OriginalAsk mismatch: got %q want %q", restored.OriginalAsk, original.OriginalAsk)
+	}
+}
+
+func TestPlannerProgressStateRoundTrip(t *testing.T) {
+	original := &PlannerProgressState{
+		SuccessFiles: []string{"README.md", "docs/index.md"},
+	}
+
+	data, err := json.MarshalIndent(original, "", "  ")
+	if err != nil {
+		t.Fatalf("json.MarshalIndent returned error: %v", err)
+	}
+
+	var restored PlannerProgressState
+	if err := json.Unmarshal(data, &restored); err != nil {
+		t.Fatalf("json.Unmarshal returned error: %v", err)
+	}
+
+	if len(original.SuccessFiles) != len(restored.SuccessFiles) {
+		t.Fatalf("SuccessFiles length mismatch: got %d want %d", len(restored.SuccessFiles), len(original.SuccessFiles))
+	}
+	for i := range original.SuccessFiles {
+		if original.SuccessFiles[i] != restored.SuccessFiles[i] {
+			t.Fatalf("SuccessFiles[%d] mismatch: got %q want %q", i, restored.SuccessFiles[i], original.SuccessFiles[i])
+		}
+	}
+}
+
+func TestConversationRoundTripWithResumabilityFields(t *testing.T) {
+	conv := New("roundtrip-resume", "Test goal")
+	conv.ShellAgentResumable = true
+	conv.ShellAgentTrajectoryPath = "/tmp/traj.json"
+	conv.ShellAgentInterruptStep = 3
+	conv.TurnsCompleted = 5
+	conv.Goal = "Custom goal"
+	conv.OriginalPrompt = "Original prompt text"
+	conv.SuspendedUserInput = &SuspendedUserInputState{
+		Kind:        "ask",
+		Question:    "Which path?",
+		Context:     "Testing",
+		Reason:      "test",
+		OriginalAsk: "Which?",
+	}
+	conv.PlannerProgress = &PlannerProgressState{
+		SuccessFiles: []string{"a.go"},
+	}
+	conv.Modes = []string{"coding"}
+	conv.ModeInstructionDir = "/modes"
+	conv.PlannerOverlay = "overlay1"
+	conv.TaskDescription = "A task"
+	conv.Status = "running"
+
+	data, err := conv.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal returned error: %v", err)
+	}
+
+	loaded, err := Unmarshal(data)
+	if err != nil {
+		t.Fatalf("Unmarshal returned error: %v", err)
+	}
+
+	if loaded.SessionID != conv.SessionID {
+		t.Fatalf("SessionID mismatch: got %q want %q", loaded.SessionID, conv.SessionID)
+	}
+	if loaded.OriginalGoal != conv.OriginalGoal {
+		t.Fatalf("OriginalGoal mismatch: got %q want %q", loaded.OriginalGoal, conv.OriginalGoal)
+	}
+	if loaded.ShellAgentResumable != conv.ShellAgentResumable {
+		t.Fatalf("ShellAgentResumable mismatch: got %v want %v", loaded.ShellAgentResumable, conv.ShellAgentResumable)
+	}
+	if loaded.ShellAgentTrajectoryPath != conv.ShellAgentTrajectoryPath {
+		t.Fatalf("ShellAgentTrajectoryPath mismatch: got %q want %q", loaded.ShellAgentTrajectoryPath, conv.ShellAgentTrajectoryPath)
+	}
+	if loaded.ShellAgentInterruptStep != conv.ShellAgentInterruptStep {
+		t.Fatalf("ShellAgentInterruptStep mismatch: got %d want %d", loaded.ShellAgentInterruptStep, conv.ShellAgentInterruptStep)
+	}
+	if loaded.TurnsCompleted != conv.TurnsCompleted {
+		t.Fatalf("TurnsCompleted mismatch: got %d want %d", loaded.TurnsCompleted, conv.TurnsCompleted)
+	}
+	if loaded.Goal != conv.Goal {
+		t.Fatalf("Goal mismatch: got %q want %q", loaded.Goal, conv.Goal)
+	}
+	if loaded.OriginalPrompt != conv.OriginalPrompt {
+		t.Fatalf("OriginalPrompt mismatch: got %q want %q", loaded.OriginalPrompt, conv.OriginalPrompt)
+	}
+
+	if conv.SuspendedUserInput == nil {
+		if loaded.SuspendedUserInput != nil {
+			t.Fatalf("SuspendedUserInput mismatch: got non-nil, want nil")
+		}
+	} else {
+		if loaded.SuspendedUserInput == nil {
+			t.Fatalf("SuspendedUserInput mismatch: got nil, want non-nil")
+		} else {
+			if loaded.SuspendedUserInput.Kind != conv.SuspendedUserInput.Kind {
+				t.Fatalf("SuspendedUserInput.Kind mismatch: got %q want %q", loaded.SuspendedUserInput.Kind, conv.SuspendedUserInput.Kind)
+			}
+			if loaded.SuspendedUserInput.Question != conv.SuspendedUserInput.Question {
+				t.Fatalf("SuspendedUserInput.Question mismatch: got %q want %q", loaded.SuspendedUserInput.Question, conv.SuspendedUserInput.Question)
+			}
+			if loaded.SuspendedUserInput.Context != conv.SuspendedUserInput.Context {
+				t.Fatalf("SuspendedUserInput.Context mismatch: got %q want %q", loaded.SuspendedUserInput.Context, conv.SuspendedUserInput.Context)
+			}
+			if loaded.SuspendedUserInput.Reason != conv.SuspendedUserInput.Reason {
+				t.Fatalf("SuspendedUserInput.Reason mismatch: got %q want %q", loaded.SuspendedUserInput.Reason, conv.SuspendedUserInput.Reason)
+			}
+			if loaded.SuspendedUserInput.OriginalAsk != conv.SuspendedUserInput.OriginalAsk {
+				t.Fatalf("SuspendedUserInput.OriginalAsk mismatch: got %q want %q", loaded.SuspendedUserInput.OriginalAsk, conv.SuspendedUserInput.OriginalAsk)
+			}
+		}
+	}
+
+	if conv.PlannerProgress == nil {
+		if loaded.PlannerProgress != nil {
+			t.Fatalf("PlannerProgress mismatch: got non-nil, want nil")
+		}
+	} else {
+		if loaded.PlannerProgress == nil {
+			t.Fatalf("PlannerProgress mismatch: got nil, want non-nil")
+		} else {
+			if len(loaded.PlannerProgress.SuccessFiles) != len(conv.PlannerProgress.SuccessFiles) {
+				t.Fatalf("PlannerProgress.SuccessFiles length mismatch: got %d want %d", len(loaded.PlannerProgress.SuccessFiles), len(conv.PlannerProgress.SuccessFiles))
+			}
+			for i := range conv.PlannerProgress.SuccessFiles {
+				if loaded.PlannerProgress.SuccessFiles[i] != conv.PlannerProgress.SuccessFiles[i] {
+					t.Fatalf("PlannerProgress.SuccessFiles[%d] mismatch: got %q want %q", i, loaded.PlannerProgress.SuccessFiles[i], conv.PlannerProgress.SuccessFiles[i])
+				}
+			}
+		}
+	}
+
+	if len(loaded.Modes) != len(conv.Modes) {
+		t.Fatalf("Modes length mismatch: got %d want %d", len(loaded.Modes), len(conv.Modes))
+	}
+	for i := range conv.Modes {
+		if loaded.Modes[i] != conv.Modes[i] {
+			t.Fatalf("Modes[%d] mismatch: got %q want %q", i, loaded.Modes[i], conv.Modes[i])
+		}
+	}
+
+	if loaded.ModeInstructionDir != conv.ModeInstructionDir {
+		t.Fatalf("ModeInstructionDir mismatch: got %q want %q", loaded.ModeInstructionDir, conv.ModeInstructionDir)
+	}
+	if loaded.PlannerOverlay != conv.PlannerOverlay {
+		t.Fatalf("PlannerOverlay mismatch: got %q want %q", loaded.PlannerOverlay, conv.PlannerOverlay)
+	}
+	if loaded.TaskDescription != conv.TaskDescription {
+		t.Fatalf("TaskDescription mismatch: got %q want %q", loaded.TaskDescription, conv.TaskDescription)
+	}
+	if loaded.Status != conv.Status {
+		t.Fatalf("Status mismatch: got %q want %q", loaded.Status, conv.Status)
 	}
 }

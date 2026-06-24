@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tursomari/machtiani/agent/internal/conversation"
 	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
 )
 
@@ -23,10 +24,10 @@ func TestSaveLoadSessionStateRoundTrip(t *testing.T) {
 		PlannerOverlay:  "Prefer migration safety over speed",
 		Status:          "suspended_user_input",
 		TurnsCompleted:  3,
-		PlannerProgress: &PlannerProgressState{
+		PlannerProgress: &conversation.PlannerProgressState{
 			SuccessFiles:   []string{"README.md", "db/migrations/20240101.sql"},
 			},
-		SuspendedUserInput: &SuspendedUserInputState{
+		SuspendedUserInput: &conversation.SuspendedUserInputState{
 			Kind:        "user-directed-ask",
 			Question:    "Do you want the safer fix, or the faster fix?",
 			Context:     "The safer fix preserves behavior.",
@@ -397,23 +398,19 @@ func TestPersistSessionStateNormalExit(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 
-	runState.persistSessionState(nil, os.Stderr)
+	var diagBuf bytes.Buffer
+	runState.persistSessionState(nil, &diagBuf)
 
-	loaded, err := LoadSessionState(sessionID)
-	if err != nil {
-		t.Fatalf("LoadSessionState returned error: %v", err)
+	// Verify session-state.json is NOT created.
+	statePath := filepath.Join(dir, sessionStateFile)
+	if _, err := os.Stat(statePath); !os.IsNotExist(err) {
+		t.Fatalf("session-state.json unexpectedly exists: %v", err)
 	}
-	if loaded.SessionID != sessionID {
-		t.Fatalf("unexpected session ID: got %s want %s", loaded.SessionID, sessionID)
-	}
-	if loaded.Goal != "Test goal" {
-		t.Fatalf("unexpected goal: got %q want %q", loaded.Goal, "Test goal")
-	}
-	if loaded.TurnsCompleted != 2 {
-		t.Fatalf("unexpected turns completed: got %d want 2", loaded.TurnsCompleted)
-	}
-	if loaded.Status != "error" {
-		t.Fatalf("unexpected status: got %q want %q", loaded.Status, "error")
+
+	// Verify deprecation log message is written.
+	output := diagBuf.String()
+	if !strings.Contains(output, "session-state.json persistence disabled; using conversation.json") {
+		t.Fatalf("expected deprecation message in diagWriter, got: %s", output)
 	}
 }
 
@@ -446,19 +443,16 @@ func TestPersistSessionStateInterrupted(t *testing.T) {
 
 	stdout := diagBuf.String()
 
-	// Verify state file exists and is loadable.
-	loaded, err := LoadSessionState(sessionID)
-	if err != nil {
-		t.Fatalf("LoadSessionState returned error: %v", err)
-	}
-	if loaded.SessionID != sessionID {
-		t.Fatalf("unexpected session ID: got %s want %s", loaded.SessionID, sessionID)
-	}
-	if loaded.TurnsCompleted != 3 {
-		t.Fatalf("unexpected turns completed: got %d want 3", loaded.TurnsCompleted)
+	// Verify session-state.json is NOT created.
+	statePath := filepath.Join(dir, sessionStateFile)
+	if _, err := os.Stat(statePath); !os.IsNotExist(err) {
+		t.Fatalf("session-state.json unexpectedly exists: %v", err)
 	}
 
-	// Verify interruption banner was printed.
+	// Verify deprecation log message and interruption banner were printed.
+	if !strings.Contains(stdout, "session-state.json persistence disabled; using conversation.json") {
+		t.Fatalf("expected deprecation message in diagWriter, got: %s", stdout)
+	}
 	if !strings.Contains(stdout, "=== SESSION INTERRUPTED ===") {
 		t.Fatalf("expected interruption banner in stdout, got: %s", stdout)
 	}
@@ -505,27 +499,19 @@ func TestPersistSessionStatePendingStateOverride(t *testing.T) {
 		_ = os.RemoveAll(overrideDir)
 	})
 
-	runState.persistSessionState(nil, os.Stderr)
+	var diagBuf bytes.Buffer
+	runState.persistSessionState(nil, &diagBuf)
 
-	// The saved state should reflect the pendingState override.
-	// Since pendingState.SessionID is "override-id", the file was saved
-	// under that ID, not the original sessionID.
-	loaded, err := LoadSessionState(overrideID)
-	if err != nil {
-		t.Fatalf("LoadSessionState returned error: %v", err)
+	// Verify session-state.json is NOT created for the override directory.
+	statePath := filepath.Join(overrideDir, sessionStateFile)
+	if _, err := os.Stat(statePath); !os.IsNotExist(err) {
+		t.Fatalf("session-state.json unexpectedly exists for override: %v", err)
 	}
-	// The saved state should reflect the pendingState override.
-	if loaded.SessionID != overrideID {
-		t.Fatalf("expected overridden session ID: got %s want %s", loaded.SessionID, overrideID)
-	}
-	if loaded.Goal != "Overridden goal" {
-		t.Fatalf("expected overridden goal: got %q want %q", loaded.Goal, "Overridden goal")
-	}
-	if loaded.TurnsCompleted != 5 {
-		t.Fatalf("expected overridden turns: got %d want 5", loaded.TurnsCompleted)
-	}
-	if loaded.Status != "success" {
-		t.Fatalf("expected overridden status: got %q want %q", loaded.Status, "success")
+
+	// Verify deprecation log message is written.
+	output := diagBuf.String()
+	if !strings.Contains(output, "session-state.json persistence disabled; using conversation.json") {
+		t.Fatalf("expected deprecation message in diagWriter, got: %s", output)
 	}
 }
 
@@ -604,7 +590,276 @@ func TestPersistSessionStateSaveFailure(t *testing.T) {
 	runState.persistSessionState(nil, &diagBuf)
 
 	output := diagBuf.String()
-	if !strings.Contains(output, "Warning: failed to save session state") {
-		t.Fatalf("expected save failure warning in diagWriter, got: %s", output)
+	if !strings.Contains(output, "session-state.json persistence disabled; using conversation.json") {
+		t.Fatalf("expected deprecation message in diagWriter, got: %s", output)
+	}
+}
+
+// TestLoadOrMigrateSessionStateFromConversationFields verifies that when
+// a Conversation pointer with all top-level fields populated is passed to
+// loadOrMigrateSessionState, the returned SessionState matches those fields
+// exactly without requiring a session-state.json file on disk.
+func TestLoadOrMigrateSessionStateFromConversationFields(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	sessionID := fmt.Sprintf("test-migrate-from-conv-%d", time.Now().UnixNano())
+
+	now := time.Now().UTC()
+	conv := &conversation.Conversation{
+		SessionID:                sessionID,
+		Goal:                     "Investigate database performance",
+		OriginalGoal:             "Review slow queries",
+		OriginalPrompt:           "Please investigate database performance issues",
+		ShellAgentResumable:      true,
+		ShellAgentTrajectoryPath: "/tmp/test-trajectory.json",
+		ShellAgentInterruptStep:  3,
+		TurnsCompleted:           5,
+		SuspendedUserInput: &conversation.SuspendedUserInputState{
+			Kind:        "user-directed-ask",
+			Question:    "Which index strategy do you prefer?",
+			Context:     "We have two options: B-tree or hash index.",
+			Reason:      "User needs to choose indexing strategy",
+			OriginalAsk: "Do you want B-tree or hash index?",
+		},
+		PlannerProgress: &conversation.PlannerProgressState{
+			SuccessFiles: []string{"db/migrations/001.sql", "README.md"},
+		},
+		Modes:             []string{"coding", "database"},
+		ModeInstructionDir: "/modes/database",
+		PlannerOverlay:    "Prefer index-only scans",
+		TaskDescription:   "Analyze and optimize slow queries",
+		Status:            "suspended_user_input",
+		UpdatedAt:         now,
+	}
+
+	state, err := loadOrMigrateSessionState(conv, sessionID)
+	if err != nil {
+		t.Fatalf("loadOrMigrateSessionState returned error: %v", err)
+	}
+	if state == nil {
+		t.Fatal("expected non-nil SessionState")
+	}
+
+	// Verify all fields match.
+	if state.SessionID != conv.SessionID {
+		t.Fatalf("SessionID mismatch: got %q want %q", state.SessionID, conv.SessionID)
+	}
+	if state.Goal != conv.Goal {
+		t.Fatalf("Goal mismatch: got %q want %q", state.Goal, conv.Goal)
+	}
+	if state.OriginalGoal != conv.OriginalGoal {
+		t.Fatalf("OriginalGoal mismatch: got %q want %q", state.OriginalGoal, conv.OriginalGoal)
+	}
+	if state.OriginalPrompt != conv.OriginalPrompt {
+		t.Fatalf("OriginalPrompt mismatch: got %q want %q", state.OriginalPrompt, conv.OriginalPrompt)
+	}
+	if state.ShellAgentResumable != conv.ShellAgentResumable {
+		t.Fatalf("ShellAgentResumable mismatch: got %v want %v", state.ShellAgentResumable, conv.ShellAgentResumable)
+	}
+	if state.ShellAgentTrajectoryPath != conv.ShellAgentTrajectoryPath {
+		t.Fatalf("ShellAgentTrajectoryPath mismatch: got %q want %q", state.ShellAgentTrajectoryPath, conv.ShellAgentTrajectoryPath)
+	}
+	if state.ShellAgentInterruptStep != conv.ShellAgentInterruptStep {
+		t.Fatalf("ShellAgentInterruptStep mismatch: got %d want %d", state.ShellAgentInterruptStep, conv.ShellAgentInterruptStep)
+	}
+	if state.TurnsCompleted != conv.TurnsCompleted {
+		t.Fatalf("TurnsCompleted mismatch: got %d want %d", state.TurnsCompleted, conv.TurnsCompleted)
+	}
+	if state.SuspendedUserInput == nil {
+		t.Fatal("expected SuspendedUserInput to be set")
+	}
+	if state.SuspendedUserInput.Kind != conv.SuspendedUserInput.Kind {
+		t.Fatalf("SuspendedUserInput.Kind mismatch: got %q want %q", state.SuspendedUserInput.Kind, conv.SuspendedUserInput.Kind)
+	}
+	if state.SuspendedUserInput.Question != conv.SuspendedUserInput.Question {
+		t.Fatalf("SuspendedUserInput.Question mismatch: got %q want %q", state.SuspendedUserInput.Question, conv.SuspendedUserInput.Question)
+	}
+	if state.SuspendedUserInput.Context != conv.SuspendedUserInput.Context {
+		t.Fatalf("SuspendedUserInput.Context mismatch: got %q want %q", state.SuspendedUserInput.Context, conv.SuspendedUserInput.Context)
+	}
+	if state.SuspendedUserInput.Reason != conv.SuspendedUserInput.Reason {
+		t.Fatalf("SuspendedUserInput.Reason mismatch: got %q want %q", state.SuspendedUserInput.Reason, conv.SuspendedUserInput.Reason)
+	}
+	if state.SuspendedUserInput.OriginalAsk != conv.SuspendedUserInput.OriginalAsk {
+		t.Fatalf("SuspendedUserInput.OriginalAsk mismatch: got %q want %q", state.SuspendedUserInput.OriginalAsk, conv.SuspendedUserInput.OriginalAsk)
+	}
+	if state.PlannerProgress == nil {
+		t.Fatal("expected PlannerProgress to be set")
+	}
+	if len(state.PlannerProgress.SuccessFiles) != len(conv.PlannerProgress.SuccessFiles) {
+		t.Fatalf("PlannerProgress.SuccessFiles length mismatch: got %d want %d",
+			len(state.PlannerProgress.SuccessFiles), len(conv.PlannerProgress.SuccessFiles))
+	}
+	for i, f := range conv.PlannerProgress.SuccessFiles {
+		if state.PlannerProgress.SuccessFiles[i] != f {
+			t.Fatalf("PlannerProgress.SuccessFiles[%d] mismatch: got %q want %q",
+				i, state.PlannerProgress.SuccessFiles[i], f)
+		}
+	}
+	if len(state.Modes) != len(conv.Modes) {
+		t.Fatalf("Modes length mismatch: got %d want %d", len(state.Modes), len(conv.Modes))
+	}
+	for i, m := range conv.Modes {
+		if state.Modes[i] != m {
+			t.Fatalf("Modes[%d] mismatch: got %q want %q", i, state.Modes[i], m)
+		}
+	}
+	if state.ModeInstructionDir != conv.ModeInstructionDir {
+		t.Fatalf("ModeInstructionDir mismatch: got %q want %q", state.ModeInstructionDir, conv.ModeInstructionDir)
+	}
+	if state.PlannerOverlay != conv.PlannerOverlay {
+		t.Fatalf("PlannerOverlay mismatch: got %q want %q", state.PlannerOverlay, conv.PlannerOverlay)
+	}
+	if state.TaskDescription != conv.TaskDescription {
+		t.Fatalf("TaskDescription mismatch: got %q want %q", state.TaskDescription, conv.TaskDescription)
+	}
+	if state.Status != conv.Status {
+		t.Fatalf("Status mismatch: got %q want %q", state.Status, conv.Status)
+	}
+	if !state.UpdatedAt.Equal(conv.UpdatedAt) {
+		t.Fatalf("UpdatedAt mismatch: got %v want %v", state.UpdatedAt, conv.UpdatedAt)
+	}
+}
+
+// TestLoadOrMigrateSessionStateLegacyFallback verifies that when a
+// Conversation with empty Goal is passed, loadOrMigrateSessionState falls
+// back to loading from the session-state.json file on disk.
+func TestLoadOrMigrateSessionStateLegacyFallback(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	sessionID := fmt.Sprintf("test-legacy-fallback-%d", time.Now().UnixNano())
+
+	// Save a SessionState to disk (legacy path).
+	state := SessionState{
+		SessionID:                sessionID,
+		Goal:                     "Legacy goal from file",
+		OriginalGoal:             "Legacy original goal",
+		OriginalPrompt:           "Legacy original prompt",
+		TaskDescription:          "Legacy task",
+		PlannerOverlay:           "Legacy overlay",
+		Status:                   "suspended_user_input",
+		TurnsCompleted:           4,
+		ShellAgentResumable:      true,
+		ShellAgentTrajectoryPath: "/tmp/legacy-trajectory.json",
+		ShellAgentInterruptStep:  2,
+		Modes:                    []string{"legacy-mode"},
+		ModeInstructionDir:       "/legacy/modes",
+		PlannerProgress: &conversation.PlannerProgressState{
+			SuccessFiles: []string{"legacy.go"},
+		},
+		SuspendedUserInput: &conversation.SuspendedUserInputState{
+			Kind:        "legacy-ask",
+			Question:    "Legacy question?",
+			Context:     "Legacy context.",
+			Reason:      "Legacy reason.",
+			OriginalAsk: "Legacy original ask?",
+		},
+	}
+	if err := SaveSessionState(state); err != nil {
+		t.Fatalf("SaveSessionState returned error: %v", err)
+	}
+
+	dir, err := artifacts.SessionDirectory(sessionID)
+	if err != nil {
+		t.Fatalf("failed to resolve session directory: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = RemoveSessionState(sessionID)
+		_ = os.RemoveAll(dir)
+	})
+
+	// Create a Conversation with empty Goal – this should trigger the
+	// legacy fallback path.
+	conv := &conversation.Conversation{
+		SessionID: sessionID,
+		Goal:      "",
+	}
+
+	loaded, err := loadOrMigrateSessionState(conv, sessionID)
+	if err != nil {
+		t.Fatalf("loadOrMigrateSessionState returned error: %v", err)
+	}
+	if loaded == nil {
+		t.Fatal("expected non-nil SessionState")
+	}
+
+	// Verify all fields match the legacy saved state.
+	if loaded.SessionID != sessionID {
+		t.Fatalf("SessionID mismatch: got %q want %q", loaded.SessionID, sessionID)
+	}
+	if loaded.Goal != state.Goal {
+		t.Fatalf("Goal mismatch: got %q want %q", loaded.Goal, state.Goal)
+	}
+	if loaded.OriginalGoal != state.OriginalGoal {
+		t.Fatalf("OriginalGoal mismatch: got %q want %q", loaded.OriginalGoal, state.OriginalGoal)
+	}
+	if loaded.OriginalPrompt != state.OriginalPrompt {
+		t.Fatalf("OriginalPrompt mismatch: got %q want %q", loaded.OriginalPrompt, state.OriginalPrompt)
+	}
+	if loaded.TaskDescription != state.TaskDescription {
+		t.Fatalf("TaskDescription mismatch: got %q want %q", loaded.TaskDescription, state.TaskDescription)
+	}
+	if loaded.PlannerOverlay != state.PlannerOverlay {
+		t.Fatalf("PlannerOverlay mismatch: got %q want %q", loaded.PlannerOverlay, state.PlannerOverlay)
+	}
+	if loaded.Status != state.Status {
+		t.Fatalf("Status mismatch: got %q want %q", loaded.Status, state.Status)
+	}
+	if loaded.TurnsCompleted != state.TurnsCompleted {
+		t.Fatalf("TurnsCompleted mismatch: got %d want %d", loaded.TurnsCompleted, state.TurnsCompleted)
+	}
+	if loaded.ShellAgentResumable != state.ShellAgentResumable {
+		t.Fatalf("ShellAgentResumable mismatch: got %v want %v", loaded.ShellAgentResumable, state.ShellAgentResumable)
+	}
+	if loaded.ShellAgentTrajectoryPath != state.ShellAgentTrajectoryPath {
+		t.Fatalf("ShellAgentTrajectoryPath mismatch: got %q want %q", loaded.ShellAgentTrajectoryPath, state.ShellAgentTrajectoryPath)
+	}
+	if loaded.ShellAgentInterruptStep != state.ShellAgentInterruptStep {
+		t.Fatalf("ShellAgentInterruptStep mismatch: got %d want %d", loaded.ShellAgentInterruptStep, state.ShellAgentInterruptStep)
+	}
+	if len(loaded.Modes) != len(state.Modes) {
+		t.Fatalf("Modes length mismatch: got %d want %d", len(loaded.Modes), len(state.Modes))
+	}
+	for i, m := range state.Modes {
+		if loaded.Modes[i] != m {
+			t.Fatalf("Modes[%d] mismatch: got %q want %q", i, loaded.Modes[i], m)
+		}
+	}
+	if loaded.ModeInstructionDir != state.ModeInstructionDir {
+		t.Fatalf("ModeInstructionDir mismatch: got %q want %q", loaded.ModeInstructionDir, state.ModeInstructionDir)
+	}
+	if loaded.PlannerProgress == nil {
+		t.Fatal("expected PlannerProgress to be set")
+	}
+	if len(loaded.PlannerProgress.SuccessFiles) != len(state.PlannerProgress.SuccessFiles) {
+		t.Fatalf("PlannerProgress.SuccessFiles length mismatch: got %d want %d",
+			len(loaded.PlannerProgress.SuccessFiles), len(state.PlannerProgress.SuccessFiles))
+	}
+	for i, f := range state.PlannerProgress.SuccessFiles {
+		if loaded.PlannerProgress.SuccessFiles[i] != f {
+			t.Fatalf("PlannerProgress.SuccessFiles[%d] mismatch: got %q want %q",
+				i, loaded.PlannerProgress.SuccessFiles[i], f)
+		}
+	}
+	if loaded.SuspendedUserInput == nil {
+		t.Fatal("expected SuspendedUserInput to be set")
+	}
+	if loaded.SuspendedUserInput.Kind != state.SuspendedUserInput.Kind {
+		t.Fatalf("SuspendedUserInput.Kind mismatch: got %q want %q", loaded.SuspendedUserInput.Kind, state.SuspendedUserInput.Kind)
+	}
+	if loaded.SuspendedUserInput.Question != state.SuspendedUserInput.Question {
+		t.Fatalf("SuspendedUserInput.Question mismatch: got %q want %q", loaded.SuspendedUserInput.Question, state.SuspendedUserInput.Question)
+	}
+	if loaded.SuspendedUserInput.Context != state.SuspendedUserInput.Context {
+		t.Fatalf("SuspendedUserInput.Context mismatch: got %q want %q", loaded.SuspendedUserInput.Context, state.SuspendedUserInput.Context)
+	}
+	if loaded.SuspendedUserInput.Reason != state.SuspendedUserInput.Reason {
+		t.Fatalf("SuspendedUserInput.Reason mismatch: got %q want %q", loaded.SuspendedUserInput.Reason, state.SuspendedUserInput.Reason)
+	}
+	if loaded.SuspendedUserInput.OriginalAsk != state.SuspendedUserInput.OriginalAsk {
+		t.Fatalf("SuspendedUserInput.OriginalAsk mismatch: got %q want %q", loaded.SuspendedUserInput.OriginalAsk, state.SuspendedUserInput.OriginalAsk)
+	}
+	// UpdatedAt should be set by SaveSessionState (non-zero).
+	if loaded.UpdatedAt.IsZero() {
+		t.Fatalf("expected UpdatedAt to be set")
 	}
 }

@@ -40,7 +40,7 @@ type runBootstrap struct {
 	conversationPath     string
 	resumeMode           bool
 	loadedState          *SessionState
-	resumeSuspendedInput              *SuspendedUserInputState
+	resumeSuspendedInput              *conversation.SuspendedUserInputState
 	modeInstructions                  llm.ModeInstructions
 	modeInstructionPath               string
 	runState                          *runLifecycleState
@@ -87,7 +87,15 @@ func prepareRunBootstrap(rootCtx context.Context, opts Options, diagWriter io.Wr
 	resumePrompt := ""
 
 	if sessionID != "" {
-		state, err := LoadSessionState(sessionID)
+		// Load conversation from disk if available, for migration
+		// from per-message metadata to top-level fields.
+		var conv *conversation.Conversation
+		if convPath, convPathErr := artifacts.SessionConversationFile(sessionID); convPathErr == nil {
+			if data, readErr := os.ReadFile(convPath); readErr == nil {
+				conv, _ = conversation.Unmarshal(data)
+			}
+		}
+		state, err := loadOrMigrateSessionState(conv, sessionID)
 		if err != nil {
 			if errors.Is(err, ErrSessionStateNotFound) {
 				fmt.Fprintf(diagWriter, "Error: no saved session found for %s.\n", sessionID)
@@ -208,7 +216,7 @@ func prepareRunBootstrap(rootCtx context.Context, opts Options, diagWriter io.Wr
 	return bootstrap, Result{}, true
 }
 
-func loadedStateSuspendedInput(state *SessionState) *SuspendedUserInputState {
+func loadedStateSuspendedInput(state *SessionState) *conversation.SuspendedUserInputState {
 	if state == nil || state.SuspendedUserInput == nil {
 		return nil
 	}
@@ -450,14 +458,27 @@ func (c *conversationRecorder) PreWriteTurn(step int, question string, shellAgen
 	if c.conversation == nil {
 		return nil
 	}
+	c.conversation.ShellAgentResumable = true
+	c.conversation.ShellAgentTrajectoryPath = shellAgentTrajectoryPath
+	c.conversation.TurnsCompleted = step
+	c.conversation.Goal = c.conversationGoal
+	if c.loadedState != nil {
+		c.conversation.ShellAgentInterruptStep = c.loadedState.ShellAgentInterruptStep
+		c.conversation.OriginalPrompt = c.loadedState.OriginalPrompt
+		c.conversation.SuspendedUserInput = c.loadedState.SuspendedUserInput.Clone()
+		c.conversation.PlannerProgress = c.loadedState.PlannerProgress.Clone()
+		c.conversation.Modes = append([]string(nil), c.loadedState.Modes...)
+		c.conversation.ModeInstructionDir = c.loadedState.ModeInstructionDir
+		c.conversation.PlannerOverlay = c.loadedState.PlannerOverlay
+		c.conversation.TaskDescription = c.loadedState.TaskDescription
+		c.conversation.Status = c.loadedState.Status
+	}
 	shellAgentSessionID := fmt.Sprintf("%s/shell-agent/%d", c.sessionID, step)
 	c.conversation.AddMessage("assistant", question, map[string]any{
-		"type":                        "work_request",
-		"turn":                        step,
-		"decision":                    "ask",
-		"shell_agent_session_id":       shellAgentSessionID,
-		"shell_agent_trajectory_path": shellAgentTrajectoryPath,
-		"shell_agent_resumable":       true,
+		"type":                  "work_request",
+		"turn":                  step,
+		"decision":              "ask",
+		"shell_agent_session_id": shellAgentSessionID,
 	})
 	rendered, delta, err := c.renderDelta()
 	if errors.Is(err, errConversationTranscriptDesync) {
@@ -569,22 +590,33 @@ func (c *conversationRecorder) WriteTurn(step int, question, savedPath string, r
 		}
 		return c.tr.WriteTurn(step, question, savedPath, retrieved, summary, decision)
 	}
+	c.conversation.ShellAgentResumable = c.shellAgentResumable
+	c.conversation.ShellAgentTrajectoryPath = c.shellAgentTrajectoryPath
+	c.conversation.TurnsCompleted = step
+	c.conversation.Goal = c.conversationGoal
+	if c.loadedState != nil {
+		c.conversation.ShellAgentInterruptStep = c.loadedState.ShellAgentInterruptStep
+		c.conversation.OriginalPrompt = c.loadedState.OriginalPrompt
+		c.conversation.SuspendedUserInput = c.loadedState.SuspendedUserInput.Clone()
+		c.conversation.PlannerProgress = c.loadedState.PlannerProgress.Clone()
+		c.conversation.Modes = append([]string(nil), c.loadedState.Modes...)
+		c.conversation.ModeInstructionDir = c.loadedState.ModeInstructionDir
+		c.conversation.PlannerOverlay = c.loadedState.PlannerOverlay
+		c.conversation.TaskDescription = c.loadedState.TaskDescription
+		c.conversation.Status = c.loadedState.Status
+	}
 	shellAgentSessionID := fmt.Sprintf("%s/shell-agent/%d", c.sessionID, step)
 	c.conversation.AddMessage("assistant", question, map[string]any{
-		"type":                        "work_request",
-		"turn":                        step,
-		"decision":                    decision,
-		"shell_agent_session_id":       shellAgentSessionID,
-		"shell_agent_trajectory_path": c.shellAgentTrajectoryPath,
-		"shell_agent_resumable":       c.shellAgentResumable,
+		"type":                  "work_request",
+		"turn":                  step,
+		"decision":              decision,
+		"shell_agent_session_id": shellAgentSessionID,
 	})
 	c.conversation.AddMessage("assistant", summary, map[string]any{
-		"type":                        "work_result",
-		"turn":                        step,
-		"retrieved_files":             retrieved,
-		"chat_path":                   savedPath,
-		"shell_agent_trajectory_path": c.shellAgentTrajectoryPath,
-		"shell_agent_resumable":       c.shellAgentResumable,
+		"type":            "work_result",
+		"turn":            step,
+		"retrieved_files": retrieved,
+		"chat_path":       savedPath,
 	})
 	rendered, delta, err := c.renderDelta()
 	if errors.Is(err, errConversationTranscriptDesync) {
@@ -728,6 +760,9 @@ func HasResumableShellAgentWorkRequest(conv *conversation.Conversation) bool {
 	if conv == nil {
 		return false
 	}
+	if conv.ShellAgentResumable {
+		return true
+	}
 	for i := len(conv.Messages) - 1; i >= 0; i-- {
 		msg := conv.Messages[i]
 		if msgMetaType(msg.Metadata) != "work_request" {
@@ -764,6 +799,33 @@ func HasResumableShellAgentWorkRequest(conv *conversation.Conversation) bool {
 // an empty string.
 func ExtractResumableWorkRequestQuestion(conv *conversation.Conversation) string {
 	if conv == nil {
+		return ""
+	}
+	if conv.ShellAgentResumable {
+		for i := len(conv.Messages) - 1; i >= 0; i-- {
+			msg := conv.Messages[i]
+			if msgMetaType(msg.Metadata) != "work_request" {
+				continue
+			}
+			turn := msgTurn(msg)
+			if turn < 0 {
+				continue
+			}
+			hasResult := false
+			for j := i + 1; j < len(conv.Messages); j++ {
+				nxt := conv.Messages[j]
+				if msgMetaType(nxt.Metadata) != "work_result" {
+					continue
+				}
+				if msgTurn(nxt) == turn {
+					hasResult = true
+					break
+				}
+			}
+			if !hasResult {
+				return msg.Content
+			}
+		}
 		return ""
 	}
 	for i := len(conv.Messages) - 1; i >= 0; i-- {
@@ -850,7 +912,7 @@ type runLifecycleState struct {
 	turnsCompleted      int
 	interrupted         bool
 	pendingState        *SessionState
-	suspendedUserInput     *SuspendedUserInputState
+	suspendedUserInput     *conversation.SuspendedUserInputState
 	shellAgentInterruptStep int
 }
 
@@ -1014,10 +1076,7 @@ func (r *runLifecycleState) persistSessionState(display ui.SessionDisplay, diagW
 	}
 	r.hydrateState(&state, diagWriter)
 
-	if err := SaveSessionState(state); err != nil {
-		fmt.Fprintf(diagWriter, "Warning: failed to save session state for %s: %v\n", sid, err)
-		return
-	}
+	fmt.Fprintf(diagWriter, "session-state.json persistence disabled; using conversation.json\n")
 
 	if r.interrupted {
 		r.printResumeHint(display, diagWriter, "=== SESSION INTERRUPTED ===", r.turnsCompleted)
@@ -1059,7 +1118,7 @@ func (r *runLifecycleState) suspendForUserInput(display ui.SessionDisplay, diagW
 	if err := r.transition(StateSuspendedUserInput); err != nil {
 		return Result{}, err
 	}
-	r.suspendedUserInput = &SuspendedUserInputState{
+	r.suspendedUserInput = &conversation.SuspendedUserInputState{
 		Kind:        "user-directed-ask",
 		Question:    strings.TrimSpace(question),
 		Context:     strings.TrimSpace(context),

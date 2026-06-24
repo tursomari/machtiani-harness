@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tursomari/machtiani/agent/internal/conversation"
 	"github.com/tursomari/machtiani/agent/internal/llm"
 )
 
@@ -94,7 +95,7 @@ func TestUpdateModePlanProgressNoLongerPersistsProgressInModePlan(t *testing.T) 
 	if err := persistModePlan(sessionID, plan); err != nil {
 		t.Fatalf("persistModePlan error: %v", err)
 	}
-	progress := &PlannerProgressState{
+	progress := &conversation.PlannerProgressState{
 		SuccessFiles: []string{"LICENSE", "docs/README.md"},
 	}
 	if err := UpdateModePlanProgress(sessionID, progress); err != nil {

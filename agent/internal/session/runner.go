@@ -21,6 +21,7 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/trajectory"
 	"github.com/tursomari/machtiani/agent/internal/transcript"
 	"github.com/tursomari/machtiani/agent/internal/ui"
+	"github.com/tursomari/machtiani/agent/internal/conversation"
 )
 
 const (
@@ -49,7 +50,7 @@ type plannerProgressTracker struct {
 	fileDedupSet map[string]string
 }
 
-func newPlannerProgressTracker(existing *PlannerProgressState) *plannerProgressTracker {
+func newPlannerProgressTracker(existing *conversation.PlannerProgressState) *plannerProgressTracker {
 	tracker := &plannerProgressTracker{
 		successSet:   make(map[string]struct{}),
 		fileDedupSet: make(map[string]string),
@@ -210,14 +211,14 @@ func (p *plannerProgressTracker) successList() []string {
 	return append([]string(nil), p.successFiles...)
 }
 
-func (p *plannerProgressTracker) toState() *PlannerProgressState {
+func (p *plannerProgressTracker) toState() *conversation.PlannerProgressState {
 	if p == nil {
 		return nil
 	}
 	if len(p.successFiles) == 0 {
 		return nil
 	}
-	state := &PlannerProgressState{
+	state := &conversation.PlannerProgressState{
 		SuccessFiles: append([]string(nil), p.successFiles...),
 	}
 	return state

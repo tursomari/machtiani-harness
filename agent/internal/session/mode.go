@@ -14,6 +14,7 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
 	"github.com/tursomari/machtiani/agent/internal/ui"
+	"github.com/tursomari/machtiani/agent/internal/conversation"
 )
 
 const modePlanFilename = "mode-plan.json"
@@ -356,7 +357,7 @@ func persistModePlan(sessionID string, plan modePlanState) error {
 	return nil
 }
 
-func UpdateModePlanProgress(sessionID string, progress *PlannerProgressState) error {
+func UpdateModePlanProgress(sessionID string, progress *conversation.PlannerProgressState) error {
 	// PlannerProgress is now stored only in session-state.json; mode-plan.json
 	// no longer carries a redundant copy. Kept as a no-op to preserve the
 	// call-site surface across the codebase.

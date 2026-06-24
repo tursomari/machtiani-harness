@@ -13,6 +13,7 @@ import (
 
 	"github.com/tursomari/machtiani/agent/internal/conversation"
 	"github.com/tursomari/machtiani/agent/internal/llm"
+	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
 	"github.com/tursomari/machtiani/agent/internal/planner"
 	"github.com/tursomari/machtiani/agent/internal/shell-agent"
 	"github.com/tursomari/machtiani/agent/internal/shell-agent/pkg/minisweagent"
@@ -460,5 +461,485 @@ func TestReplayShellAgentActionsNoCommands(t *testing.T) {
 
 	if len(recorder.streamActions) != 0 {
 		t.Fatalf("expected 0 StreamAction calls for trajectory without commands, got %d", len(recorder.streamActions))
+	}
+}
+
+// TestExtractResumableWorkRequestQuestionFromTopLevelField verifies that
+// ExtractResumableWorkRequestQuestion detects resumable work requests from
+// the top-level Conversation.ShellAgentResumable field without relying on
+// per-message shell_agent_resumable metadata.
+func TestExtractResumableWorkRequestQuestionFromTopLevelField(t *testing.T) {
+	conv := conversation.New("test-resume-top-level", "Test goal")
+
+	conv.ShellAgentResumable = true
+	conv.ShellAgentTrajectoryPath = "/tmp/test-path"
+
+	conv.AddMessage("assistant", "Run a background check on the project", map[string]any{
+		"type":                        "work_request",
+		"turn":                        1,
+		"decision":                    "ask_worker",
+		"shell_agent_session_id":       "test-resume-top-level/shell-agent/1",
+		"shell_agent_trajectory_path": "/tmp/test-path",
+		// shell_agent_resumable intentionally NOT set in metadata
+	})
+
+	// No work_result for turn 1.
+
+	data, err := conv.Marshal()
+	if err != nil {
+		t.Fatalf("failed to marshal conversation: %v", err)
+	}
+	loaded, err := conversation.Unmarshal(data)
+	if err != nil {
+		t.Fatalf("failed to unmarshal conversation: %v", err)
+	}
+
+	if !HasResumableShellAgentWorkRequest(loaded) {
+		t.Fatal("expected HasResumableShellAgentWorkRequest to return true via top-level field")
+	}
+
+	question := ExtractResumableWorkRequestQuestion(loaded)
+	if question != "Run a background check on the project" {
+		t.Fatalf("expected ExtractResumableWorkRequestQuestion to return 'Run a background check on the project', got %q", question)
+	}
+
+	// Also test that an empty Conversation with ShellAgentResumable=true but
+	// no messages returns empty string.
+	emptyConv := conversation.New("test-empty-resumable", "Empty goal")
+	emptyConv.ShellAgentResumable = true
+	if q := ExtractResumableWorkRequestQuestion(emptyConv); q != "" {
+		t.Fatalf("expected empty string for empty conversation with ShellAgentResumable=true, got %q", q)
+	}
+}
+
+// TestExtractResumableWorkRequestQuestionMetadataFallback verifies that when
+// ShellAgentResumable is false (the top-level field), the function falls
+// back to scanning per-message metadata.
+func TestExtractResumableWorkRequestQuestionMetadataFallback(t *testing.T) {
+	conv := conversation.New("test-resume-metadata-fallback", "Test goal")
+
+	// ShellAgentResumable is false (zero value) – leave it as is.
+
+	conv.AddMessage("assistant", "Run a background check on the project", map[string]any{
+		"type":                        "work_request",
+		"turn":                        1,
+		"decision":                    "ask_worker",
+		"shell_agent_session_id":       "test-resume-metadata-fallback/shell-agent/1",
+		"shell_agent_trajectory_path": "/tmp/test-path",
+		"shell_agent_resumable":       true,
+	})
+
+	// No work_result for turn 1.
+
+	data, err := conv.Marshal()
+	if err != nil {
+		t.Fatalf("failed to marshal conversation: %v", err)
+	}
+	loaded, err := conversation.Unmarshal(data)
+	if err != nil {
+		t.Fatalf("failed to unmarshal conversation: %v", err)
+	}
+
+	if !HasResumableShellAgentWorkRequest(loaded) {
+		t.Fatal("expected HasResumableShellAgentWorkRequest to return true via metadata fallback")
+	}
+
+	question := ExtractResumableWorkRequestQuestion(loaded)
+	if question != "Run a background check on the project" {
+		t.Fatalf("expected ExtractResumableWorkRequestQuestion to return 'Run a background check on the project' via metadata fallback, got %q", question)
+	}
+}
+
+// TestPrepareRunBootstrapFromConversation verifies end-to-end bootstrap from a
+// Conversation with top-level fields without requiring a session-state.json
+// file on disk. The conversation.json file is pre-populated with all session
+// state fields, and prepareRunBootstrap should load state from it.
+func TestPrepareRunBootstrapFromConversation(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+	oldWd, _ := os.Getwd()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer os.Chdir(oldWd)
+
+	sessionID := fmt.Sprintf("test-bootstrap-from-conv-%d", time.Now().UnixNano())
+
+	// Create a Conversation with all top-level fields populated.
+	now := time.Now().UTC()
+	conv := &conversation.Conversation{
+		SessionID:                sessionID,
+		Goal:                     "Bootstrap from conversation fields",
+		OriginalGoal:             "Bootstrap original goal",
+		OriginalPrompt:           "Bootstrap original prompt",
+		ShellAgentResumable:      false,
+		ShellAgentTrajectoryPath: "/tmp/bootstrap-trajectory.json",
+		ShellAgentInterruptStep:  1,
+		TurnsCompleted:           2,
+		PlannerProgress: &conversation.PlannerProgressState{
+			SuccessFiles: []string{"bootstrap_test.go"},
+		},
+		PlannerOverlay:    "Bootstrap overlay",
+		TaskDescription:   "Bootstrap task description",
+		Status:            "running",
+		UpdatedAt:         now,
+	}
+
+	// Ensure there is NO session-state.json on disk – only conversation.json.
+	dir, err := artifacts.SessionDirectory(sessionID)
+	if err != nil {
+		t.Fatalf("failed to resolve session directory: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = RemoveSessionState(sessionID)
+		_ = os.RemoveAll(dir)
+	})
+
+	// Write conversation.json to disk.
+	convPath, err := artifacts.SessionConversationFile(sessionID)
+	if err != nil {
+		t.Fatalf("SessionConversationFile: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(convPath), 0o755); err != nil {
+		t.Fatalf("mkdir conv dir: %v", err)
+	}
+	data, err := conv.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal conversation: %v", err)
+	}
+	if err := os.WriteFile(convPath, data, 0o644); err != nil {
+		t.Fatalf("WriteFile conversation: %v", err)
+	}
+
+	// Verify session-state.json does NOT exist.
+	statePath := filepath.Join(dir, "session-state.json")
+	if _, err := os.Stat(statePath); !os.IsNotExist(err) {
+		t.Fatalf("expected session-state.json to NOT exist before bootstrap")
+	}
+
+	opts := Options{
+		Config: Config{
+			SessionID: sessionID,
+		},
+		Goal:            "Bootstrap from conversation fields",
+		PlannerOverride: &mockPlanner{},
+	}
+
+	bootstrap, _, ok := prepareRunBootstrap(context.Background(), opts, io.Discard)
+	if !ok {
+		t.Fatal("prepareRunBootstrap returned not ok")
+	}
+	if bootstrap == nil {
+		t.Fatal("expected non-nil bootstrap")
+	}
+	if bootstrap.loadedState == nil {
+		t.Fatal("expected non-nil loadedState in bootstrap")
+	}
+
+	loaded := bootstrap.loadedState
+
+	// Verify all fields match the conversation top-level fields.
+	if loaded.SessionID != sessionID {
+		t.Fatalf("SessionID mismatch: got %q want %q", loaded.SessionID, sessionID)
+	}
+	if loaded.Goal != conv.Goal {
+		t.Fatalf("Goal mismatch: got %q want %q", loaded.Goal, conv.Goal)
+	}
+	if loaded.OriginalGoal != conv.OriginalGoal {
+		t.Fatalf("OriginalGoal mismatch: got %q want %q", loaded.OriginalGoal, conv.OriginalGoal)
+	}
+	if loaded.OriginalPrompt != conv.OriginalPrompt {
+		t.Fatalf("OriginalPrompt mismatch: got %q want %q", loaded.OriginalPrompt, conv.OriginalPrompt)
+	}
+	if loaded.ShellAgentResumable != conv.ShellAgentResumable {
+		t.Fatalf("ShellAgentResumable mismatch: got %v want %v", loaded.ShellAgentResumable, conv.ShellAgentResumable)
+	}
+	if loaded.ShellAgentTrajectoryPath != conv.ShellAgentTrajectoryPath {
+		t.Fatalf("ShellAgentTrajectoryPath mismatch: got %q want %q", loaded.ShellAgentTrajectoryPath, conv.ShellAgentTrajectoryPath)
+	}
+	if loaded.ShellAgentInterruptStep != conv.ShellAgentInterruptStep {
+		t.Fatalf("ShellAgentInterruptStep mismatch: got %d want %d", loaded.ShellAgentInterruptStep, conv.ShellAgentInterruptStep)
+	}
+	if loaded.TurnsCompleted != conv.TurnsCompleted {
+		t.Fatalf("TurnsCompleted mismatch: got %d want %d", loaded.TurnsCompleted, conv.TurnsCompleted)
+	}
+	if loaded.PlannerProgress == nil {
+		t.Fatal("expected PlannerProgress to be set")
+	}
+	if len(loaded.PlannerProgress.SuccessFiles) != len(conv.PlannerProgress.SuccessFiles) {
+		t.Fatalf("PlannerProgress.SuccessFiles length mismatch: got %d want %d",
+			len(loaded.PlannerProgress.SuccessFiles), len(conv.PlannerProgress.SuccessFiles))
+	}
+	for i, f := range conv.PlannerProgress.SuccessFiles {
+		if loaded.PlannerProgress.SuccessFiles[i] != f {
+			t.Fatalf("PlannerProgress.SuccessFiles[%d] mismatch: got %q want %q",
+				i, loaded.PlannerProgress.SuccessFiles[i], f)
+		}
+	}
+	if len(loaded.Modes) != len(conv.Modes) {
+		t.Fatalf("Modes length mismatch: got %d want %d", len(loaded.Modes), len(conv.Modes))
+	}
+	for i, m := range conv.Modes {
+		if loaded.Modes[i] != m {
+			t.Fatalf("Modes[%d] mismatch: got %q want %q", i, loaded.Modes[i], m)
+		}
+	}
+	if loaded.ModeInstructionDir != conv.ModeInstructionDir {
+		t.Fatalf("ModeInstructionDir mismatch: got %q want %q", loaded.ModeInstructionDir, conv.ModeInstructionDir)
+	}
+	if loaded.PlannerOverlay != conv.PlannerOverlay {
+		t.Fatalf("PlannerOverlay mismatch: got %q want %q", loaded.PlannerOverlay, conv.PlannerOverlay)
+	}
+	if loaded.TaskDescription != conv.TaskDescription {
+		t.Fatalf("TaskDescription mismatch: got %q want %q", loaded.TaskDescription, conv.TaskDescription)
+	}
+	if loaded.Status != conv.Status {
+		t.Fatalf("Status mismatch: got %q want %q", loaded.Status, conv.Status)
+	}
+	// The bootstrap is in resume mode since a sessionID was provided.
+	if !bootstrap.resumeMode {
+		t.Fatal("expected resumeMode to be true when sessionID is provided")
+	}
+
+	// session-state.json is still not required (and may not exist).
+	if _, err := os.Stat(statePath); !os.IsNotExist(err) {
+		// If it was created by the bootstrap, that's fine but not required.
+		t.Logf("session-state.json exists after bootstrap (optional)")
+	}
+}
+
+// TestResumeEndToEndWithoutSessionStateJSON verifies that when a
+// conversation.json with all top-level resumability fields is present on
+// disk but session-state.json is absent, prepareRunBootstrap can load state
+// from the conversation alone and does NOT create session-state.json.
+func TestResumeEndToEndWithoutSessionStateJSON(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+	oldWd, _ := os.Getwd()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer os.Chdir(oldWd)
+
+	sessionID := fmt.Sprintf("test-e2e-no-state-%d", time.Now().UnixNano())
+
+	// Build a Conversation with all top-level resumability fields
+	// populated – this simulates what PreWriteTurn writes to disk.
+	now := time.Now().UTC()
+	conv := &conversation.Conversation{
+		SessionID:                sessionID,
+		Goal:                     "End-to-end resume without session-state",
+		OriginalGoal:             "E2E original goal",
+		OriginalPrompt:           "E2E original prompt",
+		ShellAgentResumable:      true,
+		ShellAgentTrajectoryPath: "/tmp/e2e-trajectory.json",
+		ShellAgentInterruptStep:  1,
+		TurnsCompleted:           3,
+		PlannerProgress: &conversation.PlannerProgressState{
+			SuccessFiles: []string{"runner_resume_test.go"},
+		},
+		PlannerOverlay:  "E2E overlay",
+		TaskDescription: "E2E task description",
+		Status:          "interrupted",
+		UpdatedAt:       now,
+	}
+
+	// Ensure there is NO session-state.json on disk.
+	dir, err := artifacts.SessionDirectory(sessionID)
+	if err != nil {
+		t.Fatalf("failed to resolve session directory: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = RemoveSessionState(sessionID)
+		_ = os.RemoveAll(dir)
+	})
+
+	// Write conversation.json to disk.
+	convPath, err := artifacts.SessionConversationFile(sessionID)
+	if err != nil {
+		t.Fatalf("SessionConversationFile: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(convPath), 0o755); err != nil {
+		t.Fatalf("mkdir conv dir: %v", err)
+	}
+	data, err := conv.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal conversation: %v", err)
+	}
+	if err := os.WriteFile(convPath, data, 0o644); err != nil {
+		t.Fatalf("WriteFile conversation: %v", err)
+	}
+
+	// Verify session-state.json does NOT exist before bootstrap.
+	statePath := filepath.Join(dir, "session-state.json")
+	if _, err := os.Stat(statePath); !os.IsNotExist(err) {
+		t.Fatalf("expected session-state.json to NOT exist before bootstrap")
+	}
+
+	opts := Options{
+		Config: Config{
+			SessionID: sessionID,
+		},
+		Goal:            "End-to-end resume without session-state",
+		PlannerOverride: &mockPlanner{},
+	}
+
+	bootstrap, _, ok := prepareRunBootstrap(context.Background(), opts, io.Discard)
+	if !ok {
+		t.Fatal("prepareRunBootstrap returned not ok")
+	}
+	if bootstrap == nil {
+		t.Fatal("expected non-nil bootstrap")
+	}
+	if bootstrap.loadedState == nil {
+		t.Fatal("expected non-nil loadedState in bootstrap")
+	}
+
+	loaded := bootstrap.loadedState
+
+	// Verify key fields match the conversation top-level fields.
+	if loaded.SessionID != sessionID {
+		t.Fatalf("SessionID mismatch: got %q want %q", loaded.SessionID, sessionID)
+	}
+	if loaded.Goal != conv.Goal {
+		t.Fatalf("Goal mismatch: got %q want %q", loaded.Goal, conv.Goal)
+	}
+	if loaded.OriginalGoal != conv.OriginalGoal {
+		t.Fatalf("OriginalGoal mismatch: got %q want %q", loaded.OriginalGoal, conv.OriginalGoal)
+	}
+	if loaded.OriginalPrompt != conv.OriginalPrompt {
+		t.Fatalf("OriginalPrompt mismatch: got %q want %q", loaded.OriginalPrompt, conv.OriginalPrompt)
+	}
+	if loaded.ShellAgentResumable != conv.ShellAgentResumable {
+		t.Fatalf("ShellAgentResumable mismatch: got %v want %v", loaded.ShellAgentResumable, conv.ShellAgentResumable)
+	}
+	if loaded.ShellAgentTrajectoryPath != conv.ShellAgentTrajectoryPath {
+		t.Fatalf("ShellAgentTrajectoryPath mismatch: got %q want %q", loaded.ShellAgentTrajectoryPath, conv.ShellAgentTrajectoryPath)
+	}
+	if loaded.ShellAgentInterruptStep != conv.ShellAgentInterruptStep {
+		t.Fatalf("ShellAgentInterruptStep mismatch: got %d want %d", loaded.ShellAgentInterruptStep, conv.ShellAgentInterruptStep)
+	}
+	if loaded.TurnsCompleted != conv.TurnsCompleted {
+		t.Fatalf("TurnsCompleted mismatch: got %d want %d", loaded.TurnsCompleted, conv.TurnsCompleted)
+	}
+	if loaded.PlannerOverlay != conv.PlannerOverlay {
+		t.Fatalf("PlannerOverlay mismatch: got %q want %q", loaded.PlannerOverlay, conv.PlannerOverlay)
+	}
+	if loaded.TaskDescription != conv.TaskDescription {
+		t.Fatalf("TaskDescription mismatch: got %q want %q", loaded.TaskDescription, conv.TaskDescription)
+	}
+	if loaded.Status != conv.Status {
+		t.Fatalf("Status mismatch: got %q want %q", loaded.Status, conv.Status)
+	}
+
+	// Assert session-state.json was NOT created on disk after bootstrap.
+	if _, err := os.Stat(statePath); !os.IsNotExist(err) {
+		t.Fatalf("session-state.json was created on disk but should NOT have been")
+	}
+}
+
+// TestResumeBackwardCompatWithSessionStateJSON verifies backward
+// compatibility: when a legacy session-state.json is present on disk and
+// conversation.json has NO top-level resumability fields, prepareRunBootstrap
+// loads state from session-state.json.
+func TestResumeBackwardCompatWithSessionStateJSON(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+	oldWd, _ := os.Getwd()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer os.Chdir(oldWd)
+
+	sessionID := fmt.Sprintf("test-bwd-compat-%d", time.Now().UnixNano())
+
+	dir, err := artifacts.SessionDirectory(sessionID)
+	if err != nil {
+		t.Fatalf("failed to resolve session directory: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = RemoveSessionState(sessionID)
+		_ = os.RemoveAll(dir)
+	})
+
+	// Write a legacy session-state.json to disk via SaveSessionState.
+	legacyState := SessionState{
+		SessionID:      sessionID,
+		Goal:           "Backward compat goal from session-state",
+		OriginalGoal:   "Backward compat original goal",
+		OriginalPrompt: "Backward compat original prompt",
+		TurnsCompleted: 4,
+		Status:         "interrupted",
+	}
+	if err := SaveSessionState(legacyState); err != nil {
+		t.Fatalf("SaveSessionState: %v", err)
+	}
+
+	// Verify session-state.json exists on disk.
+	statePath := filepath.Join(dir, "session-state.json")
+	if _, err := os.Stat(statePath); os.IsNotExist(err) {
+		t.Fatalf("session-state.json should exist after SaveSessionState")
+	}
+
+	// Write a bare conversation.json that has NO top-level resumability
+	// fields populated – just what conversation.New produces (SessionID,
+	// OriginalGoal, empty Messages, CreatedAt, UpdatedAt). The Goal field
+	// is intentionally empty so that loadOrMigrateSessionState falls
+	// through to LoadSessionState.
+	convPath, err := artifacts.SessionConversationFile(sessionID)
+	if err != nil {
+		t.Fatalf("SessionConversationFile: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(convPath), 0o755); err != nil {
+		t.Fatalf("mkdir conv dir: %v", err)
+	}
+	bareConv := conversation.New(sessionID, "Backward compat original goal")
+	data, err := bareConv.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal bare conversation: %v", err)
+	}
+	if err := os.WriteFile(convPath, data, 0o644); err != nil {
+		t.Fatalf("WriteFile bare conversation: %v", err)
+	}
+
+	opts := Options{
+		Config: Config{
+			SessionID: sessionID,
+		},
+		Goal:            "Backward compat goal from session-state",
+		PlannerOverride: &mockPlanner{},
+	}
+
+	bootstrap, _, ok := prepareRunBootstrap(context.Background(), opts, io.Discard)
+	if !ok {
+		t.Fatal("prepareRunBootstrap returned not ok")
+	}
+	if bootstrap == nil {
+		t.Fatal("expected non-nil bootstrap")
+	}
+	if bootstrap.loadedState == nil {
+		t.Fatal("expected non-nil loadedState in bootstrap")
+	}
+
+	loaded := bootstrap.loadedState
+
+	// Verify loadedState matches the legacy session-state.json fields.
+	if loaded.SessionID != legacyState.SessionID {
+		t.Fatalf("SessionID mismatch: got %q want %q", loaded.SessionID, legacyState.SessionID)
+	}
+	if loaded.Goal != legacyState.Goal {
+		t.Fatalf("Goal mismatch: got %q want %q", loaded.Goal, legacyState.Goal)
+	}
+	if loaded.OriginalGoal != legacyState.OriginalGoal {
+		t.Fatalf("OriginalGoal mismatch: got %q want %q", loaded.OriginalGoal, legacyState.OriginalGoal)
+	}
+	if loaded.OriginalPrompt != legacyState.OriginalPrompt {
+		t.Fatalf("OriginalPrompt mismatch: got %q want %q", loaded.OriginalPrompt, legacyState.OriginalPrompt)
+	}
+	if loaded.TurnsCompleted != legacyState.TurnsCompleted {
+		t.Fatalf("TurnsCompleted mismatch: got %d want %d", loaded.TurnsCompleted, legacyState.TurnsCompleted)
+	}
+	if loaded.Status != legacyState.Status {
+		t.Fatalf("Status mismatch: got %q want %q", loaded.Status, legacyState.Status)
 	}
 }
