@@ -1,15 +1,22 @@
 package main
 
 import (
+	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/BurntSushi/toml"
 	"github.com/tursomari/machtiani/agent/internal/llm"
 )
 
-func TestHandleConfigProviderCommands(t *testing.T) {
+// setupConfigTest creates a temp dir, chdir into it, calls
+// llm.ResetConfigForTesting, and returns the original dir and a cleanup
+// function.  The cleanup is registered with t.Cleanup.
+func setupConfigTest(t *testing.T) (origDir string, cleanup func()) {
+	t.Helper()
 	tmpDir := t.TempDir()
 	origDir, err := os.Getwd()
 	if err != nil {
@@ -18,114 +25,453 @@ func TestHandleConfigProviderCommands(t *testing.T) {
 	if err := os.Chdir(tmpDir); err != nil {
 		t.Fatalf("chdir: %v", err)
 	}
-	defer func() {
+	llm.ResetConfigForTesting()
+	cleanup = func() {
 		if err := os.Chdir(origDir); err != nil {
-			t.Fatalf("chdir back: %v", err)
+			t.Errorf("chdir back: %v", err)
 		}
+	}
+	t.Cleanup(cleanup)
+	return origDir, cleanup
+}
+
+// captureOutput runs fn and captures both stdout and stderr.
+func captureOutput(fn func()) (stdout, stderr string) {
+	oldStdout := os.Stdout
+	oldStderr := os.Stderr
+
+	rOut, wOut, _ := os.Pipe()
+	rErr, wErr, _ := os.Pipe()
+	os.Stdout = wOut
+	os.Stderr = wErr
+
+	outCh := make(chan string, 1)
+	errCh := make(chan string, 1)
+	go func() {
+		var buf bytes.Buffer
+		io.Copy(&buf, rOut)
+		outCh <- buf.String()
+	}()
+	go func() {
+		var buf bytes.Buffer
+		io.Copy(&buf, rErr)
+		errCh <- buf.String()
 	}()
 
-	// 1. Initialize a valid config.
-	t.Run("init", func(t *testing.T) {
-		code := handleInitCommand([]string{
-			"--provider-url", "https://api.example.com",
-			"--api-key", "sk-test123",
-			"--model", "gpt-4o",
-			"--reasoning", "high",
-		})
-		if code != 0 {
-			t.Fatalf("expected return code 0, got %d", code)
-		}
+	fn()
 
-		configPath := filepath.Join(".machtiani", "config.toml")
-		if _, err := os.Stat(configPath); os.IsNotExist(err) {
-			t.Fatalf("expected config.toml to exist at %s", configPath)
-		}
-	})
+	wOut.Close()
+	wErr.Close()
+	os.Stdout = oldStdout
+	os.Stderr = oldStderr
 
-	// 2. Update provider URL.
-	t.Run("url", func(t *testing.T) {
-		code := handleConfigProviderCommand([]string{"url", "https://new-url.com"})
-		if code != 0 {
-			t.Fatalf("expected return code 0, got %d", code)
-		}
+	return <-outCh, <-errCh
+}
 
-		data, err := os.ReadFile(filepath.Join(".machtiani", "config.toml"))
-		if err != nil {
-			t.Fatalf("reading config.toml: %v", err)
-		}
-		content := string(data)
-		if !strings.Contains(content, `base_url = "https://new-url.com"`) {
-			t.Fatalf("config.toml content missing new base_url:\n%s", content)
-		}
-	})
+// writeTOML encodes the given map as TOML and writes it to path.
+// Directories are created as needed.
+func writeTOML(t *testing.T, path string, data map[string]any) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatalf("mkdir for %s: %v", path, err)
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create %s: %v", path, err)
+	}
+	defer f.Close()
+	if err := toml.NewEncoder(f).Encode(data); err != nil {
+		t.Fatalf("encode %s: %v", path, err)
+	}
+}
 
-	// 3. Update API key.
-	t.Run("api-key", func(t *testing.T) {
-		code := handleConfigProviderCommand([]string{"api-key", "new-key"})
-		if code != 0 {
-			t.Fatalf("expected return code 0, got %d", code)
-		}
+// readTOML reads the file at path and decodes it into a map[string]any.
+func readTOML(t *testing.T, path string) map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	var cfg map[string]any
+	if err := toml.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("decode %s: %v", path, err)
+	}
+	return cfg
+}
 
-		data, err := os.ReadFile(filepath.Join(".machtiani", "config.toml"))
-		if err != nil {
-			t.Fatalf("reading config.toml: %v", err)
-		}
-		content := string(data)
-		if !strings.Contains(content, `api_key = "new-key"`) {
-			t.Fatalf("config.toml content missing new api_key:\n%s", content)
-		}
-	})
+// ---------------------------------------------------------------------------
+// TestSetNestedConfig_CreatesIntermediateMaps
+// ---------------------------------------------------------------------------
 
-	// 4. Update model.
-	t.Run("model", func(t *testing.T) {
-		code := handleConfigProviderCommand([]string{"model", "gpt-5"})
-		if code != 0 {
-			t.Fatalf("expected return code 0, got %d", code)
-		}
+func TestSetNestedConfig_CreatesIntermediateMaps(t *testing.T) {
+	_, cleanup := setupConfigTest(t)
+	defer cleanup()
 
-		data, err := os.ReadFile(filepath.Join(".machtiani", "config.toml"))
-		if err != nil {
-			t.Fatalf("reading config.toml: %v", err)
-		}
-		content := string(data)
-		if !strings.Contains(content, `model = "gpt-5"`) {
-			t.Fatalf("config.toml content missing new model:\n%s", content)
-		}
-	})
+	configPath := filepath.Join(".machtiani", "config.toml")
+	writeTOML(t, configPath, llm.DefaultMinimalConfigMap())
 
-	// 5. Update reasoning effort.
-	t.Run("reasoning", func(t *testing.T) {
-		code := handleConfigProviderCommand([]string{"reasoning", "low"})
-		if code != 0 {
-			t.Fatalf("expected return code 0, got %d", code)
-		}
+	if err := setNestedConfig(configPath, "high",
+		"models", "default", "params", "reasoning", "effort"); err != nil {
+		t.Fatalf("setNestedConfig: %v", err)
+	}
 
-		data, err := os.ReadFile(filepath.Join(".machtiani", "config.toml"))
-		if err != nil {
-			t.Fatalf("reading config.toml: %v", err)
-		}
-		content := string(data)
-		if !strings.Contains(content, `effort = "low"`) {
-			t.Fatalf("config.toml content missing new reasoning effort:\n%s", content)
-		}
-	})
+	cfg := readTOML(t, configPath)
 
-	// 6. Error when config does not exist in a different directory.
-	t.Run("error no config", func(t *testing.T) {
-		emptyDir := t.TempDir()
-		if err := os.Chdir(emptyDir); err != nil {
-			t.Fatalf("chdir to empty dir: %v", err)
-		}
-		defer func() {
-			if err := os.Chdir(tmpDir); err != nil {
-				t.Fatalf("chdir back to tmpDir: %v", err)
+	models, ok := cfg["models"].(map[string]any)
+	if !ok {
+		t.Fatalf("models is not map[string]any, got %T", cfg["models"])
+	}
+	def, ok := models["default"].(map[string]any)
+	if !ok {
+		t.Fatalf("models.default is not map[string]any, got %T", models["default"])
+	}
+	params, ok := def["params"].(map[string]any)
+	if !ok {
+		t.Fatalf("models.default.params is not map[string]any, got %T", def["params"])
+	}
+	reasoning, ok := params["reasoning"].(map[string]any)
+	if !ok {
+		t.Fatalf("models.default.params.reasoning is not map[string]any, got %T", params["reasoning"])
+	}
+	if reasoning["effort"] != "high" {
+		t.Errorf("expected effort = %q, got %q", "high", reasoning["effort"])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TestSetNestedConfig_OverwritesNonMap
+// ---------------------------------------------------------------------------
+
+func TestSetNestedConfig_OverwritesNonMap(t *testing.T) {
+	_, cleanup := setupConfigTest(t)
+	defer cleanup()
+
+	configPath := filepath.Join(".machtiani", "config.toml")
+	cfg := map[string]any{
+		"default_model": "",
+		"models": map[string]any{
+			"default": map[string]any{
+				"params": "not-a-map", // a string, not a map
+			},
+		},
+	}
+	writeTOML(t, configPath, cfg)
+
+	if err := setNestedConfig(configPath, "high",
+		"models", "default", "params", "reasoning", "effort"); err != nil {
+		t.Fatalf("setNestedConfig: %v", err)
+	}
+
+	data := readTOML(t, configPath)
+
+	models, ok := data["models"].(map[string]any)
+	if !ok {
+		t.Fatalf("models is not map[string]any, got %T", data["models"])
+	}
+	def, ok := models["default"].(map[string]any)
+	if !ok {
+		t.Fatalf("models.default is not map[string]any, got %T", models["default"])
+	}
+	params, ok := def["params"].(map[string]any)
+	if !ok {
+		t.Fatalf("models.default.params is not map[string]any, got %T", def["params"])
+	}
+	reasoning, ok := params["reasoning"].(map[string]any)
+	if !ok {
+		t.Fatalf("models.default.params.reasoning is not map[string]any, got %T", params["reasoning"])
+	}
+	if reasoning["effort"] != "high" {
+		t.Errorf("expected effort = %q, got %q", "high", reasoning["effort"])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TestConfigURLCommand_UpdatesField
+// ---------------------------------------------------------------------------
+
+func TestConfigURLCommand_UpdatesField(t *testing.T) {
+	_, cleanup := setupConfigTest(t)
+	defer cleanup()
+
+	configPath := filepath.Join(".machtiani", "config.toml")
+	writeTOML(t, configPath, llm.DefaultMinimalConfigMap())
+
+	// Set initial value via setNestedConfig so we can later verify it changed.
+	if err := setNestedConfig(configPath, "old", "providers", "default", "base_url"); err != nil {
+		t.Fatalf("setNestedConfig (initial): %v", err)
+	}
+
+	code := handleConfigURLCommand([]string{"new"})
+	if code != 0 {
+		t.Fatalf("expected return code 0, got %d", code)
+	}
+
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	s := string(content)
+	if !strings.Contains(s, `base_url = "new"`) {
+		t.Errorf("expected base_url = \"new\", got:\n%s", s)
+	}
+	if strings.Contains(s, `base_url = "old"`) {
+		t.Errorf("old base_url should no longer be present:\n%s", s)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TestConfigAPIKeyCommand_UpdatesField
+// ---------------------------------------------------------------------------
+
+func TestConfigAPIKeyCommand_UpdatesField(t *testing.T) {
+	_, cleanup := setupConfigTest(t)
+	defer cleanup()
+
+	configPath := filepath.Join(".machtiani", "config.toml")
+	writeTOML(t, configPath, llm.DefaultMinimalConfigMap())
+
+	if err := setNestedConfig(configPath, "old-key", "providers", "default", "api_key"); err != nil {
+		t.Fatalf("setNestedConfig (initial): %v", err)
+	}
+
+	code := handleConfigAPIKeyCommand([]string{"new-key"})
+	if code != 0 {
+		t.Fatalf("expected return code 0, got %d", code)
+	}
+
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	s := string(content)
+	if !strings.Contains(s, `api_key = "new-key"`) {
+		t.Errorf("expected api_key = \"new-key\", got:\n%s", s)
+	}
+	if strings.Contains(s, `api_key = "old-key"`) {
+		t.Errorf("old api_key should no longer be present:\n%s", s)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TestConfigModelCommand_UpdatesField
+// ---------------------------------------------------------------------------
+
+func TestConfigModelCommand_UpdatesField(t *testing.T) {
+	_, cleanup := setupConfigTest(t)
+	defer cleanup()
+
+	configPath := filepath.Join(".machtiani", "config.toml")
+	writeTOML(t, configPath, llm.DefaultMinimalConfigMap())
+
+	if err := setNestedConfig(configPath, "old-model", "models", "default", "model"); err != nil {
+		t.Fatalf("setNestedConfig (initial): %v", err)
+	}
+
+	code := handleConfigModelCommand([]string{"new-model"})
+	if code != 0 {
+		t.Fatalf("expected return code 0, got %d", code)
+	}
+
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	s := string(content)
+	if !strings.Contains(s, `model = "new-model"`) {
+		t.Errorf("expected model = \"new-model\", got:\n%s", s)
+	}
+	if strings.Contains(s, `model = "old-model"`) {
+		t.Errorf("old model should no longer be present:\n%s", s)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TestConfigReasoningCommand_UpdatesField
+// ---------------------------------------------------------------------------
+
+func TestConfigReasoningCommand_UpdatesField(t *testing.T) {
+	_, cleanup := setupConfigTest(t)
+	defer cleanup()
+
+	configPath := filepath.Join(".machtiani", "config.toml")
+	writeTOML(t, configPath, llm.DefaultMinimalConfigMap())
+
+	if err := setNestedConfig(configPath, "low", "models", "default", "params", "reasoning", "effort"); err != nil {
+		t.Fatalf("setNestedConfig (initial): %v", err)
+	}
+
+	code := handleConfigReasoningCommand([]string{"high"})
+	if code != 0 {
+		t.Fatalf("expected return code 0, got %d", code)
+	}
+
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	s := string(content)
+	if !strings.Contains(s, `effort = "high"`) {
+		t.Errorf("expected effort = \"high\", got:\n%s", s)
+	}
+	if strings.Contains(s, `effort = "low"`) {
+		t.Errorf("old effort value should no longer be present:\n%s", s)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TestConfigCommand_NoConfigFile
+// ---------------------------------------------------------------------------
+
+func TestConfigCommand_NoConfigFile(t *testing.T) {
+	_, cleanup := setupConfigTest(t)
+	defer cleanup()
+
+	subcommands := []struct {
+		name string
+		fn   func([]string) int
+		args []string
+	}{
+		{"url", handleConfigURLCommand, []string{"x"}},
+		{"api-key", handleConfigAPIKeyCommand, []string{"x"}},
+		{"model", handleConfigModelCommand, []string{"x"}},
+		{"reasoning", handleConfigReasoningCommand, []string{"x"}},
+	}
+
+	for _, sc := range subcommands {
+		t.Run(sc.name, func(t *testing.T) {
+			llm.ResetConfigForTesting()
+
+			var code int
+			stderr := ""
+			_, stderr = captureOutput(func() {
+				code = sc.fn(sc.args)
+			})
+
+			if code != 1 {
+				t.Errorf("expected return code 1, got %d", code)
 			}
-		}()
+			if !strings.Contains(stderr, "config file not found") {
+				t.Errorf("expected stderr to contain 'config file not found', got: %s", stderr)
+			}
+		})
+	}
+}
 
-		llm.ResetConfigForTesting()
-		code := handleConfigProviderCommand([]string{"url", "x"})
-		if code == 0 {
-			t.Fatalf("expected non-zero return code when config does not exist, got %d", code)
-		}
+// ---------------------------------------------------------------------------
+// TestConfigCommand_BackwardCompatibility
+// ---------------------------------------------------------------------------
+
+func TestConfigCommand_BackwardCompatibility(t *testing.T) {
+	_, cleanup := setupConfigTest(t)
+	defer cleanup()
+
+	configPath := filepath.Join(".machtiani", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	// Write a config with an extra "dead" field that should survive the
+	// round-trip through setNestedConfig.
+	content := []byte(`
+default_model = ""
+listen = "127.0.0.1:8042"
+
+[models.default]
+model = "old-model"
+`)
+	if err := os.WriteFile(configPath, content, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	code := handleConfigModelCommand([]string{"new-model"})
+	if code != 0 {
+		t.Fatalf("expected return code 0, got %d", code)
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	s := string(data)
+
+	// The new model value should be present.
+	if !strings.Contains(s, `model = "new-model"`) {
+		t.Errorf("expected model = \"new-model\" in config:\n%s", s)
+	}
+
+	// The dead field should survive.
+	if !strings.Contains(s, `listen = "127.0.0.1:8042"`) {
+		t.Errorf("expected listen = \"127.0.0.1:8042\" to survive in config:\n%s", s)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TestConfigShowCommand_NoConfig
+// ---------------------------------------------------------------------------
+
+func TestConfigShowCommand_NoConfig(t *testing.T) {
+	_, cleanup := setupConfigTest(t)
+	defer cleanup()
+	llm.ResetConfigForTesting()
+
+	var code int
+	stdout, _ := captureOutput(func() {
+		code = handleConfigShowCommand([]string{})
 	})
+
+	if code != 0 {
+		t.Fatalf("expected return code 0, got %d", code)
+	}
+
+	if !strings.Contains(stdout, "step_limit = 110 # default") {
+		t.Errorf("expected 'step_limit = 110 # default' in stdout, got:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "timeout = 9999 # default") {
+		t.Errorf("expected 'timeout = 9999 # default' in stdout, got:\n%s", stdout)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TestConfigShowCommand_WithConfig
+// ---------------------------------------------------------------------------
+
+func TestConfigShowCommand_WithConfig(t *testing.T) {
+	_, cleanup := setupConfigTest(t)
+	defer cleanup()
+	llm.ResetConfigForTesting()
+
+	configPath := filepath.Join(".machtiani", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	// Write a config that overrides step_limit away from the default of 110.
+	content := []byte(`
+default_model = ""
+
+[planner]
+step_limit = 200
+`)
+	if err := os.WriteFile(configPath, content, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	var code int
+	stdout, _ := captureOutput(func() {
+		code = handleConfigShowCommand([]string{})
+	})
+
+	if code != 0 {
+		t.Fatalf("expected return code 0, got %d", code)
+	}
+
+	// The overridden value should be annotated with "# config.toml".
+	if !strings.Contains(stdout, "step_limit = 200 # config.toml") {
+		t.Errorf("expected 'step_limit = 200 # config.toml' in stdout, got:\n%s", stdout)
+	}
+
+	// Default values should still be annotated with "# default".
+	if !strings.Contains(stdout, "timeout = 9999 # default") {
+		t.Errorf("expected 'timeout = 9999 # default' in stdout, got:\n%s", stdout)
+	}
 }

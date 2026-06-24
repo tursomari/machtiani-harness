@@ -572,18 +572,30 @@ func handleConfigCommand(args []string) int {
 		fmt.Fprintln(os.Stderr, "Usage: mct-agent config <subcommand>")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Subcommands:")
-		fmt.Fprintln(os.Stderr, "  check      Validate configuration")
-		fmt.Fprintln(os.Stderr, "  provider   Configure provider settings")
+		fmt.Fprintln(os.Stderr, "  check       Validate configuration")
+		fmt.Fprintln(os.Stderr, "  show        Show configuration")
+		fmt.Fprintln(os.Stderr, "  url         Get/set API URL")
+		fmt.Fprintln(os.Stderr, "  api-key     Get/set API key")
+		fmt.Fprintln(os.Stderr, "  model       Get/set model")
+		fmt.Fprintln(os.Stderr, "  reasoning   Get/set reasoning")
 		return 2
 	}
 	switch args[0] {
 	case "check":
 		return handleConfigCheckCommand(args[1:])
-	case "provider":
-		return handleConfigProviderCommand(args[1:])
+	case "show":
+		return handleConfigShowCommand(args[1:])
+	case "url":
+		return handleConfigURLCommand(args[1:])
+	case "api-key":
+		return handleConfigAPIKeyCommand(args[1:])
+	case "model":
+		return handleConfigModelCommand(args[1:])
+	case "reasoning":
+		return handleConfigReasoningCommand(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown config subcommand: %s\n", args[0])
-		fmt.Fprintln(os.Stderr, "Usage: mct-agent config <check|provider>")
+		fmt.Fprintln(os.Stderr, "Usage: mct-agent config <check|show|url|api-key|model|reasoning>")
 		return 2
 	}
 }
