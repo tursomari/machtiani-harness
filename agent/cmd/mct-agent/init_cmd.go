@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,8 +10,6 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/tursomari/machtiani/agent/internal/llm"
 )
-
-var _ = context.Background
 
 func init() {
 	cliCommands = append(cliCommands, cliCommand{
@@ -29,7 +26,7 @@ func handleInitCommand(args []string) int {
 	providerURL := fs.String("provider-url", "", "LLM provider base URL (required)")
 	apiKey := fs.String("api-key", "", "API key for the provider (required)")
 	model := fs.String("model", "", "Model name (required)")
-	reasoning := fs.String("reasoning", "medium", "Reasoning effort level")
+	reasoning := fs.String("reasoning", "medium", "Reasoning effort level (low, medium, high)")
 	alias := fs.String("alias", "default", "Model alias name")
 	force := fs.Bool("force", false, "Overwrite existing configuration")
 
@@ -66,22 +63,34 @@ func handleInitCommand(args []string) int {
 		return 1
 	}
 
-	cfg := llm.DefaultMinimalConfig()
-	cfg.DefaultModel = *alias
-	cfg.Providers = map[string]llm.ProviderConfig{
-		*alias: {
-			BaseURL: *providerURL,
-			APIKey:  *apiKey,
-		},
+	cfg := llm.DefaultMinimalConfigMap()
+
+	// Set default_model
+	cfg["default_model"] = *alias
+
+	// Create or get providers map
+	providers, ok := cfg["providers"].(map[string]any)
+	if !ok {
+		providers = make(map[string]any)
+		cfg["providers"] = providers
 	}
-	cfg.Models = map[string]llm.ModelDefinition{
-		*alias: {
-			Provider: *alias,
-			Model:    *model,
-			Params: map[string]interface{}{
-				"reasoning": map[string]interface{}{
-					"effort": *reasoning,
-				},
+	providers[*alias] = map[string]any{
+		"base_url": *providerURL,
+		"api_key":  *apiKey,
+	}
+
+	// Create or get models map
+	models, ok := cfg["models"].(map[string]any)
+	if !ok {
+		models = make(map[string]any)
+		cfg["models"] = models
+	}
+	models[*alias] = map[string]any{
+		"provider": *alias,
+		"model":    *model,
+		"params": map[string]any{
+			"reasoning": map[string]any{
+				"effort": *reasoning,
 			},
 		},
 	}

@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/tursomari/machtiani/agent/internal/llm"
 )
 
 func TestHandleInitCommand(t *testing.T) {
@@ -21,6 +23,8 @@ func TestHandleInitCommand(t *testing.T) {
 			t.Fatalf("chdir back: %v", err)
 		}
 	}()
+	llm.ResetConfigForTesting()
+	t.Cleanup(llm.ResetConfigForTesting)
 
 	// 1. No flags provided - pflag parses successfully but required flags
 	//    are missing, so expects return code 1.
@@ -128,5 +132,63 @@ func TestHandleInitCommand(t *testing.T) {
 				t.Fatalf("config.toml content missing %q:\n%s", check, content)
 			}
 		}
+	})
+
+	// 6. parses with LoadGlobalConfig - verifies that the generated config can
+	//    be parsed by LoadGlobalConfig and contains expected values.
+	t.Run("parses with LoadGlobalConfig", func(t *testing.T) {
+		llm.ResetConfigForTesting()
+
+		code := handleInitCommand([]string{
+			"--provider-url", "https://api.example.com",
+			"--api-key", "sk-test123",
+			"--model", "gpt-4o",
+			"--force",
+		})
+		if code != 0 {
+			t.Fatalf("expected return code 0, got %d", code)
+		}
+
+		if err := os.Chdir(".machtiani"); err != nil {
+			t.Fatalf("chdir .machtiani: %v", err)
+		}
+		defer func() {
+			if err := os.Chdir(tmpDir); err != nil {
+				t.Fatalf("chdir back to tmpDir: %v", err)
+			}
+		}()
+
+		cfg, _, err := llm.LoadGlobalConfig()
+		if err != nil {
+			t.Fatalf("LoadGlobalConfig: %v", err)
+		}
+
+		if cfg.DefaultModel != "default" {
+			t.Fatalf("expected DefaultModel 'default', got %q", cfg.DefaultModel)
+		}
+
+		if cfg.Providers == nil {
+			t.Fatal("expected Providers to be non-nil")
+		}
+		prov, ok := cfg.Providers["default"]
+		if !ok {
+			t.Fatal("expected Providers to have key 'default'")
+		}
+		if prov.BaseURL != "https://api.example.com" {
+			t.Fatalf("expected Providers['default'].BaseURL 'https://api.example.com', got %q", prov.BaseURL)
+		}
+
+		if cfg.Models == nil {
+			t.Fatal("expected Models to be non-nil")
+		}
+		modelDef, ok := cfg.Models["default"]
+		if !ok {
+			t.Fatal("expected Models to have key 'default'")
+		}
+		if modelDef.Model != "gpt-4o" {
+			t.Fatalf("expected Models['default'].Model 'gpt-4o', got %q", modelDef.Model)
+		}
+
+		llm.ResetConfigForTesting()
 	})
 }
