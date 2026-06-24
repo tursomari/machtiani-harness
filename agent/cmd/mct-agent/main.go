@@ -569,15 +569,15 @@ func configureSessionFlags(fs *pflag.FlagSet, cfg *session.Config, paramFlags, p
 }
 func handleConfigCommand(args []string) int {
 	if len(args) < 1 || args[0] == "--help" || args[0] == "-h" {
-		fmt.Fprintln(os.Stderr, "Usage: mct-agent config <subcommand>")
+		fmt.Fprintln(os.Stderr, "Usage: mct-agent config <check|show|url|api-key|model|reasoning>")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Subcommands:")
-		fmt.Fprintln(os.Stderr, "  check       Validate configuration")
-		fmt.Fprintln(os.Stderr, "  show        Show configuration")
-		fmt.Fprintln(os.Stderr, "  url         Get/set API URL")
-		fmt.Fprintln(os.Stderr, "  api-key     Get/set API key")
-		fmt.Fprintln(os.Stderr, "  model       Get/set model")
-		fmt.Fprintln(os.Stderr, "  reasoning   Get/set reasoning")
+		fmt.Fprintln(os.Stderr, "  check       Validate the configuration file")
+		fmt.Fprintln(os.Stderr, "  show        Print the effective configuration with source annotations")
+		fmt.Fprintln(os.Stderr, "  url         Set the provider base URL")
+		fmt.Fprintln(os.Stderr, "  api-key     Set the provider API key")
+		fmt.Fprintln(os.Stderr, "  model       Set the model identifier")
+		fmt.Fprintln(os.Stderr, "  reasoning   Set the reasoning effort level (low, medium, or high)")
 		return 2
 	}
 	switch args[0] {

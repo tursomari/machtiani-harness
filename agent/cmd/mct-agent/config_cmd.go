@@ -79,6 +79,7 @@ func handleConfigURLCommand(args []string) int {
 	alias := fs.String("alias", "default", "provider alias name")
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: mct-agent config url [--alias <name>] <base-url>\n\n")
+		fmt.Fprintln(os.Stderr, "Set the provider base URL for the given alias.")
 		fmt.Fprintln(os.Stderr, "Flags:")
 		fs.PrintDefaults()
 	}
@@ -120,6 +121,7 @@ func handleConfigAPIKeyCommand(args []string) int {
 	alias := fs.String("alias", "default", "provider alias name")
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: mct-agent config api-key [--alias <name>] <api-key>\n\n")
+		fmt.Fprintln(os.Stderr, "Set the provider API key for the given alias.")
 		fmt.Fprintln(os.Stderr, "Flags:")
 		fs.PrintDefaults()
 	}
@@ -161,6 +163,7 @@ func handleConfigModelCommand(args []string) int {
 	alias := fs.String("alias", "default", "model alias name")
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: mct-agent config model [--alias <name>] <model-name>\n\n")
+		fmt.Fprintln(os.Stderr, "Set the model identifier for the given alias.")
 		fmt.Fprintln(os.Stderr, "Flags:")
 		fs.PrintDefaults()
 	}
@@ -202,6 +205,7 @@ func handleConfigReasoningCommand(args []string) int {
 	alias := fs.String("alias", "default", "model alias name")
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: mct-agent config reasoning [--alias <name>] <effort>\n\n")
+		fmt.Fprintln(os.Stderr, "Set the reasoning effort level. Valid values: low, medium, high.")
 		fmt.Fprintln(os.Stderr, "Flags:")
 		fs.PrintDefaults()
 	}
@@ -241,6 +245,8 @@ func handleConfigShowCommand(args []string) int {
 	fs.SetOutput(os.Stderr)
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: mct-agent config show\n\n")
+		fmt.Fprintln(os.Stderr, "Print the effective configuration with source annotations showing")
+		fmt.Fprintln(os.Stderr, "whether each value comes from defaults or config.toml.")
 		fmt.Fprintln(os.Stderr, "Flags:")
 		fs.PrintDefaults()
 	}
