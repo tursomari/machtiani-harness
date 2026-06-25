@@ -6,6 +6,11 @@ default_model = "default"
 
 [planner]
 max_turns = 150
+# turn_timeout = 120  # seconds per turn; 0 = unlimited (default: 120)
+# max_input_tokens = 180000  # max tokens per LLM call; 0 = disabled (default: 180000)
+
+# Uncomment to enable shell-agent by default
+# shell_agent_enabled = false
 
 [shell-agent]
 finalize_remaining_steps = 10
@@ -26,3 +31,14 @@ effort = "medium"
 type = "local"
 command_timeout = 9999
 cwd = "."
+
+# Optional behavioral settings (all default to what is shown):
+# verbose = false
+# persist_tmp_data = false
+# dry_run = false
+# answer_model = ""
+# file_discovery_model = ""
+# shell_agent_model = ""
+# answer_tag = "answer"
+# tag = ""
+# enable_tag_format = false
