@@ -18,7 +18,6 @@ func DefaultConfig() Config {
 		Debug:     nil,
 		Prompts:   nil,
 		Ignore:    nil,
-		Workspace: nil,
 		Mode:      nil,
 		Providers: nil,
 		Models:    nil,
@@ -288,28 +287,6 @@ func overlayConfig(target *Config, source Config) {
 			}
 			if source.Ignore.Extensions != nil {
 				target.Ignore.Extensions = append([]string(nil), source.Ignore.Extensions...)
-			}
-		}
-	}
-
-	// Workspace
-	if source.Workspace != nil {
-		if target.Workspace == nil {
-			w := *source.Workspace
-			w.GitHydration = append([]GitHydrationRule(nil), w.GitHydration...)
-			w.GitHydrationRoots = append([]string(nil), w.GitHydrationRoots...)
-			w.GitHydrationBranches = append([]string(nil), w.GitHydrationBranches...)
-			target.Workspace = &w
-		} else {
-			*target.Workspace = *source.Workspace
-			if source.Workspace.GitHydration != nil {
-				target.Workspace.GitHydration = append([]GitHydrationRule(nil), source.Workspace.GitHydration...)
-			}
-			if source.Workspace.GitHydrationRoots != nil {
-				target.Workspace.GitHydrationRoots = append([]string(nil), source.Workspace.GitHydrationRoots...)
-			}
-			if source.Workspace.GitHydrationBranches != nil {
-				target.Workspace.GitHydrationBranches = append([]string(nil), source.Workspace.GitHydrationBranches...)
 			}
 		}
 	}

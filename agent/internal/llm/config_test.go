@@ -565,34 +565,6 @@ step_limit = 9
 	}
 }
 
-func TestLoadGlobalConfigCopiesWorkspace(t *testing.T) {
-	ResetConfigForTesting()
-	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, ".machtiani"), 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	configPath := filepath.Join(root, ".machtiani", "config.toml")
-	if err := os.WriteFile(configPath, []byte("[workspace]\ngit_hydration = [{ root = 'tests/repositories/undici', branches = ['main'] }]\n"), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-	t.Setenv("MACHTIANI_CONFIG", configPath)
-
-	cfg, _, err := LoadGlobalConfig()
-	if err != nil {
-		t.Fatalf("LoadGlobalConfig error: %v", err)
-	}
-	if cfg.Workspace == nil {
-		t.Fatalf("expected workspace to be non-nil")
-	}
-	if len(cfg.Workspace.GitHydration) != 1 {
-		t.Fatalf("expected 1 hydration rule, got %d", len(cfg.Workspace.GitHydration))
-	}
-}
-
-func TestWorkspaceHydrationRulesDisableRootByDefault(t *testing.T) {
-	// Regression coverage lives in agent/internal/workspace.
-}
-
 func TestLoadGlobalConfigSupportsTemplateFiles(t *testing.T) {
 	root := t.TempDir()
 	mustWriteFile(t, filepath.Join(root, "templates", "planner", "system.tpl"), "planner system file")
@@ -816,10 +788,7 @@ func TestDefaultMinimalConfig(t *testing.T) {
 	}
 	if cfg.Ignore != nil {
 		t.Fatalf("expected Ignore to be nil, got %+v", cfg.Ignore)
-	}
-	if cfg.Workspace != nil {
-		t.Fatalf("expected Workspace to be nil, got %+v", cfg.Workspace)
-	}
+		}
 	if cfg.Mode != nil {
 		t.Fatalf("expected Mode to be nil, got %+v", cfg.Mode)
 	}
