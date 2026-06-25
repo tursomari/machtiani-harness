@@ -243,9 +243,9 @@ func TestShellAgentModelFlagPropagation(t *testing.T) {
 		shellAgentRunFn = origRun
 	})
 
-	var receivedGlobal *llm.Config
+	var receivedModelAlias string
 	shellAgentBuildLibFn = func(global *llm.Config, apiKeyOverrides map[string]string, persistTmpData bool, modelAlias string, answerTag string, commandTag string) (*shellagent.ShellAgentLibrary, error) {
-		receivedGlobal = global
+		receivedModelAlias = modelAlias
 		return stubLibrary(), nil
 	}
 
@@ -257,11 +257,8 @@ func TestShellAgentModelFlagPropagation(t *testing.T) {
 	if exitCode != 0 {
 		t.Fatalf("expected exit code 0, got %d", exitCode)
 	}
-	if receivedGlobal == nil || receivedGlobal.Model == nil {
-		t.Fatal("expected Model to be set on global config")
-	}
-	if receivedGlobal.Model.ModelName != "gpt4" {
-		t.Fatalf("expected ModelName 'gpt4', got %q", receivedGlobal.Model.ModelName)
+	if receivedModelAlias != "gpt4" {
+		t.Fatalf("expected modelAlias 'gpt4', got %q", receivedModelAlias)
 	}
 }
 

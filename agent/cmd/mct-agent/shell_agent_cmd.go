@@ -90,13 +90,7 @@ func handleShellAgentCommand(args []string) int {
 		return 1
 	}
 
-	// Override model alias if --model flag provided.
-	if *modelFlag != "" {
-		if globalCfg.Model == nil {
-			globalCfg.Model = &llm.ModelConfig{}
-		}
-		globalCfg.Model.ModelName = *modelFlag
-	}
+
 
 	apiOverrides, err := llm.ParseAPIKeyOverrides(apiKeyFlags)
 	if err != nil {
@@ -134,7 +128,7 @@ func handleShellAgentCommand(args []string) int {
 	}
 
 	// Build the shell-agent library (model + environment) once.
-	lib, err := shellAgentBuildLibFn(&globalCfg, apiOverrides, false, "", effectiveAnswerTag, effectiveCommandTag)
+	lib, err := shellAgentBuildLibFn(&globalCfg, apiOverrides, false, *modelFlag, effectiveAnswerTag, effectiveCommandTag)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error building shell-agent library: %v\n", err)
 		return 1
