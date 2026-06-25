@@ -27,9 +27,10 @@ func DefaultMinimalConfigMap() map[string]any {
 	return map[string]any{
 		"default_model": "",
 		"planner": map[string]any{
-			"max_turns": int64(110),
+			"max_turns": int64(150),
 		},
 		"shell-agent": map[string]any{
+			"max_steps":                int64(110),
 			"finalize_remaining_steps": int64(10),
 		},
 		"environment": map[string]any{
