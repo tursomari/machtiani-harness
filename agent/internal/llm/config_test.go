@@ -186,8 +186,8 @@ provider = "fake"
 	if cfg.Prompts.ShellAgent != nil {
 		t.Fatalf("expected shell-agent prompts to be nil when using legacy agent section, got %+v", cfg.Prompts.ShellAgent)
 	}
-	if cfg.Planner != nil {
-		t.Fatalf("expected planner to be nil when only legacy agent section provided")
+	if cfg.Planner == nil || cfg.Planner.MaxTurns != 150 {
+		t.Fatalf("expected planner.MaxTurns=150 (merged default), got %+v", cfg.Planner)
 	}
 }
 
@@ -662,8 +662,8 @@ func TestDefaultMinimalConfig(t *testing.T) {
 	if cfg.Planner == nil {
 		t.Fatal("expected Planner to be non-nil")
 	} else {
-		if cfg.Planner.MaxTurns != 110 {
-			t.Fatalf("expected Planner.MaxTurns 110, got %d", cfg.Planner.MaxTurns)
+		if cfg.Planner.MaxTurns != 150 {
+			t.Fatalf("expected Planner.MaxTurns 150, got %d", cfg.Planner.MaxTurns)
 		}
 	}
 

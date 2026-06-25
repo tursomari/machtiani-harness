@@ -423,11 +423,11 @@ func TestConfigShowCommand_NoConfig(t *testing.T) {
 		t.Fatalf("expected return code 0, got %d", code)
 	}
 
-	if !strings.Contains(stdout, "step_limit = 110 # default") {
-		t.Errorf("expected 'step_limit = 110 # default' in stdout, got:\n%s", stdout)
+	if !strings.Contains(stdout, "planner.max_turns = 150 # default") {
+		t.Errorf("expected 'planner.max_turns = 150 # default' in stdout, got:\n%s", stdout)
 	}
-	if !strings.Contains(stdout, "timeout = 9999 # default") {
-		t.Errorf("expected 'timeout = 9999 # default' in stdout, got:\n%s", stdout)
+	if !strings.Contains(stdout, "environment.command_timeout = 9999 # default") {
+		t.Errorf("expected 'environment.command_timeout = 9999 # default' in stdout, got:\n%s", stdout)
 	}
 }
 
@@ -450,7 +450,7 @@ func TestConfigShowCommand_WithConfig(t *testing.T) {
 default_model = ""
 
 [planner]
-step_limit = 200
+max_turns = 200
 `)
 	if err := os.WriteFile(configPath, content, 0644); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -466,12 +466,12 @@ step_limit = 200
 	}
 
 	// The overridden value should be annotated with "# config.toml".
-	if !strings.Contains(stdout, "step_limit = 200 # config.toml") {
-		t.Errorf("expected 'step_limit = 200 # config.toml' in stdout, got:\n%s", stdout)
+	if !strings.Contains(stdout, "planner.max_turns = 200 # config.toml") {
+		t.Errorf("expected 'planner.max_turns = 200 # config.toml' in stdout, got:\n%s", stdout)
 	}
 
 	// Default values should still be annotated with "# default".
-	if !strings.Contains(stdout, "timeout = 9999 # default") {
-		t.Errorf("expected 'timeout = 9999 # default' in stdout, got:\n%s", stdout)
+	if !strings.Contains(stdout, "environment.command_timeout = 9999 # default") {
+		t.Errorf("expected 'environment.command_timeout = 9999 # default' in stdout, got:\n%s", stdout)
 	}
 }

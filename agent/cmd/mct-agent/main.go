@@ -158,6 +158,15 @@ func newRunFlagSet(cfg *session.Config) runFlagSetResult {
 
 func handleRunCommand(args []string) int {
 	cfg := session.Config{}
+	if globalCfg, _, err := llm.LoadGlobalConfig(); err == nil && globalCfg.Planner != nil {
+		cfg.MaxTurns = globalCfg.Planner.MaxTurns
+	}
+	if cfg.MaxTurns <= 0 {
+		cfg.MaxTurns = 150
+	}
+	if cfg.TurnTimeout <= 0 {
+		cfg.TurnTimeout = 120
+	}
 	r := newRunFlagSet(&cfg)
 	fs, promptFile, apiKeyFlags := r.fs, r.promptFile, r.apiKeyFlags
 	if err := fs.Parse(args); err != nil {
@@ -426,6 +435,15 @@ func shortSHA(hash string, length int) string {
 
 func handleSyncCommand(args []string) int {
 	cfg := session.Config{}
+	if globalCfg, _, err := llm.LoadGlobalConfig(); err == nil && globalCfg.Planner != nil {
+		cfg.MaxTurns = globalCfg.Planner.MaxTurns
+	}
+	if cfg.MaxTurns <= 0 {
+		cfg.MaxTurns = 150
+	}
+	if cfg.TurnTimeout <= 0 {
+		cfg.TurnTimeout = 120
+	}
 	fs := pflag.NewFlagSet("mct-agent sync", pflag.ContinueOnError)
 	var paramFlags multiString
 	var paramJSON multiString
@@ -519,13 +537,13 @@ func handleSyncCommand(args []string) int {
 }
 
 func configureSessionFlags(fs *pflag.FlagSet, cfg *session.Config, paramFlags, paramJSON, apiKeyFlags *multiString) {
-	fs.IntVar(&cfg.MaxTurns, "max-turns", 4, "maximum number of turns before finalizing")
+	fs.IntVar(&cfg.MaxTurns, "max-turns", cfg.MaxTurns, "maximum number of turns before finalizing (default 150)")
 	fs.StringVar(&cfg.OrchModel, "model", "", "Model alias defined in .machtiani/config.toml (alias for --orch-model)")
 	fs.StringVar(&cfg.OrchModel, "orch-model", "", "Model alias for orchestration/planner steps (default: config or env)")
 	fs.StringVar(&cfg.AnswerModel, "answer-model", "", "Model alias for final answer generation (defaults to --orch-model)")
 	fs.StringVar(&cfg.FileDiscoveryModel, "file-discovery-model", "", "Model alias for file discovery runs (default: orchestration model)")
 	fs.StringVar(&cfg.AgentModel, "agent-model", "", "Legacy planner model alias (deprecated; use --orch-model)")
-	fs.IntVar(&cfg.TurnTimeout, "turn-timeout", 120, "per-turn timeout in seconds (set 0 for no timeout)")
+	fs.IntVar(&cfg.TurnTimeout, "turn-timeout", cfg.TurnTimeout, "per-turn timeout in seconds (set 0 for no timeout, default 120)")
 	fs.BoolVar(&cfg.DryRun, "dry-run", false, "print intended mct calls; don't execute")
 	fs.BoolVarP(&cfg.Verbose, "verbose", "v", false, "verbose agent logging")
 	fs.BoolVar(&cfg.PersistTmpData, "persist-tmp-data", false, "keep temporary data (worktrees, trajectories) after execution; startup orphan cleanup always runs")

@@ -130,6 +130,7 @@ type EnvironmentConfig struct {
 	MaxCommandOutputBytes int   `toml:"max_command_output_bytes"`
 	CWD                  string `toml:"cwd"`
 	ComputedImageTag     string `toml:"-"`
+	commandTimeoutSet    bool   `toml:"-"`
 }
 
 type ModeConfig struct {
@@ -370,7 +371,8 @@ func loadConfig() (*configData, error) {
 			cfgErr = err
 			return
 		}
-		cfgData = &configData{path: path, config: cfg}
+		merged := MergeConfig(DefaultConfig(), cfg, Config{})
+		cfgData = &configData{path: path, config: merged}
 	})
 	if cfgErr != nil {
 		return nil, cfgErr
@@ -1068,6 +1070,7 @@ func parseEnvironmentSection(path string, data map[string]any) (*EnvironmentConf
 	}
 	if v, ok := toInt(data["command_timeout"]); ok {
 		env.CommandTimeout = v
+		env.commandTimeoutSet = true
 	}
 	if v, ok := toInt(data["max_command_output_bytes"]); ok {
 		env.MaxCommandOutputBytes = v
