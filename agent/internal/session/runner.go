@@ -630,14 +630,14 @@ func runSession(ctx context.Context, opts Options) Result {
 		step := runState.turnsCompleted + 1
 		var turn *turnTelemetry
 		if sessTelemetry != nil {
-			turn = sessTelemetry.StartTurn(step, cfg.maxSteps)
+			turn = sessTelemetry.StartTurn(step, cfg.maxTurns)
 			parentSpanID = turn.span.ID
 		}
 
 		turnDecision := "unknown"
 		turnInfo := map[string]any{
 			"step":      step,
-			"max_steps": cfg.maxSteps,
+			"max_steps": cfg.maxTurns,
 		}
 
 		var (
@@ -686,7 +686,7 @@ func runSession(ctx context.Context, opts Options) Result {
 			}
 		}
 		planCtx = attachTrajectory(planCtx, trajectoryWriter, parentSpanID)
-		decision, question, perr = pl.Plan(planCtx, conv, goal, trFull, step, cfg.maxSteps)
+		decision, question, perr = pl.Plan(planCtx, conv, goal, trFull, step, cfg.maxTurns)
 	PostPlan:
 		if trimmedResumePrompt != "" {
 			resumePrompt = ""
@@ -776,7 +776,7 @@ func runSession(ctx context.Context, opts Options) Result {
 		if decision == planner.DecisionAskWorker {
 			ctxAsk, cancelAsk := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
 			ctxAsk = attachTrajectory(ctxAsk, trajectoryWriter, parentSpanID)
-			userDirected, uerr := pl.AnalyzeUserDirectedAsk(ctxAsk, conv, goal, question, step, cfg.maxSteps)
+			userDirected, uerr := pl.AnalyzeUserDirectedAsk(ctxAsk, conv, goal, question, step, cfg.maxTurns)
 			var ctxAskErr error
 			if ctxAsk != nil {
 				ctxAskErr = ctxAsk.Err()
@@ -900,7 +900,7 @@ func runSession(ctx context.Context, opts Options) Result {
 		case planner.DecisionAskUser:
 			ctxAsk, cancelAsk := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
 			ctxAsk = attachTrajectory(ctxAsk, trajectoryWriter, parentSpanID)
-			userDirected, uerr := pl.AnalyzeUserDirectedAsk(ctxAsk, conv, goal, question, step, cfg.maxSteps)
+			userDirected, uerr := pl.AnalyzeUserDirectedAsk(ctxAsk, conv, goal, question, step, cfg.maxTurns)
 			var ctxAskErr error
 			if ctxAsk != nil {
 				ctxAskErr = ctxAsk.Err()
@@ -970,7 +970,7 @@ Finalize:
 		runState.turnsCompleted = turns
 		return Result{ExitCode: 1, Err: ferr}
 	}
-	if err := runState.completeSession(display, diagWriter, answer, turns, turns, turns >= cfg.maxSteps); err != nil {
+	if err := runState.completeSession(display, diagWriter, answer, turns, turns, turns >= cfg.maxTurns); err != nil {
 		fmt.Fprintln(diagWriter, "Final file write error:", err)
 		runState.turnsCompleted = turns
 		return Result{ExitCode: 1, Err: err}

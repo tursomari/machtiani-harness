@@ -5,11 +5,11 @@ package llm
 func DefaultConfig() Config {
 	return Config{
 		DefaultModel: "",
-		Planner:      &PlannerConfig{StepLimit: 110},
+		Planner:      &PlannerConfig{MaxTurns: 150},
 		ShellAgent:   &ShellAgentConfig{FinalizeRemainingSteps: 10},
 		Environment: &EnvironmentConfig{
 			Type:                  "local",
-			Timeout:               9999,
+			CommandTimeout:       9999,
 			CWD:                   ".",
 			MaxCommandOutputBytes: 65536,
 		},
@@ -27,14 +27,14 @@ func DefaultMinimalConfigMap() map[string]any {
 	return map[string]any{
 		"default_model": "",
 		"planner": map[string]any{
-			"step_limit": int64(110),
+			"max_turns": int64(110),
 		},
 		"shell-agent": map[string]any{
 			"finalize_remaining_steps": int64(10),
 		},
 		"environment": map[string]any{
 			"type":                     "local",
-			"timeout":                  int64(9999),
+			"command_timeout":       int64(9999),
 			"cwd":                      ".",
 			"max_command_output_bytes": int64(65536),
 		},
@@ -65,8 +65,8 @@ func overlayConfig(target *Config, source Config) {
 		if target.Planner == nil {
 			target.Planner = &PlannerConfig{}
 		}
-		if source.Planner.StepLimit != 0 {
-			target.Planner.StepLimit = source.Planner.StepLimit
+		if source.Planner.MaxTurns != 0 {
+			target.Planner.MaxTurns = source.Planner.MaxTurns
 		}
 	}
 
@@ -75,8 +75,8 @@ func overlayConfig(target *Config, source Config) {
 		if target.ShellAgent == nil {
 			target.ShellAgent = &ShellAgentConfig{}
 		}
-		if source.ShellAgent.StepLimit != 0 {
-			target.ShellAgent.StepLimit = source.ShellAgent.StepLimit
+		if source.ShellAgent.MaxSteps != 0 {
+			target.ShellAgent.MaxSteps = source.ShellAgent.MaxSteps
 		}
 		if source.ShellAgent.FinalizeRemainingSteps != 0 {
 			target.ShellAgent.FinalizeRemainingSteps = source.ShellAgent.FinalizeRemainingSteps
@@ -94,8 +94,8 @@ func overlayConfig(target *Config, source Config) {
 		if source.Environment.CWD != "" {
 			target.Environment.CWD = source.Environment.CWD
 		}
-		if source.Environment.Timeout != 0 {
-			target.Environment.Timeout = source.Environment.Timeout
+		if source.Environment.CommandTimeout != 0 {
+			target.Environment.CommandTimeout = source.Environment.CommandTimeout
 		}
 		if source.Environment.MaxCommandOutputBytes != 0 {
 			target.Environment.MaxCommandOutputBytes = source.Environment.MaxCommandOutputBytes

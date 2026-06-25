@@ -287,15 +287,15 @@ func printConfigWithSources(effective, defaults llm.Config, hasFile bool) {
 		stringSource(effective.DefaultModel, defaults.DefaultModel, hasFile))
 
 	if effective.Planner != nil {
-		defaultStepLimit := 0
+		defaultMaxTurns := 0
 		if defaults.Planner != nil {
-			defaultStepLimit = defaults.Planner.StepLimit
+			defaultMaxTurns = defaults.Planner.MaxTurns
 		}
-		fmt.Printf("planner.step_limit = %d # %s\n",
-			effective.Planner.StepLimit,
-			intSource(effective.Planner.StepLimit, defaultStepLimit, hasFile))
+		fmt.Printf("planner.max_turns = %d # %s\n",
+			effective.Planner.MaxTurns,
+			intSource(effective.Planner.MaxTurns, defaultMaxTurns, hasFile))
 	} else {
-		fmt.Printf("planner.step_limit = # default\n")
+		fmt.Printf("planner.max_turns = # default\n")
 	}
 
 	if effective.ShellAgent != nil {
@@ -318,9 +318,9 @@ func printConfigWithSources(effective, defaults llm.Config, hasFile bool) {
 		fmt.Printf("environment.type = %s # %s\n",
 			effective.Environment.Type,
 			stringSource(effective.Environment.Type, defaultEnv.Type, hasFile))
-		fmt.Printf("environment.timeout = %d # %s\n",
-			effective.Environment.Timeout,
-			intSource(effective.Environment.Timeout, defaultEnv.Timeout, hasFile))
+		fmt.Printf("environment.command_timeout = %d # %s\n",
+			effective.Environment.CommandTimeout,
+			intSource(effective.Environment.CommandTimeout, defaultEnv.CommandTimeout, hasFile))
 		fmt.Printf("environment.cwd = %s # %s\n",
 			effective.Environment.CWD,
 			stringSource(effective.Environment.CWD, defaultEnv.CWD, hasFile))

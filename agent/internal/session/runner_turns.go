@@ -380,7 +380,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 		*env.turnsCompleted++
 		
 		finishTurn(env.sessTelemetry, env.turn, env.turnDecision, "success", env.turnInfo, nil)
-		if *env.turnsCompleted == env.cfg.maxSteps {
+		if *env.turnsCompleted == env.cfg.maxTurns {
 			return turnExecutionResult{action: turnLoopAnswerUser, shellAgentUsed: shellAgentUsedThisTurn}
 		}
 		return turnExecutionResult{action: turnLoopAskWorker, shellAgentUsed: shellAgentUsedThisTurn}
@@ -511,7 +511,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 	}
 	
 	finishTurn(env.sessTelemetry, env.turn, env.turnDecision, "success", env.turnInfo, nil)
-	if *env.turnsCompleted == env.cfg.maxSteps {
+	if *env.turnsCompleted == env.cfg.maxTurns {
 		return turnExecutionResult{action: turnLoopAnswerUser, shellAgentUsed: shellAgentUsedThisTurn}
 	}
 	return turnExecutionResult{action: turnLoopAskWorker, shellAgentUsed: shellAgentUsedThisTurn}

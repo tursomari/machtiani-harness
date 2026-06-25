@@ -128,7 +128,7 @@ func configureModePlan(ctx *modeContext, plan modePlanState) (modePlanState, err
 		ctx.Options.PlannerOverlay = overlay
 	}
 
-	// Apply mode defaults (e.g., patch=true, maxSteps floor for coding mode).
+	// Apply mode defaults (e.g., patch=true, maxTurns floor for coding mode).
 	applyModeDefaults(&ctx.Options.Config, task.Mode)
 
 
@@ -390,8 +390,8 @@ func tasksToDisplay(tasks []modeTaskState) []ui.ModeTaskDisplay {
 func applyModeDefaults(cfg *Config, mode string) {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case "coding":
-		if cfg.MaxSteps < 3 {
-			cfg.MaxSteps = 3
+		if cfg.MaxTurns < 3 {
+			cfg.MaxTurns = 3
 		}
 	}
 }

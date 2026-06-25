@@ -28,19 +28,18 @@ type Config struct {
 // ShellAgentConfig mirrors the shell-agent configuration section and is loaded
 // from the global TOML configuration under [shell-agent] (or legacy [agent]).
 type ShellAgentConfig struct {
-	StepLimit              int     `toml:"step_limit"`
-	FinalizeRemainingSteps int     `toml:"finalize_remaining_steps"`
+	MaxSteps               int `toml:"max_steps"`
+	FinalizeRemainingSteps int `toml:"finalize_remaining_steps"`
 
-	stepLimitSet              bool `toml:"-"`
+	maxStepsSet              bool `toml:"-"`
 	finalizeRemainingStepsSet bool `toml:"-"`
 }
 
-// PlannerConfig captures configuration intended for the orchestration planner
-// while also providing defaults for shell-agent where applicable.
+// PlannerConfig captures configuration intended for the orchestration planner.
 type PlannerConfig struct {
-	StepLimit int     `toml:"step_limit"`
+	MaxTurns int `toml:"max_turns"`
 
-	stepLimitSet bool `toml:"-"`
+	maxTurnsSet bool `toml:"-"`
 }
 
 // PromptsConfig captures the prompt templates referenced by planner and shell-agent.
@@ -126,11 +125,11 @@ type MCTPromptsConfig struct {
 // EnvironmentConfig describes shell execution settings loaded from the
 // [environment] section of the unified configuration.
 type EnvironmentConfig struct {
-	Type             string            `toml:"type"`
-	Timeout               int               `toml:"timeout"`
-	MaxCommandOutputBytes int               `toml:"max_command_output_bytes"`
-	CWD              string            `toml:"cwd"`
-	ComputedImageTag string            `toml:"-"`
+	Type                 string `toml:"type"`
+	CommandTimeout       int    `toml:"command_timeout"`
+	MaxCommandOutputBytes int   `toml:"max_command_output_bytes"`
+	CWD                  string `toml:"cwd"`
+	ComputedImageTag     string `toml:"-"`
 }
 
 type ModeConfig struct {
@@ -488,9 +487,6 @@ func parseConfig(path string) (Config, error) {
 		}
 		cfg.Prompts = promptsCfg
 	}
-	if cfg.Planner != nil && cfg.ShellAgent != nil {
-		mergePlannerIntoShellAgent(cfg.ShellAgent, cfg.Planner)
-	}
 	cfg.Prompts = mergePromptsSources(cfg.Prompts, legacyPlannerPrompts, legacyShellAgentPrompts)
 	if envRaw, ok := toMap(raw["environment"]); ok {
 		envCfg, err := parseEnvironmentSection(path, envRaw)
@@ -729,9 +725,9 @@ func parseShellAgentSection(path, section string, data map[string]any) (*ShellAg
 			p.lightweightErrorTemplateSet = true
 		}
 	}
-	if val, ok := toInt(data["step_limit"]); ok {
-		agent.StepLimit = val
-		agent.stepLimitSet = true
+	if val, ok := toInt(data["max_steps"]); ok {
+		agent.MaxSteps = val
+		agent.maxStepsSet = true
 	}
 	if val, ok := toInt(data["finalize_remaining_steps"]); ok {
 		agent.FinalizeRemainingSteps = val
@@ -830,9 +826,9 @@ func parsePlannerSection(path, section string, data map[string]any) (*PlannerCon
 		p.ReviewPrompt = val
 		p.reviewPromptSet = true
 	}
-	if val, ok := toInt(data["step_limit"]); ok {
-		planner.StepLimit = val
-		planner.stepLimitSet = true
+	if val, ok := toInt(data["max_turns"]); ok {
+		planner.MaxTurns = val
+		planner.maxTurnsSet = true
 	}
 	return planner, prompts, nil
 }
@@ -960,16 +956,6 @@ func parsePromptsSection(path string, data map[string]any) (*PromptsConfig, erro
 	return prompts, nil
 }
 
-func mergePlannerIntoShellAgent(agent *ShellAgentConfig, planner *PlannerConfig) {
-	if agent == nil || planner == nil {
-		return
-	}
-	if !agent.stepLimitSet && planner.stepLimitSet {
-		agent.StepLimit = planner.StepLimit
-		agent.stepLimitSet = true
-	}
-}
-
 func mergePromptsSources(base *PromptsConfig, plannerLegacy *PlannerPromptsConfig, shellLegacy *ShellAgentPromptsConfig) *PromptsConfig {
 	if plannerLegacy == nil && shellLegacy == nil {
 		return base
@@ -1080,8 +1066,8 @@ func parseEnvironmentSection(path string, data map[string]any) (*EnvironmentConf
 	if v, ok := data["type"].(string); ok {
 		env.Type = v
 	}
-	if v, ok := toInt(data["timeout"]); ok {
-		env.Timeout = v
+	if v, ok := toInt(data["command_timeout"]); ok {
+		env.CommandTimeout = v
 	}
 	if v, ok := toInt(data["max_command_output_bytes"]); ok {
 		env.MaxCommandOutputBytes = v
@@ -1823,11 +1809,11 @@ func toStringMap(v any) (map[string]any, bool) {
 func DefaultMinimalConfig() Config {
 	return Config{
 		DefaultModel: "",
-		Planner:      &PlannerConfig{StepLimit: 110},
+		Planner:      &PlannerConfig{MaxTurns: 150},
 		ShellAgent:   &ShellAgentConfig{FinalizeRemainingSteps: 10},
 		Environment: &EnvironmentConfig{
 			Type:           "local",
-			Timeout:        9999,
+			CommandTimeout: 9999,
 			CWD:            ".",
 		},
 		Prompts:    nil,

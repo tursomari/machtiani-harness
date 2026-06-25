@@ -24,7 +24,7 @@ type sessionTelemetry struct {
 type turnTelemetry struct {
 	span     trajectory.Span
 	step     int
-	maxSteps int
+	maxTurns int
 	started  time.Time
 }
 
@@ -46,7 +46,7 @@ func newSessionTelemetry(writer *trajectory.Writer, sessionID, goal string, cfg 
 	payload := map[string]any{
 		"event_version": 1,
 		"config_summary": map[string]any{
-			"max_steps":        cfg.maxSteps,
+			"max_steps":        cfg.maxTurns,
 			"timeout_per_turn": cfg.timeoutPerTurn,
 			"dry_run":          cfg.dryRun,
 		},
@@ -68,20 +68,20 @@ func newSessionTelemetry(writer *trajectory.Writer, sessionID, goal string, cfg 
 	return st
 }
 
-func (st *sessionTelemetry) StartTurn(step, maxSteps int) *turnTelemetry {
+func (st *sessionTelemetry) StartTurn(step, maxTurns int) *turnTelemetry {
 	if st == nil || st.writer == nil {
 		return nil
 	}
 	tt := &turnTelemetry{
 		span:     st.writer.StartSpan(st.span.ID),
 		step:     step,
-		maxSteps: maxSteps,
+		maxTurns: maxTurns,
 		started:  time.Now(),
 	}
 	payload := map[string]any{
 		"event_version": 1,
 		"step":          step,
-		"max_steps":     maxSteps,
+		"max_steps":     maxTurns,
 	}
 	if step == 1 {
 		payload = trajectory.MergeExcerptWithPrefix(payload, trajectory.MakeTextExcerpt(st.goal, st.writer.ExcerptLen()), "goal")
@@ -100,7 +100,7 @@ func (st *sessionTelemetry) EndTurn(tt *turnTelemetry, decision string, status s
 	payload := map[string]any{
 		"event_version": 1,
 		"step":          tt.step,
-		"max_steps":     tt.maxSteps,
+		"max_steps":     tt.maxTurns,
 		"decision":      decision,
 		"status":        status,
 		"duration_ms":   time.Since(tt.started).Milliseconds(),

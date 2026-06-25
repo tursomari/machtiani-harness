@@ -519,13 +519,13 @@ func handleSyncCommand(args []string) int {
 }
 
 func configureSessionFlags(fs *pflag.FlagSet, cfg *session.Config, paramFlags, paramJSON, apiKeyFlags *multiString) {
-	fs.IntVar(&cfg.MaxSteps, "max-steps", 4, "maximum number of turns before finalizing")
+	fs.IntVar(&cfg.MaxTurns, "max-turns", 4, "maximum number of turns before finalizing")
 	fs.StringVar(&cfg.OrchModel, "model", "", "Model alias defined in .machtiani/config.toml (alias for --orch-model)")
 	fs.StringVar(&cfg.OrchModel, "orch-model", "", "Model alias for orchestration/planner steps (default: config or env)")
 	fs.StringVar(&cfg.AnswerModel, "answer-model", "", "Model alias for final answer generation (defaults to --orch-model)")
 	fs.StringVar(&cfg.FileDiscoveryModel, "file-discovery-model", "", "Model alias for file discovery runs (default: orchestration model)")
 	fs.StringVar(&cfg.AgentModel, "agent-model", "", "Legacy planner model alias (deprecated; use --orch-model)")
-	fs.IntVar(&cfg.TimeoutPerTurn, "timeout-per-turn", 120, "per-turn timeout in seconds (set 0 for no timeout)")
+	fs.IntVar(&cfg.TurnTimeout, "turn-timeout", 120, "per-turn timeout in seconds (set 0 for no timeout)")
 	fs.BoolVar(&cfg.DryRun, "dry-run", false, "print intended mct calls; don't execute")
 	fs.BoolVarP(&cfg.Verbose, "verbose", "v", false, "verbose agent logging")
 	fs.BoolVar(&cfg.PersistTmpData, "persist-tmp-data", false, "keep temporary data (worktrees, trajectories) after execution; startup orphan cleanup always runs")

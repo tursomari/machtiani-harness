@@ -9,12 +9,12 @@ import (
 )
 
 type Config struct {
-	MaxSteps                int
+	MaxTurns                int
 	OrchModel               string
 	AnswerModel             string
 	FileDiscoveryModel      string
 	AgentModel              string
-	TimeoutPerTurn          int
+	TurnTimeout          int
 	DryRun                  bool
 	Verbose                 bool
 	PersistTmpData          bool
@@ -90,7 +90,7 @@ type Result struct {
 }
 
 type legacyConfig struct {
-	maxSteps                int
+	maxTurns                int
 	orchModel               string
 	answerModel             string
 	fileDiscoveryModel      string
@@ -130,12 +130,12 @@ type legacyConfig struct {
 
 func newLegacyConfig(cfg Config) legacyConfig {
 	return legacyConfig{
-		maxSteps:                cfg.MaxSteps,
+		maxTurns:                cfg.MaxTurns,
 		orchModel:               cfg.OrchModel,
 		answerModel:             cfg.AnswerModel,
 		fileDiscoveryModel:      cfg.FileDiscoveryModel,
 		agentModel:              cfg.AgentModel,
-		timeoutPerTurn:          cfg.TimeoutPerTurn,
+		timeoutPerTurn:          cfg.TurnTimeout,
 		dryRun:                  cfg.DryRun,
 		verbose:                 cfg.Verbose,
 		finalFile:               cfg.FinalFile,

@@ -74,13 +74,13 @@ format_error_template = "format-error"
 action_observation_template = "Observation: {{.Output}}"
 
 [planner]
-step_limit = 7
+max_turns = 7
 
 [shell-agent]
 
 [environment]
 type = "local"
-timeout = 45
+command_timeout = 45
 cwd = "."
 
 [providers.fake]
@@ -109,14 +109,14 @@ git_synced_only = true
 	if loadedPath != path {
 		t.Fatalf("expected loaded path %q, got %q", path, loadedPath)
 	}
-	if cfg.Planner == nil || cfg.Planner.StepLimit != 7 {
-		t.Fatalf("expected planner step_limit 7, got %+v", cfg.Planner)
+	if cfg.Planner == nil || cfg.Planner.MaxTurns != 7 {
+		t.Fatalf("expected planner max_turns 7, got %+v", cfg.Planner)
 	}
 	if cfg.ShellAgent == nil {
 		t.Fatalf("expected shell-agent config")
 	}
-	if cfg.ShellAgent.StepLimit != 7 {
-		t.Fatalf("expected shell-agent step_limit fallback 7, got %+v", cfg.ShellAgent)
+	if cfg.ShellAgent.MaxSteps != 0 {
+		t.Fatalf("expected shell-agent max_steps 0 (no merge), got %+v", cfg.ShellAgent)
 	}
 	if cfg.Prompts == nil || cfg.Prompts.Planner == nil {
 		t.Fatalf("expected planner prompts to be parsed, got %+v", cfg.Prompts)
@@ -139,8 +139,8 @@ git_synced_only = true
 	if cfg.Environment == nil || strings.TrimSpace(cfg.Environment.Type) != "local" {
 		t.Fatalf("expected environment type local, got %+v", cfg.Environment)
 	}
-	if cfg.Environment == nil || cfg.Environment.Timeout != 45 {
-		t.Fatalf("expected environment timeout 45, got %+v", cfg.Environment)
+	if cfg.Environment == nil || cfg.Environment.CommandTimeout != 45 {
+		t.Fatalf("expected environment command_timeout 45, got %+v", cfg.Environment)
 	}
 }
 
@@ -150,7 +150,7 @@ func TestLoadGlobalConfigSupportsLegacyAgentSection(t *testing.T) {
 [agent]
 system_template = "legacy system"
 instance_template = "legacy instance"
-step_limit = 5
+max_steps = 5
 
 [environment]
 type = "local"
@@ -171,8 +171,8 @@ provider = "fake"
 	if cfg.ShellAgent == nil {
 		t.Fatalf("expected shell-agent config from legacy section")
 	}
-	if cfg.ShellAgent.StepLimit != 5 {
-		t.Fatalf("expected step_limit 5 from legacy section, got %d", cfg.ShellAgent.StepLimit)
+	if cfg.ShellAgent.MaxSteps != 5 {
+		t.Fatalf("expected max_steps 5 from legacy section, got %d", cfg.ShellAgent.MaxSteps)
 	}
 	if cfg.Prompts == nil || cfg.Prompts.Planner == nil {
 		t.Fatalf("expected planner prompts from legacy section")
@@ -466,7 +466,7 @@ lightweight_intent_template = "legacy lw intent"
 lightweight_error_template = "legacy lw error"
 
 [planner]
-step_limit = 9
+max_turns = 9
 `
 
 	path := filepath.Join(t.TempDir(), "config.toml")
@@ -505,8 +505,8 @@ step_limit = 9
 	if cfg.Prompts.ShellAgent.LightweightErrorTemplate != "legacy lw error" {
 		t.Fatalf("expected lightweight error template, got %q", cfg.Prompts.ShellAgent.LightweightErrorTemplate)
 	}
-	if cfg.ShellAgent.StepLimit != 9 {
-		t.Fatalf("expected shell-agent step_limit to inherit 9, got %d", cfg.ShellAgent.StepLimit)
+	if cfg.ShellAgent.MaxSteps != 0 {
+		t.Fatalf("expected shell-agent max_steps 0 (no merge), got %d", cfg.ShellAgent.MaxSteps)
 	}
 }
 
@@ -662,8 +662,8 @@ func TestDefaultMinimalConfig(t *testing.T) {
 	if cfg.Planner == nil {
 		t.Fatal("expected Planner to be non-nil")
 	} else {
-		if cfg.Planner.StepLimit != 110 {
-			t.Fatalf("expected Planner.StepLimit 110, got %d", cfg.Planner.StepLimit)
+		if cfg.Planner.MaxTurns != 110 {
+			t.Fatalf("expected Planner.MaxTurns 110, got %d", cfg.Planner.MaxTurns)
 		}
 	}
 
@@ -673,8 +673,8 @@ func TestDefaultMinimalConfig(t *testing.T) {
 		if cfg.ShellAgent.FinalizeRemainingSteps != 10 {
 			t.Fatalf("expected ShellAgent.FinalizeRemainingSteps 10, got %d", cfg.ShellAgent.FinalizeRemainingSteps)
 		}
-		if cfg.ShellAgent.StepLimit != 0 {
-			t.Fatalf("expected ShellAgent.StepLimit 0, got %d", cfg.ShellAgent.StepLimit)
+		if cfg.ShellAgent.MaxSteps != 0 {
+			t.Fatalf("expected ShellAgent.MaxSteps 0, got %d", cfg.ShellAgent.MaxSteps)
 		}
 	}
 
@@ -684,8 +684,8 @@ func TestDefaultMinimalConfig(t *testing.T) {
 		if cfg.Environment.Type != "local" {
 			t.Fatalf("expected Environment.Type local, got %q", cfg.Environment.Type)
 		}
-		if cfg.Environment.Timeout != 9999 {
-			t.Fatalf("expected Environment.Timeout 9999, got %d", cfg.Environment.Timeout)
+		if cfg.Environment.CommandTimeout != 9999 {
+			t.Fatalf("expected Environment.CommandTimeout 9999, got %d", cfg.Environment.CommandTimeout)
 		}
 		if cfg.Environment.CWD != "." {
 			t.Fatalf("expected Environment.CWD \".\", got %q", cfg.Environment.CWD)
