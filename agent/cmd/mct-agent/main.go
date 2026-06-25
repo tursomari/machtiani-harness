@@ -158,8 +158,40 @@ func newRunFlagSet(cfg *session.Config) runFlagSetResult {
 
 func handleRunCommand(args []string) int {
 	cfg := session.Config{}
-	if globalCfg, _, err := llm.LoadGlobalConfig(); err == nil && globalCfg.Planner != nil {
-		cfg.MaxTurns = globalCfg.Planner.MaxTurns
+	if globalCfg, _, err := llm.LoadGlobalConfig(); err == nil {
+		if globalCfg.Planner != nil {
+			cfg.MaxTurns = globalCfg.Planner.MaxTurns
+			cfg.TurnTimeout = globalCfg.Planner.TurnTimeout
+			cfg.MaxInputTokens = globalCfg.Planner.MaxInputTokens
+		}
+		if globalCfg.Environment != nil {
+			cfg.MaxCommandOutputBytes = globalCfg.Environment.MaxCommandOutputBytes
+		}
+		if globalCfg.Mode != nil {
+			cfg.ModeInstructionDir = globalCfg.Mode.InstructionDir
+		}
+		if globalCfg.Trajectory != nil {
+			cfg.TrajectoryFile = globalCfg.Trajectory.File
+			cfg.NoTrajectory = !globalCfg.Trajectory.Enabled
+			cfg.TrajectoryVerboseLLM = globalCfg.Trajectory.VerboseLLM
+			cfg.TrajectoryStreamTokens = globalCfg.Trajectory.StreamTokens
+			cfg.TrajectoryExcerpt = globalCfg.Trajectory.Excerpt
+			cfg.TrajectoryOmitRepoRoot = globalCfg.Trajectory.OmitRepoRoot
+		}
+		cfg.Verbose = globalCfg.Verbose
+		cfg.PersistTmpData = globalCfg.PersistTmpData
+		cfg.DryRun = globalCfg.DryRun
+		cfg.ShellAgent = globalCfg.ShellAgentEnabled
+		cfg.ShellAgentModel = globalCfg.ShellAgentModel
+		cfg.AnswerModel = globalCfg.AnswerModel
+		cfg.FileDiscoveryModel = globalCfg.FileDiscoveryModel
+		cfg.AnswerTag = globalCfg.AnswerTag
+		cfg.CommandTag = globalCfg.Tag
+		cfg.FinalFile = globalCfg.FinalFile
+		cfg.TranscriptFile = globalCfg.TranscriptFile
+		cfg.FileDiscoveryTrajectory = globalCfg.FileDiscoveryTrajectory
+		cfg.FileDiscoveryOutputDir = globalCfg.FileDiscoveryOutputDir
+		cfg.EnableTagFormat = globalCfg.EnableTagFormat
 	}
 	if cfg.MaxTurns <= 0 {
 		cfg.MaxTurns = 150
@@ -540,37 +572,37 @@ func configureSessionFlags(fs *pflag.FlagSet, cfg *session.Config, paramFlags, p
 	fs.IntVar(&cfg.MaxTurns, "max-turns", cfg.MaxTurns, "maximum number of turns before finalizing (default 150)")
 	fs.StringVar(&cfg.OrchModel, "model", "", "Model alias defined in .machtiani/config.toml (alias for --orch-model)")
 	fs.StringVar(&cfg.OrchModel, "orch-model", "", "Model alias for orchestration/planner steps (default: config or env)")
-	fs.StringVar(&cfg.AnswerModel, "answer-model", "", "Model alias for final answer generation (defaults to --orch-model)")
-	fs.StringVar(&cfg.FileDiscoveryModel, "file-discovery-model", "", "Model alias for file discovery runs (default: orchestration model)")
+	fs.StringVar(&cfg.AnswerModel, "answer-model", cfg.AnswerModel, "Model alias for final answer generation (defaults to --orch-model)")
+	fs.StringVar(&cfg.FileDiscoveryModel, "file-discovery-model", cfg.FileDiscoveryModel, "Model alias for file discovery runs (default: orchestration model)")
 	fs.StringVar(&cfg.AgentModel, "agent-model", "", "Legacy planner model alias (deprecated; use --orch-model)")
 	fs.IntVar(&cfg.TurnTimeout, "turn-timeout", cfg.TurnTimeout, "per-turn timeout in seconds (set 0 for no timeout, default 120)")
-	fs.BoolVar(&cfg.DryRun, "dry-run", false, "print intended mct calls; don't execute")
-	fs.BoolVarP(&cfg.Verbose, "verbose", "v", false, "verbose agent logging")
-	fs.BoolVar(&cfg.PersistTmpData, "persist-tmp-data", false, "keep temporary data (worktrees, trajectories) after execution; startup orphan cleanup always runs")
-	fs.IntVar(&cfg.MaxCommandOutputBytes, "max-command-output-bytes", 65536, "maximum bytes of shell command output captured per step (default 64KB)")
-	fs.BoolVar(&cfg.ShellAgent, "shell-agent", false, "Enable shell-agent mode: invoke shell-agent subprocess binary for task execution")
-	fs.StringVar(&cfg.ShellAgentModel, "shell-agent-model", "", "Model alias override for shell-agent subprocesses (default: config)")
-	fs.StringVar(&cfg.AnswerTag, "answer-tag", "", `Override the final-answer tag name used by the shell-agent parser and prompt templates. Must not contain "<", ">", "/", "{{", or "}}". Empty input keeps the default ("answer").`)
-	fs.StringVar(&cfg.CommandTag, "tag", "", "single suffix for both answer and command tags (e.g. --tag foo produces answer-foo and command-foo)")
-	fs.StringVar(&cfg.FinalFile, "final-file", "", "path to write final answer-only artifact (default: .machtiani/sessions/<sessionID>/chat/agent-final-answer.md)")
-	fs.StringVar(&cfg.TranscriptFile, "transcript-file", "", "path to write transcript file (default: .machtiani/sessions/<sessionID>/chat/agent-transcript.adoc)")
-	fs.StringVar(&cfg.FileDiscoveryTrajectory, "file-discovery-trajectory", "", "path to write file-discovery trajectory JSONL (default: auto-named under session artifacts)")
-	fs.StringVar(&cfg.FileDiscoveryOutputDir, "file-discovery-output-dir", "", "directory for file-discovery artifacts (default: .machtiani/sessions/<sessionID>/artifacts)")
-	fs.IntVar(&cfg.MaxInputTokens, "max-input-tokens", 0, "maximum number of tokens allowed in constructed prompts (0 disables truncation)")
-	fs.StringVar(&cfg.TrajectoryFile, "trajectory-file", "", "override path for unified trajectory JSONL (default: session-scoped path)")
-	fs.BoolVar(&cfg.NoTrajectory, "no-trajectory", false, "disable unified trajectory JSONL emission")
-	fs.BoolVar(&cfg.TrajectoryVerboseLLM, "trajectory-verbose-llm", false, "include expanded LLM details in the trajectory stream")
-	fs.BoolVar(&cfg.TrajectoryStreamTokens, "trajectory-stream-tokens", false, "record LLM token streaming events in the trajectory (disabled by default)")
-	fs.IntVar(&cfg.TrajectoryExcerpt, "trajectory-excerpt", 512, "excerpt length (in characters) for prompts/responses captured in the trajectory")
-	fs.BoolVar(&cfg.TrajectoryOmitRepoRoot, "trajectory-omit-repo-root", false, "omit repo_root from trajectory events")
+	fs.BoolVar(&cfg.DryRun, "dry-run", cfg.DryRun, "print intended mct calls; don't execute")
+	fs.BoolVarP(&cfg.Verbose, "verbose", "v", cfg.Verbose, "verbose agent logging")
+	fs.BoolVar(&cfg.PersistTmpData, "persist-tmp-data", cfg.PersistTmpData, "keep temporary data (worktrees, trajectories) after execution; startup orphan cleanup always runs")
+	fs.IntVar(&cfg.MaxCommandOutputBytes, "max-command-output-bytes", cfg.MaxCommandOutputBytes, "maximum bytes of shell command output captured per step (default 64KB)")
+	fs.BoolVar(&cfg.ShellAgent, "shell-agent", cfg.ShellAgent, "Enable shell-agent mode: invoke shell-agent subprocess binary for task execution")
+	fs.StringVar(&cfg.ShellAgentModel, "shell-agent-model", cfg.ShellAgentModel, "Model alias override for shell-agent subprocesses (default: config)")
+	fs.StringVar(&cfg.AnswerTag, "answer-tag", cfg.AnswerTag, `Override the final-answer tag name used by the shell-agent parser and prompt templates. Must not contain "<", ">", "/", "{{", or "}}". Empty input keeps the default ("answer").`)
+	fs.StringVar(&cfg.CommandTag, "tag", cfg.CommandTag, "single suffix for both answer and command tags (e.g. --tag foo produces answer-foo and command-foo)")
+	fs.StringVar(&cfg.FinalFile, "final-file", cfg.FinalFile, "path to write final answer-only artifact (default: .machtiani/sessions/<sessionID>/chat/agent-final-answer.md)")
+	fs.StringVar(&cfg.TranscriptFile, "transcript-file", cfg.TranscriptFile, "path to write transcript file (default: .machtiani/sessions/<sessionID>/chat/agent-transcript.adoc)")
+	fs.StringVar(&cfg.FileDiscoveryTrajectory, "file-discovery-trajectory", cfg.FileDiscoveryTrajectory, "path to write file-discovery trajectory JSONL (default: auto-named under session artifacts)")
+	fs.StringVar(&cfg.FileDiscoveryOutputDir, "file-discovery-output-dir", cfg.FileDiscoveryOutputDir, "directory for file-discovery artifacts (default: .machtiani/sessions/<sessionID>/artifacts)")
+	fs.IntVar(&cfg.MaxInputTokens, "max-input-tokens", cfg.MaxInputTokens, "maximum number of tokens allowed in constructed prompts (0 disables truncation)")
+	fs.StringVar(&cfg.TrajectoryFile, "trajectory-file", cfg.TrajectoryFile, "override path for unified trajectory JSONL (default: session-scoped path)")
+	fs.BoolVar(&cfg.NoTrajectory, "no-trajectory", cfg.NoTrajectory, "disable unified trajectory JSONL emission")
+	fs.BoolVar(&cfg.TrajectoryVerboseLLM, "trajectory-verbose-llm", cfg.TrajectoryVerboseLLM, "include expanded LLM details in the trajectory stream")
+	fs.BoolVar(&cfg.TrajectoryStreamTokens, "trajectory-stream-tokens", cfg.TrajectoryStreamTokens, "record LLM token streaming events in the trajectory (disabled by default)")
+	fs.IntVar(&cfg.TrajectoryExcerpt, "trajectory-excerpt", cfg.TrajectoryExcerpt, "excerpt length (in characters) for prompts/responses captured in the trajectory")
+	fs.BoolVar(&cfg.TrajectoryOmitRepoRoot, "trajectory-omit-repo-root", cfg.TrajectoryOmitRepoRoot, "omit repo_root from trajectory events")
 	fs.StringVar(&cfg.OpenAIAPIKey, "openai-api-key", "", "OpenAI-compatible API key (overrides env, deprecated)")
 	fs.StringVar(&cfg.OpenAIBaseURL, "openai-base-url", "", "OpenAI-compatible base URL (overrides env, deprecated)")
 	fs.StringVar(&cfg.OpenAIModel, "openai-model", "", "Direct upstream model name (deprecated; prefer --model)")
 	fs.StringVar(&cfg.SessionID, "session-id", "", "Existing session identifier to resume")
-	fs.BoolVar(&cfg.EnableTagFormat, "enable-tag-format", false, "Enable tag-format response directives and validation (experimental)")
+	fs.BoolVar(&cfg.EnableTagFormat, "enable-tag-format", cfg.EnableTagFormat, "Enable tag-format response directives and validation (experimental)")
 	fs.IntVar(&cfg.ShellAgentInterruptStep, "shell-agent-interrupt-step", 0, "deterministic interrupt after this many shell-agent steps (0 = disabled)")
 	fs.StringVar(&cfg.Mode, "mode", "", "Operating mode")
-	fs.StringVar(&cfg.ModeInstructionDir, "mode-instruction-dir", "", "Directory containing mode custom instructions (overrides config)")
+	fs.StringVar(&cfg.ModeInstructionDir, "mode-instruction-dir", cfg.ModeInstructionDir, "Directory containing mode custom instructions (overrides config)")
 	fs.StringVarP(&cfg.PromptText, "text", "t", "", "prompt text (alternative to positional argument)")
 	if apiKeyFlags != nil {
 		fs.Var(apiKeyFlags, "api-key", "Provider-specific API key override in provider:key format (repeatable)")
