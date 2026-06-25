@@ -244,6 +244,7 @@ func handleConfigShowCommand(args []string) int {
 	var showFull bool
 	fs := pflag.NewFlagSet("mct-agent config show", pflag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
+	fs.BoolVarP(&showFull, "full", "f", false, "Show all configuration settings including obscure ones (trajectory, file paths, etc.)")
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: mct-agent config show [--full]\n\n")
 		fmt.Fprintln(os.Stderr, "Print the effective configuration with source annotations showing")

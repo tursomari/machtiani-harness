@@ -1489,6 +1489,10 @@ func cloneConfig(in Config) Config {
 		}
 		clone.Mode = &m
 	}
+	if in.Trajectory != nil {
+		t := *in.Trajectory
+		clone.Trajectory = &t
+	}
 	for name, prov := range in.Providers {
 		copyProv := ProviderConfig{
 			BaseURL:  prov.BaseURL,
