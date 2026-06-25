@@ -15,32 +15,9 @@
 #   - Prompt template file paths are reachable
 #   - [environment] 'image' field is rejected at parse time
 #   - [[tasks]] arrays in mode TOML are rejected at parse time
-
-# ── Top-level ──────────────────────────────────────────────────────────────────
-
-# listen is an optional host:port for the local HTTP telemetry server.
-# Set to "" to disable. Default: "127.0.0.1:8042"
-listen = "127.0.0.1:8042"
-
 # default_model is the model alias used when --model is not specified.
 # This alias must exist under [models] below.
 default_model = "foo"
-
-# ── [model] ────────────────────────────────────────────────────────────────────
-# [LEGACY] Direct model overrides used by shell-agent and as fallback when aliases
-# are absent. Most users should define aliases under [models] instead.
-# This section is retained for backward compatibility but superseded by
-# [providers] + [models] pattern.
-
-[model]
-# model_name is the alias to resolve from [models].
-model_name = "foo"
-# api_key is optional; prefer provider-level keys or environment variables.
-api_key = ""
-
-# [model.model_kwargs] — additional keyword arguments forwarded to the model.
-# [model.model_kwargs]
-# temperature = 0.7
 
 # ── [planner] ──────────────────────────────────────────────────────────────────
 # Configuration for the orchestration planner.
@@ -48,8 +25,6 @@ api_key = ""
 [planner]
 # step_limit is the default maximum number of orchestration turns.
 step_limit = 6
-# cost_limit caps the total spend per session (0 = unlimited).
-cost_limit = 0.0
 
 # Prompt templates (override defaults by setting any of these):
 # system_template = "You are the planning layer for the Machtiani shell agent."
@@ -71,12 +46,8 @@ cost_limit = 0.0
 # [LEGACY ALIAS] This section can also be named [agent] for backward compatibility.
 
 [shell-agent]
-# lightweight_max_attempts is retained for backward-compatible parsing only.
-lightweight_max_attempts = 3
 # step_limit caps the number of shell-agent steps per turn.
 step_limit = 10
-# cost_limit caps the total spend for shell-agent per session (0 = unlimited).
-cost_limit = 0.0
 # finalize_remaining_steps: when set, finalize after this many remaining steps.
 finalize_remaining_steps = 1  # Inject a "wrap up now" prompt once remaining LLM calls (step_limit - calls so far) drop to this value or below, giving the model a chance to produce a final answer before the hard step_limit cap.
 
@@ -100,61 +71,12 @@ type = "local"
 timeout = 30
 # cwd: working directory for subprocesses (default: ".").
 cwd = "."
-# internet_access is a capability hint for planner guardrails; not an escalation trigger.
-internet_access = true
-
-# [environment.env_vars] — extra environment variables for subprocesses.
-# [environment.env_vars]
-# FOO = "bar"
-
-# REJECTED FIELD: 'image' is no longer supported. Use dockerfile_path instead.
-# image = ""
-
-# dockerfile_path: path to a Dockerfile for non-local environments.
-# dockerfile_path = ""
-# runtime: container runtime (default: "docker").
-# runtime = "docker"
-# trajectory_dir: override directory for trajectory JSONL files.
-# trajectory_dir = ""
-# tmp_root: override directory for temporary session data.
-# tmp_root = ""
-
-# ── [ignore] ────────────────────────────────────────────────────────────────────
-# File filtering rules for the agent.
-
-[ignore]
-# paths: repo-relative paths to exclude from retrieval.
-paths = []
-# extensions: file extensions to exclude.
-extensions = []
-# git_synced_only: when true, only consider git-tracked files.
-git_synced_only = false
-
-# ── [workspace] ─────────────────────────────────────────────────────────────────
-# Snapshot hydration behavior for non-local environments.
-
-# [[workspace.git_hydration]]
-# root = "subdir/"
-# branches = ["main"]
-
-# [LEGACY] Flat array alternatives (used when git_hydration is empty):
-# git_hydration_roots = []
-# git_hydration_branches = []
-
-# ── [patcher] ───────────────────────────────────────────────────────────────────
-# Strategy for persisting sandbox edits back to the host repository.
-# NOTE: This section is defined in the Config struct but NOT loaded by parseConfig().
-# Values set here are currently ignored.
-
-[patcher]
-# strategy: "patch" (default) or "full_rewrite".
-strategy = "patch"
-
 # ── [providers] ─────────────────────────────────────────────────────────────────
 # Each provider defines an API endpoint. Models reference a provider by name.
 
 [providers.openrouter]
 base_url = "https://openrouter.ai/api/v1"
+
 # api_key: set directly or use ${ENV_VAR} references. Prefer environment variables
 # (OPENROUTER_API_KEY) or the --api-key CLI flag for secrets.
 api_key = "${OPENROUTER_API_KEY}"
@@ -244,14 +166,6 @@ model    = "openai/gpt-5-nano"
 # # Or load the note from a file instead of inlining the string:
 # # patch_success_note = { file = "prompts/patch-success-note.txt" }
 
-# ── [debug] ─────────────────────────────────────────────────────────────────────
-# Optional debugging toggles.
-# NOTE: This section is defined in the Config struct but NOT loaded by parseConfig().
-# Values set here are currently ignored (Debug.LLMInputLogPath is consumed directly
-# from the Config struct in some code paths, but never populated by the config loader).
-
-# [debug]
-# llm_input_log_path = "/tmp/mct-llm-input.log"
 
 # ── Runtime dependencies ────────────────────────────────────────────────────────
 # The following tools must be on PATH for mct-agent to function:
