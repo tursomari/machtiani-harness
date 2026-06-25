@@ -13,7 +13,6 @@ func DefaultConfig() Config {
 			CWD:                   ".",
 			MaxCommandOutputBytes: 65536,
 		},
-		Listen:    "",
 		Model:     nil,
 		Debug:     nil,
 		Prompts:   nil,
@@ -62,9 +61,6 @@ func overlayConfig(target *Config, source Config) {
 	if source.DefaultModel != "" {
 		target.DefaultModel = source.DefaultModel
 	}
-	if source.Listen != "" {
-		target.Listen = source.Listen
-	}
 
 	// --- planner --------------------------------------------------------
 	if source.Planner != nil {
@@ -73,9 +69,6 @@ func overlayConfig(target *Config, source Config) {
 		}
 		if source.Planner.StepLimit != 0 {
 			target.Planner.StepLimit = source.Planner.StepLimit
-		}
-		if source.Planner.CostLimit != 0 {
-			target.Planner.CostLimit = source.Planner.CostLimit
 		}
 	}
 
@@ -87,14 +80,8 @@ func overlayConfig(target *Config, source Config) {
 		if source.ShellAgent.StepLimit != 0 {
 			target.ShellAgent.StepLimit = source.ShellAgent.StepLimit
 		}
-		if source.ShellAgent.CostLimit != 0 {
-			target.ShellAgent.CostLimit = source.ShellAgent.CostLimit
-		}
 		if source.ShellAgent.FinalizeRemainingSteps != 0 {
 			target.ShellAgent.FinalizeRemainingSteps = source.ShellAgent.FinalizeRemainingSteps
-		}
-		if source.ShellAgent.LightweightMaxAttempts != 0 {
-			target.ShellAgent.LightweightMaxAttempts = source.ShellAgent.LightweightMaxAttempts
 		}
 	}
 
@@ -109,27 +96,11 @@ func overlayConfig(target *Config, source Config) {
 		if source.Environment.CWD != "" {
 			target.Environment.CWD = source.Environment.CWD
 		}
-		if source.Environment.DockerfilePath != "" {
-			target.Environment.DockerfilePath = source.Environment.DockerfilePath
-		}
-		if source.Environment.Runtime != "" {
-			target.Environment.Runtime = source.Environment.Runtime
-		}
-		if source.Environment.TrajectoryDir != "" {
-			target.Environment.TrajectoryDir = source.Environment.TrajectoryDir
-		}
-		if source.Environment.TmpRoot != "" {
-			target.Environment.TmpRoot = source.Environment.TmpRoot
-		}
 		if source.Environment.Timeout != 0 {
 			target.Environment.Timeout = source.Environment.Timeout
 		}
 		if source.Environment.MaxCommandOutputBytes != 0 {
 			target.Environment.MaxCommandOutputBytes = source.Environment.MaxCommandOutputBytes
-		}
-		target.Environment.InternetAccess = source.Environment.InternetAccess
-		if source.Environment.EnvVars != nil && len(source.Environment.EnvVars) > 0 {
-			target.Environment.EnvVars = copyStringMap(source.Environment.EnvVars)
 		}
 	}
 

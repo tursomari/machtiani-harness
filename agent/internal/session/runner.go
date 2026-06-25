@@ -598,7 +598,7 @@ func runSession(ctx context.Context, opts Options) Result {
 			Alias:             models.orchestrator.alias,
 			Verbose:           cfg.verbose,
 			DryRun:            cfg.dryRun,
-			InternetAccess:    opts.GlobalConfig.Environment != nil && opts.GlobalConfig.Environment.InternetAccess,
+			InternetAccess:    false,
 			RequestTimeoutSec: cfg.timeoutPerTurn,
 			RepoRoot:          repoRoot,
 			SessionID:         sessionID,

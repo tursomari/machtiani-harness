@@ -234,13 +234,7 @@ func prepareSessionEnvironment(sessionID string, cfg legacyConfig, diagWriter io
 	}
 
 	globalConfig, _, _ := llm.LoadGlobalConfig()
-	tmpRoot := ""
-	if globalConfig.Environment != nil {
-		tmpRoot = strings.TrimSpace(globalConfig.Environment.TmpRoot)
-	}
-	if tmpRoot == "" {
-		tmpRoot = ".machtiani/tmp"
-	}
+	tmpRoot := ".machtiani/tmp"
 	if abs, err := filepath.Abs(tmpRoot); err == nil {
 		tmpRoot = abs
 	}

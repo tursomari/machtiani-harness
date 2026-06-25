@@ -14,7 +14,6 @@ import (
 )
 
 type Config struct {
-	Listen           string                     `toml:"listen"`
 	DefaultModel     string                     `toml:"default_model"`
 	Model            *ModelConfig               `toml:"model"`
 	Planner          *PlannerConfig             `toml:"planner"`
@@ -36,15 +35,10 @@ type DebugConfig struct {
 // ShellAgentConfig mirrors the shell-agent configuration section and is loaded
 // from the global TOML configuration under [shell-agent] (or legacy [agent]).
 type ShellAgentConfig struct {
-	// LightweightMaxAttempts is retained for backward-compatible parsing only.
-	// The shell agent no longer runs a lightweight translator stage.
-	LightweightMaxAttempts int     `toml:"lightweight_max_attempts"`
 	StepLimit              int     `toml:"step_limit"`
-	CostLimit              float64 `toml:"cost_limit"`
 	FinalizeRemainingSteps int     `toml:"finalize_remaining_steps"`
 
 	stepLimitSet              bool `toml:"-"`
-	costLimitSet              bool `toml:"-"`
 	finalizeRemainingStepsSet bool `toml:"-"`
 }
 
@@ -52,10 +46,8 @@ type ShellAgentConfig struct {
 // while also providing defaults for shell-agent where applicable.
 type PlannerConfig struct {
 	StepLimit int     `toml:"step_limit"`
-	CostLimit float64 `toml:"cost_limit"`
 
 	stepLimitSet bool `toml:"-"`
-	costLimitSet bool `toml:"-"`
 }
 
 // PromptsConfig captures the prompt templates referenced by planner and shell-agent.
@@ -154,12 +146,6 @@ type EnvironmentConfig struct {
 	Timeout               int               `toml:"timeout"`
 	MaxCommandOutputBytes int               `toml:"max_command_output_bytes"`
 	CWD              string            `toml:"cwd"`
-	InternetAccess   bool              `toml:"internet_access"`
-	EnvVars          map[string]string `toml:"env_vars"`
-	DockerfilePath   string            `toml:"dockerfile_path"`
-	Runtime          string            `toml:"runtime"`
-	TrajectoryDir    string            `toml:"trajectory_dir"`
-	TmpRoot          string            `toml:"tmp_root"`
 	ComputedImageTag string            `toml:"-"`
 }
 
@@ -479,9 +465,6 @@ func parseConfig(path string) (Config, error) {
 		Providers: make(map[string]ProviderConfig),
 		Models:    make(map[string]ModelDefinition),
 	}
-	if v, ok := raw["listen"].(string); ok {
-		cfg.Listen = v
-	}
 	if v, ok := raw["default_model"].(string); ok {
 		cfg.DefaultModel = v
 	}
@@ -783,16 +766,9 @@ func parseShellAgentSection(path, section string, data map[string]any) (*ShellAg
 			p.lightweightErrorTemplateSet = true
 		}
 	}
-	if val, ok := toInt(data["lightweight_max_attempts"]); ok {
-		agent.LightweightMaxAttempts = val
-	}
 	if val, ok := toInt(data["step_limit"]); ok {
 		agent.StepLimit = val
 		agent.stepLimitSet = true
-	}
-	if val, ok := toFloat(data["cost_limit"]); ok {
-		agent.CostLimit = val
-		agent.costLimitSet = true
 	}
 	if val, ok := toInt(data["finalize_remaining_steps"]); ok {
 		agent.FinalizeRemainingSteps = val
@@ -894,10 +870,6 @@ func parsePlannerSection(path, section string, data map[string]any) (*PlannerCon
 	if val, ok := toInt(data["step_limit"]); ok {
 		planner.StepLimit = val
 		planner.stepLimitSet = true
-	}
-	if val, ok := toFloat(data["cost_limit"]); ok {
-		planner.CostLimit = val
-		planner.costLimitSet = true
 	}
 	return planner, prompts, nil
 }
@@ -1033,10 +1005,6 @@ func mergePlannerIntoShellAgent(agent *ShellAgentConfig, planner *PlannerConfig)
 		agent.StepLimit = planner.StepLimit
 		agent.stepLimitSet = true
 	}
-	if !agent.costLimitSet && planner.costLimitSet {
-		agent.CostLimit = planner.CostLimit
-		agent.costLimitSet = true
-	}
 }
 
 func mergePromptsSources(base *PromptsConfig, plannerLegacy *PlannerPromptsConfig, shellLegacy *ShellAgentPromptsConfig) *PromptsConfig {
@@ -1158,30 +1126,8 @@ func parseEnvironmentSection(path string, data map[string]any) (*EnvironmentConf
 	if v, ok := data["cwd"].(string); ok {
 		env.CWD = v
 	}
-	if v, ok := data["internet_access"].(bool); ok {
-		env.InternetAccess = v
-	}
-	if vars, ok := toMap(data["env_vars"]); ok {
-		stringMap, err := mapStringString(vars)
-		if err != nil {
-			return nil, fmt.Errorf("parse %s [environment.env_vars]: %w", path, err)
-		}
-		env.EnvVars = stringMap
-	}
-	if v, ok := data["dockerfile_path"].(string); ok {
-		env.DockerfilePath = v
-	}
 	if _, ok := data["image"]; ok {
 		return nil, fmt.Errorf("%s [environment.image] is no longer supported; use dockerfile_path", path)
-	}
-	if v, ok := data["runtime"].(string); ok {
-		env.Runtime = v
-	}
-	if v, ok := data["trajectory_dir"].(string); ok {
-		env.TrajectoryDir = v
-	}
-	if v, ok := data["tmp_root"].(string); ok {
-		env.TmpRoot = v
 	}
 	return env, nil
 }
@@ -1439,7 +1385,6 @@ func expandUserPath(path string) (string, error) {
 
 func cloneConfig(in Config) Config {
 	clone := Config{
-		Listen:       in.Listen,
 		DefaultModel: in.DefaultModel,
 		Providers:    make(map[string]ProviderConfig, len(in.Providers)),
 		Models:       make(map[string]ModelDefinition, len(in.Models)),
@@ -1476,9 +1421,6 @@ func cloneConfig(in Config) Config {
 	}
 	if in.Environment != nil {
 		env := *in.Environment
-		if len(env.EnvVars) > 0 {
-			env.EnvVars = copyStringMap(env.EnvVars)
-		}
 		clone.Environment = &env
 	}
 	if in.Mode != nil {
@@ -1924,7 +1866,6 @@ func toStringMap(v any) (map[string]any, bool) {
 
 func DefaultMinimalConfig() Config {
 	return Config{
-		Listen:       "127.0.0.1:8042",
 		DefaultModel: "",
 		Planner:      &PlannerConfig{StepLimit: 110},
 		ShellAgent:   &ShellAgentConfig{FinalizeRemainingSteps: 10},
@@ -1932,7 +1873,6 @@ func DefaultMinimalConfig() Config {
 			Type:           "local",
 			Timeout:        9999,
 			CWD:            ".",
-			InternetAccess: true,
 		},
 		Model:      nil,
 		Debug:      nil,

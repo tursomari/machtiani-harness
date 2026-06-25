@@ -63,7 +63,7 @@ func TestLocateConfigFallsBackToGlobalConfig(t *testing.T) {
 }
 
 func TestLoadGlobalConfigParsesSections(t *testing.T) {
-	content := `listen = "127.0.0.1:0"
+	content := `
 
 [prompts.planner]
 system_template = "Planner system"
@@ -75,10 +75,8 @@ action_observation_template = "Observation: {{.Output}}"
 
 [planner]
 step_limit = 7
-cost_limit = 2.5
 
 [shell-agent]
-lightweight_max_attempts = 4
 
 [model]
 model_name = "alias-model"
@@ -91,10 +89,6 @@ base_url = "https://example.com/v1"
 type = "local"
 timeout = 45
 cwd = "."
-internet_access = true
-
-[environment.env_vars]
-FOO = "bar"
 
 [providers.fake]
 base_url = "https://example.com/v1"
@@ -125,17 +119,11 @@ git_synced_only = true
 	if cfg.Planner == nil || cfg.Planner.StepLimit != 7 {
 		t.Fatalf("expected planner step_limit 7, got %+v", cfg.Planner)
 	}
-	if cfg.Planner.CostLimit != 2.5 {
-		t.Fatalf("expected planner cost_limit 2.5, got %v", cfg.Planner.CostLimit)
-	}
 	if cfg.ShellAgent == nil {
 		t.Fatalf("expected shell-agent config")
 	}
 	if cfg.ShellAgent.StepLimit != 7 {
 		t.Fatalf("expected shell-agent step_limit fallback 7, got %+v", cfg.ShellAgent)
-	}
-	if cfg.ShellAgent.CostLimit != 2.5 {
-		t.Fatalf("expected shell-agent cost_limit fallback 2.5, got %+v", cfg.ShellAgent)
 	}
 	if cfg.Prompts == nil || cfg.Prompts.Planner == nil {
 		t.Fatalf("expected planner prompts to be parsed, got %+v", cfg.Prompts)
@@ -155,9 +143,6 @@ git_synced_only = true
 	if cfg.Prompts.ShellAgent.ActionObservationTemplate != "Observation: {{.Output}}" {
 		t.Fatalf("expected shell-agent action_observation_template, got %q", cfg.Prompts.ShellAgent.ActionObservationTemplate)
 	}
-	if cfg.ShellAgent.LightweightMaxAttempts != 4 {
-		t.Fatalf("expected shell-agent lightweight_max_attempts 4, got %d", cfg.ShellAgent.LightweightMaxAttempts)
-	}
 	if cfg.Model == nil || strings.TrimSpace(cfg.Model.ModelName) != "alias-model" {
 		t.Fatalf("expected model name alias-model, got %+v", cfg.Model)
 	}
@@ -173,23 +158,15 @@ git_synced_only = true
 	if cfg.Environment == nil || cfg.Environment.Timeout != 45 {
 		t.Fatalf("expected environment timeout 45, got %+v", cfg.Environment)
 	}
-	if cfg.Environment == nil || !cfg.Environment.InternetAccess {
-		t.Fatalf("expected environment internet_access true, got %+v", cfg.Environment)
-	}
-	if cfg.Environment == nil || cfg.Environment.EnvVars["FOO"] != "bar" {
-		t.Fatalf("expected environment env_vars FOO=bar, got %+v", cfg.Environment)
-	}
 }
 
 func TestLoadGlobalConfigSupportsLegacyAgentSection(t *testing.T) {
-	content := `listen = "127.0.0.1:0"
+	content := `
 
 [agent]
 system_template = "legacy system"
 instance_template = "legacy instance"
 step_limit = 5
-cost_limit = 1.5
-lightweight_max_attempts = 2
 
 [environment]
 type = "local"
@@ -492,7 +469,7 @@ description = "missing.txt"
 }
 
 func TestLoadGlobalConfigPromotesLegacyShellAgentTemplates(t *testing.T) {
-	content := `listen = "127.0.0.1:0"
+	content := `
 
 [shell-agent]
 system_template = "agent system"
@@ -503,7 +480,6 @@ action_observation_template = "legacy action {{.Output}}"
 lightweight_system_template = "legacy lw system"
 lightweight_intent_template = "legacy lw intent"
 lightweight_error_template = "legacy lw error"
-lightweight_max_attempts = 3
 
 [planner]
 step_limit = 9
@@ -545,9 +521,6 @@ step_limit = 9
 	if cfg.Prompts.ShellAgent.LightweightErrorTemplate != "legacy lw error" {
 		t.Fatalf("expected lightweight error template, got %q", cfg.Prompts.ShellAgent.LightweightErrorTemplate)
 	}
-	if cfg.ShellAgent.LightweightMaxAttempts != 3 {
-		t.Fatalf("expected lightweight max attempts to remain 3, got %d", cfg.ShellAgent.LightweightMaxAttempts)
-	}
 	if cfg.ShellAgent.StepLimit != 9 {
 		t.Fatalf("expected shell-agent step_limit to inherit 9, got %d", cfg.ShellAgent.StepLimit)
 	}
@@ -580,7 +553,7 @@ func TestLoadGlobalConfigSupportsTemplateFiles(t *testing.T) {
 	mustWriteFile(t, filepath.Join(root, "templates", "mct", "patch_success_note.tpl"), "patch success note")
 	mustWriteFile(t, filepath.Join(root, "templates", "mct", "full_diff_note.tpl"), "full diff note")
 
-	content := `listen = "127.0.0.1:0"
+	content := `
 
 [prompts.planner]
 system_template = { file = "templates/planner/system.tpl" }
@@ -698,9 +671,6 @@ full_diff_note = { file = "templates/mct/full_diff_note.tpl" }
 func TestDefaultMinimalConfig(t *testing.T) {
 	cfg := DefaultMinimalConfig()
 
-	if cfg.Listen != "127.0.0.1:8042" {
-		t.Fatalf("expected Listen 127.0.0.1:8042, got %q", cfg.Listen)
-	}
 	if cfg.DefaultModel != "" {
 		t.Fatalf("expected DefaultModel \"\", got %q", cfg.DefaultModel)
 	}
@@ -711,9 +681,6 @@ func TestDefaultMinimalConfig(t *testing.T) {
 		if cfg.Planner.StepLimit != 110 {
 			t.Fatalf("expected Planner.StepLimit 110, got %d", cfg.Planner.StepLimit)
 		}
-		if cfg.Planner.CostLimit != 0 {
-			t.Fatalf("expected Planner.CostLimit 0, got %v", cfg.Planner.CostLimit)
-		}
 	}
 
 	if cfg.ShellAgent == nil {
@@ -722,14 +689,8 @@ func TestDefaultMinimalConfig(t *testing.T) {
 		if cfg.ShellAgent.FinalizeRemainingSteps != 10 {
 			t.Fatalf("expected ShellAgent.FinalizeRemainingSteps 10, got %d", cfg.ShellAgent.FinalizeRemainingSteps)
 		}
-		if cfg.ShellAgent.LightweightMaxAttempts != 0 {
-			t.Fatalf("expected ShellAgent.LightweightMaxAttempts 0, got %d", cfg.ShellAgent.LightweightMaxAttempts)
-		}
 		if cfg.ShellAgent.StepLimit != 0 {
 			t.Fatalf("expected ShellAgent.StepLimit 0, got %d", cfg.ShellAgent.StepLimit)
-		}
-		if cfg.ShellAgent.CostLimit != 0.0 {
-			t.Fatalf("expected ShellAgent.CostLimit 0.0, got %v", cfg.ShellAgent.CostLimit)
 		}
 	}
 
@@ -745,23 +706,8 @@ func TestDefaultMinimalConfig(t *testing.T) {
 		if cfg.Environment.CWD != "." {
 			t.Fatalf("expected Environment.CWD \".\", got %q", cfg.Environment.CWD)
 		}
-		if !cfg.Environment.InternetAccess {
-			t.Fatal("expected Environment.InternetAccess true")
-		}
 		if cfg.Environment.MaxCommandOutputBytes != 0 {
 			t.Fatalf("expected Environment.MaxCommandOutputBytes 0, got %d", cfg.Environment.MaxCommandOutputBytes)
-		}
-		if cfg.Environment.Runtime != "" {
-			t.Fatalf("expected Environment.Runtime \"\", got %q", cfg.Environment.Runtime)
-		}
-		if cfg.Environment.TrajectoryDir != "" {
-			t.Fatalf("expected Environment.TrajectoryDir \"\", got %q", cfg.Environment.TrajectoryDir)
-		}
-		if cfg.Environment.DockerfilePath != "" {
-			t.Fatalf("expected Environment.DockerfilePath \"\", got %q", cfg.Environment.DockerfilePath)
-		}
-		if cfg.Environment.TmpRoot != "" {
-			t.Fatalf("expected Environment.TmpRoot \"\", got %q", cfg.Environment.TmpRoot)
 		}
 	}
 
