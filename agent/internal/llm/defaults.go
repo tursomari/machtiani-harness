@@ -17,7 +17,6 @@ func DefaultConfig() Config {
 		Model:     nil,
 		Debug:     nil,
 		Prompts:   nil,
-		Ignore:    nil,
 		Mode:      nil,
 		Providers: nil,
 		Models:    nil,
@@ -270,24 +269,6 @@ func overlayConfig(target *Config, source Config) {
 			target.Prompts = &p
 		} else {
 			*target.Prompts = *source.Prompts
-		}
-	}
-
-	// Ignore
-	if source.Ignore != nil {
-		if target.Ignore == nil {
-			i := *source.Ignore
-			i.Paths = append([]string(nil), i.Paths...)
-			i.Extensions = append([]string(nil), i.Extensions...)
-			target.Ignore = &i
-		} else {
-			*target.Ignore = *source.Ignore
-			if source.Ignore.Paths != nil {
-				target.Ignore.Paths = append([]string(nil), source.Ignore.Paths...)
-			}
-			if source.Ignore.Extensions != nil {
-				target.Ignore.Extensions = append([]string(nil), source.Ignore.Extensions...)
-			}
 		}
 	}
 

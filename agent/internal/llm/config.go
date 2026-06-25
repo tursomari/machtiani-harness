@@ -22,18 +22,9 @@ type Config struct {
 	Debug            *DebugConfig               `toml:"debug"`
 	Prompts          *PromptsConfig             `toml:"prompts"`
 	Environment      *EnvironmentConfig         `toml:"environment"`
-	Ignore           *IgnoreConfig              `toml:"ignore"`
 	Providers        map[string]ProviderConfig  `toml:"providers"`
 	Models           map[string]ModelDefinition `toml:"models"`
 	Mode *ModeConfig `toml:"mode"`
-}
-
-// IgnoreConfig controls how the agent filters files when syncing code into a
-// sandbox/workspace.
-type IgnoreConfig struct {
-	Paths         []string `toml:"paths"`
-	Extensions    []string `toml:"extensions"`
-	GitSyncedOnly bool     `toml:"git_synced_only"`
 }
 
 
@@ -493,27 +484,6 @@ func parseConfig(path string) (Config, error) {
 	}
 	if v, ok := raw["default_model"].(string); ok {
 		cfg.DefaultModel = v
-	}
-	if ignoreRaw, ok := toMap(raw["ignore"]); ok {
-		ignore := &IgnoreConfig{}
-		if paths, ok := toSlice(ignoreRaw["paths"]); ok {
-			for _, p := range paths {
-				if s, ok := p.(string); ok {
-					ignore.Paths = append(ignore.Paths, s)
-				}
-			}
-		}
-		if extensions, ok := toSlice(ignoreRaw["extensions"]); ok {
-			for _, e := range extensions {
-				if s, ok := e.(string); ok {
-					ignore.Extensions = append(ignore.Extensions, s)
-				}
-			}
-		}
-		if v, ok := ignoreRaw["git_synced_only"].(bool); ok {
-			ignore.GitSyncedOnly = v
-		}
-		cfg.Ignore = ignore
 	}
 	if modelRaw, ok := toMap(raw["model"]); ok {
 		modelCfg, err := parseModelSection(path, modelRaw)
@@ -1474,12 +1444,6 @@ func cloneConfig(in Config) Config {
 		Providers:    make(map[string]ProviderConfig, len(in.Providers)),
 		Models:       make(map[string]ModelDefinition, len(in.Models)),
 	}
-	if in.Ignore != nil {
-		ignore := *in.Ignore
-		ignore.Paths = append([]string(nil), ignore.Paths...)
-		ignore.Extensions = append([]string(nil), ignore.Extensions...)
-		clone.Ignore = &ignore
-	}
 	if in.ShellAgent != nil {
 		agent := *in.ShellAgent
 		clone.ShellAgent = &agent
@@ -1973,7 +1937,6 @@ func DefaultMinimalConfig() Config {
 		Model:      nil,
 		Debug:      nil,
 		Prompts:    nil,
-		Ignore:     nil,
 		Mode:       nil,
 		Providers:  nil,
 		Models:     nil,

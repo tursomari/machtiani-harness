@@ -179,18 +179,6 @@ git_synced_only = true
 	if cfg.Environment == nil || cfg.Environment.EnvVars["FOO"] != "bar" {
 		t.Fatalf("expected environment env_vars FOO=bar, got %+v", cfg.Environment)
 	}
-	if cfg.Ignore == nil {
-		t.Fatalf("expected ignore section to be parsed")
-	}
-	if len(cfg.Ignore.Paths) != 2 || cfg.Ignore.Paths[0] != "tests/tmp/" || cfg.Ignore.Paths[1] != "tests/repositories/undici" {
-		t.Fatalf("unexpected ignore paths: %v", cfg.Ignore.Paths)
-	}
-	if len(cfg.Ignore.Extensions) != 2 || cfg.Ignore.Extensions[0] != ".log" || cfg.Ignore.Extensions[1] != ".tmp" {
-		t.Fatalf("unexpected ignore extensions: %v", cfg.Ignore.Extensions)
-	}
-	if !cfg.Ignore.GitSyncedOnly {
-		t.Fatalf("expected git_synced_only to be true")
-	}
 }
 
 func TestLoadGlobalConfigSupportsLegacyAgentSection(t *testing.T) {
@@ -786,9 +774,6 @@ func TestDefaultMinimalConfig(t *testing.T) {
 	if cfg.Prompts != nil {
 		t.Fatalf("expected Prompts to be nil, got %+v", cfg.Prompts)
 	}
-	if cfg.Ignore != nil {
-		t.Fatalf("expected Ignore to be nil, got %+v", cfg.Ignore)
-		}
 	if cfg.Mode != nil {
 		t.Fatalf("expected Mode to be nil, got %+v", cfg.Mode)
 	}
