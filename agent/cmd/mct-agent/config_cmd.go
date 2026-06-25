@@ -327,14 +327,6 @@ func printConfigWithSources(effective, defaults llm.Config, hasFile bool) {
 		fmt.Printf("environment.max_command_output_bytes = %d # %s\n",
 			effective.Environment.MaxCommandOutputBytes,
 			intSource(effective.Environment.MaxCommandOutputBytes, defaultEnv.MaxCommandOutputBytes, hasFile))
-
-		defaultInternetAccess := false
-		if defaultEnv != nil {
-			defaultInternetAccess = defaultEnv.InternetAccess
-		}
-		fmt.Printf("environment.internet_access = %t # %s\n",
-			effective.Environment.InternetAccess,
-			internetAccessSource(effective.Environment.InternetAccess, defaultInternetAccess, hasFile))
 	}
 
 	// --- Providers ---
@@ -395,15 +387,6 @@ func stringSource(effective, defaults string, hasFile bool) string {
 // intSource returns "config.toml" when hasFile is true and the effective
 // value differs from the default, otherwise "default".
 func intSource(effective, defaults int, hasFile bool) string {
-	if hasFile && effective != defaults {
-		return "config.toml"
-	}
-	return "default"
-}
-
-// internetAccessSource is the same as stringSource but for booleans,
-// formatted with %t.
-func internetAccessSource(effective, defaults bool, hasFile bool) string {
 	if hasFile && effective != defaults {
 		return "config.toml"
 	}

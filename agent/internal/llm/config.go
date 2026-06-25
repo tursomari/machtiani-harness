@@ -15,10 +15,8 @@ import (
 
 type Config struct {
 	DefaultModel     string                     `toml:"default_model"`
-	Model            *ModelConfig               `toml:"model"`
 	Planner          *PlannerConfig             `toml:"planner"`
 	ShellAgent       *ShellAgentConfig          `toml:"shell-agent"`
-	Debug            *DebugConfig               `toml:"debug"`
 	Prompts          *PromptsConfig             `toml:"prompts"`
 	Environment      *EnvironmentConfig         `toml:"environment"`
 	Providers        map[string]ProviderConfig  `toml:"providers"`
@@ -26,11 +24,6 @@ type Config struct {
 	Mode *ModeConfig `toml:"mode"`
 }
 
-
-// DebugConfig captures optional debugging toggles.
-type DebugConfig struct {
-	LLMInputLogPath string `toml:"llm_input_log_path"`
-}
 
 // ShellAgentConfig mirrors the shell-agent configuration section and is loaded
 // from the global TOML configuration under [shell-agent] (or legacy [agent]).
@@ -128,15 +121,6 @@ type MCTPromptsConfig struct {
 	readmeSystemTemplateSet        bool `toml:"-"`
 	shellAgentContextTemplateSet   bool `toml:"-"`
 	fullDiffNoteSet                bool `toml:"-"`
-}
-
-// ModelConfig captures direct model overrides under the top-level [model]
-// section. These values are used by shell-agent and can provide fallback
-// OpenAI-compatible settings for the orchestrator when aliases are absent.
-type ModelConfig struct {
-	ModelName   string         `toml:"model_name"`
-	APIKey      string         `toml:"api_key"`
-	ModelKwargs map[string]any `toml:"model_kwargs"`
 }
 
 // EnvironmentConfig describes shell execution settings loaded from the
@@ -468,13 +452,6 @@ func parseConfig(path string) (Config, error) {
 	if v, ok := raw["default_model"].(string); ok {
 		cfg.DefaultModel = v
 	}
-	if modelRaw, ok := toMap(raw["model"]); ok {
-		modelCfg, err := parseModelSection(path, modelRaw)
-		if err != nil {
-			return Config{}, err
-		}
-		cfg.Model = modelCfg
-	}
 	var (
 		legacyPlannerPrompts    *PlannerPromptsConfig
 		legacyShellAgentPrompts *ShellAgentPromptsConfig
@@ -646,20 +623,6 @@ func parseConfig(path string) (Config, error) {
 		}
 	}
 	return cfg, nil
-}
-
-func parseModelSection(path string, data map[string]any) (*ModelConfig, error) {
-	model := &ModelConfig{}
-	if v, ok := data["model_name"].(string); ok {
-		model.ModelName = v
-	}
-	if v, ok := data["api_key"].(string); ok {
-		model.APIKey = v
-	}
-	if kwargs, ok := toMap(data["model_kwargs"]); ok {
-		model.ModelKwargs = deepCopyMap(kwargs)
-	}
-	return model, nil
 }
 
 func parseShellAgentSection(path, section string, data map[string]any) (*ShellAgentConfig, *ShellAgentPromptsConfig, *PlannerPromptsConfig, error) {
@@ -1430,13 +1393,6 @@ func cloneConfig(in Config) Config {
 		}
 		clone.Mode = &m
 	}
-	if in.Model != nil {
-		model := *in.Model
-		if len(model.ModelKwargs) > 0 {
-			model.ModelKwargs = deepCopyMap(model.ModelKwargs)
-		}
-		clone.Model = &model
-	}
 	for name, prov := range in.Providers {
 		copyProv := ProviderConfig{
 			BaseURL:  prov.BaseURL,
@@ -1874,8 +1830,6 @@ func DefaultMinimalConfig() Config {
 			Timeout:        9999,
 			CWD:            ".",
 		},
-		Model:      nil,
-		Debug:      nil,
 		Prompts:    nil,
 		Mode:       nil,
 		Providers:  nil,

@@ -78,13 +78,6 @@ step_limit = 7
 
 [shell-agent]
 
-[model]
-model_name = "alias-model"
-api_key = "direct-key"
-
-[model.model_kwargs]
-base_url = "https://example.com/v1"
-
 [environment]
 type = "local"
 timeout = 45
@@ -142,15 +135,6 @@ git_synced_only = true
 	}
 	if cfg.Prompts.ShellAgent.ActionObservationTemplate != "Observation: {{.Output}}" {
 		t.Fatalf("expected shell-agent action_observation_template, got %q", cfg.Prompts.ShellAgent.ActionObservationTemplate)
-	}
-	if cfg.Model == nil || strings.TrimSpace(cfg.Model.ModelName) != "alias-model" {
-		t.Fatalf("expected model name alias-model, got %+v", cfg.Model)
-	}
-	if cfg.Model == nil || strings.TrimSpace(cfg.Model.APIKey) != "direct-key" {
-		t.Fatalf("expected model api key direct-key, got %+v", cfg.Model)
-	}
-	if cfg.Model == nil || cfg.Model.ModelKwargs["base_url"] != "https://example.com/v1" {
-		t.Fatalf("expected model_kwargs.base_url present, got %+v", cfg.Model)
 	}
 	if cfg.Environment == nil || strings.TrimSpace(cfg.Environment.Type) != "local" {
 		t.Fatalf("expected environment type local, got %+v", cfg.Environment)
@@ -711,15 +695,6 @@ func TestDefaultMinimalConfig(t *testing.T) {
 		}
 	}
 
-	if cfg.Model != nil {
-		t.Fatalf("expected Model to be nil, got %+v", cfg.Model)
-	}
-	if cfg.Debug != nil {
-		t.Fatalf("expected Debug to be nil, got %+v", cfg.Debug)
-	}
-	if cfg.Prompts != nil {
-		t.Fatalf("expected Prompts to be nil, got %+v", cfg.Prompts)
-	}
 	if cfg.Mode != nil {
 		t.Fatalf("expected Mode to be nil, got %+v", cfg.Mode)
 	}

@@ -166,14 +166,7 @@ func llmInputLogPath() string {
 			return p
 		}
 	}
-	cfg, err := loadConfig()
-	if err != nil || cfg == nil {
-		return ""
-	}
-	if cfg.config.Debug == nil {
-		return ""
-	}
-	return strings.TrimSpace(cfg.config.Debug.LLMInputLogPath)
+	return ""
 }
 
 func appendLLMInputLog(path string, payload any) {

@@ -230,32 +230,6 @@ func TestResolveModelRuntimesShellAgentOverrideAlias(t *testing.T) {
 	}
 }
 
-func TestResolveShellAgentRuntimeDirectConfig(t *testing.T) {
-	global := llm.Config{
-		Model: &llm.ModelConfig{
-			ModelName: "direct-shell",
-			ModelKwargs: map[string]any{
-				"base_url": "https://shell.example",
-				"endpoint": "/v1/chat",
-			},
-		},
-	}
-
-	rt, err := resolveShellAgentRuntime(global, "", nil, modelRuntime{})
-	if err != nil {
-		t.Fatalf("resolveShellAgentRuntime returned error: %v", err)
-	}
-	if got := strings.TrimSpace(rt.resolved.BaseURL); got != "https://shell.example" {
-		t.Fatalf("expected base URL https://shell.example, got %q", got)
-	}
-	if got := strings.TrimSpace(rt.resolved.Endpoint); got != "/v1/chat" {
-		t.Fatalf("expected endpoint /v1/chat, got %q", got)
-	}
-	if got := strings.TrimSpace(rt.resolved.Model); got != "direct-shell" {
-		t.Fatalf("expected model direct-shell, got %q", got)
-	}
-}
-
 func TestResolveModelRuntimesShellAgentInheritsPrimaryWithoutDefault(t *testing.T) {
 	configDir := t.TempDir()
 	configPath := filepath.Join(configDir, "config.toml")

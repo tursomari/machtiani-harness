@@ -13,8 +13,6 @@ func DefaultConfig() Config {
 			CWD:                   ".",
 			MaxCommandOutputBytes: 65536,
 		},
-		Model:     nil,
-		Debug:     nil,
 		Prompts:   nil,
 		Mode:      nil,
 		Providers: nil,
@@ -207,31 +205,6 @@ func overlayConfig(target *Config, source Config) {
 	}
 
 	// --- other pointer fields -------------------------------------------
-	// Model
-	if source.Model != nil {
-		if target.Model == nil {
-			m := *source.Model
-			if len(m.ModelKwargs) > 0 {
-				m.ModelKwargs = deepCopyMap(m.ModelKwargs)
-			}
-			target.Model = &m
-		} else {
-			*target.Model = *source.Model
-			if len(source.Model.ModelKwargs) > 0 {
-				target.Model.ModelKwargs = deepCopyMap(source.Model.ModelKwargs)
-			}
-		}
-	}
-
-	// Debug
-	if source.Debug != nil {
-		if target.Debug == nil {
-			d := *source.Debug
-			target.Debug = &d
-		} else {
-			*target.Debug = *source.Debug
-		}
-	}
 
 	// Prompts
 	if source.Prompts != nil {

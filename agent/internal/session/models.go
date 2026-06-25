@@ -332,47 +332,8 @@ func resolveShellAgentRuntime(global llm.Config, override string, apiKeyOverride
 	trimmedOverride := strings.TrimSpace(override)
 	rt.apiKeyOverrides = llm.CopyAPIKeyOverridesForRuntime(apiKeyOverrides)
 
-	var baseURL, endpoint, modelName string
-	if global.Model != nil {
-		modelName = strings.TrimSpace(global.Model.ModelName)
-		if trimmedOverride == "" && len(global.Model.ModelKwargs) > 0 {
-			baseURL = trimAny(global.Model.ModelKwargs["base_url"])
-			endpoint = trimAny(global.Model.ModelKwargs["endpoint"])
-			if modelName == "" {
-				modelName = trimAny(global.Model.ModelKwargs["model"])
-			}
-		}
-		if modelName == "" {
-			modelName = trimmedOverride
-		}
-	}
-
 	alias := trimmedOverride
 	if alias == "" {
-		alias = modelName
-	}
-
-	if baseURL != "" {
-		if endpoint == "" {
-			endpoint = "/chat/completions"
-		}
-		resolved := llm.ResolvedModel{
-			Alias:        strings.TrimSpace(alias),
-			ProviderName: "direct",
-			BaseURL:      baseURL,
-			Endpoint:     endpoint,
-			Model:        strings.TrimSpace(modelName),
-			Params:       map[string]any{},
-		}
-		rt.resolved = resolved
-		if strings.TrimSpace(alias) != "" {
-			rt.alias = strings.TrimSpace(alias)
-			rt.usingAlias = true
-		}
-		return rt, nil
-	}
-
-	if strings.TrimSpace(alias) == "" {
 		resolved := primaryFallback.resolved
 		if strings.TrimSpace(resolved.Model) != "" || strings.TrimSpace(resolved.BaseURL) != "" || strings.TrimSpace(resolved.ProviderName) != "" {
 			return cloneModelRuntime(primaryFallback), nil
@@ -481,27 +442,7 @@ func applyFallbacks(rt *modelRuntime, candidates []string, directBase, directKey
 }
 
 func configModelDefaults(global llm.Config) (apiKey, baseURL, model string) {
-	if global.Model == nil {
-		return "", "", ""
-	}
-	apiKey = strings.TrimSpace(global.Model.APIKey)
-	if kwargs := global.Model.ModelKwargs; kwargs != nil {
-		if v, ok := kwargs["api_key"].(string); ok {
-			if trimmed := strings.TrimSpace(v); trimmed != "" {
-				apiKey = trimmed
-			}
-		}
-		if v, ok := kwargs["base_url"].(string); ok {
-			baseURL = strings.TrimSpace(v)
-		}
-		if v, ok := kwargs["model"].(string); ok {
-			model = strings.TrimSpace(v)
-		}
-	}
-	if model == "" {
-		model = strings.TrimSpace(global.Model.ModelName)
-	}
-	return apiKey, baseURL, model
+	return "", "", ""
 }
 
 func resolveFileDiscoveryTrajectory(cfg legacyConfig, sessionID string) (string, error) {
