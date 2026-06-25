@@ -23,8 +23,8 @@ default_model = "foo"
 # Configuration for the orchestration planner.
 
 [planner]
-# step_limit is the default maximum number of orchestration turns.
-step_limit = 6
+# max_turns is the default maximum number of orchestration turns.
+max_turns = 150
 
 # Prompt templates (override defaults by setting any of these):
 # system_template = "You are the planning layer for the Machtiani shell agent."
@@ -46,10 +46,10 @@ step_limit = 6
 # [LEGACY ALIAS] This section can also be named [agent] for backward compatibility.
 
 [shell-agent]
-# step_limit caps the number of shell-agent steps per turn.
-step_limit = 10
+# max_steps caps the number of shell-agent steps per shell-agent invocation.
+max_steps = 110
 # finalize_remaining_steps: when set, finalize after this many remaining steps.
-finalize_remaining_steps = 1  # Inject a "wrap up now" prompt once remaining LLM calls (step_limit - calls so far) drop to this value or below, giving the model a chance to produce a final answer before the hard step_limit cap.
+finalize_remaining_steps = 1  # Inject a "wrap up now" prompt once remaining LLM calls (max_steps - calls so far) drop to this value or below, giving the model a chance to produce a final answer before the hard max_steps cap.
 
 # Prompt templates (override defaults):
 # system_template = "..."
@@ -68,7 +68,7 @@ finalize_remaining_steps = 1  # Inject a "wrap up now" prompt once remaining LLM
 # type: "local" (default) or "docker".
 type = "local"
 # timeout: per-command timeout in seconds.
-timeout = 30
+command_timeout = 30
 # cwd: working directory for subprocesses (default: ".").
 cwd = "."
 # ── [providers] ─────────────────────────────────────────────────────────────────
