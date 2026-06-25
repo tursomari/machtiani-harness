@@ -300,7 +300,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 				msg := merr.Error()
 				if errors.Is(ctx2Err, context.DeadlineExceeded) || strings.Contains(strings.ToLower(merr.Error()), "signal: killed") {
 					msg = fmt.Sprintf("timed out after %ds", env.cfg.timeoutPerTurn)
-					fmt.Fprintf(env.diagWriter, "mct prompt error: %s. Try increasing --timeout-per-turn or set 0 for unlimited.\n", msg)
+					fmt.Fprintf(env.diagWriter, "mct prompt error: %s. Try increasing --turn-timeout or set 0 for unlimited.\n", msg)
 				} else {
 					fmt.Fprintln(env.diagWriter, "mct prompt error:", merr)
 				}
@@ -429,7 +429,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 		msg := merr.Error()
 		if errors.Is(ctx2Err, context.DeadlineExceeded) || strings.Contains(strings.ToLower(merr.Error()), "signal: killed") {
 			msg = fmt.Sprintf("timed out after %ds", env.cfg.timeoutPerTurn)
-			fmt.Fprintf(env.diagWriter, "mct prompt error: %s. Try increasing --timeout-per-turn or set 0 for unlimited.\n", msg)
+			fmt.Fprintf(env.diagWriter, "mct prompt error: %s. Try increasing --turn-timeout or set 0 for unlimited.\n", msg)
 		} else {
 			fmt.Fprintln(env.diagWriter, "mct prompt error:", merr)
 		}

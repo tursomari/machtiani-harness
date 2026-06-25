@@ -703,7 +703,7 @@ func runSession(ctx context.Context, opts Options) Result {
 				return interruptedResult(perr)
 			}
 			if errors.Is(planCtxErr, context.DeadlineExceeded) {
-				fmt.Fprintf(diagWriter, "Planner error: timed out after %ds. Increase --timeout-per-turn or set 0 for unlimited.\n", cfg.timeoutPerTurn)
+				fmt.Fprintf(diagWriter, "Planner error: timed out after %ds. Increase --turn-timeout or set 0 for unlimited.\n", cfg.timeoutPerTurn)
 				runState.sessionErr = perr
 				finishTurn(sessTelemetry, turn, "planner", "error", turnInfo, perr)
 				
@@ -736,7 +736,7 @@ func runSession(ctx context.Context, opts Options) Result {
 						return interruptedResult(ferr)
 					}
 					if errors.Is(ctxFErr, context.DeadlineExceeded) {
-						fmt.Fprintf(diagWriter, "Finalizer error: timed out after %ds. Increase --timeout-per-turn or set 0 for unlimited.\n", cfg.timeoutPerTurn)
+						fmt.Fprintf(diagWriter, "Finalizer error: timed out after %ds. Increase --turn-timeout or set 0 for unlimited.\n", cfg.timeoutPerTurn)
 					} else {
 						fmt.Fprintln(diagWriter, "Finalizer error:", ferr)
 					}
@@ -827,7 +827,7 @@ func runSession(ctx context.Context, opts Options) Result {
 					return interruptedResult(ferr)
 				}
 				if errors.Is(finalizeCtxErr, context.DeadlineExceeded) {
-					fmt.Fprintf(diagWriter, "Finalizer error: timed out after %ds. Increase --timeout-per-turn or set 0 for unlimited.\n", cfg.timeoutPerTurn)
+					fmt.Fprintf(diagWriter, "Finalizer error: timed out after %ds. Increase --turn-timeout or set 0 for unlimited.\n", cfg.timeoutPerTurn)
 				} else {
 					fmt.Fprintln(diagWriter, "Finalizer error:", ferr)
 				}

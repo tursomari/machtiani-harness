@@ -35,7 +35,7 @@ func TestTurnContext_buildShellAgentRequest_equivalence(t *testing.T) {
 			},
 		},
 		Config: &llm.ShellAgentConfig{
-			StepLimit: 10,
+			MaxSteps: 10,
 		},
 	}
 

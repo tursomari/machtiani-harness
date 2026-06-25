@@ -95,7 +95,7 @@ func TestBuildShellAgentRequestResumeAttemptFalseWithNewInput(t *testing.T) {
 				InstanceTemplate: "Instance template for task: {{.Task}}",
 			},
 		},
-		Config: &llm.ShellAgentConfig{StepLimit: 10},
+		Config: &llm.ShellAgentConfig{MaxSteps: 10},
 	}
 
 	tc := &TurnContext{
