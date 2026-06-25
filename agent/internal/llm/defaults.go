@@ -5,18 +5,47 @@ package llm
 func DefaultConfig() Config {
 	return Config{
 		DefaultModel: "",
-		Planner:      &PlannerConfig{MaxTurns: 150},
-		ShellAgent:   &ShellAgentConfig{FinalizeRemainingSteps: 10},
+		Planner: &PlannerConfig{
+			MaxTurns:      150,
+			TurnTimeout:   120,
+			MaxInputTokens: 180000,
+		},
+		ShellAgent: &ShellAgentConfig{
+			MaxSteps:               110,
+			FinalizeRemainingSteps: 10,
+		},
 		Environment: &EnvironmentConfig{
 			Type:                  "local",
 			CommandTimeout:       9999,
 			CWD:                   ".",
 			MaxCommandOutputBytes: 65536,
 		},
-		Prompts:   nil,
-		Mode:      nil,
-		Providers: nil,
-		Models:    nil,
+		Trajectory: &TrajectoryConfig{
+			Enabled:      true,
+			File:         "",
+			VerboseLLM:   false,
+			StreamTokens: false,
+			Excerpt:      512,
+			OmitRepoRoot: false,
+		},
+		Verbose:                 false,
+		PersistTmpData:          false,
+		DryRun:                  false,
+		ShellAgentEnabled:       false,
+		ShellAgentModel:         "",
+		AnswerModel:             "",
+		FileDiscoveryModel:      "",
+		AnswerTag:               "",
+		Tag:                     "",
+		EnableTagFormat:         false,
+		FinalFile:               "",
+		TranscriptFile:          "",
+		FileDiscoveryTrajectory: "",
+		FileDiscoveryOutputDir:  "",
+		Prompts:                 nil,
+		Mode:                    nil,
+		Providers:               nil,
+		Models:                  nil,
 	}
 }
 
@@ -27,7 +56,9 @@ func DefaultMinimalConfigMap() map[string]any {
 	return map[string]any{
 		"default_model": "",
 		"planner": map[string]any{
-			"max_turns": int64(150),
+			"max_turns":        int64(150),
+			"turn_timeout":     int64(120),
+			"max_input_tokens": int64(180000),
 		},
 		"shell-agent": map[string]any{
 			"max_steps":                int64(110),
@@ -35,7 +66,7 @@ func DefaultMinimalConfigMap() map[string]any {
 		},
 		"environment": map[string]any{
 			"type":                     "local",
-			"command_timeout":       int64(9999),
+			"command_timeout":         int64(9999),
 			"cwd":                      ".",
 			"max_command_output_bytes": int64(65536),
 		},
@@ -66,8 +97,14 @@ func overlayConfig(target *Config, source Config) {
 		if target.Planner == nil {
 			target.Planner = &PlannerConfig{}
 		}
-		if source.Planner.MaxTurns != 0 {
+		if source.Planner.maxTurnsSet || source.Planner.MaxTurns != 0 {
 			target.Planner.MaxTurns = source.Planner.MaxTurns
+		}
+		if source.Planner.turnTimeoutSet || source.Planner.TurnTimeout != 0 {
+			target.Planner.TurnTimeout = source.Planner.TurnTimeout
+		}
+		if source.Planner.maxInputTokensSet || source.Planner.MaxInputTokens != 0 {
+			target.Planner.MaxInputTokens = source.Planner.MaxInputTokens
 		}
 	}
 
@@ -205,6 +242,24 @@ func overlayConfig(target *Config, source Config) {
 		}
 	}
 
+	// --- trajectory -----------------------------------------------------
+	if source.Trajectory != nil {
+		if target.Trajectory == nil {
+			target.Trajectory = &TrajectoryConfig{}
+		}
+		if source.Trajectory.File != "" {
+			target.Trajectory.File = source.Trajectory.File
+		}
+		// booleans: always copy from source when non-nil (allows explicit false)
+		target.Trajectory.Enabled = source.Trajectory.Enabled
+		target.Trajectory.VerboseLLM = source.Trajectory.VerboseLLM
+		target.Trajectory.StreamTokens = source.Trajectory.StreamTokens
+		target.Trajectory.OmitRepoRoot = source.Trajectory.OmitRepoRoot
+		if source.Trajectory.Excerpt != 0 {
+			target.Trajectory.Excerpt = source.Trajectory.Excerpt
+		}
+	}
+
 	// --- other pointer fields -------------------------------------------
 
 	// Prompts
@@ -215,6 +270,50 @@ func overlayConfig(target *Config, source Config) {
 		} else {
 			*target.Prompts = *source.Prompts
 		}
+	}
+
+	// --- top-level behavioral fields ------------------------------------
+	if source.Verbose {
+		target.Verbose = source.Verbose
+	}
+	if source.PersistTmpData {
+		target.PersistTmpData = source.PersistTmpData
+	}
+	if source.DryRun {
+		target.DryRun = source.DryRun
+	}
+	if source.ShellAgentEnabled {
+		target.ShellAgentEnabled = source.ShellAgentEnabled
+	}
+	if source.ShellAgentModel != "" {
+		target.ShellAgentModel = source.ShellAgentModel
+	}
+	if source.AnswerModel != "" {
+		target.AnswerModel = source.AnswerModel
+	}
+	if source.FileDiscoveryModel != "" {
+		target.FileDiscoveryModel = source.FileDiscoveryModel
+	}
+	if source.AnswerTag != "" {
+		target.AnswerTag = source.AnswerTag
+	}
+	if source.Tag != "" {
+		target.Tag = source.Tag
+	}
+	if source.EnableTagFormat {
+		target.EnableTagFormat = source.EnableTagFormat
+	}
+	if source.FinalFile != "" {
+		target.FinalFile = source.FinalFile
+	}
+	if source.TranscriptFile != "" {
+		target.TranscriptFile = source.TranscriptFile
+	}
+	if source.FileDiscoveryTrajectory != "" {
+		target.FileDiscoveryTrajectory = source.FileDiscoveryTrajectory
+	}
+	if source.FileDiscoveryOutputDir != "" {
+		target.FileDiscoveryOutputDir = source.FileDiscoveryOutputDir
 	}
 
 	// Mode

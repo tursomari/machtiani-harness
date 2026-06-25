@@ -19,9 +19,26 @@ type Config struct {
 	ShellAgent       *ShellAgentConfig          `toml:"shell-agent"`
 	Prompts          *PromptsConfig             `toml:"prompts"`
 	Environment      *EnvironmentConfig         `toml:"environment"`
+	Trajectory       *TrajectoryConfig          `toml:"trajectory"`
 	Providers        map[string]ProviderConfig  `toml:"providers"`
 	Models           map[string]ModelDefinition `toml:"models"`
-	Mode *ModeConfig `toml:"mode"`
+	Mode             *ModeConfig                `toml:"mode"`
+
+	// Top-level behavioral settings
+	Verbose                 bool   `toml:"verbose"`                    // verbose logging
+	PersistTmpData          bool   `toml:"persist_tmp_data"`           // persist temp directories
+	DryRun                  bool   `toml:"dry_run"`                    // dry-run mode
+	ShellAgentEnabled       bool   `toml:"shell_agent_enabled"`        // whether to use shell-agent by default
+	ShellAgentModel         string `toml:"shell_agent_model"`          // default model for shell-agent
+	AnswerModel             string `toml:"answer_model"`               // model for final answer
+	FileDiscoveryModel      string `toml:"file_discovery_model"`       // model for file discovery
+	AnswerTag               string `toml:"answer_tag"`                 // output tag for answers
+	Tag                     string `toml:"tag"`                        // default command tag
+	EnableTagFormat         bool   `toml:"enable_tag_format"`          // enable tag format output
+	FinalFile               string `toml:"final_file"`                 // path for final answer file
+	TranscriptFile          string `toml:"transcript_file"`            // path for transcript file
+	FileDiscoveryTrajectory string `toml:"file_discovery_trajectory"`  // file-discovery trajectory path
+	FileDiscoveryOutputDir  string `toml:"file_discovery_output_dir"`  // file-discovery output directory
 }
 
 
@@ -37,9 +54,13 @@ type ShellAgentConfig struct {
 
 // PlannerConfig captures configuration intended for the orchestration planner.
 type PlannerConfig struct {
-	MaxTurns int `toml:"max_turns"`
+	MaxTurns      int `toml:"max_turns"`
+	TurnTimeout   int `toml:"turn_timeout"`    // per-turn timeout in seconds, 0 = unlimited
+	MaxInputTokens int `toml:"max_input_tokens"` // max tokens per LLM call, 0 = disabled
 
-	maxTurnsSet bool `toml:"-"`
+	maxTurnsSet      bool `toml:"-"`
+	turnTimeoutSet   bool `toml:"-"`
+	maxInputTokensSet bool `toml:"-"`
 }
 
 // PromptsConfig captures the prompt templates referenced by planner and shell-agent.
@@ -131,6 +152,18 @@ type EnvironmentConfig struct {
 	CWD                  string `toml:"cwd"`
 	ComputedImageTag     string `toml:"-"`
 	commandTimeoutSet    bool   `toml:"-"`
+}
+
+
+
+// TrajectoryConfig controls trajectory recording settings.
+type TrajectoryConfig struct {
+	Enabled       bool   `toml:"enabled"`         // whether to record trajectory
+	File          string `toml:"file"`            // trajectory file path
+	VerboseLLM    bool   `toml:"verbose_llm"`     // verbose LLM logging in trajectory
+	StreamTokens  bool   `toml:"stream_tokens"`   // stream token output
+	Excerpt       int    `toml:"excerpt"`         // excerpt length for trajectory
+	OmitRepoRoot  bool   `toml:"omit_repo_root"`  // omit repo root from paths
 }
 
 type ModeConfig struct {
@@ -457,6 +490,50 @@ func parseConfig(path string) (Config, error) {
 		legacyPlannerPrompts    *PlannerPromptsConfig
 		legacyShellAgentPrompts *ShellAgentPromptsConfig
 	)
+
+	// Top-level behavioral settings
+	if v, ok := raw["verbose"].(bool); ok {
+		cfg.Verbose = v
+	}
+	if v, ok := raw["persist_tmp_data"].(bool); ok {
+		cfg.PersistTmpData = v
+	}
+	if v, ok := raw["dry_run"].(bool); ok {
+		cfg.DryRun = v
+	}
+	if v, ok := raw["shell_agent_enabled"].(bool); ok {
+		cfg.ShellAgentEnabled = v
+	}
+	if v, ok := raw["shell_agent_model"].(string); ok {
+		cfg.ShellAgentModel = v
+	}
+	if v, ok := raw["answer_model"].(string); ok {
+		cfg.AnswerModel = v
+	}
+	if v, ok := raw["file_discovery_model"].(string); ok {
+		cfg.FileDiscoveryModel = v
+	}
+	if v, ok := raw["answer_tag"].(string); ok {
+		cfg.AnswerTag = v
+	}
+	if v, ok := raw["tag"].(string); ok {
+		cfg.Tag = v
+	}
+	if v, ok := raw["enable_tag_format"].(bool); ok {
+		cfg.EnableTagFormat = v
+	}
+	if v, ok := raw["final_file"].(string); ok {
+		cfg.FinalFile = v
+	}
+	if v, ok := raw["transcript_file"].(string); ok {
+		cfg.TranscriptFile = v
+	}
+	if v, ok := raw["file_discovery_trajectory"].(string); ok {
+		cfg.FileDiscoveryTrajectory = v
+	}
+	if v, ok := raw["file_discovery_output_dir"].(string); ok {
+		cfg.FileDiscoveryOutputDir = v
+	}
 	if shellAgentRaw, ok := toMap(raw["shell-agent"]); ok {
 		agentCfg, shellPrompts, plannerOverrides, err := parseShellAgentSection(path, "shell-agent", shellAgentRaw)
 		if err != nil {
@@ -503,6 +580,28 @@ func parseConfig(path string) (Config, error) {
 			return Config{}, err
 		}
 		cfg.Mode = modeCfg
+	}
+	if trajRaw, ok := toMap(raw["trajectory"]); ok {
+		trajCfg := &TrajectoryConfig{}
+		if v, ok := trajRaw["enabled"].(bool); ok {
+			trajCfg.Enabled = v
+		}
+		if v, ok := trajRaw["file"].(string); ok {
+			trajCfg.File = v
+		}
+		if v, ok := trajRaw["verbose_llm"].(bool); ok {
+			trajCfg.VerboseLLM = v
+		}
+		if v, ok := trajRaw["stream_tokens"].(bool); ok {
+			trajCfg.StreamTokens = v
+		}
+		if v, ok := toInt(trajRaw["excerpt"]); ok {
+			trajCfg.Excerpt = v
+		}
+		if v, ok := trajRaw["omit_repo_root"].(bool); ok {
+			trajCfg.OmitRepoRoot = v
+		}
+		cfg.Trajectory = trajCfg
 	}
 	if provRaw, ok := toMap(raw["providers"]); ok {
 		for name, entry := range provRaw {
@@ -831,6 +930,14 @@ func parsePlannerSection(path, section string, data map[string]any) (*PlannerCon
 	if val, ok := toInt(data["max_turns"]); ok {
 		planner.MaxTurns = val
 		planner.maxTurnsSet = true
+	}
+	if val, ok := toInt(data["turn_timeout"]); ok {
+		planner.TurnTimeout = val
+		planner.turnTimeoutSet = true
+	}
+	if val, ok := toInt(data["max_input_tokens"]); ok {
+		planner.MaxInputTokens = val
+		planner.maxInputTokensSet = true
 	}
 	return planner, prompts, nil
 }
@@ -1813,7 +1920,7 @@ func DefaultMinimalConfig() Config {
 	return Config{
 		DefaultModel: "",
 		Planner:      &PlannerConfig{MaxTurns: 150},
-		ShellAgent:   &ShellAgentConfig{FinalizeRemainingSteps: 10},
+		ShellAgent:   &ShellAgentConfig{FinalizeRemainingSteps: 10, MaxSteps: 110},
 		Environment: &EnvironmentConfig{
 			Type:           "local",
 			CommandTimeout: 9999,

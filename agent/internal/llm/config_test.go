@@ -115,8 +115,8 @@ git_synced_only = true
 	if cfg.ShellAgent == nil {
 		t.Fatalf("expected shell-agent config")
 	}
-	if cfg.ShellAgent.MaxSteps != 0 {
-		t.Fatalf("expected shell-agent max_steps 0 (no merge), got %+v", cfg.ShellAgent)
+	if cfg.ShellAgent.MaxSteps != 110 {
+		t.Fatalf("expected shell-agent max_steps 110 (default from MergeConfig), got %+v", cfg.ShellAgent)
 	}
 	if cfg.Prompts == nil || cfg.Prompts.Planner == nil {
 		t.Fatalf("expected planner prompts to be parsed, got %+v", cfg.Prompts)
@@ -505,8 +505,8 @@ max_turns = 9
 	if cfg.Prompts.ShellAgent.LightweightErrorTemplate != "legacy lw error" {
 		t.Fatalf("expected lightweight error template, got %q", cfg.Prompts.ShellAgent.LightweightErrorTemplate)
 	}
-	if cfg.ShellAgent.MaxSteps != 0 {
-		t.Fatalf("expected shell-agent max_steps 0 (no merge), got %d", cfg.ShellAgent.MaxSteps)
+	if cfg.ShellAgent.MaxSteps != 110 {
+		t.Fatalf("expected shell-agent max_steps 110 (default from MergeConfig), got %d", cfg.ShellAgent.MaxSteps)
 	}
 }
 
@@ -673,7 +673,7 @@ func TestDefaultMinimalConfig(t *testing.T) {
 		if cfg.ShellAgent.FinalizeRemainingSteps != 10 {
 			t.Fatalf("expected ShellAgent.FinalizeRemainingSteps 10, got %d", cfg.ShellAgent.FinalizeRemainingSteps)
 		}
-		if cfg.ShellAgent.MaxSteps != 0 {
+		if cfg.ShellAgent.MaxSteps != 110 {
 			t.Fatalf("expected ShellAgent.MaxSteps 0, got %d", cfg.ShellAgent.MaxSteps)
 		}
 	}
