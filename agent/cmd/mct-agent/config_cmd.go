@@ -241,10 +241,11 @@ func handleConfigReasoningCommand(args []string) int {
 // annotations.
 // Usage: mct-agent config show
 func handleConfigShowCommand(args []string) int {
+	var showFull bool
 	fs := pflag.NewFlagSet("mct-agent config show", pflag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: mct-agent config show\n\n")
+		fmt.Fprintf(os.Stderr, "Usage: mct-agent config show [--full]\n\n")
 		fmt.Fprintln(os.Stderr, "Print the effective configuration with source annotations showing")
 		fmt.Fprintln(os.Stderr, "whether each value comes from defaults or config.toml.")
 		fmt.Fprintln(os.Stderr, "Flags:")
@@ -273,7 +274,7 @@ func handleConfigShowCommand(args []string) int {
 	}
 
 	effective := llm.MergeConfig(defaults, fileConfig, llm.Config{})
-	printConfigWithSources(effective, defaults, hasFile, false)
+	printConfigWithSources(effective, defaults, hasFile, showFull)
 	return 0
 }
 
