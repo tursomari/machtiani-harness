@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"sort"
 
@@ -281,73 +280,80 @@ func handleConfigShowCommand(args []string) int {
 //   key = value # source
 // where source is either "default" or "config.toml".
 // When showFull is false, only common settings are shown.
+
+// configEntry holds a single key-value pair with its source for display.
+type configEntry struct {
+	key    string
+	value  string
+	source string
+}
+
+// aliasEntry holds a named group of config entries (e.g., a provider or model alias).
+type aliasEntry struct {
+	name   string
+	source string
+	keys   []configEntry
+}
+
+// sourceLabel converts a FieldSource to a human-readable label.
+func sourceLabel(src llm.FieldSource) string {
+	switch src {
+	case llm.SourceFile:
+		return "config.toml"
+	case llm.SourceFlag:
+		return "flag"
+	default:
+		return "default"
+	}
+}
+
+// renderScalarSection writes a titled section with aligned key-value pairs and (source) tags.
+func renderScalarSection(buf *strings.Builder, title, desc string, entries []configEntry) {
+	if len(entries) == 0 {
+		return
+	}
+	maxKeyLen := 0
+	for _, e := range entries {
+		if len(e.key) > maxKeyLen {
+			maxKeyLen = len(e.key)
+		}
+	}
+	buf.WriteString(title + "\n")
+	buf.WriteString("  " + desc + "\n")
+	for _, e := range entries {
+		fmt.Fprintf(buf, "  %-*s = %s  (%s)\n", maxKeyLen, e.key, e.value, e.source)
+	}
+	buf.WriteByte('\n')
+}
+
+// renderAliasSection writes a titled section with per-alias sub-blocks. Each
+// alias prints a [name]  (source) header and its keys with the dotted prefix
+// stripped.
+func renderAliasSection(buf *strings.Builder, title, desc string, aliases []aliasEntry) {
+	if len(aliases) == 0 {
+		return
+	}
+	maxKeyLen := 0
+	for _, a := range aliases {
+		for _, k := range a.keys {
+			if len(k.key) > maxKeyLen {
+				maxKeyLen = len(k.key)
+			}
+		}
+	}
+	buf.WriteString(title + "\n")
+	buf.WriteString("  " + desc + "\n")
+	for _, a := range aliases {
+		fmt.Fprintf(buf, "  [%s]  (%s)\n", a.name, a.source)
+		for _, k := range a.keys {
+			fmt.Fprintf(buf, "    %-*s = %s\n", maxKeyLen, k.key, k.value)
+		}
+	}
+	buf.WriteByte('\n')
+}
+
 func printConfigWithSources(effective, defaults llm.Config, showFull bool) {
 	var buf strings.Builder
-	// --- Fixed fields ---
-	fmt.Fprintf(&buf, "default_model = %s # %s\n",
-		effective.DefaultModel,
-		stringSource(effective.DefaultModel, defaults.DefaultModel, effective.DefaultModelSource))
-
-	if effective.Planner != nil {
-		defaultMaxTurns := 0
-		defaultTurnTimeout := 0
-		defaultMaxInputTokens := 0
-		if defaults.Planner != nil {
-			defaultMaxTurns = defaults.Planner.MaxTurns
-			defaultTurnTimeout = defaults.Planner.TurnTimeout
-			defaultMaxInputTokens = defaults.Planner.MaxInputTokens
-		}
-		fmt.Fprintf(&buf, "planner.max_turns = %d # %s\n",
-			effective.Planner.MaxTurns,
-			intSource(effective.Planner.MaxTurns, defaultMaxTurns, effective.Planner.MaxTurnsSource))
-		fmt.Fprintf(&buf, "planner.turn_timeout = %d # %s\n",
-			effective.Planner.TurnTimeout,
-			intSource(effective.Planner.TurnTimeout, defaultTurnTimeout, effective.Planner.TurnTimeoutSource))
-		fmt.Fprintf(&buf, "planner.max_input_tokens = %d # %s\n",
-			effective.Planner.MaxInputTokens,
-			intSource(effective.Planner.MaxInputTokens, defaultMaxInputTokens, effective.Planner.MaxInputTokensSource))
-	} else {
-		fmt.Fprintf(&buf, "planner.max_turns = # default\n")
-		fmt.Fprintf(&buf, "planner.turn_timeout = # default\n")
-		fmt.Fprintf(&buf, "planner.max_input_tokens = # default\n")
-	}
-
-	if effective.ShellAgent != nil {
-		defaultMaxSteps := 0
-		defaultFRS := 0
-		if defaults.ShellAgent != nil {
-			defaultMaxSteps = defaults.ShellAgent.MaxSteps
-			defaultFRS = defaults.ShellAgent.FinalizeRemainingSteps
-		}
-		fmt.Fprintf(&buf, "shell-agent.max_steps = %d # %s\n",
-			effective.ShellAgent.MaxSteps,
-			intSource(effective.ShellAgent.MaxSteps, defaultMaxSteps, effective.ShellAgent.MaxStepsSource))
-		fmt.Fprintf(&buf, "shell-agent.finalize_remaining_steps = %d # %s\n",
-			effective.ShellAgent.FinalizeRemainingSteps,
-			intSource(effective.ShellAgent.FinalizeRemainingSteps, defaultFRS, effective.ShellAgent.FinalizeRemainingStepsSource))
-	} else {
-		fmt.Fprintf(&buf, "shell-agent.max_steps = # default\n")
-		fmt.Fprintf(&buf, "shell-agent.finalize_remaining_steps = # default\n")
-	}
-
-	if effective.Environment != nil {
-		defaultEnv := defaults.Environment
-		if defaultEnv == nil {
-			defaultEnv = &llm.EnvironmentConfig{}
-		}
-		fmt.Fprintf(&buf, "environment.type = %s # %s\n",
-			effective.Environment.Type,
-			stringSource(effective.Environment.Type, defaultEnv.Type, effective.Environment.TypeSource))
-		fmt.Fprintf(&buf, "environment.command_timeout = %d # %s\n",
-			effective.Environment.CommandTimeout,
-			intSource(effective.Environment.CommandTimeout, defaultEnv.CommandTimeout, effective.Environment.CommandTimeoutSource))
-		fmt.Fprintf(&buf, "environment.cwd = %s # %s\n",
-			effective.Environment.CWD,
-			stringSource(effective.Environment.CWD, defaultEnv.CWD, effective.Environment.CWDSource))
-		fmt.Fprintf(&buf, "environment.max_command_output_bytes = %d # %s\n",
-			effective.Environment.MaxCommandOutputBytes,
-			intSource(effective.Environment.MaxCommandOutputBytes, defaultEnv.MaxCommandOutputBytes, effective.Environment.MaxCommandOutputBytesSource))
-	}
 
 	// --- Providers ---
 	providerNames := make([]string, 0, len(effective.Providers))
@@ -355,140 +361,131 @@ func printConfigWithSources(effective, defaults llm.Config, showFull bool) {
 		providerNames = append(providerNames, n)
 	}
 	sort.Strings(providerNames)
+	var providerAliases []aliasEntry
 	for _, name := range providerNames {
 		prov := effective.Providers[name]
-		defaultBaseURL := ""
-		defaultAPIKey := ""
-		defaultEndpoint := ""
-		if defProv, ok := defaults.Providers[name]; ok {
-			defaultBaseURL = defProv.BaseURL
-			defaultAPIKey = defProv.APIKey
-			defaultEndpoint = defProv.Endpoint
+		label := sourceLabel(effective.ProviderSources[name])
+		keys := []configEntry{
+			{key: "base_url", value: prov.BaseURL},
+			{key: "api_key", value: prov.APIKey},
+			{key: "endpoint", value: prov.Endpoint},
 		}
-		fmt.Fprintf(&buf, "providers.%s.base_url = %s # %s\n",
-			name, prov.BaseURL,
-			stringSource(prov.BaseURL, defaultBaseURL, prov.BaseURLSource))
-		fmt.Fprintf(&buf, "providers.%s.api_key = %s # %s\n",
-			name, prov.APIKey,
-			stringSource(prov.APIKey, defaultAPIKey, prov.APIKeySource))
-		fmt.Fprintf(&buf, "providers.%s.endpoint = %s # %s\n",
-			name, prov.Endpoint,
-			stringSource(prov.Endpoint, defaultEndpoint, prov.EndpointSource))
+		providerAliases = append(providerAliases, aliasEntry{name: name, source: label, keys: keys})
 	}
-
-	// --- top-level behavioral settings (common) ---
-	defaultsVerbose := defaults.Verbose
-	defaultsPersistTmp := defaults.PersistTmpData
-	defaultsDryRun := defaults.DryRun
-	defaultsShellEnabled := defaults.ShellAgentEnabled
-	defaultsAnswerTag := defaults.AnswerTag
-	defaultsTag := defaults.Tag
-	defaultsTagFormat := defaults.EnableTagFormat
-	fmt.Fprintf(&buf, "verbose = %t # %s\n", effective.Verbose, boolSource(effective.Verbose, defaultsVerbose, effective.VerboseSource))
-	fmt.Fprintf(&buf, "persist_tmp_data = %t # %s\n", effective.PersistTmpData, boolSource(effective.PersistTmpData, defaultsPersistTmp, effective.PersistTmpDataSource))
-	fmt.Fprintf(&buf, "dry_run = %t # %s\n", effective.DryRun, boolSource(effective.DryRun, defaultsDryRun, effective.DryRunSource))
-	fmt.Fprintf(&buf, "shell_agent_enabled = %t # %s\n", effective.ShellAgentEnabled, boolSource(effective.ShellAgentEnabled, defaultsShellEnabled, effective.ShellAgentEnabledSource))
-	fmt.Fprintf(&buf, "answer_tag = %s # %s\n", effective.AnswerTag, stringSource(effective.AnswerTag, defaultsAnswerTag, effective.AnswerTagSource))
-	fmt.Fprintf(&buf, "tag = %s # %s\n", effective.Tag, stringSource(effective.Tag, defaultsTag, effective.TagSource))
-	fmt.Fprintf(&buf, "enable_tag_format = %t # %s\n", effective.EnableTagFormat, boolSource(effective.EnableTagFormat, defaultsTagFormat, effective.EnableTagFormatSource))
-	fmt.Fprintf(&buf, "answer_model = %s # %s\n", effective.AnswerModel, stringSource(effective.AnswerModel, defaults.AnswerModel, effective.AnswerModelSource))
-	fmt.Fprintf(&buf, "file_discovery_model = %s # %s\n", effective.FileDiscoveryModel, stringSource(effective.FileDiscoveryModel, defaults.FileDiscoveryModel, effective.FileDiscoveryModelSource))
-	fmt.Fprintf(&buf, "shell_agent_model = %s # %s\n", effective.ShellAgentModel, stringSource(effective.ShellAgentModel, defaults.ShellAgentModel, effective.ShellAgentModelSource))
-
-	if showFull {
-		fmt.Fprintf(&buf, "final_file = %s # %s\n", effective.FinalFile, stringSource(effective.FinalFile, defaults.FinalFile, effective.FinalFileSource))
-		fmt.Fprintf(&buf, "transcript_file = %s # %s\n", effective.TranscriptFile, stringSource(effective.TranscriptFile, defaults.TranscriptFile, effective.TranscriptFileSource))
-		fmt.Fprintf(&buf, "file_discovery_trajectory = %s # %s\n", effective.FileDiscoveryTrajectory, stringSource(effective.FileDiscoveryTrajectory, defaults.FileDiscoveryTrajectory, effective.FileDiscoveryTrajectorySource))
-		fmt.Fprintf(&buf, "file_discovery_output_dir = %s # %s\n", effective.FileDiscoveryOutputDir, stringSource(effective.FileDiscoveryOutputDir, defaults.FileDiscoveryOutputDir, effective.FileDiscoveryOutputDirSource))
-		if effective.Trajectory != nil {
-			defaultTraj := defaults.Trajectory
-			if defaultTraj == nil {
-				defaultTraj = &llm.TrajectoryConfig{}
-			}
-			fmt.Fprintf(&buf, "trajectory.enabled = %t # %s\n", effective.Trajectory.Enabled, boolSource(effective.Trajectory.Enabled, defaultTraj.Enabled, effective.Trajectory.EnabledSource))
-			fmt.Fprintf(&buf, "trajectory.file = %s # %s\n", effective.Trajectory.File, stringSource(effective.Trajectory.File, defaultTraj.File, effective.Trajectory.FileSource))
-			fmt.Fprintf(&buf, "trajectory.verbose_llm = %t # %s\n", effective.Trajectory.VerboseLLM, boolSource(effective.Trajectory.VerboseLLM, defaultTraj.VerboseLLM, effective.Trajectory.VerboseLLMSource))
-			fmt.Fprintf(&buf, "trajectory.stream_tokens = %t # %s\n", effective.Trajectory.StreamTokens, boolSource(effective.Trajectory.StreamTokens, defaultTraj.StreamTokens, effective.Trajectory.StreamTokensSource))
-			fmt.Fprintf(&buf, "trajectory.excerpt = %d # %s\n", effective.Trajectory.Excerpt, intSource(effective.Trajectory.Excerpt, defaultTraj.Excerpt, effective.Trajectory.ExcerptSource))
-			fmt.Fprintf(&buf, "trajectory.omit_repo_root = %t # %s\n", effective.Trajectory.OmitRepoRoot, boolSource(effective.Trajectory.OmitRepoRoot, defaultTraj.OmitRepoRoot, effective.Trajectory.OmitRepoRootSource))
-		}
-	}
+	renderAliasSection(&buf, "Providers", "Base URLs, API keys, and endpoints for each LLM provider", providerAliases)
 
 	// --- Models ---
-
 	modelNames := make([]string, 0, len(effective.Models))
 	for n := range effective.Models {
 		modelNames = append(modelNames, n)
 	}
 	sort.Strings(modelNames)
+	var modelAliases []aliasEntry
 	for _, name := range modelNames {
 		model := effective.Models[name]
-		defaultProvider := ""
-		defaultModel := ""
-		if defModel, ok := defaults.Models[name]; ok {
-			defaultProvider = defModel.Provider
-			defaultModel = defModel.Model
+		label := sourceLabel(effective.ModelSources[name])
+		keys := []configEntry{
+			{key: "provider", value: model.Provider},
+			{key: "model", value: model.Model},
 		}
-		fmt.Fprintf(&buf, "models.%s.provider = %s # %s\n",
-			name, model.Provider,
-			stringSource(model.Provider, defaultProvider, model.ProviderSource))
-		fmt.Fprintf(&buf, "models.%s.model = %s # %s\n",
-			name, model.Model,
-			stringSource(model.Model, defaultModel, model.ModelSource))
-
 		if len(model.Params) > 0 {
-			_, aliasInDefaults := defaults.Models[name]
 			for k, v := range model.Params {
-				defaultVal := any(nil)
-				if aliasInDefaults {
-					defaultVal = defaults.Models[name].Params[k]
-				}
-				source := paramValueSource(v, defaultVal, aliasInDefaults, effective.ModelSources[name])
-				fmt.Fprintf(&buf, "models.%s.params.%s = %s # %s\n",
-					name, k, formatParamValue(v),
-					source)
+				keys = append(keys, configEntry{key: "params." + k, value: formatParamValue(v)})
 			}
 		}
+		modelAliases = append(modelAliases, aliasEntry{name: name, source: label, keys: keys})
+	}
+	renderAliasSection(&buf, "Models", "Model identifiers and provider bindings for each alias", modelAliases)
+
+	// --- Planner ---
+	var plannerEntries []configEntry
+	if effective.Planner != nil {
+		plannerEntries = []configEntry{
+			{key: "planner.max_turns", value: fmt.Sprintf("%d", effective.Planner.MaxTurns), source: sourceLabel(effective.Planner.MaxTurnsSource)},
+			{key: "planner.turn_timeout", value: fmt.Sprintf("%d", effective.Planner.TurnTimeout), source: sourceLabel(effective.Planner.TurnTimeoutSource)},
+			{key: "planner.max_input_tokens", value: fmt.Sprintf("%d", effective.Planner.MaxInputTokens), source: sourceLabel(effective.Planner.MaxInputTokensSource)},
+		}
+	} else {
+		plannerEntries = []configEntry{
+			{key: "planner.max_turns", value: "", source: "default"},
+			{key: "planner.turn_timeout", value: "", source: "default"},
+			{key: "planner.max_input_tokens", value: "", source: "default"},
+		}
+	}
+	renderScalarSection(&buf, "Planner", "Turn budget, timeout, and input token limit", plannerEntries)
+
+	// --- Shell Agent ---
+	var saEntries []configEntry
+	if effective.ShellAgent != nil {
+		saEntries = []configEntry{
+			{key: "shell-agent.max_steps", value: fmt.Sprintf("%d", effective.ShellAgent.MaxSteps), source: sourceLabel(effective.ShellAgent.MaxStepsSource)},
+			{key: "shell-agent.finalize_remaining_steps", value: fmt.Sprintf("%d", effective.ShellAgent.FinalizeRemainingSteps), source: sourceLabel(effective.ShellAgent.FinalizeRemainingStepsSource)},
+		}
+	} else {
+		saEntries = []configEntry{
+			{key: "shell-agent.max_steps", value: "", source: "default"},
+			{key: "shell-agent.finalize_remaining_steps", value: "", source: "default"},
+		}
+	}
+	renderScalarSection(&buf, "Shell Agent", "Step budget and finalize window", saEntries)
+
+	// --- Environment ---
+	var envEntries []configEntry
+	if effective.Environment != nil {
+		envEntries = []configEntry{
+			{key: "environment.type", value: effective.Environment.Type, source: sourceLabel(effective.Environment.TypeSource)},
+			{key: "environment.command_timeout", value: fmt.Sprintf("%d", effective.Environment.CommandTimeout), source: sourceLabel(effective.Environment.CommandTimeoutSource)},
+			{key: "environment.cwd", value: effective.Environment.CWD, source: sourceLabel(effective.Environment.CWDSource)},
+			{key: "environment.max_command_output_bytes", value: fmt.Sprintf("%d", effective.Environment.MaxCommandOutputBytes), source: sourceLabel(effective.Environment.MaxCommandOutputBytesSource)},
+		}
+	}
+	renderScalarSection(&buf, "Environment", "Execution sandbox settings", envEntries)
+
+	// --- General ---
+	generalEntries := []configEntry{
+		{key: "default_model", value: effective.DefaultModel, source: sourceLabel(effective.DefaultModelSource)},
+		{key: "verbose", value: fmt.Sprintf("%t", effective.Verbose), source: sourceLabel(effective.VerboseSource)},
+		{key: "persist_tmp_data", value: fmt.Sprintf("%t", effective.PersistTmpData), source: sourceLabel(effective.PersistTmpDataSource)},
+		{key: "dry_run", value: fmt.Sprintf("%t", effective.DryRun), source: sourceLabel(effective.DryRunSource)},
+		{key: "shell_agent_enabled", value: fmt.Sprintf("%t", effective.ShellAgentEnabled), source: sourceLabel(effective.ShellAgentEnabledSource)},
+		{key: "answer_tag", value: effective.AnswerTag, source: sourceLabel(effective.AnswerTagSource)},
+		{key: "tag", value: effective.Tag, source: sourceLabel(effective.TagSource)},
+		{key: "enable_tag_format", value: fmt.Sprintf("%t", effective.EnableTagFormat), source: sourceLabel(effective.EnableTagFormatSource)},
+		{key: "answer_model", value: effective.AnswerModel, source: sourceLabel(effective.AnswerModelSource)},
+		{key: "file_discovery_model", value: effective.FileDiscoveryModel, source: sourceLabel(effective.FileDiscoveryModelSource)},
+		{key: "shell_agent_model", value: effective.ShellAgentModel, source: sourceLabel(effective.ShellAgentModelSource)},
+	}
+	renderScalarSection(&buf, "General", "Top-level defaults and flags", generalEntries)
+
+	// --- Files (--full only) ---
+	if showFull {
+		filesEntries := []configEntry{
+			{key: "final_file", value: effective.FinalFile, source: sourceLabel(effective.FinalFileSource)},
+			{key: "transcript_file", value: effective.TranscriptFile, source: sourceLabel(effective.TranscriptFileSource)},
+			{key: "file_discovery_trajectory", value: effective.FileDiscoveryTrajectory, source: sourceLabel(effective.FileDiscoveryTrajectorySource)},
+			{key: "file_discovery_output_dir", value: effective.FileDiscoveryOutputDir, source: sourceLabel(effective.FileDiscoveryOutputDirSource)},
+		}
+		renderScalarSection(&buf, "Files", "Output paths for final answers and transcripts", filesEntries)
+
+		// --- Trajectory (--full only) ---
+		var trajEntries []configEntry
+		if effective.Trajectory != nil {
+			trajEntries = []configEntry{
+				{key: "trajectory.enabled", value: fmt.Sprintf("%t", effective.Trajectory.Enabled), source: sourceLabel(effective.Trajectory.EnabledSource)},
+				{key: "trajectory.file", value: effective.Trajectory.File, source: sourceLabel(effective.Trajectory.FileSource)},
+				{key: "trajectory.verbose_llm", value: fmt.Sprintf("%t", effective.Trajectory.VerboseLLM), source: sourceLabel(effective.Trajectory.VerboseLLMSource)},
+				{key: "trajectory.stream_tokens", value: fmt.Sprintf("%t", effective.Trajectory.StreamTokens), source: sourceLabel(effective.Trajectory.StreamTokensSource)},
+				{key: "trajectory.excerpt", value: fmt.Sprintf("%d", effective.Trajectory.Excerpt), source: sourceLabel(effective.Trajectory.ExcerptSource)},
+				{key: "trajectory.omit_repo_root", value: fmt.Sprintf("%t", effective.Trajectory.OmitRepoRoot), source: sourceLabel(effective.Trajectory.OmitRepoRootSource)},
+			}
+		}
+		renderScalarSection(&buf, "Trajectory", "Telemetry and debugging trajectory settings", trajEntries)
 	}
 
 	fmt.Print(buf.String())
 }
 
-// stringSource returns "config.toml" when hasFile is true and the effective
-// value differs from the default, otherwise "default".
-func stringSource(effective, defaults string, src llm.FieldSource) string {
-	if src == llm.SourceFile {
-		return "config.toml"
-	}
-	if src == llm.SourceFlag {
-		return "flag"
-	}
-	return "default"
-}
 
-// intSource returns "config.toml" when hasFile is true and the effective
-// value differs from the default, otherwise "default".
-func intSource(effective, defaults int, src llm.FieldSource) string {
-	if src == llm.SourceFile {
-		return "config.toml"
-	}
-	if src == llm.SourceFlag {
-		return "flag"
-	}
-	return "default"
-}
-
-// boolSource returns "config.toml" when hasFile is true and the effective
-// value differs from the default, otherwise "default".
-func boolSource(effective, defaults bool, src llm.FieldSource) string {
-	if src == llm.SourceFile {
-		return "config.toml"
-	}
-	if src == llm.SourceFlag {
-		return "flag"
-	}
-	return "default"
-}
 
 // formatParamValue formats a parameter value for display.
 func formatParamValue(v any) string {
@@ -517,30 +514,3 @@ func flattenMap(m map[string]any) string {
 	return strings.Join(parts, " ")
 }
 
-// paramSource returns "config.toml" when hasFile is true and the defaults
-// have no entry for the given model (since all params originate from the
-// config file), otherwise "default".
-func paramValueSource(effective, defaultVal any, aliasInDefaults bool, src llm.FieldSource) string {
-	if src == llm.SourceDefault {
-		return "default"
-	}
-	if !aliasInDefaults {
-		if src == llm.SourceFile {
-			return "config.toml"
-		}
-		return "flag"
-	}
-	if reflect.DeepEqual(effective, defaultVal) {
-		if src == llm.SourceDefault {
-			return "default"
-		}
-		if src == llm.SourceFile {
-			return "config.toml"
-		}
-		return "flag"
-	}
-	if src == llm.SourceFile {
-		return "config.toml"
-	}
-	return "flag"
-}
