@@ -1156,7 +1156,7 @@ run_happy_case() {
   local has_timeout=false
   for arg in "${runtime_args[@]}"; do
     case "$arg" in
-      --timeout-per-turn|--timeout-per-turn=*)
+      --turn-timeout|--turn-timeout=*)
         has_timeout=true
         ;;
     esac
@@ -1219,11 +1219,11 @@ run_happy_case() {
   local scratch_root=$(mktemp -d "$tmp_root/scratch-${case_id:-default}.XXXXXX")
   local -a cmd=(
     timeout $((max_steps * 180)) "$MCT_AGENT" run
-    --max-steps "$max_steps"
+    --max-turns "$max_steps"
     
   )
   if [[ "$has_timeout" == false ]]; then
-    cmd+=(--timeout-per-turn 300)
+    cmd+=(--turn-timeout 300)
   fi
   if ((${#COMMON_AGENT_ARGS[@]})); then
     cmd+=("${COMMON_AGENT_ARGS[@]}")
@@ -1432,7 +1432,7 @@ run_menu_flow_live_case() {
     'Identify the functions in `agent/internal/planner/planner.go` and `agent/internal/session/runner.go` that handle ask selection and ask execution, then summarize the control flow after an ask is chosen.' \
     "(?s)(?=.*\[mct:shell\])(?!.*\bNo-shell:)(?!.*\bShell:)" \
     1 \
-    --timeout-per-turn 600 \
+    --turn-timeout 600 \
     "${DEFAULT_MODEL_ARGS[@]}"
 }
 
@@ -1478,9 +1478,9 @@ run_user_directed_suspend_case() {
   set +e
   MACHTIANI_CONFIG="$stub_config" \
     timeout 240 "$MCT_AGENT" run \
-      --max-steps 2 \
+      --max-turns 2 \
       \
-      --timeout-per-turn 300 \
+      --turn-timeout 300 \
       --model "$stub_alias" \
       --orch-model "$stub_alias" \
       --file-discovery-model "$stub_alias" \
@@ -1552,9 +1552,9 @@ PY
   set +e
   MACHTIANI_CONFIG="$stub_config" \
     timeout 240 "$MCT_AGENT" run \
-      --max-steps 2 \
+      --max-turns 2 \
       \
-      --timeout-per-turn 300 \
+      --turn-timeout 300 \
       --session-id "$agent_session" \
       --model "$stub_alias" \
       --orch-model "$stub_alias" \
@@ -1662,7 +1662,7 @@ run_mode_live_case() {
     'mode-plan.json|agent-transcript.adoc|agent-final-answer.md' \
     1 \
     --mode code \
-    --timeout-per-turn 600 \
+    --turn-timeout 600 \
     "${DEFAULT_MODEL_ARGS[@]}"
 }
 
@@ -1673,7 +1673,7 @@ run_file_discovery_live_case() {
     'In `agent/internal/planner/planner.go`, what function generates the ask prompt? In `agent/internal/session/runner.go`, what function executes planner asks? Return the two function names and one sentence connecting them.' \
     "(?s)(?=.*\\[mct:shell\\])" \
     1 \
-    --timeout-per-turn 600 \
+    --turn-timeout 600 \
     "${DEFAULT_MODEL_ARGS[@]}"
 }
 
@@ -1832,9 +1832,9 @@ EOF
   echo "Running happy case: $case_id (local env tmp-root regression)..." >&2
   local -a cmd=(
     timeout 240 "$MCT_AGENT" run
-    --max-steps 2
+    --max-turns 2
     
-    --timeout-per-turn 300
+    --turn-timeout 300
   )
   if ((${#COMMON_AGENT_ARGS[@]})); then
     cmd+=("${COMMON_AGENT_ARGS[@]}")
@@ -1918,8 +1918,8 @@ run_shell_command_trajectory_live_case() {
   echo "Running sub-test: $case_id (verbose)..." >&2
   local -a cmd=(
     timeout 240 "$MCT_AGENT" run
-    --max-steps 3
-    --timeout-per-turn 120
+    --max-turns 3
+    --turn-timeout 120
     --mode code
   )
   if ((${#COMMON_AGENT_ARGS[@]})); then
@@ -2002,8 +2002,8 @@ PY
   echo "Running sub-test: $case_id (non-verbose)..." >&2
   local -a cmd2=(
     timeout 240 "$MCT_AGENT" run
-    --max-steps 3
-    --timeout-per-turn 120
+    --max-turns 3
+    --turn-timeout 120
     --mode code
   )
   if ((${#COMMON_AGENT_ARGS[@]})); then
@@ -2155,9 +2155,9 @@ run_resume_without_mode_case() {
   set +e
   MACHTIANI_CONFIG="$stub_config" \
   timeout 120 "$MCT_AGENT" run \
-    --max-steps 2 \
+    --max-turns 2 \
     \
-    --timeout-per-turn 300 \
+    --turn-timeout 300 \
     --mode code \
     --model "$stub_alias" \
     --orch-model "$stub_alias" \
@@ -2213,9 +2213,9 @@ except Exception as e:
   set +e
   MACHTIANI_CONFIG="$stub_config" \
   timeout 120 "$MCT_AGENT" run \
-    --max-steps 2 \
+    --max-turns 2 \
     \
-    --timeout-per-turn 300 \
+    --turn-timeout 300 \
     --session-id "$agent_session" \
     --model "$stub_alias" \
     --orch-model "$stub_alias" \
@@ -2290,9 +2290,9 @@ test_code_no_forge() {
   set +e
   MACHTIANI_CONFIG="$stub_config" \
   timeout 120 "$MCT_AGENT" run \
-    --max-steps 2 \
+    --max-turns 2 \
     \
-    --timeout-per-turn 300 \
+    --turn-timeout 300 \
     --mode code \
     --model "$stub_alias" \
     --orch-model "$stub_alias" \
@@ -2392,9 +2392,9 @@ run_enforce_early_commands_case() {
   MACHTIANI_CONFIG="$stub_config" \
   MACHTIANI_SHELL_AGENT_ENFORCE_EARLY_COMMANDS=true \
     timeout 120 "$MCT_AGENT" run \
-      --max-steps 2 \
+      --max-turns 2 \
       \
-      --timeout-per-turn 300 \
+      --turn-timeout 300 \
       --mode code \
       --model "$stub_alias" \
       --orch-model "$stub_alias" \
@@ -2478,9 +2478,9 @@ PY
   MACHTIANI_CONFIG="$stub_config" \
   MACHTIANI_SHELL_AGENT_ENFORCE_EARLY_COMMANDS=false \
     timeout 120 "$MCT_AGENT" run \
-      --max-steps 2 \
+      --max-turns 2 \
       \
-      --timeout-per-turn 300 \
+      --turn-timeout 300 \
       --mode code \
       --model "$stub_alias" \
       --orch-model "$stub_alias" \
@@ -2543,9 +2543,9 @@ test_code_forge_initial() {
   set +e
   MACHTIANI_CONFIG="$stub_config" \
   timeout 120 "$MCT_AGENT" run \
-    --max-steps 2 \
+    --max-turns 2 \
     \
-    --timeout-per-turn 300 \
+    --turn-timeout 300 \
     --mode code-forge \
     --model "$stub_alias" \
     --orch-model "$stub_alias" \
@@ -2633,9 +2633,9 @@ test_code_forge_resume_with_mode() {
   set +e
   MACHTIANI_CONFIG="$stub_config" \
   timeout 120 "$MCT_AGENT" run \
-    --max-steps 2 \
+    --max-turns 2 \
     \
-    --timeout-per-turn 300 \
+    --turn-timeout 300 \
     --mode code-forge \
     --model "$stub_alias" \
     --orch-model "$stub_alias" \
@@ -2684,9 +2684,9 @@ test_code_forge_resume_with_mode() {
   set +e
   MACHTIANI_CONFIG="$stub_config" \
   timeout 120 "$MCT_AGENT" run \
-    --max-steps 2 \
+    --max-turns 2 \
     \
-    --timeout-per-turn 300 \
+    --turn-timeout 300 \
     --session-id "$agent_session" \
     --mode code-forge \
     --model "$stub_alias" \
@@ -2760,9 +2760,9 @@ test_code_forge_resume_without_mode() {
   set +e
   MACHTIANI_CONFIG="$stub_config" \
   timeout 120 "$MCT_AGENT" run \
-    --max-steps 2 \
+    --max-turns 2 \
     \
-    --timeout-per-turn 300 \
+    --turn-timeout 300 \
     --mode code-forge \
     --model "$stub_alias" \
     --orch-model "$stub_alias" \
@@ -2811,9 +2811,9 @@ test_code_forge_resume_without_mode() {
   set +e
   MACHTIANI_CONFIG="$stub_config" \
   timeout 120 "$MCT_AGENT" run \
-    --max-steps 2 \
+    --max-turns 2 \
     \
-    --timeout-per-turn 300 \
+    --turn-timeout 300 \
     --session-id "$agent_session" \
     --model "$stub_alias" \
     --orch-model "$stub_alias" \
@@ -2886,9 +2886,9 @@ test_code_resume_without_mode_no_forge() {
   set +e
   MACHTIANI_CONFIG="$stub_config" \
   timeout 120 "$MCT_AGENT" run \
-    --max-steps 2 \
+    --max-turns 2 \
     \
-    --timeout-per-turn 300 \
+    --turn-timeout 300 \
     --mode code \
     --model "$stub_alias" \
     --orch-model "$stub_alias" \
@@ -2937,9 +2937,9 @@ test_code_resume_without_mode_no_forge() {
   set +e
   MACHTIANI_CONFIG="$stub_config" \
   timeout 120 "$MCT_AGENT" run \
-    --max-steps 2 \
+    --max-turns 2 \
     \
-    --timeout-per-turn 300 \
+    --turn-timeout 300 \
     --session-id "$agent_session" \
     --model "$stub_alias" \
     --orch-model "$stub_alias" \
@@ -3015,7 +3015,7 @@ test_shell_agent_step_counter_resume() {
   set +e
   # timeout kills the process after checkpoint to prevent cleanup from deleting the resume file
   timeout 45s "$MCT_AGENT" run \
-    --max-steps 5 \
+    --max-turns 5 \
     --mode test-blocking \
     --model "$TEST_MODEL_ALIAS" \
     --orch-model "$TEST_MODEL_ALIAS" \
@@ -3110,7 +3110,7 @@ PY
   pushd "$REPO_ROOT" >/dev/null
   set +e
   timeout 300s "$MCT_AGENT" run \
-    --max-steps 3 \
+    --max-turns 3 \
     --session-id "$agent_session" \
     --mode test-blocking \
     --model "$TEST_MODEL_ALIAS" \
@@ -3211,8 +3211,8 @@ PY
   set +e
   MACHTIANI_CONFIG="$local_config" \
   timeout 600 "$MCT_AGENT" run \
-    --max-steps 15 \
-    --timeout-per-turn 300 \
+    --max-turns 15 \
+    --turn-timeout 300 \
     "${DEFAULT_MODEL_ARGS[@]}" \
     --text "Investigate the repository structure: find the main Go package for the mct-agent binary, list its key source files, and identify what Go version is required in go.mod. Report your findings step by step." \
     > "$stdout_file" 2> "$stderr_file"
@@ -3285,9 +3285,9 @@ run_resume_from_conversation_json_case() {
   pushd "$REPO_ROOT" >/dev/null
   set +e
   timeout 420 "$MCT_AGENT" run \
-    --max-steps 3 \
+    --max-turns 3 \
     \
-    --timeout-per-turn 300 \
+    --turn-timeout 300 \
     "${DEFAULT_MODEL_ARGS[@]}" \
     --text "Identify the main components of the mct-agent binary by reading agent/README.md and agent/cmd/mct-agent/main.go. List them." \
     > "$stdout_interrupt" 2> "$stderr_interrupt"
@@ -3349,9 +3349,9 @@ PY
   pushd "$REPO_ROOT" >/dev/null
   set +e
   timeout 420 "$MCT_AGENT" run \
-    --max-steps 2 \
+    --max-turns 2 \
     \
-    --timeout-per-turn 300 \
+    --turn-timeout 300 \
     --session-id "$agent_session" \
     "${DEFAULT_MODEL_ARGS[@]}" \
     --text "Continue." \
@@ -3577,9 +3577,9 @@ PY
   set +e
   MACHTIANI_CONFIG="$stub_config" \
     timeout 240 "$MCT_AGENT" run \
-      --max-steps 2 \
+      --max-turns 2 \
       \
-      --timeout-per-turn 300 \
+      --turn-timeout 300 \
       --session-id "$session_id" \
       --model "$stub_alias" \
       --orch-model "$stub_alias" \
@@ -3672,10 +3672,10 @@ run_error_case() {
   local has_max_steps=false
   for ((i=0; i<${#provided_args[@]}; i++)); do
     case "${provided_args[i]}" in
-      --timeout-per-turn|--timeout-per-turn=*)
+      --turn-timeout|--turn-timeout=*)
         has_timeout=true
         ;;
-      --max-steps|--max-steps=*)
+      --max-turns|--max-turns=*)
         has_max_steps=true
         ;;
     esac
@@ -3687,10 +3687,10 @@ run_error_case() {
     cmd+=("${provided_args[@]}")
   fi
   if [[ "$has_max_steps" == false ]]; then
-    cmd+=(--max-steps "$max_steps")
+    cmd+=(--max-turns "$max_steps")
   fi
   if [[ "$has_timeout" == false ]]; then
-    cmd+=(--timeout-per-turn 300)
+    cmd+=(--turn-timeout 300)
   fi
   if ((${#COMMON_AGENT_ARGS[@]})); then
     cmd+=("${COMMON_AGENT_ARGS[@]}")
