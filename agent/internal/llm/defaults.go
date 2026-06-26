@@ -7,7 +7,7 @@ func DefaultConfig() Config {
 		DefaultModel: "",
 		Planner: &PlannerConfig{
 			MaxTurns:      150,
-			TurnTimeout:   120,
+			TurnTimeout:   0,
 			MaxInputTokens: 180000,
 		},
 		ShellAgent: &ShellAgentConfig{
@@ -57,7 +57,7 @@ func DefaultMinimalConfigMap() map[string]any {
 		"default_model": "",
 		"planner": map[string]any{
 			"max_turns":        int64(150),
-			"turn_timeout":     int64(120),
+			"turn_timeout":     int64(0),
 			"max_input_tokens": int64(180000),
 		},
 		"shell-agent": map[string]any{
