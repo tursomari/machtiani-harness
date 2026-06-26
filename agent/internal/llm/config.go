@@ -247,6 +247,8 @@ type ProviderConfig struct {
 	BaseURLSource  FieldSource `toml:"-"`
 	APIKeySource   FieldSource `toml:"-"`
 	EndpointSource FieldSource `toml:"-"`
+	HeadersSource FieldSource `toml:"-"`
+	QuerySource   FieldSource `toml:"-"`
 }
 
 type ModelDefinition struct {
@@ -255,6 +257,14 @@ type ModelDefinition struct {
 	Params   map[string]any `toml:"params"`
 	ProviderSource FieldSource `toml:"-"`
 	ModelSource    FieldSource `toml:"-"`
+	ParamsSource                FieldSource `toml:"-"`
+	CacheKeyNameSource          FieldSource `toml:"-"`
+	CacheControlSource          FieldSource `toml:"-"`
+	CacheTriggerThresholdSource FieldSource `toml:"-"`
+	CacheLookbackOffsetSource   FieldSource `toml:"-"`
+	CacheReanchorTokensSource   FieldSource `toml:"-"`
+	CacheReanchorMessagesSource FieldSource `toml:"-"`
+	CacheReanchorMinCachedTokensSource FieldSource `toml:"-"`
 
 	CacheKeyName                 string         `toml:"cache_key_name"`
 	CacheControl                 map[string]any `toml:"cache_control"`

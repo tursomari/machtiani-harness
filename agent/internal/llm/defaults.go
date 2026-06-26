@@ -176,9 +176,11 @@ func overlayConfig(target *Config, source Config, srcSource FieldSource) {
 				}
 				if len(v.Headers) > 0 {
 					existing.Headers = copyStringMap(v.Headers)
+					existing.HeadersSource = srcSource
 				}
 				if len(v.Query) > 0 {
 					existing.Query = copyStringMap(v.Query)
+					existing.QuerySource = srcSource
 				}
 				target.Providers[k] = existing
 			} else {
@@ -193,9 +195,11 @@ func overlayConfig(target *Config, source Config, srcSource FieldSource) {
 				copyProv.EndpointSource = srcSource
 				if len(v.Headers) > 0 {
 					copyProv.Headers = copyStringMap(v.Headers)
+				copyProv.HeadersSource = srcSource
 				}
 				if len(v.Query) > 0 {
 					copyProv.Query = copyStringMap(v.Query)
+				copyProv.QuerySource = srcSource
 				}
 				target.Providers[k] = copyProv
 			}
@@ -224,27 +228,35 @@ func overlayConfig(target *Config, source Config, srcSource FieldSource) {
 				}
 				if v.CacheKeyName != "" {
 					existing.CacheKeyName = v.CacheKeyName
+					existing.CacheKeyNameSource = srcSource
 				}
 				if len(v.CacheControl) > 0 {
 					existing.CacheControl = deepCopyMap(v.CacheControl)
+					existing.CacheControlSource = srcSource
 				}
 				if v.CacheTriggerThreshold != 0 {
 					existing.CacheTriggerThreshold = v.CacheTriggerThreshold
+					existing.CacheTriggerThresholdSource = srcSource
 				}
 				if v.CacheLookbackOffset != 0 {
 					existing.CacheLookbackOffset = v.CacheLookbackOffset
+					existing.CacheLookbackOffsetSource = srcSource
 				}
 				if v.CacheReanchorTokens != 0 {
 					existing.CacheReanchorTokens = v.CacheReanchorTokens
+					existing.CacheReanchorTokensSource = srcSource
 				}
 				if v.CacheReanchorMessages != 0 {
 					existing.CacheReanchorMessages = v.CacheReanchorMessages
+					existing.CacheReanchorMessagesSource = srcSource
 				}
 				if v.CacheReanchorMinCachedTokens != 0 {
 					existing.CacheReanchorMinCachedTokens = v.CacheReanchorMinCachedTokens
+					existing.CacheReanchorMinCachedTokensSource = srcSource
 				}
 				if len(v.Params) > 0 {
 					existing.Params = deepCopyMap(v.Params)
+					existing.ParamsSource = srcSource
 				}
 				target.Models[k] = existing
 			} else {
@@ -262,6 +274,14 @@ func overlayConfig(target *Config, source Config, srcSource FieldSource) {
 				}
 				copyModel.ProviderSource = srcSource
 				copyModel.ModelSource = srcSource
+				copyModel.CacheKeyNameSource = srcSource
+				copyModel.CacheControlSource = srcSource
+				copyModel.CacheTriggerThresholdSource = srcSource
+				copyModel.CacheLookbackOffsetSource = srcSource
+				copyModel.CacheReanchorTokensSource = srcSource
+				copyModel.CacheReanchorMessagesSource = srcSource
+				copyModel.CacheReanchorMinCachedTokensSource = srcSource
+				copyModel.ParamsSource = srcSource
 				if len(v.Params) > 0 {
 					copyModel.Params = deepCopyMap(v.Params)
 				}
