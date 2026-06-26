@@ -196,9 +196,6 @@ func handleRunCommand(args []string) int {
 	if cfg.MaxTurns <= 0 {
 		cfg.MaxTurns = 150
 	}
-	if cfg.TurnTimeout <= 0 {
-		cfg.TurnTimeout = 120
-	}
 	r := newRunFlagSet(&cfg)
 	fs, promptFile, apiKeyFlags := r.fs, r.promptFile, r.apiKeyFlags
 	if err := fs.Parse(args); err != nil {
@@ -472,9 +469,6 @@ func handleSyncCommand(args []string) int {
 	}
 	if cfg.MaxTurns <= 0 {
 		cfg.MaxTurns = 150
-	}
-	if cfg.TurnTimeout <= 0 {
-		cfg.TurnTimeout = 120
 	}
 	fs := pflag.NewFlagSet("mct-agent sync", pflag.ContinueOnError)
 	var paramFlags multiString
