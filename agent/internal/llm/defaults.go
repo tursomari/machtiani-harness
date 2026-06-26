@@ -80,16 +80,17 @@ func DefaultMinimalConfigMap() map[string]any {
 // applied so that the caller retains ownership of the original.
 func MergeConfig(defaults, fileConfig, flagOverrides Config) Config {
 	clone := cloneConfig(defaults)
-	overlayConfig(&clone, fileConfig)
-	overlayConfig(&clone, flagOverrides)
+	overlayConfig(&clone, fileConfig, SourceFile)
+	overlayConfig(&clone, flagOverrides, SourceFlag)
 	return clone
 }
 
 // overlayConfig overlays non-zero and non-nil fields from source onto target.
-func overlayConfig(target *Config, source Config) {
+func overlayConfig(target *Config, source Config, srcSource FieldSource) {
 	// --- string fields --------------------------------------------------
 	if source.DefaultModel != "" {
 		target.DefaultModel = source.DefaultModel
+		target.DefaultModelSource = srcSource
 	}
 
 	// --- planner --------------------------------------------------------
@@ -99,12 +100,15 @@ func overlayConfig(target *Config, source Config) {
 		}
 		if source.Planner.maxTurnsSet || source.Planner.MaxTurns != 0 {
 			target.Planner.MaxTurns = source.Planner.MaxTurns
+			target.Planner.MaxTurnsSource = srcSource
 		}
 		if source.Planner.turnTimeoutSet || source.Planner.TurnTimeout != 0 {
 			target.Planner.TurnTimeout = source.Planner.TurnTimeout
+			target.Planner.TurnTimeoutSource = srcSource
 		}
 		if source.Planner.maxInputTokensSet || source.Planner.MaxInputTokens != 0 {
 			target.Planner.MaxInputTokens = source.Planner.MaxInputTokens
+			target.Planner.MaxInputTokensSource = srcSource
 		}
 	}
 
@@ -115,9 +119,11 @@ func overlayConfig(target *Config, source Config) {
 		}
 		if source.ShellAgent.MaxSteps != 0 {
 			target.ShellAgent.MaxSteps = source.ShellAgent.MaxSteps
+			target.ShellAgent.MaxStepsSource = srcSource
 		}
 		if source.ShellAgent.FinalizeRemainingSteps != 0 {
 			target.ShellAgent.FinalizeRemainingSteps = source.ShellAgent.FinalizeRemainingSteps
+			target.ShellAgent.FinalizeRemainingStepsSource = srcSource
 		}
 	}
 
@@ -128,15 +134,19 @@ func overlayConfig(target *Config, source Config) {
 		}
 		if source.Environment.Type != "" {
 			target.Environment.Type = source.Environment.Type
+			target.Environment.TypeSource = srcSource
 		}
 		if source.Environment.CWD != "" {
 			target.Environment.CWD = source.Environment.CWD
+			target.Environment.CWDSource = srcSource
 		}
 		if source.Environment.CommandTimeout != 0 {
 			target.Environment.CommandTimeout = source.Environment.CommandTimeout
+			target.Environment.CommandTimeoutSource = srcSource
 		}
 		if source.Environment.MaxCommandOutputBytes != 0 {
 			target.Environment.MaxCommandOutputBytes = source.Environment.MaxCommandOutputBytes
+			target.Environment.MaxCommandOutputBytesSource = srcSource
 		}
 	}
 
@@ -145,17 +155,24 @@ func overlayConfig(target *Config, source Config) {
 		if target.Providers == nil {
 			target.Providers = make(map[string]ProviderConfig)
 		}
+		if target.ProviderSources == nil {
+			target.ProviderSources = make(map[string]FieldSource)
+		}
 		for k, v := range source.Providers {
+			target.ProviderSources[k] = srcSource
 			if existing, ok := target.Providers[k]; ok {
 				// overlay onto an already-present provider
 				if v.BaseURL != "" {
 					existing.BaseURL = v.BaseURL
+					existing.BaseURLSource = srcSource
 				}
 				if v.APIKey != "" {
 					existing.APIKey = v.APIKey
+					existing.APIKeySource = srcSource
 				}
 				if v.Endpoint != "" {
 					existing.Endpoint = v.Endpoint
+					existing.EndpointSource = srcSource
 				}
 				if len(v.Headers) > 0 {
 					existing.Headers = copyStringMap(v.Headers)
@@ -171,6 +188,9 @@ func overlayConfig(target *Config, source Config) {
 					APIKey:   v.APIKey,
 					Endpoint: v.Endpoint,
 				}
+				copyProv.BaseURLSource = srcSource
+				copyProv.APIKeySource = srcSource
+				copyProv.EndpointSource = srcSource
 				if len(v.Headers) > 0 {
 					copyProv.Headers = copyStringMap(v.Headers)
 				}
@@ -187,14 +207,20 @@ func overlayConfig(target *Config, source Config) {
 		if target.Models == nil {
 			target.Models = make(map[string]ModelDefinition)
 		}
+		if target.ModelSources == nil {
+			target.ModelSources = make(map[string]FieldSource)
+		}
 		for k, v := range source.Models {
+			target.ModelSources[k] = srcSource
 			if existing, ok := target.Models[k]; ok {
 				// overlay onto an already-present model definition
 				if v.Provider != "" {
 					existing.Provider = v.Provider
+					existing.ProviderSource = srcSource
 				}
 				if v.Model != "" {
 					existing.Model = v.Model
+					existing.ModelSource = srcSource
 				}
 				if v.CacheKeyName != "" {
 					existing.CacheKeyName = v.CacheKeyName
@@ -234,6 +260,8 @@ func overlayConfig(target *Config, source Config) {
 					CacheReanchorMessages:        v.CacheReanchorMessages,
 					CacheReanchorMinCachedTokens: v.CacheReanchorMinCachedTokens,
 				}
+				copyModel.ProviderSource = srcSource
+				copyModel.ModelSource = srcSource
 				if len(v.Params) > 0 {
 					copyModel.Params = deepCopyMap(v.Params)
 				}
@@ -249,14 +277,20 @@ func overlayConfig(target *Config, source Config) {
 		}
 		if source.Trajectory.File != "" {
 			target.Trajectory.File = source.Trajectory.File
+			target.Trajectory.FileSource = srcSource
 		}
 		// booleans: always copy from source when non-nil (allows explicit false)
 		target.Trajectory.Enabled = source.Trajectory.Enabled
+		target.Trajectory.EnabledSource = srcSource
 		target.Trajectory.VerboseLLM = source.Trajectory.VerboseLLM
+		target.Trajectory.VerboseLLMSource = srcSource
 		target.Trajectory.StreamTokens = source.Trajectory.StreamTokens
+		target.Trajectory.StreamTokensSource = srcSource
 		target.Trajectory.OmitRepoRoot = source.Trajectory.OmitRepoRoot
+		target.Trajectory.OmitRepoRootSource = srcSource
 		if source.Trajectory.Excerpt != 0 {
 			target.Trajectory.Excerpt = source.Trajectory.Excerpt
+			target.Trajectory.ExcerptSource = srcSource
 		}
 	}
 
@@ -275,45 +309,59 @@ func overlayConfig(target *Config, source Config) {
 	// --- top-level behavioral fields ------------------------------------
 	if source.Verbose {
 		target.Verbose = source.Verbose
+		target.VerboseSource = srcSource
 	}
 	if source.PersistTmpData {
 		target.PersistTmpData = source.PersistTmpData
+		target.PersistTmpDataSource = srcSource
 	}
 	if source.DryRun {
 		target.DryRun = source.DryRun
+		target.DryRunSource = srcSource
 	}
 	if source.ShellAgentEnabled {
 		target.ShellAgentEnabled = source.ShellAgentEnabled
+		target.ShellAgentEnabledSource = srcSource
 	}
 	if source.ShellAgentModel != "" {
 		target.ShellAgentModel = source.ShellAgentModel
+		target.ShellAgentModelSource = srcSource
 	}
 	if source.AnswerModel != "" {
 		target.AnswerModel = source.AnswerModel
+		target.AnswerModelSource = srcSource
 	}
 	if source.FileDiscoveryModel != "" {
 		target.FileDiscoveryModel = source.FileDiscoveryModel
+		target.FileDiscoveryModelSource = srcSource
 	}
 	if source.AnswerTag != "" {
 		target.AnswerTag = source.AnswerTag
+		target.AnswerTagSource = srcSource
 	}
 	if source.Tag != "" {
 		target.Tag = source.Tag
+		target.TagSource = srcSource
 	}
 	if source.EnableTagFormat {
 		target.EnableTagFormat = source.EnableTagFormat
+		target.EnableTagFormatSource = srcSource
 	}
 	if source.FinalFile != "" {
 		target.FinalFile = source.FinalFile
+		target.FinalFileSource = srcSource
 	}
 	if source.TranscriptFile != "" {
 		target.TranscriptFile = source.TranscriptFile
+		target.TranscriptFileSource = srcSource
 	}
 	if source.FileDiscoveryTrajectory != "" {
 		target.FileDiscoveryTrajectory = source.FileDiscoveryTrajectory
+		target.FileDiscoveryTrajectorySource = srcSource
 	}
 	if source.FileDiscoveryOutputDir != "" {
 		target.FileDiscoveryOutputDir = source.FileDiscoveryOutputDir
+		target.FileDiscoveryOutputDirSource = srcSource
 	}
 
 	// Mode

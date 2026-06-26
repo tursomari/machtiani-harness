@@ -265,18 +265,14 @@ func handleConfigShowCommand(args []string) int {
 	configPath := filepath.Join(".machtiani", "config.toml")
 
 	var fileConfig llm.Config
-	hasFile := true
 	if _, err := toml.DecodeFile(configPath, &fileConfig); err != nil {
-		if os.IsNotExist(err) {
-			hasFile = false
-		} else {
+		if !os.IsNotExist(err) {
 			fmt.Fprintf(os.Stderr, "Error reading config: %v\n", err)
 			return 1
 		}
 	}
-
 	effective := llm.MergeConfig(defaults, fileConfig, llm.Config{})
-	printConfigWithSources(effective, defaults, hasFile, showFull)
+	printConfigWithSources(effective, defaults, showFull)
 	return 0
 }
 
@@ -284,11 +280,11 @@ func handleConfigShowCommand(args []string) int {
 //   key = value # source
 // where source is either "default" or "config.toml".
 // When showFull is false, only common settings are shown.
-func printConfigWithSources(effective, defaults llm.Config, hasFile bool, showFull bool) {
+func printConfigWithSources(effective, defaults llm.Config, showFull bool) {
 	// --- Fixed fields ---
 	fmt.Printf("default_model = %s # %s\n",
 		effective.DefaultModel,
-		stringSource(effective.DefaultModel, defaults.DefaultModel, hasFile))
+		stringSource(effective.DefaultModel, defaults.DefaultModel, effective.DefaultModelSource))
 
 	if effective.Planner != nil {
 		defaultMaxTurns := 0
@@ -301,13 +297,13 @@ func printConfigWithSources(effective, defaults llm.Config, hasFile bool, showFu
 		}
 		fmt.Printf("planner.max_turns = %d # %s\n",
 			effective.Planner.MaxTurns,
-			intSource(effective.Planner.MaxTurns, defaultMaxTurns, hasFile))
+			intSource(effective.Planner.MaxTurns, defaultMaxTurns, effective.Planner.MaxTurnsSource))
 		fmt.Printf("planner.turn_timeout = %d # %s\n",
 			effective.Planner.TurnTimeout,
-			intSource(effective.Planner.TurnTimeout, defaultTurnTimeout, hasFile))
+			intSource(effective.Planner.TurnTimeout, defaultTurnTimeout, effective.Planner.TurnTimeoutSource))
 		fmt.Printf("planner.max_input_tokens = %d # %s\n",
 			effective.Planner.MaxInputTokens,
-			intSource(effective.Planner.MaxInputTokens, defaultMaxInputTokens, hasFile))
+			intSource(effective.Planner.MaxInputTokens, defaultMaxInputTokens, effective.Planner.MaxInputTokensSource))
 	} else {
 		fmt.Printf("planner.max_turns = # default\n")
 		fmt.Printf("planner.turn_timeout = # default\n")
@@ -323,10 +319,10 @@ func printConfigWithSources(effective, defaults llm.Config, hasFile bool, showFu
 		}
 		fmt.Printf("shell-agent.max_steps = %d # %s\n",
 			effective.ShellAgent.MaxSteps,
-			intSource(effective.ShellAgent.MaxSteps, defaultMaxSteps, hasFile))
+			intSource(effective.ShellAgent.MaxSteps, defaultMaxSteps, effective.ShellAgent.MaxStepsSource))
 		fmt.Printf("shell-agent.finalize_remaining_steps = %d # %s\n",
 			effective.ShellAgent.FinalizeRemainingSteps,
-			intSource(effective.ShellAgent.FinalizeRemainingSteps, defaultFRS, hasFile))
+			intSource(effective.ShellAgent.FinalizeRemainingSteps, defaultFRS, effective.ShellAgent.FinalizeRemainingStepsSource))
 	} else {
 		fmt.Printf("shell-agent.max_steps = # default\n")
 		fmt.Printf("shell-agent.finalize_remaining_steps = # default\n")
@@ -339,16 +335,16 @@ func printConfigWithSources(effective, defaults llm.Config, hasFile bool, showFu
 		}
 		fmt.Printf("environment.type = %s # %s\n",
 			effective.Environment.Type,
-			stringSource(effective.Environment.Type, defaultEnv.Type, hasFile))
+			stringSource(effective.Environment.Type, defaultEnv.Type, effective.Environment.TypeSource))
 		fmt.Printf("environment.command_timeout = %d # %s\n",
 			effective.Environment.CommandTimeout,
-			intSource(effective.Environment.CommandTimeout, defaultEnv.CommandTimeout, hasFile))
+			intSource(effective.Environment.CommandTimeout, defaultEnv.CommandTimeout, effective.Environment.CommandTimeoutSource))
 		fmt.Printf("environment.cwd = %s # %s\n",
 			effective.Environment.CWD,
-			stringSource(effective.Environment.CWD, defaultEnv.CWD, hasFile))
+			stringSource(effective.Environment.CWD, defaultEnv.CWD, effective.Environment.CWDSource))
 		fmt.Printf("environment.max_command_output_bytes = %d # %s\n",
 			effective.Environment.MaxCommandOutputBytes,
-			intSource(effective.Environment.MaxCommandOutputBytes, defaultEnv.MaxCommandOutputBytes, hasFile))
+			intSource(effective.Environment.MaxCommandOutputBytes, defaultEnv.MaxCommandOutputBytes, effective.Environment.MaxCommandOutputBytesSource))
 	}
 
 	// --- Providers ---
@@ -363,13 +359,13 @@ func printConfigWithSources(effective, defaults llm.Config, hasFile bool, showFu
 		}
 		fmt.Printf("providers.%s.base_url = %s # %s\n",
 			name, prov.BaseURL,
-			stringSource(prov.BaseURL, defaultBaseURL, hasFile))
+			stringSource(prov.BaseURL, defaultBaseURL, prov.BaseURLSource))
 		fmt.Printf("providers.%s.api_key = %s # %s\n",
 			name, prov.APIKey,
-			stringSource(prov.APIKey, defaultAPIKey, hasFile))
+			stringSource(prov.APIKey, defaultAPIKey, prov.APIKeySource))
 		fmt.Printf("providers.%s.endpoint = %s # %s\n",
 			name, prov.Endpoint,
-			stringSource(prov.Endpoint, defaultEndpoint, hasFile))
+			stringSource(prov.Endpoint, defaultEndpoint, prov.EndpointSource))
 	}
 
 	// --- top-level behavioral settings (common) ---
@@ -380,33 +376,33 @@ func printConfigWithSources(effective, defaults llm.Config, hasFile bool, showFu
 	defaultsAnswerTag := defaults.AnswerTag
 	defaultsTag := defaults.Tag
 	defaultsTagFormat := defaults.EnableTagFormat
-	fmt.Printf("verbose = %t # %s\n", effective.Verbose, boolSource(effective.Verbose, defaultsVerbose, hasFile))
-	fmt.Printf("persist_tmp_data = %t # %s\n", effective.PersistTmpData, boolSource(effective.PersistTmpData, defaultsPersistTmp, hasFile))
-	fmt.Printf("dry_run = %t # %s\n", effective.DryRun, boolSource(effective.DryRun, defaultsDryRun, hasFile))
-	fmt.Printf("shell_agent_enabled = %t # %s\n", effective.ShellAgentEnabled, boolSource(effective.ShellAgentEnabled, defaultsShellEnabled, hasFile))
-	fmt.Printf("answer_tag = %s # %s\n", effective.AnswerTag, stringSource(effective.AnswerTag, defaultsAnswerTag, hasFile))
-	fmt.Printf("tag = %s # %s\n", effective.Tag, stringSource(effective.Tag, defaultsTag, hasFile))
-	fmt.Printf("enable_tag_format = %t # %s\n", effective.EnableTagFormat, boolSource(effective.EnableTagFormat, defaultsTagFormat, hasFile))
-	fmt.Printf("answer_model = %s # %s\n", effective.AnswerModel, stringSource(effective.AnswerModel, defaults.AnswerModel, hasFile))
-	fmt.Printf("file_discovery_model = %s # %s\n", effective.FileDiscoveryModel, stringSource(effective.FileDiscoveryModel, defaults.FileDiscoveryModel, hasFile))
-	fmt.Printf("shell_agent_model = %s # %s\n", effective.ShellAgentModel, stringSource(effective.ShellAgentModel, defaults.ShellAgentModel, hasFile))
+	fmt.Printf("verbose = %t # %s\n", effective.Verbose, boolSource(effective.Verbose, defaultsVerbose, effective.VerboseSource))
+	fmt.Printf("persist_tmp_data = %t # %s\n", effective.PersistTmpData, boolSource(effective.PersistTmpData, defaultsPersistTmp, effective.PersistTmpDataSource))
+	fmt.Printf("dry_run = %t # %s\n", effective.DryRun, boolSource(effective.DryRun, defaultsDryRun, effective.DryRunSource))
+	fmt.Printf("shell_agent_enabled = %t # %s\n", effective.ShellAgentEnabled, boolSource(effective.ShellAgentEnabled, defaultsShellEnabled, effective.ShellAgentEnabledSource))
+	fmt.Printf("answer_tag = %s # %s\n", effective.AnswerTag, stringSource(effective.AnswerTag, defaultsAnswerTag, effective.AnswerTagSource))
+	fmt.Printf("tag = %s # %s\n", effective.Tag, stringSource(effective.Tag, defaultsTag, effective.TagSource))
+	fmt.Printf("enable_tag_format = %t # %s\n", effective.EnableTagFormat, boolSource(effective.EnableTagFormat, defaultsTagFormat, effective.EnableTagFormatSource))
+	fmt.Printf("answer_model = %s # %s\n", effective.AnswerModel, stringSource(effective.AnswerModel, defaults.AnswerModel, effective.AnswerModelSource))
+	fmt.Printf("file_discovery_model = %s # %s\n", effective.FileDiscoveryModel, stringSource(effective.FileDiscoveryModel, defaults.FileDiscoveryModel, effective.FileDiscoveryModelSource))
+	fmt.Printf("shell_agent_model = %s # %s\n", effective.ShellAgentModel, stringSource(effective.ShellAgentModel, defaults.ShellAgentModel, effective.ShellAgentModelSource))
 
 	if showFull {
-		fmt.Printf("final_file = %s # %s\n", effective.FinalFile, stringSource(effective.FinalFile, defaults.FinalFile, hasFile))
-		fmt.Printf("transcript_file = %s # %s\n", effective.TranscriptFile, stringSource(effective.TranscriptFile, defaults.TranscriptFile, hasFile))
-		fmt.Printf("file_discovery_trajectory = %s # %s\n", effective.FileDiscoveryTrajectory, stringSource(effective.FileDiscoveryTrajectory, defaults.FileDiscoveryTrajectory, hasFile))
-		fmt.Printf("file_discovery_output_dir = %s # %s\n", effective.FileDiscoveryOutputDir, stringSource(effective.FileDiscoveryOutputDir, defaults.FileDiscoveryOutputDir, hasFile))
+		fmt.Printf("final_file = %s # %s\n", effective.FinalFile, stringSource(effective.FinalFile, defaults.FinalFile, effective.FinalFileSource))
+		fmt.Printf("transcript_file = %s # %s\n", effective.TranscriptFile, stringSource(effective.TranscriptFile, defaults.TranscriptFile, effective.TranscriptFileSource))
+		fmt.Printf("file_discovery_trajectory = %s # %s\n", effective.FileDiscoveryTrajectory, stringSource(effective.FileDiscoveryTrajectory, defaults.FileDiscoveryTrajectory, effective.FileDiscoveryTrajectorySource))
+		fmt.Printf("file_discovery_output_dir = %s # %s\n", effective.FileDiscoveryOutputDir, stringSource(effective.FileDiscoveryOutputDir, defaults.FileDiscoveryOutputDir, effective.FileDiscoveryOutputDirSource))
 		if effective.Trajectory != nil {
 			defaultTraj := defaults.Trajectory
 			if defaultTraj == nil {
 				defaultTraj = &llm.TrajectoryConfig{}
 			}
-			fmt.Printf("trajectory.enabled = %t # %s\n", effective.Trajectory.Enabled, boolSource(effective.Trajectory.Enabled, defaultTraj.Enabled, hasFile))
-			fmt.Printf("trajectory.file = %s # %s\n", effective.Trajectory.File, stringSource(effective.Trajectory.File, defaultTraj.File, hasFile))
-			fmt.Printf("trajectory.verbose_llm = %t # %s\n", effective.Trajectory.VerboseLLM, boolSource(effective.Trajectory.VerboseLLM, defaultTraj.VerboseLLM, hasFile))
-			fmt.Printf("trajectory.stream_tokens = %t # %s\n", effective.Trajectory.StreamTokens, boolSource(effective.Trajectory.StreamTokens, defaultTraj.StreamTokens, hasFile))
-			fmt.Printf("trajectory.excerpt = %d # %s\n", effective.Trajectory.Excerpt, intSource(effective.Trajectory.Excerpt, defaultTraj.Excerpt, hasFile))
-			fmt.Printf("trajectory.omit_repo_root = %t # %s\n", effective.Trajectory.OmitRepoRoot, boolSource(effective.Trajectory.OmitRepoRoot, defaultTraj.OmitRepoRoot, hasFile))
+			fmt.Printf("trajectory.enabled = %t # %s\n", effective.Trajectory.Enabled, boolSource(effective.Trajectory.Enabled, defaultTraj.Enabled, effective.Trajectory.EnabledSource))
+			fmt.Printf("trajectory.file = %s # %s\n", effective.Trajectory.File, stringSource(effective.Trajectory.File, defaultTraj.File, effective.Trajectory.FileSource))
+			fmt.Printf("trajectory.verbose_llm = %t # %s\n", effective.Trajectory.VerboseLLM, boolSource(effective.Trajectory.VerboseLLM, defaultTraj.VerboseLLM, effective.Trajectory.VerboseLLMSource))
+			fmt.Printf("trajectory.stream_tokens = %t # %s\n", effective.Trajectory.StreamTokens, boolSource(effective.Trajectory.StreamTokens, defaultTraj.StreamTokens, effective.Trajectory.StreamTokensSource))
+			fmt.Printf("trajectory.excerpt = %d # %s\n", effective.Trajectory.Excerpt, intSource(effective.Trajectory.Excerpt, defaultTraj.Excerpt, effective.Trajectory.ExcerptSource))
+			fmt.Printf("trajectory.omit_repo_root = %t # %s\n", effective.Trajectory.OmitRepoRoot, boolSource(effective.Trajectory.OmitRepoRoot, defaultTraj.OmitRepoRoot, effective.Trajectory.OmitRepoRootSource))
 		}
 	}
 
@@ -421,10 +417,10 @@ func printConfigWithSources(effective, defaults llm.Config, hasFile bool, showFu
 		}
 		fmt.Printf("models.%s.provider = %s # %s\n",
 			name, model.Provider,
-			stringSource(model.Provider, defaultProvider, hasFile))
+			stringSource(model.Provider, defaultProvider, model.ProviderSource))
 		fmt.Printf("models.%s.model = %s # %s\n",
 			name, model.Model,
-			stringSource(model.Model, defaultModel, hasFile))
+			stringSource(model.Model, defaultModel, model.ModelSource))
 
 		if len(model.Params) > 0 {
 			_, aliasInDefaults := defaults.Models[name]
@@ -433,7 +429,7 @@ func printConfigWithSources(effective, defaults llm.Config, hasFile bool, showFu
 				if aliasInDefaults {
 					defaultVal = defaults.Models[name].Params[k]
 				}
-				source := paramValueSource(v, defaultVal, aliasInDefaults, hasFile)
+				source := paramValueSource(v, defaultVal, aliasInDefaults, effective.ModelSources[name])
 				fmt.Printf("models.%s.params.%s = %s # %s\n",
 					name, k, formatParamValue(v),
 					source)
@@ -444,27 +440,36 @@ func printConfigWithSources(effective, defaults llm.Config, hasFile bool, showFu
 
 // stringSource returns "config.toml" when hasFile is true and the effective
 // value differs from the default, otherwise "default".
-func stringSource(effective, defaults string, hasFile bool) string {
-	if hasFile && effective != defaults {
+func stringSource(effective, defaults string, src llm.FieldSource) string {
+	if src == llm.SourceFile {
 		return "config.toml"
+	}
+	if src == llm.SourceFlag {
+		return "flag"
 	}
 	return "default"
 }
 
 // intSource returns "config.toml" when hasFile is true and the effective
 // value differs from the default, otherwise "default".
-func intSource(effective, defaults int, hasFile bool) string {
-	if hasFile && effective != defaults {
+func intSource(effective, defaults int, src llm.FieldSource) string {
+	if src == llm.SourceFile {
 		return "config.toml"
+	}
+	if src == llm.SourceFlag {
+		return "flag"
 	}
 	return "default"
 }
 
 // boolSource returns "config.toml" when hasFile is true and the effective
 // value differs from the default, otherwise "default".
-func boolSource(effective, defaults bool, hasFile bool) string {
-	if hasFile && effective != defaults {
+func boolSource(effective, defaults bool, src llm.FieldSource) string {
+	if src == llm.SourceFile {
 		return "config.toml"
+	}
+	if src == llm.SourceFlag {
+		return "flag"
 	}
 	return "default"
 }
@@ -499,15 +504,27 @@ func flattenMap(m map[string]any) string {
 // paramSource returns "config.toml" when hasFile is true and the defaults
 // have no entry for the given model (since all params originate from the
 // config file), otherwise "default".
-func paramValueSource(effective, defaultVal any, aliasInDefaults bool, hasFile bool) string {
-	if !hasFile {
+func paramValueSource(effective, defaultVal any, aliasInDefaults bool, src llm.FieldSource) string {
+	if src == llm.SourceDefault {
 		return "default"
 	}
 	if !aliasInDefaults {
-		return "config.toml"
+		if src == llm.SourceFile {
+			return "config.toml"
+		}
+		return "flag"
 	}
 	if reflect.DeepEqual(effective, defaultVal) {
-		return "default"
+		if src == llm.SourceDefault {
+			return "default"
+		}
+		if src == llm.SourceFile {
+			return "config.toml"
+		}
+		return "flag"
 	}
-	return "config.toml"
+	if src == llm.SourceFile {
+		return "config.toml"
+	}
+	return "flag"
 }

@@ -15,6 +15,7 @@ import (
 
 type Config struct {
 	DefaultModel     string                     `toml:"default_model"`
+	DefaultModelSource FieldSource `toml:"-"`
 	Planner          *PlannerConfig             `toml:"planner"`
 	ShellAgent       *ShellAgentConfig          `toml:"shell-agent"`
 	Prompts          *PromptsConfig             `toml:"prompts"`
@@ -22,23 +23,39 @@ type Config struct {
 	Trajectory       *TrajectoryConfig          `toml:"trajectory"`
 	Providers        map[string]ProviderConfig  `toml:"providers"`
 	Models           map[string]ModelDefinition `toml:"models"`
+	ProviderSources  map[string]FieldSource   `toml:"-"`
+	ModelSources     map[string]FieldSource   `toml:"-"`
 	Mode             *ModeConfig                `toml:"mode"`
 
 	// Top-level behavioral settings
-	Verbose                 bool   `toml:"verbose"`                    // verbose logging
-	PersistTmpData          bool   `toml:"persist_tmp_data"`           // persist temp directories
-	DryRun                  bool   `toml:"dry_run"`                    // dry-run mode
-	ShellAgentEnabled       bool   `toml:"shell_agent_enabled"`        // whether to use shell-agent by default
-	ShellAgentModel         string `toml:"shell_agent_model"`          // default model for shell-agent
-	AnswerModel             string `toml:"answer_model"`               // model for final answer
-	FileDiscoveryModel      string `toml:"file_discovery_model"`       // model for file discovery
-	AnswerTag               string `toml:"answer_tag"`                 // output tag for answers
-	Tag                     string `toml:"tag"`                        // default command tag
-	EnableTagFormat         bool   `toml:"enable_tag_format"`          // enable tag format output
-	FinalFile               string `toml:"final_file"`                 // path for final answer file
-	TranscriptFile          string `toml:"transcript_file"`            // path for transcript file
-	FileDiscoveryTrajectory string `toml:"file_discovery_trajectory"`  // file-discovery trajectory path
-	FileDiscoveryOutputDir  string `toml:"file_discovery_output_dir"`  // file-discovery output directory
+	Verbose                 bool   `toml:"verbose"`
+	VerboseSource FieldSource `toml:"-"`                    // verbose logging
+	PersistTmpData                 bool   `toml:"persist_tmp_data"`
+	PersistTmpDataSource FieldSource `toml:"-"`           // persist temp directories
+	DryRun                 bool   `toml:"dry_run"`
+	DryRunSource FieldSource `toml:"-"`                    // dry-run mode
+	ShellAgentEnabled                 bool   `toml:"shell_agent_enabled"`
+	ShellAgentEnabledSource FieldSource `toml:"-"`        // whether to use shell-agent by default
+	ShellAgentModel     string `toml:"shell_agent_model"`          // default model for shell-agent
+	ShellAgentModelSource FieldSource `toml:"-"`
+	AnswerModel     string `toml:"answer_model"`               // model for final answer
+	AnswerModelSource FieldSource `toml:"-"`
+	FileDiscoveryModel     string `toml:"file_discovery_model"`       // model for file discovery
+	FileDiscoveryModelSource FieldSource `toml:"-"`
+	AnswerTag     string `toml:"answer_tag"`                 // output tag for answers
+	AnswerTagSource FieldSource `toml:"-"`
+	Tag     string `toml:"tag"`                        // default command tag
+	TagSource FieldSource `toml:"-"`
+	EnableTagFormat                 bool   `toml:"enable_tag_format"`
+	EnableTagFormatSource FieldSource `toml:"-"`          // enable tag format output
+	FinalFile     string `toml:"final_file"`                 // path for final answer file
+	FinalFileSource FieldSource `toml:"-"`
+	TranscriptFile     string `toml:"transcript_file"`            // path for transcript file
+	TranscriptFileSource FieldSource `toml:"-"`
+	FileDiscoveryTrajectory     string `toml:"file_discovery_trajectory"`  // file-discovery trajectory path
+	FileDiscoveryTrajectorySource FieldSource `toml:"-"`
+	FileDiscoveryOutputDir     string `toml:"file_discovery_output_dir"`  // file-discovery output directory
+	FileDiscoveryOutputDirSource FieldSource `toml:"-"`
 }
 
 
@@ -50,17 +67,22 @@ type ShellAgentConfig struct {
 
 	maxStepsSet              bool `toml:"-"`
 	finalizeRemainingStepsSet bool `toml:"-"`
+	MaxStepsSource               FieldSource `toml:"-"`
+	FinalizeRemainingStepsSource FieldSource `toml:"-"`
 }
 
 // PlannerConfig captures configuration intended for the orchestration planner.
 type PlannerConfig struct {
-	MaxTurns      int `toml:"max_turns"`
-	TurnTimeout   int `toml:"turn_timeout"`    // per-turn timeout in seconds, 0 = unlimited
+	MaxTurns       int `toml:"max_turns"`
+	TurnTimeout    int `toml:"turn_timeout"`    // per-turn timeout in seconds, 0 = unlimited
 	MaxInputTokens int `toml:"max_input_tokens"` // max tokens per LLM call, 0 = disabled
 
-	maxTurnsSet      bool `toml:"-"`
-	turnTimeoutSet   bool `toml:"-"`
+	maxTurnsSet       bool `toml:"-"`
+	turnTimeoutSet    bool `toml:"-"`
 	maxInputTokensSet bool `toml:"-"`
+	MaxTurnsSource       FieldSource `toml:"-"`
+	TurnTimeoutSource    FieldSource `toml:"-"`
+	MaxInputTokensSource FieldSource `toml:"-"`
 }
 
 // PromptsConfig captures the prompt templates referenced by planner and shell-agent.
@@ -152,6 +174,10 @@ type EnvironmentConfig struct {
 	CWD                  string `toml:"cwd"`
 	ComputedImageTag     string `toml:"-"`
 	commandTimeoutSet    bool   `toml:"-"`
+	TypeSource                 FieldSource `toml:"-"`
+	CommandTimeoutSource       FieldSource `toml:"-"`
+	MaxCommandOutputBytesSource FieldSource `toml:"-"`
+	CWDSource                  FieldSource `toml:"-"`
 }
 
 
@@ -164,6 +190,12 @@ type TrajectoryConfig struct {
 	StreamTokens  bool   `toml:"stream_tokens"`   // stream token output
 	Excerpt       int    `toml:"excerpt"`         // excerpt length for trajectory
 	OmitRepoRoot  bool   `toml:"omit_repo_root"`  // omit repo root from paths
+	EnabledSource      FieldSource `toml:"-"`
+	FileSource         FieldSource `toml:"-"`
+	VerboseLLMSource   FieldSource `toml:"-"`
+	StreamTokensSource FieldSource `toml:"-"`
+	ExcerptSource      FieldSource `toml:"-"`
+	OmitRepoRootSource FieldSource `toml:"-"`
 }
 
 type ModeConfig struct {
@@ -212,12 +244,17 @@ type ProviderConfig struct {
 	Headers  map[string]string `toml:"headers"`
 	Query    map[string]string `toml:"query"`
 	Endpoint string            `toml:"endpoint"`
+	BaseURLSource  FieldSource `toml:"-"`
+	APIKeySource   FieldSource `toml:"-"`
+	EndpointSource FieldSource `toml:"-"`
 }
 
 type ModelDefinition struct {
 	Provider string         `toml:"provider"`
 	Model    string         `toml:"model"`
 	Params   map[string]any `toml:"params"`
+	ProviderSource FieldSource `toml:"-"`
+	ModelSource    FieldSource `toml:"-"`
 
 	CacheKeyName                 string         `toml:"cache_key_name"`
 	CacheControl                 map[string]any `toml:"cache_control"`
@@ -247,6 +284,15 @@ type ResolvedModel struct {
 	CacheReanchorMessages        int
 	CacheReanchorMinCachedTokens int
 }
+
+// FieldSource tracks where a configuration value originated.
+type FieldSource int
+
+const (
+	SourceDefault FieldSource = iota
+	SourceFile
+	SourceFlag
+)
 
 type configData struct {
 	path   string
