@@ -608,6 +608,82 @@ var fieldDocs = map[string]fieldDoc{
 			"Default: false. Shown only with --full.",
 		},
 	},
+	"providers.*.headers": {
+		summary:     "Custom HTTP headers",
+		explanation: "Additional HTTP headers sent with every request to this provider. Set per-provider header key-value pairs.",
+		example:     "providers.default.headers.X-Custom = value",
+		details: []string{
+			"Appended to the default headers sent by the agent.",
+			"Keys are case-insensitive header names.",
+		},
+	},
+	"providers.*.query": {
+		summary:     "Custom query parameters",
+		explanation: "Additional URL query parameters appended to every request for this provider.",
+		example:     "providers.default.query.region = us-east-1",
+		details: []string{
+			"Appended to the provider's base URL as ?key=value pairs.",
+		},
+	},
+	"models.*.cache_key_name": {
+		summary:     "Cache key name for this model",
+		explanation: "Identifier used to namespace cache entries for this model. When set, enables provider-level response caching.",
+		example:     "models.default.cache_key_name = my-cache-key",
+		details: []string{
+			"Only used if the provider supports cache-control.",
+			"Must be unique across models that share a cache namespace if you want separate caches.",
+		},
+	},
+	"models.*.cache_control": {
+		summary:     "Cache control settings",
+		explanation: "Controls how the provider caches responses. Typically includes a type field like ephemeral.",
+		example:     "models.default.cache_control.type = ephemeral",
+		details: []string{
+			"Exact sub-keys depend on the provider (e.g., type, scope).",
+			"Refer to your provider's documentation for supported cache-control options.",
+		},
+	},
+	"models.*.cache_trigger_threshold": {
+		summary:     "Cache trigger threshold",
+		explanation: "Minimum number of tokens before the cache mechanism activates for a request.",
+		example:     "models.default.cache_trigger_threshold = 500",
+		details: []string{
+			"Helps avoid caching overhead for tiny requests.",
+		},
+	},
+	"models.*.cache_lookback_offset": {
+		summary:     "Cache lookback offset",
+		explanation: "Number of tokens to offset from the end of the conversation when determining the cache boundary.",
+		example:     "models.default.cache_lookback_offset = 0",
+		details: []string{
+			"Adjusts where the cache considers recent context to end.",
+		},
+	},
+	"models.*.cache_reanchor_tokens": {
+		summary:     "Cache reanchor tokens",
+		explanation: "Number of tokens after which the cache anchor point is repositioned to improve hit rates.",
+		example:     "models.default.cache_reanchor_tokens = 1000",
+		details: []string{
+			"Larger values cause less frequent reanchoring; smaller values increase cache precision.",
+		},
+	},
+	"models.*.cache_reanchor_messages": {
+		summary:     "Cache reanchor messages",
+		explanation: "Number of messages after which the cache anchor is repositioned.",
+		example:     "models.default.cache_reanchor_messages = 10",
+		details: []string{
+			"Works alongside cache_reanchor_tokens to balance cache granularity.",
+		},
+	},
+	"models.*.cache_reanchor_min_cached_tokens": {
+		summary:     "Cache reanchor minimum cached tokens",
+		explanation: "Minimum number of cached tokens that must remain after reanchoring.",
+		example:     "models.default.cache_reanchor_min_cached_tokens = 500",
+		details: []string{
+			"Prevents overly aggressive cache truncation.",
+		},
+	},
+
 }
 
 // getFieldValue returns the string representation of a config key's value and source.
