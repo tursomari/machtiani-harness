@@ -865,9 +865,20 @@ func printConfigWithSources(effective, defaults llm.Config, showFull bool) {
 			{key: "providers." + name + ".api_key", value: maskAPIKey(prov.APIKey)},
 			{key: "providers." + name + ".endpoint", value: prov.Endpoint},
 		}
+		if len(prov.Headers) > 0 {
+			for k, v := range prov.Headers {
+				keys = append(keys, configEntry{key: "providers." + name + ".headers." + k, value: v})
+			}
+		}
+		if len(prov.Query) > 0 {
+			for k, v := range prov.Query {
+				keys = append(keys, configEntry{key: "providers." + name + ".query." + k, value: v})
+			}
+		}
 		providerAliases = append(providerAliases, aliasEntry{name: name, source: label, keys: keys})
 	}
 	renderAliasSection(&buf, "Providers", "Base URLs, API keys, and endpoints for each LLM provider", providerAliases)
+
 
 	// --- Models ---
 	modelNames := make([]string, 0, len(effective.Models))
@@ -883,6 +894,29 @@ func printConfigWithSources(effective, defaults llm.Config, showFull bool) {
 			{key: "models." + name + ".provider", value: model.Provider},
 			{key: "models." + name + ".model", value: model.Model},
 		}
+		if model.CacheKeyName != "" {
+			keys = append(keys, configEntry{key: "models." + name + ".cache_key_name", value: model.CacheKeyName})
+		}
+		if len(model.CacheControl) > 0 {
+			for k, v := range model.CacheControl {
+				keys = append(keys, configEntry{key: "models." + name + ".cache_control." + k, value: formatParamValue(v)})
+			}
+		}
+		if model.CacheTriggerThreshold != 0 {
+			keys = append(keys, configEntry{key: "models." + name + ".cache_trigger_threshold", value: fmt.Sprintf("%d", model.CacheTriggerThreshold)})
+		}
+		if model.CacheLookbackOffset != 0 {
+			keys = append(keys, configEntry{key: "models." + name + ".cache_lookback_offset", value: fmt.Sprintf("%d", model.CacheLookbackOffset)})
+		}
+		if model.CacheReanchorTokens != 0 {
+			keys = append(keys, configEntry{key: "models." + name + ".cache_reanchor_tokens", value: fmt.Sprintf("%d", model.CacheReanchorTokens)})
+		}
+		if model.CacheReanchorMessages != 0 {
+			keys = append(keys, configEntry{key: "models." + name + ".cache_reanchor_messages", value: fmt.Sprintf("%d", model.CacheReanchorMessages)})
+		}
+		if model.CacheReanchorMinCachedTokens != 0 {
+			keys = append(keys, configEntry{key: "models." + name + ".cache_reanchor_min_cached_tokens", value: fmt.Sprintf("%d", model.CacheReanchorMinCachedTokens)})
+		}
 		if len(model.Params) > 0 {
 			for k, v := range model.Params {
 				keys = append(keys, configEntry{key: "models." + name + ".params." + k, value: formatParamValue(v)})
@@ -891,6 +925,7 @@ func printConfigWithSources(effective, defaults llm.Config, showFull bool) {
 		modelAliases = append(modelAliases, aliasEntry{name: name, source: label, keys: keys})
 	}
 	renderAliasSection(&buf, "Models", "Model identifiers and provider bindings for each alias", modelAliases)
+
 
 	// --- Planner ---
 	var plannerEntries []configEntry
