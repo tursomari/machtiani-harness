@@ -726,10 +726,28 @@ func getFieldValue(effective llm.Config, key string) (value string, source strin
 
 // printKeyDetail prints detailed documentation for a single config key.
 func printKeyDetail(effective llm.Config, key string) error {
-	doc, ok := fieldDocs[key]
+	// Normalize concrete alias keys for doc lookup: providers.x.y -> providers.*.y
+	lookupKey := key
+	parts := strings.SplitN(key, ".", 3)
+	if len(parts) == 3 && (parts[0] == "providers" || parts[0] == "models") {
+		if parts[0] == "models" && strings.HasPrefix(parts[2], "params.") {
+			lookupKey = "models.*.params.*"
+		} else {
+			lookupKey = parts[0] + ".*." + parts[2]
+		}
+	}
+	doc, ok := fieldDocs[lookupKey]
+	if !ok {
+		doc, ok = fieldDocs[key]
+	}
 	if !ok {
 		fmt.Fprintf(os.Stderr, "Unknown config key: %s\n\nValid keys:\n", key)
+		validKeys := make([]string, 0, len(fieldDocs))
 		for k := range fieldDocs {
+			validKeys = append(validKeys, k)
+		}
+		sort.Strings(validKeys)
+		for _, k := range validKeys {
 			fmt.Fprintf(os.Stderr, "  %s\n", k)
 		}
 		return fmt.Errorf("")
@@ -843,9 +861,9 @@ func printConfigWithSources(effective, defaults llm.Config, showFull bool) {
 		prov := effective.Providers[name]
 		label := sourceLabel(effective.ProviderSources[name])
 		keys := []configEntry{
-			{key: "base_url", value: prov.BaseURL},
-			{key: "api_key", value: maskAPIKey(prov.APIKey)},
-			{key: "endpoint", value: prov.Endpoint},
+			{key: "providers." + name + ".base_url", value: prov.BaseURL},
+			{key: "providers." + name + ".api_key", value: maskAPIKey(prov.APIKey)},
+			{key: "providers." + name + ".endpoint", value: prov.Endpoint},
 		}
 		providerAliases = append(providerAliases, aliasEntry{name: name, source: label, keys: keys})
 	}
@@ -862,12 +880,12 @@ func printConfigWithSources(effective, defaults llm.Config, showFull bool) {
 		model := effective.Models[name]
 		label := sourceLabel(effective.ModelSources[name])
 		keys := []configEntry{
-			{key: "provider", value: model.Provider},
-			{key: "model", value: model.Model},
+			{key: "models." + name + ".provider", value: model.Provider},
+			{key: "models." + name + ".model", value: model.Model},
 		}
 		if len(model.Params) > 0 {
 			for k, v := range model.Params {
-				keys = append(keys, configEntry{key: "params." + k, value: formatParamValue(v)})
+				keys = append(keys, configEntry{key: "models." + name + ".params." + k, value: formatParamValue(v)})
 			}
 		}
 		modelAliases = append(modelAliases, aliasEntry{name: name, source: label, keys: keys})
