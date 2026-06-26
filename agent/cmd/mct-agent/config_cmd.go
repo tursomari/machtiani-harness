@@ -694,6 +694,20 @@ func getFieldValue(effective llm.Config, key string) (value string, source strin
 			case "endpoint":
 				return prov.Endpoint, sourceLabel(prov.EndpointSource)
 			default:
+				if strings.HasPrefix(sub, "headers.") {
+					hKey := strings.TrimPrefix(sub, "headers.")
+					if v, ok := prov.Headers[hKey]; ok {
+						return v, sourceLabel(prov.HeadersSource)
+					}
+					return "", ""
+				}
+				if strings.HasPrefix(sub, "query.") {
+					qKey := strings.TrimPrefix(sub, "query.")
+					if v, ok := prov.Query[qKey]; ok {
+						return v, sourceLabel(prov.QuerySource)
+					}
+					return "", ""
+				}
 				return "", ""
 			}
 		}
@@ -709,7 +723,26 @@ func getFieldValue(effective llm.Config, key string) (value string, source strin
 				return model.Provider, sourceLabel(model.ProviderSource)
 			case "model":
 				return model.Model, sourceLabel(model.ModelSource)
+			case "cache_key_name":
+				return model.CacheKeyName, sourceLabel(model.CacheKeyNameSource)
+			case "cache_trigger_threshold":
+				return fmt.Sprintf("%d", model.CacheTriggerThreshold), sourceLabel(model.CacheTriggerThresholdSource)
+			case "cache_lookback_offset":
+				return fmt.Sprintf("%d", model.CacheLookbackOffset), sourceLabel(model.CacheLookbackOffsetSource)
+			case "cache_reanchor_tokens":
+				return fmt.Sprintf("%d", model.CacheReanchorTokens), sourceLabel(model.CacheReanchorTokensSource)
+			case "cache_reanchor_messages":
+				return fmt.Sprintf("%d", model.CacheReanchorMessages), sourceLabel(model.CacheReanchorMessagesSource)
+			case "cache_reanchor_min_cached_tokens":
+				return fmt.Sprintf("%d", model.CacheReanchorMinCachedTokens), sourceLabel(model.CacheReanchorMinCachedTokensSource)
 			default:
+				if strings.HasPrefix(sub, "cache_control.") {
+					ccKey := strings.TrimPrefix(sub, "cache_control.")
+					if v, ok := model.CacheControl[ccKey]; ok {
+						return fmt.Sprintf("%v", v), sourceLabel(model.CacheControlSource)
+					}
+					return "", ""
+				}
 				if strings.HasPrefix(sub, "params.") {
 					paramKey := strings.TrimPrefix(sub, "params.")
 					val, ok := model.Params[paramKey]
@@ -726,6 +759,44 @@ func getFieldValue(effective llm.Config, key string) (value string, source strin
 
 // printKeyDetail prints detailed documentation for a single config key.
 func printKeyDetail(effective llm.Config, key string) error {
+	// Alias-level lookup: models.<alias> or providers.<alias>
+	aliasParts := strings.SplitN(key, ".", 2)
+	if len(aliasParts) == 2 && (aliasParts[0] == "models" || aliasParts[0] == "providers") && !strings.Contains(aliasParts[1], ".") {
+		alias := aliasParts[1]
+		if aliasParts[0] == "models" {
+			model, ok := effective.Models[alias]
+			if !ok {
+				aliases := make([]string, 0, len(effective.Models))
+				for a := range effective.Models {
+					aliases = append(aliases, "models."+a)
+				}
+				sort.Strings(aliases)
+				fmt.Fprintf(os.Stderr, "Unknown model alias: %s\n\nAvailable model aliases:\n", key)
+				for _, a := range aliases {
+					fmt.Fprintf(os.Stderr, "  %s\n", a)
+				}
+				return fmt.Errorf("")
+			}
+			return printModelAliasDetail(&model, alias)
+		}
+		if aliasParts[0] == "providers" {
+			prov, ok := effective.Providers[alias]
+			if !ok {
+				aliases := make([]string, 0, len(effective.Providers))
+				for a := range effective.Providers {
+					aliases = append(aliases, "providers."+a)
+				}
+				sort.Strings(aliases)
+				fmt.Fprintf(os.Stderr, "Unknown provider alias: %s\n\nAvailable provider aliases:\n", key)
+				for _, a := range aliases {
+					fmt.Fprintf(os.Stderr, "  %s\n", a)
+				}
+				return fmt.Errorf("")
+			}
+			return printProviderAliasDetail(&prov, alias)
+		}
+	}
+
 	// Normalize concrete alias keys for doc lookup: providers.x.y -> providers.*.y
 	lookupKey := key
 	parts := strings.SplitN(key, ".", 3)
@@ -1018,6 +1089,91 @@ func printConfigWithSources(effective, defaults llm.Config, showFull bool) {
 
 
 // formatParamValue formats a parameter value for display.
+func printModelAliasDetail(model *llm.ModelDefinition, alias string) error {
+	buf := &strings.Builder{}
+	fmt.Fprintf(buf, "models.%s\n\n", alias)
+	fmt.Fprintf(buf, "Model alias: %s\n\n", alias)
+	fmt.Fprintf(buf, "All fields and parameters configured for this model alias.\n\n")
+	fmt.Fprintf(buf, "Current values:\n")
+	keys := []configEntry{
+		{key: "models." + alias + ".provider", value: model.Provider},
+		{key: "models." + alias + ".model", value: model.Model},
+	}
+	if model.CacheKeyName != "" {
+		keys = append(keys, configEntry{key: "models." + alias + ".cache_key_name", value: model.CacheKeyName})
+	}
+	if model.CacheTriggerThreshold != 0 {
+		keys = append(keys, configEntry{key: "models." + alias + ".cache_trigger_threshold", value: fmt.Sprintf("%d", model.CacheTriggerThreshold)})
+	}
+	if model.CacheLookbackOffset != 0 {
+		keys = append(keys, configEntry{key: "models." + alias + ".cache_lookback_offset", value: fmt.Sprintf("%d", model.CacheLookbackOffset)})
+	}
+	if model.CacheReanchorTokens != 0 {
+		keys = append(keys, configEntry{key: "models." + alias + ".cache_reanchor_tokens", value: fmt.Sprintf("%d", model.CacheReanchorTokens)})
+	}
+	if model.CacheReanchorMessages != 0 {
+		keys = append(keys, configEntry{key: "models." + alias + ".cache_reanchor_messages", value: fmt.Sprintf("%d", model.CacheReanchorMessages)})
+	}
+	if model.CacheReanchorMinCachedTokens != 0 {
+		keys = append(keys, configEntry{key: "models." + alias + ".cache_reanchor_min_cached_tokens", value: fmt.Sprintf("%d", model.CacheReanchorMinCachedTokens)})
+	}
+	if len(model.CacheControl) > 0 {
+		for k, v := range model.CacheControl {
+			keys = append(keys, configEntry{key: "models." + alias + ".cache_control." + k, value: fmt.Sprintf("%v", v)})
+		}
+	}
+	if len(model.Params) > 0 {
+		for k, v := range model.Params {
+			keys = append(keys, configEntry{key: "models." + alias + ".params." + k, value: formatParamValue(v)})
+		}
+	}
+	maxKeyLen := 0
+	for _, e := range keys {
+		if len(e.key) > maxKeyLen {
+			maxKeyLen = len(e.key)
+		}
+	}
+	for _, e := range keys {
+		fmt.Fprintf(buf, "  %-*s = %s\n", maxKeyLen, e.key, e.value)
+	}
+	fmt.Print(buf.String())
+	return nil
+}
+
+func printProviderAliasDetail(prov *llm.ProviderConfig, alias string) error {
+	buf := &strings.Builder{}
+	fmt.Fprintf(buf, "providers.%s\n\n", alias)
+	fmt.Fprintf(buf, "Provider alias: %s\n\n", alias)
+	fmt.Fprintf(buf, "All fields configured for this provider alias.\n\n")
+	fmt.Fprintf(buf, "Current values:\n")
+	keys := []configEntry{
+		{key: "providers." + alias + ".base_url", value: prov.BaseURL},
+		{key: "providers." + alias + ".api_key", value: maskAPIKey(prov.APIKey)},
+		{key: "providers." + alias + ".endpoint", value: prov.Endpoint},
+	}
+	if len(prov.Headers) > 0 {
+		for k, v := range prov.Headers {
+			keys = append(keys, configEntry{key: "providers." + alias + ".headers." + k, value: v})
+		}
+	}
+	if len(prov.Query) > 0 {
+		for k, v := range prov.Query {
+			keys = append(keys, configEntry{key: "providers." + alias + ".query." + k, value: v})
+		}
+	}
+	maxKeyLen := 0
+	for _, e := range keys {
+		if len(e.key) > maxKeyLen {
+			maxKeyLen = len(e.key)
+		}
+	}
+	for _, e := range keys {
+		fmt.Fprintf(buf, "  %-*s = %s\n", maxKeyLen, e.key, e.value)
+	}
+	fmt.Print(buf.String())
+	return nil
+}
+
 func formatParamValue(v any) string {
 	switch val := v.(type) {
 	case string:
