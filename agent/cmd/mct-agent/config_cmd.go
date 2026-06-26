@@ -282,7 +282,10 @@ func handleConfigShowCommand(args []string) int {
 	}
 	effective := llm.MergeConfig(defaults, fileConfig, flagOverrides)
 	if showKey != "" {
-		printKeyDetail(effective, showKey)
+		if err := printKeyDetail(effective, showKey); err != nil {
+			fmt.Fprint(os.Stderr, err)
+			return 1
+		}
 		return 0
 	}
 	printConfigWithSources(effective, defaults, showFull)
@@ -722,14 +725,14 @@ func getFieldValue(effective llm.Config, key string) (value string, source strin
 }
 
 // printKeyDetail prints detailed documentation for a single config key.
-func printKeyDetail(effective llm.Config, key string) {
+func printKeyDetail(effective llm.Config, key string) error {
 	doc, ok := fieldDocs[key]
 	if !ok {
 		fmt.Fprintf(os.Stderr, "Unknown config key: %s\n\nValid keys:\n", key)
 		for k := range fieldDocs {
 			fmt.Fprintf(os.Stderr, "  %s\n", k)
 		}
-		os.Exit(1)
+		return fmt.Errorf("")
 	}
 	value, source := getFieldValue(effective, key)
 	buf := &strings.Builder{}
@@ -746,6 +749,7 @@ func printKeyDetail(effective llm.Config, key string) {
 	}
 	fmt.Fprintf(buf, "Current value:\n  %s = %s  (%s)\n", key, value, source)
 	fmt.Print(buf.String())
+	return nil
 }
 
 
