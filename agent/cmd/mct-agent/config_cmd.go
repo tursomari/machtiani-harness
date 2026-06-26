@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -426,10 +427,16 @@ func printConfigWithSources(effective, defaults llm.Config, hasFile bool, showFu
 			stringSource(model.Model, defaultModel, hasFile))
 
 		if len(model.Params) > 0 {
+			_, aliasInDefaults := defaults.Models[name]
 			for k, v := range model.Params {
+				defaultVal := any(nil)
+				if aliasInDefaults {
+					defaultVal = defaults.Models[name].Params[k]
+				}
+				source := paramValueSource(v, defaultVal, aliasInDefaults, hasFile)
 				fmt.Printf("models.%s.params.%s = %s # %s\n",
 					name, k, formatParamValue(v),
-					paramSource(name, defaults.Models, hasFile))
+					source)
 			}
 		}
 	}
@@ -492,11 +499,14 @@ func flattenMap(m map[string]any) string {
 // paramSource returns "config.toml" when hasFile is true and the defaults
 // have no entry for the given model (since all params originate from the
 // config file), otherwise "default".
-func paramSource(modelName string, defaults map[string]llm.ModelDefinition, hasFile bool) string {
+func paramValueSource(effective, defaultVal any, aliasInDefaults bool, hasFile bool) string {
 	if !hasFile {
 		return "default"
 	}
-	if _, exists := defaults[modelName]; exists {
+	if !aliasInDefaults {
+		return "config.toml"
+	}
+	if reflect.DeepEqual(effective, defaultVal) {
 		return "default"
 	}
 	return "config.toml"
