@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sort"
 
 	"github.com/BurntSushi/toml"
 	"github.com/spf13/pflag"
@@ -281,8 +282,9 @@ func handleConfigShowCommand(args []string) int {
 // where source is either "default" or "config.toml".
 // When showFull is false, only common settings are shown.
 func printConfigWithSources(effective, defaults llm.Config, showFull bool) {
+	var buf strings.Builder
 	// --- Fixed fields ---
-	fmt.Printf("default_model = %s # %s\n",
+	fmt.Fprintf(&buf, "default_model = %s # %s\n",
 		effective.DefaultModel,
 		stringSource(effective.DefaultModel, defaults.DefaultModel, effective.DefaultModelSource))
 
@@ -295,19 +297,19 @@ func printConfigWithSources(effective, defaults llm.Config, showFull bool) {
 			defaultTurnTimeout = defaults.Planner.TurnTimeout
 			defaultMaxInputTokens = defaults.Planner.MaxInputTokens
 		}
-		fmt.Printf("planner.max_turns = %d # %s\n",
+		fmt.Fprintf(&buf, "planner.max_turns = %d # %s\n",
 			effective.Planner.MaxTurns,
 			intSource(effective.Planner.MaxTurns, defaultMaxTurns, effective.Planner.MaxTurnsSource))
-		fmt.Printf("planner.turn_timeout = %d # %s\n",
+		fmt.Fprintf(&buf, "planner.turn_timeout = %d # %s\n",
 			effective.Planner.TurnTimeout,
 			intSource(effective.Planner.TurnTimeout, defaultTurnTimeout, effective.Planner.TurnTimeoutSource))
-		fmt.Printf("planner.max_input_tokens = %d # %s\n",
+		fmt.Fprintf(&buf, "planner.max_input_tokens = %d # %s\n",
 			effective.Planner.MaxInputTokens,
 			intSource(effective.Planner.MaxInputTokens, defaultMaxInputTokens, effective.Planner.MaxInputTokensSource))
 	} else {
-		fmt.Printf("planner.max_turns = # default\n")
-		fmt.Printf("planner.turn_timeout = # default\n")
-		fmt.Printf("planner.max_input_tokens = # default\n")
+		fmt.Fprintf(&buf, "planner.max_turns = # default\n")
+		fmt.Fprintf(&buf, "planner.turn_timeout = # default\n")
+		fmt.Fprintf(&buf, "planner.max_input_tokens = # default\n")
 	}
 
 	if effective.ShellAgent != nil {
@@ -317,15 +319,15 @@ func printConfigWithSources(effective, defaults llm.Config, showFull bool) {
 			defaultMaxSteps = defaults.ShellAgent.MaxSteps
 			defaultFRS = defaults.ShellAgent.FinalizeRemainingSteps
 		}
-		fmt.Printf("shell-agent.max_steps = %d # %s\n",
+		fmt.Fprintf(&buf, "shell-agent.max_steps = %d # %s\n",
 			effective.ShellAgent.MaxSteps,
 			intSource(effective.ShellAgent.MaxSteps, defaultMaxSteps, effective.ShellAgent.MaxStepsSource))
-		fmt.Printf("shell-agent.finalize_remaining_steps = %d # %s\n",
+		fmt.Fprintf(&buf, "shell-agent.finalize_remaining_steps = %d # %s\n",
 			effective.ShellAgent.FinalizeRemainingSteps,
 			intSource(effective.ShellAgent.FinalizeRemainingSteps, defaultFRS, effective.ShellAgent.FinalizeRemainingStepsSource))
 	} else {
-		fmt.Printf("shell-agent.max_steps = # default\n")
-		fmt.Printf("shell-agent.finalize_remaining_steps = # default\n")
+		fmt.Fprintf(&buf, "shell-agent.max_steps = # default\n")
+		fmt.Fprintf(&buf, "shell-agent.finalize_remaining_steps = # default\n")
 	}
 
 	if effective.Environment != nil {
@@ -333,22 +335,28 @@ func printConfigWithSources(effective, defaults llm.Config, showFull bool) {
 		if defaultEnv == nil {
 			defaultEnv = &llm.EnvironmentConfig{}
 		}
-		fmt.Printf("environment.type = %s # %s\n",
+		fmt.Fprintf(&buf, "environment.type = %s # %s\n",
 			effective.Environment.Type,
 			stringSource(effective.Environment.Type, defaultEnv.Type, effective.Environment.TypeSource))
-		fmt.Printf("environment.command_timeout = %d # %s\n",
+		fmt.Fprintf(&buf, "environment.command_timeout = %d # %s\n",
 			effective.Environment.CommandTimeout,
 			intSource(effective.Environment.CommandTimeout, defaultEnv.CommandTimeout, effective.Environment.CommandTimeoutSource))
-		fmt.Printf("environment.cwd = %s # %s\n",
+		fmt.Fprintf(&buf, "environment.cwd = %s # %s\n",
 			effective.Environment.CWD,
 			stringSource(effective.Environment.CWD, defaultEnv.CWD, effective.Environment.CWDSource))
-		fmt.Printf("environment.max_command_output_bytes = %d # %s\n",
+		fmt.Fprintf(&buf, "environment.max_command_output_bytes = %d # %s\n",
 			effective.Environment.MaxCommandOutputBytes,
 			intSource(effective.Environment.MaxCommandOutputBytes, defaultEnv.MaxCommandOutputBytes, effective.Environment.MaxCommandOutputBytesSource))
 	}
 
 	// --- Providers ---
-	for name, prov := range effective.Providers {
+	providerNames := make([]string, 0, len(effective.Providers))
+	for n := range effective.Providers {
+		providerNames = append(providerNames, n)
+	}
+	sort.Strings(providerNames)
+	for _, name := range providerNames {
+		prov := effective.Providers[name]
 		defaultBaseURL := ""
 		defaultAPIKey := ""
 		defaultEndpoint := ""
@@ -357,13 +365,13 @@ func printConfigWithSources(effective, defaults llm.Config, showFull bool) {
 			defaultAPIKey = defProv.APIKey
 			defaultEndpoint = defProv.Endpoint
 		}
-		fmt.Printf("providers.%s.base_url = %s # %s\n",
+		fmt.Fprintf(&buf, "providers.%s.base_url = %s # %s\n",
 			name, prov.BaseURL,
 			stringSource(prov.BaseURL, defaultBaseURL, prov.BaseURLSource))
-		fmt.Printf("providers.%s.api_key = %s # %s\n",
+		fmt.Fprintf(&buf, "providers.%s.api_key = %s # %s\n",
 			name, prov.APIKey,
 			stringSource(prov.APIKey, defaultAPIKey, prov.APIKeySource))
-		fmt.Printf("providers.%s.endpoint = %s # %s\n",
+		fmt.Fprintf(&buf, "providers.%s.endpoint = %s # %s\n",
 			name, prov.Endpoint,
 			stringSource(prov.Endpoint, defaultEndpoint, prov.EndpointSource))
 	}
@@ -376,49 +384,55 @@ func printConfigWithSources(effective, defaults llm.Config, showFull bool) {
 	defaultsAnswerTag := defaults.AnswerTag
 	defaultsTag := defaults.Tag
 	defaultsTagFormat := defaults.EnableTagFormat
-	fmt.Printf("verbose = %t # %s\n", effective.Verbose, boolSource(effective.Verbose, defaultsVerbose, effective.VerboseSource))
-	fmt.Printf("persist_tmp_data = %t # %s\n", effective.PersistTmpData, boolSource(effective.PersistTmpData, defaultsPersistTmp, effective.PersistTmpDataSource))
-	fmt.Printf("dry_run = %t # %s\n", effective.DryRun, boolSource(effective.DryRun, defaultsDryRun, effective.DryRunSource))
-	fmt.Printf("shell_agent_enabled = %t # %s\n", effective.ShellAgentEnabled, boolSource(effective.ShellAgentEnabled, defaultsShellEnabled, effective.ShellAgentEnabledSource))
-	fmt.Printf("answer_tag = %s # %s\n", effective.AnswerTag, stringSource(effective.AnswerTag, defaultsAnswerTag, effective.AnswerTagSource))
-	fmt.Printf("tag = %s # %s\n", effective.Tag, stringSource(effective.Tag, defaultsTag, effective.TagSource))
-	fmt.Printf("enable_tag_format = %t # %s\n", effective.EnableTagFormat, boolSource(effective.EnableTagFormat, defaultsTagFormat, effective.EnableTagFormatSource))
-	fmt.Printf("answer_model = %s # %s\n", effective.AnswerModel, stringSource(effective.AnswerModel, defaults.AnswerModel, effective.AnswerModelSource))
-	fmt.Printf("file_discovery_model = %s # %s\n", effective.FileDiscoveryModel, stringSource(effective.FileDiscoveryModel, defaults.FileDiscoveryModel, effective.FileDiscoveryModelSource))
-	fmt.Printf("shell_agent_model = %s # %s\n", effective.ShellAgentModel, stringSource(effective.ShellAgentModel, defaults.ShellAgentModel, effective.ShellAgentModelSource))
+	fmt.Fprintf(&buf, "verbose = %t # %s\n", effective.Verbose, boolSource(effective.Verbose, defaultsVerbose, effective.VerboseSource))
+	fmt.Fprintf(&buf, "persist_tmp_data = %t # %s\n", effective.PersistTmpData, boolSource(effective.PersistTmpData, defaultsPersistTmp, effective.PersistTmpDataSource))
+	fmt.Fprintf(&buf, "dry_run = %t # %s\n", effective.DryRun, boolSource(effective.DryRun, defaultsDryRun, effective.DryRunSource))
+	fmt.Fprintf(&buf, "shell_agent_enabled = %t # %s\n", effective.ShellAgentEnabled, boolSource(effective.ShellAgentEnabled, defaultsShellEnabled, effective.ShellAgentEnabledSource))
+	fmt.Fprintf(&buf, "answer_tag = %s # %s\n", effective.AnswerTag, stringSource(effective.AnswerTag, defaultsAnswerTag, effective.AnswerTagSource))
+	fmt.Fprintf(&buf, "tag = %s # %s\n", effective.Tag, stringSource(effective.Tag, defaultsTag, effective.TagSource))
+	fmt.Fprintf(&buf, "enable_tag_format = %t # %s\n", effective.EnableTagFormat, boolSource(effective.EnableTagFormat, defaultsTagFormat, effective.EnableTagFormatSource))
+	fmt.Fprintf(&buf, "answer_model = %s # %s\n", effective.AnswerModel, stringSource(effective.AnswerModel, defaults.AnswerModel, effective.AnswerModelSource))
+	fmt.Fprintf(&buf, "file_discovery_model = %s # %s\n", effective.FileDiscoveryModel, stringSource(effective.FileDiscoveryModel, defaults.FileDiscoveryModel, effective.FileDiscoveryModelSource))
+	fmt.Fprintf(&buf, "shell_agent_model = %s # %s\n", effective.ShellAgentModel, stringSource(effective.ShellAgentModel, defaults.ShellAgentModel, effective.ShellAgentModelSource))
 
 	if showFull {
-		fmt.Printf("final_file = %s # %s\n", effective.FinalFile, stringSource(effective.FinalFile, defaults.FinalFile, effective.FinalFileSource))
-		fmt.Printf("transcript_file = %s # %s\n", effective.TranscriptFile, stringSource(effective.TranscriptFile, defaults.TranscriptFile, effective.TranscriptFileSource))
-		fmt.Printf("file_discovery_trajectory = %s # %s\n", effective.FileDiscoveryTrajectory, stringSource(effective.FileDiscoveryTrajectory, defaults.FileDiscoveryTrajectory, effective.FileDiscoveryTrajectorySource))
-		fmt.Printf("file_discovery_output_dir = %s # %s\n", effective.FileDiscoveryOutputDir, stringSource(effective.FileDiscoveryOutputDir, defaults.FileDiscoveryOutputDir, effective.FileDiscoveryOutputDirSource))
+		fmt.Fprintf(&buf, "final_file = %s # %s\n", effective.FinalFile, stringSource(effective.FinalFile, defaults.FinalFile, effective.FinalFileSource))
+		fmt.Fprintf(&buf, "transcript_file = %s # %s\n", effective.TranscriptFile, stringSource(effective.TranscriptFile, defaults.TranscriptFile, effective.TranscriptFileSource))
+		fmt.Fprintf(&buf, "file_discovery_trajectory = %s # %s\n", effective.FileDiscoveryTrajectory, stringSource(effective.FileDiscoveryTrajectory, defaults.FileDiscoveryTrajectory, effective.FileDiscoveryTrajectorySource))
+		fmt.Fprintf(&buf, "file_discovery_output_dir = %s # %s\n", effective.FileDiscoveryOutputDir, stringSource(effective.FileDiscoveryOutputDir, defaults.FileDiscoveryOutputDir, effective.FileDiscoveryOutputDirSource))
 		if effective.Trajectory != nil {
 			defaultTraj := defaults.Trajectory
 			if defaultTraj == nil {
 				defaultTraj = &llm.TrajectoryConfig{}
 			}
-			fmt.Printf("trajectory.enabled = %t # %s\n", effective.Trajectory.Enabled, boolSource(effective.Trajectory.Enabled, defaultTraj.Enabled, effective.Trajectory.EnabledSource))
-			fmt.Printf("trajectory.file = %s # %s\n", effective.Trajectory.File, stringSource(effective.Trajectory.File, defaultTraj.File, effective.Trajectory.FileSource))
-			fmt.Printf("trajectory.verbose_llm = %t # %s\n", effective.Trajectory.VerboseLLM, boolSource(effective.Trajectory.VerboseLLM, defaultTraj.VerboseLLM, effective.Trajectory.VerboseLLMSource))
-			fmt.Printf("trajectory.stream_tokens = %t # %s\n", effective.Trajectory.StreamTokens, boolSource(effective.Trajectory.StreamTokens, defaultTraj.StreamTokens, effective.Trajectory.StreamTokensSource))
-			fmt.Printf("trajectory.excerpt = %d # %s\n", effective.Trajectory.Excerpt, intSource(effective.Trajectory.Excerpt, defaultTraj.Excerpt, effective.Trajectory.ExcerptSource))
-			fmt.Printf("trajectory.omit_repo_root = %t # %s\n", effective.Trajectory.OmitRepoRoot, boolSource(effective.Trajectory.OmitRepoRoot, defaultTraj.OmitRepoRoot, effective.Trajectory.OmitRepoRootSource))
+			fmt.Fprintf(&buf, "trajectory.enabled = %t # %s\n", effective.Trajectory.Enabled, boolSource(effective.Trajectory.Enabled, defaultTraj.Enabled, effective.Trajectory.EnabledSource))
+			fmt.Fprintf(&buf, "trajectory.file = %s # %s\n", effective.Trajectory.File, stringSource(effective.Trajectory.File, defaultTraj.File, effective.Trajectory.FileSource))
+			fmt.Fprintf(&buf, "trajectory.verbose_llm = %t # %s\n", effective.Trajectory.VerboseLLM, boolSource(effective.Trajectory.VerboseLLM, defaultTraj.VerboseLLM, effective.Trajectory.VerboseLLMSource))
+			fmt.Fprintf(&buf, "trajectory.stream_tokens = %t # %s\n", effective.Trajectory.StreamTokens, boolSource(effective.Trajectory.StreamTokens, defaultTraj.StreamTokens, effective.Trajectory.StreamTokensSource))
+			fmt.Fprintf(&buf, "trajectory.excerpt = %d # %s\n", effective.Trajectory.Excerpt, intSource(effective.Trajectory.Excerpt, defaultTraj.Excerpt, effective.Trajectory.ExcerptSource))
+			fmt.Fprintf(&buf, "trajectory.omit_repo_root = %t # %s\n", effective.Trajectory.OmitRepoRoot, boolSource(effective.Trajectory.OmitRepoRoot, defaultTraj.OmitRepoRoot, effective.Trajectory.OmitRepoRootSource))
 		}
 	}
 
 	// --- Models ---
 
-	for name, model := range effective.Models {
+	modelNames := make([]string, 0, len(effective.Models))
+	for n := range effective.Models {
+		modelNames = append(modelNames, n)
+	}
+	sort.Strings(modelNames)
+	for _, name := range modelNames {
+		model := effective.Models[name]
 		defaultProvider := ""
 		defaultModel := ""
 		if defModel, ok := defaults.Models[name]; ok {
 			defaultProvider = defModel.Provider
 			defaultModel = defModel.Model
 		}
-		fmt.Printf("models.%s.provider = %s # %s\n",
+		fmt.Fprintf(&buf, "models.%s.provider = %s # %s\n",
 			name, model.Provider,
 			stringSource(model.Provider, defaultProvider, model.ProviderSource))
-		fmt.Printf("models.%s.model = %s # %s\n",
+		fmt.Fprintf(&buf, "models.%s.model = %s # %s\n",
 			name, model.Model,
 			stringSource(model.Model, defaultModel, model.ModelSource))
 
@@ -430,12 +444,14 @@ func printConfigWithSources(effective, defaults llm.Config, showFull bool) {
 					defaultVal = defaults.Models[name].Params[k]
 				}
 				source := paramValueSource(v, defaultVal, aliasInDefaults, effective.ModelSources[name])
-				fmt.Printf("models.%s.params.%s = %s # %s\n",
+				fmt.Fprintf(&buf, "models.%s.params.%s = %s # %s\n",
 					name, k, formatParamValue(v),
 					source)
 			}
 		}
 	}
+
+	fmt.Print(buf.String())
 }
 
 // stringSource returns "config.toml" when hasFile is true and the effective
