@@ -245,7 +245,9 @@ func handleConfigShowCommand(args []string) int {
 	var showFull bool
 	fs := pflag.NewFlagSet("mct-agent config show", pflag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
+	var showVerbose bool
 	fs.BoolVarP(&showFull, "full", "f", false, "Show all configuration settings including obscure ones (trajectory, file paths, etc.)")
+	fs.BoolVar(&showVerbose, "verbose", false, "Enable verbose mode (for testing source=flag)")
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: mct-agent config show [--full]\n\n")
 		fmt.Fprintln(os.Stderr, "Print the effective configuration with source annotations showing")
@@ -271,7 +273,12 @@ func handleConfigShowCommand(args []string) int {
 			return 1
 		}
 	}
-	effective := llm.MergeConfig(defaults, fileConfig, llm.Config{})
+	flagOverrides := llm.Config{}
+	if showVerbose {
+		flagOverrides.Verbose = true
+		flagOverrides.VerboseSource = llm.SourceFlag
+	}
+	effective := llm.MergeConfig(defaults, fileConfig, flagOverrides)
 	printConfigWithSources(effective, defaults, showFull)
 	return 0
 }
@@ -293,6 +300,15 @@ type aliasEntry struct {
 	name   string
 	source string
 	keys   []configEntry
+}
+
+
+// maskAPIKey masks an API key, showing only "********" if non-empty.
+func maskAPIKey(key string) string {
+	if key == "" {
+		return ""
+	}
+	return "********"
 }
 
 // sourceLabel converts a FieldSource to a human-readable label.
@@ -330,9 +346,6 @@ func renderScalarSection(buf *strings.Builder, title, desc string, entries []con
 // alias prints a [name]  (source) header and its keys with the dotted prefix
 // stripped.
 func renderAliasSection(buf *strings.Builder, title, desc string, aliases []aliasEntry) {
-	if len(aliases) == 0 {
-		return
-	}
 	maxKeyLen := 0
 	for _, a := range aliases {
 		for _, k := range a.keys {
@@ -367,7 +380,7 @@ func printConfigWithSources(effective, defaults llm.Config, showFull bool) {
 		label := sourceLabel(effective.ProviderSources[name])
 		keys := []configEntry{
 			{key: "base_url", value: prov.BaseURL},
-			{key: "api_key", value: prov.APIKey},
+			{key: "api_key", value: maskAPIKey(prov.APIKey)},
 			{key: "endpoint", value: prov.Endpoint},
 		}
 		providerAliases = append(providerAliases, aliasEntry{name: name, source: label, keys: keys})
