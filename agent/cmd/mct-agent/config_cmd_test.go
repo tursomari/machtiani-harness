@@ -358,7 +358,7 @@ func TestConfigShowCommand_NoConfig(t *testing.T) {
 	if !strings.Contains(stdout, "Step budget and finalize window") {
 		t.Error("missing Shell Agent description")
 	}
-	if !strings.Contains(stdout, "Execution sandbox settings") {
+	if !strings.Contains(stdout, "Execution environment and workspace settings") {
 		t.Error("missing Environment description")
 	}
 	if !strings.Contains(stdout, "Top-level defaults and flags") {

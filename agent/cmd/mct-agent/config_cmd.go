@@ -452,7 +452,7 @@ func printConfigWithSources(effective, defaults llm.Config, showFull bool) {
 			{key: "environment.max_command_output_bytes", value: fmt.Sprintf("%d", effective.Environment.MaxCommandOutputBytes), source: sourceLabel(effective.Environment.MaxCommandOutputBytesSource)},
 		}
 	}
-	renderScalarSection(&buf, "Environment", "Execution sandbox settings", envEntries)
+	renderScalarSection(&buf, "Environment", "Execution environment and workspace settings", envEntries)
 
 	// --- General ---
 	generalEntries := []configEntry{
