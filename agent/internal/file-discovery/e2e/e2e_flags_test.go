@@ -3,6 +3,7 @@ package e2e
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -11,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	cfgpkg "github.com/tursomari/machtiani/agent/internal/file-discovery/internal/config"
 )
@@ -20,7 +22,7 @@ func buildBinary(t *testing.T, tags ...string) string {
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("go toolchain not available")
 	}
-	args := []string{"build", "-o"}
+	args := []string{"build", "-buildvcs=false", "-o"}
 	tmpDir := t.TempDir()
 	bin := filepath.Join(tmpDir, "file-discovery")
 	if runtime.GOOS == "windows" {
@@ -31,7 +33,9 @@ func buildBinary(t *testing.T, tags ...string) string {
 		args = append(args, "-tags", strings.Join(tags, ","))
 	}
 	args = append(args, "./cmd/file-discovery")
-	cmd := exec.Command("go", args...)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "go", args...)
 	// Build from repo root (this test runs from ./e2e)
 	cwd, _ := os.Getwd()
 	cmd.Dir = filepath.Dir(cwd)
@@ -80,12 +84,15 @@ type runResult struct {
 
 func runBin(t *testing.T, bin, cwd string, args []string, env []string) runResult {
 	t.Helper()
-	cmd := exec.Command(bin, args...)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = cwd
 	cmd.Env = env
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
+	cmd.Stdin = bytes.NewReader(nil)
 	err := cmd.Run()
 	code := 0
 	if err != nil {

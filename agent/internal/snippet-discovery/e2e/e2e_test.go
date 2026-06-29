@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -9,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 type runResult struct {
@@ -22,7 +24,7 @@ func buildBinary(t *testing.T, tags ...string) string {
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("go toolchain not available")
 	}
-	args := []string{"build", "-o"}
+	args := []string{"build", "-buildvcs=false", "-o"}
 	tmpDir := t.TempDir()
 	bin := filepath.Join(tmpDir, "snippet-discovery")
 	if runtime.GOOS == "windows" {
@@ -33,7 +35,9 @@ func buildBinary(t *testing.T, tags ...string) string {
 		args = append(args, "-tags", strings.Join(tags, ","))
 	}
 	args = append(args, "./cmd/snippet-discovery")
-	cmd := exec.Command("go", args...)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "go", args...)
 	cwd, _ := os.Getwd()
 	cmd.Dir = filepath.Dir(cwd)
 	cmd.Env = append(os.Environ(), "GOCACHE="+goCacheDir(tmpDir))
@@ -53,12 +57,15 @@ func goCacheDir(fallbackRoot string) string {
 
 func runBin(t *testing.T, bin, cwd string, args []string, env []string) runResult {
 	t.Helper()
-	cmd := exec.Command(bin, args...)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = cwd
 	cmd.Env = env
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
+	cmd.Stdin = bytes.NewReader(nil)
 	err := cmd.Run()
 	code := 0
 	if err != nil {

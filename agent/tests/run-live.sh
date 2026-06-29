@@ -257,6 +257,8 @@ class Handler(BaseHTTPRequestHandler):
             counts["last_plan_content"] = content
             if "Use the safer fix that preserves behavior." in content:
                 reply = "Decision: answer_user\nFinalize: Proceed with the safer fix and summarize the chosen direction."
+            elif "planner prompt layers" in content:
+                reply = "Decision: answer_user\nFinalize: The planner prompt layers for code mode are organized with CORE_SAFETY_RULES, PLANNER_OPERATING_RULES, and REPO_MODE_GUIDANCE sections."
             else:
                 reply = "Decision: ask_worker"
         elif "You are generating the next Ask for mct." in content:
@@ -1632,7 +1634,7 @@ run_mode_prompt_layers_case() {
     HARNESS_STDIN_INPUT=$'c\n' run_happy_case "$case_id" 1 \
       "Explain how the planner prompt layers are organized for code mode." \
       "." \
-      1 \
+      0 \
       --mode code \
       --model "$stub_alias" \
       --orch-model "$stub_alias" \
@@ -3789,6 +3791,7 @@ declare -A TESTS=(
   ["test_code_resume_without_mode_no_forge"]="test_code_resume_without_mode_no_forge"
   ["test_finalize_reminder"]="test_finalize_reminder"
   ["test_shell_agent_step_counter_resume"]="test_shell_agent_step_counter_resume"
+  ["test_mode_prompt_layers"]="run_mode_prompt_layers_case"
   ["test_enforce_early_commands"]="run_enforce_early_commands_case"
 )
 
