@@ -661,9 +661,11 @@ func replayShellAgentActions(display ui.SessionDisplay, diagWriter io.Writer, se
 		return nil
 	}
 
+	cmdRe := regexp.MustCompile(`<command-now>\s*(.*?)\s*</command-now>`)
+
 	cmdSteps := 0
 	for _, msg := range traj.Messages {
-		if msg.Role == "assistant" && strings.Contains(msg.Content, "<command") {
+		if msg.Role == "assistant" && len(cmdRe.FindStringSubmatch(msg.Content)) > 0 {
 			cmdSteps++
 		}
 	}
@@ -672,7 +674,6 @@ func replayShellAgentActions(display ui.SessionDisplay, diagWriter io.Writer, se
 		return nil
 	}
 
-	cmdRe := regexp.MustCompile(`<command-now>\s*(.*?)\s*</command-now>`)
 	cmdIndex := 0
 	for i := 0; i < len(traj.Messages); i++ {
 		msg := traj.Messages[i]
