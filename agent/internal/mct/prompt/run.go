@@ -176,6 +176,7 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 			return res, shellErr
 		}
 		shellAgentTrajectoryPath = result.TrajectoryPath
+		res.ShellAgentTrajectoryMessages = result.Trajectory.Messages
 		if result.Error != nil {
 			res.ShellAgentTrajectoryPath = shellAgentTrajectoryPath
 			return res, fmt.Errorf("shell-agent failed: %w", result.Error)
@@ -183,6 +184,7 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 		if result.ExitStatus != "Submitted" {
 			res.ShellAgentCancelled = true
 			res.ShellAgentTrajectoryPath = shellAgentTrajectoryPath
+			res.ShellAgentTrajectoryMessages = result.Trajectory.Messages
 			if result.ExitStatus == "" {
 				return res, nil
 			}
@@ -193,6 +195,7 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 		verbatimBlock := strings.TrimSpace(result.Answer)
 		if verbatimBlock == "" {
 			res.ShellAgentTrajectoryPath = shellAgentTrajectoryPath
+			res.ShellAgentTrajectoryMessages = result.Trajectory.Messages
 			return res, fmt.Errorf("shell-agent submitted an empty final answer")
 		}
 		shellAgentUsed = true

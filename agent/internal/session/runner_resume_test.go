@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -358,14 +357,14 @@ func TestConversationJSONUpdatedAfterResume(t *testing.T) {
 	}
 }
 
-// streamActionRecorder wraps mockDisplay and captures StreamAction calls.
+// streamActionRecorder wraps mockDisplay and captures Notify calls.
 type streamActionRecorder struct {
 	mockDisplay
-	streamActions []string
+	notifications []string
 }
 
-func (r *streamActionRecorder) StreamAction(line string) {
-	r.streamActions = append(r.streamActions, line)
+func (r *streamActionRecorder) Notify(line string) {
+	r.notifications = append(r.notifications, line)
 }
 
 // TestReplayShellAgentActions verifies that replayShellAgentActions reads
@@ -383,9 +382,9 @@ func TestReplayShellAgentActions(t *testing.T) {
 		Messages []minisweagent.Message `json:"messages"`
 	}{
 		Messages: []minisweagent.Message{
-			{Role: "assistant", Content: "<command>echo step1</command>"},
+			{Role: "assistant", Content: "<command-now>echo step1</command-now>"},
 			{Role: "tool", Content: "step1 output"},
-			{Role: "assistant", Content: "<command>echo step2</command>"},
+			{Role: "assistant", Content: "<command-now>echo step2</command-now>"},
 		},
 	}
 
@@ -398,23 +397,23 @@ func TestReplayShellAgentActions(t *testing.T) {
 		t.Fatalf("failed to save resume state: %v", err)
 	}
 
-	// Create a mockDisplay and replay.
-	mock := &mockDisplay{}
-	_ = replayShellAgentActions(mock, io.Discard, sessionID, 1)
+	// Create a streamActionRecorder and replay.
+	recorder := &streamActionRecorder{}
+	_ = replayShellAgentActions(recorder, io.Discard, sessionID, 1)
 
-	// Verify: at least 2 stream actions (the two assistant command steps).
-	if len(mock.streamActions) < 2 {
-		t.Fatalf("expected at least 2 stream actions, got %d", len(mock.streamActions))
+	// Verify: exactly 2 notify calls (one per command step).
+	if len(recorder.notifications) != 2 {
+		t.Fatalf("expected 2 notify calls, got %d", len(recorder.notifications))
 	}
 
-	// Assert ordered command content. replayShellAgentActions streams both
-	// assistant commands and tool output, so the second command lands at
-	// index2 after the tool output at index1.
-	if !strings.Contains(mock.streamActions[0], "echo step1") {
-		t.Errorf("expected streamActions[0] to contain 'echo step1', got: %s", mock.streamActions[0])
+	// Assert ordered command content with the new Notify format.
+	expected0 := "[replay 1/2] echo step1 (1 lines output)"
+	if recorder.notifications[0] != expected0 {
+		t.Errorf("expected notifications[0] = %q, got: %q", expected0, recorder.notifications[0])
 	}
-	if !strings.Contains(mock.streamActions[2], "echo step2") {
-		t.Errorf("expected streamActions[2] to contain 'echo step2', got: %s", mock.streamActions[2])
+	expected1 := "[replay 2/2] echo step2 (0 lines output)"
+	if recorder.notifications[1] != expected1 {
+		t.Errorf("expected notifications[1] = %q, got: %q", expected1, recorder.notifications[1])
 	}
 }
 
@@ -427,8 +426,8 @@ func TestReplayShellAgentActionsMissingFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected nil error for missing file, got: %v", err)
 	}
-	if len(recorder.streamActions) != 0 {
-		t.Fatalf("expected 0 StreamAction calls for missing file, got %d", len(recorder.streamActions))
+	if len(recorder.notifications) != 0 {
+		t.Fatalf("expected 0 Notify calls for missing file, got %d", len(recorder.notifications))
 	}
 }
 
@@ -461,8 +460,8 @@ func TestReplayShellAgentActionsNoCommands(t *testing.T) {
 	recorder := &streamActionRecorder{}
 	_ = replayShellAgentActions(recorder, io.Discard, sessionID, 0)
 
-	if len(recorder.streamActions) != 0 {
-		t.Fatalf("expected 0 StreamAction calls for trajectory without commands, got %d", len(recorder.streamActions))
+	if len(recorder.notifications) != 0 {
+		t.Fatalf("expected 0 Notify calls for trajectory without commands, got %d", len(recorder.notifications))
 	}
 }
 
