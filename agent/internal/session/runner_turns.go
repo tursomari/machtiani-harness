@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/tursomari/machtiani/agent/internal/llm"
@@ -638,9 +639,7 @@ func (tc *TurnContext) buildShellAgentRequest(task string, sessionID string, ver
 	return req, nil
 }
 
-// replayShellAgentActions replays shell-agent command steps from a saved
-// resume file into the TUI display so the user sees what happened before
-// the interrupt when resuming.
+// replayShellAgentActions replays shell-agent command steps from a saved resume file into the TUI display as concise summary lines, one per prior command, showing the command string and output line count.
 func replayShellAgentActions(display ui.SessionDisplay, diagWriter io.Writer, sessionID string, step int) error {
 	resumePath := filepath.Join(os.TempDir(), sessionID+"-resume.json")
 
@@ -673,20 +672,38 @@ func replayShellAgentActions(display ui.SessionDisplay, diagWriter io.Writer, se
 		return nil
 	}
 
+	cmdRe := regexp.MustCompile(`<command-now>\s*(.*?)\s*</command-now>`)
 	cmdIndex := 0
-	for _, msg := range traj.Messages {
-		switch msg.Role {
-		case "assistant":
-			if strings.Contains(msg.Content, "<command") {
-				cmdIndex++
-				line := fmt.Sprintf("[shell step %d/%d cmd %d] %s", cmdIndex, cmdSteps, cmdIndex, strings.TrimSpace(msg.Content))
-				display.StreamAction(line)
+	for i := 0; i < len(traj.Messages); i++ {
+		msg := traj.Messages[i]
+		if msg.Role != "assistant" || !strings.Contains(msg.Content, "<command") {
+			continue
+		}
+		cmdIndex++
+		commandStr := ""
+		if matches := cmdRe.FindStringSubmatch(msg.Content); len(matches) >= 2 {
+			commandStr = matches[1]
+		}
+		if commandStr == "" {
+			commandStr = "(no command text)"
+		}
+		outputLines := 0
+		j := i + 1
+		for ; j < len(traj.Messages); j++ {
+			nxt := traj.Messages[j]
+			if nxt.Role == "assistant" && strings.Contains(nxt.Content, "<command") {
+				break
 			}
-		case "tool", "user":
-			if trimmed := strings.TrimSpace(msg.Content); trimmed != "" {
-				display.StreamAction(trimmed)
+			if nxt.Role == "tool" || nxt.Role == "user" {
+				for _, line := range strings.Split(nxt.Content, "\n") {
+					if strings.TrimSpace(line) != "" {
+						outputLines++
+					}
+				}
 			}
 		}
+		i = j - 1
+		display.Notify(fmt.Sprintf("[replay %d/%d] %s (%d lines output)", cmdIndex, cmdSteps, commandStr, outputLines))
 	}
 
 	return nil
