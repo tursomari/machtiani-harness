@@ -450,7 +450,6 @@ func (c *conversationRecorder) PreWriteTurn(step int, question string, shellAgen
 	}
 	c.conversation.ShellAgentResumable = true
 	c.conversation.ShellAgentTrajectoryPath = shellAgentTrajectoryPath
-	c.conversation.TurnsCompleted = step
 	c.conversation.Goal = c.conversationGoal
 	if c.loadedState != nil {
 		c.conversation.ShellAgentInterruptStep = c.loadedState.ShellAgentInterruptStep

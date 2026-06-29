@@ -193,7 +193,6 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 	if env.orchPromptOpts != nil {
 		orchPromptOpts = *env.orchPromptOpts
 	}
-	stream := env.display.BeginPrompt(question, orchPromptOpts)
 	if env.isResumingTurn {
 		env.display.Notify(fmt.Sprintf("[resume] shell-agent session is resumable, step %d", env.step))
 		replayShellAgentActions(env.display, env.diagWriter, env.sessionID, env.step)
@@ -211,6 +210,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 			}
 		}
 	}
+	stream := env.display.BeginPrompt(question, orchPromptOpts)
 	if runSplitShell {
 		runNoShell := true
 
@@ -475,6 +475,19 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 	if result.ShellAgentCancelled {
 		env.recorder.SetShellAgentMetadata(result.ShellAgentTrajectoryPath, true)
 		env.turnInfo["shell_agent_cancelled"] = true
+		if env.isResumingTurn {
+			env.display.Notify("[resume] shell-agent interrupted again; assertion deferred")
+		}
+	}
+	if env.isResumingTurn {
+		resumedMsgs := result.ShellAgentTrajectoryMessages
+		err := verifyShellAgentResume(interruptedMsgs, resumedMsgs)
+		if err != nil {
+			msg := fmt.Sprintf("[resume] ASSERTION FAILED: %v", err)
+			env.display.Notify(msg)
+			panic(msg)
+		}
+		env.display.Notify(fmt.Sprintf("[resume] assertion passed: %d messages restored, %d new messages", len(interruptedMsgs), len(resumedMsgs)-len(interruptedMsgs)))
 	}
 
 	savedPath := strings.TrimSpace(result.SavedPath)
