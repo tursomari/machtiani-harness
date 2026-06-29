@@ -677,7 +677,7 @@ func replayShellAgentActions(display ui.SessionDisplay, diagWriter io.Writer, se
 	cmdIndex := 0
 	for i := 0; i < len(traj.Messages); i++ {
 		msg := traj.Messages[i]
-		if msg.Role != "assistant" || !strings.Contains(msg.Content, "<command") {
+		if msg.Role != "assistant" || len(cmdRe.FindStringSubmatch(msg.Content)) == 0 {
 			continue
 		}
 		cmdIndex++
