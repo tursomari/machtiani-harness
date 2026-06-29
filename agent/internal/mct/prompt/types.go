@@ -2,6 +2,7 @@ package prompt
 
 import (
 	"github.com/tursomari/machtiani/agent/internal/llm"
+	"github.com/tursomari/machtiani/agent/internal/shell-agent/pkg/minisweagent"
 	shellagent "github.com/tursomari/machtiani/agent/internal/shell-agent"
 )
 
@@ -73,5 +74,6 @@ type Result struct {
 	FileDiscoveryRan bool
 	ShellAgentUsed            bool
 	ShellAgentCancelled       bool   // ShellAgentCancelled indicates the shell-agent run was interrupted or did not complete normally.
-	ShellAgentTrajectoryPath  string // ShellAgentTrajectoryPath is the filesystem path to the shell-agent session trajectory file (trajectory.json).
+	ShellAgentTrajectoryPath    string             // ShellAgentTrajectoryPath is the filesystem path to the shell-agent session trajectory file (trajectory.json).
+	ShellAgentTrajectoryMessages []minisweagent.Message `json:"-,"`
 }

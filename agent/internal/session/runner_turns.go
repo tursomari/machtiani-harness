@@ -195,7 +195,21 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 	}
 	stream := env.display.BeginPrompt(question, orchPromptOpts)
 	if env.isResumingTurn {
+		env.display.Notify(fmt.Sprintf("[resume] shell-agent session is resumable, step %d", env.step))
 		replayShellAgentActions(env.display, env.diagWriter, env.sessionID, env.step)
+	}
+	var interruptedMsgs []minisweagent.Message
+	if env.isResumingTurn {
+		resumePath := filepath.Join(os.TempDir(), env.sessionID+"-resume.json")
+		data, err := os.ReadFile(resumePath)
+		if err == nil {
+			var traj struct {
+				Messages []minisweagent.Message `json:"messages"`
+			}
+			if err := json.Unmarshal(data, &traj); err == nil {
+				interruptedMsgs = traj.Messages
+			}
+		}
 	}
 	if runSplitShell {
 		runNoShell := true
@@ -315,6 +329,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 		if shellDone != nil {
 			<-shellDone
 		}
+		result.ShellAgentTrajectoryMessages = shellResult.TrajectoryMessages
 		if shellErr != nil {
 			env.turnInfo["shell_agent_error"] = trimTo(shellErr.Error(), 200)
 		}
@@ -327,10 +342,24 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 			if _, err := os.Stat(resumePath); err == nil {
 				env.recorder.SetShellAgentMetadata(shellResult.TrajectoryPath, true)
 			}
-		} else if strings.TrimSpace(shellResult.TrajectoryPath) != "" {
+			if env.isResumingTurn {
+				env.display.Notify("[resume] shell-agent interrupted again; assertion deferred")
+			}
+		} else {
+		if strings.TrimSpace(shellResult.TrajectoryPath) != "" {
 			env.turnInfo["shell_agent_trajectory"] = trimTo(shellResult.TrajectoryPath, 200)
 		}
-
+		if env.isResumingTurn {
+			resumedMsgs := result.ShellAgentTrajectoryMessages
+			err := verifyShellAgentResume(interruptedMsgs, resumedMsgs)
+			if err != nil {
+				msg := fmt.Sprintf("[resume] ASSERTION FAILED: %v", err)
+				env.display.Notify(msg)
+				panic(msg)
+			}
+			env.display.Notify(fmt.Sprintf("[resume] assertion passed: %d messages restored, %d new messages", len(interruptedMsgs), len(resumedMsgs)-len(interruptedMsgs)))
+		}
+	}
 		savedPath := ""
 		lastAnswer := ""
 		var retrieved []string
@@ -647,5 +676,23 @@ func replayShellAgentActions(display ui.SessionDisplay, diagWriter io.Writer, se
 		}
 	}
 
+	return nil
+}
+
+func verifyShellAgentResume(interruptedMsgs, resumedMsgs []minisweagent.Message) error {
+	if len(interruptedMsgs) == 0 {
+		return fmt.Errorf("interrupted message history is empty")
+	}
+	if len(resumedMsgs) <= len(interruptedMsgs) {
+		return fmt.Errorf("no new messages added after resume: interrupted=%d resumed=%d", len(interruptedMsgs), len(resumedMsgs))
+	}
+	for i := range interruptedMsgs {
+		if interruptedMsgs[i].Role != resumedMsgs[i].Role {
+			return fmt.Errorf("message prefix mismatch at index %d: expected role %q, got %q", i, interruptedMsgs[i].Role, resumedMsgs[i].Role)
+		}
+		if interruptedMsgs[i].Content != resumedMsgs[i].Content {
+			return fmt.Errorf("message prefix mismatch at index %d: content differs", i)
+		}
+	}
 	return nil
 }

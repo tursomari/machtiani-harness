@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/tursomari/machtiani/agent/internal/shell-agent/pkg/minisweagent"
 	shellagent "github.com/tursomari/machtiani/agent/internal/shell-agent"
 )
 
@@ -14,8 +15,9 @@ type ShellAgentOnlyResult struct {
 	Summary        string
 	Context        string
 	Verbatim       string
-	TrajectoryPath string
-	Cancelled      bool
+	TrajectoryPath     string
+	TrajectoryMessages []minisweagent.Message `json:"trajectory_messages,omitempty"`
+	Cancelled          bool
 }
 
 // RunShellAgentOnly runs the shell agent on the prompt and returns its output
@@ -63,6 +65,7 @@ func RunShellAgentOnly(ctx context.Context, opts RunOptions, req shellagent.Requ
 		return res, err
 	}
 	res.TrajectoryPath = result.TrajectoryPath
+	res.TrajectoryMessages = result.Trajectory.Messages
 	if result.Error != nil {
 		return res, fmt.Errorf("shell-agent failed: %w", result.Error)
 	}
