@@ -261,7 +261,7 @@ class Handler(BaseHTTPRequestHandler):
             reply = "Stub response."
             if "Decision menu (choose exactly one)" in match_content:
                 counts["plan"] += 1
-                counts["last_plan_content"] = last_user_content if last_user_content is not None else ""
+                counts["last_plan_content"] = "\n".join(m.get("content", "") for m in messages)
                 if "Use the safer fix that preserves behavior." in match_content:
                     reply = "Decision: answer_user\nFinalize: Proceed with the safer fix and summarize the chosen direction."
                 elif "planner prompt layers" in match_content:
