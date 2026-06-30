@@ -1638,7 +1638,7 @@ run_mode_prompt_layers_case() {
   (
     export MACHTIANI_CONFIG="$stub_config"
     COMMON_AGENT_ARGS=()
-    HARNESS_STDIN_INPUT=$'c\n' run_happy_case "$case_id" 1 \
+    HARNESS_STDIN_INPUT=$'c\n' run_happy_case "$case_id" 2 \
       "Explain how the planner prompt layers are organized for code mode." \
       "." \
       0 \
