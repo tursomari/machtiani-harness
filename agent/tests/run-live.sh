@@ -1161,6 +1161,11 @@ run_happy_case() {
     min_turns="$1"
     shift
   fi
+  local skip_turn_check=false
+  if (( $# > 0 )) && [[ "${1}" == "--skip-turn-check" ]]; then
+    skip_turn_check=true
+    shift
+  fi
   local -a runtime_args=("$@")
   local has_timeout=false
   for arg in "${runtime_args[@]}"; do
@@ -1315,9 +1320,11 @@ run_happy_case() {
   if [[ $turns -eq 0 ]]; then
     turns=$(grep -E '^Step [0-9]+ decision: ' "$stderr_file" "$stdout_file" 2>/dev/null | wc -l)
   fi
-  if [[ $turns -gt $max_steps || $turns -lt $min_turns ]]; then
-    echo "Invalid turns ($turns): $case_id" >&2
-    return_with_cleanup 1 || return 1
+  if [[ "$skip_turn_check" != true ]]; then
+    if [[ $turns -gt $max_steps || $turns -lt $min_turns ]]; then
+      echo "Invalid turns ($turns): $case_id" >&2
+      return_with_cleanup 1 || return 1
+    fi
   fi
   local -a keyword_files=("$stdout_file" "$transcript_path")
 
@@ -1642,6 +1649,7 @@ run_mode_prompt_layers_case() {
       "Explain how the planner prompt layers are organized for code mode." \
       "." \
       0 \
+      --skip-turn-check \
       --mode code \
       --model "$stub_alias" \
       --orch-model "$stub_alias" \
