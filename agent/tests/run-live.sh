@@ -265,7 +265,7 @@ class Handler(BaseHTTPRequestHandler):
                 if "Use the safer fix that preserves behavior." in match_content:
                     reply = "Decision: answer_user\nFinalize: Proceed with the safer fix and summarize the chosen direction."
                 elif "planner prompt layers" in match_content:
-                    reply = "Decision: answer_user\nFinalize: The planner prompt layers for code mode are organized with CORE_SAFETY_RULES, PLANNER_OPERATING_RULES, and REPO_MODE_GUIDANCE sections."
+                    reply = "Decision: answer_user\nReason: The planner prompt layers for code mode are organized with CORE_SAFETY_RULES, PLANNER_OPERATING_RULES, and REPO_MODE_GUIDANCE sections."
                 else:
                     reply = "Decision: ask_worker"
             elif "You are generating the next Ask for mct." in match_content:
