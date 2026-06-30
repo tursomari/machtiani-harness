@@ -291,6 +291,10 @@ func runSession(ctx context.Context, opts Options) Result {
 			envBootstrap.restore()
 		}
 	}()
+	if err := cleanupOrphanedSessionDirs(sessionTempRoot, cfg.verbose, diagWriter); err != nil {
+		fmt.Fprintf(diagWriter, "Warning: session cleanup: %v\n", err)
+	}
+
 	lock, lockErr := acquireSessionLock(sessionID, sessionTempRoot)
 	if lockErr != nil {
 		fmt.Fprintln(diagWriter, "Error acquiring session lock:", lockErr)
