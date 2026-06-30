@@ -208,6 +208,7 @@ start_llm_stub_server() {
 import json
 import sys
 import time
+import os
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 state_path = sys.argv[1]
@@ -249,58 +250,64 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         messages = data.get("messages", [])
-        content = "\n".join(m.get("content", "") for m in messages if isinstance(m, dict))
+        last_user_content = None
+        for m in messages:
+            if isinstance(m, dict) and m.get("role", "").lower() == "user":
+                last_user_content = m.get("content", "")
+        match_content = last_user_content if last_user_content is not None else "\n".join(m.get("content", "") for m in messages if isinstance(m, dict))
 
-        reply = "Stub response."
-        if "Decision menu (choose exactly one)" in content:
-            counts["plan"] += 1
-            counts["last_plan_content"] = content
-            if "Use the safer fix that preserves behavior." in content:
-                reply = "Decision: answer_user\nFinalize: Proceed with the safer fix and summarize the chosen direction."
-            elif "planner prompt layers" in content:
-                reply = "Decision: answer_user\nFinalize: The planner prompt layers for code mode are organized with CORE_SAFETY_RULES, PLANNER_OPERATING_RULES, and REPO_MODE_GUIDANCE sections."
+        reply = os.environ.get("STUB_FORCE_REPLY")
+        if reply is None:
+            reply = "Stub response."
+            if "Decision menu (choose exactly one)" in match_content:
+                counts["plan"] += 1
+                counts["last_plan_content"] = last_user_content if last_user_content is not None else ""
+                if "Use the safer fix that preserves behavior." in match_content:
+                    reply = "Decision: answer_user\nFinalize: Proceed with the safer fix and summarize the chosen direction."
+                elif "planner prompt layers" in match_content:
+                    reply = "Decision: answer_user\nFinalize: The planner prompt layers for code mode are organized with CORE_SAFETY_RULES, PLANNER_OPERATING_RULES, and REPO_MODE_GUIDANCE sections."
+                else:
+                    reply = "Decision: ask_worker"
+            elif "You are generating the next Ask for mct." in match_content:
+                counts["plan"] += 1
+                if "tradeoff I prefer" in match_content:
+                    reply = "Ask Mode: no-shell\nAsk: Ask the user whether they want the safer fix that preserves behavior or the faster fix that may slightly change behavior before you continue."
+                elif "Guardrail:" in match_content:
+                    reply = "Ask Mode: no-shell\nAsk: Summarize the staged planner menu flow."
+                else:
+                    reply = "Ask Mode: both\nAsk: Summarize the staged planner menu flow, then run `git diff --stat` and report the output."
+            elif "You are a guard that checks whether an ask mixes no-shell and shell actions." in match_content:
+                counts["mixed_monitor"] += 1
+                reply = "{\"is_mixed\":false,\"reason\":\"already split\",\"rewrite\":\"\"}"
+            elif "You are a guard that checks whether an ask is requesting file changes or patches." in match_content:
+                counts["monitor"] += 1
+                if counts["monitor"] == 1:
+                    reply = "{\"has_patch_intent\":true,\"reason\":\"mentions running git diff and could lead to patches\"}"
+                else:
+                    reply = "{\"has_patch_intent\":false,\"reason\":\"no patch intent\"}"
+            elif "You are a guard for user-directed asks." in match_content:
+                counts["user_directed_monitor"] += 1
+                if "Ask the user whether they want the safer fix" in match_content:
+                    reply = "{\"is_user_directed\":true,\"reason\":\"asks the user to choose the preferred tradeoff\"}"
+                else:
+                    reply = "{\"is_user_directed\":false,\"reason\":\"no user-owned authority boundary\"}"
+            elif "You are a purifier for flagged user-directed asks." in match_content:
+                counts["user_directed_purifier"] += 1
+                if "Ask the user whether they want the safer fix" in match_content:
+                    reply = "{\"should_suspend\":true,\"purified_question\":\"Do you want the safer fix that preserves behavior, or the faster fix that may slightly change behavior?\",\"context\":\"\",\"reason\":\"extracted the user-owned tradeoff\"}"
+                else:
+                    reply = "{\"should_suspend\":false,\"purified_question\":\"\",\"context\":\"\",\"reason\":\"no clean user-owned question\"}"
+            elif "You classify user requests for a developer assistant" in match_content:
+                counts["preflight"] += 1
+                reply = "content"
+            elif "You are the action-execution layer of the Machtiani shell agent." in match_content:
+                counts["shell_agent"] += 1
+                counts["last_shell_agent_content"] = match_content
+                if "You MUST use forge" in match_content:
+                    counts["shell_agent_code_mode"] += 1
+                reply = "<answer>\nStub shell-agent final answer.\n</answer>"
             else:
-                reply = "Decision: ask_worker"
-        elif "You are generating the next Ask for mct." in content:
-            counts["plan"] += 1
-            if "tradeoff I prefer" in content:
-                reply = "Ask Mode: no-shell\nAsk: Ask the user whether they want the safer fix that preserves behavior or the faster fix that may slightly change behavior before you continue."
-            elif "Guardrail:" in content:
-                reply = "Ask Mode: no-shell\nAsk: Summarize the staged planner menu flow."
-            else:
-                reply = "Ask Mode: both\nAsk: Summarize the staged planner menu flow, then run `git diff --stat` and report the output."
-        elif "You are a guard that checks whether an ask mixes no-shell and shell actions." in content:
-            counts["mixed_monitor"] += 1
-            reply = "{\"is_mixed\":false,\"reason\":\"already split\",\"rewrite\":\"\"}"
-        elif "You are a guard that checks whether an ask is requesting file changes or patches." in content:
-            counts["monitor"] += 1
-            if counts["monitor"] == 1:
-                reply = "{\"has_patch_intent\":true,\"reason\":\"mentions running git diff and could lead to patches\"}"
-            else:
-                reply = "{\"has_patch_intent\":false,\"reason\":\"no patch intent\"}"
-        elif "You are a guard for user-directed asks." in content:
-            counts["user_directed_monitor"] += 1
-            if "Ask the user whether they want the safer fix" in content:
-                reply = "{\"is_user_directed\":true,\"reason\":\"asks the user to choose the preferred tradeoff\"}"
-            else:
-                reply = "{\"is_user_directed\":false,\"reason\":\"no user-owned authority boundary\"}"
-        elif "You are a purifier for flagged user-directed asks." in content:
-            counts["user_directed_purifier"] += 1
-            if "Ask the user whether they want the safer fix" in content:
-                reply = "{\"should_suspend\":true,\"purified_question\":\"Do you want the safer fix that preserves behavior, or the faster fix that may slightly change behavior?\",\"context\":\"\",\"reason\":\"extracted the user-owned tradeoff\"}"
-            else:
-                reply = "{\"should_suspend\":false,\"purified_question\":\"\",\"context\":\"\",\"reason\":\"no clean user-owned question\"}"
-        elif "You classify user requests for a developer assistant" in content:
-            counts["preflight"] += 1
-            reply = "content"
-        elif "You are the action-execution layer of the Machtiani shell agent." in content:
-            counts["shell_agent"] += 1
-            counts["last_shell_agent_content"] = content
-            if "You MUST use forge" in content:
-                counts["shell_agent_code_mode"] += 1
-            reply = "<answer>\nStub shell-agent final answer.\n</answer>"
-        else:
-            counts["other"] += 1
+                counts["other"] += 1
 
         write_state()
         payload = {
@@ -2393,6 +2400,7 @@ run_enforce_early_commands_case() {
   set +e
   MACHTIANI_CONFIG="$stub_config" \
   MACHTIANI_SHELL_AGENT_ENFORCE_EARLY_COMMANDS=true \
+  STUB_FORCE_REPLY=ask_worker \
     timeout 120 "$MCT_AGENT" run \
       --max-turns 2 \
       \
@@ -2479,6 +2487,7 @@ PY
   set +e
   MACHTIANI_CONFIG="$stub_config" \
   MACHTIANI_SHELL_AGENT_ENFORCE_EARLY_COMMANDS=false \
+  STUB_FORCE_REPLY=ask_worker \
     timeout 120 "$MCT_AGENT" run \
       --max-turns 2 \
       \
@@ -2507,6 +2516,7 @@ PY
     return 1
   fi
 
+  unset STUB_FORCE_REPLY
   stop_llm_stub_server
   if [[ "${KEEP_TEST_CONFIG:-}" != "true" ]]; then
     rm -rf "$stub_dir"
