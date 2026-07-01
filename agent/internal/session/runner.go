@@ -679,7 +679,8 @@ func runSession(ctx context.Context, opts Options) Result {
 			}
 			turnInfo["resume_prompt"] = true
 		}
-		if resumableShellAgent && step == loadedState.TurnsCompleted+1 {
+		isResumingFromShellAgent := resumableShellAgent
+	if resumableShellAgent && step == loadedState.TurnsCompleted+1 {
 			recoveredQuestion := ExtractResumableWorkRequestQuestion(conv)
 			if recoveredQuestion != "" {
 				decision = planner.DecisionAskWorker
@@ -868,7 +869,7 @@ func runSession(ctx context.Context, opts Options) Result {
 			diagWriter:                  diagWriter,
 			hasNewInput:                 bootstrap.hasNewInput,
 			resumableShellAgentTrajectoryPath: bootstrap.resumableShellAgentTrajectoryPath,
-			isResumingTurn:              resumableShellAgent,
+			isResumingTurn:              isResumingFromShellAgent,
 			shellAgentInterruptStep:     bootstrap.shellAgentInterruptStep,
 			shellAgentStepLog:           bootstrap.shellAgentStepLog,
 			sessTelemetry:               sessTelemetry,
