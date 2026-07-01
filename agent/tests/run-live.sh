@@ -1252,12 +1252,14 @@ run_happy_case() {
   if [[ "$marker_checks" == true ]]; then
     if [[ -n "$harness_input" ]]; then
       MACHTIANI_TMP_ROOT="$scratch_root" \
+      MACHTIANI_SESSION_ID="$session_id" \
       MACHTIANI_SESSION_TEMP_ROOT="$session_temp_root" \
       MACHTIANI_SHELL_AGENT_MARKER_MAX_AGE="$marker_max_age" \
       MINISWE_FINAL_DIR="$marker_dir" \
         "${cmd[@]}" < <(printf '%b' "$harness_input") > "$stdout_file" 2> "$stderr_file"
     else
       MACHTIANI_TMP_ROOT="$scratch_root" \
+      MACHTIANI_SESSION_ID="$session_id" \
       MACHTIANI_SESSION_TEMP_ROOT="$session_temp_root" \
       MACHTIANI_SHELL_AGENT_MARKER_MAX_AGE="$marker_max_age" \
       MINISWE_FINAL_DIR="$marker_dir" \
@@ -1266,9 +1268,11 @@ run_happy_case() {
   else
     if [[ -n "$harness_input" ]]; then
       MACHTIANI_TMP_ROOT="$scratch_root" \
+      MACHTIANI_SESSION_ID="$session_id" \
       "${cmd[@]}" < <(printf '%b' "$harness_input") > "$stdout_file" 2> "$stderr_file"
     else
       MACHTIANI_TMP_ROOT="$scratch_root" \
+      MACHTIANI_SESSION_ID="$session_id" \
       "${cmd[@]}" > "$stdout_file" 2> "$stderr_file"
     fi
   fi
@@ -1280,12 +1284,7 @@ run_happy_case() {
     return_with_cleanup 1 || return 1
   fi
 
-  local agent_session
-  agent_session=$(grep -m1 '^Session:' "$stderr_file" | awk '{print $2}' || true)
-  if [[ -z "$agent_session" ]]; then
-    echo "Failed to parse session ID from stderr for $case_id" >&2
-    return_with_cleanup 1 || return 1
-  fi
+  local agent_session="$session_id"
 
   local sessions_root="$REPO_ROOT/.machtiani/sessions"
   local session_dir="$sessions_root/$agent_session"
@@ -1312,11 +1311,10 @@ run_happy_case() {
   cp -f "$transcript_path" "$out_dir/transcript-${session_id}.adoc"
 
   local turns
-  turns=$(awk 'BEGIN { c = 0 } /^== TURN / {
-      if ($3 ~ /^[0-9]+$/ && ($3 + 0) > 0) {
-        c++
-      }
-    } END { print c }' "$transcript_path")
+  turns=$(jq -r "select(.kind == \"agent.turn.start\") | .kind" "$session_dir/trajectory/agent.jsonl" 2>/dev/null | wc -l)
+  if [[ $turns -eq 0 ]]; then
+    turns=$(awk 'BEGIN { c = 0 } /^== TURN / { c++ } END { print c }' "$transcript_path")
+  fi
   if [[ $turns -eq 0 ]]; then
     turns=$(grep -E '^Step [0-9]+ decision: ' "$stderr_file" "$stdout_file" 2>/dev/null | wc -l)
   fi
@@ -3185,6 +3183,7 @@ PY
   pushd "$REPO_ROOT" >/dev/null
   set +e
   MACHTIANI_CONFIG="$local_config" \
+  MACHTIANI_SESSION_ID="$session_id" \
   timeout 600 "$MCT_AGENT" run \
     --max-turns 15 \
     --turn-timeout 300 \
@@ -3202,13 +3201,7 @@ PY
     return 1
   fi
 
-  local agent_session
-  agent_session=$(grep -m1 '^Session:' "$stderr_file" | awk '{print $2}' || true)
-  if [[ -z "$agent_session" ]]; then
-    echo "Failed to parse session ID from stderr for $case_id" >&2
-    rm -rf "$config_root"
-    return 1
-  fi
+  local agent_session="$session_id"
 
   local sessions_root="$REPO_ROOT/.machtiani/sessions"
   local session_dir="$sessions_root/$agent_session"
