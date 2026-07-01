@@ -326,6 +326,7 @@ func handleRunCommand(args []string) int {
 		APIKeyOverrides:         apiOverrides,
 		ProcessTimerManager:     globalTimerMgr,
 		ShellAgentInterruptStep: cfg.ShellAgentInterruptStep,
+		ShellAgentStepLog:      cfg.ShellAgentStepLog,
 		HasNewInput:            hasNewInput,
 	}
 	opts.Config.APIKeyOverrides = llm.CopyAPIKeyOverridesForRuntime(apiOverrides)
@@ -595,6 +596,7 @@ func configureSessionFlags(fs *pflag.FlagSet, cfg *session.Config, paramFlags, p
 	fs.StringVar(&cfg.SessionID, "session-id", "", "Existing session identifier to resume")
 	fs.BoolVar(&cfg.EnableTagFormat, "enable-tag-format", cfg.EnableTagFormat, "Enable tag-format response directives and validation (experimental)")
 	fs.IntVar(&cfg.ShellAgentInterruptStep, "shell-agent-interrupt-step", 0, "deterministic interrupt after this many shell-agent steps (0 = disabled)")
+	fs.StringVar(&cfg.ShellAgentStepLog, "shell-agent-step-log", "", "path for step-log JSONL file (empty disables)")
 	fs.StringVar(&cfg.Mode, "mode", "", "Operating mode")
 	fs.StringVar(&cfg.ModeInstructionDir, "mode-instruction-dir", cfg.ModeInstructionDir, "Directory containing mode custom instructions (overrides config)")
 	fs.StringVarP(&cfg.PromptText, "text", "t", "", "prompt text (alternative to positional argument)")

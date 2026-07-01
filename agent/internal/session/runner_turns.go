@@ -56,7 +56,9 @@ type runTurnEnv struct {
 	diagWriter                  io.Writer
 	hasNewInput                 bool // from Options; propagated to TurnContext for ResumeAttempt
 	isResumingTurn              bool // set when resumableShellAgent is true; triggers TUI replay
+	resumableShellAgentTrajectoryPath string
 	shellAgentInterruptStep     int
+	shellAgentStepLog          string
 	sessTelemetry               *sessionTelemetry
 	turn                        *turnTelemetry
 	turnDecision                string
@@ -269,7 +271,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 			}
 			var req shellagent.Request
 			if env.mctRunner.ShellAgentLibrary != nil {
-				tc := &TurnContext{TurnIndex: env.step, Conversation: env.recorder, ShellAgentLib: env.mctRunner.ShellAgentLibrary, HasNewInput: env.hasNewInput, ShellAgentInterruptStep: env.shellAgentInterruptStep}
+				tc := &TurnContext{TurnIndex: env.step, Conversation: env.recorder, ShellAgentLib: env.mctRunner.ShellAgentLibrary, HasNewInput: env.hasNewInput, ResumableShellAgentTrajectoryPath: env.resumableShellAgentTrajectoryPath, ShellAgentInterruptStep: env.shellAgentInterruptStep, ShellAgentStepLog: env.shellAgentStepLog}
 				var err error
 				req, err = tc.buildShellAgentRequest(shellAskTrimmed, env.sessionID, env.cfg.verbose, env.cfg.maxInputTokens)
 				if err == nil {
@@ -440,7 +442,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 		ResponseDirectives: append([]string(nil), env.mctResponseDirectives...),
 	}
 	if useShellAgent && env.mctRunner.ShellAgentLibrary != nil {
-		tc := &TurnContext{TurnIndex: env.step, Conversation: env.recorder, ShellAgentLib: env.mctRunner.ShellAgentLibrary, HasNewInput: env.hasNewInput, ShellAgentInterruptStep: env.shellAgentInterruptStep}
+		tc := &TurnContext{TurnIndex: env.step, Conversation: env.recorder, ShellAgentLib: env.mctRunner.ShellAgentLibrary, HasNewInput: env.hasNewInput, ResumableShellAgentTrajectoryPath: env.resumableShellAgentTrajectoryPath, ShellAgentInterruptStep: env.shellAgentInterruptStep, ShellAgentStepLog: env.shellAgentStepLog}
 		req, err := tc.buildShellAgentRequest(question, env.sessionID, env.cfg.verbose, env.cfg.maxInputTokens)
 		if err == nil {
 			input.ShellAgentRequest = &req
@@ -577,10 +579,12 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 // TurnContext bundles turn-scoped data for shell-agent request construction.
 type TurnContext struct {
 	HasNewInput  bool // from Options; determines ResumeAttempt on shellagent.Request
+	ResumableShellAgentTrajectoryPath string
 	TurnIndex    int
 	Conversation *conversationRecorder
 	ShellAgentLib *shellagent.ShellAgentLibrary
 	ShellAgentInterruptStep int
+	ShellAgentStepLog      string
 }
 
 // buildShellAgentRequest constructs a shellagent.Request from the TurnContext

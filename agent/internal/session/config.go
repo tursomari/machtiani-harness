@@ -50,6 +50,7 @@ type Config struct {
 	Mode                  string
 	ModeInstructionDir    string
 	ShellAgentInterruptStep int
+	ShellAgentStepLog      string `json:"shell_agent_step_log,omitempty"`
 }
 
 type BuildInfo struct {
@@ -79,6 +80,7 @@ type Options struct {
 	PlannerOverride     Planner
 	HasNewInput         bool // true when -t/-f provided on resume (shell-agent starts fresh, no resume attempt)
 	ShellAgentInterruptStep int  // > 0 triggers deterministic interrupt after this many shell-agent steps
+	ShellAgentStepLog      string // path for step-log JSONL file (empty disables)
 }
 
 type Result struct {
@@ -126,6 +128,7 @@ type legacyConfig struct {
 	promptText              string
 	mode                    string
 	modeInstructionDir      string
+	shellAgentStepLog       string
 }
 
 func newLegacyConfig(cfg Config) legacyConfig {
@@ -164,5 +167,6 @@ func newLegacyConfig(cfg Config) legacyConfig {
 		promptText:              cfg.PromptText,
 		mode:                    cfg.Mode,
 		modeInstructionDir:      cfg.ModeInstructionDir,
+		shellAgentStepLog:       cfg.ShellAgentStepLog,
 	}
 }

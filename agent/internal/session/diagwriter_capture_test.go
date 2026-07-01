@@ -37,6 +37,7 @@ func TestSuspendForUserInputDiagWriterCapturesUserInputHint(t *testing.T) {
 		"",
 		"",
 		0,
+		"",
 		nil,
 	)
 	runState.recorder = recorder
@@ -266,6 +267,7 @@ func TestCompleteSessionDiagWriterCapturesWriteError(t *testing.T) {
 		"",
 		"",
 		0,
+		"",
 		nil,
 	)
 	runState.recorder = recorder
@@ -313,6 +315,7 @@ func TestApplyPlannerProgressNoWarningWhenUpdateSucceeds(t *testing.T) {
 		"",
 		"",
 		0,
+		"",
 		nil,
 	)
 

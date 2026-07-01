@@ -48,7 +48,7 @@ func TestCompleteSessionDiagWriterCapturesModePlanTaskFailure(t *testing.T) {
 		"",
 		"",
 		"",
-		0,
+		0, "",
 		nil,
 	)
 	runState.recorder = recorder
@@ -133,7 +133,7 @@ func TestCompleteSessionVerboseSuccessCapturesDiagAndDisplay(t *testing.T) {
 		"",
 		"",
 		"",
-		0,
+		0, "",
 		nil,
 	)
 	runState.recorder = recorder
@@ -181,7 +181,7 @@ func TestPrintResumeHintDiagWriterFallback(t *testing.T) {
 		"",
 		"",
 		"",
-		0,
+		0, "",
 		nil,
 	)
 
@@ -212,7 +212,7 @@ func TestPrintResumeHintDisplayPath(t *testing.T) {
 		"",
 		"",
 		"",
-		0,
+		0, "",
 		nil,
 	)
 
@@ -285,7 +285,7 @@ func TestSuspendForUserInputResumeContextCapturesDiag(t *testing.T) {
 		"",
 		"",
 		"",
-		0,
+		0, "",
 		loadedState,
 	)
 	runState.recorder = recorder

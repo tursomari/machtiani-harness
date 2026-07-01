@@ -311,7 +311,7 @@ func TestOriginalGoalDoubleInterrupt(t *testing.T) {
 		firstOriginalPrompt := "Fix all lint issues"
 
 		// Step 1: Create the initial runLifecycleState.
-		r1 := newRunLifecycleState(ctx, cfg, sessionID, firstGoal, firstOriginalPrompt, "", "", "", 0, nil)
+		r1 := newRunLifecycleState(ctx, cfg, sessionID, firstGoal, firstOriginalPrompt, "", "", "", 0, "", nil)
 
 		// Step 2: Simulate a suspend by transitioning to suspended_user_input.
 		if err := r1.transition(StateSuspendedUserInput); err != nil {
@@ -336,7 +336,7 @@ func TestOriginalGoalDoubleInterrupt(t *testing.T) {
 		// loaded state's Goal.
 		secondGoal := "Also update comments"
 		secondOriginalPrompt := firstOriginalPrompt
-		r2 := newRunLifecycleState(ctx, cfg, sessionID, secondGoal, secondOriginalPrompt, "", "", "", 0, loadedState)
+		r2 := newRunLifecycleState(ctx, cfg, sessionID, secondGoal, secondOriginalPrompt, "", "", "", 0, "", loadedState)
 
 		// Step 5: Verify that OriginalGoal on the resumed state equals
 		// the first goal.
@@ -363,7 +363,7 @@ func TestOriginalGoalDoubleInterrupt(t *testing.T) {
 		}
 
 		secondGoal := "Also update comments"
-		r2 := newRunLifecycleState(ctx, cfg, sessionID, secondGoal, firstGoal, "", "", "", 0, loadedState)
+		r2 := newRunLifecycleState(ctx, cfg, sessionID, secondGoal, firstGoal, "", "", "", 0, "", loadedState)
 
 		base := r2.baseSessionState()
 		if base.OriginalGoal != firstOriginalGoal {

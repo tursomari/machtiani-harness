@@ -628,7 +628,6 @@ func runSession(ctx context.Context, opts Options) Result {
 
 	parentSpanID := ""
 	for {
-		wasResumable := false
 		if err := rootCtx.Err(); err != nil {
 			return runState.interruptedResult(err)
 		}
@@ -685,7 +684,6 @@ func runSession(ctx context.Context, opts Options) Result {
 			if recoveredQuestion != "" {
 				decision = planner.DecisionAskWorker
 				question = recoveredQuestion
-				wasResumable = resumableShellAgent
 				resumableShellAgent = false
 				perr = nil
 				goto PostPlan
@@ -869,8 +867,10 @@ func runSession(ctx context.Context, opts Options) Result {
 			display:                     display,
 			diagWriter:                  diagWriter,
 			hasNewInput:                 bootstrap.hasNewInput,
-			isResumingTurn:              wasResumable,
+			resumableShellAgentTrajectoryPath: bootstrap.resumableShellAgentTrajectoryPath,
+			isResumingTurn:              resumableShellAgent,
 			shellAgentInterruptStep:     bootstrap.shellAgentInterruptStep,
+			shellAgentStepLog:           bootstrap.shellAgentStepLog,
 			sessTelemetry:               sessTelemetry,
 			turn:                        turn,
 			turnDecision:                turnDecision,

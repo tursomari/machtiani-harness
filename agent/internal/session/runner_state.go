@@ -48,6 +48,7 @@ type runBootstrap struct {
 	resumableShellAgentTrajectoryPath string
 	hasNewInput                     bool // from Options; determines shell-agent ResumeAttempt
 	shellAgentInterruptStep         int  // from Options; deterministic interrupt step for shell agent
+	shellAgentStepLog               string // from Options; path for step-log JSONL file (empty disables)
 }
 
 type sessionEnvironmentBootstrap struct {
@@ -181,7 +182,7 @@ func prepareRunBootstrap(rootCtx context.Context, opts Options, diagWriter io.Wr
 		modeInstructionPath = doc.Path
 	}
 
-	runState := newRunLifecycleState(rootCtx, cfg, sessionID, goal, originalPrompt, taskDescription, plannerOverlay, modeInstructionPath, opts.ShellAgentInterruptStep, loadedState)
+	runState := newRunLifecycleState(rootCtx, cfg, sessionID, goal, originalPrompt, taskDescription, plannerOverlay, modeInstructionPath, opts.ShellAgentInterruptStep, opts.ShellAgentStepLog, loadedState)
 
 	bootstrap := &runBootstrap{
 		opts:                 opts,
@@ -201,6 +202,7 @@ func prepareRunBootstrap(rootCtx context.Context, opts Options, diagWriter io.Wr
 		modeInstructionPath:  modeInstructionPath,
 		runState:             runState,
 		shellAgentInterruptStep: opts.ShellAgentInterruptStep,
+		shellAgentStepLog:      opts.ShellAgentStepLog,
 	}
 	bootstrap.hasNewInput = opts.HasNewInput
 
@@ -378,7 +380,7 @@ func loadResumeTranscript(cfg legacyConfig, loadedState *SessionState, resumeMod
 	return rendered
 }
 
-func newRunLifecycleState(rootCtx context.Context, cfg legacyConfig, sessionID, goal, originalPrompt, taskDescription, plannerOverlay, modeInstructionPath string, interruptStep int, loadedState *SessionState) *runLifecycleState {
+func newRunLifecycleState(rootCtx context.Context, cfg legacyConfig, sessionID, goal, originalPrompt, taskDescription, plannerOverlay, modeInstructionPath string, interruptStep int, stepLogPath string, loadedState *SessionState) *runLifecycleState {
 	turnsCompleted := 0
 	if loadedState != nil && loadedState.TurnsCompleted > 0 {
 		turnsCompleted = loadedState.TurnsCompleted
@@ -408,6 +410,7 @@ func newRunLifecycleState(rootCtx context.Context, cfg legacyConfig, sessionID, 
 		sessionStatus:           "error",
 		turnsCompleted:          turnsCompleted,
 		shellAgentInterruptStep: interruptStep,
+		shellAgentStepLog:      stepLogPath,
 	}
 }
 
@@ -845,6 +848,7 @@ type runLifecycleState struct {
 	pendingState        *SessionState
 	suspendedUserInput     *conversation.SuspendedUserInputState
 	shellAgentInterruptStep int
+	shellAgentStepLog      string
 }
 
 func (r *runLifecycleState) clearSuspendedUserInput() {

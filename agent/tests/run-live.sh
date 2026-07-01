@@ -2999,9 +2999,9 @@ test_code_resume_without_mode_no_forge() {
 }
 
 # test_shell_agent_step_counter_resume proves step-level resume deterministically.
-# It starts a shell-agent session, interrupts with SIGINT, extracts the saved
-# step_counter and messages from the resume checkpoint, then resumes and
-# verifies the resume stdout is non-empty.
+# It starts a shell-agent session with --shell-agent-step-log, tails the step log
+# to detect step completion, externally kills the process (real crash simulation),
+# then resumes and asserts bit-for-bit message identity on shared steps.
 test_shell_agent_step_counter_resume() {
   local case_id="shell-agent-step-counter-resume"
   if [[ "$LIVE_MODE" != true ]]; then
@@ -3016,43 +3016,103 @@ test_shell_agent_step_counter_resume() {
   local stderr_init="$out_dir/stderr-init-${session_id}.txt"
   local stdout_resume="$out_dir/stdout-resume-${session_id}.txt"
   local stderr_resume="$out_dir/stderr-resume-${session_id}.txt"
-  local resume_file=""
-  local saved_step=""
-  local saved_msgs_len=""
-  local resume_start_step=""
-  local expected_step=""
-  local INTERRUPT_STEP=1
+  local step_log_init="/tmp/test-step-log.jsonl"
+  local step_log_resume="/tmp/test-step-log-resume.jsonl"
+  local pre_traj="$out_dir/pre_crash_traj.json"
+  local post_traj="$out_dir/post_crash_traj.json"
   local rc=0
+  local bg_pid=""
+  local tail_pid=""
 
-  # Clean up stale session locks from previous runs
+  # Clean up stale session locks and step log files from previous runs
   find "$REPO_ROOT/.machtiani/tmp" -name "session.lock" -delete 2>/dev/null || true
-  # Clean stale resume files from /tmp
-  find /tmp -maxdepth 1 -name "agent-*-resume.json" -delete 2>/dev/null || true
+  rm -f "$step_log_init" "$step_log_resume"
 
-  echo "Running shell-agent-step-counter-resume case (phase 1: interrupt step)..." >&2
+  echo "Running shell-agent-step-counter-resume case (phase 1: crash simulation)..." >&2
 
   pushd "$REPO_ROOT" >/dev/null
   set +e
-  # timeout kills the process after checkpoint to prevent cleanup from deleting the resume file
-  timeout 45s "$MCT_AGENT" run \
+
+  # Launch mct-agent in the background with step log
+  "$MCT_AGENT" run \
     --max-turns 5 \
     --mode test-blocking \
+    --turn-timeout 0 \
     --model "$TEST_MODEL_ALIAS" \
     --orch-model "$TEST_MODEL_ALIAS" \
     --file-discovery-model "$TEST_MODEL_ALIAS" \
-    --shell-agent-interrupt-step $INTERRUPT_STEP \
-    --text "Run a bash command to read agent/internal/session/state.go, then after that command completes, run a second bash command to read agent/internal/session/config.go. Use separate command blocks." \
-    > "$stdout_init" 2> "$stderr_init"
+    --shell-agent-model "$TEST_MODEL_ALIAS" \
+    --shell-agent-step-log "$step_log_init" \
+    --text "Run three separate bash commands using separate command blocks. Step 1: cat agent/internal/session/state.go. Step 2: cat agent/internal/session/config.go. Step 3: cat agent/internal/session/runner_turns.go." \
+    > "$stdout_init" 2> "$stderr_init" &
+  bg_pid=$!
+
+  # Poll for step log file to exist, then tail until post-execute step_counter=1 appears
+  local poll_start=$SECONDS
+  local poll_timeout=300
+  while [[ ! -f "$step_log_init" || ! -s "$step_log_init" ]]; do
+    echo "Polling for step log file: elapsed=$(( SECONDS - poll_start ))s, exists=$(test -f "$step_log_init" && echo yes || echo no)" >&2
+    if [[ $(( SECONDS - poll_start )) -gt $poll_timeout ]]; then
+      echo "FAIL: step log file did not appear within ${poll_timeout}s" >&2
+      kill -9 "$bg_pid" 2>/dev/null || true
+      wait "$bg_pid" 2>/dev/null || true
+      popd >/dev/null
+      return 1
+    fi
+    sleep 0.5
+  done
+
+  # Phase A: tail the log file and scan for post-execute step_counter=1
+  local found_post_execute=false
+  local tail_start=$SECONDS
+  local tail_timeout=300
+  while IFS= read -r line; do
+    if echo "$line" | "$PYTHON_BIN" -c "import json,sys; d=json.load(sys.stdin); assert d.get(\"phase\") == \"post-execute\"; assert d.get(\"step_counter\") == 1" 2>/dev/null; then
+      found_post_execute=true
+      break
+    fi
+    if [[ $(( SECONDS - tail_start )) -gt $tail_timeout ]]; then
+      break
+    fi
+  done < <(tail -f "$step_log_init" 2>/dev/null)
+
+  if [[ "$found_post_execute" != true ]]; then
+    echo "FAIL: post-execute step_counter=1 did not appear in step log" >&2
+    kill -9 "$bg_pid" 2>/dev/null || true
+    wait "$bg_pid" 2>/dev/null || true
+    popd >/dev/null
+    return 1
+  fi
+
+  # Phase B: continue tailing for pre-execute step_counter=2
+  local found_pre_execute=false
+  tail_start=$SECONDS
+  while IFS= read -r line; do
+    if echo "$line" | "$PYTHON_BIN" -c "import json,sys; d=json.load(sys.stdin); assert d.get(\"phase\") == \"pre-execute\"; assert d.get(\"step_counter\") == 2" 2>/dev/null; then
+      found_pre_execute=true
+      break
+    fi
+    if [[ $(( SECONDS - tail_start )) -gt $tail_timeout ]]; then
+      break
+    fi
+  done < <(tail -f "$step_log_init" 2>/dev/null)
+
+  if [[ "$found_pre_execute" != true ]]; then
+    echo "FAIL: pre-execute step_counter=2 did not appear in step log" >&2
+    kill -9 "$bg_pid" 2>/dev/null || true
+    wait "$bg_pid" 2>/dev/null || true
+    popd >/dev/null
+    return 1
+  fi
+
+  # Kill the mct-agent process (simulating real crash)
+  kill -9 "$bg_pid" 2>/dev/null || true
+  wait "$bg_pid" 2>/dev/null || true
   rc=$?
   set -e
   popd >/dev/null
 
-  if [[ $rc -ne 0 && $rc -ne 124 ]]; then
-    echo "FAIL: initial run failed (rc=$rc): $case_id" >&2
-    cat "$stderr_init" >&2 || true
-    return 1
-  fi
-
+  # Parse session ID from stderr
   local agent_session
   agent_session=$(grep -m1 "^Session:" "$stderr_init" | awk "{print \$2}" || true)
   if [[ -z "$agent_session" ]]; then
@@ -3066,98 +3126,167 @@ test_shell_agent_step_counter_resume() {
   local session_dir="$sessions_root/$agent_session"
   local shell_agent_dir="$session_dir/shell-agent"
 
-  # Look for resume file: first in /tmp/${agent_session}-resume.json
-  resume_file="/tmp/${agent_session}-resume.json"
-  if [[ ! -s "$resume_file" ]]; then
-    # Fallback: check sessions_dir/agent_session/shell-agent/*-resume.json
-    if [[ -d "$shell_agent_dir" ]]; then
-      resume_file=$(find "$shell_agent_dir" -name "*-resume.json" 2>/dev/null | head -1)
-    fi
-  fi
-
-  if [[ -z "$resume_file" || ! -s "$resume_file" ]]; then
-    echo "FAIL: resume file not found after interrupt" >&2
+  if [[ ! -d "$shell_agent_dir" ]]; then
+    echo "FAIL: shell-agent directory missing: $shell_agent_dir" >&2
     return 1
   fi
 
-  # Extract saved_step from resume_state.step_counter using python3
-  saved_step=$("$PYTHON_BIN" - "$resume_file" <<'PY'
+  # Find trajectory.json under shell-agent directory
+  local pre_traj_path="$shell_agent_dir/1/trajectory.json"
+  if [[ ! -f "$pre_traj_path" ]]; then
+    pre_traj_path=$(find "$shell_agent_dir" -name "trajectory.json" 2>/dev/null | head -1)
+  fi
+  if [[ -z "$pre_traj_path" || ! -s "$pre_traj_path" ]]; then
+    echo "FAIL: pre-crash trajectory.json not found under $shell_agent_dir" >&2
+    return 1
+  fi
+
+  cp "$pre_traj_path" "$pre_traj"
+
+  # Extract pre-crash trajectory stats
+  local pre_output
+  pre_output=$("$PYTHON_BIN" - "$pre_traj" <<'PY'
 import json, sys
 with open(sys.argv[1]) as f:
     data = json.load(f)
-try:
-    step = data['resume_state']['step_counter']
-except (KeyError, TypeError):
-    step = 0
+msgs = data.get("messages", [])
+step = data.get("resume_state", {}).get("step_counter", 0)
 print(step)
+print(len(msgs))
+print(json.dumps(msgs))
 PY
   )
-  if [[ -z "$saved_step" ]]; then
-    echo "FAIL: could not extract step_counter from resume file $resume_file" >&2
+  local pre_step
+  pre_step=$(echo "$pre_output" | sed -n '1p')
+  local pre_msgs_len
+  pre_msgs_len=$(echo "$pre_output" | sed -n '2p')
+
+  if [[ -z "$pre_step" || "$pre_step" -lt 1 ]]; then
+    echo "FAIL: pre-crash step_counter is $pre_step, expected >= 1" >&2
     return 1
   fi
-
-  # Assert saved_step equals $INTERRUPT_STEP
-  if [[ "$saved_step" -ne "$INTERRUPT_STEP" ]]; then
-    echo "FAIL: saved step_counter is $saved_step, expected $INTERRUPT_STEP" >&2
+  if [[ -z "$pre_msgs_len" || "$pre_msgs_len" -le 0 ]]; then
+    echo "FAIL: pre-crash messages array is empty" >&2
     return 1
   fi
-  echo "Evidence: saved step_counter from resume file: $saved_step" >&2
+  echo "Evidence: pre-crash step_counter=$pre_step, messages_len=$pre_msgs_len" >&2
 
-  # Extract messages array length using python3
-  saved_msgs_len=$("$PYTHON_BIN" - "$resume_file" <<'PY'
-import json, sys
-with open(sys.argv[1]) as f:
-    data = json.load(f)
-try:
-    msgs = data.get('messages', [])
-    length = len(msgs)
-except Exception:
-    length = 0
-print(length)
-PY
-  )
-  if [[ -z "$saved_msgs_len" || "$saved_msgs_len" -le 0 ]]; then
-    echo "FAIL: messages array is empty or missing in resume file $resume_file" >&2
-    return 1
-  fi
-  echo "Evidence: messages array length: $saved_msgs_len" >&2
-
-  cp "${resume_file}" "${resume_file}.bak"
-
+  # Phase 2: Resume the session
   echo "Running shell-agent-step-counter-resume case (phase 2: resume)..." >&2
+
+  rm -f "$step_log_resume"
 
   pushd "$REPO_ROOT" >/dev/null
   set +e
-  timeout 300s "$MCT_AGENT" run \
+
+  "$MCT_AGENT" run \
     --max-turns 3 \
     --session-id "$agent_session" \
     --mode test-blocking \
+    --turn-timeout 0 \
     --model "$TEST_MODEL_ALIAS" \
     --orch-model "$TEST_MODEL_ALIAS" \
     --file-discovery-model "$TEST_MODEL_ALIAS" \
-    > "$stdout_resume" 2> "$stderr_resume"
+    --shell-agent-model "$TEST_MODEL_ALIAS" \
+    --shell-agent-step-log "$step_log_resume" \
+    > "$stdout_resume" 2> "$stderr_resume" &
+  bg_pid=$!
+
+  # Wait for the resume process to complete or timeout
+  local resume_start=$SECONDS
+  local resume_timeout=300
+  while kill -0 "$bg_pid" 2>/dev/null; do
+    echo "Waiting for resume: elapsed=$(( SECONDS - resume_start ))s, pid alive=$(kill -0 $bg_pid 2>/dev/null && echo yes || echo no)" >&2
+    if [[ $(( SECONDS - resume_start )) -gt $resume_timeout ]]; then
+      echo "WARN: resume process timed out, killing..." >&2
+      kill -9 "$bg_pid" 2>/dev/null || true
+      break
+    fi
+    sleep 1
+  done
+
+  wait "$bg_pid" 2>/dev/null || true
   rc=$?
   set -e
   popd >/dev/null
 
-  if [[ $rc -ne 0 ]]; then
+  if [[ $rc -ne 0 && $rc -ne 137 ]]; then
     echo "FAIL: resume run (rc=$rc): $case_id" >&2
     cat "$stderr_resume" >&2 || true
     return 1
   fi
 
-  # Assert resume stdout is non-empty
-  if [[ ! -s "$stdout_resume" ]]; then
-    echo "FAIL: resume stdout is empty" >&2
+  # Find post-resume trajectory
+  local post_traj_path="$shell_agent_dir/2/trajectory.json"
+  if [[ ! -f "$post_traj_path" ]]; then
+    post_traj_path=$(find "$shell_agent_dir" -name "trajectory.json" 2>/dev/null | head -1)
+  fi
+  if [[ -z "$post_traj_path" || ! -s "$post_traj_path" ]]; then
+    echo "FAIL: post-resume trajectory.json not found under $shell_agent_dir" >&2
     return 1
   fi
 
+  cp "$post_traj_path" "$post_traj"
+
+  # Bit-for-bit comparison of pre and post trajectory messages
+  local cmp_result
+  cmp_result=$("$PYTHON_BIN" - "$pre_traj" "$post_traj" "$pre_msgs_len" <<'PY'
+import json, sys
+pre_file = sys.argv[1]
+post_file = sys.argv[2]
+pre_len = int(sys.argv[3])
+
+with open(pre_file) as f:
+    pre = json.load(f)
+with open(post_file) as f:
+    post = json.load(f)
+
+pre_msgs = pre.get("messages", [])
+post_msgs = post.get("messages", [])
+pre_step = pre.get("resume_state", {}).get("step_counter", 0)
+post_step = post.get("resume_state", {}).get("step_counter", 0)
+
+errors = []
+
+# Assert post has more messages than pre
+if len(post_msgs) <= len(pre_msgs):
+    errors.append(f"post messages len {len(post_msgs)} <= pre messages len {len(pre_msgs)}")
+else:
+    # Assert first N messages identical
+    for i in range(len(pre_msgs)):
+        pre_m = pre_msgs[i]
+        post_m = post_msgs[i]
+        if pre_m.get("role") != post_m.get("role"):
+            errors.append(f"message {i}: role differs ({pre_m.get("role")} vs {post_m.get("role")})")
+        if pre_m.get("content") != post_m.get("content"):
+            errors.append(f"message {i}: content differs")
+
+# Assert step counter advanced
+if post_step <= pre_step:
+    errors.append(f"step_counter did not advance: pre={pre_step}, post={post_step}")
+
+if errors:
+    for e in errors:
+        print(f"FAIL: {e}")
+    print("FAIL")
+else:
+    print("PASS")
+PY
+  )
+
+  if [[ "$cmp_result" != *"PASS"* ]]; then
+    echo "FAIL: trajectory comparison failed" >&2
+    echo "$cmp_result" >&2
+    return 1
+  fi
+  echo "Evidence: trajectory bit-for-bit comparison passed, step counter advanced" >&2
+
   if [[ "${KEEP_TEST_CONFIG:-}" != "true" ]]; then
     rm -rf "$out_dir"
+    rm -f "$step_log_init" "$step_log_resume"
   fi
 
-  echo "Passed: $case_id (step-level resume: saved_step=$saved_step)" >&2
+  echo "Passed: $case_id (crash-resume with bit-for-bit trajectory verification)" >&2
 }
 
 # test_finalize_reminder verifies that the shell-agent respects
