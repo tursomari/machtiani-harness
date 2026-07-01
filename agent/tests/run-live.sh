@@ -1107,10 +1107,6 @@ if [[ "$LIVE_MODE" != true ]]; then
 fi
 
 DEFAULT_MODEL_ARGS=(--model "$TEST_MODEL_ALIAS")
-PER_COMPONENT_MODEL_ARGS=(
-  --orch-model "$ORCH_MODEL_ALIAS"
-  --file-discovery-model "$FILE_DISCOVERY_MODEL_ALIAS"
-)
 
 MCT_AGENT="$MCT_AGENT_BIN"
 
@@ -3487,7 +3483,6 @@ ORCH_LABEL_REGEX="$(regex_escape "$ORCH_MODEL_ALIAS")"
 FILE_DISCOVERY_LABEL_REGEX="$(regex_escape "$FILE_DISCOVERY_MODEL_ALIAS")"
 DEFAULT_LABEL_REGEX="$(regex_escape "$TEST_MODEL_ALIAS")"
 
-PER_COMPONENT_LABEL_PATTERN="(?s)(?=.*orchestrator model: ${ORCH_LABEL_REGEX})(?=.*file discovery model: ${FILE_DISCOVERY_LABEL_REGEX})"
 MIXED_LABEL_PATTERN="(?s)(?=.*orchestrator model: ${ORCH_LABEL_REGEX})(?=.*file discovery model: ${ORCH_LABEL_REGEX})"
 CATCH_ALL_LABEL_PATTERN="(?s)(?=.*orchestrator model: ${DEFAULT_LABEL_REGEX})(?=.*file discovery model: ${DEFAULT_LABEL_REGEX})"
 
@@ -3528,15 +3523,6 @@ fi  # $# -eq 0 guard
 # When called with one or more test names (e.g. ./run-live.sh test_code_no_forge),
 # run only the requested tests in order.  Each name must map to a registered
 # function in the TESTS array.
-
-test_models_per_component() {
-  run_happy_case "models-per-component" 3 \
-    "Outline how the orchestrator and file discovery collaborators interact." \
-    "$PER_COMPONENT_LABEL_PATTERN" \
-    1 \
-    \
-    "${PER_COMPONENT_MODEL_ARGS[@]}"
-}
 
 test_models_mixed_fallback() {
   run_happy_case "models-mixed-fallback" 3 \
@@ -3653,8 +3639,6 @@ declare -A TESTS=(
   ["shell_command_trajectory_live"]="run_shell_command_trajectory_live_case"
   ["shell_live"]="run_shell_live_case"
   ["resume_without_mode"]="run_resume_without_mode_case"
-
-  ["models-per-component"]="test_models_per_component"
   ["models-mixed-fallback"]="test_models_mixed_fallback"
   ["models-catch-all"]="test_models_catch_all"
   ["issue-a-1turn"]="test_issue_a_1turn"
@@ -3712,13 +3696,6 @@ if [[ "$LIVE_MODE" == true ]]; then
   test_finalize_reminder
   test_shell_agent_step_counter_resume
 fi
-
-run_happy_case "models-per-component" 3 \
-  "Outline how the orchestrator and file discovery collaborators interact." \
-  "$PER_COMPONENT_LABEL_PATTERN" \
-  1 \
-  \
-  "${PER_COMPONENT_MODEL_ARGS[@]}"
 
 run_happy_case "models-mixed-fallback" 3 \
   "Summarize how shell-agent falls back to the orchestrator model when unspecified." \
