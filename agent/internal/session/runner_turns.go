@@ -714,17 +714,31 @@ func replayShellAgentActions(display ui.SessionDisplay, diagWriter io.Writer, se
 }
 
 func verifyShellAgentResume(interruptedMsgs, resumedMsgs []minisweagent.Message) error {
-	if len(interruptedMsgs) == 0 {
+	filterMsgs := func(msgs []minisweagent.Message) []minisweagent.Message {
+		var out []minisweagent.Message
+		for _, m := range msgs {
+			if m.Metadata != nil {
+				if typ, ok := m.Metadata["type"].(string); ok && typ == "cache_anchor" {
+					continue
+				}
+			}
+			out = append(out, m)
+		}
+		return out
+	}
+	interrupted := filterMsgs(interruptedMsgs)
+	resumed := filterMsgs(resumedMsgs)
+	if len(interrupted) == 0 {
 		return fmt.Errorf("interrupted message history is empty")
 	}
-	if len(resumedMsgs) <= len(interruptedMsgs) {
-		return fmt.Errorf("no new messages added after resume: interrupted=%d resumed=%d", len(interruptedMsgs), len(resumedMsgs))
+	if len(resumed) <= len(interrupted) {
+		return fmt.Errorf("no new messages added after resume: interrupted=%d resumed=%d", len(interrupted), len(resumed))
 	}
-	for i := range interruptedMsgs {
-		if interruptedMsgs[i].Role != resumedMsgs[i].Role {
-			return fmt.Errorf("message prefix mismatch at index %d: expected role %q, got %q", i, interruptedMsgs[i].Role, resumedMsgs[i].Role)
+	for i := range interrupted {
+		if interrupted[i].Role != resumed[i].Role {
+			return fmt.Errorf("message prefix mismatch at index %d: expected role %q, got %q", i, interrupted[i].Role, resumed[i].Role)
 		}
-		if interruptedMsgs[i].Content != resumedMsgs[i].Content {
+		if interrupted[i].Content != resumed[i].Content {
 			return fmt.Errorf("message prefix mismatch at index %d: content differs", i)
 		}
 	}
