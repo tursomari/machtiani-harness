@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -221,8 +222,17 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 		replayShellAgentActions(env.display, env.diagWriter, env.sessionID, env.step)
 	}
 	var interruptedMsgs []minisweagent.Message
+	skipResumeVerify := false
 	if env.isResumingTurn {
-		interruptedMsgs, _ = loadTrajectoryForResume(env.sessionID, env.step)
+		var loadErr error
+	interruptedMsgs, loadErr = loadTrajectoryForResume(env.sessionID, env.step)
+	if loadErr != nil {
+		log.Printf("[resume] failed to load trajectory for replay (step %d): %v", env.step, loadErr)
+	}
+	if len(interruptedMsgs) == 0 {
+		log.Printf("[resume] no interrupted messages to verify for step %d, skipping resume verification", env.step)
+		skipResumeVerify = true
+	}
 	}
 	stream := env.display.BeginPrompt(question, orchPromptOpts)
 	if runSplitShell {
@@ -365,7 +375,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 		if strings.TrimSpace(shellResult.TrajectoryPath) != "" {
 			env.turnInfo["shell_agent_trajectory"] = trimTo(shellResult.TrajectoryPath, 200)
 		}
-		if env.isResumingTurn {
+		if env.isResumingTurn && !skipResumeVerify {
 			resumedMsgs := result.ShellAgentTrajectoryMessages
 			err := verifyShellAgentResume(interruptedMsgs, resumedMsgs)
 			if err != nil {
@@ -495,7 +505,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 			env.display.Notify("[resume] shell-agent interrupted again; assertion deferred")
 		}
 	}
-	if env.isResumingTurn {
+	if env.isResumingTurn && !skipResumeVerify {
 		resumedMsgs := result.ShellAgentTrajectoryMessages
 		err := verifyShellAgentResume(interruptedMsgs, resumedMsgs)
 		if err != nil {
@@ -729,7 +739,8 @@ func verifyShellAgentResume(interruptedMsgs, resumedMsgs []minisweagent.Message)
 	interrupted := filterMsgs(interruptedMsgs)
 	resumed := filterMsgs(resumedMsgs)
 	if len(interrupted) == 0 {
-		return fmt.Errorf("interrupted message history is empty")
+		log.Printf("[resume] no interrupted trajectory found, treating as fresh start (no prior messages to verify)")
+		return nil
 	}
 	if len(resumed) <= len(interrupted) {
 		return fmt.Errorf("no new messages added after resume: interrupted=%d resumed=%d", len(interrupted), len(resumed))

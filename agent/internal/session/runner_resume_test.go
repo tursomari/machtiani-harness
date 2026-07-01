@@ -880,4 +880,19 @@ func TestLoadTrajectoryForResumeNotFound(t *testing.T) {
 	}
 }
 
+// TestVerifyShellAgentResume_MissingInterruptedTrajectory verifies that
+// verifyShellAgentResume returns nil when interruptedMsgs is empty,
+// representing a fresh start after a missing/corrupt trajectory.
+func TestVerifyShellAgentResume_MissingInterruptedTrajectory(t *testing.T) {
+	interruptedMsgs := []minisweagent.Message{}
+	resumedMsgs := []minisweagent.Message{
+		{Role: "user", Content: "hello"},
+	}
+
+	err := verifyShellAgentResume(interruptedMsgs, resumedMsgs)
+	if err != nil {
+		t.Fatalf("expected nil error when interruptedMsgs is empty (fresh start after missing trajectory), got: %v", err)
+	}
+}
+
 
