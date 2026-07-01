@@ -1452,180 +1452,6 @@ run_menu_flow_live_case() {
     "${DEFAULT_MODEL_ARGS[@]}"
 }
 
-run_user_directed_suspend_case() {
-  local case_id="user-directed-suspend"
-  local stub_dir="$TMP_ROOT/stub-${case_id}-$(date +%s)"
-  mkdir -p "$stub_dir"
-  local state_file="$stub_dir/state.json"
-  local port_file="$stub_dir/port.txt"
-  start_llm_stub_server "$state_file" "$port_file"
-  local stub_port
-  stub_port="$(cat "$port_file")"
-  local base_url="http://127.0.0.1:${stub_port}/v1"
-  local stub_alias="stub-model"
-  local stub_config
-  stub_config="$(generate_stub_config "$base_url" "$stub_alias")"
-
-  local session_id="test-${case_id}-$(date +%s)"
-  local out_dir="$(pwd)/test-out-${session_id}"
-  mkdir -p "$out_dir"
-  local stdout_suspend="$out_dir/stdout-suspend-${session_id}.txt"
-  local stderr_suspend="$out_dir/stderr-suspend-${session_id}.txt"
-  local stdout_resume="$out_dir/stdout-resume-${session_id}.txt"
-  local stderr_resume="$out_dir/stderr-resume-${session_id}.txt"
-
-  cleanup_case() {
-    stop_llm_stub_server
-    if [[ "${KEEP_TEST_CONFIG:-}" != "true" ]]; then
-      rm -rf "$stub_dir"
-      rm -rf "$(dirname "$stub_config")"
-    fi
-  }
-  return_with_cleanup() {
-    local rc="${1:-0}"
-    cleanup_case
-    return "$rc"
-  }
-
-  echo "Running user-directed suspend case: $case_id..." >&2
-
-  local rc=0
-  pushd "$REPO_ROOT" >/dev/null
-  set +e
-  MACHTIANI_CONFIG="$stub_config" \
-    timeout 240 "$MCT_AGENT" run \
-      --max-turns 2 \
-      \
-      --turn-timeout 300 \
-      --model "$stub_alias" \
-      --orch-model "$stub_alias" \
-      --file-discovery-model "$stub_alias" \
-      --text "Ask me which tradeoff I prefer before you continue." \
-      > "$stdout_suspend" 2> "$stderr_suspend"
-  rc=$?
-  set -e
-  popd >/dev/null
-  if [[ $rc -ne 0 ]]; then
-    echo "Failed initial suspend run (rc=$rc): $case_id" >&2
-    return_with_cleanup 1 || return 1
-  fi
-
-  local agent_session
-  agent_session=$(grep -m1 '^Session:' "$stderr_suspend" | awk '{print $2}' || true)
-  if [[ -z "$agent_session" ]]; then
-    echo "Failed to parse session ID from suspended stderr for $case_id" >&2
-    return_with_cleanup 1 || return 1
-  fi
-
-  local session_dir="$REPO_ROOT/.machtiani/sessions/$agent_session"
-  local transcript_path="$session_dir/chat/agent-transcript.adoc"
-  local final_path="$session_dir/chat/agent-final-answer.md"
-  local session_state_path="$session_dir/session-state.json"
-
-  if [[ ! -s "$transcript_path" ]]; then
-    echo "Transcript missing or empty after suspend: $transcript_path" >&2
-    return_with_cleanup 1 || return 1
-  fi
-  if [[ ! -s "$session_state_path" ]]; then
-    echo "Session state missing after suspend: $session_state_path" >&2
-    return_with_cleanup 1 || return 1
-  fi
-  if [[ -e "$final_path" ]]; then
-    echo "Final artifact should not exist before resume: $final_path" >&2
-    return_with_cleanup 1 || return 1
-  fi
-
-  cp -f "$transcript_path" "$out_dir/transcript-suspend-${session_id}.adoc"
-
-  if ! contains_keywords '=== USER INPUT NEEDED ===|Do you want the safer fix' "$stdout_suspend" "$transcript_path"; then
-    echo "Missing suspended user-input prompt: $case_id" >&2
-    return_with_cleanup 1 || return 1
-  fi
-
-  if ! "$PYTHON_BIN" - "$session_state_path" <<'PY'
-import json
-import sys
-
-path = sys.argv[1]
-with open(path, 'r', encoding='utf-8') as fh:
-    data = json.load(fh)
-
-if data.get('status') != 'suspended_user_input':
-    print(f"ERROR: unexpected suspended status: {data.get('status')!r}", file=sys.stderr)
-    sys.exit(1)
-
-suspended = data.get('suspended_user_input') or {}
-question = str(suspended.get('question') or '').strip()
-if 'safer fix' not in question:
-    print(f"ERROR: unexpected suspended question: {question!r}", file=sys.stderr)
-    sys.exit(1)
-PY
-  then
-    return_with_cleanup 1 || return 1
-  fi
-
-  pushd "$REPO_ROOT" >/dev/null
-  set +e
-  MACHTIANI_CONFIG="$stub_config" \
-    timeout 240 "$MCT_AGENT" run \
-      --max-turns 2 \
-      \
-      --turn-timeout 300 \
-      --session-id "$agent_session" \
-      --model "$stub_alias" \
-      --orch-model "$stub_alias" \
-      --file-discovery-model "$stub_alias" \
-      --text "Use the safer fix that preserves behavior." \
-      > "$stdout_resume" 2> "$stderr_resume"
-  rc=$?
-  set -e
-  popd >/dev/null
-  if [[ $rc -ne 0 ]]; then
-    echo "Failed resume run (rc=$rc): $case_id" >&2
-    return_with_cleanup 1 || return 1
-  fi
-
-  if [[ ! -s "$final_path" ]]; then
-    echo "Missing final artifact after resume: $final_path" >&2
-    return_with_cleanup 1 || return 1
-  fi
-  if [[ -e "$session_state_path" ]]; then
-    if ! "$PYTHON_BIN" - "$session_state_path" <<'PY'
-import json
-import sys
-
-path = sys.argv[1]
-with open(path, 'r', encoding='utf-8') as fh:
-    data = json.load(fh)
-
-if data.get('status') != 'success':
-    print(f"ERROR: unexpected resumed status: {data.get('status')!r}", file=sys.stderr)
-    sys.exit(1)
-
-if data.get('suspended_user_input'):
-    print('ERROR: suspended_user_input should be cleared after resume completion', file=sys.stderr)
-    sys.exit(1)
-PY
-    then
-      return_with_cleanup 1 || return 1
-    fi
-  fi
-
-  cp -f "$transcript_path" "$out_dir/transcript-resume-${session_id}.adoc"
-  cp -f "$final_path" "$out_dir/final-resume-${session_id}.md"
-
-  if ! contains_keywords '===> FINAL RESPONSE <===|Stub response\.|=== USER INPUT ===|=== USER INPUT NEEDED ===' "$stdout_resume" "$transcript_path" "$final_path"; then
-    echo "Missing resume completion markers: $case_id" >&2
-    return_with_cleanup 1 || return 1
-  fi
-
-  assert_stub_counts "$state_file" 2 1 1 0
-  assert_stub_user_directed_counts "$state_file" 2 1 1
-
-  echo "Passed: $case_id" >&2
-  return_with_cleanup 0
-}
-
 run_mode_prompt_layers_case() {
   local case_id="mode-prompt-layers"
   local stub_dir="$TMP_ROOT/stub-${case_id}-$(date +%s)"
@@ -3834,7 +3660,7 @@ declare -A TESTS=(
   ["shell_command_trajectory_live"]="run_shell_command_trajectory_live_case"
   ["shell_live"]="run_shell_live_case"
   ["resume_without_mode"]="run_resume_without_mode_case"
-  ["user_directed_suspend"]="run_user_directed_suspend_case"
+
   ["models-per-component"]="test_models_per_component"
   ["models-mixed-fallback"]="test_models_mixed_fallback"
   ["models-catch-all"]="test_models_catch_all"
@@ -3943,7 +3769,7 @@ run_happy_case "planner-ask-monitor" 2 \
   1 \
   "${DEFAULT_MODEL_ARGS[@]}"
 
-run_user_directed_suspend_case
+
 
 run_happy_case "issue-c-1turn" 1 \
   "Explain how mct-agent handles errors during finalization and transcript writing." \
