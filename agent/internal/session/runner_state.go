@@ -147,15 +147,19 @@ func prepareRunBootstrap(rootCtx context.Context, opts Options, diagWriter io.Wr
 	opts.PlannerOverlay = plannerOverlay
 	conversationGoal := formatGoalText(originalPrompt, taskDescription)
 
-	inheritedSessionID := os.Getenv("MACHTIANI_SESSION_ID")
 	if sessionID == "" {
-		sessionID = runner.GenerateSessionID()
+		if inherited := os.Getenv("MACHTIANI_SESSION_ID"); inherited != "" {
+			sessionID = inherited
+		} else {
+			sessionID = runner.GenerateSessionID()
+		}
 	}
 	_ = os.Setenv("MACHTIANI_SESSION_ID", sessionID)
 
 	// Ignore inherited MACHTIANI_SESSION_TEMP_ROOT for new sessions
-	// to prevent child processes from colliding with a parent session lock.
-	if strings.TrimSpace(cfgInput.SessionID) == "" && inheritedSessionID != "" {
+	// to prevent child processes from colliding with a parent session lock,
+	// unless the caller explicitly provided a temp root via the environment.
+	if strings.TrimSpace(cfgInput.SessionID) == "" && os.Getenv("MACHTIANI_SESSION_ID") != "" && os.Getenv("MACHTIANI_SESSION_TEMP_ROOT") == "" {
 		_ = os.Unsetenv("MACHTIANI_SESSION_TEMP_ROOT")
 	}
 
