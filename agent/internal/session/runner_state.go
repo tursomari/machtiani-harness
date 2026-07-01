@@ -96,7 +96,7 @@ func prepareRunBootstrap(rootCtx context.Context, opts Options, diagWriter io.Wr
 				conv, _ = conversation.Unmarshal(data)
 			}
 		}
-		state, err := loadOrMigrateSessionState(conv, sessionID)
+		state, err := sessionStateFromConversation(conv, sessionID)
 		if err != nil {
 			fmt.Fprintln(diagWriter, "Error loading session state:", err)
 			return nil, Result{ExitCode: 1, Err: err}, false

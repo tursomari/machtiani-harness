@@ -422,11 +422,11 @@ func TestPersistSessionStateSaveFailure(t *testing.T) {
 	}
 }
 
-// TestLoadOrMigrateSessionStateFromConversationFields verifies that when
+// TestSessionStateFromConversationFields verifies that when
 // a Conversation pointer with all top-level fields populated is passed to
-// loadOrMigrateSessionState, the returned SessionState matches those fields
+// sessionStateFromConversation, the returned SessionState matches those fields
 // exactly without requiring a session-state.json file on disk.
-func TestLoadOrMigrateSessionStateFromConversationFields(t *testing.T) {
+func TestSessionStateFromConversationFields(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	sessionID := fmt.Sprintf("test-migrate-from-conv-%d", time.Now().UnixNano())
 
@@ -458,9 +458,9 @@ func TestLoadOrMigrateSessionStateFromConversationFields(t *testing.T) {
 		UpdatedAt:         now,
 	}
 
-	state, err := loadOrMigrateSessionState(conv, sessionID)
+	state, err := sessionStateFromConversation(conv, sessionID)
 	if err != nil {
-		t.Fatalf("loadOrMigrateSessionState returned error: %v", err)
+		t.Fatalf("sessionStateFromConversation returned error: %v", err)
 	}
 	if state == nil {
 		t.Fatal("expected non-nil SessionState")

@@ -34,15 +34,12 @@ type SessionState struct {
 
 
 // SaveSessionState is a deprecated no-op kept for API compatibility.
+// Deprecated: This function is a no-op and does nothing.
 func SaveSessionState(state SessionState) error {
 	return nil
 }
 
-func LoadSessionState(sessionID string) (*SessionState, error) {
-	return nil, errors.New("LoadSessionState is removed; use loadOrMigrateSessionState")
-}
-
-func loadOrMigrateSessionState(conv *conversation.Conversation, sessionID string) (*SessionState, error) {
+func sessionStateFromConversation(conv *conversation.Conversation, sessionID string) (*SessionState, error) {
 	if conv != nil && conv.Goal != "" {
 		ss := SessionState{
 			SessionID:                  conv.SessionID,
@@ -65,6 +62,13 @@ func loadOrMigrateSessionState(conv *conversation.Conversation, sessionID string
 		return &ss, nil
 	}
 	return nil, fmt.Errorf("no session state available from conversation for session %s", sessionID)
+}
+
+// SessionStateFromConversation is the public wrapper that derives a
+// SessionState from a parsed conversation. It delegates to the
+// unexported sessionStateFromConversation.
+func SessionStateFromConversation(conv *conversation.Conversation, sessionID string) (*SessionState, error) {
+	return sessionStateFromConversation(conv, sessionID)
 }
 
 
@@ -120,7 +124,7 @@ func ListSessions() ([]SessionState, error) {
 		if err != nil {
 			continue
 		}
-		state, err := loadOrMigrateSessionState(conv, sessionID)
+		state, err := sessionStateFromConversation(conv, sessionID)
 		if err != nil {
 			continue
 		}

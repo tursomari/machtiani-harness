@@ -12,7 +12,9 @@ import (
 	"time"
 
 	"github.com/spf13/pflag"
+	"github.com/tursomari/machtiani/agent/internal/conversation"
 	"github.com/tursomari/machtiani/agent/internal/llm"
+	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
 	"github.com/tursomari/machtiani/agent/internal/mct/readmesync"
 	shellagent "github.com/tursomari/machtiani/agent/internal/shell-agent"
 	"github.com/tursomari/machtiani/agent/internal/session"
@@ -786,9 +788,24 @@ func handleSessionShowCommand(args []string) int {
 	}
 
 	sessionID := fs.Arg(0)
-	state, err := session.LoadSessionState(sessionID)
+	convPath, err := artifacts.SessionConversationFile(sessionID)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading session %s: %v\n", sessionID, err)
+		fmt.Fprintf(os.Stderr, "Error resolving conversation path for session %s: %v\n", sessionID, err)
+		return 1
+	}
+	convData, err := os.ReadFile(convPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading conversation file for session %s: %v\n", sessionID, err)
+		return 1
+	}
+	conv, err := conversation.Unmarshal(convData)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error parsing conversation for session %s: %v\n", sessionID, err)
+		return 1
+	}
+	state, err := session.SessionStateFromConversation(conv, sessionID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error deriving session state for %s: %v\n", sessionID, err)
 		return 1
 	}
 

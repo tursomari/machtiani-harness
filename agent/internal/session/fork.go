@@ -34,7 +34,7 @@ func ForkSession(sourceSessionID string) (string, error) {
 			forkedConv, _ = conversation.Unmarshal(data)
 		}
 	}
-	sourceState, err := loadOrMigrateSessionState(forkedConv, sourceSessionID)
+	sourceState, err := sessionStateFromConversation(forkedConv, sourceSessionID)
 	if err != nil {
 		return "", fmt.Errorf("load source session state: %w", err)
 	}
