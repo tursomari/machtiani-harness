@@ -4009,7 +4009,7 @@ test_issue_c_3turn() {
 }
 
 test_empty_goal() {
-  run_error_case "empty-goal" "" 1 "empty issue/question|missing issue" "${DEFAULT_MODEL_ARGS[@]}"
+  run_error_case "empty-goal" "" 1 "one of --text or --file is required" "${DEFAULT_MODEL_ARGS[@]}"
 }
 
 test_invalid_orch_model() {
@@ -4177,7 +4177,7 @@ run_happy_case "issue-c-3turn" 3 \
   "error|handling|finalize|transcript|fallback" \
   "${DEFAULT_MODEL_ARGS[@]}"
 
-run_error_case "empty-goal" "" 1 "empty issue/question|missing issue" "${DEFAULT_MODEL_ARGS[@]}"
+run_error_case "empty-goal" "" 1 "one of --text or --file is required" "${DEFAULT_MODEL_ARGS[@]}"
 
 run_error_case "invalid-orch-model" "" 1 "$MODEL_ALIAS_NOT_FOUND_PATTERN" \
   "Trigger orchestrator alias failure" \
