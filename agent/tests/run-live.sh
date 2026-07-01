@@ -3929,6 +3929,108 @@ fi  # $# -eq 0 guard
 # run only the requested tests in order.  Each name must map to a registered
 # function in the TESTS array.
 
+test_models_per_component() {
+  run_happy_case "models-per-component" 3 \
+    "Outline how the orchestrator and file discovery collaborators interact." \
+    "$PER_COMPONENT_LABEL_PATTERN" \
+    1 \
+    \
+    "${PER_COMPONENT_MODEL_ARGS[@]}"
+}
+
+test_models_mixed_fallback() {
+  run_happy_case "models-mixed-fallback" 3 \
+    "Summarize how shell-agent falls back to the orchestrator model when unspecified." \
+    "$MIXED_LABEL_PATTERN" \
+    1 \
+    \
+    --orch-model "$ORCH_MODEL_ALIAS"
+}
+
+test_models_catch_all() {
+  run_happy_case "models-catch-all" 1 \
+    "Describe the default model wiring for orchestrator and file discovery." \
+    "$CATCH_ALL_LABEL_PATTERN" \
+    1 \
+    "${DEFAULT_MODEL_ARGS[@]}"
+}
+
+test_issue_a_1turn() {
+  run_happy_case "issue-a-1turn" 1 \
+    "What is the main purpose of the mct-agent binary?" \
+    "===> FINAL RESPONSE <===" \
+    1 \
+    "${DEFAULT_MODEL_ARGS[@]}"
+}
+
+test_issue_a_3turn() {
+  run_happy_case "issue-a-3turn" 3 \
+    "What is the main purpose of the mct-agent binary?" \
+    "===> FINAL RESPONSE <===" \
+    "${DEFAULT_MODEL_ARGS[@]}"
+}
+
+test_issue_b_1turn() {
+  run_happy_case "issue-b-1turn" 1 \
+    "Describe the full multi-turn flow in mct-agent, including planning and context retention." \
+    "multi-turn|conversation|context|planner|ask" \
+    1 \
+    "${DEFAULT_MODEL_ARGS[@]}"
+}
+
+test_issue_b_3turn() {
+  run_happy_case "issue-b-3turn" 3 \
+    "Describe the full multi-turn flow in mct-agent, including planning and context retention." \
+    "multi-turn|conversation|context|planner|ask" \
+    1 \
+    "${DEFAULT_MODEL_ARGS[@]}"
+}
+
+test_planner_ask_monitor() {
+  run_happy_case "planner-ask-monitor" 2 \
+    "Explain the planner ask monitor guardrail flow and when it retries. If you need repository context, ask for it." \
+    "(?s)(?=.*ask)(?=.*monitor)" \
+    1 \
+    "${DEFAULT_MODEL_ARGS[@]}"
+}
+
+test_issue_c_1turn() {
+  run_happy_case "issue-c-1turn" 1 \
+    "Explain how mct-agent handles errors during finalization and transcript writing." \
+    "error|handling|finalize|transcript|fallback" \
+    "${DEFAULT_MODEL_ARGS[@]}"
+}
+
+test_issue_c_3turn() {
+  run_happy_case "issue-c-3turn" 3 \
+    "Explain how mct-agent handles errors during finalization and transcript writing, with examples from code." \
+    "error|handling|finalize|transcript|fallback" \
+    "${DEFAULT_MODEL_ARGS[@]}"
+}
+
+test_empty_goal() {
+  run_error_case "empty-goal" "" 1 "empty issue/question|missing issue" "${DEFAULT_MODEL_ARGS[@]}"
+}
+
+test_invalid_orch_model() {
+  run_error_case "invalid-orch-model" "" 1 "$MODEL_ALIAS_NOT_FOUND_PATTERN" \
+    "Trigger orchestrator alias failure" \
+    --orch-model "$INVALID_ALIAS"
+}
+
+test_invalid_file_discovery_model() {
+  run_error_case "invalid-file-discovery-model" "" 1 "$MODEL_ALIAS_NOT_FOUND_PATTERN" \
+    "Trigger file discovery alias failure" \
+    --file-discovery-model "$INVALID_ALIAS" \
+    "${DEFAULT_MODEL_ARGS[@]}"
+}
+
+test_missing_config() {
+  MACHTIANI_CONFIG="/nonexistent/machtiani-config.toml" OPENAI_API_KEY="" OPENAI_BASE_URL="" OPENAI_MODEL="" \
+  run_error_case "missing-config" "" 1 "Missing model config|Model resolution error|MACHTIANI_CONFIG" \
+    "Explain how the agent chooses its model runtime."
+}
+
 declare -A TESTS=(
   ["test_local_tmp_root_unset_live"]="run_local_tmp_root_unset_live_case"
   ["test_code_no_forge"]="test_code_no_forge"
@@ -3940,6 +4042,33 @@ declare -A TESTS=(
   ["test_shell_agent_step_counter_resume"]="test_shell_agent_step_counter_resume"
   ["test_mode_prompt_layers"]="run_mode_prompt_layers_case"
   ["test_enforce_early_commands"]="run_enforce_early_commands_case"
+  ["shell_agent_subcommand_live"]="run_shell_agent_subcommand_live_case"
+  ["snippet_discovery_tightness_live"]="run_snippet_discovery_tightness_live_case"
+  ["menu_flow_live"]="run_menu_flow_live_case"
+  ["mode_live"]="run_mode_live_case"
+  ["file_discovery_live"]="run_file_discovery_live_case"
+  ["show_live"]="run_show_live_case"
+  ["show_range_live"]="run_show_range_live_case"
+  ["resume_from_conversation_json"]="run_resume_from_conversation_json_case"
+  ["shell_command_trajectory_live"]="run_shell_command_trajectory_live_case"
+  ["shell_live"]="run_shell_live_case"
+  ["resume_without_mode"]="run_resume_without_mode_case"
+  ["user_directed_suspend"]="run_user_directed_suspend_case"
+  ["legacy_migration_resume"]="run_legacy_migration_resume_case"
+  ["models-per-component"]="test_models_per_component"
+  ["models-mixed-fallback"]="test_models_mixed_fallback"
+  ["models-catch-all"]="test_models_catch_all"
+  ["issue-a-1turn"]="test_issue_a_1turn"
+  ["issue-a-3turn"]="test_issue_a_3turn"
+  ["issue-b-1turn"]="test_issue_b_1turn"
+  ["issue-b-3turn"]="test_issue_b_3turn"
+  ["planner-ask-monitor"]="test_planner_ask_monitor"
+  ["issue-c-1turn"]="test_issue_c_1turn"
+  ["issue-c-3turn"]="test_issue_c_3turn"
+  ["empty-goal"]="test_empty_goal"
+  ["invalid-orch-model"]="test_invalid_orch_model"
+  ["invalid-file-discovery-model"]="test_invalid_file_discovery_model"
+  ["missing-config"]="test_missing_config"
 )
 
 if [[ $# -gt 0 ]]; then

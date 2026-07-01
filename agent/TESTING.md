@@ -33,6 +33,25 @@ Scenarios covered
 - Error: empty prompt
 - Error: missing config (only when live test/provider env vars are present)
 
+### Targeting individual cases
+
+You can target specific test cases by passing their names as command-line arguments to `run-live.sh`.
+
+- **Run all cases:** invoke the script with no arguments. This executes every registered case in order.
+  ```bash
+  bash agent/tests/run-live.sh
+  ```
+- **Run one or more specific cases:** pass the names as arguments. The script looks up each name in an internal registry and runs only those cases.
+  ```bash
+  bash agent/tests/run-live.sh issue-a-1turn
+  bash agent/tests/run-live.sh issue-a-1turn empty-goal test_code_no_forge
+  ```
+- **Case naming conventions:** dedicated test functions use underscores (e.g. `shell_command_trajectory_live`, `menu_flow_live`, `test_code_no_forge`). Cases defined via `run_happy_case` / `run_error_case` use their case-id as the name, which may contain hyphens (e.g. `issue-a-1turn`, `empty-goal`, `models-per-component`).
+- **Discovering available names:** if you pass an unknown name, the script prints the full list of available test names to stderr and exits. You can use this to explore what is available:
+  ```bash
+  bash agent/tests/run-live.sh no-such-case 2>&1 | head -5
+  ```
+
 Modes
 - Live: export `TEST_API_KEY`, `TEST_BASE_URL`, and `TEST_MODEL` before running, or omit `TEST_*` and let the harness fall back to `OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_MODEL`.
 - Optional live overrides: `TEST_ORCH_MODEL` and `TEST_FILE_DISCOVERY_MODEL` take precedence over the corresponding `OPENAI_*` component model vars.
