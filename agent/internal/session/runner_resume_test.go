@@ -372,8 +372,11 @@ func (r *streamActionRecorder) Notify(line string) {
 // to the display in order.
 func TestReplayShellAgentActions(t *testing.T) {
 	sessionID := "test-replay-session"
-	resumePath := filepath.Join(os.TempDir(), sessionID+"-resume.json")
-	defer os.Remove(resumePath)
+	trajPath, err := artifacts.ShellAgentTrajectoryPath(sessionID, 1)
+	if err != nil {
+		t.Fatalf("failed to resolve trajectory path: %v", err)
+	}
+	defer os.RemoveAll(filepath.Dir(trajPath))
 
 	// Build a FileTrajectory-compatible struct with 3 messages: two assistant
 	// commands separated by a tool output. The inner run package is internal,
@@ -388,12 +391,15 @@ func TestReplayShellAgentActions(t *testing.T) {
 		},
 	}
 
-	// Save it to a temp file (equivalent to SaveResumeState).
+	// Save it to the artifacts trajectory path (equivalent to SaveResumeState).
 	data, err := json.MarshalIndent(traj, "", "  ")
 	if err != nil {
 		t.Fatalf("failed to marshal trajectory: %v", err)
 	}
-	if err := os.WriteFile(resumePath, data, 0644); err != nil {
+	if err := os.MkdirAll(filepath.Dir(trajPath), 0755); err != nil {
+		t.Fatalf("failed to create trajectory directory: %v", err)
+	}
+	if err := os.WriteFile(trajPath, data, 0644); err != nil {
 		t.Fatalf("failed to save resume state: %v", err)
 	}
 
@@ -435,8 +441,11 @@ func TestReplayShellAgentActionsMissingFile(t *testing.T) {
 // returns nil (no-op) when the trajectory has no <command> messages.
 func TestReplayShellAgentActionsNoCommands(t *testing.T) {
 	sessionID := "test-replay-no-cmds"
-	resumePath := filepath.Join(os.TempDir(), sessionID+"-resume.json")
-	defer os.Remove(resumePath)
+	trajPath, err := artifacts.ShellAgentTrajectoryPath(sessionID, 0)
+	if err != nil {
+		t.Fatalf("failed to resolve trajectory path: %v", err)
+	}
+	defer os.RemoveAll(filepath.Dir(trajPath))
 
 	messages := []minisweagent.Message{
 		{Role: "system", Content: "system prompt"},
@@ -453,7 +462,10 @@ func TestReplayShellAgentActionsNoCommands(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to marshal trajectory: %v", err)
 	}
-	if err := os.WriteFile(resumePath, data, 0644); err != nil {
+	if err := os.MkdirAll(filepath.Dir(trajPath), 0755); err != nil {
+		t.Fatalf("failed to create trajectory directory: %v", err)
+	}
+	if err := os.WriteFile(trajPath, data, 0644); err != nil {
 		t.Fatalf("failed to write resume file: %v", err)
 	}
 
@@ -799,6 +811,72 @@ func TestResumeEndToEndWithoutSessionStateJSON(t *testing.T) {
 	// Assert session-state.json was NOT created on disk after bootstrap.
 	if _, err := os.Stat(statePath); !os.IsNotExist(err) {
 		t.Fatalf("session-state.json was created on disk but should NOT have been")
+	}
+}
+
+// TestLoadTrajectoryForResumeSuccess creates a temporary trajectory file,
+// calls loadTrajectoryForResume, and verifies the returned messages.
+func TestLoadTrajectoryForResumeSuccess(t *testing.T) {
+	sessionID := "test-load-trajectory-success"
+	trajPath, err := artifacts.ShellAgentTrajectoryPath(sessionID, 1)
+	if err != nil {
+		t.Fatalf("failed to resolve trajectory path: %v", err)
+	}
+	parentDir := filepath.Dir(trajPath)
+	defer os.RemoveAll(parentDir)
+
+	if err := os.MkdirAll(parentDir, 0755); err != nil {
+		t.Fatalf("failed to create trajectory directory: %v", err)
+	}
+
+	traj := struct {
+		Messages []minisweagent.Message `json:"messages"`
+	}{
+		Messages: []minisweagent.Message{
+			{Role: "assistant", Content: "test content 1"},
+			{Role: "tool", Content: "test content 2"},
+		},
+	}
+
+	data, err := json.Marshal(traj)
+	if err != nil {
+		t.Fatalf("failed to marshal trajectory: %v", err)
+	}
+	if err := os.WriteFile(trajPath, data, 0644); err != nil {
+		t.Fatalf("failed to write trajectory file: %v", err)
+	}
+
+	messages, err := loadTrajectoryForResume(sessionID, 1)
+	if err != nil {
+		t.Fatalf("loadTrajectoryForResume returned unexpected error: %v", err)
+	}
+
+	if len(messages) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(messages))
+	}
+
+	if messages[0].Role != "assistant" {
+		t.Fatalf("expected messages[0].Role to be 'assistant', got %q", messages[0].Role)
+	}
+	if messages[0].Content != "test content 1" {
+		t.Fatalf("expected messages[0].Content to be 'test content 1', got %q", messages[0].Content)
+	}
+
+	if messages[1].Role != "tool" {
+		t.Fatalf("expected messages[1].Role to be 'tool', got %q", messages[1].Role)
+	}
+	if messages[1].Content != "test content 2" {
+		t.Fatalf("expected messages[1].Content to be 'test content 2', got %q", messages[1].Content)
+	}
+}
+
+// TestLoadTrajectoryForResumeNotFound verifies that loadTrajectoryForResume
+// returns an error when no trajectory file exists for the given session.
+func TestLoadTrajectoryForResumeNotFound(t *testing.T) {
+	sessionID := "test-load-trajectory-notfound-1a2b3c"
+	_, err := loadTrajectoryForResume(sessionID, 1)
+	if err == nil {
+		t.Fatal("expected error from loadTrajectoryForResume for non-existent trajectory, got nil")
 	}
 }
 

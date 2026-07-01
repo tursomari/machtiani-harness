@@ -75,6 +75,26 @@ type runTurnEnv struct {
 	mctResponseDirectives       []string
 }
 
+// loadTrajectoryForResume loads the shell-agent trajectory messages
+// from the canonical artifacts path for the given session and step.
+func loadTrajectoryForResume(sessionID string, step int) ([]minisweagent.Message, error) {
+	path, err := artifacts.ShellAgentTrajectoryPath(sessionID, step)
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var traj struct {
+		Messages []minisweagent.Message `json:"messages"`
+	}
+	if err := json.Unmarshal(data, &traj); err != nil {
+		return nil, err
+	}
+	return traj.Messages, nil
+}
+
 func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 	if env == nil {
 		return turnExecutionResult{}
@@ -200,16 +220,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 	}
 	var interruptedMsgs []minisweagent.Message
 	if env.isResumingTurn {
-		resumePath := filepath.Join(os.TempDir(), env.sessionID+"-resume.json")
-		data, err := os.ReadFile(resumePath)
-		if err == nil {
-			var traj struct {
-				Messages []minisweagent.Message `json:"messages"`
-			}
-			if err := json.Unmarshal(data, &traj); err == nil {
-				interruptedMsgs = traj.Messages
-			}
-		}
+		interruptedMsgs, _ = loadTrajectoryForResume(env.sessionID, env.step)
 	}
 	stream := env.display.BeginPrompt(question, orchPromptOpts)
 	if runSplitShell {
@@ -339,9 +350,11 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 				env.turnInfo["shell_agent_trajectory"] = trimTo(shellResult.TrajectoryPath, 200)
 			}
 			env.turnInfo["shell_agent_cancelled"] = true
-			resumePath := filepath.Join(os.TempDir(), env.sessionID+"-resume.json")
-			if _, err := os.Stat(resumePath); err == nil {
-				env.recorder.SetShellAgentMetadata(shellResult.TrajectoryPath, true)
+			trajPath, err := artifacts.ShellAgentTrajectoryPath(env.sessionID, env.step)
+			if err == nil {
+				if _, err := os.Stat(trajPath); err == nil {
+					env.recorder.SetShellAgentMetadata(shellResult.TrajectoryPath, true)
+				}
 			}
 			if env.isResumingTurn {
 				env.display.Notify("[resume] shell-agent interrupted again; assertion deferred")
@@ -641,30 +654,16 @@ func (tc *TurnContext) buildShellAgentRequest(task string, sessionID string, ver
 
 // replayShellAgentActions replays shell-agent command steps from a saved resume file into the TUI display as concise summary lines, one per prior command, showing the command string and output line count.
 func replayShellAgentActions(display ui.SessionDisplay, diagWriter io.Writer, sessionID string, step int) error {
-	resumePath := filepath.Join(os.TempDir(), sessionID+"-resume.json")
-
-	// Load the resume file as a raw trajectory (avoid importing internal/run).
-	data, err := os.ReadFile(resumePath)
+	messages, err := loadTrajectoryForResume(sessionID, step)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
 		fmt.Fprintf(diagWriter, "Warning: unable to load shell-agent resume state for replay: %v\n", err)
-		return nil
-	}
-
-	var traj struct {
-		Messages []minisweagent.Message `json:"messages"`
-	}
-	if err := json.Unmarshal(data, &traj); err != nil {
-		fmt.Fprintf(diagWriter, "Warning: unable to parse shell-agent resume state for replay: %v\n", err)
 		return nil
 	}
 
 	cmdRe := regexp.MustCompile(`<command-now>\s*(.*?)\s*</command-now>`)
 
 	cmdSteps := 0
-	for _, msg := range traj.Messages {
+	for _, msg := range messages {
 		if msg.Role == "assistant" && len(cmdRe.FindStringSubmatch(msg.Content)) > 0 {
 			cmdSteps++
 		}
@@ -675,8 +674,8 @@ func replayShellAgentActions(display ui.SessionDisplay, diagWriter io.Writer, se
 	}
 
 	cmdIndex := 0
-	for i := 0; i < len(traj.Messages); i++ {
-		msg := traj.Messages[i]
+	for i := 0; i < len(messages); i++ {
+		msg := messages[i]
 		if msg.Role != "assistant" || len(cmdRe.FindStringSubmatch(msg.Content)) == 0 {
 			continue
 		}
@@ -690,8 +689,8 @@ func replayShellAgentActions(display ui.SessionDisplay, diagWriter io.Writer, se
 		}
 		outputLines := 0
 		j := i + 1
-		for ; j < len(traj.Messages); j++ {
-			nxt := traj.Messages[j]
+		for ; j < len(messages); j++ {
+			nxt := messages[j]
 			if nxt.Role == "assistant" && strings.Contains(nxt.Content, "<command") {
 				break
 			}
