@@ -516,3 +516,20 @@ func TestRestoreTranscriptFromConversationIncludesFinalConclusion(t *testing.T) 
 		t.Fatalf("transcript not rewritten from conversation:\nwant:\n%s\n----\n got:\n%s", convRendered, tr.Content())
 	}
 }
+
+func TestTurnCountConsistency(t *testing.T) {
+	t.Parallel()
+
+	transcriptContent := "\n== TURN 1\n\nshell-agent output\n\n== TURN 2\n\nshell-agent output\n\n== TURN 3\n\nshell-agent output\n"
+
+	got := countTurns(transcriptContent)
+	if got != 3 {
+		t.Errorf("countTurns returned %d, want 3 (case mismatch: countTurns checks == Turn  but transcripts are written with == TURN )", got)
+	}
+
+	loopTurnsCompleted := 3
+	turns := countTurns(transcriptContent)
+	if turns != loopTurnsCompleted {
+		t.Errorf("Path 2 would overwrite loop counter: loopTurnsCompleted=%d but countTurns returned %d", loopTurnsCompleted, turns)
+	}
+}
