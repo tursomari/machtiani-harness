@@ -1174,14 +1174,14 @@ validate_turn_counts() {
     return 1
   fi
 
-  # 4. Count turn headers in the transcript
+  # 4. Count unique turn numbers in the transcript
   local trans_turns
-  trans_turns=$(grep -c "^== TURN " "$transcript_path" 2>/dev/null)
+  trans_turns=$(grep -oP "^== TURN \K[0-9]+" "$transcript_path" 2>/dev/null | sort -n -u | wc -l)
   if [[ -z "$trans_turns" || "$trans_turns" -eq 0 ]]; then
     printf "ERROR: unable to count turn headers in transcript for %s\n" "$case_id" >&2
     return 1
   fi
-  # Check if Turn 0 header exists, subtract 1 if so
+  # If Turn 0 is included, subtract 1
   if grep -q "^== TURN 0$" "$transcript_path" 2>/dev/null; then
     trans_turns=$((trans_turns - 1))
   fi
