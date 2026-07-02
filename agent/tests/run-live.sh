@@ -1146,6 +1146,56 @@ if paths != [expected]:
 PY
 }
 
+validate_turn_counts() {
+  local case_id="$1"
+  local stdout_file="$2"
+  local transcript_path="$3"
+  local session_dir="$4"
+
+  # 1. Check if jq is available
+  if ! command -v jq >/dev/null 2>&1; then
+    printf "WARNING: jq not found, skipping turn-count cross-validation for %s\n" "$case_id" >&2
+    return 0
+  fi
+
+  # 2. Parse turns from stdout
+  local stdout_turns
+  stdout_turns=$(grep "Turns completed:" "$stdout_file" 2>/dev/null | head -1 | sed -n 's/.*Turns completed: *\([0-9][0-9]*\).*/\1/p')
+  if [[ -z "$stdout_turns" ]]; then
+    printf "ERROR: unable to parse Turns completed from stdout for %s\n" "$case_id" >&2
+    return 1
+  fi
+
+  # 3. Read turns_completed from conversation.json
+  local conv_turns
+  conv_turns=$(jq -r ".turns_completed" "$session_dir/artifacts/conversation.json" 2>/dev/null)
+  if [[ -z "$conv_turns" || "$conv_turns" == "null" ]]; then
+    printf "ERROR: unable to read turns_completed from conversation.json for %s\n" "$case_id" >&2
+    return 1
+  fi
+
+  # 4. Count turn headers in the transcript
+  local trans_turns
+  trans_turns=$(grep -c "^== TURN " "$transcript_path" 2>/dev/null)
+  if [[ -z "$trans_turns" || "$trans_turns" -eq 0 ]]; then
+    printf "ERROR: unable to count turn headers in transcript for %s\n" "$case_id" >&2
+    return 1
+  fi
+  # Check if Turn 0 header exists, subtract 1 if so
+  if grep -q "^== TURN 0$" "$transcript_path" 2>/dev/null; then
+    trans_turns=$((trans_turns - 1))
+  fi
+
+  # 5. Assert all three values are equal
+  if [[ "$stdout_turns" -eq "$conv_turns" ]] && [[ "$stdout_turns" -eq "$trans_turns" ]]; then
+    printf "Turn count cross-validation PASSED: %s (stdout=%s, conv=%s, trans=%s)\n" "$case_id" "$stdout_turns" "$conv_turns" "$trans_turns" >&2
+    return 0
+  else
+    printf "ERROR: Turn count mismatch for %s: stdout=%s, conv=%s, trans=%s\n" "$case_id" "$stdout_turns" "$conv_turns" "$trans_turns" >&2
+    return 1
+  fi
+}
+
 run_happy_case() {
   local case_id="$1"
   local max_steps="$2"
@@ -1386,6 +1436,10 @@ run_happy_case() {
     if ! assert_shell_agent_marker_cleanup "$marker_dir" "$stale_marker" "$recent_marker" "$case_id"; then
       return_with_cleanup 1 || return 1
     fi
+  fi
+
+  if ! validate_turn_counts "$case_id" "$stdout_file" "$transcript_path" "$session_dir"; then
+    return_with_cleanup 1 || return 1
   fi
 
   echo "Passed: $case_id ($turns turns)" >&2
