@@ -111,7 +111,7 @@ func TestStartLLMRetryLoggerDiagWriterCapturesListenerError(t *testing.T) {
 	missingPath := filepath.Join(t.TempDir(), "does-not-exist.jsonl")
 
 	var diagBuf bytes.Buffer
-	cancel, done, err := startLLMRetryLogger(&mockDisplay{}, missingPath, &diagBuf)
+	cancel, done, err := startLLMRetryLogger(nil, missingPath, &diagBuf)
 	if err != nil {
 		t.Fatalf("startLLMRetryLogger: %v", err)
 	}
@@ -133,7 +133,7 @@ func TestStartLLMCacheUsageLoggerDiagWriterCapturesListenerError(t *testing.T) {
 	missingPath := filepath.Join(t.TempDir(), "does-not-exist.jsonl")
 
 	var diagBuf bytes.Buffer
-	cancel, done, err := startLLMCacheUsageLogger(&mockDisplay{}, missingPath, &diagBuf)
+	cancel, done, err := startLLMCacheUsageLogger(nil, missingPath, &diagBuf)
 	if err != nil {
 		t.Fatalf("startLLMCacheUsageLogger: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestStartLLMCacheDiagnosticsLoggerDiagWriterCapturesListenerError(t *testin
 	missingPath := filepath.Join(t.TempDir(), "does-not-exist.jsonl")
 
 	var diagBuf bytes.Buffer
-	cancel, done, err := startLLMCacheDiagnosticsLogger(&mockDisplay{}, missingPath, &diagBuf)
+	cancel, done, err := startLLMCacheDiagnosticsLogger(nil, missingPath, &diagBuf)
 	if err != nil {
 		t.Fatalf("startLLMCacheDiagnosticsLogger: %v", err)
 	}
@@ -177,7 +177,7 @@ func TestStartShellActionStreamerDiagWriterCapturesListenerError(t *testing.T) {
 	missingPath := filepath.Join(t.TempDir(), "does-not-exist.jsonl")
 
 	var diagBuf bytes.Buffer
-	cancel, done, err := startShellActionStreamer(&mockDisplay{}, missingPath, &diagBuf)
+	cancel, done, err := startShellActionStreamer(nil, missingPath, &diagBuf)
 	if err != nil {
 		t.Fatalf("startShellActionStreamer: %v", err)
 	}

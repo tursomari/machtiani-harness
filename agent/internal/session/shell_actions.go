@@ -11,7 +11,7 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/ui"
 )
 
-func startShellActionStreamer(display ui.SessionDisplay, path string, diagWriter io.Writer) (context.CancelFunc, <-chan struct{}, error) {
+func startShellActionStreamer(bus *ui.EventBus, path string, diagWriter io.Writer) (context.CancelFunc, <-chan struct{}, error) {
 	sub, err := listener.New(path)
 	if err != nil {
 		return nil, nil, err
@@ -30,7 +30,7 @@ func startShellActionStreamer(display ui.SessionDisplay, path string, diagWriter
 		err := sub.Subscribe(ctx, opts, func(ctx context.Context, evt listener.Event) error {
 			line := formatShellActionLine(evt.Payload)
 			if line != "" {
-				display.StreamAction(line)
+				bus.Emit(ui.ActionExecutedEvent{Description: line})
 			}
 			return nil
 		})

@@ -97,7 +97,7 @@ func TestStartLLMFailoverLoggerDiagWriterCapturesListenerError(t *testing.T) {
 	missingPath := filepath.Join(t.TempDir(), "does-not-exist.jsonl")
 
 	var diagBuf bytes.Buffer
-	cancel, done, err := startLLMFailoverLogger(&mockDisplay{}, missingPath, &diagBuf)
+	cancel, done, err := startLLMFailoverLogger(nil, missingPath, &diagBuf)
 	if err != nil {
 		t.Fatalf("startLLMFailoverLogger: %v", err)
 	}

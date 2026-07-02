@@ -242,7 +242,7 @@ func isFallbackAttempt(payload map[string]any) bool {
 	}
 }
 
-func startLLMFailoverLogger(display ui.SessionDisplay, path string, diagWriter io.Writer) (context.CancelFunc, <-chan struct{}, error) {
+func startLLMFailoverLogger(bus *ui.EventBus, path string, diagWriter io.Writer) (context.CancelFunc, <-chan struct{}, error) {
 	sub, err := listener.New(path)
 	if err != nil {
 		return nil, nil, err
@@ -261,7 +261,7 @@ func startLLMFailoverLogger(display ui.SessionDisplay, path string, diagWriter i
 		defer close(done)
 		err := sub.Subscribe(ctx, opts, func(ctx context.Context, evt listener.Event) error {
 			if msg := tracker.process(evt); strings.TrimSpace(msg) != "" {
-				display.Notify(msg)
+				bus.Emit(ui.NotificationEvent{Level: ui.NotificationInfo, Message: msg})
 			}
 			return nil
 		})

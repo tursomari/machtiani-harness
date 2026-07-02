@@ -49,7 +49,7 @@ func (s *FormatterPromptStream) Abort(message string) {
 type Formatter struct {
 	out             io.Writer
 	mu              sync.Mutex
-	bus             *EventBus
+	Bus             *EventBus
 	theme           Theme
 	started         bool
 	closed          bool
@@ -85,7 +85,7 @@ func NewFormatter(out io.Writer, bus *EventBus, theme Theme, manager *ProcessTim
 	}
 	f := &Formatter{
 		out:          out,
-		bus:          bus,
+		Bus:          bus,
 		theme:        theme,
 		width:        detectWidth(out),
 		timerEnabled: isTerminalWriter(out),
@@ -605,50 +605,50 @@ func (f *Formatter) timerLoop(ticker *time.Ticker, stop <-chan struct{}) {
 
 // StartSession emits a SessionStartedEvent.
 func (f *Formatter) StartSession(goal string) {
-	f.bus.Emit(SessionStartedEvent{Goal: goal})
+	f.Bus.Emit(SessionStartedEvent{Goal: goal})
 }
 
 // EndSession emits a SessionEndedEvent.
 func (f *Formatter) EndSession() {
-	f.bus.Emit(SessionEndedEvent{})
+	f.Bus.Emit(SessionEndedEvent{})
 }
 
 // BeginPrompt emits a PromptStartedEvent and returns a FormatterPromptStream
 // that emits subsequent events for this prompt turn.
 func (f *Formatter) BeginPrompt(prompt string, opts *PromptOptions) PromptStream {
 	id := fmt.Sprintf("stream-%d", f.streamCounter.Add(1))
-	f.bus.Emit(PromptStartedEvent{StreamID: id, Prompt: prompt, Opts: opts})
-	return &FormatterPromptStream{bus: f.bus, streamID: id}
+	f.Bus.Emit(PromptStartedEvent{StreamID: id, Prompt: prompt, Opts: opts})
+	return &FormatterPromptStream{bus: f.Bus, streamID: id}
 }
 
 // ShowFinal emits a FinalAnswerEvent.
 func (f *Formatter) ShowFinal(rendered string) {
-	f.bus.Emit(FinalAnswerEvent{RenderedText: rendered})
+	f.Bus.Emit(FinalAnswerEvent{RenderedText: rendered})
 }
 
 // StreamAction emits an ActionExecutedEvent.
 func (f *Formatter) StreamAction(line string) {
-	f.bus.Emit(ActionExecutedEvent{Description: line})
+	f.Bus.Emit(ActionExecutedEvent{Description: line})
 }
 
 // RenderModePlan emits a ModeTaskPlanDisplayEvent.
 func (f *Formatter) RenderModePlan(tasks []ModeTaskDisplay) {
-	f.bus.Emit(ModeTaskPlanDisplayEvent{Tasks: tasks})
+	f.Bus.Emit(ModeTaskPlanDisplayEvent{Tasks: tasks})
 }
 
 // UpdateModeTaskStatus emits a ModeTaskStatusUpdateEvent.
 func (f *Formatter) UpdateModeTaskStatus(index int, title string, status string) {
-	f.bus.Emit(ModeTaskStatusUpdateEvent{Index: index, Title: title, Status: status})
+	f.Bus.Emit(ModeTaskStatusUpdateEvent{Index: index, Title: title, Status: status})
 }
 
 // Notify emits a NotificationEvent at the Info level.
 func (f *Formatter) Notify(message string) {
-	f.bus.Emit(NotificationEvent{Level: NotificationInfo, Message: message})
+	f.Bus.Emit(NotificationEvent{Level: NotificationInfo, Message: message})
 }
 
 // WriteString emits a RawStringEvent.
 func (f *Formatter) WriteString(s string) {
-	f.bus.Emit(RawStringEvent{Text: s})
+	f.Bus.Emit(RawStringEvent{Text: s})
 }
 
 // --- concrete prompt methods (mu held by caller) ----------------------------

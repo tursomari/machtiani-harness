@@ -315,6 +315,10 @@ func runSession(ctx context.Context, opts Options) Result {
 	if display == nil {
 		display = ui.NewFormatter(os.Stdout, nil, ui.Theme{}, timerMgr, sessionID)
 	}
+	var eventBus *ui.EventBus
+	if f, ok := display.(*ui.Formatter); ok {
+		eventBus = f.Bus
+	}
 	var failoverCancel context.CancelFunc
 	var failoverDone <-chan struct{}
 	var retryCancel context.CancelFunc
@@ -326,28 +330,28 @@ func runSession(ctx context.Context, opts Options) Result {
 	var shellActionCancel context.CancelFunc
 	var shellActionDone <-chan struct{}
 	if trajectoryWriter != nil {
-		cancel, done, err := startLLMFailoverLogger(display, trajectoryWriter.Config().Path, diagWriter)
+		cancel, done, err := startLLMFailoverLogger(eventBus, trajectoryWriter.Config().Path, diagWriter)
 		if err != nil {
 			fmt.Fprintf(diagWriter, "[trajectory] failover listener setup error: %v\n", err)
 		} else {
 			failoverCancel = cancel
 			failoverDone = done
 		}
-		cancel, done, err = startLLMRetryLogger(display, trajectoryWriter.Config().Path, diagWriter)
+		cancel, done, err = startLLMRetryLogger(eventBus, trajectoryWriter.Config().Path, diagWriter)
 		if err != nil {
 			fmt.Fprintf(diagWriter, "[trajectory] retry listener setup error: %v\n", err)
 		} else {
 			retryCancel = cancel
 			retryDone = done
 		}
-		cancel, done, err = startLLMCacheUsageLogger(display, trajectoryWriter.Config().Path, diagWriter)
+		cancel, done, err = startLLMCacheUsageLogger(eventBus, trajectoryWriter.Config().Path, diagWriter)
 		if err != nil {
 			fmt.Fprintf(diagWriter, "[trajectory] cache usage listener setup error: %v\n", err)
 		} else {
 			cacheUsageCancel = cancel
 			cacheUsageDone = done
 		}
-		cancel, done, err = startLLMCacheDiagnosticsLogger(display, trajectoryWriter.Config().Path, diagWriter)
+		cancel, done, err = startLLMCacheDiagnosticsLogger(eventBus, trajectoryWriter.Config().Path, diagWriter)
 		if err != nil {
 			fmt.Fprintf(diagWriter, "[trajectory] cache diagnostics listener setup error: %v\n", err)
 		} else {
@@ -355,7 +359,7 @@ func runSession(ctx context.Context, opts Options) Result {
 			cacheDiagnosticsDone = done
 		}
 		// Start shell-agent action streamer to surface shell actions in real-time
-		cancel, done, err = startShellActionStreamer(display, trajectoryWriter.Config().Path, diagWriter)
+		cancel, done, err = startShellActionStreamer(eventBus, trajectoryWriter.Config().Path, diagWriter)
 		if err != nil {
 			fmt.Fprintf(diagWriter, "[trajectory] shell action listener setup error: %v\n", err)
 		} else {
