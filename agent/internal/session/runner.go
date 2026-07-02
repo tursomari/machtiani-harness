@@ -422,7 +422,7 @@ func runSession(ctx context.Context, opts Options) Result {
 	rootCtx = llm.WithTranscript(rootCtx, tr)
 	_ = transcriptSetup.recorder // recorder is accessed via runState.recorder
 	defer func() {
-		runState.checkpointTurn(display, diagWriter)
+		runState.checkpointTurn(diagWriter)
 	}()
 	writeTurn := transcriptSetup.writeTurn
 	appendConversationRaw := transcriptSetup.appendConversationRaw
@@ -754,7 +754,7 @@ func runSession(ctx context.Context, opts Options) Result {
 					
 					return Result{ExitCode: 1, Err: ferr}
 				}
-				if err := runState.completeSession(display, diagWriter, answer, step, runState.turnsCompleted, true); err != nil {
+				if err := runState.completeSession(eventBus, diagWriter, answer, step, runState.turnsCompleted, true); err != nil {
 					fmt.Fprintln(diagWriter, "Final file write error:", err)
 					finishTurn(sessTelemetry, turn, "finalize", "error", turnInfo, err)
 					
@@ -804,7 +804,7 @@ func runSession(ctx context.Context, opts Options) Result {
 				if trajectoryWriter != nil {
 					turnInfo = trajectory.MergeExcerptWithPrefix(turnInfo, trajectory.MakeTextExcerpt(userDirected.Question, trajectoryWriter.ExcerptLen()), "suspension_question")
 				}
-				result, suspendErr := runState.suspendForUserInput(display, diagWriter, userDirected.Question, userDirected.Context, userDirected.Reason, userDirected.OriginalAsk)
+				result, suspendErr := runState.suspendForUserInput(eventBus, diagWriter, userDirected.Question, userDirected.Context, userDirected.Reason, userDirected.OriginalAsk)
 				if suspendErr != nil {
 					runState.sessionErr = suspendErr
 					finishTurn(sessTelemetry, turn, turnDecision, "error", turnInfo, suspendErr)
@@ -845,7 +845,7 @@ func runSession(ctx context.Context, opts Options) Result {
 				
 				return Result{ExitCode: 1, Err: ferr}
 			}
-			if err := runState.completeSession(display, diagWriter, answer, step, runState.turnsCompleted, false); err != nil {
+			if err := runState.completeSession(eventBus, diagWriter, answer, step, runState.turnsCompleted, false); err != nil {
 				fmt.Fprintln(diagWriter, "Final file write error:", err)
 				finishTurn(sessTelemetry, turn, "finalize", "error", turnInfo, err)
 				
@@ -870,6 +870,7 @@ func runSession(ctx context.Context, opts Options) Result {
 			
 			plannerProgress:             plannerProgress,
 			display:                     display,
+			bus:                         eventBus,
 			diagWriter:                  diagWriter,
 			hasNewInput:                 bootstrap.hasNewInput,
 			resumableShellAgentTrajectoryPath: bootstrap.resumableShellAgentTrajectoryPath,
@@ -930,7 +931,7 @@ func runSession(ctx context.Context, opts Options) Result {
 				if trajectoryWriter != nil {
 					turnInfo = trajectory.MergeExcerptWithPrefix(turnInfo, trajectory.MakeTextExcerpt(userDirected.Question, trajectoryWriter.ExcerptLen()), "suspension_question")
 				}
-				result, suspendErr := runState.suspendForUserInput(display, diagWriter, userDirected.Question, userDirected.Context, userDirected.Reason, userDirected.OriginalAsk)
+				result, suspendErr := runState.suspendForUserInput(eventBus, diagWriter, userDirected.Question, userDirected.Context, userDirected.Reason, userDirected.OriginalAsk)
 				if suspendErr != nil {
 					runState.sessionErr = suspendErr
 					finishTurn(sessTelemetry, turn, turnDecision, "error", turnInfo, suspendErr)
@@ -975,7 +976,7 @@ Finalize:
 		runState.sessionErr = ferr
 		return Result{ExitCode: 1, Err: ferr}
 	}
-	if err := runState.completeSession(display, diagWriter, answer, runState.turnsCompleted, runState.turnsCompleted, runState.turnsCompleted >= cfg.maxTurns); err != nil {
+	if err := runState.completeSession(eventBus, diagWriter, answer, runState.turnsCompleted, runState.turnsCompleted, runState.turnsCompleted >= cfg.maxTurns); err != nil {
 		fmt.Fprintln(diagWriter, "Final file write error:", err)
 		return Result{ExitCode: 1, Err: err}
 	}

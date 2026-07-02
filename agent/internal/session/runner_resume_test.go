@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/planner"
 	"github.com/tursomari/machtiani/agent/internal/shell-agent"
 	"github.com/tursomari/machtiani/agent/internal/shell-agent/pkg/minisweagent"
+	"github.com/tursomari/machtiani/agent/internal/ui"
 )
 
 // TestResumeDetectsInterruptedWorkRequest creates a conversation with a
@@ -357,14 +359,29 @@ func TestConversationJSONUpdatedAfterResume(t *testing.T) {
 	}
 }
 
-// streamActionRecorder wraps mockDisplay and captures Notify calls.
+// streamActionRecorder wraps *ui.EventBus and captures Notify calls.
 type streamActionRecorder struct {
-	mockDisplay
-	notifications []string
+	bus     *ui.EventBus
+	notified []string
+	mu      sync.Mutex
 }
 
 func (r *streamActionRecorder) Notify(line string) {
-	r.notifications = append(r.notifications, line)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.notified = append(r.notified, line)
+	r.bus.Emit(ui.NotificationEvent{Level: ui.NotificationInfo, Message: line})
+}
+
+// newTestRecorder creates a streamActionRecorder with an EventBus and a
+// goroutine that drains the bus subscription channel.
+func newTestRecorder() *streamActionRecorder {
+	bus := ui.NewEventBus(256)
+	go func() {
+		for range bus.Subscribe() {
+		}
+	}()
+	return &streamActionRecorder{bus: bus}
 }
 
 // TestReplayShellAgentActions verifies that replayShellAgentActions reads
@@ -404,22 +421,38 @@ func TestReplayShellAgentActions(t *testing.T) {
 	}
 
 	// Create a streamActionRecorder and replay.
-	recorder := &streamActionRecorder{}
-	_ = replayShellAgentActions(recorder, io.Discard, sessionID, 1, "command-runnderresumetest")
+	recorder := newTestRecorder()
+	sub := recorder.bus.Subscribe()
+	_ = replayShellAgentActions(recorder.bus, io.Discard, sessionID, 1, "command-runnderresumetest")
+	recorder.bus.Unsubscribe(sub)
+
+	// Collect NotificationEvents from the subscription.
+	var events []string
+	for {
+		select {
+		case event := <-sub:
+			if ne, ok := event.(ui.NotificationEvent); ok {
+				events = append(events, ne.Message)
+			}
+		default:
+			goto verifyReplay
+		}
+	}
+verifyReplay:
 
 	// Verify: exactly 2 notify calls (one per command step).
-	if len(recorder.notifications) != 2 {
-		t.Fatalf("expected 2 notify calls, got %d", len(recorder.notifications))
+	if len(events) != 2 {
+		t.Fatalf("expected 2 notify calls, got %d", len(events))
 	}
 
 	// Assert ordered command content with the new Notify format.
 	expected0 := "[replay 1/2] echo step1 (1 lines output)"
-	if recorder.notifications[0] != expected0 {
-		t.Errorf("expected notifications[0] = %q, got: %q", expected0, recorder.notifications[0])
+	if events[0] != expected0 {
+		t.Errorf("expected messages[0] = %q, got: %q", expected0, events[0])
 	}
 	expected1 := "[replay 2/2] echo step2 (0 lines output)"
-	if recorder.notifications[1] != expected1 {
-		t.Errorf("expected notifications[1] = %q, got: %q", expected1, recorder.notifications[1])
+	if events[1] != expected1 {
+		t.Errorf("expected messages[1] = %q, got: %q", expected1, events[1])
 	}
 }
 
@@ -427,13 +460,30 @@ func TestReplayShellAgentActions(t *testing.T) {
 // returns nil (no-op) when the resume file does not exist.
 func TestReplayShellAgentActionsMissingFile(t *testing.T) {
 	sessionID := "test-replay-missing"
-	recorder := &streamActionRecorder{}
-	err := replayShellAgentActions(recorder, io.Discard, sessionID, 0, "command-runnderresumetest")
+	recorder := newTestRecorder()
+	sub := recorder.bus.Subscribe()
+	err := replayShellAgentActions(recorder.bus, io.Discard, sessionID, 0, "command-runnderresumetest")
 	if err != nil {
 		t.Fatalf("expected nil error for missing file, got: %v", err)
 	}
-	if len(recorder.notifications) != 0 {
-		t.Fatalf("expected 0 Notify calls for missing file, got %d", len(recorder.notifications))
+	recorder.bus.Unsubscribe(sub)
+
+	// Collect events; expect none.
+	var events []string
+	for {
+		select {
+		case event := <-sub:
+			if ne, ok := event.(ui.NotificationEvent); ok {
+				events = append(events, ne.Message)
+			}
+		default:
+			goto verifyMissingFile
+		}
+	}
+verifyMissingFile:
+
+	if len(events) != 0 {
+		t.Fatalf("expected 0 Notify calls for missing file, got %d", len(events))
 	}
 }
 
@@ -469,11 +519,27 @@ func TestReplayShellAgentActionsNoCommands(t *testing.T) {
 		t.Fatalf("failed to write resume file: %v", err)
 	}
 
-	recorder := &streamActionRecorder{}
-	_ = replayShellAgentActions(recorder, io.Discard, sessionID, 0, "command-runnderresumetest")
+	recorder := newTestRecorder()
+	sub := recorder.bus.Subscribe()
+	_ = replayShellAgentActions(recorder.bus, io.Discard, sessionID, 0, "command-runnderresumetest")
+	recorder.bus.Unsubscribe(sub)
 
-	if len(recorder.notifications) != 0 {
-		t.Fatalf("expected 0 Notify calls for trajectory without commands, got %d", len(recorder.notifications))
+	// Collect events; expect none.
+	var events []string
+	for {
+		select {
+		case event := <-sub:
+			if ne, ok := event.(ui.NotificationEvent); ok {
+				events = append(events, ne.Message)
+			}
+		default:
+			goto verifyNoCommands
+		}
+	}
+verifyNoCommands:
+
+	if len(events) != 0 {
+		t.Fatalf("expected 0 Notify calls for trajectory without commands, got %d", len(events))
 	}
 }
 

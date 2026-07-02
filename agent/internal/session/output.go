@@ -36,7 +36,7 @@ func writeFinalAnswer(sessionID, answer, finalFileFlag string, verbose bool, dry
 	return nil
 }
 
-func presentFinalAnswer(display ui.SessionDisplay, answer string, diagWriter io.Writer) {
+func presentFinalAnswer(bus *ui.EventBus, answer string, diagWriter io.Writer) {
 	rendered, fallback, err := renderWithGlow(answer)
 	if fallback {
 		if err != nil {
@@ -48,7 +48,9 @@ func presentFinalAnswer(display ui.SessionDisplay, answer string, diagWriter io.
 	if strings.TrimSpace(rendered) == "" {
 		rendered = strings.TrimSpace(answer)
 	}
-	display.ShowFinal(rendered)
+	if bus != nil {
+		bus.Emit(ui.FinalAnswerEvent{RenderedText: rendered})
+	}
 }
 
 func renderWithGlow(content string) (string, bool, error) {

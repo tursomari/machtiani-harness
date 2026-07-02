@@ -221,7 +221,7 @@ func TestPersistSessionStateNormalExit(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 
-	runState.persistSessionState(nil, nil)
+	runState.persistSessionState(nil)
 
 	// Verify session-state.json is NOT created.
 	statePath := filepath.Join(dir, "session-state.json")
@@ -254,7 +254,7 @@ func TestPersistSessionStateInterrupted(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 
-	runState.persistSessionState(nil, nil)
+	runState.persistSessionState(nil)
 
 	// Verify session-state.json is NOT created.
 	statePath := filepath.Join(dir, "session-state.json")
@@ -301,7 +301,7 @@ func TestPersistSessionStatePendingStateOverride(t *testing.T) {
 		_ = os.RemoveAll(overrideDir)
 	})
 
-	runState.persistSessionState(nil, nil)
+	runState.persistSessionState(nil)
 
 	// Verify session-state.json is NOT created for the override directory.
 	statePath := filepath.Join(overrideDir, "session-state.json")
@@ -328,7 +328,7 @@ func TestPersistSessionStateEmptySessionID(t *testing.T) {
 	}
 
 	// Should not panic and should not create any file.
-	runState.persistSessionState(nil, os.Stderr)
+	runState.persistSessionState(os.Stderr)
 
 	// Verify no session-state.json was created in the sessions root.
 	sessionsDir, err := artifacts.SessionsRoot()
@@ -382,7 +382,7 @@ func TestPersistSessionStateSaveFailure(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 
-	runState.persistSessionState(nil, nil)
+	runState.persistSessionState(nil)
 }
 
 // TestSessionStateFromConversationFields verifies that when

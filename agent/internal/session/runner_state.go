@@ -903,15 +903,15 @@ func (r *runLifecycleState) isContextCancelled(err error) bool {
 	return false
 }
 
-func (r *runLifecycleState) printResumeHint(display ui.SessionDisplay, diagWriter io.Writer, header string, turns int) {
-	if display != nil {
-		display.WriteString(header)
-		display.WriteString(fmt.Sprintf("Session ID: %s", r.sessionID))
-		display.WriteString(fmt.Sprintf("Turns completed: %d", turns))
-		display.WriteString(fmt.Sprintf("Goal so far: %q", r.goal))
-		display.WriteString("")
-		display.WriteString(fmt.Sprintf("To continue, provide your next instruction, for example:\n  mct-agent run \"<next instruction>\" --session-id %s", r.sessionID))
-		display.WriteString("")
+func (r *runLifecycleState) printResumeHint(bus *ui.EventBus, diagWriter io.Writer, header string, turns int) {
+	if bus != nil {
+		bus.Emit(ui.RawStringEvent{Text: header})
+		bus.Emit(ui.RawStringEvent{Text: fmt.Sprintf("Session ID: %s", r.sessionID)})
+		bus.Emit(ui.RawStringEvent{Text: fmt.Sprintf("Turns completed: %d", turns)})
+		bus.Emit(ui.RawStringEvent{Text: fmt.Sprintf("Goal so far: %q", r.goal)})
+		bus.Emit(ui.RawStringEvent{Text: ""})
+		bus.Emit(ui.RawStringEvent{Text: fmt.Sprintf("To continue, provide your next instruction, for example:\n  mct-agent run \"<next instruction>\" --session-id %s", r.sessionID)})
+		bus.Emit(ui.RawStringEvent{Text: ""})
 	} else {
 		fmt.Fprintf(diagWriter, "%s\nSession ID: %s\nTurns completed: %d\nGoal so far: %q\n\n", header, r.sessionID, turns, r.goal)
 		fmt.Fprintf(diagWriter, "To continue, provide your next instruction, for example:\n  mct-agent run \"<next instruction>\" --session-id %s\n", r.sessionID)
@@ -919,18 +919,18 @@ func (r *runLifecycleState) printResumeHint(display ui.SessionDisplay, diagWrite
 	}
 }
 
-func (r *runLifecycleState) printUserInputHint(display ui.SessionDisplay, diagWriter io.Writer, question, context string) {
-	if display != nil {
-		display.WriteString("=== USER INPUT NEEDED ===")
-		display.WriteString(fmt.Sprintf("Session ID: %s", r.sessionID))
+func (r *runLifecycleState) printUserInputHint(bus *ui.EventBus, diagWriter io.Writer, question, context string) {
+	if bus != nil {
+		bus.Emit(ui.RawStringEvent{Text: "=== USER INPUT NEEDED ==="})
+		bus.Emit(ui.RawStringEvent{Text: fmt.Sprintf("Session ID: %s", r.sessionID)})
 		if strings.TrimSpace(context) != "" {
-			display.WriteString(strings.TrimSpace(context))
-			display.WriteString("")
+			bus.Emit(ui.RawStringEvent{Text: strings.TrimSpace(context)})
+			bus.Emit(ui.RawStringEvent{Text: ""})
 		}
-		display.WriteString(strings.TrimSpace(question))
-		display.WriteString("")
-		display.WriteString(fmt.Sprintf("To continue, answer with:\n  mct-agent run \"<your answer>\" --session-id %s", r.sessionID))
-		display.WriteString("")
+		bus.Emit(ui.RawStringEvent{Text: strings.TrimSpace(question)})
+		bus.Emit(ui.RawStringEvent{Text: ""})
+		bus.Emit(ui.RawStringEvent{Text: fmt.Sprintf("To continue, answer with:\n  mct-agent run \"<your answer>\" --session-id %s", r.sessionID)})
+		bus.Emit(ui.RawStringEvent{Text: ""})
 	} else {
 		fmt.Fprintln(diagWriter, "=== USER INPUT NEEDED ===")
 		fmt.Fprintf(diagWriter, "Session ID: %s\n", r.sessionID)
@@ -1021,7 +1021,7 @@ func (r *runLifecycleState) hydrateState(state *SessionState, diagWriter io.Writ
 	r.applyPlannerProgress(state, diagWriter)
 }
 
-func (r *runLifecycleState) persistSessionState(display ui.SessionDisplay, diagWriter io.Writer) {
+func (r *runLifecycleState) persistSessionState(diagWriter io.Writer) {
 	sid := strings.TrimSpace(r.sessionID)
 	if sid == "" {
 		return
@@ -1036,11 +1036,11 @@ func (r *runLifecycleState) persistSessionState(display ui.SessionDisplay, diagW
 }
 
 // checkpointTurn saves conversation.json.
-func (r *runLifecycleState) checkpointTurn(display ui.SessionDisplay, diagWriter io.Writer) {
+func (r *runLifecycleState) checkpointTurn(diagWriter io.Writer) {
 	if r.recorder != nil {
 		r.recorder.EnsureSaved()
 	}
-	r.persistSessionState(display, diagWriter)
+	r.persistSessionState(diagWriter)
 }
 
 func formatUserInputRequestContent(question, context string) string {
@@ -1052,7 +1052,7 @@ func formatUserInputRequestContent(question, context string) string {
 	return question + "\n\nContext:\n" + context
 }
 
-func (r *runLifecycleState) suspendForUserInput(display ui.SessionDisplay, diagWriter io.Writer, question, context, reason, originalAsk string) (Result, error) {
+func (r *runLifecycleState) suspendForUserInput(bus *ui.EventBus, diagWriter io.Writer, question, context, reason, originalAsk string) (Result, error) {
 	question = strings.TrimSpace(question)
 	if question == "" {
 		return Result{}, errors.New("user input question required")
@@ -1061,8 +1061,8 @@ func (r *runLifecycleState) suspendForUserInput(display ui.SessionDisplay, diagW
 	if err := r.recorder.AppendRaw("assistant", content, "user_input_request"); err != nil {
 		return Result{}, err
 	}
-	if display != nil {
-		display.EndSession()
+	if bus != nil {
+		bus.Emit(ui.SessionEndedEvent{})
 	}
 	r.sessionErr = nil
 	if err := r.transition(StateSuspendedUserInput); err != nil {
@@ -1078,7 +1078,7 @@ func (r *runLifecycleState) suspendForUserInput(display ui.SessionDisplay, diagW
 	state := r.baseSessionState()
 	r.pendingState = &state
 	r.hydrateState(r.pendingState, diagWriter)
-	r.printUserInputHint(display, diagWriter, question, context)
+	r.printUserInputHint(bus, diagWriter, question, context)
 	return Result{ExitCode: 0, Status: r.sessionStatus, Turns: r.turnsCompleted, SessionID: r.sessionID}, nil
 }
 

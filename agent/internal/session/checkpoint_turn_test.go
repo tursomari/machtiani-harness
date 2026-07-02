@@ -48,7 +48,7 @@ func TestCheckpointTurn_callsBothPersistMethods(t *testing.T) {
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 
 	// First call: both conversation.json and session-state.json should be created.
-	runState.checkpointTurn(nil, os.Stderr)
+	runState.checkpointTurn(os.Stderr)
 
 	// Verify conversation.json exists.
 	if _, err := os.Stat(convPath); err != nil {
@@ -62,7 +62,7 @@ func TestCheckpointTurn_callsBothPersistMethods(t *testing.T) {
 	}
 
 	// Second call: both files should still exist.
-	runState.checkpointTurn(nil, os.Stderr)
+	runState.checkpointTurn(os.Stderr)
 
 	if _, err := os.Stat(convPath); err != nil {
 		t.Fatalf("conversation.json does not exist after second checkpointTurn: %v", err)
@@ -119,7 +119,7 @@ func TestCheckpointTurnDiagWriterCapturesSaveFailure(t *testing.T) {
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 
 	var diagBuf bytes.Buffer
-	runState.checkpointTurn(nil, &diagBuf)
+	runState.checkpointTurn(&diagBuf)
 
 
 }

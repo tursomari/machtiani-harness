@@ -281,7 +281,7 @@ func TestCompleteSessionDiagWriterCapturesWriteError(t *testing.T) {
 	}
 
 	var diagBuf bytes.Buffer
-	err = runState.completeSession(&mockDisplay{}, &diagBuf, "final answer", 1, 1, false)
+	err = runState.completeSession(nil, &diagBuf, "final answer", 1, 1, false)
 	if err == nil {
 		t.Fatalf("expected completeSession to fail, but got nil error")
 	}

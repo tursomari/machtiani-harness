@@ -11,6 +11,7 @@ import (
 
 	"github.com/tursomari/machtiani/agent/internal/conversation"
 	"github.com/tursomari/machtiani/agent/internal/transcript"
+	"github.com/tursomari/machtiani/agent/internal/ui"
 )
 
 // ---------------------------------------------------------------------------
@@ -69,7 +70,7 @@ func TestCompleteSessionDiagWriterCapturesModePlanTaskFailure(t *testing.T) {
 	}
 
 	var diagBuf bytes.Buffer
-	err = runState.completeSession(&mockDisplay{}, &diagBuf, "final answer", 1, 1, false)
+	err = runState.completeSession(nil, &diagBuf, "final answer", 1, 1, false)
 	if err != nil {
 		t.Fatalf("completeSession returned unexpected error: %v", err)
 	}
@@ -141,8 +142,9 @@ func TestCompleteSessionVerboseSuccessCapturesDiagAndDisplay(t *testing.T) {
 	runState.sessionStatus = "error"
 
 	var diagBuf bytes.Buffer
-	disp := &captureDisplay{}
-	err = runState.completeSession(disp, &diagBuf, "# Final Answer\nDone.", 1, 1, false)
+	bus := ui.NewEventBus(0)
+	events := bus.Subscribe()
+	err = runState.completeSession(bus, &diagBuf, "# Final Answer\nDone.", 1, 1, false)
 	if err != nil {
 		t.Fatalf("completeSession returned unexpected error: %v", err)
 	}
@@ -153,12 +155,23 @@ func TestCompleteSessionVerboseSuccessCapturesDiagAndDisplay(t *testing.T) {
 		t.Fatalf("expected 'Final answer saved:' in diagWriter, got:\n%s", diagOutput)
 	}
 
-	// presentFinalAnswer should have called display.ShowFinal with the rendered answer.
-	if !disp.finalCalled {
-		t.Fatal("expected display.ShowFinal to be called by presentFinalAnswer")
+	// presentFinalAnswer should emit a FinalAnswerEvent with the rendered answer.
+	finalSeen := false
+	for {
+		select {
+		case e := <-events:
+			if e.Type() == "FinalAnswer" {
+				if fa, ok := e.(ui.FinalAnswerEvent); ok && strings.TrimSpace(fa.RenderedText) != "" {
+					finalSeen = true
+				}
+			}
+		default:
+			goto doneLoop
+		}
 	}
-	if strings.TrimSpace(disp.finalShown) == "" {
-		t.Fatal("expected non-empty rendered answer in display.ShowFinal")
+doneLoop:
+	if !finalSeen {
+		t.Fatal("expected FinalAnswerEvent emitted by presentFinalAnswer")
 	}
 
 	// The final answer file should exist on disk.
@@ -216,15 +229,28 @@ func TestPrintResumeHintDisplayPath(t *testing.T) {
 		nil,
 	)
 
-	disp := &captureDisplay{}
-	runState.printResumeHint(disp, io.Discard, "=== SESSION INTERRUPTED ===", 5)
+	bus := ui.NewEventBus(0)
+	events := bus.Subscribe()
+	runState.printResumeHint(bus, io.Discard, "=== SESSION INTERRUPTED ===", 5)
 
-	// The display should have received multiple WriteString calls.
-	if len(disp.writtenStrings) == 0 {
-		t.Fatal("expected display.WriteString to be called")
+	// The bus should have received multiple RawStringEvent emissions.
+	var writtenStrings []string
+	for {
+		select {
+		case e := <-events:
+			if re, ok := e.(ui.RawStringEvent); ok {
+				writtenStrings = append(writtenStrings, re.Text)
+			}
+		default:
+			goto donePrintResume
+		}
+	}
+donePrintResume:
+	if len(writtenStrings) == 0 {
+		t.Fatal("expected RawStringEvent to be emitted")
 	}
 
-	joined := strings.Join(disp.writtenStrings, "\n")
+	joined := strings.Join(writtenStrings, "\n")
 	for _, want := range []string{
 		"=== SESSION INTERRUPTED ===",
 		"Session ID: resume-hint-display",

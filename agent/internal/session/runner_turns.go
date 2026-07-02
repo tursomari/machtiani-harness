@@ -54,6 +54,7 @@ type runTurnEnv struct {
 	turnsCompleted              *int
 	plannerProgress             *plannerProgressTracker
 	display                     ui.SessionDisplay
+	bus                         *ui.EventBus
 	diagWriter                  io.Writer
 	hasNewInput                 bool // from Options; propagated to TurnContext for ResumeAttempt
 	isResumingTurn              bool // set when resumableShellAgent is true; triggers TUI replay
@@ -218,8 +219,8 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 		orchPromptOpts = *env.orchPromptOpts
 	}
 	if env.isResumingTurn {
-		env.display.Notify(fmt.Sprintf("[resume] shell-agent session is resumable, step %d", env.step))
-		replayShellAgentActions(env.display, env.diagWriter, env.sessionID, env.step, env.mctRunner.ShellAgentLibrary.CommandTag)
+		env.bus.Emit(ui.NotificationEvent{Level: ui.NotificationInfo, Message: fmt.Sprintf("[resume] shell-agent session is resumable, step %d", env.step)})
+		replayShellAgentActions(env.bus, env.diagWriter, env.sessionID, env.step, env.mctRunner.ShellAgentLibrary.CommandTag)
 	}
 	var interruptedMsgs []minisweagent.Message
 	skipResumeVerify := false
@@ -369,23 +370,23 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 				}
 			}
 			if env.isResumingTurn {
-				env.display.Notify("[resume] shell-agent interrupted again; assertion deferred")
+				env.bus.Emit(ui.NotificationEvent{Level: ui.NotificationInfo, Message: "[resume] shell-agent interrupted again; assertion deferred"})
 			}
 		} else {
-		if strings.TrimSpace(shellResult.TrajectoryPath) != "" {
-			env.turnInfo["shell_agent_trajectory"] = trimTo(shellResult.TrajectoryPath, 200)
-		}
-		if env.isResumingTurn && !skipResumeVerify {
-			resumedMsgs := result.ShellAgentTrajectoryMessages
-			err := verifyShellAgentResume(interruptedMsgs, resumedMsgs)
-			if err != nil {
-				msg := fmt.Sprintf("[resume] ASSERTION FAILED: %v", err)
-				env.display.Notify(msg)
-				panic(msg)
+			if strings.TrimSpace(shellResult.TrajectoryPath) != "" {
+				env.turnInfo["shell_agent_trajectory"] = trimTo(shellResult.TrajectoryPath, 200)
 			}
-			env.display.Notify(fmt.Sprintf("[resume] assertion passed: %d messages restored, %d new messages", len(interruptedMsgs), len(resumedMsgs)-len(interruptedMsgs)))
+			if env.isResumingTurn && !skipResumeVerify {
+				resumedMsgs := result.ShellAgentTrajectoryMessages
+				err := verifyShellAgentResume(interruptedMsgs, resumedMsgs)
+				if err != nil {
+					msg := fmt.Sprintf("[resume] ASSERTION FAILED: %v", err)
+					env.bus.Emit(ui.NotificationEvent{Level: ui.NotificationInfo, Message: msg})
+					panic(msg)
+				}
+				env.bus.Emit(ui.NotificationEvent{Level: ui.NotificationInfo, Message: fmt.Sprintf("[resume] assertion passed: %d messages restored, %d new messages", len(interruptedMsgs), len(resumedMsgs)-len(interruptedMsgs))})
+			}
 		}
-	}
 		savedPath := ""
 		lastAnswer := ""
 		var retrieved []string
@@ -505,7 +506,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 		env.recorder.SetShellAgentMetadata(result.ShellAgentTrajectoryPath, true)
 		env.turnInfo["shell_agent_cancelled"] = true
 		if env.isResumingTurn {
-			env.display.Notify("[resume] shell-agent interrupted again; assertion deferred")
+			env.bus.Emit(ui.NotificationEvent{Level: ui.NotificationInfo, Message: "[resume] shell-agent interrupted again; assertion deferred"})
 		}
 	}
 	if env.isResumingTurn && !skipResumeVerify {
@@ -513,10 +514,10 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 		err := verifyShellAgentResume(interruptedMsgs, resumedMsgs)
 		if err != nil {
 			msg := fmt.Sprintf("[resume] ASSERTION FAILED: %v", err)
-			env.display.Notify(msg)
+			env.bus.Emit(ui.NotificationEvent{Level: ui.NotificationInfo, Message: msg})
 			panic(msg)
 		}
-		env.display.Notify(fmt.Sprintf("[resume] assertion passed: %d messages restored, %d new messages", len(interruptedMsgs), len(resumedMsgs)-len(interruptedMsgs)))
+		env.bus.Emit(ui.NotificationEvent{Level: ui.NotificationInfo, Message: fmt.Sprintf("[resume] assertion passed: %d messages restored, %d new messages", len(interruptedMsgs), len(resumedMsgs)-len(interruptedMsgs))})
 	}
 
 	savedPath := strings.TrimSpace(result.SavedPath)
@@ -673,7 +674,7 @@ func (tc *TurnContext) buildShellAgentRequest(task string, sessionID string, ver
 }
 
 // replayShellAgentActions replays shell-agent command steps from a saved resume file into the TUI display as concise summary lines, one per prior command, showing the command string and output line count.
-func replayShellAgentActions(display ui.SessionDisplay, diagWriter io.Writer, sessionID string, step int, commandTag string) error {
+func replayShellAgentActions(bus *ui.EventBus, diagWriter io.Writer, sessionID string, step int, commandTag string) error {
 	messages, err := loadTrajectoryForResume(sessionID, step)
 	if err != nil {
 		fmt.Fprintf(diagWriter, "Warning: unable to load shell-agent resume state for replay: %v\n", err)
@@ -723,7 +724,7 @@ func replayShellAgentActions(display ui.SessionDisplay, diagWriter io.Writer, se
 			}
 		}
 		i = j - 1
-		display.Notify(fmt.Sprintf("[replay %d/%d] %s (%d lines output)", cmdIndex, cmdSteps, commandStr, outputLines))
+		bus.Emit(ui.NotificationEvent{Level: ui.NotificationInfo, Message: fmt.Sprintf("[replay %d/%d] %s (%d lines output)", cmdIndex, cmdSteps, commandStr, outputLines)})
 	}
 
 	return nil

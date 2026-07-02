@@ -7,7 +7,7 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/ui"
 )
 
-func (r *runLifecycleState) completeSession(display ui.SessionDisplay, diagWriter io.Writer, answer string, transcriptStep, turnsCompleted int, capped bool) error {
+func (r *runLifecycleState) completeSession(bus *ui.EventBus, diagWriter io.Writer, answer string, transcriptStep, turnsCompleted int, capped bool) error {
 	if err := r.recorder.WriteFinal(answer, transcriptStep, capped); err != nil {
 		r.sessionErr = err
 		r.turnsCompleted = turnsCompleted
@@ -19,8 +19,10 @@ func (r *runLifecycleState) completeSession(display ui.SessionDisplay, diagWrite
 		r.turnsCompleted = turnsCompleted
 		return err
 	}
-	presentFinalAnswer(display, finalAnswer, diagWriter)
-	display.EndSession()
+	presentFinalAnswer(bus, finalAnswer, diagWriter)
+	if bus != nil {
+		bus.Emit(ui.SessionEndedEvent{})
+	}
 	r.turnsCompleted = turnsCompleted
 	if err := r.transition(StateSuccess); err != nil {
 		return err
@@ -32,7 +34,7 @@ func (r *runLifecycleState) completeSession(display ui.SessionDisplay, diagWrite
 	state := r.baseSessionState()
 	r.pendingState = &state
 	r.hydrateState(r.pendingState, diagWriter)
-	r.printResumeHint(display, diagWriter, "=== SESSION COMPLETE ===", r.turnsCompleted)
+	r.printResumeHint(bus, diagWriter, "=== SESSION COMPLETE ===", r.turnsCompleted)
 	return nil
 }
 
