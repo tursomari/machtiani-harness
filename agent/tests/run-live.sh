@@ -3651,7 +3651,6 @@ if [[ "$LIVE_MODE" == true ]]; then
   test_code_forge_resume_without_mode
   test_code_resume_without_mode_no_forge
   test_finalize_reminder
-  test_shell_agent_step_counter_resume
 fi
 
 run_happy_case "models-mixed-fallback" 3 \
@@ -3728,6 +3727,8 @@ if [[ "$LIVE_MODE" == true ]]; then
 else
   echo "Skipping missing-config error case in dry-run mode (requires live env)." >&2
 fi
+
+test_shell_agent_step_counter_resume
 
 echo "Skipping missing-mct and timeout simulations: preflight ensures PATH binaries and no stub overrides." >&2
 
