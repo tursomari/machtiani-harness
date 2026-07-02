@@ -399,7 +399,7 @@ func newRunLifecycleState(rootCtx context.Context, cfg legacyConfig, sessionID, 
 	} else if loadedState != nil && loadedState.Goal != "" {
 		originalGoalVal = loadedState.Goal
 	}
-	return &runLifecycleState{
+	r := &runLifecycleState{
 		rootCtx:             rootCtx,
 		cfg:                 cfg,
 		sessionID:           sessionID,
@@ -409,6 +409,7 @@ func newRunLifecycleState(rootCtx context.Context, cfg legacyConfig, sessionID, 
 		taskDescription:     taskDescription,
 		plannerOverlay:      plannerOverlay,
 		modeInstructionPath: modeInstructionPath,
+		mode:                cfg.mode,
 		plannerProgress:     plannerProgress,
 		suspendedUserInput:  loadedStateSuspendedInput(loadedState),
 		sessionStatus:           "error",
@@ -416,6 +417,10 @@ func newRunLifecycleState(rootCtx context.Context, cfg legacyConfig, sessionID, 
 		shellAgentInterruptStep: interruptStep,
 		shellAgentStepLog:      stepLogPath,
 	}
+	if strings.TrimSpace(r.mode) != "" && r.recorder != nil && r.recorder.HasConversation() {
+		r.recorder.conversation.Modes = []string{strings.ToLower(strings.TrimSpace(r.mode))}
+	}
+	return r
 }
 
 
@@ -839,6 +844,7 @@ type runLifecycleState struct {
 	taskDescription     string
 	plannerOverlay      string
 	modeInstructionPath string
+	mode                string
 	recorder            *conversationRecorder
 	plannerProgress     *plannerProgressTracker
 
@@ -993,12 +999,24 @@ func (r *runLifecycleState) hydrateState(state *SessionState, diagWriter io.Writ
 	}
 	if len(state.Modes) == 0 && strings.TrimSpace(r.cfg.mode) != "" {
 		state.Modes = []string{strings.ToLower(strings.TrimSpace(r.cfg.mode))}
+		if r.recorder != nil && r.recorder.HasConversation() {
+			r.recorder.conversation.Modes = state.Modes
+		}
 	}
 	if state.Status == "" {
 		state.Status = r.sessionStatus
 	}
+	if r.recorder != nil && r.recorder.HasConversation() {
+		r.recorder.conversation.Status = state.Status
+	}
 	if state.SuspendedUserInput == nil && r.suspendedUserInput != nil {
 		state.SuspendedUserInput = r.suspendedUserInput.Clone()
+	}
+	if r.recorder != nil && r.recorder.HasConversation() {
+		r.recorder.conversation.SuspendedUserInput = state.SuspendedUserInput
+	}
+	if r.recorder != nil && r.recorder.HasConversation() {
+		_ = r.recorder.Save()
 	}
 	r.applyPlannerProgress(state, diagWriter)
 }
