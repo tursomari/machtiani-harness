@@ -3211,6 +3211,24 @@ INVALID_ALIAS_REGEX="$(regex_escape "$INVALID_ALIAS")"
 MODEL_ALIAS_NOT_FOUND_PATTERN="model alias \"${INVALID_ALIAS_REGEX}\" not found"
 
 if [[ $# -eq 0 ]]; then
+declare -a PASS_LIST=()
+declare -a FAIL_LIST=()
+global_failed=0
+
+run_test_case() {
+  local name="$1"
+  shift
+  echo "Running $name..." >&2
+  if "$@"; then
+    PASS_LIST+=("$name")
+    echo "Passed: $name" >&2
+  else
+    FAIL_LIST+=("$name")
+    global_failed=1
+    echo "FAILED: $name" >&2
+  fi
+}
+
 if [[ "$LIVE_MODE" != true ]]; then
   # Temporarily disable the legacy `both` routing dry-run case while
   # `Ask Mode: both` is treated as a single shell ask.
@@ -3221,18 +3239,18 @@ else
   else
     echo "Skipping local tmp-root live case: shell-agent not found on PATH." >&2
   fi
-  run_shell_agent_subcommand_live_case
-  run_enforce_early_commands_case
-  run_snippet_discovery_tightness_live_case
-  run_menu_flow_live_case
-  run_mode_live_case
-  run_file_discovery_live_case
-  run_show_live_case
-  run_show_range_live_case
-  run_resume_from_conversation_json_case || echo "FAILED (non-fatal): resume-from-conversation-json" >&2
-  run_shell_command_trajectory_live_case
+  run_test_case "shell_agent_subcommand_live" run_shell_agent_subcommand_live_case
+  run_test_case "enforce_early_commands" run_enforce_early_commands_case
+  run_test_case "snippet_discovery_tightness" run_snippet_discovery_tightness_live_case
+  run_test_case "menu_flow_live" run_menu_flow_live_case
+  run_test_case "mode_live" run_mode_live_case
+  run_test_case "file_discovery_live" run_file_discovery_live_case
+  run_test_case "show_live" run_show_live_case
+  run_test_case "show_range_live" run_show_range_live_case
+  run_test_case "resume_from_conversation_json" run_resume_from_conversation_json_case
+  run_test_case "shell_command_trajectory_live" run_shell_command_trajectory_live_case
   if shell_agent_available; then
-    run_shell_live_case
+    run_test_case "shell_live" run_shell_live_case
   else
     echo "Skipping shell-only live case: shell-agent not found on PATH." >&2
   fi
@@ -3400,58 +3418,58 @@ fi
 
 if [[ $# -eq 0 ]]; then
 # Per-component flag coverage.
-run_mode_prompt_layers_case
+run_test_case "mode_prompt_layers" run_mode_prompt_layers_case
 
 # Resume without mode: verify shell-agent system prompt survives
 # a mode-less resume (uses stub server).
-run_resume_without_mode_case
+run_test_case "resume_without_mode" run_resume_without_mode_case
 
 if [[ "$LIVE_MODE" == true ]]; then
-  test_code_no_forge
-  test_code_forge_initial
-  test_code_forge_resume_with_mode
-  test_code_forge_resume_without_mode
-  test_code_resume_without_mode_no_forge
-  test_finalize_reminder
+  run_test_case "code_no_forge" test_code_no_forge
+  run_test_case "code_forge_initial" test_code_forge_initial
+  run_test_case "code_forge_resume_with_mode" test_code_forge_resume_with_mode
+  run_test_case "code_forge_resume_without_mode" test_code_forge_resume_without_mode
+  run_test_case "code_resume_without_mode_no_forge" test_code_resume_without_mode_no_forge
+  run_test_case "finalize_reminder" test_finalize_reminder
 fi
 
-run_happy_case "models-mixed-fallback" 3 \
+run_test_case "models-mixed-fallback" run_happy_case "models-mixed-fallback" 3 \
   "Summarize how shell-agent falls back to the orchestrator model when unspecified." \
   "$MIXED_LABEL_PATTERN" \
   1 \
   \
   --orch-model "$ORCH_MODEL_ALIAS"
 
-run_happy_case "models-catch-all" 1 \
+run_test_case "models-catch-all" run_happy_case "models-catch-all" 1 \
   "Describe the default model wiring for orchestrator and file discovery." \
   "$CATCH_ALL_LABEL_PATTERN" \
   1 \
   "${DEFAULT_MODEL_ARGS[@]}"
 
-run_happy_case "issue-a-1turn" 1 \
+run_test_case "issue-a-1turn" run_happy_case "issue-a-1turn" 1 \
   "What is the main purpose of the mct-agent binary?" \
   "===> FINAL RESPONSE <===" \
   1 \
   "${DEFAULT_MODEL_ARGS[@]}"
 
-run_happy_case "issue-a-3turn" 3 \
+run_test_case "issue-a-3turn" run_happy_case "issue-a-3turn" 3 \
   "What is the main purpose of the mct-agent binary?" \
   "===> FINAL RESPONSE <===" \
   "${DEFAULT_MODEL_ARGS[@]}"
 
-run_happy_case "issue-b-1turn" 1 \
+run_test_case "issue-b-1turn" run_happy_case "issue-b-1turn" 1 \
   "Describe the full multi-turn flow in mct-agent, including planning and context retention." \
   "multi-turn|conversation|context|planner|ask" \
   1 \
   "${DEFAULT_MODEL_ARGS[@]}"
 
-run_happy_case "issue-b-3turn" 3 \
+run_test_case "issue-b-3turn" run_happy_case "issue-b-3turn" 3 \
   "Describe the full multi-turn flow in mct-agent, including planning and context retention." \
   "multi-turn|conversation|context|planner|ask" \
   1 \
   "${DEFAULT_MODEL_ARGS[@]}"
 
-run_happy_case "planner-ask-monitor" 2 \
+run_test_case "planner-ask-monitor" run_happy_case "planner-ask-monitor" 2 \
   "Explain the planner ask monitor guardrail flow and when it retries. If you need repository context, ask for it." \
   "(?s)(?=.*ask)(?=.*monitor)" \
   1 \
@@ -3459,31 +3477,31 @@ run_happy_case "planner-ask-monitor" 2 \
 
 
 
-run_happy_case "issue-c-1turn" 1 \
+run_test_case "issue-c-1turn" run_happy_case "issue-c-1turn" 1 \
   "Explain how mct-agent handles errors during finalization and transcript writing." \
   "error|handling|finalize|transcript|fallback" \
   "${DEFAULT_MODEL_ARGS[@]}"
 
-run_happy_case "issue-c-3turn" 3 \
+run_test_case "issue-c-3turn" run_happy_case "issue-c-3turn" 3 \
   "Explain how mct-agent handles errors during finalization and transcript writing, with examples from code." \
   "error|handling|finalize|transcript|fallback" \
   "${DEFAULT_MODEL_ARGS[@]}"
 
-run_error_case "empty-goal" "" 1 "one of --text or --file is required" "${DEFAULT_MODEL_ARGS[@]}"
+run_test_case "empty-goal" run_error_case "empty-goal" "" 1 "one of --text or --file is required" "${DEFAULT_MODEL_ARGS[@]}"
 
-run_error_case "invalid-orch-model" "" 1 "$MODEL_ALIAS_NOT_FOUND_PATTERN" \
+run_test_case "invalid-orch-model" run_error_case "invalid-orch-model" "" 1 "$MODEL_ALIAS_NOT_FOUND_PATTERN" \
   "Trigger orchestrator alias failure" \
   --orch-model "$INVALID_ALIAS"
 
 
-run_error_case "invalid-file-discovery-model" "" 1 "$MODEL_ALIAS_NOT_FOUND_PATTERN" \
+run_test_case "invalid-file-discovery-model" run_error_case "invalid-file-discovery-model" "" 1 "$MODEL_ALIAS_NOT_FOUND_PATTERN" \
   "Trigger file discovery alias failure" \
   --file-discovery-model "$INVALID_ALIAS" \
   "${DEFAULT_MODEL_ARGS[@]}"
 
 if [[ "$LIVE_MODE" == true ]]; then
   MACHTIANI_CONFIG="/nonexistent/machtiani-config.toml" OPENAI_API_KEY="" OPENAI_BASE_URL="" OPENAI_MODEL="" \
-  run_error_case "missing-config" "" 1 "Missing model config|Model resolution error|MACHTIANI_CONFIG" \
+  run_test_case "missing-config" run_error_case "missing-config" "" 1 "Missing model config|Model resolution error|MACHTIANI_CONFIG" \
     "Explain how the agent chooses its model runtime."
 
 else
@@ -3493,5 +3511,11 @@ fi
 
 echo "Skipping missing-mct and timeout simulations: preflight ensures PATH binaries and no stub overrides." >&2
 
-echo "All cases finished. Check test-out-* dirs for artifacts." >&2
+  echo "=== Test Summary ===" >&2
+  echo "Total: $(( ${#PASS_LIST[@]} + ${#FAIL_LIST[@]} )) | Passed: ${#PASS_LIST[@]} | Failed: ${#FAIL_LIST[@]}" >&2
+  if [[ ${#FAIL_LIST[@]} -gt 0 ]]; then
+    echo "Failed tests:" >&2
+    for t in "${FAIL_LIST[@]}"; do echo "  - $t" >&2; done
+  fi
 fi  # $# -eq 0 guard
+exit $global_failed
