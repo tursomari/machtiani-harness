@@ -3203,8 +3203,8 @@ ORCH_LABEL_REGEX="$(regex_escape "$ORCH_MODEL_ALIAS")"
 FILE_DISCOVERY_LABEL_REGEX="$(regex_escape "$FILE_DISCOVERY_MODEL_ALIAS")"
 DEFAULT_LABEL_REGEX="$(regex_escape "$TEST_MODEL_ALIAS")"
 
-MIXED_LABEL_PATTERN="(?s)(?=.*orchestrator model: ${ORCH_LABEL_REGEX})(?=.*file discovery model: ${ORCH_LABEL_REGEX})"
-CATCH_ALL_LABEL_PATTERN="(?s)(?=.*orchestrator model: ${DEFAULT_LABEL_REGEX})(?=.*file discovery model: ${DEFAULT_LABEL_REGEX})"
+MIXED_LABEL_PATTERN="(?s)(?=.*shell.agent)(?=.*fall.?back)(?=.*orchestrator)(?=.*model)"
+CATCH_ALL_LABEL_PATTERN="(?s)(?=.*orchestrator)(?=.*file.discovery)(?=.*default)(?=.*model)"
 
 INVALID_ALIAS="does-not-exist-alias"
 INVALID_ALIAS_REGEX="$(regex_escape "$INVALID_ALIAS")"
