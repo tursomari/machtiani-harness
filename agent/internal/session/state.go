@@ -4,8 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
@@ -31,13 +29,6 @@ type SessionState struct {
 	ShellAgentInterruptStep     int                      `json:"shell_agent_interrupt_step"`
 }
 
-
-
-// SaveSessionState is a deprecated no-op kept for API compatibility.
-// Deprecated: This function is a no-op and does nothing.
-func SaveSessionState(state SessionState) error {
-	return nil
-}
 
 func sessionStateFromConversation(conv *conversation.Conversation, sessionID string) (*SessionState, error) {
 	if conv != nil && conv.Goal != "" {
@@ -72,21 +63,6 @@ func SessionStateFromConversation(conv *conversation.Conversation, sessionID str
 }
 
 
-func RemoveSessionState(sessionID string) error {
-	sessionID = strings.TrimSpace(sessionID)
-	if sessionID == "" {
-		return errors.New("session id required to remove state")
-	}
-	dir, err := artifacts.SessionDirectory(sessionID)
-	if err != nil {
-		return fmt.Errorf("resolve session directory: %w", err)
-	}
-	path := filepath.Join(dir, "session-state.json")
-	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("remove session state: %w", err)
-	}
-	return nil
-}
 
 // ListSessions returns all session states found in the sessions directory,
 // sorted by UpdatedAt in descending order (most recent first).

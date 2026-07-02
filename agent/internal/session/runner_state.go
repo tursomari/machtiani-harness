@@ -1033,11 +1033,6 @@ func (r *runLifecycleState) persistSessionState(display ui.SessionDisplay, diagW
 	}
 	r.hydrateState(&state, diagWriter)
 
-	fmt.Fprintf(diagWriter, "session-state.json persistence disabled; using conversation.json\n")
-
-	if r.interrupted {
-		r.printResumeHint(display, diagWriter, "=== SESSION INTERRUPTED ===", r.turnsCompleted)
-	}
 }
 
 // checkpointTurn saves conversation.json.

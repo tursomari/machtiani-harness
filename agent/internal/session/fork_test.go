@@ -184,8 +184,6 @@ func TestForkSessionSuccess(t *testing.T) {
 	srcDir, _ := artifacts.SessionDirectory(sourceID)
 	dstDir, _ := artifacts.SessionDirectory(newID)
 	t.Cleanup(func() {
-		_ = RemoveSessionState(sourceID)
-		_ = RemoveSessionState(newID)
 		_ = os.RemoveAll(srcDir)
 		_ = os.RemoveAll(dstDir)
 	})
@@ -253,8 +251,6 @@ func TestForkSessionSkipsLockFiles(t *testing.T) {
 	}
 
 	t.Cleanup(func() {
-		_ = RemoveSessionState(sourceID)
-		_ = RemoveSessionState(newID)
 		_ = os.RemoveAll(srcDir)
 		_ = os.RemoveAll(dstDir)
 	})

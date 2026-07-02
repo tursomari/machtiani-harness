@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -105,7 +104,7 @@ func TestCheckpointTurnDiagWriterCapturesSaveFailure(t *testing.T) {
 		recorder:       recorder,
 	}
 
-	// Block SaveSessionState by placing a file where the session directory should be.
+	// Block session directory creation by placing a file where the session directory should be.
 	sessionsDir, err := artifacts.SessionsRoot()
 	if err != nil {
 		t.Fatalf("SessionsRoot: %v", err)
@@ -122,8 +121,5 @@ func TestCheckpointTurnDiagWriterCapturesSaveFailure(t *testing.T) {
 	var diagBuf bytes.Buffer
 	runState.checkpointTurn(nil, &diagBuf)
 
-	output := diagBuf.String()
-	if !strings.Contains(output, "session-state.json persistence disabled; using conversation.json") {
-		t.Fatalf("expected deprecation message in diagWriter, got: %s", output)
-	}
+
 }

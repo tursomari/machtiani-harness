@@ -50,7 +50,6 @@ func TestHasNewInputPropagatesToTurnContext(t *testing.T) {
 		t.Fatalf("WriteFile conversation: %v", err)
 	}
 	t.Cleanup(func() {
-		_ = RemoveSessionState(sessionID)
 		dir, _ := artifacts.SessionDirectory(sessionID)
 		_ = os.RemoveAll(dir)
 	})
@@ -150,7 +149,6 @@ func TestResumableShellAgentFalseWhenHasNewInput(t *testing.T) {
 		t.Fatalf("WriteFile conversation: %v", err)
 	}
 	t.Cleanup(func() {
-		_ = RemoveSessionState(sessionID)
 		dir, _ := artifacts.SessionDirectory(sessionID)
 		_ = os.RemoveAll(dir)
 	})
@@ -222,7 +220,6 @@ func TestResumeWithNewInputSetsHasNewInput(t *testing.T) {
 		t.Fatalf("WriteFile conversation: %v", err)
 	}
 	t.Cleanup(func() {
-		_ = RemoveSessionState(sessionID)
 		dir, _ := artifacts.SessionDirectory(sessionID)
 		_ = os.RemoveAll(dir)
 	})

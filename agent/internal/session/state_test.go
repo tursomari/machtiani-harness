@@ -1,12 +1,10 @@
 package session
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -70,7 +68,6 @@ func TestListSessionsMultiple(t *testing.T) {
 	// Cleanup
 	t.Cleanup(func() {
 		for _, id := range sessionIDs {
-			_ = RemoveSessionState(id)
 			dir, _ := artifacts.SessionDirectory(id)
 			_ = os.RemoveAll(dir)
 		}
@@ -151,7 +148,6 @@ func TestListSessionsSkipsCorrupt(t *testing.T) {
 
 	// Cleanup
 	t.Cleanup(func() {
-		_ = RemoveSessionState(goodSessionID)
 		goodDir, _ := artifacts.SessionDirectory(goodSessionID)
 		_ = os.RemoveAll(goodDir)
 		corruptDir, _ := artifacts.SessionDirectory(corruptSessionID)
@@ -225,8 +221,7 @@ func TestPersistSessionStateNormalExit(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 
-	var diagBuf bytes.Buffer
-	runState.persistSessionState(nil, &diagBuf)
+	runState.persistSessionState(nil, nil)
 
 	// Verify session-state.json is NOT created.
 	statePath := filepath.Join(dir, "session-state.json")
@@ -234,11 +229,6 @@ func TestPersistSessionStateNormalExit(t *testing.T) {
 		t.Fatalf("session-state.json unexpectedly exists: %v", err)
 	}
 
-	// Verify deprecation log message is written.
-	output := diagBuf.String()
-	if !strings.Contains(output, "session-state.json persistence disabled; using conversation.json") {
-		t.Fatalf("expected deprecation message in diagWriter, got: %s", output)
-	}
 }
 
 func TestPersistSessionStateInterrupted(t *testing.T) {
@@ -264,27 +254,12 @@ func TestPersistSessionStateInterrupted(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 
-	// Capture diagWriter output to verify the resume hint is printed.
-	var diagBuf bytes.Buffer
-	runState.persistSessionState(nil, &diagBuf)
-
-	stdout := diagBuf.String()
+	runState.persistSessionState(nil, nil)
 
 	// Verify session-state.json is NOT created.
 	statePath := filepath.Join(dir, "session-state.json")
 	if _, err := os.Stat(statePath); !os.IsNotExist(err) {
 		t.Fatalf("session-state.json unexpectedly exists: %v", err)
-	}
-
-	// Verify deprecation log message and interruption banner were printed.
-	if !strings.Contains(stdout, "session-state.json persistence disabled; using conversation.json") {
-		t.Fatalf("expected deprecation message in diagWriter, got: %s", stdout)
-	}
-	if !strings.Contains(stdout, "=== SESSION INTERRUPTED ===") {
-		t.Fatalf("expected interruption banner in stdout, got: %s", stdout)
-	}
-	if !strings.Contains(stdout, sessionID) {
-		t.Fatalf("expected session ID %s in stdout, got: %s", sessionID, stdout)
 	}
 }
 
@@ -326,8 +301,7 @@ func TestPersistSessionStatePendingStateOverride(t *testing.T) {
 		_ = os.RemoveAll(overrideDir)
 	})
 
-	var diagBuf bytes.Buffer
-	runState.persistSessionState(nil, &diagBuf)
+	runState.persistSessionState(nil, nil)
 
 	// Verify session-state.json is NOT created for the override directory.
 	statePath := filepath.Join(overrideDir, "session-state.json")
@@ -335,11 +309,6 @@ func TestPersistSessionStatePendingStateOverride(t *testing.T) {
 		t.Fatalf("session-state.json unexpectedly exists for override: %v", err)
 	}
 
-	// Verify deprecation log message is written.
-	output := diagBuf.String()
-	if !strings.Contains(output, "session-state.json persistence disabled; using conversation.json") {
-		t.Fatalf("expected deprecation message in diagWriter, got: %s", output)
-	}
 }
 
 func TestPersistSessionStateEmptySessionID(t *testing.T) {
@@ -388,7 +357,7 @@ func TestPersistSessionStateSaveFailure(t *testing.T) {
 	sessionID := fmt.Sprintf("test-persist-failure-%d", time.Now().UnixNano())
 
 	// Pre-create the sessions root and then place a file at the session
-	// directory path to block MkdirAll inside SaveSessionState.
+	// directory path to block MkdirAll inside session directory creation.
 	sessionsDir, err := artifacts.SessionsRoot()
 	if err != nil {
 		t.Fatalf("SessionsRoot: %v", err)
@@ -411,15 +380,9 @@ func TestPersistSessionStateSaveFailure(t *testing.T) {
 		turnsCompleted: 1,
 		interrupted:    false,
 	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 
-	// Inject a bytes.Buffer as the diagWriter to capture the warning directly.
-	var diagBuf bytes.Buffer
-	runState.persistSessionState(nil, &diagBuf)
-
-	output := diagBuf.String()
-	if !strings.Contains(output, "session-state.json persistence disabled; using conversation.json") {
-		t.Fatalf("expected deprecation message in diagWriter, got: %s", output)
-	}
+	runState.persistSessionState(nil, nil)
 }
 
 // TestSessionStateFromConversationFields verifies that when

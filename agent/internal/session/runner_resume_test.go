@@ -567,7 +567,6 @@ func TestPrepareRunBootstrapFromConversation(t *testing.T) {
 		t.Fatalf("failed to resolve session directory: %v", err)
 	}
 	t.Cleanup(func() {
-		_ = RemoveSessionState(sessionID)
 		_ = os.RemoveAll(dir)
 	})
 
@@ -726,7 +725,6 @@ func TestResumeEndToEndWithoutSessionStateJSON(t *testing.T) {
 		t.Fatalf("failed to resolve session directory: %v", err)
 	}
 	t.Cleanup(func() {
-		_ = RemoveSessionState(sessionID)
 		_ = os.RemoveAll(dir)
 	})
 
