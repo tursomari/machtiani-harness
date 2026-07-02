@@ -219,7 +219,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 	}
 	if env.isResumingTurn {
 		env.display.Notify(fmt.Sprintf("[resume] shell-agent session is resumable, step %d", env.step))
-		replayShellAgentActions(env.display, env.diagWriter, env.sessionID, env.step)
+		replayShellAgentActions(env.display, env.diagWriter, env.sessionID, env.step, env.mctRunner.ShellAgentLibrary.CommandTag)
 	}
 	var interruptedMsgs []minisweagent.Message
 	skipResumeVerify := false
@@ -673,14 +673,14 @@ func (tc *TurnContext) buildShellAgentRequest(task string, sessionID string, ver
 }
 
 // replayShellAgentActions replays shell-agent command steps from a saved resume file into the TUI display as concise summary lines, one per prior command, showing the command string and output line count.
-func replayShellAgentActions(display ui.SessionDisplay, diagWriter io.Writer, sessionID string, step int) error {
+func replayShellAgentActions(display ui.SessionDisplay, diagWriter io.Writer, sessionID string, step int, commandTag string) error {
 	messages, err := loadTrajectoryForResume(sessionID, step)
 	if err != nil {
 		fmt.Fprintf(diagWriter, "Warning: unable to load shell-agent resume state for replay: %v\n", err)
 		return nil
 	}
 
-	cmdRe := regexp.MustCompile(`<command-now>\s*(.*?)\s*</command-now>`)
+	cmdRe := regexp.MustCompile(`<` + regexp.QuoteMeta(commandTag) + `>\s*(.*?)\s*</` + regexp.QuoteMeta(commandTag) + `>`)
 
 	cmdSteps := 0
 	for _, msg := range messages {

@@ -385,9 +385,9 @@ func TestReplayShellAgentActions(t *testing.T) {
 		Messages []minisweagent.Message `json:"messages"`
 	}{
 		Messages: []minisweagent.Message{
-			{Role: "assistant", Content: "<command-now>echo step1</command-now>"},
+			{Role: "assistant", Content: "<command-runnderresumetest>echo step1</command-runnderresumetest>"},
 			{Role: "tool", Content: "step1 output"},
-			{Role: "assistant", Content: "<command-now>echo step2</command-now>"},
+			{Role: "assistant", Content: "<command-runnderresumetest>echo step2</command-runnderresumetest>"},
 		},
 	}
 
@@ -405,7 +405,7 @@ func TestReplayShellAgentActions(t *testing.T) {
 
 	// Create a streamActionRecorder and replay.
 	recorder := &streamActionRecorder{}
-	_ = replayShellAgentActions(recorder, io.Discard, sessionID, 1)
+	_ = replayShellAgentActions(recorder, io.Discard, sessionID, 1, "command-runnderresumetest")
 
 	// Verify: exactly 2 notify calls (one per command step).
 	if len(recorder.notifications) != 2 {
@@ -428,7 +428,7 @@ func TestReplayShellAgentActions(t *testing.T) {
 func TestReplayShellAgentActionsMissingFile(t *testing.T) {
 	sessionID := "test-replay-missing"
 	recorder := &streamActionRecorder{}
-	err := replayShellAgentActions(recorder, io.Discard, sessionID, 0)
+	err := replayShellAgentActions(recorder, io.Discard, sessionID, 0, "command-runnderresumetest")
 	if err != nil {
 		t.Fatalf("expected nil error for missing file, got: %v", err)
 	}
@@ -470,7 +470,7 @@ func TestReplayShellAgentActionsNoCommands(t *testing.T) {
 	}
 
 	recorder := &streamActionRecorder{}
-	_ = replayShellAgentActions(recorder, io.Discard, sessionID, 0)
+	_ = replayShellAgentActions(recorder, io.Discard, sessionID, 0, "command-runnderresumetest")
 
 	if len(recorder.notifications) != 0 {
 		t.Fatalf("expected 0 Notify calls for trajectory without commands, got %d", len(recorder.notifications))
