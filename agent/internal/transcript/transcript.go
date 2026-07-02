@@ -191,8 +191,10 @@ func formatGoalSection(originalPrompt string, taskDescription string) string {
 
 func (t *Transcript) WriteTurn(step int, question, savedPath string, retrieved []string, summary string, decision string) error {
 	var b strings.Builder
-	if step >= 0 {
+	if step > 0 {
 		b.WriteString(fmt.Sprintf("\n== TURN %d\n\n", step))
+	} else if step == 0 {
+		b.WriteString("\n== CONTEXT\n\n")
 	}
 	b.WriteString(question + "\n\n")
 	if savedPath != "" {

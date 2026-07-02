@@ -1160,7 +1160,7 @@ validate_turn_counts() {
 
   # 2. Parse turns from stdout
   local stdout_turns
-  stdout_turns=$(grep "Turns completed:" "$stdout_file" 2>/dev/null | head -1 | sed -n 's/.*Turns completed: *\([0-9][0-9]*\).*/\1/p')
+  stdout_turns=$(grep -a "Turns completed:" "$stdout_file" 2>/dev/null | head -1 | sed -n 's/.*Turns completed: *\([0-9][0-9]*\).*/\1/p')
   if [[ -z "$stdout_turns" ]]; then
     printf "ERROR: unable to parse Turns completed from stdout for %s\n" "$case_id" >&2
     return 1
