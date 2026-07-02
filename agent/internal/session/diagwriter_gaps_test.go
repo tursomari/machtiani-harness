@@ -86,23 +86,6 @@ func TestCompleteSessionDiagWriterCapturesModePlanTaskFailure(t *testing.T) {
 // and presentFinalAnswer renders to the injected display
 // ---------------------------------------------------------------------------
 
-// captureDisplay records WriteString and ShowFinal calls for assertion.
-type captureDisplay struct {
-	mockDisplay
-	writtenStrings []string
-	finalShown     string
-	finalCalled    bool
-}
-
-func (c *captureDisplay) ShowFinal(s string) {
-	c.finalCalled = true
-	c.finalShown = s
-}
-
-func (c *captureDisplay) WriteString(s string) {
-	c.writtenStrings = append(c.writtenStrings, s)
-}
-
 func TestCompleteSessionVerboseSuccessCapturesDiagAndDisplay(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("HOME", tmpDir)
