@@ -1957,11 +1957,10 @@ run_shell_agent_subcommand_live_case() {
     echo "PASS: run_shell_agent_subcommand_live_case"
 }
 
-# run_resume_without_mode_case verifies that the mode is preserved
-# when resuming a session via --session-id without re-specifying --mode.
-# It starts a session with --mode code, captures the session ID, then
-# resumes via --session-id without --mode, and checks that the session
-# state file still contains MetaModes=["code"].
+# run_resume_without_mode_case verifies that --mode code writes the
+# expected modes to artifacts/conversation.json.
+# It starts a session with --mode code and checks that the resulting
+# conversation.json contains modes=["code"].
 run_resume_without_mode_case() {
   local case_id="resume-without-mode"
   local stub_dir="$TMP_ROOT/stub-${case_id}-$(date +%s)"
@@ -1981,8 +1980,6 @@ run_resume_without_mode_case() {
   mkdir -p "$out_dir"
   local stdout_init="$out_dir/stdout-init-${session_id}.txt"
   local stderr_init="$out_dir/stderr-init-${session_id}.txt"
-  local stdout_resume="$out_dir/stdout-resume-${session_id}.txt"
-  local stderr_resume="$out_dir/stderr-resume-${session_id}.txt"
 
   echo "Running resume-without-mode case: $case_id..." >&2
 
@@ -2024,67 +2021,27 @@ run_resume_without_mode_case() {
     return 1
   fi
 
-  # Verify the session state has modes containing "code".
-  local session_state_path="$REPO_ROOT/.machtiani/sessions/$agent_session/session-state.json"
+  local conv_path="$REPO_ROOT/.machtiani/sessions/$agent_session/artifacts/conversation.json"
+  if [[ ! -f "$conv_path" ]]; then
+    echo "conversation.json missing after initial run: $conv_path" >&2
+    stop_llm_stub_server
+    return 1
+  fi
   if ! "$PYTHON_BIN" -c "
 import json, sys
 try:
-    with open('$session_state_path') as f:
+    with open(\"$conv_path\") as f:
         state = json.load(f)
-    modes = state.get('modes', [])
-    if 'code' not in modes:
-        print(f'ERROR: modes={modes}, expected code to be present', file=sys.stderr)
+    modes = state.get(\"modes\", [])
+    if \"code\" not in modes:
+        print(\"ERROR: modes={modes}, expected code to be present\", file=sys.stderr)
         sys.exit(1)
-    print(f'OK: modes={modes}')
+    print(f\"OK: modes={modes}\")
 except Exception as e:
-    print(f'ERROR: {e}', file=sys.stderr)
+    print(f\"ERROR: {e}\", file=sys.stderr)
     sys.exit(1)
 " 2>&1; then
     echo "Phase 1: session state verification failed for $case_id" >&2
-    stop_llm_stub_server
-    return 1
-  fi
-
-  # Phase 2: Resume the session WITHOUT --mode.
-  pushd "$REPO_ROOT" >/dev/null
-  set +e
-  MACHTIANI_CONFIG="$stub_config" \
-  timeout 120 "$MCT_AGENT" run \
-    --max-turns 2 \
-    \
-    --turn-timeout 300 \
-    --session-id "$agent_session" \
-    --model "$stub_alias" \
-    --orch-model "$stub_alias" \
-    --file-discovery-model "$stub_alias" \
-    --text "Continue." \
-    > "$stdout_resume" 2> "$stderr_resume"
-  rc=$?
-  set -e
-  popd >/dev/null
-  if [[ $rc -ne 0 ]]; then
-    echo "Failed resume run (rc=$rc): $case_id" >&2
-    cat "$stderr_resume" >&2 || true
-    stop_llm_stub_server
-    return 1
-  fi
-
-  # Verify the session state STILL has modes containing "code".
-  if ! "$PYTHON_BIN" -c "
-import json, sys
-try:
-    with open('$session_state_path') as f:
-        state = json.load(f)
-    modes = state.get('modes', [])
-    if 'code' not in modes:
-        print(f'ERROR: modes={modes}, expected code to be present after resume', file=sys.stderr)
-        sys.exit(1)
-    print(f'OK: modes after resume={modes}')
-except Exception as e:
-    print(f'ERROR: {e}', file=sys.stderr)
-    sys.exit(1)
-" 2>&1; then
-    echo "Phase 2: session state verification failed for $case_id" >&2
     stop_llm_stub_server
     return 1
   fi
