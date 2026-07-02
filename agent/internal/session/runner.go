@@ -951,11 +951,8 @@ func runSession(ctx context.Context, opts Options) Result {
 
 Finalize:
 	if err := rootCtx.Err(); err != nil {
-		runState.turnsCompleted = countTurns(tr.Content())
-		
 		return interruptedResult(err)
 	}
-	turns := countTurns(tr.Content())
 	ctx, cancelF := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
 	ctx = attachTrajectory(ctx, trajectoryWriter, parentSpanID)
 	answer, ferr := pl.Finalize(ctx, conv, goal)
@@ -968,22 +965,18 @@ Finalize:
 	}
 	if ferr != nil {
 		if isContextCancelled(ferr) || isContextCancelled(finalCtxErr) {
-			runState.turnsCompleted = turns
-			
 			return interruptedResult(ferr)
 		}
 		fmt.Fprintln(diagWriter, "Finalizer error:", ferr)
 		runState.sessionErr = ferr
-		runState.turnsCompleted = turns
 		return Result{ExitCode: 1, Err: ferr}
 	}
-	if err := runState.completeSession(display, diagWriter, answer, turns, turns, turns >= cfg.maxTurns); err != nil {
+	if err := runState.completeSession(display, diagWriter, answer, runState.turnsCompleted, runState.turnsCompleted, runState.turnsCompleted >= cfg.maxTurns); err != nil {
 		fmt.Fprintln(diagWriter, "Final file write error:", err)
-		runState.turnsCompleted = turns
 		return Result{ExitCode: 1, Err: err}
 	}
 	sessionClosed = true
-	return Result{ExitCode: 0, Status: runState.sessionStatus, Turns: turns, SessionID: sessionID}
+	return Result{ExitCode: 0, Status: runState.sessionStatus, Turns: runState.turnsCompleted, SessionID: sessionID}
 }
 
 func appendResumePromptContext(transcript, prompt string) string {

@@ -83,15 +83,17 @@ func splitAskLabel(line string, labels ...string) (string, bool) {
 	return "", false
 }
 
+// countTurns returns the number of turns in a transcript document.
+// It recognises turn headers starting with "== Turn " or "== TURN ".
 func countTurns(doc string) int {
 	lines := strings.Split(doc, "\n")
 	count := 0
 	hasTurnZero := false
 	for _, l := range lines {
 		trimmed := strings.TrimSpace(l)
-		if strings.HasPrefix(trimmed, "== Turn ") {
+		if strings.HasPrefix(trimmed, "== Turn ") || strings.HasPrefix(trimmed, "== TURN ") {
 			count++
-			if strings.HasPrefix(trimmed, "== Turn 0") {
+			if strings.HasPrefix(trimmed, "== Turn 0") || strings.HasPrefix(trimmed, "== TURN 0") {
 				hasTurnZero = true
 			}
 		}
