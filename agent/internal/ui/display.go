@@ -13,4 +13,4 @@ type SessionDisplay interface {
 	WriteString(s string)
 }
 
-var _ SessionDisplay = (*TerminalDisplay)(nil)
+var _ SessionDisplay = (*Formatter)(nil)

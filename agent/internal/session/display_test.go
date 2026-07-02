@@ -9,13 +9,6 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/ui"
 )
 
-// TestTerminalDisplaySatisfiesSessionDisplay is a compile-time assertion
-// that the concrete terminal types satisfy the display interfaces.
-func TestTerminalDisplaySatisfiesSessionDisplay(t *testing.T) {
-	var _ ui.SessionDisplay = (*ui.TerminalDisplay)(nil)
-	var _ ui.PromptStream = (*ui.TerminalPromptStream)(nil)
-}
-
 // TestSessionRunWithNilDisplayDefaultsNoPanic verifies that session.Run does
 // not panic when Display and Diagnostics are nil.  The session may exit early
 // with ExitCode 1 when no LLM backend is configured, but the wiring itself
@@ -58,7 +51,7 @@ func TestSessionRunWithCustomDiagnosticsCapturesOutput(t *testing.T) {
 	opts := Options{
 		Config:      Config{},
 		Goal:        "test goal with diagnostics",
-		Display:     ui.NewTerminalDisplay(io.Discard, nil, ""),
+		Display:     ui.NewFormatter(io.Discard, nil, ui.Theme{}, nil, ""),
 		Diagnostics: new(bytes.Buffer),
 		Context:     ctx,
 	}

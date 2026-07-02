@@ -7,4 +7,4 @@ type PromptStream interface {
 	Abort(message string)
 }
 
-var _ PromptStream = (*TerminalPromptStream)(nil)
+var _ PromptStream = (*FormatterPromptStream)(nil)

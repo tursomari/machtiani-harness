@@ -12,7 +12,7 @@ import (
 // write to the same stdout.
 type ProcessTimerManager struct {
 	mu         sync.Mutex
-	registered map[string]*TerminalDisplay
+	registered map[string]any
 	activeID   string
 	writer     io.Writer // Always os.Stdout for now
 }
@@ -20,14 +20,14 @@ type ProcessTimerManager struct {
 // NewProcessTimerManager creates a new process-level timer manager.
 func NewProcessTimerManager() *ProcessTimerManager {
 	return &ProcessTimerManager{
-		registered: make(map[string]*TerminalDisplay),
+		registered: make(map[string]any),
 		writer:     os.Stdout,
 	}
 }
 
 // RegisterDisplay registers a display with the manager.
 // If no active timer exists, this display becomes active.
-func (m *ProcessTimerManager) RegisterDisplay(id string, display *TerminalDisplay) {
+func (m *ProcessTimerManager) RegisterDisplay(id string, display any) {
 	if m == nil {
 		return
 	}

@@ -27,7 +27,7 @@ func TestApplyModeCompletedPlanWithResumePromptReturnsHandledFalse(t *testing.T)
 		Goal:         "fix bug",
 		ResumePrompt: "add more tests",
 		Config:       legacyConfig{mode: "coding"},
-		Display:      ui.NewTerminalDisplay(&bytes.Buffer{}, nil, ""),
+		Display:      ui.NewFormatter(&bytes.Buffer{}, nil, ui.Theme{}, nil, ""),
 	}
 
 	result, handled := applyMode(&ctx)
@@ -58,7 +58,7 @@ func TestApplyModeCompletedPlanWithoutResumePromptReturnsHandledFalse(t *testing
 		Goal:         "fix bug",
 		ResumePrompt: "",
 		Config:       legacyConfig{mode: "coding"},
-		Display:      ui.NewTerminalDisplay(&bytes.Buffer{}, nil, ""),
+		Display:      ui.NewFormatter(&bytes.Buffer{}, nil, ui.Theme{}, nil, ""),
 	}
 
 	// With the single-session model, completed plan without resume prompt
@@ -88,7 +88,7 @@ func TestApplyModePendingTaskReturnsHandledFalse(t *testing.T) {
 		Goal:      "fix bug",
 		Config:    legacyConfig{mode: "coding"},
 		Options:   Options{},
-		Display:   ui.NewTerminalDisplay(&bytes.Buffer{}, nil, ""),
+		Display:   ui.NewFormatter(&bytes.Buffer{}, nil, ui.Theme{}, nil, ""),
 	}
 
 	result, handled := applyMode(&ctx)
@@ -123,7 +123,7 @@ func TestApplyModeSuspendedTaskReturnsHandledFalse(t *testing.T) {
 		ResumePrompt: "the answer is 42",
 		Config:       legacyConfig{mode: "coding"},
 		Options:      Options{},
-		Display:      ui.NewTerminalDisplay(&bytes.Buffer{}, nil, ""),
+		Display:      ui.NewFormatter(&bytes.Buffer{}, nil, ui.Theme{}, nil, ""),
 	}
 
 	result, handled := applyMode(&ctx)
@@ -154,7 +154,7 @@ func TestApplyModeSuspendedTaskWithoutResumePromptResetsToRunning(t *testing.T) 
 		Goal:      "fix bug",
 		Config:    legacyConfig{mode: "coding"},
 		Options:   Options{},
-		Display:   ui.NewTerminalDisplay(&bytes.Buffer{}, nil, ""),
+		Display:   ui.NewFormatter(&bytes.Buffer{}, nil, ui.Theme{}, nil, ""),
 	}
 
 	result, handled := applyMode(&ctx)
@@ -228,7 +228,7 @@ func TestApplyModePropagatesOverlayToContext(t *testing.T) {
 		Goal:      "fix bug",
 		Config:    legacyConfig{mode: "coding"},
 		Options:   Options{}, // PlannerOverlay starts empty
-		Display:   ui.NewTerminalDisplay(&bytes.Buffer{}, nil, ""),
+		Display:   ui.NewFormatter(&bytes.Buffer{}, nil, ui.Theme{}, nil, ""),
 	}
 
 	_, handled := applyMode(&ctx)

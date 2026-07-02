@@ -313,7 +313,7 @@ func runSession(ctx context.Context, opts Options) Result {
 
 	display := opts.Display
 	if display == nil {
-		display = ui.NewTerminalDisplay(os.Stdout, timerMgr, sessionID)
+		display = ui.NewFormatter(os.Stdout, nil, ui.Theme{}, timerMgr, sessionID)
 	}
 	var failoverCancel context.CancelFunc
 	var failoverDone <-chan struct{}
