@@ -130,7 +130,7 @@ class MctAgent(BaseInstalledAgent):
         max_input_tokens = os.environ.get("MCT_MAX_INPUT_TOKENS", "800000")
 
         run_cmd = (
-            f"mct-agent run"
+            "mkdir -p /logs/agent && mct-agent run"
             f" --mode {shlex.quote(mode)}"
             f" --max-steps {shlex.quote(max_steps)}"
             f" --timeout-per-turn {shlex.quote(timeout_per_turn)}"
@@ -140,6 +140,7 @@ class MctAgent(BaseInstalledAgent):
             f" --tag now"
             f" --persist-tmp-data"
             f" -f /app/instruction.md"
+            f" > /logs/agent/run-stdout.txt 2> /logs/agent/run-stderr.txt"
         )
         try:
             await self.exec_as_agent(environment, run_cmd)
