@@ -123,20 +123,14 @@ class MctAgent(BaseInstalledAgent):
 
         # Step 6: Run mct-agent run.
         mode = os.environ.get("MCT_MODE", "code-forge")
-        max_steps = os.environ.get("MCT_MAX_STEPS", "1000")
-        timeout_per_turn = os.environ.get("MCT_TIMEOUT_PER_TURN", "0")
         model = os.environ.get("MCT_MODEL", "deepseek-v4-pro")
         shell_agent_model = os.environ.get("MCT_SHELL_AGENT_MODEL", "deepseek-v4-pro")
-        max_input_tokens = os.environ.get("MCT_MAX_INPUT_TOKENS", "800000")
 
         run_cmd = (
             "mkdir -p /logs/agent && mct-agent run"
             f" --mode {shlex.quote(mode)}"
-            f" --max-steps {shlex.quote(max_steps)}"
-            f" --timeout-per-turn {shlex.quote(timeout_per_turn)}"
             f" --model {shlex.quote(model)}"
             f" --shell-agent-model {shlex.quote(shell_agent_model)}"
-            f" --max-input-tokens {shlex.quote(max_input_tokens)}"
             f" --tag now"
             f" --persist-tmp-data"
             f" -f /app/instruction.md"

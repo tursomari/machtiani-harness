@@ -100,6 +100,9 @@ build_agent() {
     # Copy submodule contents from main worktree
     cp -a "${REPO_ROOT}/agent/internal/shell-agent" "${worktree_dir}/agent/internal/shell-agent"
     cp -a "${REPO_ROOT}/agent/internal/file-discovery/tests/undici" "${worktree_dir}/agent/internal/file-discovery/tests/undici"
+    # Copy mct-forge wrapper from repo root into the temporary worktree
+    mkdir -p $(dirname "${worktree_dir}/peripherals/mct-forge")
+    cp -a "${REPO_ROOT}/peripherals/mct-forge" "${worktree_dir}/peripherals/mct-forge"
     # Remove any .git metadata to prevent Go module confusion
     find "${worktree_dir}/agent/internal/shell-agent" -name ".git" -type f -delete 2>/dev/null || true
     find "${worktree_dir}/agent/internal/file-discovery/tests/undici" -name ".git" -type f -delete 2>/dev/null || true
@@ -132,6 +135,7 @@ build_agent "${TREATMENT_COMMIT}" "${TREATMENT_BIN}" "treatment"
 echo ""
 echo "==== Step 1 — Run control benchmark ===="
 
+export MCT_AGENT_BINARY=${CONTROL_BIN}
 pier run \
     --ae "MCT_AGENT_BINARY=${CONTROL_BIN}" \
     --ae "TEST_API_KEY=${TEST_API_KEY}" \
@@ -151,6 +155,7 @@ echo "[run:control] Complete."
 echo ""
 echo "==== Step 2 — Run treatment benchmark ===="
 
+export MCT_AGENT_BINARY=${TREATMENT_BIN}
 pier run \
     --ae "MCT_AGENT_BINARY=${TREATMENT_BIN}" \
     --ae "TEST_API_KEY=${TEST_API_KEY}" \
