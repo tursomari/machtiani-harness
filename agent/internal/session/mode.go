@@ -49,7 +49,7 @@ type modeContext struct {
 	ResumePrompt    string
 	Config          legacyConfig
 	Options         Options
-	Display         ui.SessionDisplay
+	EventBus        *ui.EventBus
 	InstructionPath string
 	Instruction     llm.ModeInstructions
 	DiagWriter      io.Writer
@@ -81,7 +81,9 @@ func applyMode(ctx *modeContext) (modeConfigResult, bool) {
 		return modeConfigResult{Plan: plan}, true
 	}
 
-	ctx.Display.RenderModePlan(tasksToDisplay(plan.Tasks))
+	if ctx.EventBus != nil {
+		ctx.EventBus.Emit(ui.ModeTaskPlanDisplayEvent{Tasks: tasksToDisplay(plan.Tasks)})
+	}
 
 	// Follow-up after completion: all tasks done and user provided new input.
 	// Return handled=false so the planner loop picks up the new prompt with
@@ -139,8 +141,8 @@ func configureModePlan(ctx *modeContext, plan modePlanState) (modePlanState, err
 		return plan, err
 	}
 
-	if ctx.Display != nil {
-		ctx.Display.UpdateModeTaskStatus(0, task.Title, "running")
+	if ctx.EventBus != nil {
+		ctx.EventBus.Emit(ui.ModeTaskStatusUpdateEvent{Index: 0, Title: task.Title, Status: "running"})
 	}
 
 	return plan, nil

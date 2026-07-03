@@ -1,7 +1,6 @@
 package session
 
 import (
-	"bytes"
 	"testing"
 
 	"github.com/tursomari/machtiani/agent/internal/llm"
@@ -27,7 +26,7 @@ func TestApplyModeCompletedPlanWithResumePromptReturnsHandledFalse(t *testing.T)
 		Goal:         "fix bug",
 		ResumePrompt: "add more tests",
 		Config:       legacyConfig{mode: "coding"},
-		Display:      ui.NewFormatter(&bytes.Buffer{}, nil, ui.Theme{}, nil, ""),
+		EventBus: ui.NewEventBus(256),
 	}
 
 	result, handled := applyMode(&ctx)
@@ -58,7 +57,7 @@ func TestApplyModeCompletedPlanWithoutResumePromptReturnsHandledFalse(t *testing
 		Goal:         "fix bug",
 		ResumePrompt: "",
 		Config:       legacyConfig{mode: "coding"},
-		Display:      ui.NewFormatter(&bytes.Buffer{}, nil, ui.Theme{}, nil, ""),
+		EventBus: ui.NewEventBus(256),
 	}
 
 	// With the single-session model, completed plan without resume prompt
@@ -88,7 +87,7 @@ func TestApplyModePendingTaskReturnsHandledFalse(t *testing.T) {
 		Goal:      "fix bug",
 		Config:    legacyConfig{mode: "coding"},
 		Options:   Options{},
-		Display:   ui.NewFormatter(&bytes.Buffer{}, nil, ui.Theme{}, nil, ""),
+		EventBus: ui.NewEventBus(256),
 	}
 
 	result, handled := applyMode(&ctx)
@@ -123,7 +122,7 @@ func TestApplyModeSuspendedTaskReturnsHandledFalse(t *testing.T) {
 		ResumePrompt: "the answer is 42",
 		Config:       legacyConfig{mode: "coding"},
 		Options:      Options{},
-		Display:      ui.NewFormatter(&bytes.Buffer{}, nil, ui.Theme{}, nil, ""),
+		EventBus: ui.NewEventBus(256),
 	}
 
 	result, handled := applyMode(&ctx)
@@ -154,7 +153,7 @@ func TestApplyModeSuspendedTaskWithoutResumePromptResetsToRunning(t *testing.T) 
 		Goal:      "fix bug",
 		Config:    legacyConfig{mode: "coding"},
 		Options:   Options{},
-		Display:   ui.NewFormatter(&bytes.Buffer{}, nil, ui.Theme{}, nil, ""),
+		EventBus: ui.NewEventBus(256),
 	}
 
 	result, handled := applyMode(&ctx)
@@ -228,7 +227,7 @@ func TestApplyModePropagatesOverlayToContext(t *testing.T) {
 		Goal:      "fix bug",
 		Config:    legacyConfig{mode: "coding"},
 		Options:   Options{}, // PlannerOverlay starts empty
-		Display:   ui.NewFormatter(&bytes.Buffer{}, nil, ui.Theme{}, nil, ""),
+		EventBus: ui.NewEventBus(256),
 	}
 
 	_, handled := applyMode(&ctx)

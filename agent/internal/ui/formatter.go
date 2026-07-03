@@ -607,58 +607,6 @@ func (f *Formatter) timerLoop(ticker *time.Ticker, stop <-chan struct{}) {
 	}
 }
 
-// --- SessionDisplay interface methods ---------------------------------------
-
-// StartSession emits a SessionStartedEvent.
-func (f *Formatter) StartSession(goal string) {
-	f.Bus.Emit(SessionStartedEvent{Goal: goal})
-}
-
-// EndSession emits a SessionEndedEvent.
-func (f *Formatter) EndSession() {
-	f.Bus.Emit(SessionEndedEvent{})
-}
-
-// BeginPrompt emits a PromptStartedEvent and returns a FormatterPromptStream
-// that emits subsequent events for this prompt turn.
-func (f *Formatter) BeginPrompt(prompt string, opts *PromptOptions) PromptStream {
-	id := fmt.Sprintf("stream-%d", f.streamCounter.Add(1))
-	f.Bus.Emit(PromptStartedEvent{StreamID: id, Prompt: prompt, Opts: opts})
-	return &FormatterPromptStream{Bus: f.Bus, StreamID: id}
-}
-
-// ShowFinal emits a FinalAnswerEvent.
-func (f *Formatter) ShowFinal(rendered string) {
-	f.Bus.Emit(FinalAnswerEvent{RenderedText: rendered})
-}
-
-// StreamAction emits an ActionExecutedEvent.
-func (f *Formatter) StreamAction(line string) {
-	f.Bus.Emit(ActionExecutedEvent{Description: line})
-}
-
-// RenderModePlan emits a ModeTaskPlanDisplayEvent.
-func (f *Formatter) RenderModePlan(tasks []ModeTaskDisplay) {
-	f.Bus.Emit(ModeTaskPlanDisplayEvent{Tasks: tasks})
-}
-
-// UpdateModeTaskStatus emits a ModeTaskStatusUpdateEvent.
-func (f *Formatter) UpdateModeTaskStatus(index int, title string, status string) {
-	f.Bus.Emit(ModeTaskStatusUpdateEvent{Index: index, Title: title, Status: status})
-}
-
-// Notify emits a NotificationEvent at the Info level.
-func (f *Formatter) Notify(message string) {
-	f.Bus.Emit(NotificationEvent{Level: NotificationInfo, Message: message})
-}
-
-// WriteString emits a RawStringEvent.
-func (f *Formatter) WriteString(s string) {
-	f.Bus.Emit(RawStringEvent{Text: s})
-}
-
-// --- concrete prompt methods (mu held by caller) ----------------------------
-
 // PromptSelection prints the prompt and numbered options, then reads the
 // user's choice from stdin. Returns the trimmed input or an error.
 func (f *Formatter) PromptSelection(prompt string, options []string) (string, error) {
@@ -721,5 +669,4 @@ func (f *Formatter) PromptInput(prompt string) (string, error) {
 
 // --- compile-time assertions ------------------------------------------------
 
-var _ SessionDisplay = (*Formatter)(nil)
 var _ PromptStream = (*FormatterPromptStream)(nil)

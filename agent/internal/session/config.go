@@ -75,7 +75,6 @@ type Options struct {
 	APIKeyOverrides     map[string]string
 	Context             context.Context
 	ProcessTimerManager *ui.ProcessTimerManager
-	Display             ui.SessionDisplay
 	Diagnostics         io.Writer
 	PlannerOverride     Planner
 	HasNewInput         bool // true when -t/-f provided on resume (shell-agent starts fresh, no resume attempt)

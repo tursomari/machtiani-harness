@@ -53,7 +53,6 @@ type runTurnEnv struct {
 	sessionErr                  *error
 	turnsCompleted              *int
 	plannerProgress             *plannerProgressTracker
-	display                     ui.SessionDisplay
 	bus                         *ui.EventBus
 	diagWriter                  io.Writer
 	hasNewInput                 bool // from Options; propagated to TurnContext for ResumeAttempt

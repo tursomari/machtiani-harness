@@ -311,17 +311,9 @@ func runSession(ctx context.Context, opts Options) Result {
 		fmt.Fprintln(diagWriter, "[trajectory] unified stream:", trajectoryWriter.Config().Path)
 	}
 
-	display := opts.Display
-	if display == nil {
-		display = ui.NewFormatter(os.Stdout, nil, ui.Theme{}, timerMgr, sessionID)
-	}
-	var eventBus *ui.EventBus
-	if f, ok := display.(*ui.Formatter); ok {
-		eventBus = f.Bus
-	}
-	if eventBus == nil {
-		eventBus = ui.NewEventBus(256)
-	}
+	var eventBus *ui.EventBus = ui.NewEventBus(256)
+	formatter := ui.NewFormatter(os.Stdout, eventBus, ui.DefaultTheme(), timerMgr, sessionID)
+	_ = formatter
 	var failoverCancel context.CancelFunc
 	var failoverDone <-chan struct{}
 	var retryCancel context.CancelFunc
@@ -554,7 +546,7 @@ func runSession(ctx context.Context, opts Options) Result {
 			ResumePrompt:    resumePrompt,
 			Config:          cfg,
 			Options:         opts,
-			Display:         display,
+			EventBus:       eventBus,
 			InstructionPath: modeInstructionPath,
 			Instruction:     modeInstructions,
 			DiagWriter:      diagWriter,
@@ -620,11 +612,7 @@ func runSession(ctx context.Context, opts Options) Result {
 
 	eventBus.Emit(ui.SessionStartedEvent{Goal: goal})
 	if resumeMode {
-		if display != nil {
-			eventBus.Emit(ui.RawStringEvent{Text: "Resuming session " + sessionID + " ..."})
-		} else {
-			fmt.Fprintf(diagWriter, "Resuming session %s ...\n", sessionID)
-		}
+		eventBus.Emit(ui.RawStringEvent{Text: "Resuming session " + sessionID + " ..."})
 	}
 	sessionClosed := false
 	defer func() {
@@ -872,7 +860,6 @@ func runSession(ctx context.Context, opts Options) Result {
 			turnsCompleted:              &runState.turnsCompleted,
 			
 			plannerProgress:             plannerProgress,
-			display:                     display,
 			bus:                         eventBus,
 			diagWriter:                  diagWriter,
 			hasNewInput:                 bootstrap.hasNewInput,

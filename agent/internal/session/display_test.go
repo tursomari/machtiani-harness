@@ -24,7 +24,6 @@ func TestSessionRunWithNilDisplayDefaultsNoPanic(t *testing.T) {
 	opts := Options{
 		Config:      Config{},
 		Goal:        "test goal",
-		Display:     nil,
 		Diagnostics: nil,
 		Context:     ctx,
 	}
@@ -51,7 +50,6 @@ func TestSessionRunWithCustomDiagnosticsCapturesOutput(t *testing.T) {
 	opts := Options{
 		Config:      Config{},
 		Goal:        "test goal with diagnostics",
-		Display:     ui.NewFormatter(io.Discard, nil, ui.Theme{}, nil, ""),
 		Diagnostics: new(bytes.Buffer),
 		Context:     ctx,
 	}
@@ -59,51 +57,43 @@ func TestSessionRunWithCustomDiagnosticsCapturesOutput(t *testing.T) {
 	_ = Run(ctx, opts)
 }
 
-// mockDisplay is a no-op implementation of ui.SessionDisplay used for testing.
-type mockDisplay struct {
-	startedGoal   string
-	streamActions []string
+// mockEventCollector creates an EventBus, subscribes to it, and collects
+// DisplayEvent values emitted to the bus in a background goroutine.
+type mockEventCollector struct {
+	bus    *ui.EventBus
+	events []ui.DisplayEvent
 }
 
-func (m *mockDisplay) StartSession(goal string)              { m.startedGoal = goal }
-func (m *mockDisplay) EndSession()                            {}
-func (m *mockDisplay) BeginPrompt(_ string, _ *ui.PromptOptions) ui.PromptStream {
-	return &mockPromptStream{}
+func newMockEventCollector() *mockEventCollector {
+	c := &mockEventCollector{
+		bus: ui.NewEventBus(256),
+	}
+	ch := c.bus.Subscribe()
+	go func() {
+		for e := range ch {
+			c.events = append(c.events, e)
+		}
+	}()
+	return c
 }
-func (m *mockDisplay) ShowFinal(_ string)                                    {}
-func (m *mockDisplay) StreamAction(line string) {
-	m.streamActions = append(m.streamActions, line)
-}
-func (m *mockDisplay) RenderModePlan(_ []ui.ModeTaskDisplay)                 {}
-func (m *mockDisplay) UpdateModeTaskStatus(_ int, _ string, _ string)        {}
-func (m *mockDisplay) Notify(_ string)                                       {}
-func (m *mockDisplay) WriteString(_ string)                                  {}
-
-// mockPromptStream is a no-op implementation of ui.PromptStream.
-type mockPromptStream struct{}
-
-func (m *mockPromptStream) OnChunk(_ string)   {}
-func (m *mockPromptStream) Complete(_ string)  {}
-func (m *mockPromptStream) Abort(_ string)     {}
 
 // TestSessionRunWithCustomDisplayNoPanic verifies that session.Run does not
-// panic when a fully mocked display and prompt stream are injected.  No
-// assertions about method-call ordering are made because the session may
-// exit early before invoking any display methods when no LLM backend is
-// present.
+// panic when an event bus collector is set up.  No assertions about emitted
+// events are made because the session may exit early before emitting any
+// events when no LLM backend is present.
 func TestSessionRunWithCustomDisplayNoPanic(t *testing.T) {
 	defer func() {
 		if r := recover(); r != nil {
-			t.Fatalf("session.Run panicked with mock display: %v", r)
+			t.Fatalf("session.Run panicked with mock event collector: %v", r)
 		}
 	}()
 
-	md := &mockDisplay{}
+	collector := newMockEventCollector()
+	_ = collector
 	ctx := context.Background()
 	opts := Options{
 		Config:      Config{},
 		Goal:        "test goal with mock",
-		Display:     md,
 		Diagnostics: io.Discard,
 		Context:     ctx,
 	}
