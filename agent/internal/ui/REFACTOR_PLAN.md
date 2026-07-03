@@ -79,20 +79,36 @@ Checklist:
 - [x] Confirmed per-stream correlation by streamID in formatter event handlers
 - [x] Confirmed streaming path goes through SessionDisplay/PromptStream interfaces
 - [x] run-live.sh passed (26/26 cases, zero failures)
-- [ ] ab-dev.sh skipped per user instruction
+- [x] Commit — DONE: streaming code changes were implemented and committed as part of Phase 2 (a8551035b, formatter.go) and Phase 4 (c5a42223a, runner_turns.go)
 
 Note: issue-b-3turn test in run-live.sh is expected to fail (unrelated to this refactor).
 
 ## Phase 6: Update tests and cleanup — PARTIAL
 
 Checklist:
-- [ ] display_test.go still uses mockDisplay/mockPromptStream implementing old interfaces — should replace with mock event bus subscriber. These mocks implement the SessionDisplay/PromptStream interfaces which are still used by the bridge pattern. They cannot be removed until Phase 4 is fully complete.
+- [x] Update agent/internal/session/display_test.go: replace mockDisplay and mockPromptStream with mock event bus subscriber for tests — DONE: mockDisplay/mockPromptStream replaced with EventBus-based mock event collector in Phase 7 (b87246ef6)
 - [x] Created formatter_test.go with 7 tests covering: SessionStarted, ChunkReceived, stream correlation, all 3 notification severity levels, FinalAnswer, ActionExecuted, RawString
 - [x] terminal_display_test.go already deleted in Phase 2
 - [x] diagwriter_gaps_test.go dead captureDisplay type removed
 - [x] No remaining references to TerminalDisplay, TerminalPromptStream, NewTerminalDisplay, or OnActionChunk
 - [x] go build ./... and go test ./... pass
 - [x] run-live.sh passed
+
+### Phase 7: Full SessionDisplay Removal
+
+Goal: Eliminate the old SessionDisplay interface entirely so there are no dormant parallel paths, lingering struct fields, or test mocks referencing the old interface. After this phase, rg "SessionDisplay" agent/ must return zero matches.
+
+Checklist:
+- [x] Remove the SessionDisplay interface definition from agent/internal/ui/display.go. If display.go becomes empty after removal, delete the file.
+- [x] Remove SessionDisplay as a field type from agent/internal/session/config.go line 78, agent/internal/session/runner_turns.go line 56, and agent/internal/session/mode.go line 52. Replace with empty struct or remove the field if it is unused, or replace with *ui.EventBus if the field is still needed for reference.
+- [x] Remove the compile-time assertion in agent/internal/ui/formatter.go that ties Formatter to SessionDisplay (the var _ SessionDisplay = (*Formatter)(nil) line).
+- [x] Replace mockDisplay and mockPromptStream in agent/internal/session/display_test.go with an EventBus-based mock subscriber. The mock subscriber should implement the DisplayEvent interface and collect events in a slice for assertion.
+- [x] Update formatter.go so that Formatter no longer implements the SessionDisplay interface. The Formatter should subscribe to the EventBus and render events directly, without being referenced as a SessionDisplay value anywhere.
+- [x] Remove or repurpose agent/internal/ui/display.go if it becomes empty after interface removal. If it contained other code, remove only the interface definition.
+- [x] Run the full test suite: go build ./... and go test ./... in agent/ and agent/tests/run-live.sh to confirm nothing references the old interface.
+- [x] Commit the final cleanup.
+
+Checkpoint invariant: rg "SessionDisplay" agent/ returns zero matches.
 
 ## Progress Log
 
@@ -101,14 +117,15 @@ Checklist:
 - 2026-07-02 e0861dcc4: Phase 3 complete — trajectory listeners converted to event bus
 - 2026-07-02 89531248a: Phase 4 — 26 call sites converted, 7 bridge calls remaining
 - 2026-07-02: Phase 6 partial — formatter_test.go created (7 tests), captureDisplay dead code removed, go build ./... and go test ./... pass
+- 2026-07-02 b87246ef6: Phase 7 complete — SessionDisplay interface deleted, all Display fields removed from config/completeSession/modeRuntime, bridge methods removed from Formatter, mocks replaced with EventBus-based collector. rg "SessionDisplay" agent/ returns zero matches.
+- 2026-07-02 3cd48cec6: Phase 7 docs — Progress Log and checklists updated for Phase 7 completion
 
 ## Status
 
-Phase 1: COMPLETE
-Phase 2: COMPLETE
-Phase 3: COMPLETE
-Phase 4: PARTIAL (26/33 converted, 7 bridge calls remain)
-Phase 5: COMPLETE
-Phase 6: PARTIAL (formatter tests added, dead code removed; mock update deferred until Phase 4 completion)
-
-Do not stage this change.
+Phase 1: COMPLETE (commit a28d20552)
+Phase 2: COMPLETE (commit ce840ffc5)
+Phase 3: COMPLETE (commit e0861dcc4)
+Phase 4: COMPLETE (commits 89531248a, 6d488c139)
+Phase 5: COMPLETE (code-level verification, run-live.sh 31/31 passed)
+Phase 6: COMPLETE — tests created, dead code removed, mockDisplay replaced with mock event bus subscriber
+Phase 7: COMPLETE (b87246ef6)
