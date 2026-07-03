@@ -319,6 +319,9 @@ func runSession(ctx context.Context, opts Options) Result {
 	if f, ok := display.(*ui.Formatter); ok {
 		eventBus = f.Bus
 	}
+	if eventBus == nil {
+		eventBus = ui.NewEventBus(256)
+	}
 	var failoverCancel context.CancelFunc
 	var failoverDone <-chan struct{}
 	var retryCancel context.CancelFunc
@@ -615,10 +618,10 @@ func runSession(ctx context.Context, opts Options) Result {
 		})
 	}
 
-	display.StartSession(goal)
+	eventBus.Emit(ui.SessionStartedEvent{Goal: goal})
 	if resumeMode {
 		if display != nil {
-			display.WriteString("Resuming session " + sessionID + " ...")
+			eventBus.Emit(ui.RawStringEvent{Text: "Resuming session " + sessionID + " ..."})
 		} else {
 			fmt.Fprintf(diagWriter, "Resuming session %s ...\n", sessionID)
 		}
@@ -626,7 +629,7 @@ func runSession(ctx context.Context, opts Options) Result {
 	sessionClosed := false
 	defer func() {
 		if !sessionClosed {
-			display.EndSession()
+			eventBus.Emit(ui.SessionEndedEvent{})
 		}
 	}()
 

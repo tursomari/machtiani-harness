@@ -235,7 +235,9 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 		skipResumeVerify = true
 	}
 	}
-	stream := env.display.BeginPrompt(question, orchPromptOpts)
+	streamID := fmt.Sprintf("stream-%d", env.step)
+	env.bus.Emit(ui.PromptStartedEvent{StreamID: streamID, Prompt: question, Opts: orchPromptOpts})
+	stream := ui.NewFormatterPromptStream(env.bus, streamID)
 	if runSplitShell {
 		runNoShell := true
 

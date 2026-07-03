@@ -27,22 +27,28 @@ type promptStreamState struct {
 // FormatterPromptStream implements the PromptStream interface by emitting
 // events into the EventBus.
 type FormatterPromptStream struct {
-	bus      *EventBus
-	streamID string
+	Bus      *EventBus
+	StreamID string
 }
 
 func (s *FormatterPromptStream) OnChunk(chunk string) {
-	s.bus.Emit(ChunkReceivedEvent{StreamID: s.streamID, Text: chunk})
+	s.Bus.Emit(ChunkReceivedEvent{StreamID: s.StreamID, Text: chunk})
 }
 
 func (s *FormatterPromptStream) Complete(finalText string) {
-	s.bus.Emit(PromptCompletedEvent{StreamID: s.streamID, FinalText: finalText})
+	s.Bus.Emit(PromptCompletedEvent{StreamID: s.StreamID, FinalText: finalText})
 }
 
 func (s *FormatterPromptStream) Abort(message string) {
-	s.bus.Emit(PromptAbortedEvent{StreamID: s.streamID, Message: message})
+	s.Bus.Emit(PromptAbortedEvent{StreamID: s.StreamID, Message: message})
 }
 
+
+// NewFormatterPromptStream creates a new FormatterPromptStream that emits
+// events into the given EventBus using the given streamID for correlation.
+func NewFormatterPromptStream(bus *EventBus, streamID string) *FormatterPromptStream {
+	return &FormatterPromptStream{Bus: bus, StreamID: streamID}
+}
 // Formatter replaces TerminalDisplay with event-bus-based rendering. It
 // subscribes to an EventBus and processes DisplayEvents in a dedicated
 // goroutine, serializing all output through the embedded mutex.
@@ -618,7 +624,7 @@ func (f *Formatter) EndSession() {
 func (f *Formatter) BeginPrompt(prompt string, opts *PromptOptions) PromptStream {
 	id := fmt.Sprintf("stream-%d", f.streamCounter.Add(1))
 	f.Bus.Emit(PromptStartedEvent{StreamID: id, Prompt: prompt, Opts: opts})
-	return &FormatterPromptStream{bus: f.Bus, streamID: id}
+	return &FormatterPromptStream{Bus: f.Bus, StreamID: id}
 }
 
 // ShowFinal emits a FinalAnswerEvent.
