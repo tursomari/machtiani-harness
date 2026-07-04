@@ -92,3 +92,37 @@ It contains a JSONL file with invocation records, system prompts, and LLM messag
 3. CancelledError / timeout: Single tasks with the meta-orchestrator take longer than direct mct-agent runs because of the multi-stage validation phases. The default pier timeout is usually sufficient but long runs may need --agent-timeout-multiplier.
 
 4. Stale job directories: Delete jobs/<job-name> before re-running with the same job name to avoid stale result files confusing the output.
+
+## Using the Convenience Script
+
+The quickest way to run a single treatment benchmark is via the `run-single-treatment.sh` script. It handles building both binaries fresh from HEAD, setting all required environment variables, and invoking pier with the correct flags.
+
+```bash
+# Source API credentials
+source .env  # or: export TEST_API_KEY=sk-... TEST_BASE_URL=https://api.deepseek.com
+
+# Run with defaults (deepseek-v4-pro for both agent and classifier)
+./scripts/run-single-treatment.sh abs-module-cache-flags
+
+# Run with specific models (e.g., glm-5-high for agent/orchestrator, deepseek-v4-pro for shell-agent)
+./scripts/run-single-treatment.sh abs-module-cache-flags glm-5-high deepseek-v4-pro
+```
+
+The script:
+- Builds `mct-agent` and `meta-orchestrator` **fresh from HEAD** on every invocation.
+- Cleans up old output under `/tmp/mct-single-treatment/` before each run.
+- Passes `--model` to both `mct-agent` and `meta-orchestrator` (the classifier LLM).
+- Passes `--shell-agent-model` to `mct-agent` for its subprocess model.
+- Runs with `--n-concurrent 1` and `--include-task-name` for single-task isolation.
+- Sets `MCT_AGENT_BINARY` and `MCT_META_ORCHESTRATOR_BINARY` both as host exports and `--ae` flags.
+
+## Model Configuration Flow
+
+| Component | Controlled by | Default |
+|---|---|---|
+| mct-agent planner LLM | `--model` flag | `deepseek-v4-pro` |
+| meta-orchestrator classifier LLM | `--model` flag (passed through) | `deepseek-v4-pro` |
+| shell-agent tool-calling LLM | `--shell-agent-model` flag | `deepseek-v4-pro` |
+| mct-agent sync LLM | `MCT_SYNC_MODEL` env var | `deepseek-v4-pro` |
+
+All model flags are propagated through the **meta-orchestrator → mct-agent** chain: the meta-orchestrator receives `--model` and passes it through to every `mct-agent run` invocation (both the initial one and CONTINUE re-invocations with `--session-id`).
