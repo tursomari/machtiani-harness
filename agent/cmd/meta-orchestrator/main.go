@@ -13,9 +13,10 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/orchestrator"
 )
 
-func generateSessionID() string {
+func generateSessionIDs() (string, string) {
 	now := time.Now().UTC().Format("20060102T150405")
-	return fmt.Sprintf("agent-%s-%04d", now, rand.Intn(10000))
+	suffix := rand.Intn(10000)
+	return fmt.Sprintf("meta-%s-%04d", now, suffix), fmt.Sprintf("agent-%s-%04d", now, suffix)
 }
 
 func main() {
@@ -40,19 +41,19 @@ func main() {
 		os.Exit(1)
 	}
 
-	sessionID := generateSessionID()
+	metaSessionID, mctSessionID := generateSessionIDs()
 
-	fmt.Printf("Starting meta-orchestrator session %s in mode %s\n", sessionID, *mode)
+	fmt.Printf("Meta session: %s, MCT session: %s, mode: %s\n", metaSessionID, mctSessionID, *mode)
 
 	ctx := context.Background()
-	exitCode, err := orchestrator.RunLoop(ctx, sessionID, *instruction, *mode, *model, *shellAgentModel, *tag, *persistTmpData)
+	exitCode, err := orchestrator.RunLoop(ctx, metaSessionID, mctSessionID, *instruction, *mode, *model, *shellAgentModel, *tag, *persistTmpData)
 	if err != nil {
 		log.Printf("Error in run loop: %v", err)
 		os.Exit(1)
 	}
 	if exitCode != 0 {
-		fmt.Printf("Meta-orchestrator session %s ended with exit code %d\n", sessionID, exitCode)
+		fmt.Printf("Meta-orchestrator session %s ended with exit code %d\n", metaSessionID, exitCode)
 		os.Exit(exitCode)
 	}
-	fmt.Printf("Meta-orchestrator session %s completed successfully. Final answer is ready.\n", sessionID)
+	fmt.Printf("Meta-orchestrator session %s completed successfully. Final answer is ready.\n", metaSessionID)
 }
