@@ -32,6 +32,30 @@ Rules:
 - If the final answer describes an irrecoverable hard blocker (e.g. no API credits available, critical missing dependency that cannot be resolved), respond with ACTION: BLOCKED.
 - Maintain context across rounds. If mct-agent continues to stall or ask for permission, escalate the firmness of your instructions.`
 
+// extractPrompt scans the args slice for "-f" or "-t" and returns the
+// associated prompt text. If "-f" is found, the next element is treated as a
+// file path and its contents are read and returned. If "-t" is found, the
+// next element is returned directly. Returns an empty string if neither flag
+// is present.
+func extractPrompt(args []string) string {
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "-f":
+			if i+1 < len(args) {
+				data, err := os.ReadFile(args[i+1])
+				if err == nil {
+					return strings.TrimSpace(string(data))
+				}
+			}
+		case "-t":
+			if i+1 < len(args) {
+				return args[i+1]
+			}
+		}
+	}
+	return ""
+}
+
 // invokeMCTAgent builds and executes an mct-agent command with the given
 // arguments. It prepends "run" as the subcommand and returns the exit code
 // of the subprocess and any error.
@@ -60,6 +84,7 @@ func invokeMCTAgent(ctx context.Context, metaSessionID string, trajDir string, m
 			"timestamp":  time.Now().UTC().Format(time.RFC3339),
 			"session_id": mctSessionID,
 			"args":       fullArgs,
+			"prompt":     extractPrompt(fullArgs),
 			"exit_code":  exitCode,
 		})
 	}
