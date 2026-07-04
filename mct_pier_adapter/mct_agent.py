@@ -69,6 +69,11 @@ class MctAgent(BaseInstalledAgent):
         await environment.upload_file(forge_wrapper, "/usr/local/bin/mct-forge")
         await self.exec_as_root(environment, "chmod +x /usr/local/bin/mct-forge")
 
+        # Upload meta-orchestrator binary.
+        meta_orch_path = os.path.expanduser(os.environ.get("MCT_META_ORCHESTRATOR_BINARY", "meta-orchestrator"))
+        await environment.upload_file(meta_orch_path, "/usr/local/bin/meta-orchestrator")
+        await self.exec_as_root(environment, "chmod +x /usr/local/bin/meta-orchestrator")
+
         # Upload forge home directory.
         forge_home = os.path.expanduser(os.environ.get("MCT_FORGE_HOME", "~/.forge"))
         await self.exec_as_root(environment, "mkdir -p /root/.forge")
@@ -127,14 +132,13 @@ class MctAgent(BaseInstalledAgent):
         shell_agent_model = os.environ.get("MCT_SHELL_AGENT_MODEL", "deepseek-v4-pro")
 
         run_cmd = (
-            "mkdir -p /logs/agent && mct-agent run"
+            "mkdir -p /logs/agent && meta-orchestrator"
             f" --mode {shlex.quote(mode)}"
             f" --model {shlex.quote(model)}"
             f" --shell-agent-model {shlex.quote(shell_agent_model)}"
             f" --tag now"
             f" --persist-tmp-data"
             f" -f /app/instruction.md"
-            f" > /logs/agent/run-stdout.txt 2> /logs/agent/run-stderr.txt"
         )
         try:
             await self.exec_as_agent(environment, run_cmd)
@@ -165,6 +169,15 @@ class MctAgent(BaseInstalledAgent):
             await self.exec_as_agent(
                 environment,
                 "mkdir -p /logs/agent && cp -r /app/.machtiani/sessions /logs/agent/sessions 2>/dev/null || true",
+            )
+        except NonZeroAgentExitCodeError:
+            pass
+
+        # Step 8b: Copy meta-orchestrator trajectory to host-visible logs directory.
+        try:
+            await self.exec_as_agent(
+                environment,
+                "mkdir -p /logs/agent && cp -r /app/.machtiani/meta-orchestrator /logs/agent/meta-orchestrator 2>/dev/null || true",
             )
         except NonZeroAgentExitCodeError:
             pass

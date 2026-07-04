@@ -74,12 +74,14 @@ trap 'for w in "${WORKTREES[@]}"; do git -C "${REPO_ROOT}" worktree remove --for
 
 CONTROL_BIN="${CONTROL_OUT}/mct-agent"
 TREATMENT_BIN="${TREATMENT_OUT}/mct-agent"
+CONTROL_META_BIN="${CONTROL_OUT}/meta-orchestrator"
+TREATMENT_META_BIN="${TREATMENT_OUT}/meta-orchestrator"
 
 # ----------------------------------------------------------------------------
 # Helper: build mct-agent from a given commit into a given output path
 # ----------------------------------------------------------------------------
 build_agent() {
-    local commit="$1" output_path="$2" label="$3"
+    local commit="$1" output_path="$2" label="$3" meta_output_path="$4"
 
     echo "[build:${label}] Building mct-agent at ${commit} -> ${output_path}"
 
@@ -114,6 +116,12 @@ build_agent() {
 
     ( cd "${worktree_dir}/agent" && go build -o "${output_path}" ./cmd/mct-agent )
 
+    if [[ -d "${worktree_dir}/agent/cmd/meta-orchestrator" ]]; then
+        ( cd "${worktree_dir}/agent" && go build -o "${meta_output_path}" ./cmd/meta-orchestrator )
+    else
+        echo "[build:${label}] Warning: meta-orchestrator not available at this commit; skipping"
+    fi
+
     git -C "${REPO_ROOT}" worktree remove --force "${worktree_dir}" 2>/dev/null || true
 
     if [[ ! -x "${output_path}" ]]; then
@@ -126,8 +134,8 @@ build_agent() {
 # ----------------------------------------------------------------------------
 # Build both binaries
 # ----------------------------------------------------------------------------
-build_agent "${CONTROL_COMMIT}" "${CONTROL_BIN}" "control"
-build_agent "${TREATMENT_COMMIT}" "${TREATMENT_BIN}" "treatment"
+build_agent "${CONTROL_COMMIT}" "${CONTROL_BIN}" "control" "${CONTROL_META_BIN}"
+build_agent "${TREATMENT_COMMIT}" "${TREATMENT_BIN}" "treatment" "${TREATMENT_META_BIN}"
 
 # ----------------------------------------------------------------------------
 # Run control benchmark
@@ -138,6 +146,7 @@ echo "==== Step 1 — Run control benchmark ===="
 export MCT_AGENT_BINARY=${CONTROL_BIN}
 pier run \
     --ae "MCT_AGENT_BINARY=${CONTROL_BIN}" \
+    --ae "MCT_META_ORCHESTRATOR_BINARY=${CONTROL_META_BIN}" \
     --ae "TEST_API_KEY=${TEST_API_KEY}" \
     --ae "TEST_BASE_URL=${TEST_BASE_URL}" \
     --ae "TEST_MODEL=${TEST_MODEL}" \
@@ -158,6 +167,7 @@ echo "==== Step 2 — Run treatment benchmark ===="
 export MCT_AGENT_BINARY=${TREATMENT_BIN}
 pier run \
     --ae "MCT_AGENT_BINARY=${TREATMENT_BIN}" \
+    --ae "MCT_META_ORCHESTRATOR_BINARY=${TREATMENT_META_BIN}" \
     --ae "TEST_API_KEY=${TEST_API_KEY}" \
     --ae "TEST_BASE_URL=${TEST_BASE_URL}" \
     --ae "TEST_MODEL=${TEST_MODEL}" \
