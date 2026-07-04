@@ -122,7 +122,10 @@ func configureModePlan(ctx *modeContext, plan modePlanState) (modePlanState, err
 	// above), return the plan as-is — the summary path in applyMode
 	// was removed; the planner loop handles finalization.
 	if strings.EqualFold(strings.TrimSpace(task.Status), "complete") {
-		return plan, nil
+		if strings.TrimSpace(ctx.ResumePrompt) == "" {
+			return plan, nil
+		}
+		task.Status = "running"
 	}
 
 	// Apply PlannerOverlay to the session's planner config.

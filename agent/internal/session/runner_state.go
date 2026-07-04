@@ -303,7 +303,7 @@ func prepareSessionEnvironment(sessionID string, cfg legacyConfig, diagWriter io
 	}, nil
 }
 
-func prepareTranscriptBootstrap(cfg legacyConfig, sessionID, conversationGoal, conversationPath string, resumeMode bool, loadedState *SessionState, trajectoryWriter *trajectory.Writer, repoRoot string, runState *runLifecycleState, diagWriter io.Writer) (*transcriptBootstrap, error) {
+func prepareTranscriptBootstrap(cfg legacyConfig, sessionID, conversationGoal, conversationPath string, resumeMode bool, loadedState *SessionState, hasNewInput bool, trajectoryWriter *trajectory.Writer, repoRoot string, runState *runLifecycleState, diagWriter io.Writer) (*transcriptBootstrap, error) {
 	resumeTranscript := loadResumeTranscript(cfg, loadedState, resumeMode, sessionID, diagWriter)
 	tr, err := transcript.NewWithPath(cfg.transcriptFile, sessionID)
 	if err != nil {
@@ -314,7 +314,7 @@ func prepareTranscriptBootstrap(cfg legacyConfig, sessionID, conversationGoal, c
 	runState.repoRoot = repoRoot
 	runState.trajectoryWriter = trajectoryWriter
 
-	recorder := newConversationRecorder(tr, sessionID, conversationGoal, conversationPath, resumeMode, loadedState)
+	recorder := newConversationRecorder(tr, sessionID, conversationGoal, conversationPath, resumeMode, loadedState, hasNewInput)
 	runState.recorder = recorder
 
 	if strings.TrimSpace(resumeTranscript) != "" {
@@ -436,11 +436,12 @@ type conversationRecorder struct {
 	conversationJSON             string
 	shellAgentTrajectoryPath     string
 	shellAgentResumable          bool
+	hasNewInput                  bool
 }
 
 var errConversationTranscriptDesync = errors.New("conversation transcript desync")
 
-func newConversationRecorder(tr *transcript.Transcript, sessionID, conversationGoal, conversationPath string, resumeMode bool, loadedState *SessionState) *conversationRecorder {
+func newConversationRecorder(tr *transcript.Transcript, sessionID, conversationGoal, conversationPath string, resumeMode bool, loadedState *SessionState, hasNewInput bool) *conversationRecorder {
 	return &conversationRecorder{
 		tr:               tr,
 		sessionID:        sessionID,
@@ -448,6 +449,7 @@ func newConversationRecorder(tr *transcript.Transcript, sessionID, conversationG
 		conversationPath: conversationPath,
 		resumeMode:       resumeMode,
 		loadedState:      loadedState,
+		hasNewInput:      hasNewInput,
 	}
 }
 
@@ -472,7 +474,9 @@ func (c *conversationRecorder) PreWriteTurn(step int, question string, shellAgen
 		c.conversation.ModeInstructionDir = c.loadedState.ModeInstructionDir
 		c.conversation.PlannerOverlay = c.loadedState.PlannerOverlay
 		c.conversation.TaskDescription = c.loadedState.TaskDescription
-		c.conversation.Status = c.loadedState.Status
+		if !c.hasNewInput {
+			c.conversation.Status = c.loadedState.Status
+		}
 	}
 	shellAgentSessionID := fmt.Sprintf("%s/shell-agent/%d", c.sessionID, step)
 	c.conversation.AddMessage("assistant", question, map[string]any{
@@ -604,7 +608,9 @@ func (c *conversationRecorder) WriteTurn(step int, question, savedPath string, r
 		c.conversation.ModeInstructionDir = c.loadedState.ModeInstructionDir
 		c.conversation.PlannerOverlay = c.loadedState.PlannerOverlay
 		c.conversation.TaskDescription = c.loadedState.TaskDescription
-		c.conversation.Status = c.loadedState.Status
+		if !c.hasNewInput {
+			c.conversation.Status = c.loadedState.Status
+		}
 	}
 	shellAgentSessionID := fmt.Sprintf("%s/shell-agent/%d", c.sessionID, step)
 	c.conversation.AddMessage("assistant", question, map[string]any{

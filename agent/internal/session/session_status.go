@@ -28,7 +28,11 @@ var validTransitions = map[SessionStatus]map[SessionStatus]bool{
 		StateError: true,
 	},
 	StateInterrupted: {},
-	StateSuccess:     {},
+	StateSuccess: {
+		StateError:              true,
+		StateInterrupted:        true,
+		StateSuspendedUserInput: true,
+	},
 }
 
 // ErrInvalidStateTransition is returned when an invalid state transition is attempted.
