@@ -119,9 +119,6 @@ func invokeMCTAgentRun(
 	if tag != "" {
 		args = append(args, "--tag", tag)
 	}
-	if mctSessionID != "" {
-		args = append(args, "--session-id", mctSessionID)
-	}
 	args = append(args, "-f", instructionFilePath)
 	if persistTmpData {
 		args = append(args, "--persist-tmp-data")
