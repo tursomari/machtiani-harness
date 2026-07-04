@@ -5,6 +5,7 @@ test-out-*/
 .gocache/
 .state/
 mct-agent
+agent/meta-orchestrator
 alternate-route-bundle-handoff-prompt.txt
 assessment.md
 background-and-problems.md
