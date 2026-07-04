@@ -143,6 +143,7 @@ build_agent "${TREATMENT_COMMIT}" "${TREATMENT_BIN}" "treatment" "${TREATMENT_ME
 echo ""
 echo "==== Step 1 — Run control benchmark ===="
 
+export MCT_META_ORCHESTRATOR_BINARY=${CONTROL_META_BIN}
 export MCT_AGENT_BINARY=${CONTROL_BIN}
 pier run \
     --ae "MCT_AGENT_BINARY=${CONTROL_BIN}" \
@@ -164,6 +165,7 @@ echo "[run:control] Complete."
 echo ""
 echo "==== Step 2 — Run treatment benchmark ===="
 
+export MCT_META_ORCHESTRATOR_BINARY=${TREATMENT_META_BIN}
 export MCT_AGENT_BINARY=${TREATMENT_BIN}
 pier run \
     --ae "MCT_AGENT_BINARY=${TREATMENT_BIN}" \

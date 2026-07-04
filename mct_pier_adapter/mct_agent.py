@@ -69,10 +69,13 @@ class MctAgent(BaseInstalledAgent):
         await environment.upload_file(forge_wrapper, "/usr/local/bin/mct-forge")
         await self.exec_as_root(environment, "chmod +x /usr/local/bin/mct-forge")
 
-        # Upload meta-orchestrator binary.
+        # Upload meta-orchestrator binary (skip if not available, e.g., older control commits).
         meta_orch_path = os.path.expanduser(os.environ.get("MCT_META_ORCHESTRATOR_BINARY", "meta-orchestrator"))
-        await environment.upload_file(meta_orch_path, "/usr/local/bin/meta-orchestrator")
-        await self.exec_as_root(environment, "chmod +x /usr/local/bin/meta-orchestrator")
+        if os.path.isfile(meta_orch_path):
+            await environment.upload_file(meta_orch_path, "/usr/local/bin/meta-orchestrator")
+            await self.exec_as_root(environment, "chmod +x /usr/local/bin/meta-orchestrator")
+        else:
+            print(f"Warning: meta-orchestrator binary not found at {meta_orch_path}; skipping upload.")
 
         # Upload forge home directory.
         forge_home = os.path.expanduser(os.environ.get("MCT_FORGE_HOME", "~/.forge"))
@@ -131,8 +134,13 @@ class MctAgent(BaseInstalledAgent):
         model = os.environ.get("MCT_MODEL", "deepseek-v4-pro")
         shell_agent_model = os.environ.get("MCT_SHELL_AGENT_MODEL", "deepseek-v4-pro")
 
+        meta_orch_path = os.path.expanduser(os.environ.get("MCT_META_ORCHESTRATOR_BINARY", "meta-orchestrator"))
+        use_meta = os.path.isfile(meta_orch_path)
+        binary = "meta-orchestrator" if use_meta else "mct-agent run"
+        if not use_meta:
+            print("Meta-orchestrator not available; falling back to mct-agent run")
         run_cmd = (
-            "mkdir -p /logs/agent && meta-orchestrator"
+            f"mkdir -p /logs/agent && {binary}"
             f" --mode {shlex.quote(mode)}"
             f" --model {shlex.quote(model)}"
             f" --shell-agent-model {shlex.quote(shell_agent_model)}"
