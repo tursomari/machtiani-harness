@@ -112,6 +112,8 @@ echo ""
 
 export MCT_AGENT_BINARY="${AGENT_BIN}"
 export MCT_META_ORCHESTRATOR_BINARY="${META_BIN}"
+export MCT_MODEL="${MODEL}"
+export MCT_SHELL_AGENT_MODEL="${SHELL_AGENT_MODEL}"
 
 pier run \
     --ae "MCT_AGENT_BINARY=${AGENT_BIN}" \
@@ -125,7 +127,49 @@ pier run \
     --job-name "mct-single-${TASK_NAME}" \
     --include-task-name "${TASK_NAME}" \
     --n-concurrent 1 \
-    -p "${TASKS}"
+    -p "${TASKS}" 2>/tmp/treatment-stderr.log
+
+sleep 2
+
+PRESERVE_DIR="/tmp/treatment-preserved-$(date +%s)"
+cp -r "${JOBS_DIR}" "${PRESERVE_DIR}"
+echo "[preserve] Jobs preserved at ${PRESERVE_DIR}"
+
+# Fallback: if the preserved directory is empty or only contains an
+# empty jobs dir (no task subdirectories), pier may have cleaned up
+# the output dir before our cp.  Try to recover from the pier cache.
+PRESERVE_CONTENT_COUNT=$(find "${PRESERVE_DIR}" -mindepth 1 -maxdepth 1 ! -name 'jobs' 2>/dev/null | wc -l)
+if [[ "${PRESERVE_CONTENT_COUNT}" -eq 0 ]]; then
+    TASK_SUBDIR_COUNT=$(find "${PRESERVE_DIR}/jobs" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)
+    if [[ "${TASK_SUBDIR_COUNT}" -eq 0 ]]; then
+        echo "[preserve] WARNING: Preserved directory appears empty. Checking pier cache..."
+        PIER_CACHE="${HOME}/.pier"
+        if [[ -d "${PIER_CACHE}" ]]; then
+            RECENT_JOBS=$(find "${PIER_CACHE}" -maxdepth 3 -name "mct-single-${TASK_NAME}*" -type d 2>/dev/null | head -5)
+            if [[ -n "${RECENT_JOBS}" ]]; then
+                echo "[preserve] Found potential pier cache entries:"
+                echo "${RECENT_JOBS}"
+                while IFS= read -r src; do
+                    if [[ -d "${src}" ]]; then
+                        cp -r "${src}" "${PRESERVE_DIR}/pier-cache-$(basename "${src}")"
+                        echo "[preserve] Copied from pier cache: ${src}"
+                    fi
+                done <<< "${RECENT_JOBS}"
+            fi
+        fi
+        HIDDEN_DIRS=$(find "${JOBS_DIR}" -mindepth 1 -maxdepth 1 -name '.*' -type d 2>/dev/null | head -5)
+        if [[ -n "${HIDDEN_DIRS}" ]]; then
+            echo "[preserve] Found hidden directories in JOBS_DIR:"
+            echo "${HIDDEN_DIRS}"
+            while IFS= read -r src; do
+                if [[ -d "${src}" ]]; then
+                    cp -r "${src}" "${PRESERVE_DIR}/hidden-$(basename "${src}")"
+                    echo "[preserve] Copied hidden dir: ${src}"
+                fi
+            done <<< "${HIDDEN_DIRS}"
+        fi
+    fi
+fi
 
 echo ""
 echo "==== Run complete ===="

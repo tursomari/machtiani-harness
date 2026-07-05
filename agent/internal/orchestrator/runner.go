@@ -123,7 +123,8 @@ func invokeMCTAgent(ctx context.Context, metaSessionID string, trajDir string, m
 			stdoutBuf.String(),
 			stderrBuf.String(),
 		)
-		crashLogPath := filepath.Join(".machtiani", "sessions", mctSessionID, "crash-debug.log")
+		fmt.Fprintf(os.Stderr, "%s", debugStr)
+		crashLogPath := filepath.Join(".machtiani", "meta-orchestrator", "sessions", metaSessionID, "crash-debug.log")
 		if err := os.MkdirAll(filepath.Dir(crashLogPath), 0755); err == nil {
 			fp, err := os.OpenFile(crashLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 			if err == nil {
@@ -131,6 +132,16 @@ func invokeMCTAgent(ctx context.Context, metaSessionID string, trajDir string, m
 				fp.Close()
 			}
 		}
+
+		writeTrajectoryLine(trajDir, map[string]interface{}{
+			"type":       "mct_crash_debug",
+			"timestamp":  time.Now().UTC().Format(time.RFC3339),
+			"session_id": mctSessionID,
+			"exit_code":  exitCode,
+			"stdout":     stdoutBuf.String(),
+			"stderr":     stderrBuf.String(),
+			"args":       fullArgs,
+		})
 	}
 
 	if trajDir != "" {

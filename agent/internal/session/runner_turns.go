@@ -108,6 +108,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 		*env.sessionErr = errEmpty
 		finishTurn(env.sessTelemetry, env.turn, env.turnDecision, "error", env.turnInfo, errEmpty)
 		
+	fmt.Fprintf(os.Stderr, "EXIT1_TRACE: runner_turns_err_empty\n")
 		return turnExecutionResult{action: turnLoopReturn, result: Result{ExitCode: 1, Err: errEmpty}}
 	}
 	if env.cfg.verbose {
@@ -350,6 +351,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 				
 				return turnExecutionResult{action: turnLoopReturn, result: Result{ExitCode: 1, Err: merr}, shellAgentUsed: shellAgentUsedThisTurn}
 			}
+	fmt.Fprintf(os.Stderr, "EXIT1_TRACE: runner_turns_mode_task_error\n")
 		}
 
 		if shellDone != nil {
@@ -404,6 +406,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 					stream.Abort("failed to save chat transcript")
 					return turnExecutionResult{action: turnLoopReturn, result: Result{ExitCode: 1, Err: err}, shellAgentUsed: shellAgentUsedThisTurn}
 				}
+	fmt.Fprintf(os.Stderr, "EXIT1_TRACE: runner_turns_shutdown_shell_error\n")
 				savedPath = filepath.Join(chatDir, "machtiani-response.md")
 			}
 			lastAnswer = result.FullText
@@ -433,6 +436,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 			finishTurn(env.sessTelemetry, env.turn, env.turnDecision, "error", env.turnInfo, err)
 			return turnExecutionResult{action: turnLoopReturn, result: Result{ExitCode: 1, Err: err}, shellAgentUsed: shellAgentUsedThisTurn}
 		}
+	fmt.Fprintf(os.Stderr, "EXIT1_TRACE: runner_turns_process_patch_error\n")
 		env.turnInfo["retrieved_count"] = len(retrieved)
 		*env.turnsCompleted++
 		
@@ -499,6 +503,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 		
 		return turnExecutionResult{action: turnLoopReturn, result: Result{ExitCode: 1, Err: merr}, shellAgentUsed: shellAgentUsedThisTurn}
 	}
+	fmt.Fprintf(os.Stderr, "EXIT1_TRACE: runner_turns_mode_write_error\n")
 
 	if strings.TrimSpace(result.ShellAgentTrajectoryPath) != "" {
 		env.turnInfo["shell_agent_trajectory"] = trimTo(result.ShellAgentTrajectoryPath, 200)
@@ -538,6 +543,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 				stream.Abort("failed to save chat transcript")
 				return turnExecutionResult{action: turnLoopReturn, result: Result{ExitCode: 1, Err: err}, shellAgentUsed: shellAgentUsedThisTurn}
 			}
+	fmt.Fprintf(os.Stderr, "EXIT1_TRACE: runner_turns_shutdown_error\n")
 			savedPath = filepath.Join(chatDir, "machtiani-response.md")
 		}
 		lastAnswer = result.FullText
@@ -567,6 +573,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 		finishTurn(env.sessTelemetry, env.turn, env.turnDecision, "error", env.turnInfo, err)
 		return turnExecutionResult{action: turnLoopReturn, result: Result{ExitCode: 1, Err: err}, shellAgentUsed: shellAgentUsedThisTurn}
 	}
+	fmt.Fprintf(os.Stderr, "EXIT1_TRACE: runner_turns_process_work_error\n")
 	askInfo := map[string]any{"retrieved_count": len(retrieved)}
 	if savedPath != "" {
 		askInfo["saved_chat_path"] = savedPath

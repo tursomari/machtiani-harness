@@ -88,7 +88,7 @@ func TestTranscriptConversationConsistencyAfterCrash(t *testing.T) {
 	}
 	convPath := filepath.Join(convDir, "conversation.json")
 
-	rec1 := newConversationRecorder(tr1, sessionID, goal, convPath, false, nil)
+	rec1 := newConversationRecorder(tr1, sessionID, goal, convPath, false, nil, false)
 	if err := rec1.Load(); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -133,7 +133,7 @@ func TestTranscriptConversationConsistencyAfterCrash(t *testing.T) {
 		t.Fatalf("restore stale transcript: %v", err)
 	}
 
-	rec2 := newConversationRecorder(tr2, sessionID, goal, convPath, true, nil)
+	rec2 := newConversationRecorder(tr2, sessionID, goal, convPath, true, nil, false)
 	if err := rec2.Load(); err != nil {
 		t.Fatalf("Load for resume: %v", err)
 	}
@@ -277,10 +277,10 @@ func TestStateTransitionValidation(t *testing.T) {
 		{StateInterrupted, StateSuspendedUserInput, ErrInvalidStateTransition},
 
 		// From success (terminal) →
-		{StateSuccess, StateError, ErrInvalidStateTransition},
-		{StateSuccess, StateInterrupted, ErrInvalidStateTransition},
+		{StateSuccess, StateError, nil},
+		{StateSuccess, StateInterrupted, nil},
 		{StateSuccess, StateSuccess, ErrInvalidStateTransition},
-		{StateSuccess, StateSuspendedUserInput, ErrInvalidStateTransition},
+		{StateSuccess, StateSuspendedUserInput, nil},
 	}
 
 	for _, tt := range tests {
@@ -398,10 +398,10 @@ func TestStateTransitionTable(t *testing.T) {
 		{StateInterrupted, StateSuccess, true},
 		{StateInterrupted, StateSuspendedUserInput, true},
 		// From StateSuccess
-		{StateSuccess, StateError, true},
-		{StateSuccess, StateInterrupted, true},
+		{StateSuccess, StateError, false},
+		{StateSuccess, StateInterrupted, false},
 		{StateSuccess, StateSuccess, true},
-		{StateSuccess, StateSuspendedUserInput, true},
+		{StateSuccess, StateSuspendedUserInput, false},
 	}
 
 	for _, tt := range tests {

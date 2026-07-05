@@ -28,7 +28,7 @@ func TestCompleteSessionDiagWriterCapturesModePlanTaskFailure(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = tr.Close() })
 
-	recorder := newConversationRecorder(tr, "complete-modeplan-fail", "Goal", "", false, nil)
+	recorder := newConversationRecorder(tr, "complete-modeplan-fail", "Goal", "", false, nil, false)
 	if err := recorder.Load(); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestCompleteSessionVerboseSuccessCapturesDiagAndDisplay(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = tr.Close() })
 
-	recorder := newConversationRecorder(tr, "complete-verbose-success", "Goal", "", false, nil)
+	recorder := newConversationRecorder(tr, "complete-verbose-success", "Goal", "", false, nil, false)
 	if err := recorder.Load(); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -280,7 +280,7 @@ func TestSuspendForUserInputResumeContextCapturesDiag(t *testing.T) {
 		TurnsCompleted: 2,
 	}
 
-	recorder := newConversationRecorder(tr, "resume-suspend-diag", "Test resume suspend goal", convPath, true, loadedState)
+	recorder := newConversationRecorder(tr, "resume-suspend-diag", "Test resume suspend goal", convPath, true, loadedState, false)
 	if err := recorder.Load(); err != nil {
 		t.Fatalf("Load: %v", err)
 	}

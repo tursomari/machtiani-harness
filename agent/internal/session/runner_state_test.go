@@ -69,7 +69,7 @@ func TestConversationRecorderWriteTurnFallsBackOnDesync(t *testing.T) {
 	}
 	defer tr.Close()
 
-	recorder := newConversationRecorder(tr, "desync-write-turn", formatGoalText("Keep transcript stable", ""), "", false, nil)
+	recorder := newConversationRecorder(tr, "desync-write-turn", formatGoalText("Keep transcript stable", ""), "", false, nil, false)
 	if err := recorder.Load(); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestConversationRecorderAppendRawFallsBackOnDesync(t *testing.T) {
 	}
 	defer tr.Close()
 
-	recorder := newConversationRecorder(tr, "desync-append-raw", formatGoalText("Keep transcript stable", ""), "", false, nil)
+	recorder := newConversationRecorder(tr, "desync-append-raw", formatGoalText("Keep transcript stable", ""), "", false, nil, false)
 	if err := recorder.Load(); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -134,7 +134,7 @@ func TestConversationRecorderAppendRawUserInputRequestAndReply(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = tr.Close() })
 
-	recorder := newConversationRecorder(tr, "conv-user-input", "Goal", "", false, nil)
+	recorder := newConversationRecorder(tr, "conv-user-input", "Goal", "", false, nil, false)
 	if err := recorder.Load(); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -174,7 +174,7 @@ func TestRunLifecycleStateSuspendForUserInput(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = tr.Close() })
 
-	recorder := newConversationRecorder(tr, "suspend-user-input", "Goal", "", false, nil)
+	recorder := newConversationRecorder(tr, "suspend-user-input", "Goal", "", false, nil, false)
 	if err := recorder.Load(); err != nil {
 		t.Fatalf("Load: %v", err)
 	}

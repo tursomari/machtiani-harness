@@ -99,6 +99,7 @@ func prepareRunBootstrap(rootCtx context.Context, opts Options, diagWriter io.Wr
 		state, err := sessionStateFromConversation(conv, sessionID)
 		if err != nil {
 			fmt.Fprintln(diagWriter, "Error loading session state:", err)
+	fmt.Fprintf(os.Stderr, "EXIT1_TRACE: runner_state_load_session_error\n")
 			return nil, Result{ExitCode: 1, Err: err}, false
 		}
 		resumeMode = true
@@ -137,6 +138,7 @@ func prepareRunBootstrap(rootCtx context.Context, opts Options, diagWriter io.Wr
 	if goal == "" {
 		fmt.Fprintln(diagWriter, "Error: unable to determine session goal")
 		return nil, Result{ExitCode: 1, Err: errors.New("missing session goal")}, false
+	fmt.Fprintf(os.Stderr, "EXIT1_TRACE: runner_state_missing_goal\n")
 	}
 	if strings.TrimSpace(originalPrompt) == "" {
 		originalPrompt = goal
@@ -167,6 +169,7 @@ func prepareRunBootstrap(rootCtx context.Context, opts Options, diagWriter io.Wr
 	if err != nil {
 		fmt.Fprintln(diagWriter, "Error resolving conversation path:", err)
 		return nil, Result{ExitCode: 1, Err: err}, false
+	fmt.Fprintf(os.Stderr, "EXIT1_TRACE: runner_state_load_transcript_error\n")
 	}
 
 	cfgInput.SessionID = sessionID
@@ -181,6 +184,7 @@ func prepareRunBootstrap(rootCtx context.Context, opts Options, diagWriter io.Wr
 		if err != nil {
 			fmt.Fprintln(diagWriter, "Error loading mode instructions:", err)
 			return nil, Result{ExitCode: 1, Err: err}, false
+	fmt.Fprintf(os.Stderr, "EXIT1_TRACE: runner_state_conv_parse_error\n")
 		}
 		modeInstructions = doc
 		modeInstructionPath = doc.Path

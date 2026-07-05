@@ -22,7 +22,7 @@ func TestSuspendForUserInputDiagWriterCapturesUserInputHint(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = tr.Close() })
 
-	recorder := newConversationRecorder(tr, "suspend-diag-test", "Goal", "", false, nil)
+	recorder := newConversationRecorder(tr, "suspend-diag-test", "Goal", "", false, nil, false)
 	if err := recorder.Load(); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -247,7 +247,7 @@ func TestCompleteSessionDiagWriterCapturesWriteError(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = tr.Close() })
 
-	recorder := newConversationRecorder(tr, "complete-diag-test", "Goal", "", false, nil)
+	recorder := newConversationRecorder(tr, "complete-diag-test", "Goal", "", false, nil, false)
 	if err := recorder.Load(); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
