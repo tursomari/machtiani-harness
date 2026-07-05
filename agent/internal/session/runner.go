@@ -277,7 +277,6 @@ func runSession(ctx context.Context, opts Options) Result {
 	envBootstrap, err := prepareSessionEnvironment(sessionID, cfg, diagWriter)
 	if err != nil {
 		fmt.Fprintln(diagWriter, "Error preparing session environment:", err)
-	fmt.Fprintf(os.Stderr, "EXIT1_TRACE: run_terminal_handler_init_error\n")
 		return Result{ExitCode: 1, Err: err}
 	}
 	sessionTempRoot := envBootstrap.sessionTempRoot
@@ -299,7 +298,6 @@ func runSession(ctx context.Context, opts Options) Result {
 	lock, lockErr := acquireSessionLock(sessionID, sessionTempRoot)
 	if lockErr != nil {
 		fmt.Fprintln(diagWriter, "Error acquiring session lock:", lockErr)
-	fmt.Fprintf(os.Stderr, "EXIT1_TRACE: run_terminal_handler_lock_error\n")
 		return Result{ExitCode: 1, Err: lockErr}
 	}
 	sessLock = lock
@@ -307,7 +305,6 @@ func runSession(ctx context.Context, opts Options) Result {
 	trajectoryWriter, repoRoot, trajErr := newTrajectoryWriter(cfg, sessionID)
 	if trajErr != nil {
 		fmt.Fprintln(diagWriter, "Trajectory setup error:", trajErr)
-	fmt.Fprintf(os.Stderr, "EXIT1_TRACE: run_terminal_handler_traj_error\n")
 		return Result{ExitCode: 1, Err: trajErr}
 	}
 	if trajectoryWriter != nil {
@@ -410,7 +407,6 @@ func runSession(ctx context.Context, opts Options) Result {
 	transcriptSetup, err := prepareTranscriptBootstrap(cfg, sessionID, conversationGoal, conversationPath, resumeMode, loadedState, bootstrap.hasNewInput, trajectoryWriter, repoRoot, runState, diagWriter)
 	if err != nil {
 		fmt.Fprintln(diagWriter, "Error preparing transcript:", err)
-	fmt.Fprintf(os.Stderr, "EXIT1_TRACE: runner_invoke_prepare_error\n")
 		return Result{ExitCode: 1, Err: err}
 	}
 	tr := transcriptSetup.transcript
@@ -437,7 +433,6 @@ func runSession(ctx context.Context, opts Options) Result {
 	trajectoryPath, err := resolveFileDiscoveryTrajectory(cfg, sessionID)
 	if err != nil {
 		fmt.Fprintln(diagWriter, "File-discovery setup error:", err)
-	fmt.Fprintf(os.Stderr, "EXIT1_TRACE: runner_invoke_create_runner_error\n")
 		return Result{ExitCode: 1, Err: err}
 	}
 	if cfg.verbose && strings.TrimSpace(trajectoryPath) != "" {
@@ -457,7 +452,6 @@ func runSession(ctx context.Context, opts Options) Result {
 			return Result{ExitCode: 2, Err: err}
 		}
 		fmt.Fprintln(diagWriter, "Model resolution error:", err)
-	fmt.Fprintf(os.Stderr, "EXIT1_TRACE: runner_invoke_apply_mode_error\n")
 		return Result{ExitCode: 1, Err: err}
 	}
 	metaLines := []string{
@@ -502,7 +496,6 @@ func runSession(ctx context.Context, opts Options) Result {
 	}
 	if err := mctRunner.Resolve(); err != nil {
 		fmt.Fprintln(diagWriter, "mct resolution error:", err)
-	fmt.Fprintf(os.Stderr, "EXIT1_TRACE: runner_invoke_write_header_error\n")
 		return Result{ExitCode: 1, Err: err}
 	}
 
@@ -536,14 +529,12 @@ func runSession(ctx context.Context, opts Options) Result {
 	startingTranscript, headerErr := startTranscriptIfNeeded(tr, originalPrompt, taskDescription, sessionID, cfg, resumeMode)
 	if headerErr != nil {
 		fmt.Fprintln(diagWriter, "Error writing transcript header:", headerErr)
-	fmt.Fprintf(os.Stderr, "EXIT1_TRACE: runner_invoke_header_error\n")
 		return Result{ExitCode: 1, Err: headerErr}
 	}
 
 	if err := writeInitialBackgroundIfNeeded(tr, repoRoot, cfg, startingTranscript, writeTurn, diagWriter); err != nil {
 		fmt.Fprintln(diagWriter, "Transcript write error:", err)
 		runState.sessionErr = err
-	fmt.Fprintf(os.Stderr, "EXIT1_TRACE: runner_invoke_write_turn_error\n")
 		return Result{ExitCode: 1, Err: err}
 	}
 
@@ -566,7 +557,6 @@ func runSession(ctx context.Context, opts Options) Result {
 			runState.sessionErr = fmt.Errorf("mode configuration failed")
 			if err := runState.transition(StateError); err != nil {
 				fmt.Fprintf(diagWriter, "transition to StateError failed: %v\n", err)
-	fmt.Fprintf(os.Stderr, "EXIT1_TRACE: runner_turnloop_append_error\n")
 				return Result{ExitCode: 1, Err: err}
 			}
 			runState.pendingState = &SessionState{
@@ -579,7 +569,6 @@ func runSession(ctx context.Context, opts Options) Result {
 				Modes:           modesFromPlan(result.Plan),
 			}
 			runState.hydrateState(runState.pendingState, diagWriter)
-	fmt.Fprintf(os.Stderr, "EXIT1_TRACE: runner_turnloop_session_status_error\n")
 			return Result{ExitCode: 1, Status: runState.sessionStatus, Turns: runState.turnsCompleted, SessionID: sessionID, Err: runState.sessionErr}
 		}
 		// applyMode configured the session (PlannerOverlay, mode
@@ -673,7 +662,6 @@ func runSession(ctx context.Context, opts Options) Result {
 				fmt.Fprintln(diagWriter, "Transcript write error:", err)
 				runState.sessionErr = err
 				finishTurn(sessTelemetry, turn, "user-feedback", "error", turnInfo, err)
-	fmt.Fprintf(os.Stderr, "EXIT1_TRACE: runner_append_resume_conversation_error\n")
 				return Result{ExitCode: 1, Err: err}
 			}
 			if err := appendConversationRaw("user", feedback, metaType); err != nil {
@@ -681,7 +669,6 @@ func runSession(ctx context.Context, opts Options) Result {
 				runState.sessionErr = err
 				finishTurn(sessTelemetry, turn, "user-feedback", "error", turnInfo, err)
 				
-	fmt.Fprintf(os.Stderr, "EXIT1_TRACE: runner_append_resume_transcript_error\n")
 				return Result{ExitCode: 1, Err: err}
 			}
 			if resumeSuspendedInput != nil {
@@ -733,7 +720,6 @@ func runSession(ctx context.Context, opts Options) Result {
 				runState.sessionErr = perr
 				finishTurn(sessTelemetry, turn, "planner", "error", turnInfo, perr)
 				
-	fmt.Fprintf(os.Stderr, "EXIT1_TRACE: runner_turnloop_plan_error\n")
 				return Result{ExitCode: 1, Err: perr}
 			}
 			perrStr := strings.ToLower(perr.Error())
@@ -770,14 +756,12 @@ func runSession(ctx context.Context, opts Options) Result {
 					runState.sessionErr = ferr
 					finishTurn(sessTelemetry, turn, "finalize", "error", turnInfo, ferr)
 					
-	fmt.Fprintf(os.Stderr, "EXIT1_TRACE: runner_finalize_error_finalize_response\n")
 					return Result{ExitCode: 1, Err: ferr}
 				}
 				if err := runState.completeSession(eventBus, diagWriter, answer, step, runState.turnsCompleted, true); err != nil {
 					fmt.Fprintln(diagWriter, "Final file write error:", err)
 					finishTurn(sessTelemetry, turn, "finalize", "error", turnInfo, err)
 					
-	fmt.Fprintf(os.Stderr, "EXIT1_TRACE: runner_finalize_error_finalize_failed\n")
 					return Result{ExitCode: 1, Err: err}
 				}
 				sessionClosed = true
@@ -790,7 +774,6 @@ func runSession(ctx context.Context, opts Options) Result {
 			runState.sessionErr = perr
 			finishTurn(sessTelemetry, turn, "planner", "error", turnInfo, perr)
 			
-	fmt.Fprintf(os.Stderr, "EXIT1_TRACE: runner_turnloop_default_error\n")
 			return Result{ExitCode: 1, Err: perr}
 		}
 
@@ -830,7 +813,6 @@ func runSession(ctx context.Context, opts Options) Result {
 					runState.sessionErr = suspendErr
 					finishTurn(sessTelemetry, turn, turnDecision, "error", turnInfo, suspendErr)
 					
-	fmt.Fprintf(os.Stderr, "EXIT1_TRACE: runner_suspend_confirm_error\n")
 					return Result{ExitCode: 1, Err: suspendErr}
 				}
 				finishTurn(sessTelemetry, turn, turnDecision, "suspended", turnInfo, nil)
@@ -865,14 +847,12 @@ func runSession(ctx context.Context, opts Options) Result {
 				runState.sessionErr = ferr
 				finishTurn(sessTelemetry, turn, "finalize", "error", turnInfo, ferr)
 				
-	fmt.Fprintf(os.Stderr, "EXIT1_TRACE: runner_finalize_answer_error\n")
 				return Result{ExitCode: 1, Err: ferr}
 			}
 			if err := runState.completeSession(eventBus, diagWriter, answer, step, runState.turnsCompleted, false); err != nil {
 				fmt.Fprintln(diagWriter, "Final file write error:", err)
 				finishTurn(sessTelemetry, turn, "finalize", "error", turnInfo, err)
 				
-	fmt.Fprintf(os.Stderr, "EXIT1_TRACE: runner_finalize_answer_unknown_error\n")
 				return Result{ExitCode: 1, Err: err}
 			}
 			sessionClosed = true
@@ -959,7 +939,6 @@ func runSession(ctx context.Context, opts Options) Result {
 					runState.sessionErr = suspendErr
 					finishTurn(sessTelemetry, turn, turnDecision, "error", turnInfo, suspendErr)
 					
-	fmt.Fprintf(os.Stderr, "EXIT1_TRACE: runner_suspend_ask_error\n")
 					return Result{ExitCode: 1, Err: suspendErr}
 				}
 				finishTurn(sessTelemetry, turn, turnDecision, "suspended", turnInfo, nil)
@@ -1001,12 +980,10 @@ Finalize:
 		}
 		fmt.Fprintln(diagWriter, "Finalizer error:", ferr)
 		runState.sessionErr = ferr
-	fmt.Fprintf(os.Stderr, "EXIT1_TRACE: runner_execute_finalize_error\n")
 		return Result{ExitCode: 1, Err: ferr}
 	}
 	if err := runState.completeSession(eventBus, diagWriter, answer, runState.turnsCompleted, runState.turnsCompleted, runState.turnsCompleted >= cfg.maxTurns); err != nil {
 		fmt.Fprintln(diagWriter, "Final file write error:", err)
-	fmt.Fprintf(os.Stderr, "EXIT1_TRACE: runner_execute_finalize_unknown_error\n")
 		return Result{ExitCode: 1, Err: err}
 	}
 	sessionClosed = true

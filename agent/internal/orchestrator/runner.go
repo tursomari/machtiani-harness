@@ -412,6 +412,13 @@ func RunLoop(
 				args = append(args, "--persist-tmp-data")
 			}
 
+			// Re-sync internal git state before the run so that mct-agent
+			// reads the current commit rather than a stale snapshot.
+			syncCmd := exec.CommandContext(ctx, "mct-agent", "sync")
+			if syncErr := syncCmd.Run(); syncErr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: mct-agent sync failed: %v\n", syncErr)
+			}
+
 			finalAnswerPath := filepath.Join(".machtiani", "sessions", mctSessionID, "chat", "agent-final-answer.md")
 			os.Remove(finalAnswerPath)
 
