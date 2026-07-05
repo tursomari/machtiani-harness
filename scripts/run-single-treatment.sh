@@ -115,6 +115,14 @@ export MCT_META_ORCHESTRATOR_BINARY="${META_BIN}"
 export MCT_MODEL="${MODEL}"
 export MCT_SHELL_AGENT_MODEL="${SHELL_AGENT_MODEL}"
 
+# Start background preservation loop to continuously save job output
+mkdir -p "${JOBS_DIR}"
+PRESERVE_DIR="/tmp/treatment-preserved-$(date +%s)"
+mkdir -p "${PRESERVE_DIR}"
+(while true; do cp -r "${JOBS_DIR}/"* "${PRESERVE_DIR}/" 2>/dev/null; sleep 2; done) &
+PRESERVE_PID=$!
+echo "[preserve] Background preservation loop started (PID ${PRESERVE_PID}) -> ${PRESERVE_DIR}"
+
 pier run \
     --ae "MCT_AGENT_BINARY=${AGENT_BIN}" \
     --ae "MCT_META_ORCHESTRATOR_BINARY=${META_BIN}" \
@@ -127,53 +135,16 @@ pier run \
     --job-name "mct-single-${TASK_NAME}" \
     --include-task-name "${TASK_NAME}" \
     --n-concurrent 1 \
-    -p "${TASKS}" 2>/tmp/treatment-stderr.log
+    -p "${TASKS}"
+
+kill $PRESERVE_PID 2>/dev/null; wait $PRESERVE_PID 2>/dev/null
+cp -r "${JOBS_DIR}/"* "${PRESERVE_DIR}/" 2>/dev/null || true
+echo "[preserve] Final preservation to ${PRESERVE_DIR}"
 
 sleep 2
-
-PRESERVE_DIR="/tmp/treatment-preserved-$(date +%s)"
-cp -r "${JOBS_DIR}" "${PRESERVE_DIR}"
-echo "[preserve] Jobs preserved at ${PRESERVE_DIR}"
-
-# Fallback: if the preserved directory is empty or only contains an
-# empty jobs dir (no task subdirectories), pier may have cleaned up
-# the output dir before our cp.  Try to recover from the pier cache.
-PRESERVE_CONTENT_COUNT=$(find "${PRESERVE_DIR}" -mindepth 1 -maxdepth 1 ! -name 'jobs' 2>/dev/null | wc -l)
-if [[ "${PRESERVE_CONTENT_COUNT}" -eq 0 ]]; then
-    TASK_SUBDIR_COUNT=$(find "${PRESERVE_DIR}/jobs" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)
-    if [[ "${TASK_SUBDIR_COUNT}" -eq 0 ]]; then
-        echo "[preserve] WARNING: Preserved directory appears empty. Checking pier cache..."
-        PIER_CACHE="${HOME}/.pier"
-        if [[ -d "${PIER_CACHE}" ]]; then
-            RECENT_JOBS=$(find "${PIER_CACHE}" -maxdepth 3 -name "mct-single-${TASK_NAME}*" -type d 2>/dev/null | head -5)
-            if [[ -n "${RECENT_JOBS}" ]]; then
-                echo "[preserve] Found potential pier cache entries:"
-                echo "${RECENT_JOBS}"
-                while IFS= read -r src; do
-                    if [[ -d "${src}" ]]; then
-                        cp -r "${src}" "${PRESERVE_DIR}/pier-cache-$(basename "${src}")"
-                        echo "[preserve] Copied from pier cache: ${src}"
-                    fi
-                done <<< "${RECENT_JOBS}"
-            fi
-        fi
-        HIDDEN_DIRS=$(find "${JOBS_DIR}" -mindepth 1 -maxdepth 1 -name '.*' -type d 2>/dev/null | head -5)
-        if [[ -n "${HIDDEN_DIRS}" ]]; then
-            echo "[preserve] Found hidden directories in JOBS_DIR:"
-            echo "${HIDDEN_DIRS}"
-            while IFS= read -r src; do
-                if [[ -d "${src}" ]]; then
-                    cp -r "${src}" "${PRESERVE_DIR}/hidden-$(basename "${src}")"
-                    echo "[preserve] Copied hidden dir: ${src}"
-                fi
-            done <<< "${HIDDEN_DIRS}"
-        fi
-    fi
-fi
-
 echo ""
+
 echo "==== Run complete ===="
-echo "Results: ${JOBS_DIR}"
 echo ""
 echo "Check reward:"
 echo "  cat ${JOBS_DIR}/mct-single-${TASK_NAME}/${TASK_NAME}_*/verifier/reward.json"
