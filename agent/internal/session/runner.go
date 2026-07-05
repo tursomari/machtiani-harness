@@ -404,7 +404,7 @@ func runSession(ctx context.Context, opts Options) Result {
 		}
 	}()
 
-	transcriptSetup, err := prepareTranscriptBootstrap(cfg, sessionID, conversationGoal, conversationPath, resumeMode, loadedState, trajectoryWriter, repoRoot, runState, diagWriter)
+	transcriptSetup, err := prepareTranscriptBootstrap(cfg, sessionID, conversationGoal, conversationPath, resumeMode, loadedState, bootstrap.hasNewInput, trajectoryWriter, repoRoot, runState, diagWriter)
 	if err != nil {
 		fmt.Fprintln(diagWriter, "Error preparing transcript:", err)
 		return Result{ExitCode: 1, Err: err}
@@ -650,6 +650,7 @@ func runSession(ctx context.Context, opts Options) Result {
 		planCtx, planCancel = makeTurnContext(rootCtx, cfg.timeoutPerTurn)
 		trFull := tr.Content()
 		trimmedResumePrompt := strings.TrimSpace(resumePrompt)
+		isResumePrompt := false
 		if trimmedResumePrompt != "" {
 			feedback := trimmedResumePrompt
 			metaType := ""
@@ -657,6 +658,12 @@ func runSession(ctx context.Context, opts Options) Result {
 				metaType = "user_input_response"
 			}
 			resumePrompt = feedback
+			if err := appendConversationRaw("system", "The previous completion was rejected by the orchestrator. Do NOT repeat your prior summary or claim the task is done. Process the following feedback as a fresh instruction and take concrete action: run tests, modify code, run commands, or investigate further.", ""); err != nil {
+				fmt.Fprintln(diagWriter, "Transcript write error:", err)
+				runState.sessionErr = err
+				finishTurn(sessTelemetry, turn, "user-feedback", "error", turnInfo, err)
+				return Result{ExitCode: 1, Err: err}
+			}
 			if err := appendConversationRaw("user", feedback, metaType); err != nil {
 				fmt.Fprintln(diagWriter, "Transcript write error:", err)
 				runState.sessionErr = err
@@ -673,6 +680,7 @@ func runSession(ctx context.Context, opts Options) Result {
 				trFull = appendResumePromptContext(trFull, feedback)
 			}
 			turnInfo["resume_prompt"] = true
+			isResumePrompt = true
 		}
 		isResumingFromShellAgent := resumableShellAgent
 	if resumableShellAgent && step == loadedState.TurnsCompleted+1 {
@@ -687,6 +695,10 @@ func runSession(ctx context.Context, opts Options) Result {
 		}
 		planCtx = attachTrajectory(planCtx, trajectoryWriter, parentSpanID)
 		decision, question, perr = pl.Plan(planCtx, conv, goal, trFull, step, cfg.maxTurns)
+		if isResumePrompt && decision == planner.DecisionAnswerUser {
+			decision = planner.DecisionAskWorker
+			question = resumePrompt
+		}
 	PostPlan:
 		if trimmedResumePrompt != "" {
 			resumePrompt = ""
@@ -937,11 +949,14 @@ func runSession(ctx context.Context, opts Options) Result {
 			}
 			goto Finalize
 		default:
-			goto Finalize
+			if isResumePrompt {
+				goto TurnDone
+			} else {
+				goto Finalize
+			}
 		}
 
 	TurnDone:
-		continue
 	}
 
 Finalize:
