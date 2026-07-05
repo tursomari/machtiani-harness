@@ -677,7 +677,8 @@ func runSession(ctx context.Context, opts Options) Result {
 				resumeSuspendedInput = nil
 				turnInfo["resume_user_input"] = true
 			} else {
-				trFull = appendResumePromptContext(trFull, feedback)
+				systemPrefix := "=== SYSTEM NOTE: The previous completion was rejected by the orchestrator. Do NOT repeat your prior summary or claim the task is done. Process the following feedback as a fresh instruction and take concrete action: run tests, modify code, run commands, or investigate further.\n\n"
+				trFull = appendResumePromptContext(trFull, systemPrefix+feedback)
 			}
 			turnInfo["resume_prompt"] = true
 			isResumePrompt = true
