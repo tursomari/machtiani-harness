@@ -136,6 +136,7 @@ pier run \
     --job-name "mct-single-${TASK_NAME}" \
     --include-task-name "${TASK_NAME}" \
     --n-concurrent 1 \
+    --agent-timeout-multiplier 3.0 \
     -p "${TASKS}"
 
 kill $PRESERVE_PID 2>/dev/null; wait $PRESERVE_PID 2>/dev/null
