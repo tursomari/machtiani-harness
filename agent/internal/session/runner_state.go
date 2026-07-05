@@ -437,12 +437,13 @@ type conversationRecorder struct {
 	shellAgentTrajectoryPath     string
 	shellAgentResumable          bool
 	hasNewInput                  bool
+	resumedSession               bool
 }
 
 var errConversationTranscriptDesync = errors.New("conversation transcript desync")
 
 func newConversationRecorder(tr *transcript.Transcript, sessionID, conversationGoal, conversationPath string, resumeMode bool, loadedState *SessionState, hasNewInput bool) *conversationRecorder {
-	return &conversationRecorder{
+	c := &conversationRecorder{
 		tr:               tr,
 		sessionID:        sessionID,
 		conversationGoal: conversationGoal,
@@ -451,6 +452,7 @@ func newConversationRecorder(tr *transcript.Transcript, sessionID, conversationG
 		loadedState:      loadedState,
 		hasNewInput:      hasNewInput,
 	}
+	return c
 }
 
 func (c *conversationRecorder) SetShellAgentMetadata(trajectoryPath string, resumable bool) {
@@ -474,7 +476,7 @@ func (c *conversationRecorder) PreWriteTurn(step int, question string, shellAgen
 		c.conversation.ModeInstructionDir = c.loadedState.ModeInstructionDir
 		c.conversation.PlannerOverlay = c.loadedState.PlannerOverlay
 		c.conversation.TaskDescription = c.loadedState.TaskDescription
-		if !c.hasNewInput {
+		if !c.resumedSession {
 			c.conversation.Status = c.loadedState.Status
 		}
 	}
@@ -514,6 +516,13 @@ func (c *conversationRecorder) Load() error {
 		}
 		c.conversation = conv
 		c.conversationJSON = string(data)
+		if c.hasNewInput && c.conversation.Status == "success" {
+			c.conversation.Status = ""
+			c.resumedSession = true
+			if saveErr := c.Save(); saveErr != nil {
+				return saveErr
+			}
+		}
 	}
 	if c.conversation == nil {
 		c.conversation = conversation.New(c.sessionID, c.conversationGoal)
@@ -608,7 +617,7 @@ func (c *conversationRecorder) WriteTurn(step int, question, savedPath string, r
 		c.conversation.ModeInstructionDir = c.loadedState.ModeInstructionDir
 		c.conversation.PlannerOverlay = c.loadedState.PlannerOverlay
 		c.conversation.TaskDescription = c.loadedState.TaskDescription
-		if !c.hasNewInput {
+		if !c.resumedSession {
 			c.conversation.Status = c.loadedState.Status
 		}
 	}

@@ -1,9 +1,11 @@
 package orchestrator
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -94,8 +96,11 @@ func extractPrompt(args []string) string {
 func invokeMCTAgent(ctx context.Context, metaSessionID string, trajDir string, mctSessionID string, args ...string) (int, error) {
 	fullArgs := append([]string{"run"}, args...)
 	cmd := exec.CommandContext(ctx, "mct-agent", fullArgs...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+
+	var stdoutBuf bytes.Buffer
+	var stderrBuf bytes.Buffer
+	cmd.Stdout = io.MultiWriter(os.Stdout, &stdoutBuf)
+	cmd.Stderr = io.MultiWriter(os.Stderr, &stderrBuf)
 	cmd.Env = append(os.Environ(), "MACHTIANI_SESSION_ID="+mctSessionID)
 
 	err := cmd.Run()
@@ -108,6 +113,24 @@ func invokeMCTAgent(ctx context.Context, metaSessionID string, trajDir string, m
 		}
 	} else {
 		exitCode = 0
+	}
+
+	if exitCode != 0 {
+		debugStr := fmt.Sprintf("=== MCT Agent Crash Debug ===\nTimestamp: %s\nArgs: %v\nExitCode: %d\n\n--- STDOUT ---\n%s\n\n--- STDERR ---\n%s\n\n",
+			time.Now().UTC().Format(time.RFC3339),
+			fullArgs,
+			exitCode,
+			stdoutBuf.String(),
+			stderrBuf.String(),
+		)
+		crashLogPath := filepath.Join(".machtiani", "sessions", mctSessionID, "crash-debug.log")
+		if err := os.MkdirAll(filepath.Dir(crashLogPath), 0755); err == nil {
+			fp, err := os.OpenFile(crashLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+			if err == nil {
+				fmt.Fprintf(fp, "%s", debugStr)
+				fp.Close()
+			}
+		}
 	}
 
 	if trajDir != "" {
@@ -183,6 +206,21 @@ func invokeMCTAgentRun(
 	return invokeMCTAgent(ctx, metaSessionID, trajDir, mctSessionID, args...)
 }
 
+// cleanContent strips the "The agent exited with code N. Output:\n\n" prefix
+// from error content strings, if present. Returns the raw output content
+// suitable for comparison.
+func cleanContent(s string) string {
+	const prefix = "The agent exited with code "
+	if !strings.HasPrefix(s, prefix) {
+		return s
+	}
+	idx := strings.Index(s, "\n\n")
+	if idx == -1 {
+		return s
+	}
+	return s[idx+2:]
+}
+
 // RunLoop runs the meta-orchestrator loop: invoke mct-agent, evaluate the
 // final answer with a conversational LLM, and continue, finish, or block
 // based on the orchestrator's decision.
@@ -203,10 +241,11 @@ func RunLoop(
 		return 1, fmt.Errorf("creating trajectory directory: %w", err)
 	}
 
+	finalAnswerPath := filepath.Join(".machtiani", "sessions", mctSessionID, "chat", "agent-final-answer.md")
+	os.Remove(finalAnswerPath)
+
 	exitCode, err := invokeMCTAgentRun(ctx, metaSessionID, trajDir, mctSessionID, instructionFilePath, mode, model, shellAgentModel, tag, persistTmpData)
-	if err != nil || exitCode != 0 {
-		return exitCode, err
-	}
+
 	writeTrajectoryLine(trajDir, map[string]interface{}{
 		"type":    "llm_message",
 		"role":    "system",
@@ -220,24 +259,98 @@ func RunLoop(
 		},
 	}
 
-	for {
-		data, err := os.ReadFile(filepath.Join(".machtiani", "sessions", mctSessionID, "chat", "agent-final-answer.md"))
-		if err != nil {
-			return 1, fmt.Errorf("reading final answer: %w", err)
+	var lastFinalAnswer string
+	repeatCount := 0
+
+	var initialError bool
+	if err != nil || exitCode != 0 {
+		data, readErr := os.ReadFile(filepath.Join(".machtiani", "sessions", mctSessionID, "chat", "agent-final-answer.md"))
+		var errorContent string
+		if readErr == nil {
+			trimmed := strings.TrimSpace(string(data))
+			if trimmed != "" {
+				errorContent = fmt.Sprintf("The agent exited with code %d. Output:\n\n%s", exitCode, trimmed)
+			} else {
+				errorContent = fmt.Sprintf("The agent exited with code %d. The agent process crashed without producing output.", exitCode)
+			}
+		} else {
+			errorContent = fmt.Sprintf("The agent exited with code %d. The agent process crashed without producing output.", exitCode)
+		}
+		if errorContent == "" {
+			if err != nil {
+				errorContent = fmt.Sprintf("The agent exited with code %d. Error: %v", exitCode, err)
+			} else {
+				errorContent = fmt.Sprintf("The agent exited with code %d.", exitCode)
+			}
 		}
 
-		content := strings.TrimSpace(string(data))
-		if content == "" {
-			return 1, fmt.Errorf("final answer file is empty for session %s", mctSessionID)
+		if cleanContent(errorContent) == cleanContent(lastFinalAnswer) {
+			repeatCount++
+			if repeatCount == 2 {
+				errorContent = "WARNING: Your last two responses were identical. You are stuck in a loop. You MUST take a fundamentally different approach this time. Read the original instruction fresh, discard your previous assumptions, and start with a new plan. Do NOT repeat your previous answer.\n\n" + errorContent
+			}
+			if repeatCount >= 3 {
+				writeTrajectoryLine(trajDir, map[string]interface{}{
+					"type":    "llm_classification",
+					"action":  "BLOCKED",
+					"message": "Agent stuck in loop - produced the same answer three times in a row.",
+				})
+				return 1, fmt.Errorf("hard blocker: agent stuck in loop - produced the same answer three times in a row")
+			}
+		} else {
+			repeatCount = 0
+			lastFinalAnswer = errorContent
 		}
 
-		messages = append(messages, llm.Message{Role: "user", Content: content})
-
+		messages = append(messages, llm.Message{Role: "user", Content: errorContent})
 		writeTrajectoryLine(trajDir, map[string]interface{}{
 			"type":    "llm_message",
 			"role":    "user",
-			"content": content,
+			"content": errorContent,
 		})
+		initialError = true
+	}
+
+	for {
+		if !initialError {
+			data, err := os.ReadFile(filepath.Join(".machtiani", "sessions", mctSessionID, "chat", "agent-final-answer.md"))
+			if err != nil {
+				return 1, fmt.Errorf("reading final answer: %w", err)
+			}
+
+			content := strings.TrimSpace(string(data))
+
+			if cleanContent(content) == cleanContent(lastFinalAnswer) {
+				repeatCount++
+				if repeatCount == 2 {
+					content = "WARNING: Your last two responses were identical. You are stuck in a loop. You MUST take a fundamentally different approach this time. Read the original instruction fresh, discard your previous assumptions, and start with a new plan. Do NOT repeat your previous answer.\n\n" + content
+				}
+				if repeatCount >= 3 {
+					writeTrajectoryLine(trajDir, map[string]interface{}{
+						"type":    "llm_classification",
+						"action":  "BLOCKED",
+						"message": "Agent stuck in loop - produced the same answer three times in a row.",
+					})
+					return 1, fmt.Errorf("hard blocker: agent stuck in loop - produced the same answer three times in a row")
+				}
+			} else {
+				repeatCount = 0
+				lastFinalAnswer = content
+			}
+
+			if content == "" {
+				return 1, fmt.Errorf("final answer file is empty for session %s", mctSessionID)
+			}
+
+			messages = append(messages, llm.Message{Role: "user", Content: content})
+
+			writeTrajectoryLine(trajDir, map[string]interface{}{
+				"type":    "llm_message",
+				"role":    "user",
+				"content": content,
+			})
+		}
+		initialError = false
 
 		response, err := llm.Chat(ctx, model, nil, messages)
 		if err != nil {
@@ -288,11 +401,66 @@ func RunLoop(
 				args = append(args, "--persist-tmp-data")
 			}
 
+			finalAnswerPath := filepath.Join(".machtiani", "sessions", mctSessionID, "chat", "agent-final-answer.md")
+			os.Remove(finalAnswerPath)
+
 			exitCode, err := invokeMCTAgent(ctx, metaSessionID, trajDir, mctSessionID, args...)
 			if err != nil || exitCode != 0 {
-				return exitCode, err
+				// Append the assistant response (the CONTINUE classification) before the error message.
+				messages = append(messages, llm.Message{Role: "assistant", Content: response})
+				writeTrajectoryLine(trajDir, map[string]interface{}{
+					"type":    "llm_message",
+					"role":    "assistant",
+					"content": response,
+				})
+
+				// Read the final answer file if it exists, or use a clean error message.
+				data, readErr := os.ReadFile(filepath.Join(".machtiani", "sessions", mctSessionID, "chat", "agent-final-answer.md"))
+				var errorContent string
+				if readErr == nil {
+					trimmed := strings.TrimSpace(string(data))
+					if trimmed != "" {
+						errorContent = fmt.Sprintf("The agent exited with code %d. Output:\n\n%s", exitCode, trimmed)
+					} else {
+						errorContent = fmt.Sprintf("The agent exited with code %d. The agent process crashed without producing output.", exitCode)
+					}
+				} else {
+					errorContent = fmt.Sprintf("The agent exited with code %d. The agent process crashed without producing output.", exitCode)
+				}
+				if errorContent == "" {
+				if err != nil {
+					errorContent = fmt.Sprintf("The agent exited with code %d. Error: %v", exitCode, err)
+				} else {
+					errorContent = fmt.Sprintf("The agent exited with code %d.", exitCode)
+				}
 			}
 
+			if cleanContent(errorContent) == cleanContent(lastFinalAnswer) {
+				repeatCount++
+				if repeatCount == 2 {
+					errorContent = "WARNING: Your last two responses were identical. You are stuck in a loop. You MUST take a fundamentally different approach this time. Read the original instruction fresh, discard your previous assumptions, and start with a new plan. Do NOT repeat your previous answer.\n\n" + errorContent
+				}
+				if repeatCount >= 3 {
+					writeTrajectoryLine(trajDir, map[string]interface{}{
+						"type":    "llm_classification",
+						"action":  "BLOCKED",
+						"message": "Agent stuck in loop - produced the same answer three times in a row.",
+					})
+					return 1, fmt.Errorf("hard blocker: agent stuck in loop - produced the same answer three times in a row")
+				}
+			} else {
+				repeatCount = 0
+				lastFinalAnswer = errorContent
+			}
+
+			messages = append(messages, llm.Message{Role: "user", Content: errorContent})
+			writeTrajectoryLine(trajDir, map[string]interface{}{
+				"type":    "llm_message",
+				"role":    "user",
+				"content": errorContent,
+			})
+			continue
+			}
 			messages = append(messages, llm.Message{Role: "assistant", Content: response})
 
 			writeTrajectoryLine(trajDir, map[string]interface{}{
