@@ -89,6 +89,7 @@ Compare each modified file against its original version. Does any change break e
 Output format: produce a structured review with these sections:
 
 1. Requirements Coverage: A table with columns requirement, status (implemented, partial, missing), location (file:line or description), and notes.
+IMPORTANT: Do NOT change existing behavior for features that already work correctly. Only fix clear, unambiguous bugs that are supported by concrete evidence from the code. If a finding is ambiguous or could break existing functionality, note it as an observation but do NOT recommend changing the code — introducing regressions by altering correct behavior is worse than leaving a minor issue unaddressed.
 2. Directional Issues: Any design-level concerns where the approach is wrong or fragile, even if individual pieces work.
 3. Bugs Found: Each bug with severity (CRITICAL, HIGH, MEDIUM, LOW), file:line, description of the bug, steps to trigger it, and suggested fix.
 4. Edge Cases Not Handled: Specific input scenarios that would cause incorrect behavior, with the expected versus actual behavior and the file:line where handling is missing.
@@ -637,7 +638,13 @@ func RunLoop(
 
 			// Re-sync internal git state before the run so that mct-agent
 			// reads the current commit rather than a stale snapshot.
-			syncCmd := exec.CommandContext(ctx, "mct-agent", "sync")
+			var syncArgs []string
+			syncArgs = append(syncArgs, "sync")
+			if model != "" {
+				syncArgs = append(syncArgs, "--model", model)
+			}
+			syncArgs = append(syncArgs, "--max-input-tokens", "800000")
+			syncCmd := exec.CommandContext(ctx, "mct-agent", syncArgs...)
 			syncCmd.Dir = "/app"
 			if syncErr := syncCmd.Run(); syncErr != nil {
 				fmt.Fprintf(os.Stderr, "Warning: mct-agent sync failed: %v\n", syncErr)
@@ -831,6 +838,20 @@ func RunLoop(
 						"role":    "assistant",
 						"content": reviewMessage,
 					})
+
+					// After review feedback is successfully processed, sync git state and
+					// loop back so the classifier evaluates the agents post-review output.
+					syncAfterReview := exec.CommandContext(ctx, "mct-agent", "sync")
+					if model != "" {
+						syncAfterReview = exec.CommandContext(ctx, "mct-agent", "sync", "--model", model, "--max-input-tokens", "800000")
+					}
+					syncAfterReview.Dir = "/app"
+					if syncErr := syncAfterReview.Run(); syncErr != nil {
+						fmt.Fprintf(os.Stderr, "Warning: sync after review feedback failed: %v\n", syncErr)
+					}
+					// Remove final answer so agent produces fresh output on next iteration
+					os.Remove(filepath.Join(".machtiani", "sessions", mctSessionID, "chat", "agent-final-answer.md"))
+					continue
 					}
 					continue
 				}
