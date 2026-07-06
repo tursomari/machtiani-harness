@@ -596,6 +596,7 @@ func RunLoop(
 
 		var actionLine string
 		var messageLine string
+	parseAction:
 		for _, line := range strings.Split(response, "\n") {
 			trimmed := strings.TrimSpace(line)
 			if actionLine == "" && strings.HasPrefix(strings.ToUpper(trimmed), "ACTION:") {
@@ -867,6 +868,20 @@ func RunLoop(
 				}
 
 		case "DONE":
+			// Intercept premature DONE: if the peer review has not fired yet and we have
+			// processed Phases 1-3 (continueCount >= 4), override to CONTINUE with Phase 4
+			// instruction so the peer review phase is triggered.
+			if !peerReviewDone && !reviewMode && continueCount >= 4 {
+				writeTrajectoryLine(trajDir, map[string]interface{}{
+					"type":      "peer_review_override",
+					"reason":    "classifier returned DONE before peer review fired",
+					"timestamp": time.Now().UTC().Format(time.RFC3339),
+				})
+				response = "ACTION: CONTINUE\nMESSAGE: Phase 3 is complete. Now proceed to Phase 4 - Final Verification. The orchestrator will trigger a peer review before final evaluation."
+				actionLine = ""
+				messageLine = ""
+				goto parseAction
+			}
 			return 0, nil
 		case "BLOCKED":
 			message := strings.TrimSpace(strings.TrimPrefix(messageLine, "MESSAGE:"))
