@@ -491,6 +491,7 @@ func RunLoop(
 	var lastFinalAnswer string
 	repeatCount := 0
 	continueCount := 0
+	peerReviewDone := false
 
 	var initialError bool
 	if err != nil || exitCode != 0 {
@@ -706,13 +707,22 @@ func RunLoop(
 				"content": response,
 			})
 				continueCount++
-				if continueCount == 4 && !reviewMode {
+				shouldPeerReview := false
+				if !peerReviewDone && !reviewMode {
+					if strings.Contains(response, "Phase 4") || strings.Contains(response, "Final Verification") {
+						shouldPeerReview = true
+					} else if continueCount == 5 {
+						shouldPeerReview = true
+					}
+				}
+				if shouldPeerReview {
 					writeTrajectoryLine(trajDir, map[string]interface{}{
 						"type":      "peer_review_phase_start",
 						"timestamp": time.Now().UTC().Format(time.RFC3339),
 					})
 
 					reviewContent, reviewErr := invokeReviewer(ctx, metaSessionID, trajDir, model, shellAgentModel, mctSessionID)
+					peerReviewDone = true
 					if reviewErr != nil {
 						fmt.Fprintf(os.Stderr, "Peer review failed: %v\n", reviewErr)
 						writeTrajectoryLine(trajDir, map[string]interface{}{
@@ -754,8 +764,6 @@ func RunLoop(
 						fmt.Fprintf(os.Stderr, "Warning: mct-agent sync before review feedback failed: %v\n", syncErr)
 					}
 
-					finalAnswerPath := filepath.Join(".machtiani", "sessions", mctSessionID, "chat", "agent-final-answer.md")
-					os.Remove(finalAnswerPath)
 
 					reviewExitCode, reviewInvokeErr := invokeMCTAgent(ctx, metaSessionID, trajDir, mctSessionID, reviewArgs...)
 					if reviewInvokeErr != nil || reviewExitCode != 0 {
@@ -816,6 +824,7 @@ func RunLoop(
 					})
 					continue
 				}
+
 		case "DONE":
 			return 0, nil
 		case "BLOCKED":

@@ -13,7 +13,7 @@ func TestRunLoop_StatefulSignature(t *testing.T) {
 	t.Skip("compile-time type check only — RunLoop calls exec and LLM, not suitable for unit testing")
 
 	ctx := context.Background()
-	_, _ = RunLoop(ctx, "test-meta-session", "test-mct-session", "/tmp/instruction.md", "code", "gpt-4", "", "", false)
+	_, _ = RunLoop(ctx, "test-meta-session", "test-mct-session", "/tmp/instruction.md", "code", "gpt-4", "", "", false, false)
 }
 
 // TestInvokeMCTAgent_Signature is a compile-time type check that verifies the
