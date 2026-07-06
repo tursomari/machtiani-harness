@@ -166,6 +166,7 @@ func extractPrompt(args []string) string {
 func invokeMCTAgent(ctx context.Context, metaSessionID string, trajDir string, mctSessionID string, args ...string) (int, error) {
 	fullArgs := append([]string{"run"}, args...)
 	cmd := exec.CommandContext(ctx, "mct-agent", fullArgs...)
+	cmd.Dir = "/app"
 
 	var stdoutBuf bytes.Buffer
 	var stderrBuf bytes.Buffer
@@ -245,6 +246,7 @@ func invokeReviewer(ctx context.Context, metaSessionID string, trajDir string, m
 	// 2. Run mct-agent sync to refresh internal state after the main agent commits.
 	if model != "" {
 		syncCmd := exec.CommandContext(ctx, "mct-agent", "sync", "--model", model, "--max-input-tokens", "800000")
+		syncCmd.Dir = "/app"
 		if err := syncCmd.Run(); err != nil {
 			fmt.Fprintf(os.Stderr, "review sync warning: %v\n", err)
 		}
@@ -274,6 +276,7 @@ func invokeReviewer(ctx context.Context, metaSessionID string, trajDir string, m
 	reviewCtx, cancel := context.WithTimeout(ctx, 30*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(reviewCtx, binaryPath, childArgs...)
+	cmd.Dir = "/app"
 
 	// 5. Set up stdout pipe and stderr capture.
 	stdoutPipe, err := cmd.StdoutPipe()
@@ -635,6 +638,7 @@ func RunLoop(
 			// Re-sync internal git state before the run so that mct-agent
 			// reads the current commit rather than a stale snapshot.
 			syncCmd := exec.CommandContext(ctx, "mct-agent", "sync")
+			syncCmd.Dir = "/app"
 			if syncErr := syncCmd.Run(); syncErr != nil {
 				fmt.Fprintf(os.Stderr, "Warning: mct-agent sync failed: %v\n", syncErr)
 			}
@@ -760,6 +764,7 @@ func RunLoop(
 					}
 
 					syncCmd := exec.CommandContext(ctx, "mct-agent", "sync")
+					syncCmd.Dir = "/app"
 					if syncErr := syncCmd.Run(); syncErr != nil {
 						fmt.Fprintf(os.Stderr, "Warning: mct-agent sync before review feedback failed: %v\n", syncErr)
 					}
