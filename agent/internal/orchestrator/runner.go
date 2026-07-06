@@ -774,12 +774,17 @@ func RunLoop(
 						reviewArgs = append(reviewArgs, "--persist-tmp-data")
 					}
 
-					syncCmd := exec.CommandContext(ctx, "mct-agent", "sync")
+					var syncArgs []string
+					syncArgs = append(syncArgs, "sync")
+					if model != "" {
+						syncArgs = append(syncArgs, "--model", model)
+					}
+					syncArgs = append(syncArgs, "--max-input-tokens", "800000")
+					syncCmd := exec.CommandContext(ctx, "mct-agent", syncArgs...)
 					syncCmd.Dir = "/app"
 					if syncErr := syncCmd.Run(); syncErr != nil {
 						fmt.Fprintf(os.Stderr, "Warning: mct-agent sync before review feedback failed: %v\n", syncErr)
 					}
-
 
 					reviewExitCode, reviewInvokeErr := invokeMCTAgent(ctx, metaSessionID, trajDir, mctSessionID, reviewArgs...)
 					if reviewInvokeErr != nil || reviewExitCode != 0 {
