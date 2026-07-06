@@ -119,7 +119,7 @@ export MCT_SHELL_AGENT_MODEL="${SHELL_AGENT_MODEL}"
 mkdir -p "${JOBS_DIR}"
 PRESERVE_DIR="/tmp/treatment-preserved-$(date +%s)"
 mkdir -p "${PRESERVE_DIR}"
-(while true; do cp -r "${JOBS_DIR}/"* "${PRESERVE_DIR}/" 2>/dev/null; sleep 2; done) &
+(while true; do rsync -a --ignore-existing "${JOBS_DIR}/" "${PRESERVE_DIR}/" 2>/dev/null; sleep 2; done) &
 PRESERVE_PID=$!
 echo "[preserve] Background preservation loop started (PID ${PRESERVE_PID}) -> ${PRESERVE_DIR}"
 
@@ -140,8 +140,27 @@ pier run \
     -p "${TASKS}"
 
 kill $PRESERVE_PID 2>/dev/null; wait $PRESERVE_PID 2>/dev/null
-cp -r "${JOBS_DIR}/"* "${PRESERVE_DIR}/" 2>/dev/null || true
+
+# Capture meta-orchestrator trajectory and conversation from inside the container
+CONTAINER_NAME=$(docker ps --format '{{.Names}}' | grep -i "${TASK_NAME}" | head -1)
+if [[ -n "${CONTAINER_NAME}" ]]; then
+    echo "[preserve] Found container: ${CONTAINER_NAME}"
+    docker exec "${CONTAINER_NAME}" sh -c 'cat /app/.machtiani/meta-orchestrator/sessions/*/trajectory.jsonl 2>/dev/null' > "${PRESERVE_DIR}/container-trajectory.jsonl" 2>/dev/null || \
+        echo "[preserve] Could not read trajectory.jsonl from container"
+    docker exec "${CONTAINER_NAME}" sh -c 'cat /app/.machtiani/sessions/*/conversation.json 2>/dev/null' > "${PRESERVE_DIR}/container-conversation.json" 2>/dev/null || \
+        echo "[preserve] Could not read conversation.json from container"
+else
+    echo "[preserve] Note: Container for ${TASK_NAME} was already cleaned up (not running)"
+fi
+
+rsync -a "${JOBS_DIR}/" "${PRESERVE_DIR}/" || true
 echo "[preserve] Final preservation to ${PRESERVE_DIR}"
+
+if ls "${PRESERVE_DIR}/mct-single-${TASK_NAME}/${TASK_NAME}_"*"/verifier/reward.json" >/dev/null 2>&1; then
+    echo "PRESERVATION SUCCESS: reward.json captured"
+else
+    echo "PRESERVATION WARNING: reward.json not found at expected path"
+fi
 
 sleep 2
 echo ""
