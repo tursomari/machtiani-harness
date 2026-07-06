@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
@@ -47,7 +46,7 @@ Rules and Phases of Operation:
    - Respond with ACTION: CONTINUE and instruct the agent to:
      a) Re-read the original instruction file (/app/instruction.md) to ground the re-implementation in the original requirements.
      b) Reset the git project completely and discard all current changes.
-     c) Taking everything it learned from the first implementation attempt, create /app/implementation-plan.md from scratch using the structured plan format. The plan format is documented in the implementationPlanFormat constant — reference it for the exact template structure. Your plan must include all of these sections: Intent, Safety Rules (NEVER and ALWAYS), Pre-flight Checks with "- [ ]" checkboxes, Execution Phases with "- [ ]" checkboxes for each task, Verification with "- [ ]" checkboxes, Cleanup with "- [ ]" checkboxes, Progress Log table, and Status Table. Commit the plan file immediately after creating it so it survives any subsequent git operations.
+     c) Taking everything it learned from the first implementation attempt, create /app/implementation-plan.md from scratch using a structured plan format with these sections: Intent, Safety Rules (NEVER and ALWAYS), Pre-flight Checks, Execution Phases with checkboxes, Verification, Cleanup, Progress Log, and Status Table. Your plan must include all of these sections: Intent, Safety Rules (NEVER and ALWAYS), Pre-flight Checks with "- [ ]" checkboxes, Execution Phases with "- [ ]" checkboxes for each task, Verification with "- [ ]" checkboxes, Cleanup with "- [ ]" checkboxes, Progress Log table, and Status Table. Commit the plan file immediately after creating it so it survives any subsequent git operations.
      d) Execute the plan fully. As work progresses, check off completed items using [x] and update the Progress Log and Status Table after each completed checkbox or phase. Do NOT claim implementation is complete until every checkbox in every phase is checked. Commit your work as you go.
 
 4. **Phase 3 - The Final Sanity Check (Third Completion Claim):**
@@ -102,6 +101,8 @@ IMPORTANT: Do NOT change existing behavior for features that already work correc
 
 Be specific. Cite file names, line numbers, and exact variable names. Do not be vague. Do not say "looks good" without justification. Find problems. If you genuinely cannot find any issues in a category, say "No issues found in this category" and explain what you checked.`
 
+const secondReviewInstruction = `You are a second-pass peer reviewer verifying fixes from a prior review. Read /app/instruction.md for the requirements. Run git diff HEAD~1..HEAD to see the fix commit. For each finding from the prior review, state whether it was ADDRESSED with evidence, PARTIALLY ADDRESSED, or NOT ADDRESSED. Check the fix diff for new bugs or regressions introduced by the fixes. For any new issue found, cite file:line, describe the bug, and assign severity. If ALL prior findings are addressed AND no new bugs exist, produce a concise verdict starting with exactly: all clear. Skip requirements coverage tables and architectural analysis — the first review already did that. Be brief and targeted.`
+
 const reviewSystemPrompt = `You are a review-mode orchestrator. Your sole job is to ensure mct-agent produces a thorough, substantive peer review of an implementation. You will receive the contents of mct-agents agent-final-answer.md after each invocation and must evaluate whether the review is complete.
 
 Respond with exactly one of these three formats:
@@ -141,77 +142,6 @@ When to BLOCKED:
 
 Escalate firmness with each successive CONTINUE. Always tell the agent exactly which section is inadequate and what specific information is missing. Never accept "looks good" or "no issues found" without detailed justification of the investigation performed.`
 
-const implementationPlanFormat = `# Implementation Plan
-
-## Intent
-<Describe what this implementation aims to achieve. Reference the original instruction or issue.>
-
-## Safety Rules
-
-### NEVER
-- NEVER delete or modify existing tests without explicit approval from the original issue requirements.
-- NEVER skip a phase or checkbox without acknowledging it and providing a reason.
-- NEVER commit code that does not compile or causes test failures.
-- NEVER claim implementation is complete until every checkbox in every phase is checked.
-
-### ALWAYS
-- ALWAYS run the project build system after each meaningful change.
-- ALWAYS run the project test suite and confirm all tests pass before checking off a phase.
-- ALWAYS commit after each phase of verifiable progress with a descriptive message.
-- ALWAYS keep this plan up to date — check off items using [x] as work is completed.
-
-## Pre-flight Checks
-- [ ] Read /app/instruction.md to understand the full requirements.
-- [ ] Identify all files that need to be created or modified.
-- [ ] Verify that the project build system runs successfully before making any changes.
-- [ ] Verify that the project test suite passes before making any changes.
-
-## Execution Phases
-
-### Phase 1: <Phase Name>
-- [ ] Task description with specific deliverable.
-- [ ] Task description with specific deliverable.
-
-### Phase 2: <Phase Name>
-- [ ] Task description with specific deliverable.
-- [ ] Task description with specific deliverable.
-
-### Phase N: <Phase Name>
-- [ ] Task description with specific deliverable.
-
-## Verification
-- [ ] Run the project build system and confirm clean compilation.
-- [ ] Run the project test suite and confirm all tests pass.
-- [ ] Run the project integration test suite and confirm end-to-end behavior.
-- [ ] Perform a manual code review of the diff (version control diff showing all changes).
-- [ ] Verify all edge cases from the original instruction are handled.
-
-## Cleanup
-- [ ] Remove any temporary test files or debug logging added during implementation.
-- [ ] Confirm no unrelated files were modified (version control diff --stat).
-- [ ] Perform version control reset (e.g., git reset --hard HEAD) on any accidental changes to unchanged files.
-
-## Progress Log
-
-| Phase | Status | Notes |
-|-------|--------|-------|
-| Pre-flight Checks | Pending | |
-| Phase 1 | Pending | |
-| Phase 2 | Pending | |
-| Phase N | Pending | |
-| Verification | Pending | |
-| Cleanup | Pending | |
-
-## Status Table
-
-| Metric | Value |
-|--------|-------|
-| Current Phase | |
-| Checkboxes Complete | X / Y |
-| Build Status | |
-| Test Status | |
-| Last Commit | |
-`
 
 // extractPrompt scans the args slice for "-f" or "-t" and returns the
 // associated prompt text. If "-f" is found, the next element is treated as a
@@ -314,9 +244,9 @@ func invokeMCTAgent(ctx context.Context, metaSessionID string, trajDir string, m
 
 // invokeReviewer runs a child meta-orchestrator in review mode to evaluate
 // the main agent's implementation. It returns the review content as a string.
-func invokeReviewer(ctx context.Context, metaSessionID string, trajDir string, model string, shellAgentModel string, mainSessionID string) (string, error) {
+func invokeReviewer(ctx context.Context, reviewInstruction string, metaSessionID string, trajDir string, model string, shellAgentModel string, mainSessionID string) (string, error) {
 	// 1. Write peer review instruction file.
-	if err := os.WriteFile("/app/review-instruction.md", []byte(peerReviewInstruction), 0644); err != nil {
+	if err := os.WriteFile("/app/review-instruction.md", []byte(reviewInstruction), 0644); err != nil {
 		return "", err
 	}
 
@@ -511,71 +441,6 @@ func invokeMCTAgentRun(
 	return invokeMCTAgent(ctx, metaSessionID, trajDir, mctSessionID, args...)
 }
 
-// verifyImplementationPlan reads the implementation plan file and checks for
-// any unchecked items or pending phases. Returns a slice of unchecked items;
-// an empty slice means all items are checked off.
-func verifyImplementationPlan() []string {
-	data, err := os.ReadFile("/app/implementation-plan.md")
-	if err != nil {
-		return []string{"Error: implementation plan file not found at /app/implementation-plan.md"}
-	}
-
-	content := strings.TrimSpace(string(data))
-	if content == "" {
-		return []string{"Error: implementation plan file is empty"}
-	}
-
-	var unchecked []string
-	re := regexp.MustCompile(`^\s*- \[ \]`)
-	lines := strings.Split(string(data), "\n")
-	inProgressLog := false
-	inStatusTable := false
-
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-
-		// Track which section we're in.
-		if strings.HasPrefix(trimmed, "## Progress Log") {
-			inProgressLog = true
-			inStatusTable = false
-			continue
-		}
-		if strings.HasPrefix(trimmed, "## Status Table") {
-			inStatusTable = true
-			inProgressLog = false
-			continue
-		}
-		// Reset section tracking on any other section header.
-		if strings.HasPrefix(trimmed, "## ") {
-			inProgressLog = false
-			inStatusTable = false
-		}
-
-		// Check for unchecked checkboxes.
-		if re.MatchString(line) {
-			unchecked = append(unchecked, trimmed)
-		}
-
-		// Check for PENDING or IN-PROGRESS in Progress Log or Status Table rows.
-		if inProgressLog || inStatusTable {
-			upperLine := strings.ToUpper(trimmed)
-			if strings.Contains(upperLine, "PENDING") || strings.Contains(upperLine, "IN-PROGRESS") || strings.Contains(upperLine, "IN PROGRESS") {
-				alreadyAdded := false
-				for _, item := range unchecked {
-					if item == trimmed {
-						alreadyAdded = true
-						break
-					}
-				}
-				if !alreadyAdded {
-					unchecked = append(unchecked, trimmed)
-				}
-			}
-		}
-	}
-
-	return unchecked
-}
 
 // cleanContent strips the "The agent exited with code N. Output:\n\n" prefix
 // from error content strings, if present. Returns the raw output content
@@ -616,11 +481,24 @@ func RunLoop(
 	finalAnswerPath := filepath.Join(".machtiani", "sessions", mctSessionID, "chat", "agent-final-answer.md")
 	os.Remove(finalAnswerPath)
 
+	instructionContent := ""
+	if data, err := os.ReadFile("/app/instruction.md"); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: unable to read /app/instruction.md: %v\n", err)
+	} else {
+		trimmed := strings.TrimSpace(string(data))
+		if trimmed != "" {
+			instructionContent = trimmed
+		}
+	}
+
 	exitCode, err := invokeMCTAgentRun(ctx, metaSessionID, trajDir, mctSessionID, instructionFilePath, mode, model, shellAgentModel, tag, persistTmpData)
 
 	systemPrompt := orchestratorSystemPrompt
 	if reviewMode {
 		systemPrompt = reviewSystemPrompt
+	}
+	if instructionContent != "" {
+		systemPrompt += "\n\n=== ORIGINAL INSTRUCTION ===\n" + instructionContent
 	}
 
 	writeTrajectoryLine(trajDir, map[string]interface{}{
@@ -628,6 +506,18 @@ func RunLoop(
 		"role":    "system",
 		"content": systemPrompt,
 	})
+
+	if instructionContent != "" {
+		writeTrajectoryLine(trajDir, map[string]interface{}{
+			"type":          "instruction_injection",
+			"content_length": len(instructionContent),
+		})
+	} else {
+		writeTrajectoryLine(trajDir, map[string]interface{}{
+			"type":   "instruction_injection_skipped",
+			"reason": "file not found or empty",
+		})
+	}
 
 	messages := []llm.Message{
 		{
@@ -640,6 +530,7 @@ func RunLoop(
 	repeatCount := 0
 	continueCount := 0
 	peerReviewDone := false
+	peerReviewRound := 0
 
 	var initialError bool
 	if err != nil || exitCode != 0 {
@@ -864,94 +755,6 @@ func RunLoop(
 				"content": response,
 			})
 				continueCount++
-				// Plan verification: after the classifier has issued at least 2 CONTINUEs,
-				// verify the implementation plan for unchecked items.
-				if continueCount >= 2 && !reviewMode {
-					planVerifyLoops := 0
-					for {
-						unchecked := verifyImplementationPlan()
-						if len(unchecked) == 0 {
-							writeTrajectoryLine(trajDir, map[string]interface{}{
-								"type":      "plan_verification_passed",
-								"timestamp": time.Now().UTC().Format(time.RFC3339),
-							})
-							break
-						}
-
-						writeTrajectoryLine(trajDir, map[string]interface{}{
-							"type":            "plan_verification_failed",
-							"unchecked_items": unchecked,
-							"timestamp":       time.Now().UTC().Format(time.RFC3339),
-						})
-
-						planVerifyLoops++
-						if planVerifyLoops > 10 {
-							writeTrajectoryLine(trajDir, map[string]interface{}{
-								"type":                    "plan_verification_stuck",
-								"plan_verification_stuck": true,
-								"unchecked_items":         unchecked,
-								"timestamp":               time.Now().UTC().Format(time.RFC3339),
-							})
-							break
-						}
-
-						// Build instruction listing unchecked items.
-						planMsg := "Your implementation plan has unchecked items. Address them before proceeding:\n\n"
-						for _, item := range unchecked {
-							planMsg += "- " + item + "\n"
-						}
-
-						var planArgs []string
-						if mode != "" {
-							planArgs = append(planArgs, "--mode", mode)
-						}
-						if model != "" {
-							planArgs = append(planArgs, "--model", model)
-						}
-						if shellAgentModel != "" {
-							planArgs = append(planArgs, "--shell-agent-model", shellAgentModel)
-						}
-						if tag != "" {
-							planArgs = append(planArgs, "--tag", tag)
-						}
-						planArgs = append(planArgs, "--session-id", mctSessionID)
-						planArgs = append(planArgs, "-t", planMsg)
-						if persistTmpData {
-							planArgs = append(planArgs, "--persist-tmp-data")
-						}
-
-						// Sync before plan verification run.
-						var planSyncArgs []string
-						planSyncArgs = append(planSyncArgs, "sync")
-						if model != "" {
-							planSyncArgs = append(planSyncArgs, "--model", model)
-						}
-						planSyncArgs = append(planSyncArgs, "--max-input-tokens", "800000")
-						planSyncCmd := exec.CommandContext(ctx, "mct-agent", planSyncArgs...)
-						planSyncCmd.Dir = "/app"
-						planSyncCmd.Env = append(os.Environ(), "MACHTIANI_CONFIG=/app/.machtiani/config.toml")
-						if syncErr := planSyncCmd.Run(); syncErr != nil {
-							fmt.Fprintf(os.Stderr, "Warning: mct-agent sync before plan verification failed: %v\n", syncErr)
-						}
-
-						planFinalAnswerPath := filepath.Join(".machtiani", "sessions", mctSessionID, "chat", "agent-final-answer.md")
-						os.Remove(planFinalAnswerPath)
-
-						planExitCode, planErr := invokeMCTAgent(ctx, metaSessionID, trajDir, mctSessionID, planArgs...)
-						if planErr != nil || planExitCode != 0 {
-							// Agent crashed during plan verification; record and break to let classifier handle it.
-							writeTrajectoryLine(trajDir, map[string]interface{}{
-								"type":      "plan_verification_agent_error",
-								"exit_code": planExitCode,
-								"error":     fmt.Sprintf("%v", planErr),
-								"timestamp": time.Now().UTC().Format(time.RFC3339),
-							})
-							break
-						}
-
-						// After agent responds, loop back to re-verify the plan.
-					}
-				}
 				shouldPeerReview := false
 				if !peerReviewDone && !reviewMode {
 					// Primary: message-content match for Phase 4 transition, gated by count >= 4
@@ -966,21 +769,24 @@ func RunLoop(
 					}
 				}
 				if shouldPeerReview {
-					writeTrajectoryLine(trajDir, map[string]interface{}{
-						"type":      "peer_review_phase_start",
-						"timestamp": time.Now().UTC().Format(time.RFC3339),
-					})
-
-					reviewContent, reviewErr := invokeReviewer(ctx, metaSessionID, trajDir, model, shellAgentModel, mctSessionID)
-					peerReviewDone = true
-					if reviewErr != nil {
-						fmt.Fprintf(os.Stderr, "Peer review failed: %v\n", reviewErr)
+					peerReviewRound++
+					if peerReviewRound == 1 {
 						writeTrajectoryLine(trajDir, map[string]interface{}{
-							"type":   "peer_review_skipped",
-							"reason": reviewErr.Error(),
+							"type":      "peer_review_phase_start",
+							"timestamp": time.Now().UTC().Format(time.RFC3339),
 						})
-						// Peer review failed, continue with normal Phase 4 flow below
-					} else {
+
+						reviewContent, reviewErr := invokeReviewer(ctx, peerReviewInstruction, metaSessionID, trajDir, model, shellAgentModel, mctSessionID)
+						if reviewErr != nil {
+							peerReviewDone = true
+							fmt.Fprintf(os.Stderr, "Peer review failed: %v\n", reviewErr)
+							writeTrajectoryLine(trajDir, map[string]interface{}{
+								"type":   "peer_review_skipped",
+								"reason": reviewErr.Error(),
+							})
+							continue
+						}
+
 						writeTrajectoryLine(trajDir, map[string]interface{}{
 						"type":                  "peer_review_completed",
 						"review_content_length": len(reviewContent),
@@ -1092,8 +898,134 @@ func RunLoop(
 					}
 					// Remove final answer so agent produces fresh output on next iteration
 					os.Remove(filepath.Join(".machtiani", "sessions", mctSessionID, "chat", "agent-final-answer.md"))
-					continue
+						continue
 					}
+
+					// Second peer review round
+					writeTrajectoryLine(trajDir, map[string]interface{}{
+						"type":      "second_peer_review_phase_start",
+						"timestamp": time.Now().UTC().Format(time.RFC3339),
+					})
+
+					reviewContent2, reviewErr2 := invokeReviewer(ctx, secondReviewInstruction, metaSessionID, trajDir, model, shellAgentModel, mctSessionID)
+					peerReviewDone = true
+					if reviewErr2 != nil {
+						fmt.Fprintf(os.Stderr, "Second peer review failed: %v\n", reviewErr2)
+						writeTrajectoryLine(trajDir, map[string]interface{}{
+							"type":   "second_peer_review_skipped",
+							"reason": reviewErr2.Error(),
+						})
+						continue
+					}
+
+					writeTrajectoryLine(trajDir, map[string]interface{}{
+					"type":                  "second_peer_review_completed",
+					"review_content_length": len(reviewContent2),
+					"timestamp":             time.Now().UTC().Format(time.RFC3339),
+				})
+
+				reviewMessage2 := "A second peer reviewer has verified that all prior findings have been addressed. Review feedback follows.\n\n--- SECOND PEER REVIEW ---\n" + reviewContent2 + "\n--- END REVIEW ---\n\nAfter addressing any remaining findings, the meta-orchestrator will perform final verification."
+
+				var reviewArgs2 []string
+				if mode != "" {
+					reviewArgs2 = append(reviewArgs2, "--mode", mode)
+				}
+				if model != "" {
+					reviewArgs2 = append(reviewArgs2, "--model", model)
+				}
+				if shellAgentModel != "" {
+					reviewArgs2 = append(reviewArgs2, "--shell-agent-model", shellAgentModel)
+				}
+				if tag != "" {
+					reviewArgs2 = append(reviewArgs2, "--tag", tag)
+				}
+				reviewArgs2 = append(reviewArgs2, "--session-id", mctSessionID)
+				reviewArgs2 = append(reviewArgs2, "-t", reviewMessage2)
+				if persistTmpData {
+					reviewArgs2 = append(reviewArgs2, "--persist-tmp-data")
+				}
+
+				var syncArgs2 []string
+				syncArgs2 = append(syncArgs2, "sync")
+				if model != "" {
+					syncArgs2 = append(syncArgs2, "--model", model)
+				}
+				syncArgs2 = append(syncArgs2, "--max-input-tokens", "800000")
+				syncCmd2 := exec.CommandContext(ctx, "mct-agent", syncArgs2...)
+				syncCmd2.Dir = "/app"
+				syncCmd2.Env = append(os.Environ(), "MACHTIANI_CONFIG=/app/.machtiani/config.toml")
+				if syncErr := syncCmd2.Run(); syncErr != nil {
+					fmt.Fprintf(os.Stderr, "Warning: mct-agent sync before second review feedback failed: %v\n", syncErr)
+				}
+
+				reviewExitCode2, reviewInvokeErr2 := invokeMCTAgent(ctx, metaSessionID, trajDir, mctSessionID, reviewArgs2...)
+				if reviewInvokeErr2 != nil || reviewExitCode2 != 0 {
+					messages = append(messages, llm.Message{Role: "assistant", Content: reviewMessage2})
+					writeTrajectoryLine(trajDir, map[string]interface{}{
+						"type":    "llm_message",
+						"role":    "assistant",
+						"content": reviewMessage2,
+					})
+
+					data, readErr := os.ReadFile(filepath.Join(".machtiani", "sessions", mctSessionID, "chat", "agent-final-answer.md"))
+					var errorContent string
+					if readErr == nil {
+						trimmed := strings.TrimSpace(string(data))
+						if trimmed != "" {
+							errorContent = fmt.Sprintf("The agent exited with code %d after second review feedback. Output:\n\n%s", reviewExitCode2, trimmed)
+						} else {
+							errorContent = fmt.Sprintf("The agent exited with code %d after second review feedback. The agent process crashed without producing output.", reviewExitCode2)
+						}
+					} else {
+						errorContent = fmt.Sprintf("The agent exited with code %d after second review feedback. The agent process crashed without producing output.", reviewExitCode2)
+					}
+					if reviewInvokeErr2 != nil {
+						errorContent = fmt.Sprintf("The agent exited with code %d after second review feedback. Error: %v", reviewExitCode2, reviewInvokeErr2)
+					}
+
+					if cleanContent(errorContent) == cleanContent(lastFinalAnswer) {
+						repeatCount++
+						if repeatCount == 2 {
+							errorContent = "WARNING: Your last two responses were identical. You are stuck in a loop. You MUST take a fundamentally different approach this time.\n\n" + errorContent
+						}
+						if repeatCount >= 3 {
+							writeTrajectoryLine(trajDir, map[string]interface{}{
+								"type":    "llm_classification",
+								"action":  "BLOCKED",
+								"message": "Agent stuck in loop after second review feedback.",
+							})
+							return 1, fmt.Errorf("hard blocker: agent stuck in loop after second review feedback")
+						}
+					} else {
+						repeatCount = 0
+						lastFinalAnswer = errorContent
+					}
+					messages = append(messages, llm.Message{Role: "user", Content: errorContent})
+					writeTrajectoryLine(trajDir, map[string]interface{}{
+						"type":    "llm_message",
+						"role":    "user",
+						"content": errorContent,
+					})
+					continue
+				}
+
+				messages = append(messages, llm.Message{Role: "assistant", Content: reviewMessage2})
+				writeTrajectoryLine(trajDir, map[string]interface{}{
+					"type":    "llm_message",
+					"role":    "assistant",
+					"content": reviewMessage2,
+				})
+
+				syncAfterReview2 := exec.CommandContext(ctx, "mct-agent", "sync")
+				if model != "" {
+					syncAfterReview2 = exec.CommandContext(ctx, "mct-agent", "sync", "--model", model, "--max-input-tokens", "800000")
+				}
+				syncAfterReview2.Dir = "/app"
+				syncAfterReview2.Env = append(os.Environ(), "MACHTIANI_CONFIG=/app/.machtiani/config.toml")
+				if syncErr := syncAfterReview2.Run(); syncErr != nil {
+					fmt.Fprintf(os.Stderr, "Warning: sync after second review feedback failed: %v\n", syncErr)
+				}
+				os.Remove(filepath.Join(".machtiani", "sessions", mctSessionID, "chat", "agent-final-answer.md"))
 					continue
 				}
 
