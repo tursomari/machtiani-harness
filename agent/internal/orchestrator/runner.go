@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -46,8 +47,8 @@ Rules and Phases of Operation:
    - Respond with ACTION: CONTINUE and instruct the agent to:
      a) Re-read the original instruction file (/app/instruction.md) to ground the re-implementation in the original requirements.
      b) Reset the git project completely and discard all current changes.
-     c) Taking everything it learned from the first implementation attempt, create a brand new plan from scratch with an actionable checklist.
-     d) Execute that plan fully and commit the new code.
+     c) Taking everything it learned from the first implementation attempt, create /app/implementation-plan.md from scratch using the structured plan format. The plan format is documented in the implementationPlanFormat constant — reference it for the exact template structure. Your plan must include all of these sections: Intent, Safety Rules (NEVER and ALWAYS), Pre-flight Checks with "- [ ]" checkboxes, Execution Phases with "- [ ]" checkboxes for each task, Verification with "- [ ]" checkboxes, Cleanup with "- [ ]" checkboxes, Progress Log table, and Status Table. Commit the plan file immediately after creating it so it survives any subsequent git operations.
+     d) Execute the plan fully. As work progresses, check off completed items using [x] and update the Progress Log and Status Table after each completed checkbox or phase. Do NOT claim implementation is complete until every checkbox in every phase is checked. Commit your work as you go.
 
 4. **Phase 3 - The Final Sanity Check (Third Completion Claim):**
    - When the agent reports that the second implementation is finished, DO NOT accept it as done.
@@ -77,6 +78,8 @@ Run git diff main...HEAD to see the full changeset.
 Run git diff main...HEAD --stat to see the scope of changes.
 Read every modified file in full, not just the diff. Understand how the new code fits into the surrounding context.
 
+Read /app/implementation-plan.md if it exists. This is the structured plan the implementer followed. Cross-reference every item marked [x] (complete) in the plan against the actual code to verify it was truly implemented. For each plan item: check that the described change exists in the code at the expected location, that it produces the expected behavior, and that it has not been regressed by subsequent changes. Flag any item marked [x] that has no corresponding code implementation as "plan item marked complete but not found in code". Flag any item that appears implemented but does not work end-to-end. Note any gaps between the plan declared scope and the actual changeset.
+
 Third, evaluate WIDE (directional correctness):
 Does the implementation address every requirement in the instruction? List each requirement and whether it is implemented, partially implemented, or missing. Is the overall architecture sound? Are there design decisions that solve the immediate problem but create problems for future extension, maintainability, or correctness? Are there requirements that were interpreted in a way that differs from what the instruction clearly asks for? Flag any misinterpretations. Are there requirements that LOOK implemented (code exists) but do not actually work end-to-end because of how pieces connect or fail to connect?
 
@@ -90,11 +93,12 @@ Output format: produce a structured review with these sections:
 
 1. Requirements Coverage: A table with columns requirement, status (implemented, partial, missing), location (file:line or description), and notes.
 IMPORTANT: Do NOT change existing behavior for features that already work correctly. Only fix clear, unambiguous bugs that are supported by concrete evidence from the code. If a finding is ambiguous or could break existing functionality, note it as an observation but do NOT recommend changing the code — introducing regressions by altering correct behavior is worse than leaving a minor issue unaddressed.
-2. Directional Issues: Any design-level concerns where the approach is wrong or fragile, even if individual pieces work.
-3. Bugs Found: Each bug with severity (CRITICAL, HIGH, MEDIUM, LOW), file:line, description of the bug, steps to trigger it, and suggested fix.
-4. Edge Cases Not Handled: Specific input scenarios that would cause incorrect behavior, with the expected versus actual behavior and the file:line where handling is missing.
-5. Regression Risks: Any changes to existing behavior that could break current functionality, with file:line.
-6. Summary Verdict: One paragraph stating whether this implementation is ready or needs another round of fixes. List the top 3 to 5 issues that must be fixed, ranked by severity.
+2. Plan Completeness: A table cross-referencing plan items (from /app/implementation-plan.md) against the actual code. Columns: plan item description, plan status ([x] or [ ] as declared in the plan), actual status (VERIFIED, MISSING, REGRESSED, NOT FOUND), and evidence (file:line or description of what was found or not found).
+3. Directional Issues: Any design-level concerns where the approach is wrong or fragile, even if individual pieces work.
+4. Bugs Found: Each bug with severity (CRITICAL, HIGH, MEDIUM, LOW), file:line, description of the bug, steps to trigger it, and suggested fix.
+5. Edge Cases Not Handled: Specific input scenarios that would cause incorrect behavior, with the expected versus actual behavior and the file:line where handling is missing.
+6. Regression Risks: Any changes to existing behavior that could break current functionality, with file:line.
+7. Summary Verdict: One paragraph stating whether this implementation is ready or needs another round of fixes. List the top 3 to 5 issues that must be fixed, ranked by severity.
 
 Be specific. Cite file names, line numbers, and exact variable names. Do not be vague. Do not say "looks good" without justification. Find problems. If you genuinely cannot find any issues in a category, say "No issues found in this category" and explain what you checked.`
 
@@ -136,6 +140,78 @@ When to BLOCKED:
 - After three identical review submissions with no new substantive content, classify as BLOCKED.
 
 Escalate firmness with each successive CONTINUE. Always tell the agent exactly which section is inadequate and what specific information is missing. Never accept "looks good" or "no issues found" without detailed justification of the investigation performed.`
+
+const implementationPlanFormat = `# Implementation Plan
+
+## Intent
+<Describe what this implementation aims to achieve. Reference the original instruction or issue.>
+
+## Safety Rules
+
+### NEVER
+- NEVER delete or modify existing tests without explicit approval from the original issue requirements.
+- NEVER skip a phase or checkbox without acknowledging it and providing a reason.
+- NEVER commit code that does not compile or causes test failures.
+- NEVER claim implementation is complete until every checkbox in every phase is checked.
+
+### ALWAYS
+- ALWAYS run the project build system after each meaningful change.
+- ALWAYS run the project test suite and confirm all tests pass before checking off a phase.
+- ALWAYS commit after each phase of verifiable progress with a descriptive message.
+- ALWAYS keep this plan up to date — check off items using [x] as work is completed.
+
+## Pre-flight Checks
+- [ ] Read /app/instruction.md to understand the full requirements.
+- [ ] Identify all files that need to be created or modified.
+- [ ] Verify that the project build system runs successfully before making any changes.
+- [ ] Verify that the project test suite passes before making any changes.
+
+## Execution Phases
+
+### Phase 1: <Phase Name>
+- [ ] Task description with specific deliverable.
+- [ ] Task description with specific deliverable.
+
+### Phase 2: <Phase Name>
+- [ ] Task description with specific deliverable.
+- [ ] Task description with specific deliverable.
+
+### Phase N: <Phase Name>
+- [ ] Task description with specific deliverable.
+
+## Verification
+- [ ] Run the project build system and confirm clean compilation.
+- [ ] Run the project test suite and confirm all tests pass.
+- [ ] Run the project integration test suite and confirm end-to-end behavior.
+- [ ] Perform a manual code review of the diff (version control diff showing all changes).
+- [ ] Verify all edge cases from the original instruction are handled.
+
+## Cleanup
+- [ ] Remove any temporary test files or debug logging added during implementation.
+- [ ] Confirm no unrelated files were modified (version control diff --stat).
+- [ ] Perform version control reset (e.g., git reset --hard HEAD) on any accidental changes to unchanged files.
+
+## Progress Log
+
+| Phase | Status | Notes |
+|-------|--------|-------|
+| Pre-flight Checks | Pending | |
+| Phase 1 | Pending | |
+| Phase 2 | Pending | |
+| Phase N | Pending | |
+| Verification | Pending | |
+| Cleanup | Pending | |
+
+## Status Table
+
+| Metric | Value |
+|--------|-------|
+| Current Phase | |
+| Checkboxes Complete | X / Y |
+| Build Status | |
+| Test Status | |
+| Last Commit | |
+`
 
 // extractPrompt scans the args slice for "-f" or "-t" and returns the
 // associated prompt text. If "-f" is found, the next element is treated as a
@@ -435,6 +511,72 @@ func invokeMCTAgentRun(
 	return invokeMCTAgent(ctx, metaSessionID, trajDir, mctSessionID, args...)
 }
 
+// verifyImplementationPlan reads the implementation plan file and checks for
+// any unchecked items or pending phases. Returns a slice of unchecked items;
+// an empty slice means all items are checked off.
+func verifyImplementationPlan() []string {
+	data, err := os.ReadFile("/app/implementation-plan.md")
+	if err != nil {
+		return []string{"Error: implementation plan file not found at /app/implementation-plan.md"}
+	}
+
+	content := strings.TrimSpace(string(data))
+	if content == "" {
+		return []string{"Error: implementation plan file is empty"}
+	}
+
+	var unchecked []string
+	re := regexp.MustCompile(`^\s*- \[ \]`)
+	lines := strings.Split(string(data), "\n")
+	inProgressLog := false
+	inStatusTable := false
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+
+		// Track which section we're in.
+		if strings.HasPrefix(trimmed, "## Progress Log") {
+			inProgressLog = true
+			inStatusTable = false
+			continue
+		}
+		if strings.HasPrefix(trimmed, "## Status Table") {
+			inStatusTable = true
+			inProgressLog = false
+			continue
+		}
+		// Reset section tracking on any other section header.
+		if strings.HasPrefix(trimmed, "## ") {
+			inProgressLog = false
+			inStatusTable = false
+		}
+
+		// Check for unchecked checkboxes.
+		if re.MatchString(line) {
+			unchecked = append(unchecked, trimmed)
+		}
+
+		// Check for PENDING or IN-PROGRESS in Progress Log or Status Table rows.
+		if inProgressLog || inStatusTable {
+			upperLine := strings.ToUpper(trimmed)
+			if strings.Contains(upperLine, "PENDING") || strings.Contains(upperLine, "IN-PROGRESS") || strings.Contains(upperLine, "IN PROGRESS") {
+				alreadyAdded := false
+				for _, item := range unchecked {
+					if item == trimmed {
+						alreadyAdded = true
+						break
+					}
+				}
+				if !alreadyAdded {
+					unchecked = append(unchecked, trimmed)
+				}
+			}
+		}
+	}
+
+	return unchecked
+}
+
 // cleanContent strips the "The agent exited with code N. Output:\n\n" prefix
 // from error content strings, if present. Returns the raw output content
 // suitable for comparison.
@@ -722,6 +864,94 @@ func RunLoop(
 				"content": response,
 			})
 				continueCount++
+				// Plan verification: after the classifier has issued at least 2 CONTINUEs,
+				// verify the implementation plan for unchecked items.
+				if continueCount >= 2 && !reviewMode {
+					planVerifyLoops := 0
+					for {
+						unchecked := verifyImplementationPlan()
+						if len(unchecked) == 0 {
+							writeTrajectoryLine(trajDir, map[string]interface{}{
+								"type":      "plan_verification_passed",
+								"timestamp": time.Now().UTC().Format(time.RFC3339),
+							})
+							break
+						}
+
+						writeTrajectoryLine(trajDir, map[string]interface{}{
+							"type":            "plan_verification_failed",
+							"unchecked_items": unchecked,
+							"timestamp":       time.Now().UTC().Format(time.RFC3339),
+						})
+
+						planVerifyLoops++
+						if planVerifyLoops > 10 {
+							writeTrajectoryLine(trajDir, map[string]interface{}{
+								"type":                    "plan_verification_stuck",
+								"plan_verification_stuck": true,
+								"unchecked_items":         unchecked,
+								"timestamp":               time.Now().UTC().Format(time.RFC3339),
+							})
+							break
+						}
+
+						// Build instruction listing unchecked items.
+						planMsg := "Your implementation plan has unchecked items. Address them before proceeding:\n\n"
+						for _, item := range unchecked {
+							planMsg += "- " + item + "\n"
+						}
+
+						var planArgs []string
+						if mode != "" {
+							planArgs = append(planArgs, "--mode", mode)
+						}
+						if model != "" {
+							planArgs = append(planArgs, "--model", model)
+						}
+						if shellAgentModel != "" {
+							planArgs = append(planArgs, "--shell-agent-model", shellAgentModel)
+						}
+						if tag != "" {
+							planArgs = append(planArgs, "--tag", tag)
+						}
+						planArgs = append(planArgs, "--session-id", mctSessionID)
+						planArgs = append(planArgs, "-t", planMsg)
+						if persistTmpData {
+							planArgs = append(planArgs, "--persist-tmp-data")
+						}
+
+						// Sync before plan verification run.
+						var planSyncArgs []string
+						planSyncArgs = append(planSyncArgs, "sync")
+						if model != "" {
+							planSyncArgs = append(planSyncArgs, "--model", model)
+						}
+						planSyncArgs = append(planSyncArgs, "--max-input-tokens", "800000")
+						planSyncCmd := exec.CommandContext(ctx, "mct-agent", planSyncArgs...)
+						planSyncCmd.Dir = "/app"
+						planSyncCmd.Env = append(os.Environ(), "MACHTIANI_CONFIG=/app/.machtiani/config.toml")
+						if syncErr := planSyncCmd.Run(); syncErr != nil {
+							fmt.Fprintf(os.Stderr, "Warning: mct-agent sync before plan verification failed: %v\n", syncErr)
+						}
+
+						planFinalAnswerPath := filepath.Join(".machtiani", "sessions", mctSessionID, "chat", "agent-final-answer.md")
+						os.Remove(planFinalAnswerPath)
+
+						planExitCode, planErr := invokeMCTAgent(ctx, metaSessionID, trajDir, mctSessionID, planArgs...)
+						if planErr != nil || planExitCode != 0 {
+							// Agent crashed during plan verification; record and break to let classifier handle it.
+							writeTrajectoryLine(trajDir, map[string]interface{}{
+								"type":      "plan_verification_agent_error",
+								"exit_code": planExitCode,
+								"error":     fmt.Sprintf("%v", planErr),
+								"timestamp": time.Now().UTC().Format(time.RFC3339),
+							})
+							break
+						}
+
+						// After agent responds, loop back to re-verify the plan.
+					}
+				}
 				shouldPeerReview := false
 				if !peerReviewDone && !reviewMode {
 					// Primary: message-content match for Phase 4 transition, gated by count >= 4
