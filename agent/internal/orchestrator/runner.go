@@ -713,9 +713,14 @@ func RunLoop(
 				continueCount++
 				shouldPeerReview := false
 				if !peerReviewDone && !reviewMode {
-					if strings.Contains(response, "Phase 4") || strings.Contains(response, "Final Verification") {
+					// Primary: message-content match for Phase 4 transition, gated by count >= 4
+					// to prevent premature firing when the classifier mentions later phases
+					// during earlier escalation messages.
+					if continueCount >= 4 && (strings.Contains(response, "Phase 4") || strings.Contains(response, "Final Verification")) {
 						shouldPeerReview = true
-					} else if continueCount == 5 {
+					}
+					// Fallback: deterministic count-based trigger if message matching never fires
+					if !shouldPeerReview && continueCount >= 5 {
 						shouldPeerReview = true
 					}
 				}
@@ -733,10 +738,9 @@ func RunLoop(
 							"type":   "peer_review_skipped",
 							"reason": reviewErr.Error(),
 						})
-						continue
-					}
-
-					writeTrajectoryLine(trajDir, map[string]interface{}{
+						// Peer review failed, continue with normal Phase 4 flow below
+					} else {
+						writeTrajectoryLine(trajDir, map[string]interface{}{
 						"type":                  "peer_review_completed",
 						"review_content_length": len(reviewContent),
 						"timestamp":             time.Now().UTC().Format(time.RFC3339),
@@ -827,6 +831,7 @@ func RunLoop(
 						"role":    "assistant",
 						"content": reviewMessage,
 					})
+					}
 					continue
 				}
 
