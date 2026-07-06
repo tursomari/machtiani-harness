@@ -16,10 +16,17 @@ set -euo pipefail
 #   ./scripts/run-smoke-test.sh
 #
 # This script builds a clean Docker image from a git worktree at HEAD so
-# that only committed sources are tested.  No remote fetching occurs.
+# that only committed sources are tested.  Submodules are populated from
+# the host's shared .git/modules/ directory without any network access.
 # ---------------------------------------------------------------------------
 
 WORKTREE="/tmp/mct-agent-smoke-context"
+
+# --- Ensure the worktree is always cleaned up on exit ----------------------
+cleanup() {
+  git worktree remove --force "$WORKTREE" 2>/dev/null || true
+}
+trap cleanup EXIT
 
 # --- Validate required environment variables -------------------------------
 missing=false
@@ -48,6 +55,28 @@ git worktree remove --force "$WORKTREE" 2>/dev/null || true
 echo "==> Creating git worktree from HEAD..."
 git worktree add --detach "$WORKTREE" HEAD
 
+# --- Copy submodules from host working directory (no network) --------------
+echo "==> Copying submodules from host working directory..."
+HOST_REPO_ROOT=$(git rev-parse --show-toplevel)
+if [[ -z "${HOST_REPO_ROOT:-}" ]]; then
+  echo "ERROR: HOST_REPO_ROOT is not set or empty." >&2
+  exit 1
+fi
+grep -E '^\s*path\s*=' "${WORKTREE}/.gitmodules" 2>/dev/null | while IFS= read -r line; do
+  submodule_path=$(echo "$line" | sed 's/.*path\s*=\s*//' | xargs)
+  if [[ -z "${submodule_path:-}" ]]; then
+    continue
+  fi
+  host_dir="${HOST_REPO_ROOT}/${submodule_path}"
+  worktree_dir="${WORKTREE}/${submodule_path}"
+  if [[ -d "${host_dir}" ]] && [[ -n "$(ls -A "${host_dir}" 2>/dev/null)" ]]; then
+    rm -rf "${worktree_dir}"
+    mkdir -p "$(dirname "${worktree_dir}")"
+    cp -a "${host_dir}" "${worktree_dir}"
+    rm -rf "${worktree_dir}/.git"
+  fi
+done
+
 # --- Build the Docker image from the worktree ------------------------------
 echo "==> Building Docker image 'mct-agent-smoke'..."
 docker build -f "$WORKTREE/Dockerfile.smoke" -t mct-agent-smoke "$WORKTREE"
@@ -63,10 +92,6 @@ docker run --rm \
   bash /scripts/smoke-test.sh
 exit_code=$?
 set -e
-
-# --- Clean up the worktree (always) ----------------------------------------
-echo "==> Removing git worktree..."
-git worktree remove --force "$WORKTREE"
 
 # --- Summary ----------------------------------------------------------------
 echo
