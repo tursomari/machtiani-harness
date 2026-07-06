@@ -1,0 +1,62 @@
+# Smoketest Dockerfile for mct-agent
+# Multi-stage: builder compiles the binary, runtime is a clean minimal image.
+#
+# Build:
+#   docker build -f Dockerfile.smoke -t mct-agent-smoke .
+#
+# Run (no secrets in build layers):
+#   docker run --rm -e TEST_API_KEY=... mct-agent-smoke bash /scripts/smoke-test.sh
+
+# ---------------------------------------------------------------------------
+# Builder stage: compile mct-agent and any peripherals
+# ---------------------------------------------------------------------------
+FROM golang:1.23-alpine AS builder
+
+# System dependencies for the build: git (version stamping), build-base (cgo
+# support when needed), bash (to run install.sh), and ripgrep (install.sh
+# preflight check).
+RUN apk add --no-cache git build-base bash ripgrep
+
+WORKDIR /src
+
+# Layer go.mod/go.sum first so dependency download is cached.
+COPY agent/go.mod agent/go.sum ./agent/
+WORKDIR /src/agent
+RUN go mod download
+
+# Now copy the rest of the source tree.
+WORKDIR /src
+COPY . .
+
+# Build binaries.
+#  1. Try the canonical install script with PREFIX=/out.
+#  2. If it fails (e.g. missing runtime deps), fall back to a direct go build
+#     of mct-agent.
+RUN mkdir -p /out/bin && \
+    (PREFIX=/out bash scripts/install.sh 2>/dev/null || \
+     (cd agent && go build -buildvcs=false -o /out/bin/mct-agent ./cmd/mct-agent))
+
+# ---------------------------------------------------------------------------
+# Runtime stage: lean production image with only the tools mct-agent needs
+# ---------------------------------------------------------------------------
+FROM alpine:3.20
+
+# Runtime system dependencies.
+#   git       – workspace operations and repository introspection
+#   ripgrep   – file-discovery engine
+#   curl      – smoke-test harness helper
+#   bash/sed  – shell scripting in the smoke-test entrypoint
+RUN apk add --no-cache git ripgrep curl bash sed
+
+# Pull built binaries from the builder stage.
+COPY --from=builder /out/bin /usr/local/bin/
+
+# Smoke-test script (created in a later phase; referenced here so the
+# Dockerfile is self-documenting).
+COPY scripts/smoke-test.sh /scripts/smoke-test.sh
+
+WORKDIR /workspace
+
+# .machtiani/ is deliberately NOT copied – no runtime state leaks into the
+# image. Credentials and configuration are injected at container start via
+# environment variables or volume mounts.
