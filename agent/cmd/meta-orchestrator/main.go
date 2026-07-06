@@ -26,6 +26,7 @@ func main() {
 	instruction := pflag.StringP("instruction", "f", "", "Path to instruction file (required)")
 	tag := pflag.String("tag", "now", "Tag suffix for answer and command tags (optional)")
 	persistTmpData := pflag.Bool("persist-tmp-data", false, "Keep temporary data after execution (optional)")
+	reviewMode := pflag.Bool("review-mode", false, "Operate in peer review mode with review-specific classifier prompt (optional)")
 
 	pflag.Parse()
 
@@ -46,7 +47,7 @@ func main() {
 	fmt.Printf("Meta session: %s, MCT session: %s, mode: %s\n", metaSessionID, mctSessionID, *mode)
 
 	ctx := context.Background()
-	exitCode, err := orchestrator.RunLoop(ctx, metaSessionID, mctSessionID, *instruction, *mode, *model, *shellAgentModel, *tag, *persistTmpData)
+	exitCode, err := orchestrator.RunLoop(ctx, metaSessionID, mctSessionID, *instruction, *mode, *model, *shellAgentModel, *tag, *persistTmpData, *reviewMode)
 	if err != nil {
 		log.Printf("Error in run loop: %v", err)
 		os.Exit(1)

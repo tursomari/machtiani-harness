@@ -66,6 +66,76 @@ Global Rules:
 - If the final answer describes an irrecoverable hard blocker (e.g. no API credits available, critical missing dependency that cannot be resolved), respond with ACTION: BLOCKED.
 - Maintain context across rounds. Use the chat history to determine which phase the agent is currently in. Escalate the firmness of your instructions if mct-agent stalls or attempts to bypass a phase.`
 
+const peerReviewInstruction = `You are a peer reviewer evaluating an implementation against its original requirements. Your job is to produce a rigorous, actionable critique, not a summary.
+
+First, understand the requirements:
+Read /app/instruction.md completely. This is the original specification the implementer was given. Identify every distinct feature, behavior, edge case, and constraint listed. Enumerate them as a checklist in your mental notes.
+
+Second, understand what was implemented:
+Run git log --oneline main..HEAD to see every commit.
+Run git diff main...HEAD to see the full changeset.
+Run git diff main...HEAD --stat to see the scope of changes.
+Read every modified file in full, not just the diff. Understand how the new code fits into the surrounding context.
+
+Third, evaluate WIDE (directional correctness):
+Does the implementation address every requirement in the instruction? List each requirement and whether it is implemented, partially implemented, or missing. Is the overall architecture sound? Are there design decisions that solve the immediate problem but create problems for future extension, maintainability, or correctness? Are there requirements that were interpreted in a way that differs from what the instruction clearly asks for? Flag any misinterpretations. Are there requirements that LOOK implemented (code exists) but do not actually work end-to-end because of how pieces connect or fail to connect?
+
+Fourth, evaluate DEEP (bug and edge-case hunting):
+Trace every code path introduced or modified. For each function, walk through every branch and identify inputs that would cause incorrect behavior, panics, or silent failures. Check path handling: are paths normalized? Can they be doubled, resolve outside the intended directory, or break on symlinks, relative paths, absolute paths, or nested directories? Check error handling: does every error path produce the correct error message? Are errors swallowed? Are error messages specific enough to be useful? Check ordering and precedence: where multiple config sources or flags interact, is the precedence correct in every combination? Check edge cases: empty inputs, nil values, zero-length slices, duplicate entries, circular references, already-loaded modules, concurrent access. Check that environment variable handling (reading, parsing, precedence, fallback) matches the specification exactly, including quoted entries, whitespace, and empty values. Check that any cache or state tracking is correct: keys are normalized, lookups are consistent, state transitions are valid, and stats or reporting reflect what actually happened.
+
+Fifth, check for regressions:
+Compare each modified file against its original version. Does any change break existing behavior that the instruction did not ask to change? Are there functions whose signatures or contracts changed in a way that existing callers would break?
+
+Output format: produce a structured review with these sections:
+
+1. Requirements Coverage: A table with columns requirement, status (implemented, partial, missing), location (file:line or description), and notes.
+2. Directional Issues: Any design-level concerns where the approach is wrong or fragile, even if individual pieces work.
+3. Bugs Found: Each bug with severity (CRITICAL, HIGH, MEDIUM, LOW), file:line, description of the bug, steps to trigger it, and suggested fix.
+4. Edge Cases Not Handled: Specific input scenarios that would cause incorrect behavior, with the expected versus actual behavior and the file:line where handling is missing.
+5. Regression Risks: Any changes to existing behavior that could break current functionality, with file:line.
+6. Summary Verdict: One paragraph stating whether this implementation is ready or needs another round of fixes. List the top 3 to 5 issues that must be fixed, ranked by severity.
+
+Be specific. Cite file names, line numbers, and exact variable names. Do not be vague. Do not say "looks good" without justification. Find problems. If you genuinely cannot find any issues in a category, say "No issues found in this category" and explain what you checked.`
+
+const reviewSystemPrompt = `You are a review-mode orchestrator. Your sole job is to ensure mct-agent produces a thorough, substantive peer review of an implementation. You will receive the contents of mct-agents agent-final-answer.md after each invocation and must evaluate whether the review is complete.
+
+Respond with exactly one of these three formats:
+
+ACTION: CONTINUE
+MESSAGE: <specific instruction telling mct-agent what is missing and what to do>
+
+ACTION: DONE
+MESSAGE: <brief acknowledgment>
+
+ACTION: BLOCKED
+MESSAGE: <description of the hard blocker>
+
+Review Completion Criteria (ACTION: DONE requires ALL of the following):
+- A Requirements Coverage section exists with at least one row per distinct requirement from the original instruction, each specifying status (implemented, partial, missing) and location (file:line or specific description).
+- A Directional Issues section exists. If no directional issues were found, it must state "No directional issues found" AND explain what architectural-level checks were performed.
+- A Bugs Found section exists with entries that cite specific file names and line numbers. Each entry describes the bug, steps to trigger it, and a suggested fix. If no bugs were found, it must state "No bugs found" AND list the code paths that were traced and why each was determined to be correct.
+- An Edge Cases Not Handled section exists with specific input scenarios and the file:line where handling is missing. Each scenario must be concrete, not generic (e.g., "empty ABS_MODULE_PATH with trailing colon" not "check empty inputs").
+- A Regression Risks section exists. If no regressions were identified, it must state "No regression risks identified" AND list which existing callers and behaviors were verified.
+- A Summary Verdict section exists with a clear readiness assessment and at least 3 specific issues ranked by severity (CRITICAL/HIGH/MEDIUM/LOW). If fewer than 3 issues exist, explain why the implementation is exceptionally clean.
+- The review references specific code from git diff output, not just the instruction. Evidence of having actually read the code changes must be present.
+- All findings must cite file names and line numbers. Vague statements like "the implementation looks good" or "edge cases are handled" without specific evidence are insufficient.
+
+When to CONTINUE (issue specific, actionable instructions):
+- Any required section is missing or contains only placeholder text.
+- The Requirements Coverage section is a brief yes/no list without locations or substantive notes.
+- Bugs Found entries do not cite specific file names and line numbers.
+- Edge Cases Not Handled contains only generic advice ("handle edge cases") without concrete scenarios.
+- The Summary Verdict says "looks good" or "ready" without listing specific issues or explaining the investigation performed.
+- The review does not reference any specific code from the diff, suggesting the reviewer did not actually examine the implementation.
+- Any section is implausibly short relative to the scope of changes (e.g., a one-line Bugs Found section for a multi-hundred-line diff).
+
+When to BLOCKED:
+- The agent cannot access /app/instruction.md or the git repository.
+- mct-agent reports an irrecoverable technical failure.
+- After three identical review submissions with no new substantive content, classify as BLOCKED.
+
+Escalate firmness with each successive CONTINUE. Always tell the agent exactly which section is inadequate and what specific information is missing. Never accept "looks good" or "no issues found" without detailed justification of the investigation performed.`
+
 // extractPrompt scans the args slice for "-f" or "-t" and returns the
 // associated prompt text. If "-f" is found, the next element is treated as a
 // file path and its contents are read and returned. If "-t" is found, the
@@ -164,6 +234,148 @@ func invokeMCTAgent(ctx context.Context, metaSessionID string, trajDir string, m
 	return exitCode, nil
 }
 
+// invokeReviewer runs a child meta-orchestrator in review mode to evaluate
+// the main agent's implementation. It returns the review content as a string.
+func invokeReviewer(ctx context.Context, metaSessionID string, trajDir string, model string, shellAgentModel string, mainSessionID string) (string, error) {
+	// 1. Write peer review instruction file.
+	if err := os.WriteFile("/app/review-instruction.md", []byte(peerReviewInstruction), 0644); err != nil {
+		return "", err
+	}
+
+	// 2. Run mct-agent sync to refresh internal state after the main agent commits.
+	if model != "" {
+		syncCmd := exec.CommandContext(ctx, "mct-agent", "sync", "--model", model, "--max-input-tokens", "800000")
+		if err := syncCmd.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "review sync warning: %v\n", err)
+		}
+	}
+
+	// 3. Determine the child meta-orchestrator binary path.
+	binaryPath := os.Getenv("MCT_META_ORCHESTRATOR_BINARY")
+	if binaryPath == "" {
+		binaryPath = "meta-orchestrator"
+	} else {
+		if _, err := os.Stat(binaryPath); os.IsNotExist(err) {
+			binaryPath = "meta-orchestrator"
+		}
+	}
+
+	// 4. Construct the child command.
+	var childArgs []string
+	childArgs = append(childArgs, "--review-mode", "--mode", "code-forge")
+	if model != "" {
+		childArgs = append(childArgs, "--model", model)
+	}
+	if shellAgentModel != "" {
+		childArgs = append(childArgs, "--shell-agent-model", shellAgentModel)
+	}
+	childArgs = append(childArgs, "--tag", "review", "-f", "/app/review-instruction.md")
+
+	reviewCtx, cancel := context.WithTimeout(ctx, 30*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(reviewCtx, binaryPath, childArgs...)
+
+	// 5. Set up stdout pipe and stderr capture.
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		return "", err
+	}
+
+	var stderrBuf bytes.Buffer
+	cmd.Stderr = io.MultiWriter(os.Stderr, &stderrBuf)
+
+	// 6. Start the command.
+	if err := cmd.Start(); err != nil {
+		return "", err
+	}
+
+	// 7. Read stdout and extract the child MCT session ID.
+	stdoutData, err := io.ReadAll(stdoutPipe)
+	if err != nil {
+		cmd.Wait()
+		return "", err
+	}
+
+	stdoutStr := string(stdoutData)
+	var childMctSessionID string
+	for _, line := range strings.Split(stdoutStr, "\n") {
+		if strings.Contains(line, "MCT session:") {
+			parts := strings.Split(line, ",")
+			for _, part := range parts {
+				trimmed := strings.TrimSpace(part)
+				if strings.HasPrefix(trimmed, "MCT session:") {
+					childMctSessionID = strings.TrimSpace(strings.TrimPrefix(trimmed, "MCT session:"))
+					break
+				}
+			}
+			break
+		}
+	}
+
+	if childMctSessionID == "" {
+		// Fallback: scan .machtiani/sessions/ for the most recently created
+		// directory that starts with "agent-" prefix.
+		entries, readErr := os.ReadDir(".machtiani/sessions")
+		if readErr == nil {
+			var latestDir string
+			var latestTime time.Time
+			for _, entry := range entries {
+				if entry.IsDir() && strings.HasPrefix(entry.Name(), "agent-") {
+					info, infoErr := entry.Info()
+					if infoErr == nil && info.ModTime().After(latestTime) {
+						latestTime = info.ModTime()
+						latestDir = entry.Name()
+					}
+				}
+			}
+			childMctSessionID = latestDir
+		}
+	}
+
+	// 8. Wait for the child to finish.
+	waitErr := cmd.Wait()
+
+	// 9. If the child exited with a non-zero code, record and return an error.
+	if waitErr != nil {
+		var exitCode int
+		if exitErr, ok := waitErr.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		} else {
+			exitCode = -1
+		}
+
+		stderrStr := stderrBuf.String()
+
+		writeTrajectoryLine(trajDir, map[string]interface{}{
+			"type":      "peer_reviewer_exit",
+			"exit_code": exitCode,
+			"stderr":    stderrStr,
+			"timestamp": time.Now().UTC().Format(time.RFC3339),
+		})
+
+		return "", fmt.Errorf("reviewer process exited with code %d: %s", exitCode, stderrStr)
+	}
+
+	// 10. Read child agent-final-answer.md.
+	reviewPath := filepath.Join(".machtiani", "sessions", childMctSessionID, "chat", "agent-final-answer.md")
+	reviewData, err := os.ReadFile(reviewPath)
+	if err != nil {
+		return "", fmt.Errorf("reading reviewer final answer: %w", err)
+	}
+
+	review := string(reviewData)
+
+	// 11. Write trajectory entry for the review invocation.
+	writeTrajectoryLine(trajDir, map[string]interface{}{
+		"type":                  "peer_review_invocation",
+		"reviewer_session_id":   childMctSessionID,
+		"review_content_length": len(review),
+		"timestamp":             time.Now().UTC().Format(time.RFC3339),
+	})
+
+	return review, nil
+}
+
 // writeTrajectoryLine appends a JSON line to the trajectory file.
 // It never returns an error so that trajectory issues do not break the loop.
 func writeTrajectoryLine(dir string, entry interface{}) {
@@ -245,6 +457,7 @@ func RunLoop(
 	shellAgentModel string,
 	tag string,
 	persistTmpData bool,
+	reviewMode bool,
 ) (int, error) {
 	trajDir := filepath.Join(".machtiani", "meta-orchestrator", "sessions", metaSessionID)
 
@@ -257,21 +470,27 @@ func RunLoop(
 
 	exitCode, err := invokeMCTAgentRun(ctx, metaSessionID, trajDir, mctSessionID, instructionFilePath, mode, model, shellAgentModel, tag, persistTmpData)
 
+	systemPrompt := orchestratorSystemPrompt
+	if reviewMode {
+		systemPrompt = reviewSystemPrompt
+	}
+
 	writeTrajectoryLine(trajDir, map[string]interface{}{
 		"type":    "llm_message",
 		"role":    "system",
-		"content": orchestratorSystemPrompt,
+		"content": systemPrompt,
 	})
 
 	messages := []llm.Message{
 		{
 			Role:    "system",
-			Content: orchestratorSystemPrompt,
+			Content: systemPrompt,
 		},
 	}
 
 	var lastFinalAnswer string
 	repeatCount := 0
+	continueCount := 0
 
 	var initialError bool
 	if err != nil || exitCode != 0 {
@@ -486,6 +705,117 @@ func RunLoop(
 				"role":    "assistant",
 				"content": response,
 			})
+				continueCount++
+				if continueCount == 4 && !reviewMode {
+					writeTrajectoryLine(trajDir, map[string]interface{}{
+						"type":      "peer_review_phase_start",
+						"timestamp": time.Now().UTC().Format(time.RFC3339),
+					})
+
+					reviewContent, reviewErr := invokeReviewer(ctx, metaSessionID, trajDir, model, shellAgentModel, mctSessionID)
+					if reviewErr != nil {
+						fmt.Fprintf(os.Stderr, "Peer review failed: %v\n", reviewErr)
+						writeTrajectoryLine(trajDir, map[string]interface{}{
+							"type":   "peer_review_skipped",
+							"reason": reviewErr.Error(),
+						})
+						continue
+					}
+
+					writeTrajectoryLine(trajDir, map[string]interface{}{
+						"type":                  "peer_review_completed",
+						"review_content_length": len(reviewContent),
+						"timestamp":             time.Now().UTC().Format(time.RFC3339),
+					})
+
+					reviewMessage := "A peer reviewer has completed a thorough review of your implementation. Review feedback follows. Address ALL findings before proceeding.\n\n--- PEER REVIEW ---\n" + reviewContent + "\n--- END REVIEW ---\n\nAfter addressing all findings, the meta-orchestrator will perform final verification."
+
+					var reviewArgs []string
+					if mode != "" {
+						reviewArgs = append(reviewArgs, "--mode", mode)
+					}
+					if model != "" {
+						reviewArgs = append(reviewArgs, "--model", model)
+					}
+					if shellAgentModel != "" {
+						reviewArgs = append(reviewArgs, "--shell-agent-model", shellAgentModel)
+					}
+					if tag != "" {
+						reviewArgs = append(reviewArgs, "--tag", tag)
+					}
+					reviewArgs = append(reviewArgs, "--session-id", mctSessionID)
+					reviewArgs = append(reviewArgs, "-t", reviewMessage)
+					if persistTmpData {
+						reviewArgs = append(reviewArgs, "--persist-tmp-data")
+					}
+
+					syncCmd := exec.CommandContext(ctx, "mct-agent", "sync")
+					if syncErr := syncCmd.Run(); syncErr != nil {
+						fmt.Fprintf(os.Stderr, "Warning: mct-agent sync before review feedback failed: %v\n", syncErr)
+					}
+
+					finalAnswerPath := filepath.Join(".machtiani", "sessions", mctSessionID, "chat", "agent-final-answer.md")
+					os.Remove(finalAnswerPath)
+
+					reviewExitCode, reviewInvokeErr := invokeMCTAgent(ctx, metaSessionID, trajDir, mctSessionID, reviewArgs...)
+					if reviewInvokeErr != nil || reviewExitCode != 0 {
+						messages = append(messages, llm.Message{Role: "assistant", Content: reviewMessage})
+						writeTrajectoryLine(trajDir, map[string]interface{}{
+							"type":    "llm_message",
+							"role":    "assistant",
+							"content": reviewMessage,
+						})
+
+						data, readErr := os.ReadFile(filepath.Join(".machtiani", "sessions", mctSessionID, "chat", "agent-final-answer.md"))
+						var errorContent string
+						if readErr == nil {
+							trimmed := strings.TrimSpace(string(data))
+							if trimmed != "" {
+								errorContent = fmt.Sprintf("The agent exited with code %d after review feedback. Output:\n\n%s", reviewExitCode, trimmed)
+							} else {
+								errorContent = fmt.Sprintf("The agent exited with code %d after review feedback. The agent process crashed without producing output.", reviewExitCode)
+							}
+						} else {
+							errorContent = fmt.Sprintf("The agent exited with code %d after review feedback. The agent process crashed without producing output.", reviewExitCode)
+						}
+						if reviewInvokeErr != nil {
+							errorContent = fmt.Sprintf("The agent exited with code %d after review feedback. Error: %v", reviewExitCode, reviewInvokeErr)
+						}
+
+						if cleanContent(errorContent) == cleanContent(lastFinalAnswer) {
+							repeatCount++
+							if repeatCount == 2 {
+								errorContent = "WARNING: Your last two responses were identical. You are stuck in a loop. You MUST take a fundamentally different approach this time.\n\n" + errorContent
+							}
+							if repeatCount >= 3 {
+								writeTrajectoryLine(trajDir, map[string]interface{}{
+									"type":    "llm_classification",
+									"action":  "BLOCKED",
+									"message": "Agent stuck in loop after review feedback.",
+								})
+								return 1, fmt.Errorf("hard blocker: agent stuck in loop after review feedback")
+							}
+						} else {
+							repeatCount = 0
+							lastFinalAnswer = errorContent
+						}
+						messages = append(messages, llm.Message{Role: "user", Content: errorContent})
+						writeTrajectoryLine(trajDir, map[string]interface{}{
+							"type":    "llm_message",
+							"role":    "user",
+							"content": errorContent,
+						})
+						continue
+					}
+
+					messages = append(messages, llm.Message{Role: "assistant", Content: reviewMessage})
+					writeTrajectoryLine(trajDir, map[string]interface{}{
+						"type":    "llm_message",
+						"role":    "assistant",
+						"content": reviewMessage,
+					})
+					continue
+				}
 		case "DONE":
 			return 0, nil
 		case "BLOCKED":
