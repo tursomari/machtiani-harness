@@ -726,7 +726,7 @@ func RunLoop(
 					// Primary: message-content match for Phase 4 transition, gated by count >= 4
 					// to prevent premature firing when the classifier mentions later phases
 					// during earlier escalation messages.
-					if continueCount >= 4 && (strings.Contains(response, "Phase 4") || strings.Contains(response, "Final Verification")) {
+					if continueCount >= 5 && (strings.Contains(response, "Phase 4") || strings.Contains(response, "Final Verification")) {
 						shouldPeerReview = true
 					}
 					// Fallback: deterministic count-based trigger if message matching never fires
