@@ -173,7 +173,7 @@ func invokeMCTAgent(ctx context.Context, metaSessionID string, trajDir string, m
 	var stderrBuf bytes.Buffer
 	cmd.Stdout = io.MultiWriter(os.Stdout, &stdoutBuf)
 	cmd.Stderr = io.MultiWriter(os.Stderr, &stderrBuf)
-	cmd.Env = append(os.Environ(), "MACHTIANI_SESSION_ID="+mctSessionID)
+	cmd.Env = append(os.Environ(), "MACHTIANI_SESSION_ID="+mctSessionID, "MACHTIANI_CONFIG=/app/.machtiani/config.toml")
 
 	err := cmd.Run()
 	var exitCode int
@@ -248,6 +248,7 @@ func invokeReviewer(ctx context.Context, metaSessionID string, trajDir string, m
 	if model != "" {
 		syncCmd := exec.CommandContext(ctx, "mct-agent", "sync", "--model", model, "--max-input-tokens", "800000")
 		syncCmd.Dir = "/app"
+		syncCmd.Env = append(os.Environ(), "MACHTIANI_CONFIG=/app/.machtiani/config.toml")
 		if err := syncCmd.Run(); err != nil {
 			fmt.Fprintf(os.Stderr, "review sync warning: %v\n", err)
 		}
@@ -278,6 +279,7 @@ func invokeReviewer(ctx context.Context, metaSessionID string, trajDir string, m
 	defer cancel()
 	cmd := exec.CommandContext(reviewCtx, binaryPath, childArgs...)
 	cmd.Dir = "/app"
+	cmd.Env = append(os.Environ(), "MACHTIANI_CONFIG=/app/.machtiani/config.toml")
 
 	// 5. Set up stdout pipe and stderr capture.
 	stdoutPipe, err := cmd.StdoutPipe()
@@ -646,6 +648,7 @@ func RunLoop(
 			syncArgs = append(syncArgs, "--max-input-tokens", "800000")
 			syncCmd := exec.CommandContext(ctx, "mct-agent", syncArgs...)
 			syncCmd.Dir = "/app"
+			syncCmd.Env = append(os.Environ(), "MACHTIANI_CONFIG=/app/.machtiani/config.toml")
 			if syncErr := syncCmd.Run(); syncErr != nil {
 				fmt.Fprintf(os.Stderr, "Warning: mct-agent sync failed: %v\n", syncErr)
 			}
@@ -782,6 +785,7 @@ func RunLoop(
 					syncArgs = append(syncArgs, "--max-input-tokens", "800000")
 					syncCmd := exec.CommandContext(ctx, "mct-agent", syncArgs...)
 					syncCmd.Dir = "/app"
+					syncCmd.Env = append(os.Environ(), "MACHTIANI_CONFIG=/app/.machtiani/config.toml")
 					if syncErr := syncCmd.Run(); syncErr != nil {
 						fmt.Fprintf(os.Stderr, "Warning: mct-agent sync before review feedback failed: %v\n", syncErr)
 					}
@@ -851,6 +855,7 @@ func RunLoop(
 						syncAfterReview = exec.CommandContext(ctx, "mct-agent", "sync", "--model", model, "--max-input-tokens", "800000")
 					}
 					syncAfterReview.Dir = "/app"
+					syncAfterReview.Env = append(os.Environ(), "MACHTIANI_CONFIG=/app/.machtiani/config.toml")
 					if syncErr := syncAfterReview.Run(); syncErr != nil {
 						fmt.Fprintf(os.Stderr, "Warning: sync after review feedback failed: %v\n", syncErr)
 					}
