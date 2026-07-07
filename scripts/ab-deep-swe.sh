@@ -18,8 +18,15 @@ Options:
   --tasks, -p <path>          Path to Deep-SWE task directory
                               (default: $HOME/projects/deep-swe/tasks)
   --concurrent, -n <int>      Number of concurrent pier trials (default: 4)
+  --agent-timeout-multiplier <float>  Timeout multiplier for pier agent (default: 1.0)
   --agent-import-path <path>  Pier agent import path
                               (default: mct_pier_adapter.mct_agent:MctAgent)
+  --treatment-only           Skip control benchmark and comparison; only run
+                              the treatment benchmark and persist results
+  --agent-name <name>        Agent label for the results tree
+                              (default: mct-orchestrator)
+  --treatment-name <name>    Treatment label for the results tree
+                              (default: with-peer-review)
   --help, -h                  Print this help message and exit
 EOF
     exit 0
@@ -32,7 +39,12 @@ CONTROL_COMMIT="master"
 TREATMENT_COMMIT="HEAD"
 TASKS="${HOME}/projects/deep-swe/tasks"
 CONCURRENT="4"
+TIMEOUT_MULTIPLIER="1.0"
 AGENT_IMPORT_PATH="mct_pier_adapter.mct_agent:MctAgent"
+AGENT_NAME="mct-orchestrator"
+TREATMENT_NAME="with-peer-review"
+TREATMENT_ONLY="false"
+DEEP_SWE_REPO="${HOME}/projects/deep-swe"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -41,6 +53,10 @@ while [[ $# -gt 0 ]]; do
         --tasks|-p)           TASKS="$2";              shift 2 ;;
         --concurrent|-n)      CONCURRENT="$2";         shift 2 ;;
         --agent-import-path)  AGENT_IMPORT_PATH="$2";  shift 2 ;;
+        --agent-timeout-multiplier) TIMEOUT_MULTIPLIER="$2"; shift 2 ;;
+        --treatment-only)     TREATMENT_ONLY="true";  shift ;;
+        --agent-name)         AGENT_NAME="$2";        shift 2 ;;
+        --treatment-name)     TREATMENT_NAME="$2";    shift 2 ;;
         --help|-h)            usage ;;
         *) echo "Error: unknown option: $1" >&2; usage ;;
     esac
@@ -64,6 +80,13 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 OUTPUT_BASE="/tmp/mct-ab-deepswe"
 CONTROL_OUT="${OUTPUT_BASE}/control"
 TREATMENT_OUT="${OUTPUT_BASE}/treatment"
+
+# Per-task persistence tree under the repo for treatment results.
+BENCH_DIR="${REPO_ROOT}/.bench"
+BENCH_TIMESTAMP_FS="$(date -u +%Y-%m-%dT%H-%M-%SZ)"
+BENCH_TIMESTAMP_ISO="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+FULL_BENCH_DIR="${BENCH_DIR}/deep-swe/${AGENT_NAME}/${TREATMENT_NAME}/${BENCH_TIMESTAMP_FS}"
+mkdir -p "${BENCH_DIR}" "${FULL_BENCH_DIR}"
 
 echo "[setup] Preparing ${OUTPUT_BASE}"
 rm -rf "${OUTPUT_BASE}"
@@ -132,32 +155,92 @@ build_agent() {
 }
 
 # ----------------------------------------------------------------------------
+# Helper: persist trial results as each task completes.
+#
+# Arguments:
+#   $1 JOBS_DIR    Pier jobs directory (e.g. ${TREATMENT_OUT}/jobs)
+#   $2 BENCH_DIR    Destination bench directory (e.g. ${FULL_BENCH_DIR})
+#   $3 TASKS_DIR    Deep-SWE tasks directory (for instruction.md)
+#   $4 JOB_NAME     Pier job name (e.g. mct-ab-treatment)
+# ----------------------------------------------------------------------------
+persist_results() {
+    local JOBS_DIR="$1" BENCH_DIR="$2" TASKS_DIR="$3" JOB_NAME="$4"
+    declare -A PERSISTED
+
+    # Inner helper: sweep all trial directories once and persist any new ones.
+    _persist_sweep() {
+        local trial_dir task_name
+        for trial_dir in "${JOBS_DIR}/${JOB_NAME}/"*__*; do
+            [[ -d "${trial_dir}" ]] || continue
+            [[ -f "${trial_dir}/verifier/reward.json" ]] || continue
+            task_name="$(basename "${trial_dir}" | sed 's/__.*$//')"
+            if [[ -z "${PERSISTED[${task_name}]:-}" ]]; then
+                mkdir -p "${BENCH_DIR}/${task_name}"
+                cp "${trial_dir}/verifier/reward.json" \
+                    "${BENCH_DIR}/${task_name}/reward.json" 2>/dev/null || true
+                if [[ -f "${TASKS_DIR}/${task_name}/instruction.md" ]]; then
+                    cp "${TASKS_DIR}/${task_name}/instruction.md" \
+                        "${BENCH_DIR}/${task_name}/instruction.md" 2>/dev/null || true
+                fi
+                if [[ -d "${trial_dir}/agent" ]]; then
+                    rsync -a "${trial_dir}/agent/" \
+                        "${BENCH_DIR}/${task_name}/agent/" 2>/dev/null || true
+                fi
+                echo "[persist] captured results for ${task_name}"
+                PERSISTED["${task_name}"]=1
+            fi
+        done
+    }
+
+    while true; do
+        _persist_sweep
+
+        # If pier run is no longer running, do one final sweep and exit.
+        if ! pgrep -f "pier run" >/dev/null 2>&1; then
+            _persist_sweep
+            break
+        fi
+
+        sleep 5
+    done
+}
+
+# ----------------------------------------------------------------------------
 # Build both binaries
 # ----------------------------------------------------------------------------
-build_agent "${CONTROL_COMMIT}" "${CONTROL_BIN}" "control" "${CONTROL_META_BIN}"
+# Treatment binary is always built, even in --treatment-only mode.
+if [[ "${TREATMENT_ONLY}" != "true" ]]; then
+    build_agent "${CONTROL_COMMIT}" "${CONTROL_BIN}" "control" "${CONTROL_META_BIN}"
+fi
 build_agent "${TREATMENT_COMMIT}" "${TREATMENT_BIN}" "treatment" "${TREATMENT_META_BIN}"
 
 # ----------------------------------------------------------------------------
 # Run control benchmark
 # ----------------------------------------------------------------------------
-echo ""
-echo "==== Step 1 — Run control benchmark ===="
+if [[ "${TREATMENT_ONLY}" != "true" ]]; then
+    echo ""
+    echo "==== Step 1 — Run control benchmark ===="
 
-export MCT_META_ORCHESTRATOR_BINARY=${CONTROL_META_BIN}
-export MCT_AGENT_BINARY=${CONTROL_BIN}
-pier run \
-    --ae "MCT_AGENT_BINARY=${CONTROL_BIN}" \
-    --ae "MCT_META_ORCHESTRATOR_BINARY=${CONTROL_META_BIN}" \
-    --ae "TEST_API_KEY=${TEST_API_KEY}" \
-    --ae "TEST_BASE_URL=${TEST_BASE_URL}" \
-    --ae "TEST_MODEL=${TEST_MODEL}" \
-    --agent-import-path "${AGENT_IMPORT_PATH}" \
-    --job-name "mct-ab-control" \
-    --jobs-dir "${CONTROL_OUT}/jobs" \
-    --n-concurrent "${CONCURRENT}" \
-    -p "${TASKS}"
+    export MCT_META_ORCHESTRATOR_BINARY=${CONTROL_META_BIN}
+    export MCT_AGENT_BINARY=${CONTROL_BIN}
+    pier run \
+        --ae "MCT_AGENT_BINARY=${CONTROL_BIN}" \
+        --ae "MCT_META_ORCHESTRATOR_BINARY=${CONTROL_META_BIN}" \
+        --ae "TEST_API_KEY=${TEST_API_KEY}" \
+        --ae "TEST_BASE_URL=${TEST_BASE_URL}" \
+        --ae "TEST_MODEL=${TEST_MODEL}" \
+        --agent-import-path "${AGENT_IMPORT_PATH}" \
+        --job-name "mct-ab-control" \
+        --jobs-dir "${CONTROL_OUT}/jobs" \
+        --n-concurrent "${CONCURRENT}" \
+        --agent-timeout-multiplier "${TIMEOUT_MULTIPLIER}" \
+        -p "${TASKS}"
 
-echo "[run:control] Complete."
+    echo "[run:control] Complete."
+else
+    echo ""
+    echo "==== Step 1 — Skipped (--treatment-only) ===="
+fi
 
 # ----------------------------------------------------------------------------
 # Run treatment benchmark
@@ -177,17 +260,49 @@ pier run \
     --job-name "mct-ab-treatment" \
     --jobs-dir "${TREATMENT_OUT}/jobs" \
     --n-concurrent "${CONCURRENT}" \
+    --agent-timeout-multiplier "${TIMEOUT_MULTIPLIER}" \
     -p "${TASKS}"
 
 echo "[run:treatment] Complete."
+# Run per-task persistence in the background and wait for it to finish.
+( persist_results "${TREATMENT_OUT}/jobs" "${FULL_BENCH_DIR}" "${TASKS}" "mct-ab-treatment" ) &
+PERSIST_PID=$!
+wait "${PERSIST_PID}" 2>/dev/null || true
+
+# ----------------------------------------------------------------------------
+# Write run-metadata.json at FULL_BENCH_DIR
+# ----------------------------------------------------------------------------
+MCT_BENCH_HEAD="$(git -C "${REPO_ROOT}" rev-parse HEAD 2>/dev/null || echo unknown)"
+DEEP_SWE_HEAD="$(git -C "${DEEP_SWE_REPO}" rev-parse HEAD 2>/dev/null || echo unknown)"
+jq -n \
+    --arg timestamp "${BENCH_TIMESTAMP_ISO}" \
+    --arg agent "${AGENT_NAME}" \
+    --arg treatment "${TREATMENT_NAME}" \
+    --arg mct_bench_head "${MCT_BENCH_HEAD}" \
+    --arg deep_swe_head "${DEEP_SWE_HEAD}" \
+    --arg model "${TEST_MODEL}" \
+    --arg deep_swe_repo "${DEEP_SWE_REPO}" \
+    --argjson n_concurrent "${CONCURRENT}" \
+    '{
+        timestamp: $timestamp,
+        agent: $agent,
+        treatment: $treatment,
+        mct_bench_head: $mct_bench_head,
+        deep_swe_head: $deep_swe_head,
+        model: $model,
+        deep_swe_repo: $deep_swe_repo,
+        n_concurrent: $n_concurrent
+    }' > "${FULL_BENCH_DIR}/run-metadata.json"
+echo "[persist] wrote run-metadata.json to ${FULL_BENCH_DIR}"
 
 # ============================================================================
 # Compare results via embedded Python
 # ============================================================================
-echo ""
-echo "==== Step 3 — Compare results ===="
+if [[ "${TREATMENT_ONLY}" != "true" ]]; then
+    echo ""
+    echo "==== Step 3 — Compare results ===="
 
-python3 << 'PYEOF'
+    python3 << 'PYEOF'
 import json, os
 
 CJ = "/tmp/mct-ab-deepswe/control/jobs"
@@ -275,6 +390,14 @@ print(f"  Control  F2P correct sum:  {csum}")
 print(f"  Treatment F2P correct sum: {tsum}")
 print()
 PYEOF
+else
+    echo ""
+    echo "==== Step 3 — Summary of treatment results ===="
+    echo "  (skipped comparison: --treatment-only)"
+    echo "  Results persisted to: ${FULL_BENCH_DIR}"
+    echo "  Captured files:"
+    ( cd "${FULL_BENCH_DIR}" && find . -type f | sort | sed 's#^\./#  #' )
+fi
 
 echo ""
 echo "==== Done ===="
