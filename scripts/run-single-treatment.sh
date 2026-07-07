@@ -166,11 +166,11 @@ export MCT_SHELL_AGENT_MODEL="${SHELL_AGENT_MODEL}"
 
 # Start background preservation loop to continuously save job output
 mkdir -p "${JOBS_DIR}"
-PRESERVE_DIR="/tmp/treatment-preserved-$(date +%s)"
-mkdir -p "${PRESERVE_DIR}"
-(while true; do rsync -a --ignore-existing "${JOBS_DIR}/" "${PRESERVE_DIR}/" 2>/dev/null; sleep 2; done) &
+PRESERVE_BASE="/tmp/treatment-preserved-$(date +%s)"
+mkdir -p "${PRESERVE_BASE}"
+(while true; do rsync -a --ignore-existing "${JOBS_DIR}/" "${PRESERVE_BASE}/" 2>/dev/null; sleep 2; done) &
 PRESERVE_PID=$!
-echo "[preserve] Background preservation loop started (PID ${PRESERVE_PID}) -> ${PRESERVE_DIR}"
+echo "[preserve] Background preservation loop started (PID ${PRESERVE_PID}) -> ${PRESERVE_BASE}"
 
 pier run \
     --ae "MCT_AGENT_BINARY=${AGENT_BIN}" \
@@ -188,7 +188,7 @@ pier run \
     --agent-timeout-multiplier 3.0 \
     -p "${TASKS}"
 
-kill $PRESERVE_PID 2>/dev/null; wait $PRESERVE_PID 2>/dev/null
+kill $PRESERVE_PID 2>/dev/null || true; wait $PRESERVE_PID 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
 # Persist results under .bench/deep-swe/<agent>/<treatment>/<timestamp>/
@@ -196,19 +196,21 @@ kill $PRESERVE_PID 2>/dev/null; wait $PRESERVE_PID 2>/dev/null
 BENCH_TIMESTAMP_FS="$(date -u +%Y-%m-%dT%H-%M-%SZ)"
 BENCH_TIMESTAMP_ISO="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 BENCH_DIR="${REPO_ROOT}/.bench/deep-swe/${AGENT_NAME}/${TREATMENT_NAME}/${BENCH_TIMESTAMP_FS}"
+mkdir -p "${REPO_ROOT}/.bench"
 mkdir -p "${BENCH_DIR}/${TASK_NAME}"
 echo "[persist] BENCH_DIR=${BENCH_DIR}"
 
-# Locate the task trial directory produced by pier under the jobs dir.
-TRIAL_DIR="$(ls -d "${JOBS_DIR}/mct-single-${TASK_NAME}/${TASK_NAME}__"* 2>/dev/null | head -1 || true)"
+# Locate the task trial directory from the preserved data (Pier has already
+# cleaned up the live jobs dir and containers by this point).
+TRIAL_DIR="$(ls -d "${PRESERVE_BASE}/mct-single-${TASK_NAME}/${TASK_NAME}__"* 2>/dev/null | head -1 || true)"
 if [[ -z "${TRIAL_DIR}" ]]; then
-    echo "[persist] WARNING: no trial directory found under ${JOBS_DIR}/mct-single-${TASK_NAME}" >&2
+    echo "[persist] WARNING: no trial directory found under ${PRESERVE_BASE}/mct-single-${TASK_NAME}" >&2
 fi
 
 # Copy reward.json and instruction.md into BENCH_DIR/TASK_NAME.
 if [[ -n "${TRIAL_DIR}" ]]; then
     if [[ -f "${TRIAL_DIR}/verifier/reward.json" ]]; then
-        cp "${TRIAL_DIR}/verifier/reward.json" "${BENCH_DIR}/${TASK_NAME}/reward.json"
+        cp "${TRIAL_DIR}/verifier/reward.json" "${BENCH_DIR}/${TASK_NAME}/reward.json" || true
         echo "[persist] copied reward.json"
     else
         echo "[persist] WARNING: reward.json not found at ${TRIAL_DIR}/verifier/reward.json" >&2
@@ -224,7 +226,7 @@ if [[ -n "${TRIAL_DIR}" ]]; then
         fi
     done
     if [[ -n "${INSTRUCTION_SRC}" ]]; then
-        cp "${INSTRUCTION_SRC}" "${BENCH_DIR}/${TASK_NAME}/instruction.md"
+        cp "${INSTRUCTION_SRC}" "${BENCH_DIR}/${TASK_NAME}/instruction.md" || true
         echo "[persist] copied instruction.md (${INSTRUCTION_SRC})"
     else
         echo "[persist] WARNING: instruction.md not found" >&2
@@ -234,31 +236,30 @@ if [[ -n "${TRIAL_DIR}" ]]; then
     if [[ -d "${TRIAL_DIR}/agent" ]]; then
         rsync -a "${TRIAL_DIR}/agent/" "${BENCH_DIR}/${TASK_NAME}/agent/" \
             && echo "[persist] rsynced agent directory" \
-            || echo "[persist] WARNING: agent directory rsync failed" >&2
+            || true
     else
         echo "[persist] NOTE: no agent directory present at ${TRIAL_DIR}/agent"
     fi
 fi
 
 # Capture meta-orchestrator trajectory and conversation from inside the container.
-CONTAINER_NAME=$(docker ps --format '{{.Names}}' | grep -i "${TASK_NAME}" | head -1)
+# NOTE: by this point Pier has usually already torn down the container, so these
+# docker exec calls are best-effort and must not abort the script under set -e.
+CONTAINER_NAME=$(docker ps --format '{{.Names}}' | grep -i "${TASK_NAME}" | head -1 || true)
 if [[ -n "${CONTAINER_NAME}" ]]; then
     echo "[preserve] Found container: ${CONTAINER_NAME}"
-    docker exec "${CONTAINER_NAME}" sh -c 'cat /app/.machtiani/meta-orchestrator/sessions/*/trajectory.jsonl 2>/dev/null' > "${PRESERVE_DIR}/container-trajectory.jsonl" 2>/dev/null || \
-        echo "[preserve] Could not read trajectory.jsonl from container"
-    docker exec "${CONTAINER_NAME}" sh -c 'cat /app/.machtiani/sessions/*/conversation.json 2>/dev/null' > "${PRESERVE_DIR}/container-conversation.json" 2>/dev/null || \
-        echo "[preserve] Could not read conversation.json from container"
+    docker exec "${CONTAINER_NAME}" sh -c 'cat /app/.machtiani/meta-orchestrator/sessions/*/trajectory.jsonl 2>/dev/null' \
+        > "${PRESERVE_BASE}/container-trajectory.jsonl" 2>/dev/null || true
+    docker exec "${CONTAINER_NAME}" sh -c 'cat /app/.machtiani/sessions/*/conversation.json 2>/dev/null' \
+        > "${PRESERVE_BASE}/container-conversation.json" 2>/dev/null || true
 
     # Best-effort capture of git log, diff stat, and implementation plan.
     docker exec "${CONTAINER_NAME}" sh -c 'git -C /app log 2>/dev/null' \
-        > "${BENCH_DIR}/${TASK_NAME}/git-log.txt" 2>/dev/null \
-        || echo "[persist] NOTE: could not capture git-log.txt from container" >&2
+        > "${BENCH_DIR}/${TASK_NAME}/git-log.txt" 2>/dev/null || true
     docker exec "${CONTAINER_NAME}" sh -c 'git -C /app diff --stat 2>/dev/null; git -C /app diff --cached --stat 2>/dev/null' \
-        > "${BENCH_DIR}/${TASK_NAME}/git-diff-stat.txt" 2>/dev/null \
-        || echo "[persist] NOTE: could not capture git-diff-stat.txt from container" >&2
+        > "${BENCH_DIR}/${TASK_NAME}/git-diff-stat.txt" 2>/dev/null || true
     docker exec "${CONTAINER_NAME}" sh -c 'cat /app/implementation-plan.md 2>/dev/null' \
-        > "${BENCH_DIR}/${TASK_NAME}/implementation-plan.md" 2>/dev/null \
-        || echo "[persist] NOTE: could not capture implementation-plan.md from container" >&2
+        > "${BENCH_DIR}/${TASK_NAME}/implementation-plan.md" 2>/dev/null || true
 else
     echo "[preserve] Note: Container for ${TASK_NAME} was already cleaned up (not running)"
 fi
@@ -289,10 +290,10 @@ jq -n \
     }' > "${BENCH_DIR}/run-metadata.json"
 echo "[persist] wrote run-metadata.json"
 
-rsync -a "${JOBS_DIR}/" "${PRESERVE_DIR}/" || true
-echo "[preserve] Final preservation to ${PRESERVE_DIR}"
+rsync -a "${JOBS_DIR}/" "${PRESERVE_BASE}/" || true
+echo "[preserve] Final preservation to ${PRESERVE_BASE}"
 
-if ls "${PRESERVE_DIR}/mct-single-${TASK_NAME}/${TASK_NAME}_"*"/verifier/reward.json" >/dev/null 2>&1; then
+if ls "${PRESERVE_BASE}/mct-single-${TASK_NAME}/${TASK_NAME}_"*"/verifier/reward.json" >/dev/null 2>&1; then
     echo "PRESERVATION SUCCESS: reward.json captured"
 else
     echo "PRESERVATION WARNING: reward.json not found at expected path"
@@ -310,7 +311,7 @@ echo "Captured files:"
 ( cd "${BENCH_DIR}" && find . -type f | sort | sed 's#^\./#  #')
 echo ""
 echo "Check reward:"
-echo "  cat ${JOBS_DIR}/mct-single-${TASK_NAME}/${TASK_NAME}_*/verifier/reward.json"
+echo "  cat ${PRESERVE_BASE}/mct-single-${TASK_NAME}/${TASK_NAME}_*/verifier/reward.json"
 echo ""
 echo "Check meta-orchestrator trajectory:"
-echo "  ls ${JOBS_DIR}/mct-single-${TASK_NAME}/${TASK_NAME}_*/agent/meta-orchestrator/"
+echo "  ls ${PRESERVE_BASE}/mct-single-${TASK_NAME}/${TASK_NAME}_*/agent/meta-orchestrator/"
