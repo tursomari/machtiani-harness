@@ -3,12 +3,13 @@ set -euo pipefail
 
 # ============================================================================
 # run-single-treatment.sh — Build and run a single treatment benchmark task
-# with the meta-orchestrator enabled.
+# with the meta-orchestrator enabled, then persist results under
+# .bench/deep-swe/<agent>/<treatment>/<timestamp>/.
 # ============================================================================
 
 usage() {
     cat <<'EOF'
-Usage: run-single-treatment.sh TASK_NAME [MODEL] [SHELL_AGENT_MODEL]
+Usage: run-single-treatment.sh [OPTIONS] TASK_NAME [MODEL] [SHELL_AGENT_MODEL]
 
   TASK_NAME          Task directory name under the tasks path (required)
                      Example: abs-module-cache-flags
@@ -18,6 +19,13 @@ Usage: run-single-treatment.sh TASK_NAME [MODEL] [SHELL_AGENT_MODEL]
 
   SHELL_AGENT_MODEL  Model for shell-agent subprocesses
                      Default: deepseek-v4-pro
+
+Options:
+  --agent-name NAME       Agent label for the results tree
+                          Default: mct-orchestrator
+  --treatment-name NAME   Treatment label for the results tree
+                          Default: with-peer-review
+  -h, --help              Show this help and exit
 
 Prerequisites:
   - TEST_API_KEY, TEST_BASE_URL exported in the environment
@@ -29,11 +37,14 @@ Output:
   - Binaries under /tmp/mct-single-treatment/
   - Pier job output under /tmp/mct-single-treatment/jobs/
   - Reward.json at jobs/<job-name>/<trial-dir>/verifier/reward.json
+  - Persisted results under <repo>/.bench/deep-swe/<agent>/<treatment>/<ts>/
 
 Example:
   export TEST_API_KEY=sk-...
   export TEST_BASE_URL=https://api.deepseek.com
   ./scripts/run-single-treatment.sh abs-module-cache-flags glm-5-high deepseek-v4-pro
+  ./scripts/run-single-treatment.sh --agent-name mct-orchestrator \
+      --treatment-name with-peer-review abs-module-cache-flags
 EOF
     exit 0
 }
@@ -41,16 +52,51 @@ EOF
 # ---------------------------------------------------------------------------
 # Parse arguments
 # ---------------------------------------------------------------------------
-TASK_NAME="${1:-}"
-MODEL="${2:-deepseek-v4-pro}"
-SHELL_AGENT_MODEL="${3:-deepseek-v4-pro}"
+AGENT_NAME="mct-orchestrator"
+TREATMENT_NAME="with-peer-review"
+TASK_NAME=""
+MODEL="deepseek-v4-pro"
+SHELL_AGENT_MODEL="deepseek-v4-pro"
+
+POSITIONAL=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --agent-name)
+            AGENT_NAME="${2:?--agent-name requires a value}"
+            shift 2
+            ;;
+        --agent-name=*)
+            AGENT_NAME="${1#*=}"
+            shift
+            ;;
+        --treatment-name)
+            TREATMENT_NAME="${2:?--treatment-name requires a value}"
+            shift 2
+            ;;
+        --treatment-name=*)
+            TREATMENT_NAME="${1#*=}"
+            shift
+            ;;
+        -h|--help)
+            usage
+            ;;
+        --)
+            shift
+            while [[ $# -gt 0 ]]; do POSITIONAL+=("$1"); shift; done
+            ;;
+        *)
+            POSITIONAL+=("$1")
+            shift
+            ;;
+    esac
+done
+
+TASK_NAME="${POSITIONAL[0]:-}"
+MODEL="${POSITIONAL[1]:-${MODEL}}"
+SHELL_AGENT_MODEL="${POSITIONAL[2]:-${SHELL_AGENT_MODEL}}"
 
 if [[ -z "${TASK_NAME}" ]]; then
     echo "Error: TASK_NAME is required." >&2
-    usage
-fi
-
-if [[ "$1" == "--help" || "$1" == "-h" ]]; then
     usage
 fi
 
@@ -70,6 +116,7 @@ OUTPUT_BASE="/tmp/mct-single-treatment"
 OUTPUT_BIN="${OUTPUT_BASE}/bin"
 JOBS_DIR="${OUTPUT_BASE}/jobs"
 TASKS="${HOME}/projects/deep-swe/tasks"
+DEEP_SWE_REPO="${HOME}/projects/deep-swe"
 
 AGENT_BIN="${OUTPUT_BIN}/mct-agent"
 META_BIN="${OUTPUT_BIN}/meta-orchestrator"
@@ -104,6 +151,8 @@ echo "[build] meta-orchestrator done."
 # ---------------------------------------------------------------------------
 echo ""
 echo "==== Running single treatment for ${TASK_NAME} ===="
+echo "  Agent:            ${AGENT_NAME}"
+echo "  Treatment:        ${TREATMENT_NAME}"
 echo "  Model:            ${MODEL}"
 echo "  Shell-agent model: ${SHELL_AGENT_MODEL}"
 echo "  Meta-orchestrator: ${META_BIN}"
@@ -141,7 +190,57 @@ pier run \
 
 kill $PRESERVE_PID 2>/dev/null; wait $PRESERVE_PID 2>/dev/null
 
-# Capture meta-orchestrator trajectory and conversation from inside the container
+# ---------------------------------------------------------------------------
+# Persist results under .bench/deep-swe/<agent>/<treatment>/<timestamp>/
+# ---------------------------------------------------------------------------
+BENCH_TIMESTAMP_FS="$(date -u +%Y-%m-%dT%H-%M-%SZ)"
+BENCH_TIMESTAMP_ISO="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+BENCH_DIR="${REPO_ROOT}/.bench/deep-swe/${AGENT_NAME}/${TREATMENT_NAME}/${BENCH_TIMESTAMP_FS}"
+mkdir -p "${BENCH_DIR}/${TASK_NAME}"
+echo "[persist] BENCH_DIR=${BENCH_DIR}"
+
+# Locate the task trial directory produced by pier under the jobs dir.
+TRIAL_DIR="$(ls -d "${JOBS_DIR}/mct-single-${TASK_NAME}/${TASK_NAME}__"* 2>/dev/null | head -1 || true)"
+if [[ -z "${TRIAL_DIR}" ]]; then
+    echo "[persist] WARNING: no trial directory found under ${JOBS_DIR}/mct-single-${TASK_NAME}" >&2
+fi
+
+# Copy reward.json and instruction.md into BENCH_DIR/TASK_NAME.
+if [[ -n "${TRIAL_DIR}" ]]; then
+    if [[ -f "${TRIAL_DIR}/verifier/reward.json" ]]; then
+        cp "${TRIAL_DIR}/verifier/reward.json" "${BENCH_DIR}/${TASK_NAME}/reward.json"
+        echo "[persist] copied reward.json"
+    else
+        echo "[persist] WARNING: reward.json not found at ${TRIAL_DIR}/verifier/reward.json" >&2
+    fi
+
+    INSTRUCTION_SRC=""
+    for cand in \
+        "${TRIAL_DIR}/agent/repo/instruction.md" \
+        "${TASKS}/${TASK_NAME}/instruction.md"; do
+        if [[ -f "${cand}" ]]; then
+            INSTRUCTION_SRC="${cand}"
+            break
+        fi
+    done
+    if [[ -n "${INSTRUCTION_SRC}" ]]; then
+        cp "${INSTRUCTION_SRC}" "${BENCH_DIR}/${TASK_NAME}/instruction.md"
+        echo "[persist] copied instruction.md (${INSTRUCTION_SRC})"
+    else
+        echo "[persist] WARNING: instruction.md not found" >&2
+    fi
+
+    # rsync the agent directory if present.
+    if [[ -d "${TRIAL_DIR}/agent" ]]; then
+        rsync -a "${TRIAL_DIR}/agent/" "${BENCH_DIR}/${TASK_NAME}/agent/" \
+            && echo "[persist] rsynced agent directory" \
+            || echo "[persist] WARNING: agent directory rsync failed" >&2
+    else
+        echo "[persist] NOTE: no agent directory present at ${TRIAL_DIR}/agent"
+    fi
+fi
+
+# Capture meta-orchestrator trajectory and conversation from inside the container.
 CONTAINER_NAME=$(docker ps --format '{{.Names}}' | grep -i "${TASK_NAME}" | head -1)
 if [[ -n "${CONTAINER_NAME}" ]]; then
     echo "[preserve] Found container: ${CONTAINER_NAME}"
@@ -149,9 +248,46 @@ if [[ -n "${CONTAINER_NAME}" ]]; then
         echo "[preserve] Could not read trajectory.jsonl from container"
     docker exec "${CONTAINER_NAME}" sh -c 'cat /app/.machtiani/sessions/*/conversation.json 2>/dev/null' > "${PRESERVE_DIR}/container-conversation.json" 2>/dev/null || \
         echo "[preserve] Could not read conversation.json from container"
+
+    # Best-effort capture of git log, diff stat, and implementation plan.
+    docker exec "${CONTAINER_NAME}" sh -c 'git -C /app log 2>/dev/null' \
+        > "${BENCH_DIR}/${TASK_NAME}/git-log.txt" 2>/dev/null \
+        || echo "[persist] NOTE: could not capture git-log.txt from container" >&2
+    docker exec "${CONTAINER_NAME}" sh -c 'git -C /app diff --stat 2>/dev/null; git -C /app diff --cached --stat 2>/dev/null' \
+        > "${BENCH_DIR}/${TASK_NAME}/git-diff-stat.txt" 2>/dev/null \
+        || echo "[persist] NOTE: could not capture git-diff-stat.txt from container" >&2
+    docker exec "${CONTAINER_NAME}" sh -c 'cat /app/implementation-plan.md 2>/dev/null' \
+        > "${BENCH_DIR}/${TASK_NAME}/implementation-plan.md" 2>/dev/null \
+        || echo "[persist] NOTE: could not capture implementation-plan.md from container" >&2
 else
     echo "[preserve] Note: Container for ${TASK_NAME} was already cleaned up (not running)"
 fi
+
+# Write run-metadata.json at the BENCH_DIR level.
+MCT_BENCH_HEAD="$(git -C "${REPO_ROOT}" rev-parse HEAD 2>/dev/null || echo unknown)"
+DEEP_SWE_HEAD="$(git -C "${DEEP_SWE_REPO}" rev-parse HEAD 2>/dev/null || echo unknown)"
+jq -n \
+    --arg timestamp "${BENCH_TIMESTAMP_ISO}" \
+    --arg agent "${AGENT_NAME}" \
+    --arg treatment "${TREATMENT_NAME}" \
+    --arg mct_bench_head "${MCT_BENCH_HEAD}" \
+    --arg deep_swe_head "${DEEP_SWE_HEAD}" \
+    --arg model "${MODEL}" \
+    --arg shell_agent_model "${SHELL_AGENT_MODEL}" \
+    --argjson n_concurrent 1 \
+    --argjson agent_timeout_multiplier 3.0 \
+    '{
+        timestamp: $timestamp,
+        agent: $agent,
+        treatment: $treatment,
+        mct_bench_head: $mct_bench_head,
+        deep_swe_head: $deep_swe_head,
+        model: $model,
+        shell_agent_model: $shell_agent_model,
+        n_concurrent: $n_concurrent,
+        agent_timeout_multiplier: $agent_timeout_multiplier
+    }' > "${BENCH_DIR}/run-metadata.json"
+echo "[persist] wrote run-metadata.json"
 
 rsync -a "${JOBS_DIR}/" "${PRESERVE_DIR}/" || true
 echo "[preserve] Final preservation to ${PRESERVE_DIR}"
@@ -166,6 +302,12 @@ sleep 2
 echo ""
 
 echo "==== Run complete ===="
+echo ""
+echo "Results persisted to:"
+echo "  ${BENCH_DIR}"
+echo ""
+echo "Captured files:"
+( cd "${BENCH_DIR}" && find . -type f | sort | sed 's#^\./#  #')
 echo ""
 echo "Check reward:"
 echo "  cat ${JOBS_DIR}/mct-single-${TASK_NAME}/${TASK_NAME}_*/verifier/reward.json"
