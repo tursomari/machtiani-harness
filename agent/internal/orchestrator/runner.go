@@ -251,13 +251,16 @@ func invokeReviewer(ctx context.Context, reviewInstruction string, metaSessionID
 	}
 
 	// 2. Run mct-agent sync to refresh internal state after the main agent commits.
+	var syncArgs []string
+	syncArgs = append(syncArgs, "sync")
 	if model != "" {
-		syncCmd := exec.CommandContext(ctx, "mct-agent", "sync", "--model", model)
-		syncCmd.Dir = "/app"
-		syncCmd.Env = append(os.Environ(), "MACHTIANI_CONFIG=/app/.machtiani/config.toml")
-		if err := syncCmd.Run(); err != nil {
-			fmt.Fprintf(os.Stderr, "review sync warning: %v\n", err)
-		}
+		syncArgs = append(syncArgs, "--model", model)
+	}
+	syncCmd := exec.CommandContext(ctx, "mct-agent", syncArgs...)
+	syncCmd.Dir = "/app"
+	syncCmd.Env = append(os.Environ(), "MACHTIANI_CONFIG=/app/.machtiani/config.toml")
+	if err := syncCmd.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "review sync warning: %v\n", err)
 	}
 
 	// 3. Determine the child meta-orchestrator binary path.
