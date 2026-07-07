@@ -252,7 +252,7 @@ func invokeReviewer(ctx context.Context, reviewInstruction string, metaSessionID
 
 	// 2. Run mct-agent sync to refresh internal state after the main agent commits.
 	if model != "" {
-		syncCmd := exec.CommandContext(ctx, "mct-agent", "sync", "--model", model, "--max-input-tokens", "800000")
+		syncCmd := exec.CommandContext(ctx, "mct-agent", "sync", "--model", model)
 		syncCmd.Dir = "/app"
 		syncCmd.Env = append(os.Environ(), "MACHTIANI_CONFIG=/app/.machtiani/config.toml")
 		if err := syncCmd.Run(); err != nil {
@@ -679,7 +679,6 @@ func RunLoop(
 			if model != "" {
 				syncArgs = append(syncArgs, "--model", model)
 			}
-			syncArgs = append(syncArgs, "--max-input-tokens", "800000")
 			syncCmd := exec.CommandContext(ctx, "mct-agent", syncArgs...)
 			syncCmd.Dir = "/app"
 			syncCmd.Env = append(os.Environ(), "MACHTIANI_CONFIG=/app/.machtiani/config.toml")
@@ -819,7 +818,6 @@ func RunLoop(
 					if model != "" {
 						syncArgs = append(syncArgs, "--model", model)
 					}
-					syncArgs = append(syncArgs, "--max-input-tokens", "800000")
 					syncCmd := exec.CommandContext(ctx, "mct-agent", syncArgs...)
 					syncCmd.Dir = "/app"
 					syncCmd.Env = append(os.Environ(), "MACHTIANI_CONFIG=/app/.machtiani/config.toml")
@@ -889,7 +887,7 @@ func RunLoop(
 					// loop back so the classifier evaluates the agents post-review output.
 					syncAfterReview := exec.CommandContext(ctx, "mct-agent", "sync")
 					if model != "" {
-						syncAfterReview = exec.CommandContext(ctx, "mct-agent", "sync", "--model", model, "--max-input-tokens", "800000")
+						syncAfterReview = exec.CommandContext(ctx, "mct-agent", "sync", "--model", model)
 					}
 					syncAfterReview.Dir = "/app"
 					syncAfterReview.Env = append(os.Environ(), "MACHTIANI_CONFIG=/app/.machtiani/config.toml")
@@ -950,7 +948,6 @@ func RunLoop(
 				if model != "" {
 					syncArgs2 = append(syncArgs2, "--model", model)
 				}
-				syncArgs2 = append(syncArgs2, "--max-input-tokens", "800000")
 				syncCmd2 := exec.CommandContext(ctx, "mct-agent", syncArgs2...)
 				syncCmd2.Dir = "/app"
 				syncCmd2.Env = append(os.Environ(), "MACHTIANI_CONFIG=/app/.machtiani/config.toml")
@@ -1018,7 +1015,7 @@ func RunLoop(
 
 				syncAfterReview2 := exec.CommandContext(ctx, "mct-agent", "sync")
 				if model != "" {
-					syncAfterReview2 = exec.CommandContext(ctx, "mct-agent", "sync", "--model", model, "--max-input-tokens", "800000")
+					syncAfterReview2 = exec.CommandContext(ctx, "mct-agent", "sync", "--model", model)
 				}
 				syncAfterReview2.Dir = "/app"
 				syncAfterReview2.Env = append(os.Environ(), "MACHTIANI_CONFIG=/app/.machtiani/config.toml")
