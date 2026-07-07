@@ -35,11 +35,7 @@ Rules and Phases of Operation:
 
 2. **Phase 1 - The First Sanity Check (First Completion Claim):**
    - When the agent FIRST reports that the implementation work is finished and committed, DO NOT accept it as done.
-   - Respond with ACTION: CONTINUE and explicitly instruct the agent to:
-     a) Rigorously sanity-check its implementation to ensure it meets ALL original criteria of the issue.
-     b) Find and run any relevant existing tests in the repository. If no relevant tests exist, create temporary test files to validate the implementation against the original criteria. Run the tests and fix the implementation until all pass. Then delete any temporary test files you created so they are not included in the final commit.
-     c) Base this check strictly on the actual code and requirements—do not rely on its past answers, investigative work, or assumptions.
-     d) Update and fix the implementation as needed.
+   - Respond with ACTION: CONTINUE and explicitly instruct the agent: Phase 1 — First Sanity Check. You MUST create at least 3 temporary test files that exercise the new behavior, run them through the actual runtime (not just go build), capture the full test output, fix any failures, and delete the temp test files. A response without concrete test output showing PASS/FAIL results for each test will be rejected. Show the actual test output in your response — do not summarize. Base this check strictly on the actual code and requirements — do not rely on its past answers, investigative work, or assumptions.
 
 3. **Phase 2 - The Reset and Re-Execution (Second Completion Claim):**
    - When the agent returns claiming the first sanity check and subsequent fixes are complete, DO NOT accept it as done.
@@ -51,11 +47,7 @@ Rules and Phases of Operation:
 
 4. **Phase 3 - The Final Sanity Check (Third Completion Claim):**
    - When the agent reports that the second implementation is finished, DO NOT accept it as done.
-   - Respond with ACTION: CONTINUE and explicitly instruct the agent to:
-     a) Perform a final, rigorous sanity check on this new implementation to ensure it perfectly matches the original criteria.
-     b) Find and run any relevant existing tests in the repository. If no relevant tests exist, create temporary test files to validate the implementation against the original criteria. Run the tests and fix the implementation until all pass. Then delete any temporary test files you created so they are not included in the final commit.
-     c) Again, base this check strictly on the code and requirements, not assumptions.
-     d) Fix any final issues and commit the changes.
+   - Respond with ACTION: CONTINUE and explicitly instruct the agent: Phase 3 — Final Sanity Check. You MUST create at least 3 temporary test files that exercise the new behavior, run them through the actual runtime (not just go build), capture the full test output, fix any failures, and delete the temp test files. A response without concrete test output showing PASS/FAIL results for each test will be rejected. Show the actual test output in your response — do not summarize.
 
 5. **Phase 4 - Final Verification:**
    - Only AFTER the agent has completed the Phase 3 "Final Sanity Check" and returns with the polished implementation, evaluate it for true completion.
@@ -886,8 +878,10 @@ func RunLoop(
 						"content": reviewMessage,
 					})
 
-					// After review feedback is successfully processed, sync git state and
-					// loop back so the classifier evaluates the agents post-review output.
+					// After the first review feedback is successfully processed, sync git
+					// state and remove the final answer. Then fall through to the second
+					// peer review round below - both rounds fire deterministically within
+					// the same shouldPeerReview block without loop re-entry.
 					syncAfterReview := exec.CommandContext(ctx, "mct-agent", "sync")
 					if model != "" {
 						syncAfterReview = exec.CommandContext(ctx, "mct-agent", "sync", "--model", model)
@@ -899,10 +893,12 @@ func RunLoop(
 					}
 					// Remove final answer so agent produces fresh output on next iteration
 					os.Remove(filepath.Join(".machtiani", "sessions", mctSessionID, "chat", "agent-final-answer.md"))
-						continue
 					}
 
-					// Second peer review round
+					// Second peer review round - only fires when the first review just
+					// completed (peerReviewRound is still 1, incremented above). Both
+					// rounds run deterministically within this shouldPeerReview block.
+					if peerReviewRound == 1 {
 					writeTrajectoryLine(trajDir, map[string]interface{}{
 						"type":      "second_peer_review_phase_start",
 						"timestamp": time.Now().UTC().Format(time.RFC3339),
@@ -1027,6 +1023,7 @@ func RunLoop(
 				}
 				os.Remove(filepath.Join(".machtiani", "sessions", mctSessionID, "chat", "agent-final-answer.md"))
 					continue
+					}
 				}
 
 		case "DONE":
