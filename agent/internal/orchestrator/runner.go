@@ -95,6 +95,11 @@ Be specific. Cite file names, line numbers, and exact variable names. Do not be 
 
 const secondReviewInstruction = `You are a second-pass peer reviewer verifying fixes from a prior review. Read /app/instruction.md for the requirements. Run git diff HEAD~1..HEAD to see the fix commit. For each finding from the prior review, state whether it was ADDRESSED with evidence, PARTIALLY ADDRESSED, or NOT ADDRESSED. Check the fix diff for new bugs or regressions introduced by the fixes. For any new issue found, cite file:line, describe the bug, and assign severity. If ALL prior findings are addressed AND no new bugs exist, produce a concise verdict starting with exactly: all clear. Skip requirements coverage tables and architectural analysis — the first review already did that. Be brief and targeted.`
 
+const (
+	mctAgentSyncAttempts       = 10
+	mctAgentSyncMaxInputTokens = 850000
+)
+
 const reviewSystemPrompt = `You are a review-mode orchestrator. Your sole job is to ensure mct-agent produces a thorough, substantive peer review of an implementation. You will receive the contents of mct-agents agent-final-answer.md after each invocation and must evaluate whether the review is complete.
 
 Respond with exactly one of these three formats:
@@ -133,7 +138,6 @@ When to BLOCKED:
 - After three identical review submissions with no new substantive content, classify as BLOCKED.
 
 Escalate firmness with each successive CONTINUE. Always tell the agent exactly which section is inadequate and what specific information is missing. Never accept "looks good" or "no issues found" without detailed justification of the investigation performed.`
-
 
 // extractPrompt scans the args slice for "-f" or "-t" and returns the
 // associated prompt text. If "-f" is found, the next element is treated as a
@@ -234,6 +238,72 @@ func invokeMCTAgent(ctx context.Context, metaSessionID string, trajDir string, m
 	return exitCode, nil
 }
 
+func syncMCTAgent(ctx context.Context, trajDir string, label string, model string) error {
+	var lastErr error
+	for attempt := 1; attempt <= mctAgentSyncAttempts; attempt++ {
+		syncArgs := []string{
+			"sync",
+			"--max-input-tokens",
+			fmt.Sprintf("%d", mctAgentSyncMaxInputTokens),
+		}
+		if model != "" {
+			syncArgs = append(syncArgs, "--model", model)
+		}
+
+		cmd := exec.CommandContext(ctx, "mct-agent", syncArgs...)
+		cmd.Dir = "/app"
+		var stdoutBuf bytes.Buffer
+		var stderrBuf bytes.Buffer
+		cmd.Stdout = &stdoutBuf
+		cmd.Stderr = &stderrBuf
+		cmd.Env = append(os.Environ(), "MACHTIANI_CONFIG=/app/.machtiani/config.toml")
+
+		err := cmd.Run()
+		exitCode := 0
+		if err != nil {
+			if exitErr, ok := err.(*exec.ExitError); ok {
+				exitCode = exitErr.ExitCode()
+			} else {
+				exitCode = -1
+			}
+			lastErr = err
+		} else {
+			lastErr = nil
+		}
+
+		writeTrajectoryLine(trajDir, map[string]interface{}{
+			"type":             "mct_sync_attempt",
+			"label":            label,
+			"timestamp":        time.Now().UTC().Format(time.RFC3339),
+			"attempt":          attempt,
+			"max_attempts":     mctAgentSyncAttempts,
+			"max_input_tokens": mctAgentSyncMaxInputTokens,
+			"args":             syncArgs,
+			"exit_code":        exitCode,
+			"stdout":           stdoutBuf.String(),
+			"stderr":           stderrBuf.String(),
+		})
+
+		if err == nil {
+			if attempt > 1 {
+				fmt.Fprintf(os.Stderr, "mct-agent sync succeeded on attempt %d/%d for %s\n", attempt, mctAgentSyncAttempts, label)
+			}
+			return nil
+		}
+
+		fmt.Fprintf(os.Stderr, "Warning: mct-agent sync attempt %d/%d failed for %s: %v\n", attempt, mctAgentSyncAttempts, label, err)
+		if attempt < mctAgentSyncAttempts {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(time.Duration(attempt) * time.Second):
+			}
+		}
+	}
+
+	return fmt.Errorf("mct-agent sync failed after %d attempts for %s: %w", mctAgentSyncAttempts, label, lastErr)
+}
+
 // invokeReviewer runs a child meta-orchestrator in review mode to evaluate
 // the main agent's implementation. It returns the review content as a string.
 func invokeReviewer(ctx context.Context, reviewInstruction string, metaSessionID string, trajDir string, model string, shellAgentModel string, mainSessionID string) (string, error) {
@@ -243,16 +313,8 @@ func invokeReviewer(ctx context.Context, reviewInstruction string, metaSessionID
 	}
 
 	// 2. Run mct-agent sync to refresh internal state after the main agent commits.
-	var syncArgs []string
-	syncArgs = append(syncArgs, "sync")
-	if model != "" {
-		syncArgs = append(syncArgs, "--model", model)
-	}
-	syncCmd := exec.CommandContext(ctx, "mct-agent", syncArgs...)
-	syncCmd.Dir = "/app"
-	syncCmd.Env = append(os.Environ(), "MACHTIANI_CONFIG=/app/.machtiani/config.toml")
-	if err := syncCmd.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "review sync warning: %v\n", err)
+	if err := syncMCTAgent(ctx, trajDir, "reviewer-before-child-meta", model); err != nil {
+		return "", err
 	}
 
 	// 3. Determine the child meta-orchestrator binary path.
@@ -436,7 +498,6 @@ func invokeMCTAgentRun(
 	return invokeMCTAgent(ctx, metaSessionID, trajDir, mctSessionID, args...)
 }
 
-
 // cleanContent strips the "The agent exited with code N. Output:\n\n" prefix
 // from error content strings, if present. Returns the raw output content
 // suitable for comparison.
@@ -504,7 +565,7 @@ func RunLoop(
 
 	if instructionContent != "" {
 		writeTrajectoryLine(trajDir, map[string]interface{}{
-			"type":          "instruction_injection",
+			"type":           "instruction_injection",
 			"content_length": len(instructionContent),
 		})
 	} else {
@@ -669,16 +730,8 @@ func RunLoop(
 
 			// Re-sync internal git state before the run so that mct-agent
 			// reads the current commit rather than a stale snapshot.
-			var syncArgs []string
-			syncArgs = append(syncArgs, "sync")
-			if model != "" {
-				syncArgs = append(syncArgs, "--model", model)
-			}
-			syncCmd := exec.CommandContext(ctx, "mct-agent", syncArgs...)
-			syncCmd.Dir = "/app"
-			syncCmd.Env = append(os.Environ(), "MACHTIANI_CONFIG=/app/.machtiani/config.toml")
-			if syncErr := syncCmd.Run(); syncErr != nil {
-				fmt.Fprintf(os.Stderr, "Warning: mct-agent sync failed: %v\n", syncErr)
+			if syncErr := syncMCTAgent(ctx, trajDir, "continue-before-agent-run", model); syncErr != nil {
+				return 1, syncErr
 			}
 
 			finalAnswerPath := filepath.Join(".machtiani", "sessions", mctSessionID, "chat", "agent-final-answer.md")
@@ -708,38 +761,38 @@ func RunLoop(
 					errorContent = fmt.Sprintf("The agent exited with code %d. The agent process crashed without producing output.", exitCode)
 				}
 				if errorContent == "" {
-				if err != nil {
-					errorContent = fmt.Sprintf("The agent exited with code %d. Error: %v", exitCode, err)
+					if err != nil {
+						errorContent = fmt.Sprintf("The agent exited with code %d. Error: %v", exitCode, err)
+					} else {
+						errorContent = fmt.Sprintf("The agent exited with code %d.", exitCode)
+					}
+				}
+
+				if cleanContent(errorContent) == cleanContent(lastFinalAnswer) {
+					repeatCount++
+					if repeatCount == 2 {
+						errorContent = "WARNING: Your last two responses were identical. You are stuck in a loop. You MUST take a fundamentally different approach this time. Read the original instruction fresh, discard your previous assumptions, and start with a new plan. Do NOT repeat your previous answer.\n\n" + errorContent
+					}
+					if repeatCount >= 3 {
+						writeTrajectoryLine(trajDir, map[string]interface{}{
+							"type":    "llm_classification",
+							"action":  "BLOCKED",
+							"message": "Agent stuck in loop - produced the same answer three times in a row.",
+						})
+						return 1, fmt.Errorf("hard blocker: agent stuck in loop - produced the same answer three times in a row")
+					}
 				} else {
-					errorContent = fmt.Sprintf("The agent exited with code %d.", exitCode)
+					repeatCount = 0
+					lastFinalAnswer = errorContent
 				}
-			}
 
-			if cleanContent(errorContent) == cleanContent(lastFinalAnswer) {
-				repeatCount++
-				if repeatCount == 2 {
-					errorContent = "WARNING: Your last two responses were identical. You are stuck in a loop. You MUST take a fundamentally different approach this time. Read the original instruction fresh, discard your previous assumptions, and start with a new plan. Do NOT repeat your previous answer.\n\n" + errorContent
-				}
-				if repeatCount >= 3 {
-					writeTrajectoryLine(trajDir, map[string]interface{}{
-						"type":    "llm_classification",
-						"action":  "BLOCKED",
-						"message": "Agent stuck in loop - produced the same answer three times in a row.",
-					})
-					return 1, fmt.Errorf("hard blocker: agent stuck in loop - produced the same answer three times in a row")
-				}
-			} else {
-				repeatCount = 0
-				lastFinalAnswer = errorContent
-			}
-
-			messages = append(messages, llm.Message{Role: "user", Content: errorContent})
-			writeTrajectoryLine(trajDir, map[string]interface{}{
-				"type":    "llm_message",
-				"role":    "user",
-				"content": errorContent,
-			})
-			continue
+				messages = append(messages, llm.Message{Role: "user", Content: errorContent})
+				writeTrajectoryLine(trajDir, map[string]interface{}{
+					"type":    "llm_message",
+					"role":    "user",
+					"content": errorContent,
+				})
+				continue
 			}
 			messages = append(messages, llm.Message{Role: "assistant", Content: response})
 
@@ -748,40 +801,40 @@ func RunLoop(
 				"role":    "assistant",
 				"content": response,
 			})
-				continueCount++
-				shouldPeerReview := false
-				if !peerReviewDone && !reviewMode {
-					// Primary: message-content match for Phase 4 transition, gated by count >= 4
-					// to prevent premature firing when the classifier mentions later phases
-					// during earlier escalation messages.
-					if continueCount >= 5 && (strings.Contains(response, "Phase 4") || strings.Contains(response, "Final Verification")) {
-						shouldPeerReview = true
-					}
-					// Fallback: deterministic count-based trigger if message matching never fires
-					if !shouldPeerReview && continueCount >= 5 {
-						shouldPeerReview = true
-					}
+			continueCount++
+			shouldPeerReview := false
+			if !peerReviewDone && !reviewMode {
+				// Primary: message-content match for Phase 4 transition, gated by count >= 4
+				// to prevent premature firing when the classifier mentions later phases
+				// during earlier escalation messages.
+				if continueCount >= 5 && (strings.Contains(response, "Phase 4") || strings.Contains(response, "Final Verification")) {
+					shouldPeerReview = true
 				}
-				if shouldPeerReview {
-					peerReviewRound++
-					if peerReviewRound == 1 {
+				// Fallback: deterministic count-based trigger if message matching never fires
+				if !shouldPeerReview && continueCount >= 5 {
+					shouldPeerReview = true
+				}
+			}
+			if shouldPeerReview {
+				peerReviewRound++
+				if peerReviewRound == 1 {
+					writeTrajectoryLine(trajDir, map[string]interface{}{
+						"type":      "peer_review_phase_start",
+						"timestamp": time.Now().UTC().Format(time.RFC3339),
+					})
+
+					reviewContent, reviewErr := invokeReviewer(ctx, peerReviewInstruction, metaSessionID, trajDir, model, shellAgentModel, mctSessionID)
+					if reviewErr != nil {
+						peerReviewDone = true
+						fmt.Fprintf(os.Stderr, "Peer review failed: %v\n", reviewErr)
 						writeTrajectoryLine(trajDir, map[string]interface{}{
-							"type":      "peer_review_phase_start",
-							"timestamp": time.Now().UTC().Format(time.RFC3339),
+							"type":   "peer_review_skipped",
+							"reason": reviewErr.Error(),
 						})
+						continue
+					}
 
-						reviewContent, reviewErr := invokeReviewer(ctx, peerReviewInstruction, metaSessionID, trajDir, model, shellAgentModel, mctSessionID)
-						if reviewErr != nil {
-							peerReviewDone = true
-							fmt.Fprintf(os.Stderr, "Peer review failed: %v\n", reviewErr)
-							writeTrajectoryLine(trajDir, map[string]interface{}{
-								"type":   "peer_review_skipped",
-								"reason": reviewErr.Error(),
-							})
-							continue
-						}
-
-						writeTrajectoryLine(trajDir, map[string]interface{}{
+					writeTrajectoryLine(trajDir, map[string]interface{}{
 						"type":                  "peer_review_completed",
 						"review_content_length": len(reviewContent),
 						"timestamp":             time.Now().UTC().Format(time.RFC3339),
@@ -808,16 +861,8 @@ func RunLoop(
 						reviewArgs = append(reviewArgs, "--persist-tmp-data")
 					}
 
-					var syncArgs []string
-					syncArgs = append(syncArgs, "sync")
-					if model != "" {
-						syncArgs = append(syncArgs, "--model", model)
-					}
-					syncCmd := exec.CommandContext(ctx, "mct-agent", syncArgs...)
-					syncCmd.Dir = "/app"
-					syncCmd.Env = append(os.Environ(), "MACHTIANI_CONFIG=/app/.machtiani/config.toml")
-					if syncErr := syncCmd.Run(); syncErr != nil {
-						fmt.Fprintf(os.Stderr, "Warning: mct-agent sync before review feedback failed: %v\n", syncErr)
+					if syncErr := syncMCTAgent(ctx, trajDir, "before-review-feedback", model); syncErr != nil {
+						return 1, syncErr
 					}
 
 					reviewExitCode, reviewInvokeErr := invokeMCTAgent(ctx, metaSessionID, trajDir, mctSessionID, reviewArgs...)
@@ -882,23 +927,17 @@ func RunLoop(
 					// state and remove the final answer. Then fall through to the second
 					// peer review round below - both rounds fire deterministically within
 					// the same shouldPeerReview block without loop re-entry.
-					syncAfterReview := exec.CommandContext(ctx, "mct-agent", "sync")
-					if model != "" {
-						syncAfterReview = exec.CommandContext(ctx, "mct-agent", "sync", "--model", model)
-					}
-					syncAfterReview.Dir = "/app"
-					syncAfterReview.Env = append(os.Environ(), "MACHTIANI_CONFIG=/app/.machtiani/config.toml")
-					if syncErr := syncAfterReview.Run(); syncErr != nil {
-						fmt.Fprintf(os.Stderr, "Warning: sync after review feedback failed: %v\n", syncErr)
+					if syncErr := syncMCTAgent(ctx, trajDir, "after-review-feedback", model); syncErr != nil {
+						return 1, syncErr
 					}
 					// Remove final answer so agent produces fresh output on next iteration
 					os.Remove(filepath.Join(".machtiani", "sessions", mctSessionID, "chat", "agent-final-answer.md"))
-					}
+				}
 
-					// Second peer review round - only fires when the first review just
-					// completed (peerReviewRound is still 1, incremented above). Both
-					// rounds run deterministically within this shouldPeerReview block.
-					if peerReviewRound == 1 {
+				// Second peer review round - only fires when the first review just
+				// completed (peerReviewRound is still 1, incremented above). Both
+				// rounds run deterministically within this shouldPeerReview block.
+				if peerReviewRound == 1 {
 					writeTrajectoryLine(trajDir, map[string]interface{}{
 						"type":      "second_peer_review_phase_start",
 						"timestamp": time.Now().UTC().Format(time.RFC3339),
@@ -916,46 +955,87 @@ func RunLoop(
 					}
 
 					writeTrajectoryLine(trajDir, map[string]interface{}{
-					"type":                  "second_peer_review_completed",
-					"review_content_length": len(reviewContent2),
-					"timestamp":             time.Now().UTC().Format(time.RFC3339),
-				})
+						"type":                  "second_peer_review_completed",
+						"review_content_length": len(reviewContent2),
+						"timestamp":             time.Now().UTC().Format(time.RFC3339),
+					})
 
-				reviewMessage2 := "A second peer reviewer has verified that all prior findings have been addressed. Review feedback follows.\n\n--- SECOND PEER REVIEW ---\n" + reviewContent2 + "\n--- END REVIEW ---\n\nAfter addressing any remaining findings, the meta-orchestrator will perform final verification."
+					reviewMessage2 := "A second peer reviewer has verified that all prior findings have been addressed. Review feedback follows.\n\n--- SECOND PEER REVIEW ---\n" + reviewContent2 + "\n--- END REVIEW ---\n\nAfter addressing any remaining findings, the meta-orchestrator will perform final verification."
 
-				var reviewArgs2 []string
-				if mode != "" {
-					reviewArgs2 = append(reviewArgs2, "--mode", mode)
-				}
-				if model != "" {
-					reviewArgs2 = append(reviewArgs2, "--model", model)
-				}
-				if shellAgentModel != "" {
-					reviewArgs2 = append(reviewArgs2, "--shell-agent-model", shellAgentModel)
-				}
-				if tag != "" {
-					reviewArgs2 = append(reviewArgs2, "--tag", tag)
-				}
-				reviewArgs2 = append(reviewArgs2, "--session-id", mctSessionID)
-				reviewArgs2 = append(reviewArgs2, "-t", reviewMessage2)
-				if persistTmpData {
-					reviewArgs2 = append(reviewArgs2, "--persist-tmp-data")
-				}
+					var reviewArgs2 []string
+					if mode != "" {
+						reviewArgs2 = append(reviewArgs2, "--mode", mode)
+					}
+					if model != "" {
+						reviewArgs2 = append(reviewArgs2, "--model", model)
+					}
+					if shellAgentModel != "" {
+						reviewArgs2 = append(reviewArgs2, "--shell-agent-model", shellAgentModel)
+					}
+					if tag != "" {
+						reviewArgs2 = append(reviewArgs2, "--tag", tag)
+					}
+					reviewArgs2 = append(reviewArgs2, "--session-id", mctSessionID)
+					reviewArgs2 = append(reviewArgs2, "-t", reviewMessage2)
+					if persistTmpData {
+						reviewArgs2 = append(reviewArgs2, "--persist-tmp-data")
+					}
 
-				var syncArgs2 []string
-				syncArgs2 = append(syncArgs2, "sync")
-				if model != "" {
-					syncArgs2 = append(syncArgs2, "--model", model)
-				}
-				syncCmd2 := exec.CommandContext(ctx, "mct-agent", syncArgs2...)
-				syncCmd2.Dir = "/app"
-				syncCmd2.Env = append(os.Environ(), "MACHTIANI_CONFIG=/app/.machtiani/config.toml")
-				if syncErr := syncCmd2.Run(); syncErr != nil {
-					fmt.Fprintf(os.Stderr, "Warning: mct-agent sync before second review feedback failed: %v\n", syncErr)
-				}
+					if syncErr := syncMCTAgent(ctx, trajDir, "before-second-review-feedback", model); syncErr != nil {
+						return 1, syncErr
+					}
 
-				reviewExitCode2, reviewInvokeErr2 := invokeMCTAgent(ctx, metaSessionID, trajDir, mctSessionID, reviewArgs2...)
-				if reviewInvokeErr2 != nil || reviewExitCode2 != 0 {
+					reviewExitCode2, reviewInvokeErr2 := invokeMCTAgent(ctx, metaSessionID, trajDir, mctSessionID, reviewArgs2...)
+					if reviewInvokeErr2 != nil || reviewExitCode2 != 0 {
+						messages = append(messages, llm.Message{Role: "assistant", Content: reviewMessage2})
+						writeTrajectoryLine(trajDir, map[string]interface{}{
+							"type":    "llm_message",
+							"role":    "assistant",
+							"content": reviewMessage2,
+						})
+
+						data, readErr := os.ReadFile(filepath.Join(".machtiani", "sessions", mctSessionID, "chat", "agent-final-answer.md"))
+						var errorContent string
+						if readErr == nil {
+							trimmed := strings.TrimSpace(string(data))
+							if trimmed != "" {
+								errorContent = fmt.Sprintf("The agent exited with code %d after second review feedback. Output:\n\n%s", reviewExitCode2, trimmed)
+							} else {
+								errorContent = fmt.Sprintf("The agent exited with code %d after second review feedback. The agent process crashed without producing output.", reviewExitCode2)
+							}
+						} else {
+							errorContent = fmt.Sprintf("The agent exited with code %d after second review feedback. The agent process crashed without producing output.", reviewExitCode2)
+						}
+						if reviewInvokeErr2 != nil {
+							errorContent = fmt.Sprintf("The agent exited with code %d after second review feedback. Error: %v", reviewExitCode2, reviewInvokeErr2)
+						}
+
+						if cleanContent(errorContent) == cleanContent(lastFinalAnswer) {
+							repeatCount++
+							if repeatCount == 2 {
+								errorContent = "WARNING: Your last two responses were identical. You are stuck in a loop. You MUST take a fundamentally different approach this time.\n\n" + errorContent
+							}
+							if repeatCount >= 3 {
+								writeTrajectoryLine(trajDir, map[string]interface{}{
+									"type":    "llm_classification",
+									"action":  "BLOCKED",
+									"message": "Agent stuck in loop after second review feedback.",
+								})
+								return 1, fmt.Errorf("hard blocker: agent stuck in loop after second review feedback")
+							}
+						} else {
+							repeatCount = 0
+							lastFinalAnswer = errorContent
+						}
+						messages = append(messages, llm.Message{Role: "user", Content: errorContent})
+						writeTrajectoryLine(trajDir, map[string]interface{}{
+							"type":    "llm_message",
+							"role":    "user",
+							"content": errorContent,
+						})
+						continue
+					}
+
 					messages = append(messages, llm.Message{Role: "assistant", Content: reviewMessage2})
 					writeTrajectoryLine(trajDir, map[string]interface{}{
 						"type":    "llm_message",
@@ -963,68 +1043,13 @@ func RunLoop(
 						"content": reviewMessage2,
 					})
 
-					data, readErr := os.ReadFile(filepath.Join(".machtiani", "sessions", mctSessionID, "chat", "agent-final-answer.md"))
-					var errorContent string
-					if readErr == nil {
-						trimmed := strings.TrimSpace(string(data))
-						if trimmed != "" {
-							errorContent = fmt.Sprintf("The agent exited with code %d after second review feedback. Output:\n\n%s", reviewExitCode2, trimmed)
-						} else {
-							errorContent = fmt.Sprintf("The agent exited with code %d after second review feedback. The agent process crashed without producing output.", reviewExitCode2)
-						}
-					} else {
-						errorContent = fmt.Sprintf("The agent exited with code %d after second review feedback. The agent process crashed without producing output.", reviewExitCode2)
+					if syncErr := syncMCTAgent(ctx, trajDir, "after-second-review-feedback", model); syncErr != nil {
+						return 1, syncErr
 					}
-					if reviewInvokeErr2 != nil {
-						errorContent = fmt.Sprintf("The agent exited with code %d after second review feedback. Error: %v", reviewExitCode2, reviewInvokeErr2)
-					}
-
-					if cleanContent(errorContent) == cleanContent(lastFinalAnswer) {
-						repeatCount++
-						if repeatCount == 2 {
-							errorContent = "WARNING: Your last two responses were identical. You are stuck in a loop. You MUST take a fundamentally different approach this time.\n\n" + errorContent
-						}
-						if repeatCount >= 3 {
-							writeTrajectoryLine(trajDir, map[string]interface{}{
-								"type":    "llm_classification",
-								"action":  "BLOCKED",
-								"message": "Agent stuck in loop after second review feedback.",
-							})
-							return 1, fmt.Errorf("hard blocker: agent stuck in loop after second review feedback")
-						}
-					} else {
-						repeatCount = 0
-						lastFinalAnswer = errorContent
-					}
-					messages = append(messages, llm.Message{Role: "user", Content: errorContent})
-					writeTrajectoryLine(trajDir, map[string]interface{}{
-						"type":    "llm_message",
-						"role":    "user",
-						"content": errorContent,
-					})
+					os.Remove(filepath.Join(".machtiani", "sessions", mctSessionID, "chat", "agent-final-answer.md"))
 					continue
 				}
-
-				messages = append(messages, llm.Message{Role: "assistant", Content: reviewMessage2})
-				writeTrajectoryLine(trajDir, map[string]interface{}{
-					"type":    "llm_message",
-					"role":    "assistant",
-					"content": reviewMessage2,
-				})
-
-				syncAfterReview2 := exec.CommandContext(ctx, "mct-agent", "sync")
-				if model != "" {
-					syncAfterReview2 = exec.CommandContext(ctx, "mct-agent", "sync", "--model", model)
-				}
-				syncAfterReview2.Dir = "/app"
-				syncAfterReview2.Env = append(os.Environ(), "MACHTIANI_CONFIG=/app/.machtiani/config.toml")
-				if syncErr := syncAfterReview2.Run(); syncErr != nil {
-					fmt.Fprintf(os.Stderr, "Warning: sync after second review feedback failed: %v\n", syncErr)
-				}
-				os.Remove(filepath.Join(".machtiani", "sessions", mctSessionID, "chat", "agent-final-answer.md"))
-					continue
-					}
-				}
+			}
 
 		case "DONE":
 			// Intercept premature DONE: if the peer review has not fired yet and we have

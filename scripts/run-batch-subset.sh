@@ -22,16 +22,17 @@ Runs a 12-task A/B batch on the Deep-SWE benchmark:
 Options:
   --tasks-path PATH         Path to Deep-SWE task directory
                             (default: $HOME/projects/deep-swe/tasks)
-  -n, --concurrent N        Number of concurrent pier trials (default: 6)
+  -n, --concurrent N        Number of concurrent pier trials per side
+                            (default: 2; control and treatment run in parallel)
   --timeout-mult F          Agent timeout multiplier (default: 3.0)
   --model NAME              mct-orchestrator model alias
                             (default: deepseek-v4-pro)
   --litellm-model NAME      mini-swe-agent litellm model
                             (default: deepseek/deepseek-v4-pro)
   --control-label L         Agent dir label for control side
-                            (default: control-mini-swe)
+                            (default: mini-swe-agent)
   --treatment-label L       Agent dir label for treatment side
-                            (default: treatment-mct-orchestrator)
+                            (default: mct-orchestrator)
   --control-treatment L     Treatment subdir for control
                             (default: default)
   --treatment-treatment L   Treatment subdir for treatment
@@ -54,12 +55,12 @@ EOF
 # Defaults and parse CLI arguments
 # ----------------------------------------------------------------------------
 TASKS_PATH="${HOME}/projects/deep-swe/tasks"
-CONCURRENT="6"
+CONCURRENT="2"
 TIMEOUT_MULTIPLIER="3.0"
 MODEL="deepseek-v4-pro"
 LITELLM_MODEL="deepseek/deepseek-v4-pro"
-CONTROL_AGENT_LABEL="control-mini-swe"
-TREATMENT_AGENT_LABEL="treatment-mct-orchestrator"
+CONTROL_AGENT_LABEL="mini-swe-agent"
+TREATMENT_AGENT_LABEL="mct-orchestrator"
 CONTROL_TREATMENT_LABEL="default"
 TREATMENT_TREATMENT_LABEL="with-peer-review"
 WORK_DIR="/tmp/mct-batch-subset"
@@ -297,7 +298,10 @@ echo "[run:control] Launched pier (PID ${CONTROL_PID}) -> ${CONTROL_DIR}/pier.lo
 # ----------------------------------------------------------------------------
 echo ""
 echo "==== Launching treatment (mct-orchestrator) ===="
-pier run \
+env \
+    MCT_AGENT_BINARY="${AGENT_BIN}" \
+    MCT_META_ORCHESTRATOR_BINARY="${META_BIN}" \
+    pier run \
     --agent-import-path mct_pier_adapter.mct_agent:MctAgent \
     --ae "MCT_AGENT_BINARY=${AGENT_BIN}" \
     --ae "MCT_META_ORCHESTRATOR_BINARY=${META_BIN}" \
@@ -344,6 +348,33 @@ persist_side() {
     mkdir -p "${bench_dir}"
     echo "[persist:${side_label}] bench_dir=${bench_dir}"
 
+    find_trial_dir() {
+        local jobs_dir="$1"
+        local job_name="$2"
+        local task="$3"
+        local trial_dir=""
+
+        trial_dir="$(ls -d "${jobs_dir}/${job_name}/${task}__"* 2>/dev/null | head -1 || true)"
+        if [[ -n "${trial_dir}" ]]; then
+            printf '%s\n' "${trial_dir}"
+            return
+        fi
+
+        # Pier may truncate long task names when deriving trial/container names.
+        # Match by the longest available prefix so those trials still persist.
+        local prefix_len=${#task}
+        local prefix
+        while (( prefix_len >= 20 )); do
+            prefix="${task:0:prefix_len}"
+            trial_dir="$(ls -d "${jobs_dir}/${job_name}/${prefix}"__* 2>/dev/null | head -1 || true)"
+            if [[ -n "${trial_dir}" ]]; then
+                printf '%s\n' "${trial_dir}"
+                return
+            fi
+            prefix_len=$((prefix_len - 1))
+        done
+    }
+
     local n_reward=0
     local n_missing=0
     local task trial_dir task_dir container_name instruction_src
@@ -353,7 +384,7 @@ persist_side() {
         mkdir -p "${task_dir}"
 
         # Locate the trial directory for this task.
-        trial_dir="$(ls -d "${jobs_dir}/${job_name}/${task}__"* 2>/dev/null | head -1 || true)"
+        trial_dir="$(find_trial_dir "${jobs_dir}" "${job_name}" "${task}")"
         if [[ -z "${trial_dir}" ]]; then
             echo "[persist:${side_label}] WARNING: no trial directory found for task '${task}' under ${jobs_dir}/${job_name}" >&2
             n_missing=$((n_missing + 1))
@@ -468,6 +499,22 @@ persist_side \
     "${TREATMENT_JOB_NAME}" \
     "${MODEL}" \
     "${MODEL}"
+
+# The treatment is only valid if the Pier adapter uploaded and invoked the
+# meta-orchestrator. The adapter copies that trajectory to agent/meta-orchestrator.
+TREATMENT_BENCH_DIR="${REPO_ROOT}/.bench/deep-swe/${TREATMENT_AGENT_LABEL}/${TREATMENT_TREATMENT_LABEL}/${BATCH_TIMESTAMP_FS}"
+missing_meta=0
+for task in "${TASKS[@]}"; do
+    if [[ ! -d "${TREATMENT_BENCH_DIR}/${task}/agent/meta-orchestrator" ]]; then
+        echo "[verify:treatment] ERROR: missing meta-orchestrator artifact for ${task}" >&2
+        missing_meta=$((missing_meta + 1))
+    fi
+done
+if (( missing_meta > 0 )); then
+    echo "[verify:treatment] ERROR: ${missing_meta} treatment task(s) missing meta-orchestrator artifacts" >&2
+    exit 1
+fi
+echo "[verify:treatment] all treatment tasks include meta-orchestrator artifacts"
 
 # ----------------------------------------------------------------------------
 # Batch complete banner
