@@ -59,7 +59,9 @@ class MctAgent(BaseInstalledAgent):
         await environment.upload_file(local_path, "/usr/local/bin/mct-agent")
         await self.exec_as_root(environment, "chmod +x /usr/local/bin/mct-agent")
 
-        # Upload forge binary for code-forge mode.
+        mode = os.environ.get("MCT_MODE", "code-strong-forge")
+
+        # Upload forge binary for forge-backed modes.
         forge_binary = os.path.expanduser(os.environ.get("MCT_FORGE_BINARY", "~/.local/bin/forge"))
         await environment.upload_file(forge_binary, "/usr/local/bin/forge")
         await self.exec_as_root(environment, "chmod +x /usr/local/bin/forge")
@@ -84,6 +86,10 @@ class MctAgent(BaseInstalledAgent):
         await self.exec_as_root(environment, "mkdir -p /root/.forge")
         await environment.upload_dir(forge_home, "/root/.forge/")
 
+        # Upload the selected mode directory.
+        await self.exec_as_agent(environment, f"mkdir -p /app/.machtiani/modes/{shlex.quote(mode)} /root/.forge")
+        await environment.upload_dir(f"./.machtiani/modes/{mode}/", f"/app/.machtiani/modes/{mode}/")
+
     @with_prompt_template
     async def run(
         self,
@@ -93,9 +99,11 @@ class MctAgent(BaseInstalledAgent):
     ) -> None:
         """Run mct-agent on the task, then commit all changes."""
 
+        mode = os.environ.get("MCT_MODE", "code-strong-forge")
+
         # Step 0: Create the /app/.machtiani/ directory.
         try:
-            await self.exec_as_agent(environment, "mkdir -p /app/.machtiani/modes/code-forge /root/.forge")
+            await self.exec_as_agent(environment, f"mkdir -p /app/.machtiani/modes/{shlex.quote(mode)} /root/.forge")
         except NonZeroAgentExitCodeError:
             raise RuntimeError("Failed to create /app/.machtiani/ directory")
 
@@ -103,7 +111,7 @@ class MctAgent(BaseInstalledAgent):
         await environment.upload_file("./.machtiani/config.toml", "/app/.machtiani/config.toml")
 
         # Step 3: Upload the host mode directory.
-        await environment.upload_dir("./.machtiani/modes/code-forge/", "/app/.machtiani/modes/code-forge/")
+        await environment.upload_dir(f"./.machtiani/modes/{mode}/", f"/app/.machtiani/modes/{mode}/")
 
         # Step 4: Write the instruction text to /app/instruction.md.
         await self.exec_as_agent(
@@ -132,7 +140,6 @@ class MctAgent(BaseInstalledAgent):
                 await asyncio.sleep(2 ** i)
 
         # Step 6: Run mct-agent run.
-        mode = os.environ.get("MCT_MODE", "code-forge")
         model = os.environ.get("MCT_MODEL", "deepseek-v4-pro")
         shell_agent_model = os.environ.get("MCT_SHELL_AGENT_MODEL", "deepseek-v4-pro")
 

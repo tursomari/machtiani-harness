@@ -488,7 +488,7 @@ if [ "$SEQUENTIAL" -eq 1 ]; then
     for ATTEMPT in 1 2 3; do
         echo "[mct-agent] Plan attempt $ATTEMPT/3: Running mct-agent in plan mode..."
         if env $MCT_ENV MACHTIANI_CONFIG="$CONFIG" mct-agent run \
-            --mode code-forge \
+            --mode code-strong-forge \
             --final-file "$OUTPUT_DIR/mct_plan.md" \
             --model "$MODEL" \
             $MCT_API_KEY_ARG \
@@ -543,7 +543,7 @@ else
         for ATTEMPT in 1 2 3; do
             echo "[mct-agent] Plan attempt $ATTEMPT/3: Running mct-agent in plan mode..."
             if env $MCT_ENV MACHTIANI_CONFIG="$CONFIG" mct-agent run \
-                --mode code-forge \
+                --mode code-strong-forge \
                 --final-file "$OUTPUT_DIR/mct_plan.md" \
                 --model "$MODEL" \
                 $MCT_API_KEY_ARG \
@@ -655,7 +655,7 @@ if [ "$SEQUENTIAL" -eq 1 ]; then
     for ATTEMPT in 1 2 3; do
         echo "[mct-agent] Impl attempt $ATTEMPT/3: Running mct-agent..."
         if env $MCT_ENV MACHTIANI_CONFIG="$CONFIG" mct-agent run \
-            --mode code-forge \
+            --mode code-strong-forge \
             --final-file "$OUTPUT_DIR/mct_answer.md" \
             --model "$MODEL" \
             $MCT_API_KEY_ARG \
@@ -710,7 +710,7 @@ else
         for ATTEMPT in 1 2 3; do
             echo "[mct-agent] Impl attempt $ATTEMPT/3: Running mct-agent..."
             if env $MCT_ENV MACHTIANI_CONFIG="$CONFIG" mct-agent run \
-                --mode code-forge \
+                --mode code-strong-forge \
                 --final-file "$OUTPUT_DIR/mct_answer.md" \
                 --model "$MODEL" \
                 $MCT_API_KEY_ARG \

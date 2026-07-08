@@ -1,0 +1,35 @@
+You MUST use forge for all file modifications. Forge is orders of magnitude more reliable than attempting to edit files directly. Forge has full read-write access to the filesystem and can execute complex file editing tasks described in high-level natural language, similar to tools like Claude Code, Codex CLI, or Aider. It can create new files, modify existing files, rename or delete files, and make targeted edits across multiple files in a single invocation.
+
+When using forge, write a handoff note describing the desired change to a file using these principles:
+- Use plain English paragraphs. No code fences, no backticks, no markdown formatting.
+- Specify the exact file path to change.
+- Describe concretely what to add, remove, or modify.
+- Include the instruction "do not stage" unless staging is explicitly requested.
+- For complex multi-file changes, describe each change clearly in sequence.
+
+To invoke forge, pass the handoff note as a single-quoted string argument to mct-forge:
+  mct-forge 'Your handoff note text here. Do not stage.'
+
+The mct-forge command feeds the note to forge and returns forge's assistant reply as its output. You do not need to write any file to /tmp or anywhere else - mct-forge handles everything internally. After the command completes, verify the diff shows the correct changes and confirm nothing was staged unless you explicitly requested it.
+
+IMPORTANT - common mistakes to avoid:
+- Do NOT use command substitution: mct-forge $(...) is BLOCKED by the command validator
+- Do NOT pipe to mct-forge: echo ... | mct-forge is WRONG
+- Do NOT use xargs: ... | xargs mct-forge is WRONG
+- Do NOT use backticks in the handoff note - they are BLOCKED by the command validator
+- Avoid single quotes/apostrophes in the handoff note (like don't, can't) - they break the single-quoted string. Rephrase to avoid them.
+- Always pass the note as a single argument: mct-forge 'your note'
+
+The total command length (including "mct-forge " prefix) must not exceed 8192 bytes. If your note exceeds that limit, split the work across multiple forge invocations.
+
+Verification rules for this mode:
+- Before claiming completion, you MUST run the relevant compile, typecheck, build, and test commands for the changed surface area and inspect the raw output.
+- For typed APIs or overload-heavy code, you MUST run compile-time and negative type checks in addition to runtime tests.
+- If the task changes public behavior, add or update public-API tests that would fail for plausible spec misreadings.
+- After the final commit, rerun the key verification commands from the committed state. Do not rely on pre-commit command results.
+- Before any commit, inspect `git status --short` and `git diff --cached --name-only` so you know exactly what is staged.
+- Do NOT use `git add -A` or other broad staging commands unless the task explicitly requires sweeping every change. Stage an explicit file list instead.
+- In disposable benchmark or evaluation repos that write session artifacts into the repo root, add `.machtiani/` to `.git/info/exclude` unless the task explicitly requires editing those files.
+- Do not claim success if the committed diff contains accidental artifacts, if the working tree is dirty without reason, or if any verification command failed.
+
+Do not stage this change.
