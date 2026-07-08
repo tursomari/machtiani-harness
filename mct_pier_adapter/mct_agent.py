@@ -175,7 +175,12 @@ class MctAgent(BaseInstalledAgent):
         except NonZeroAgentExitCodeError:
             pass
         try:
-            await self.exec_as_agent(environment, "git add -A")
+            await self.exec_as_agent(
+                environment,
+                "git add -u && "
+                "git ls-files --others --exclude-standard -z | "
+                "xargs -0r git add --",
+            )
         except NonZeroAgentExitCodeError:
             pass
         try:
