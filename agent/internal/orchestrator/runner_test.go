@@ -2,8 +2,34 @@ package orchestrator
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
+
+func TestParseOrchestratorResponse_MultilineMessage(t *testing.T) {
+	response := "ACTION: CONTINUE\nMESSAGE: Phase 2 — The Reset and Re-Execution. You MUST now:\n\n" +
+		"a) Re-read /app/instruction.md.\n" +
+		"b) Reset the git project completely.\n" +
+		"c) Create /app/implementation-plan.md and commit it."
+
+	action, message, err := parseOrchestratorResponse(response)
+	if err != nil {
+		t.Fatalf("parseOrchestratorResponse returned error: %v", err)
+	}
+	if action != "CONTINUE" {
+		t.Fatalf("action = %q, want CONTINUE", action)
+	}
+	for _, want := range []string{
+		"Phase 2 — The Reset and Re-Execution. You MUST now:",
+		"a) Re-read /app/instruction.md.",
+		"b) Reset the git project completely.",
+		"c) Create /app/implementation-plan.md and commit it.",
+	} {
+		if !strings.Contains(message, want) {
+			t.Fatalf("message missing %q:\n%s", want, message)
+		}
+	}
+}
 
 // TestRunLoop_StatefulSignature is a compile-time type check that verifies the
 // RunLoop function signature compiles and can be called with the expected

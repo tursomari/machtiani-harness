@@ -35,24 +35,28 @@ Rules and Phases of Operation:
 
 2. **Phase 1 - The First Sanity Check (First Completion Claim):**
    - When the agent FIRST reports that the implementation work is finished and committed, DO NOT accept it as done.
-   - Respond with ACTION: CONTINUE and explicitly instruct the agent: Phase 1 — First Sanity Check. You MUST create at least 3 temporary test files that exercise the new behavior, run them through the actual runtime (not just go build), capture the full test output, fix any failures, and delete the temp test files. A response without concrete test output showing PASS/FAIL results for each test will be rejected. Show the actual test output in your response — do not summarize. Base this check strictly on the actual code and requirements — do not rely on its past answers, investigative work, or assumptions.
+   - Respond with ACTION: CONTINUE and explicitly instruct the agent: Phase 1 — First Sanity Check. You MUST first re-read /app/instruction.md and write a concise requirement checklist plus a spec-to-test matrix. Then create at least 3 temporary test files that exercise the new behavior through public APIs and are derived from the requirement text, not from the current implementation. Include adversarial cases that would fail for plausible misreadings of the spec. For typed languages, include compile-time/type-level and negative usage checks where the specification defines API contracts. Run the temporary tests through the actual runtime (not just go build), capture the full test output, fix any failures or uncovered requirements, and delete the temp test files. A response without concrete test output showing PASS/FAIL results for each test and without the spec-to-test matrix will be rejected. Show the actual test output in your response — do not summarize. Base this check strictly on the actual code and requirements — do not rely on its past answers, investigative work, or assumptions.
 
 3. **Phase 2 - The Reset and Re-Execution (Second Completion Claim):**
    - When the agent returns claiming the first sanity check and subsequent fixes are complete, DO NOT accept it as done.
    - Respond with ACTION: CONTINUE and instruct the agent to:
      a) Re-read the original instruction file (/app/instruction.md) to ground the re-implementation in the original requirements.
      b) Reset the git project completely and discard all current changes.
-     c) Taking everything it learned from the first implementation attempt, create /app/implementation-plan.md from scratch using a structured plan format with these sections: Intent, Safety Rules (NEVER and ALWAYS), Pre-flight Checks, Execution Phases with checkboxes, Verification, Cleanup, Progress Log, and Status Table. Your plan must include all of these sections: Intent, Safety Rules (NEVER and ALWAYS), Pre-flight Checks with "- [ ]" checkboxes, Execution Phases with "- [ ]" checkboxes for each task, Verification with "- [ ]" checkboxes, Cleanup with "- [ ]" checkboxes, Progress Log table, and Status Table. Commit the plan file immediately after creating it so it survives any subsequent git operations.
+     c) Taking everything it learned from the first implementation attempt, create /app/implementation-plan.md from scratch using a structured plan format with these sections: Intent, Requirement Checklist, Spec-to-Test Matrix, Safety Rules (NEVER and ALWAYS), Pre-flight Checks, Execution Phases with checkboxes, Verification, Cleanup, Progress Log, and Status Table. Your plan must include all of these sections: Intent, Requirement Checklist with one item per distinct requirement from /app/instruction.md, Spec-to-Test Matrix mapping each requirement to planned public-API/runtime/type-level tests, Safety Rules (NEVER and ALWAYS), Pre-flight Checks with "- [ ]" checkboxes, Execution Phases with "- [ ]" checkboxes for each task, Verification with "- [ ]" checkboxes, Cleanup with "- [ ]" checkboxes, Progress Log table, and Status Table. Commit the plan file immediately after creating it so it survives any subsequent git operations.
      d) Execute the plan fully. As work progresses, check off completed items using [x] and update the Progress Log and Status Table after each completed checkbox or phase. Do NOT claim implementation is complete until every checkbox in every phase is checked. Commit your work as you go.
 
 4. **Phase 3 - The Final Sanity Check (Third Completion Claim):**
    - When the agent reports that the second implementation is finished, DO NOT accept it as done.
-   - Respond with ACTION: CONTINUE and explicitly instruct the agent: Phase 3 — Final Sanity Check. You MUST create at least 3 temporary test files that exercise the new behavior, run them through the actual runtime (not just go build), capture the full test output, fix any failures, and delete the temp test files. A response without concrete test output showing PASS/FAIL results for each test will be rejected. Show the actual test output in your response — do not summarize.
+   - Respond with ACTION: CONTINUE and explicitly instruct the agent: Phase 3 — Final Sanity Check. You MUST re-read /app/instruction.md, update the requirement checklist and spec-to-test matrix, then create at least 3 temporary test files that exercise the new behavior through public APIs and include adversarial cases for plausible spec misreadings. The tests must prove the requirement text, not the implementation's current behavior. For typed languages, include compile-time/type-level and negative usage checks where the specification defines API contracts. Run the temporary tests through the actual runtime (not just go build), capture the full test output, fix any failures or uncovered requirements, and delete the temp test files. A response without concrete test output showing PASS/FAIL results for each test and without the updated spec-to-test matrix will be rejected. Show the actual test output in your response — do not summarize.
 
-5. **Phase 4 - Final Verification:**
-   - Only AFTER the agent has completed the Phase 3 "Final Sanity Check" and returns with the polished implementation, evaluate it for true completion.
-   - a) Confirm no stray test files remain in the working tree. Delete any temporary test files that were created during validation.
-   - b) If the deliverables are fully executed and complete, respond with ACTION: DONE.
+5. **Phase 4 - Peer Review and Final Hail Mary Verification:**
+   - Only AFTER the agent has completed the Phase 3 "Final Sanity Check" and returns with the polished implementation, the orchestrator will trigger peer review and then a fresh-session final verification pass.
+   - Do not accept mere confidence, summaries, or local test claims. Final acceptance requires evidence that the implementation follows every original requirement, that the tests are aligned with the requirement text, and that compile/typecheck/runtime verification passed.
+
+6. **Final Acceptance:**
+   - After peer review and the fresh-session Hail Mary pass have both completed, evaluate the latest final answer for true completion.
+   - If the final answer lacks concrete evidence of 100% requirement coverage, spec-derived tests, clean compile/typecheck/build results where applicable, full relevant test results, committed fixes, and no stray temporary files, respond with ACTION: CONTINUE and state exactly what evidence or work is missing.
+   - If the deliverables are fully executed and complete, respond with ACTION: DONE.
 
 Global Rules:
 - If the final answer describes an irrecoverable hard blocker (e.g. no API credits available, critical missing dependency that cannot be resolved), respond with ACTION: BLOCKED.
@@ -77,7 +81,13 @@ Does the implementation address every requirement in the instruction? List each 
 Fourth, evaluate DEEP (bug and edge-case hunting):
 Trace every code path introduced or modified. For each function, walk through every branch and identify inputs that would cause incorrect behavior, panics, or silent failures. Check path handling: are paths normalized? Can they be doubled, resolve outside the intended directory, or break on symlinks, relative paths, absolute paths, or nested directories? Check error handling: does every error path produce the correct error message? Are errors swallowed? Are error messages specific enough to be useful? Check ordering and precedence: where multiple config sources or flags interact, is the precedence correct in every combination? Check edge cases: empty inputs, nil values, zero-length slices, duplicate entries, circular references, already-loaded modules, concurrent access. Check that environment variable handling (reading, parsing, precedence, fallback) matches the specification exactly, including quoted entries, whitespace, and empty values. Check that any cache or state tracking is correct: keys are normalized, lookups are consistent, state transitions are valid, and stats or reporting reflect what actually happened.
 
-Fifth, check for regressions:
+Fifth, audit the tests against the specification:
+Read every test file added or modified by the implementation, plus any temporary validation files that still exist. Build a spec-to-test coverage matrix: for each distinct requirement from /app/instruction.md, identify the specific test(s) that prove it. The tests must be public-API/black-box where possible and must prove the requirement as written, not merely the implementation's interpretation. For typed languages, require compile-time/type-level tests for API contracts, inference, overloads, invalid usage, and negative cases where the spec implies type errors. For runtime behavior, require adversarial tests that would fail for plausible misreadings of the spec. Flag any requirement whose tests are missing, weak, too coupled to internals, or assert a behavior that differs from the instruction text.
+
+Sixth, audit the verification evidence and final git state:
+Require explicit evidence that the implementer ran the relevant compile/typecheck/build/test commands after the final intended commit, not just before it. Check git status and the final changed-file set (git diff --name-only main...HEAD or equivalent) to confirm the deliverable contains only intended files and no accidental session artifacts or temporary files. If the implementation claims success without this evidence, treat it as a HIGH severity process failure because the final state is unproven.
+
+Seventh, check for regressions:
 Compare each modified file against its original version. Does any change break existing behavior that the instruction did not ask to change? Are there functions whose signatures or contracts changed in a way that existing callers would break?
 
 Output format: produce a structured review with these sections:
@@ -85,15 +95,41 @@ Output format: produce a structured review with these sections:
 1. Requirements Coverage: A table with columns requirement, status (implemented, partial, missing), location (file:line or description), and notes.
 IMPORTANT: Do NOT change existing behavior for features that already work correctly. Only fix clear, unambiguous bugs that are supported by concrete evidence from the code. If a finding is ambiguous or could break existing functionality, note it as an observation but do NOT recommend changing the code — introducing regressions by altering correct behavior is worse than leaving a minor issue unaddressed.
 2. Plan Completeness: A table cross-referencing plan items (from /app/implementation-plan.md) against the actual code. Columns: plan item description, plan status ([x] or [ ] as declared in the plan), actual status (VERIFIED, MISSING, REGRESSED, NOT FOUND), and evidence (file:line or description of what was found or not found).
-3. Directional Issues: Any design-level concerns where the approach is wrong or fragile, even if individual pieces work.
-4. Bugs Found: Each bug with severity (CRITICAL, HIGH, MEDIUM, LOW), file:line, description of the bug, steps to trigger it, and suggested fix.
-5. Edge Cases Not Handled: Specific input scenarios that would cause incorrect behavior, with the expected versus actual behavior and the file:line where handling is missing.
-6. Regression Risks: Any changes to existing behavior that could break current functionality, with file:line.
-7. Summary Verdict: One paragraph stating whether this implementation is ready or needs another round of fixes. List the top 3 to 5 issues that must be fixed, ranked by severity.
+3. Test Coverage Audit: A table with columns requirement, test evidence (file:line and command), status (strong, weak, missing, wrong-behavior), and notes. Include specific missing tests or tests that encode a likely spec misinterpretation. For typed languages, include type-level coverage and negative type cases.
+4. Verification Gate Audit: List the exact post-commit compile/typecheck/build/test commands that were run, whether the evidence is sufficient, what the final changed-file set contains, and whether accidental artifacts were excluded correctly. If evidence is missing, say so explicitly.
+5. Directional Issues: Any design-level concerns where the approach is wrong or fragile, even if individual pieces work.
+6. Bugs Found: Each bug with severity (CRITICAL, HIGH, MEDIUM, LOW), file:line, description of the bug, steps to trigger it, and suggested fix.
+7. Edge Cases Not Handled: Specific input scenarios that would cause incorrect behavior, with the expected versus actual behavior and the file:line where handling is missing.
+8. Regression Risks: Any changes to existing behavior that could break current functionality, with file:line.
+9. Summary Verdict: One paragraph stating whether this implementation is ready or needs another round of fixes. List the top 3 to 5 issues that must be fixed, ranked by severity.
 
 Be specific. Cite file names, line numbers, and exact variable names. Do not be vague. Do not say "looks good" without justification. Find problems. If you genuinely cannot find any issues in a category, say "No issues found in this category" and explain what you checked.`
 
-const secondReviewInstruction = `You are a second-pass peer reviewer verifying fixes from a prior review. Read /app/instruction.md for the requirements. Run git diff HEAD~1..HEAD to see the fix commit. For each finding from the prior review, state whether it was ADDRESSED with evidence, PARTIALLY ADDRESSED, or NOT ADDRESSED. Check the fix diff for new bugs or regressions introduced by the fixes. For any new issue found, cite file:line, describe the bug, and assign severity. If ALL prior findings are addressed AND no new bugs exist, produce a concise verdict starting with exactly: all clear. Skip requirements coverage tables and architectural analysis — the first review already did that. Be brief and targeted.`
+const secondReviewInstruction = `You are a second-pass peer reviewer verifying fixes from a prior review. Read /app/instruction.md for the requirements. Run git diff HEAD~1..HEAD to see the fix commit. For each finding from the prior review, state whether it was ADDRESSED with evidence, PARTIALLY ADDRESSED, or NOT ADDRESSED. Check the fix diff for new bugs or regressions introduced by the fixes. Re-check the implementation's tests against the exact requirement text: any fix that changes code without adding or updating spec-aligned tests should be treated as incomplete unless there is a concrete reason tests are impossible. For typed languages, verify compile-time/type-level and negative type tests when API contracts are involved. Require explicit evidence of post-commit compile/typecheck/build/test commands and a final changed-file audit; without that evidence, do not issue an all-clear verdict. For any new issue found, cite file:line, describe the bug, and assign severity. If ALL prior findings are addressed, the spec-aligned tests are adequate, the post-commit verification evidence is sufficient, and no new bugs exist, produce a concise verdict starting with exactly: all clear. Skip broad architecture discussion — the first review already did that. Be brief and targeted.`
+
+const hailMaryInstruction = `You are a fresh final verification-and-repair agent. Treat the current implementation as untrusted until proven correct. Your job is to independently verify and, if necessary, fix the implementation so it satisfies 100% of /app/instruction.md.
+
+You MUST:
+1. Re-read /app/instruction.md in full and extract every distinct requirement into a checklist.
+2. Inspect the current implementation and all added/modified tests. Do not rely on previous agents' summaries.
+3. Build a spec-to-test matrix. For every requirement, identify the test evidence proving it. If coverage is missing, weak, implementation-coupled, or appears to encode a misreading of the spec, write stronger tests.
+4. Add adversarial public-API tests for plausible spec misinterpretations. For typed languages, include compile-time/type-level tests for exact API contracts, overloads/inference, invalid usage, and negative cases where the spec implies type errors.
+5. Run the relevant compile/typecheck/build commands and the full relevant test suite. Also run any focused adversarial tests you added. Capture exact command output.
+6. Fix every failure or uncovered requirement. Do not give up after one attempt. Continue editing, compiling, and testing until the instruction is fully satisfied.
+7. Remove temporary validation files unless they are intentionally committed as permanent tests. Ensure the working tree contains only appropriate deliverables.
+8. Commit all fixes and tests.
+9. After the final commit, rerun the key verification commands from the committed state and inspect git status --short plus the final changed-file set. If any accidental artifacts are staged or present in the deliverable, fix that before answering.
+
+Your final answer must include:
+- The requirement checklist with status for every item.
+- The spec-to-test matrix with file paths and commands.
+- Exact compile/typecheck/build/test commands run and whether they passed.
+- Exact post-commit verification commands run after the final commit and whether they passed.
+- The final changed-file set and confirmation that accidental artifacts were excluded.
+- Any fixes made during this Hail Mary pass with commit hashes.
+- Confirmation that temporary files were removed or intentionally committed as permanent tests.
+
+Do not claim success unless every requirement is implemented, the tests prove the requirement text rather than an implementation assumption, all relevant verification commands pass, and the final state is committed.`
 
 const (
 	mctAgentSyncAttempts       = 10
@@ -115,17 +151,21 @@ MESSAGE: <description of the hard blocker>
 
 Review Completion Criteria (ACTION: DONE requires ALL of the following):
 - A Requirements Coverage section exists with at least one row per distinct requirement from the original instruction, each specifying status (implemented, partial, missing) and location (file:line or specific description).
+- A Test Coverage Audit section exists with a spec-to-test matrix. It must identify added/modified tests by file:line and command, classify each requirement's test coverage as strong/weak/missing/wrong-behavior, and call out tests that encode a likely misinterpretation of the spec.
 - A Directional Issues section exists. If no directional issues were found, it must state "No directional issues found" AND explain what architectural-level checks were performed.
 - A Bugs Found section exists with entries that cite specific file names and line numbers. Each entry describes the bug, steps to trigger it, and a suggested fix. If no bugs were found, it must state "No bugs found" AND list the code paths that were traced and why each was determined to be correct.
 - An Edge Cases Not Handled section exists with specific input scenarios and the file:line where handling is missing. Each scenario must be concrete, not generic (e.g., "empty ABS_MODULE_PATH with trailing colon" not "check empty inputs").
 - A Regression Risks section exists. If no regressions were identified, it must state "No regression risks identified" AND list which existing callers and behaviors were verified.
 - A Summary Verdict section exists with a clear readiness assessment and at least 3 specific issues ranked by severity (CRITICAL/HIGH/MEDIUM/LOW). If fewer than 3 issues exist, explain why the implementation is exceptionally clean.
 - The review references specific code from git diff output, not just the instruction. Evidence of having actually read the code changes must be present.
+- The review references specific test code from git diff output, not just claims that tests passed. Evidence of having compared tests to the original instruction must be present.
 - All findings must cite file names and line numbers. Vague statements like "the implementation looks good" or "edge cases are handled" without specific evidence are insufficient.
 
 When to CONTINUE (issue specific, actionable instructions):
 - Any required section is missing or contains only placeholder text.
 - The Requirements Coverage section is a brief yes/no list without locations or substantive notes.
+- The Test Coverage Audit is missing, only says tests pass, or does not map requirements to specific tests.
+- The review accepts tests that only prove implementation behavior without checking whether that behavior matches the instruction text.
 - Bugs Found entries do not cite specific file names and line numbers.
 - Edge Cases Not Handled contains only generic advice ("handle edge cases") without concrete scenarios.
 - The Summary Verdict says "looks good" or "ready" without listing specific issues or explaining the investigation performed.
@@ -304,9 +344,37 @@ func syncMCTAgent(ctx context.Context, trajDir string, label string, model strin
 	return fmt.Errorf("mct-agent sync failed after %d attempts for %s: %w", mctAgentSyncAttempts, label, lastErr)
 }
 
+func parseOrchestratorResponse(response string) (string, string, error) {
+	var action string
+	lines := strings.Split(response, "\n")
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		parts := strings.SplitN(trimmed, ":", 2)
+		if len(parts) == 2 && strings.EqualFold(strings.TrimSpace(parts[0]), "ACTION") {
+			action = strings.TrimSpace(parts[1])
+			break
+		}
+	}
+	if action == "" {
+		return "", "", fmt.Errorf("orchestrator response missing ACTION line; raw: %s", response)
+	}
+
+	for i, line := range lines {
+		trimmedLeft := strings.TrimLeft(line, " \t")
+		parts := strings.SplitN(trimmedLeft, ":", 2)
+		if len(parts) != 2 || !strings.EqualFold(strings.TrimSpace(parts[0]), "MESSAGE") {
+			continue
+		}
+		messageLines := append([]string{strings.TrimSpace(parts[1])}, lines[i+1:]...)
+		return action, strings.TrimSpace(strings.Join(messageLines, "\n")), nil
+	}
+
+	return action, "", nil
+}
+
 // invokeReviewer runs a child meta-orchestrator in review mode to evaluate
 // the main agent's implementation. It returns the review content as a string.
-func invokeReviewer(ctx context.Context, reviewInstruction string, metaSessionID string, trajDir string, model string, shellAgentModel string, mainSessionID string) (string, error) {
+func invokeReviewer(ctx context.Context, reviewInstruction string, reviewMode string, metaSessionID string, trajDir string, model string, shellAgentModel string, mainSessionID string) (string, error) {
 	// 1. Write peer review instruction file.
 	if err := os.WriteFile("/app/review-instruction.md", []byte(reviewInstruction), 0644); err != nil {
 		return "", err
@@ -329,7 +397,10 @@ func invokeReviewer(ctx context.Context, reviewInstruction string, metaSessionID
 
 	// 4. Construct the child command.
 	var childArgs []string
-	childArgs = append(childArgs, "--review-mode", "--mode", "code-forge")
+	if strings.TrimSpace(reviewMode) == "" {
+		reviewMode = "code-strong-forge"
+	}
+	childArgs = append(childArgs, "--review-mode", "--mode", reviewMode)
 	if model != "" {
 		childArgs = append(childArgs, "--model", model)
 	}
@@ -587,6 +658,7 @@ func RunLoop(
 	continueCount := 0
 	peerReviewDone := false
 	peerReviewRound := 0
+	hailMaryDone := false
 
 	var initialError bool
 	if err != nil || exitCode != 0 {
@@ -683,28 +755,14 @@ func RunLoop(
 			return 1, fmt.Errorf("orchestrator LLM call failed: %w", err)
 		}
 
-		var actionLine string
-		var messageLine string
 	parseAction:
-		for _, line := range strings.Split(response, "\n") {
-			trimmed := strings.TrimSpace(line)
-			if actionLine == "" && strings.HasPrefix(strings.ToUpper(trimmed), "ACTION:") {
-				actionLine = trimmed
-			}
-			if messageLine == "" && strings.HasPrefix(strings.ToUpper(trimmed), "MESSAGE:") {
-				messageLine = trimmed
-			}
+		action, message, parseErr := parseOrchestratorResponse(response)
+		if parseErr != nil {
+			return 1, parseErr
 		}
-
-		if actionLine == "" {
-			return 1, fmt.Errorf("orchestrator response missing ACTION line; raw: %s", response)
-		}
-
-		action := strings.TrimSpace(strings.TrimPrefix(actionLine, "ACTION:"))
 
 		switch action {
 		case "CONTINUE":
-			message := strings.TrimSpace(strings.TrimPrefix(messageLine, "MESSAGE:"))
 			if message == "" {
 				return 1, fmt.Errorf("CONTINUE action requires a MESSAGE; raw: %s", response)
 			}
@@ -823,7 +881,7 @@ func RunLoop(
 						"timestamp": time.Now().UTC().Format(time.RFC3339),
 					})
 
-					reviewContent, reviewErr := invokeReviewer(ctx, peerReviewInstruction, metaSessionID, trajDir, model, shellAgentModel, mctSessionID)
+					reviewContent, reviewErr := invokeReviewer(ctx, peerReviewInstruction, mode, metaSessionID, trajDir, model, shellAgentModel, mctSessionID)
 					if reviewErr != nil {
 						peerReviewDone = true
 						fmt.Fprintf(os.Stderr, "Peer review failed: %v\n", reviewErr)
@@ -943,7 +1001,7 @@ func RunLoop(
 						"timestamp": time.Now().UTC().Format(time.RFC3339),
 					})
 
-					reviewContent2, reviewErr2 := invokeReviewer(ctx, secondReviewInstruction, metaSessionID, trajDir, model, shellAgentModel, mctSessionID)
+					reviewContent2, reviewErr2 := invokeReviewer(ctx, secondReviewInstruction, mode, metaSessionID, trajDir, model, shellAgentModel, mctSessionID)
 					peerReviewDone = true
 					if reviewErr2 != nil {
 						fmt.Fprintf(os.Stderr, "Second peer review failed: %v\n", reviewErr2)
@@ -1062,13 +1120,77 @@ func RunLoop(
 					"timestamp": time.Now().UTC().Format(time.RFC3339),
 				})
 				response = "ACTION: CONTINUE\nMESSAGE: Phase 3 is complete. Now proceed to Phase 4 - Final Verification. The orchestrator will trigger a peer review before final evaluation."
-				actionLine = ""
-				messageLine = ""
 				goto parseAction
+			}
+			if peerReviewDone && !hailMaryDone && !reviewMode {
+				hailMaryDone = true
+				hailMarySessionID := fmt.Sprintf("agent-%s-hail-mary", time.Now().UTC().Format("20060102T150405"))
+				mctSessionID = hailMarySessionID
+				writeTrajectoryLine(trajDir, map[string]interface{}{
+					"type":       "hail_mary_phase_start",
+					"session_id": hailMarySessionID,
+					"timestamp":  time.Now().UTC().Format(time.RFC3339),
+				})
+
+				var hailMaryArgs []string
+				if mode != "" {
+					hailMaryArgs = append(hailMaryArgs, "--mode", mode)
+				}
+				if model != "" {
+					hailMaryArgs = append(hailMaryArgs, "--model", model)
+				}
+				if shellAgentModel != "" {
+					hailMaryArgs = append(hailMaryArgs, "--shell-agent-model", shellAgentModel)
+				}
+				if tag != "" {
+					hailMaryArgs = append(hailMaryArgs, "--tag", tag+"-hail-mary")
+				}
+				hailMaryArgs = append(hailMaryArgs, "--session-id", hailMarySessionID, "-t", hailMaryInstruction)
+				if persistTmpData {
+					hailMaryArgs = append(hailMaryArgs, "--persist-tmp-data")
+				}
+
+				if syncErr := syncMCTAgent(ctx, trajDir, "before-hail-mary", model); syncErr != nil {
+					return 1, syncErr
+				}
+
+				hailMaryExitCode, hailMaryErr := invokeMCTAgent(ctx, metaSessionID, trajDir, hailMarySessionID, hailMaryArgs...)
+				finalAnswerPath := filepath.Join(".machtiani", "sessions", hailMarySessionID, "chat", "agent-final-answer.md")
+				data, readErr := os.ReadFile(finalAnswerPath)
+				var hailMaryContent string
+				if readErr == nil && strings.TrimSpace(string(data)) != "" {
+					hailMaryContent = strings.TrimSpace(string(data))
+				} else if hailMaryErr != nil {
+					hailMaryContent = fmt.Sprintf("The Hail Mary agent exited with code %d. Error: %v", hailMaryExitCode, hailMaryErr)
+				} else {
+					hailMaryContent = fmt.Sprintf("The Hail Mary agent exited with code %d without producing a final answer.", hailMaryExitCode)
+				}
+				if hailMaryErr != nil || hailMaryExitCode != 0 {
+					hailMaryContent = fmt.Sprintf("The Hail Mary verification-and-repair pass failed. Continue from this fresh session and complete it.\n\n%s", hailMaryContent)
+				}
+
+				messages = append(messages, llm.Message{Role: "assistant", Content: "ACTION: CONTINUE\nMESSAGE: Fresh-session Hail Mary verification-and-repair pass has run. Evaluate its final answer against the original instruction and the required evidence. Continue the Hail Mary session unless the answer proves 100% success."})
+				messages = append(messages, llm.Message{Role: "user", Content: hailMaryContent})
+				writeTrajectoryLine(trajDir, map[string]interface{}{
+					"type":       "hail_mary_phase_completed",
+					"session_id": hailMarySessionID,
+					"exit_code":  hailMaryExitCode,
+					"timestamp":  time.Now().UTC().Format(time.RFC3339),
+				})
+				writeTrajectoryLine(trajDir, map[string]interface{}{
+					"type":    "llm_message",
+					"role":    "user",
+					"content": hailMaryContent,
+				})
+
+				if syncErr := syncMCTAgent(ctx, trajDir, "after-hail-mary", model); syncErr != nil {
+					return 1, syncErr
+				}
+				os.Remove(finalAnswerPath)
+				continue
 			}
 			return 0, nil
 		case "BLOCKED":
-			message := strings.TrimSpace(strings.TrimPrefix(messageLine, "MESSAGE:"))
 			return 1, fmt.Errorf("hard blocker: %s", message)
 		default:
 			return 1, fmt.Errorf("unexpected orchestrator ACTION %q; raw: %s", action, response)
