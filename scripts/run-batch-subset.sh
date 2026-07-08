@@ -38,7 +38,7 @@ Options:
   --treatment-treatment L   Treatment subdir for treatment
                             (default: with-peer-review)
   --work-dir PATH           Working directory for binaries and jobs
-                            (default: /tmp/mct-batch-subset)
+                            (default: REPO/.data/mct-batch-subset)
   -h, --help                Print this help message and exit
 
 Environment:
@@ -63,7 +63,7 @@ CONTROL_AGENT_LABEL="mini-swe-agent"
 TREATMENT_AGENT_LABEL="mct-orchestrator"
 CONTROL_TREATMENT_LABEL="default"
 TREATMENT_TREATMENT_LABEL="with-peer-review"
-WORK_DIR="/tmp/mct-batch-subset"
+WORK_DIR="__REPO_DATA_MCT_BATCH_SUBSET__"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -185,6 +185,10 @@ done
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+if [[ "$WORK_DIR" == "__REPO_DATA_MCT_BATCH_SUBSET__" ]]; then
+    WORK_DIR="${REPO_ROOT}/.data/mct-batch-subset"
+fi
+
 # ----------------------------------------------------------------------------
 # The 12 Deep-SWE tasks (exact order)
 # ----------------------------------------------------------------------------
@@ -211,6 +215,14 @@ TREATMENT_DIR="${WORK_DIR}/treatment"
 CONTROL_JOBS="${CONTROL_DIR}/jobs"
 TREATMENT_JOBS="${TREATMENT_DIR}/jobs"
 BIN_DIR="${WORK_DIR}/bin"
+
+TMP_AVAIL_KB="$(df -Pk /tmp | awk 'NR==2 {print $4}')"
+MIN_TMP_AVAIL_KB=$((1024 * 1024))
+if (( TMP_AVAIL_KB < MIN_TMP_AVAIL_KB )); then
+    echo "Error: /tmp has less than 1 GiB free (${TMP_AVAIL_KB} KiB available)." >&2
+    echo "Docker health checks and build steps use /tmp; free space before running the batch." >&2
+    exit 1
+fi
 
 echo "[setup] Preparing ${WORK_DIR}"
 rm -rf "${WORK_DIR}"
