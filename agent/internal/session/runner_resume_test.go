@@ -1,12 +1,14 @@
 package session
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -32,7 +34,7 @@ func TestResumeDetectsInterruptedWorkRequest(t *testing.T) {
 		"type":                        "work_request",
 		"turn":                        1,
 		"decision":                    "ask_worker",
-		"shell_agent_session_id":       "test-session-resume-detect/shell-agent/1",
+		"shell_agent_session_id":      "test-session-resume-detect/shell-agent/1",
 		"shell_agent_trajectory_path": "/tmp/test-trajectory.json",
 		"shell_agent_resumable":       true,
 	})
@@ -59,17 +61,17 @@ func TestResumeDetectsCompletedWorkRequest(t *testing.T) {
 	conv := conversation.New("test-session-resume-complete", "Test goal for completed turn")
 
 	conv.AddMessage("assistant", "Run a background check on the project", map[string]any{
-		"type":                        "work_request",
-		"turn":                        1,
-		"decision":                    "ask_worker",
-		"shell_agent_session_id":       "test-session-resume-complete/shell-agent/1",
-		"shell_agent_resumable":       true,
+		"type":                   "work_request",
+		"turn":                   1,
+		"decision":               "ask_worker",
+		"shell_agent_session_id": "test-session-resume-complete/shell-agent/1",
+		"shell_agent_resumable":  true,
 	})
 
 	conv.AddMessage("assistant", "Background check completed: all clear", map[string]any{
-		"type":                        "work_result",
-		"turn":                        1,
-		"shell_agent_resumable":       false,
+		"type":                  "work_result",
+		"turn":                  1,
+		"shell_agent_resumable": false,
 	})
 
 	data, err := conv.Marshal()
@@ -144,7 +146,7 @@ func TestResumeSkipsWorkRequestWhenResumable(t *testing.T) {
 		"type":                        "work_request",
 		"turn":                        1,
 		"decision":                    "ask_worker",
-		"shell_agent_session_id":       "test-session-resume-skip/shell-agent/1",
+		"shell_agent_session_id":      "test-session-resume-skip/shell-agent/1",
 		"shell_agent_trajectory_path": "/tmp/test-trajectory.json",
 		"shell_agent_resumable":       true,
 	})
@@ -184,7 +186,6 @@ func TestPlannerOverrideSkipsPlan(t *testing.T) {
 	}
 	_ = opts
 }
-
 
 // ==========================================================================
 // Phase 2: Session ID continuity (verification only)
@@ -361,9 +362,9 @@ func TestConversationJSONUpdatedAfterResume(t *testing.T) {
 
 // streamActionRecorder wraps *ui.EventBus and captures Notify calls.
 type streamActionRecorder struct {
-	bus     *ui.EventBus
+	bus      *ui.EventBus
 	notified []string
-	mu      sync.Mutex
+	mu       sync.Mutex
 }
 
 func (r *streamActionRecorder) Notify(line string) {
@@ -557,7 +558,7 @@ func TestExtractResumableWorkRequestQuestionFromTopLevelField(t *testing.T) {
 		"type":                        "work_request",
 		"turn":                        1,
 		"decision":                    "ask_worker",
-		"shell_agent_session_id":       "test-resume-top-level/shell-agent/1",
+		"shell_agent_session_id":      "test-resume-top-level/shell-agent/1",
 		"shell_agent_trajectory_path": "/tmp/test-path",
 		// shell_agent_resumable intentionally NOT set in metadata
 	})
@@ -591,7 +592,6 @@ func TestExtractResumableWorkRequestQuestionFromTopLevelField(t *testing.T) {
 	}
 }
 
-
 // TestPrepareRunBootstrapFromConversation verifies end-to-end bootstrap from a
 // Conversation with top-level fields without requiring a session-state.json
 // file on disk. The conversation.json file is pre-populated with all session
@@ -621,10 +621,10 @@ func TestPrepareRunBootstrapFromConversation(t *testing.T) {
 		PlannerProgress: &conversation.PlannerProgressState{
 			SuccessFiles: []string{"bootstrap_test.go"},
 		},
-		PlannerOverlay:    "Bootstrap overlay",
-		TaskDescription:   "Bootstrap task description",
-		Status:            "running",
-		UpdatedAt:         now,
+		PlannerOverlay:  "Bootstrap overlay",
+		TaskDescription: "Bootstrap task description",
+		Status:          "running",
+		UpdatedAt:       now,
 	}
 
 	// Ensure there is NO session-state.json on disk – only conversation.json.
@@ -944,6 +944,134 @@ func TestLoadTrajectoryForResumeNotFound(t *testing.T) {
 	}
 }
 
+func TestPrepareRunBootstrapIgnoresStaleShellAgentResumeMarker(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+	oldWd, _ := os.Getwd()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer os.Chdir(oldWd)
+
+	sessionID := fmt.Sprintf("test-stale-resume-%d", time.Now().UnixNano())
+	conv := conversation.New(sessionID, "test goal")
+	conv.Goal = "test goal"
+	conv.ShellAgentResumable = true
+	conv.ShellAgentTrajectoryPath = "/tmp/stale-trajectory.json"
+	conv.AddMessage("assistant", "Run the shell-agent task", map[string]any{
+		"type":                   "work_request",
+		"turn":                   1,
+		"decision":               "ask_worker",
+		"shell_agent_session_id": sessionID + "/shell-agent/1",
+	})
+
+	convPath, err := artifacts.SessionConversationFile(sessionID)
+	if err != nil {
+		t.Fatalf("SessionConversationFile: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(convPath), 0o755); err != nil {
+		t.Fatalf("mkdir conv dir: %v", err)
+	}
+	data, err := conv.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal conversation: %v", err)
+	}
+	if err := os.WriteFile(convPath, data, 0o644); err != nil {
+		t.Fatalf("WriteFile conversation: %v", err)
+	}
+	t.Cleanup(func() {
+		dir, _ := artifacts.SessionDirectory(sessionID)
+		_ = os.RemoveAll(dir)
+	})
+
+	var diag bytes.Buffer
+	bootstrap, _, ok := prepareRunBootstrap(context.Background(), Options{
+		Config: Config{SessionID: sessionID},
+		Goal:   "test goal",
+	}, &diag)
+	if !ok {
+		t.Fatal("prepareRunBootstrap returned not ok")
+	}
+	if bootstrap.resumableShellAgent {
+		t.Fatalf("expected stale shell-agent resume marker to be ignored")
+	}
+	if !strings.Contains(diag.String(), "stale shell-agent resume marker ignored") {
+		t.Fatalf("expected stale resume diagnostic, got %q", diag.String())
+	}
+}
+
+func TestPrepareRunBootstrapEnablesShellAgentResumeWithTrajectory(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+	oldWd, _ := os.Getwd()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer os.Chdir(oldWd)
+
+	sessionID := fmt.Sprintf("test-valid-resume-%d", time.Now().UnixNano())
+	conv := conversation.New(sessionID, "test goal")
+	conv.Goal = "test goal"
+	conv.ShellAgentResumable = true
+	conv.ShellAgentTrajectoryPath = "/tmp/ignored-stored-path.json"
+	conv.AddMessage("assistant", "Run the shell-agent task", map[string]any{
+		"type":                   "work_request",
+		"turn":                   1,
+		"decision":               "ask_worker",
+		"shell_agent_session_id": sessionID + "/shell-agent/1",
+	})
+
+	convPath, err := artifacts.SessionConversationFile(sessionID)
+	if err != nil {
+		t.Fatalf("SessionConversationFile: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(convPath), 0o755); err != nil {
+		t.Fatalf("mkdir conv dir: %v", err)
+	}
+	data, err := conv.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal conversation: %v", err)
+	}
+	if err := os.WriteFile(convPath, data, 0o644); err != nil {
+		t.Fatalf("WriteFile conversation: %v", err)
+	}
+	trajPath, err := artifacts.ShellAgentTrajectoryPath(sessionID, 1)
+	if err != nil {
+		t.Fatalf("ShellAgentTrajectoryPath: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(trajPath), 0o755); err != nil {
+		t.Fatalf("mkdir trajectory dir: %v", err)
+	}
+	traj := struct {
+		Messages []minisweagent.Message `json:"messages"`
+	}{Messages: []minisweagent.Message{{Role: "assistant", Content: "started"}}}
+	trajData, err := json.Marshal(traj)
+	if err != nil {
+		t.Fatalf("Marshal trajectory: %v", err)
+	}
+	if err := os.WriteFile(trajPath, trajData, 0o644); err != nil {
+		t.Fatalf("WriteFile trajectory: %v", err)
+	}
+	t.Cleanup(func() {
+		dir, _ := artifacts.SessionDirectory(sessionID)
+		_ = os.RemoveAll(dir)
+	})
+
+	bootstrap, _, ok := prepareRunBootstrap(context.Background(), Options{
+		Config: Config{SessionID: sessionID},
+		Goal:   "test goal",
+	}, io.Discard)
+	if !ok {
+		t.Fatal("prepareRunBootstrap returned not ok")
+	}
+	if !bootstrap.resumableShellAgent {
+		t.Fatalf("expected valid shell-agent trajectory to enable resume")
+	}
+	if bootstrap.resumableShellAgentTrajectoryPath != trajPath {
+		t.Fatalf("trajectory path = %q, want %q", bootstrap.resumableShellAgentTrajectoryPath, trajPath)
+	}
+}
+
 // TestVerifyShellAgentResume_MissingInterruptedTrajectory verifies that
 // verifyShellAgentResume returns nil when interruptedMsgs is empty,
 // representing a fresh start after a missing/corrupt trajectory.
@@ -958,5 +1086,3 @@ func TestVerifyShellAgentResume_MissingInterruptedTrajectory(t *testing.T) {
 		t.Fatalf("expected nil error when interruptedMsgs is empty (fresh start after missing trajectory), got: %v", err)
 	}
 }
-
-

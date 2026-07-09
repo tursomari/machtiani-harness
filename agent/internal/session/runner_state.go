@@ -11,8 +11,8 @@ import (
 
 	"github.com/tursomari/machtiani/agent/internal/conversation"
 	"github.com/tursomari/machtiani/agent/internal/llm"
-	"github.com/tursomari/machtiani/agent/internal/planner"
 	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
+	"github.com/tursomari/machtiani/agent/internal/planner"
 	"github.com/tursomari/machtiani/agent/internal/runner"
 	"github.com/tursomari/machtiani/agent/internal/tempdir"
 	"github.com/tursomari/machtiani/agent/internal/trajectory"
@@ -28,27 +28,27 @@ type Planner interface {
 }
 
 type runBootstrap struct {
-	opts                 Options
-	cfg                  legacyConfig
-	sessionID            string
-	goal                 string
-	resumePrompt         string
-	originalPrompt       string
-	taskDescription      string
-	plannerOverlay       string
-	conversationGoal     string
-	conversationPath     string
-	resumeMode           bool
-	loadedState          *SessionState
+	opts                              Options
+	cfg                               legacyConfig
+	sessionID                         string
+	goal                              string
+	resumePrompt                      string
+	originalPrompt                    string
+	taskDescription                   string
+	plannerOverlay                    string
+	conversationGoal                  string
+	conversationPath                  string
+	resumeMode                        bool
+	loadedState                       *SessionState
 	resumeSuspendedInput              *conversation.SuspendedUserInputState
 	modeInstructions                  llm.ModeInstructions
 	modeInstructionPath               string
 	runState                          *runLifecycleState
 	resumableShellAgent               bool
 	resumableShellAgentTrajectoryPath string
-	hasNewInput                     bool // from Options; determines shell-agent ResumeAttempt
-	shellAgentInterruptStep         int  // from Options; deterministic interrupt step for shell agent
-	shellAgentStepLog               string // from Options; path for step-log JSONL file (empty disables)
+	hasNewInput                       bool   // from Options; determines shell-agent ResumeAttempt
+	shellAgentInterruptStep           int    // from Options; deterministic interrupt step for shell agent
+	shellAgentStepLog                 string // from Options; path for step-log JSONL file (empty disables)
 }
 
 type sessionEnvironmentBootstrap struct {
@@ -189,33 +189,53 @@ func prepareRunBootstrap(rootCtx context.Context, opts Options, diagWriter io.Wr
 	runState := newRunLifecycleState(rootCtx, cfg, sessionID, goal, originalPrompt, taskDescription, plannerOverlay, modeInstructionPath, opts.ShellAgentInterruptStep, opts.ShellAgentStepLog, loadedState)
 
 	bootstrap := &runBootstrap{
-		opts:                 opts,
-		cfg:                  cfg,
-		sessionID:            sessionID,
-		goal:                 goal,
-		resumePrompt:         resumePrompt,
-		originalPrompt:       originalPrompt,
-		taskDescription:      taskDescription,
-		plannerOverlay:       plannerOverlay,
-		conversationGoal:     conversationGoal,
-		conversationPath:     conversationPath,
-		resumeMode:           resumeMode,
-		loadedState:          loadedState,
-		resumeSuspendedInput: loadedStateSuspendedInput(loadedState),
-		modeInstructions:     modeInstructions,
-		modeInstructionPath:  modeInstructionPath,
-		runState:             runState,
+		opts:                    opts,
+		cfg:                     cfg,
+		sessionID:               sessionID,
+		goal:                    goal,
+		resumePrompt:            resumePrompt,
+		originalPrompt:          originalPrompt,
+		taskDescription:         taskDescription,
+		plannerOverlay:          plannerOverlay,
+		conversationGoal:        conversationGoal,
+		conversationPath:        conversationPath,
+		resumeMode:              resumeMode,
+		loadedState:             loadedState,
+		resumeSuspendedInput:    loadedStateSuspendedInput(loadedState),
+		modeInstructions:        modeInstructions,
+		modeInstructionPath:     modeInstructionPath,
+		runState:                runState,
 		shellAgentInterruptStep: opts.ShellAgentInterruptStep,
-		shellAgentStepLog:      opts.ShellAgentStepLog,
+		shellAgentStepLog:       opts.ShellAgentStepLog,
 	}
 	bootstrap.hasNewInput = opts.HasNewInput
 
 	if loadedState != nil && loadedState.ShellAgentResumable && !opts.HasNewInput {
-		bootstrap.resumableShellAgent = true
-		bootstrap.resumableShellAgentTrajectoryPath = loadedState.ShellAgentTrajectoryPath
-		fmt.Fprintf(diagWriter, "resumable shell-agent work request detected for session %s at %s\n", sessionID, loadedState.ShellAgentTrajectoryPath)
+		resumeTrajectoryPath, resumeErr := validatedShellAgentResumeTrajectory(sessionID, loadedState)
+		if resumeErr != nil {
+			fmt.Fprintf(diagWriter, "stale shell-agent resume marker ignored for session %s: %v\n", sessionID, resumeErr)
+		} else {
+			bootstrap.resumableShellAgent = true
+			bootstrap.resumableShellAgentTrajectoryPath = resumeTrajectoryPath
+			fmt.Fprintf(diagWriter, "resumable shell-agent work request detected for session %s at %s\n", sessionID, resumeTrajectoryPath)
+		}
 	}
 	return bootstrap, Result{}, true
+}
+
+func validatedShellAgentResumeTrajectory(sessionID string, state *SessionState) (string, error) {
+	if state == nil || !state.ShellAgentResumable {
+		return "", errors.New("shell-agent work is not marked resumable")
+	}
+	turn := state.TurnsCompleted + 1
+	path, err := artifacts.ShellAgentTrajectoryPath(sessionID, turn)
+	if err != nil {
+		return "", err
+	}
+	if _, err := loadTrajectoryForResume(sessionID, turn); err != nil {
+		return path, fmt.Errorf("resume trajectory unavailable at %s: %w", path, err)
+	}
+	return path, nil
 }
 
 func loadedStateSuspendedInput(state *SessionState) *conversation.SuspendedUserInputState {
@@ -400,22 +420,22 @@ func newRunLifecycleState(rootCtx context.Context, cfg legacyConfig, sessionID, 
 		originalGoalVal = loadedState.Goal
 	}
 	r := &runLifecycleState{
-		rootCtx:             rootCtx,
-		cfg:                 cfg,
-		sessionID:           sessionID,
-		goal:                goal,
-		originalPrompt:      originalPrompt,
-		originalGoal:        originalGoalVal,
-		taskDescription:     taskDescription,
-		plannerOverlay:      plannerOverlay,
-		modeInstructionPath: modeInstructionPath,
-		mode:                cfg.mode,
-		plannerProgress:     plannerProgress,
-		suspendedUserInput:  loadedStateSuspendedInput(loadedState),
+		rootCtx:                 rootCtx,
+		cfg:                     cfg,
+		sessionID:               sessionID,
+		goal:                    goal,
+		originalPrompt:          originalPrompt,
+		originalGoal:            originalGoalVal,
+		taskDescription:         taskDescription,
+		plannerOverlay:          plannerOverlay,
+		modeInstructionPath:     modeInstructionPath,
+		mode:                    cfg.mode,
+		plannerProgress:         plannerProgress,
+		suspendedUserInput:      loadedStateSuspendedInput(loadedState),
 		sessionStatus:           "error",
 		turnsCompleted:          turnsCompleted,
 		shellAgentInterruptStep: interruptStep,
-		shellAgentStepLog:      stepLogPath,
+		shellAgentStepLog:       stepLogPath,
 	}
 	if strings.TrimSpace(r.mode) != "" && r.recorder != nil && r.recorder.HasConversation() {
 		r.recorder.conversation.Modes = []string{strings.ToLower(strings.TrimSpace(r.mode))}
@@ -423,21 +443,20 @@ func newRunLifecycleState(rootCtx context.Context, cfg legacyConfig, sessionID, 
 	return r
 }
 
-
 type conversationRecorder struct {
-	tr                           *transcript.Transcript
-	sessionID                    string
-	conversationGoal             string
-	conversationPath             string
-	resumeMode                   bool
-	loadedState                  *SessionState
-	conversation                 *conversation.Conversation
-	conversationRendered         string
-	conversationJSON             string
-	shellAgentTrajectoryPath     string
-	shellAgentResumable          bool
-	hasNewInput                  bool
-	resumedSession               bool
+	tr                       *transcript.Transcript
+	sessionID                string
+	conversationGoal         string
+	conversationPath         string
+	resumeMode               bool
+	loadedState              *SessionState
+	conversation             *conversation.Conversation
+	conversationRendered     string
+	conversationJSON         string
+	shellAgentTrajectoryPath string
+	shellAgentResumable      bool
+	hasNewInput              bool
+	resumedSession           bool
 }
 
 var errConversationTranscriptDesync = errors.New("conversation transcript desync")
@@ -482,9 +501,9 @@ func (c *conversationRecorder) PreWriteTurn(step int, question string, shellAgen
 	}
 	shellAgentSessionID := fmt.Sprintf("%s/shell-agent/%d", c.sessionID, step)
 	c.conversation.AddMessage("assistant", question, map[string]any{
-		"type":                  "work_request",
-		"turn":                  step,
-		"decision":              "ask",
+		"type":                   "work_request",
+		"turn":                   step,
+		"decision":               "ask",
 		"shell_agent_session_id": shellAgentSessionID,
 	})
 	rendered, delta, err := c.renderDelta()
@@ -623,9 +642,9 @@ func (c *conversationRecorder) WriteTurn(step int, question, savedPath string, r
 	}
 	shellAgentSessionID := fmt.Sprintf("%s/shell-agent/%d", c.sessionID, step)
 	c.conversation.AddMessage("assistant", question, map[string]any{
-		"type":                  "work_request",
-		"turn":                  step,
-		"decision":              decision,
+		"type":                   "work_request",
+		"turn":                   step,
+		"decision":               decision,
 		"shell_agent_session_id": shellAgentSessionID,
 	})
 	c.conversation.AddMessage("assistant", summary, map[string]any{
@@ -735,18 +754,6 @@ func (c *conversationRecorder) WriteFinal(answer string, step int, capped bool) 
 	return c.Save()
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
 func (c *conversationRecorder) appendRawToTranscript(role, content, metaType string) error {
 	if c.tr == nil {
 		return nil
@@ -848,7 +855,6 @@ func msgMetaBool(val any) bool {
 	return false
 }
 
-
 type runLifecycleState struct {
 	rootCtx             context.Context
 	cfg                 legacyConfig
@@ -863,17 +869,17 @@ type runLifecycleState struct {
 	recorder            *conversationRecorder
 	plannerProgress     *plannerProgressTracker
 
-	repoRoot            string
-	trajectoryWriter    *trajectory.Writer
-	tr                  *transcript.Transcript
-	sessionStatus       string
-	sessionErr          error
-	turnsCompleted      int
-	interrupted         bool
-	pendingState        *SessionState
-	suspendedUserInput     *conversation.SuspendedUserInputState
+	repoRoot                string
+	trajectoryWriter        *trajectory.Writer
+	tr                      *transcript.Transcript
+	sessionStatus           string
+	sessionErr              error
+	turnsCompleted          int
+	interrupted             bool
+	pendingState            *SessionState
+	suspendedUserInput      *conversation.SuspendedUserInputState
 	shellAgentInterruptStep int
-	shellAgentStepLog      string
+	shellAgentStepLog       string
 }
 
 func (r *runLifecycleState) clearSuspendedUserInput() {
@@ -1096,5 +1102,3 @@ func (r *runLifecycleState) suspendForUserInput(bus *ui.EventBus, diagWriter io.
 	r.printUserInputHint(bus, diagWriter, question, context)
 	return Result{ExitCode: 0, Status: r.sessionStatus, Turns: r.turnsCompleted, SessionID: r.sessionID}, nil
 }
-
-
