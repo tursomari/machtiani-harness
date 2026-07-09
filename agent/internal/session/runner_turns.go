@@ -31,10 +31,10 @@ type transcriptTurnWriter func(step int, question, savedPath string, retrieved [
 type turnLoopAction string
 
 const (
-	turnLoopAskWorker turnLoopAction = "ask_worker"
+	turnLoopAskWorker  turnLoopAction = "ask_worker"
 	turnLoopAnswerUser turnLoopAction = "answer_user"
-	turnLoopReturn   turnLoopAction = "return"
-	turnLoopAskUser  turnLoopAction = "ask_user"
+	turnLoopReturn     turnLoopAction = "return"
+	turnLoopAskUser    turnLoopAction = "ask_user"
 )
 
 type turnExecutionResult struct {
@@ -44,38 +44,38 @@ type turnExecutionResult struct {
 }
 
 type runTurnEnv struct {
-	rootCtx                     context.Context
-	cfg                         legacyConfig
-	sessionID                   string
-	goal                        string
-	repoRoot                    string
-	step                        int
-	sessionErr                  *error
-	turnsCompleted              *int
-	plannerProgress             *plannerProgressTracker
-	bus                         *ui.EventBus
-	diagWriter                  io.Writer
-	hasNewInput                 bool // from Options; propagated to TurnContext for ResumeAttempt
-	isResumingTurn              bool // set when resumableShellAgent is true; triggers TUI replay
+	rootCtx                           context.Context
+	cfg                               legacyConfig
+	sessionID                         string
+	goal                              string
+	repoRoot                          string
+	step                              int
+	sessionErr                        *error
+	turnsCompleted                    *int
+	plannerProgress                   *plannerProgressTracker
+	bus                               *ui.EventBus
+	diagWriter                        io.Writer
+	hasNewInput                       bool // from Options; propagated to TurnContext for ResumeAttempt
+	isResumingTurn                    bool // set when resumableShellAgent is true; triggers TUI replay
 	resumableShellAgentTrajectoryPath string
-	shellAgentInterruptStep     int
-	shellAgentStepLog          string
-	sessTelemetry               *sessionTelemetry
-	turn                        *turnTelemetry
-	turnDecision                string
-	turnInfo                    map[string]any
-	parentSpanID                string
-	trajectoryWriter            *trajectory.Writer
-	writeTurn                   transcriptTurnWriter
-	interruptedResult           func(error) Result
-	isContextCancelled          func(error) bool
-	mctRunner                   *runner.Runner
-	pl                          Planner
-	tr                          *transcript.Transcript
-	recorder                    *conversationRecorder
-	orchPromptOpts              **ui.PromptOptions
-	baseOrchMetadata            []string
-	mctResponseDirectives       []string
+	shellAgentInterruptStep           int
+	shellAgentStepLog                 string
+	sessTelemetry                     *sessionTelemetry
+	turn                              *turnTelemetry
+	turnDecision                      string
+	turnInfo                          map[string]any
+	parentSpanID                      string
+	trajectoryWriter                  *trajectory.Writer
+	writeTurn                         transcriptTurnWriter
+	interruptedResult                 func(error) Result
+	isContextCancelled                func(error) bool
+	mctRunner                         *runner.Runner
+	pl                                Planner
+	tr                                *transcript.Transcript
+	recorder                          *conversationRecorder
+	orchPromptOpts                    **ui.PromptOptions
+	baseOrchMetadata                  []string
+	mctResponseDirectives             []string
 }
 
 // loadTrajectoryForResume loads the shell-agent trajectory messages
@@ -107,7 +107,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 		fmt.Fprintln(env.diagWriter, "Planner returned empty question for 'ask' decision")
 		*env.sessionErr = errEmpty
 		finishTurn(env.sessTelemetry, env.turn, env.turnDecision, "error", env.turnInfo, errEmpty)
-		
+
 		return turnExecutionResult{action: turnLoopReturn, result: Result{ExitCode: 1, Err: errEmpty}}
 	}
 	if env.cfg.verbose {
@@ -225,14 +225,14 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 	skipResumeVerify := false
 	if env.isResumingTurn {
 		var loadErr error
-	interruptedMsgs, loadErr = loadTrajectoryForResume(env.sessionID, env.step)
-	if loadErr != nil {
-		log.Printf("[resume] failed to load trajectory for replay (step %d): %v", env.step, loadErr)
-	}
-	if len(interruptedMsgs) == 0 {
-		log.Printf("[resume] no interrupted messages to verify for step %d, skipping resume verification", env.step)
-		skipResumeVerify = true
-	}
+		interruptedMsgs, loadErr = loadTrajectoryForResume(env.sessionID, env.step)
+		if loadErr != nil {
+			log.Printf("[resume] failed to load trajectory for replay (step %d): %v", env.step, loadErr)
+		}
+		if len(interruptedMsgs) == 0 {
+			log.Printf("[resume] no interrupted messages to verify for step %d, skipping resume verification", env.step)
+			skipResumeVerify = true
+		}
 	}
 	streamID := fmt.Sprintf("stream-%d", env.step)
 	env.bus.Emit(ui.PromptStartedEvent{StreamID: streamID, Prompt: question, Opts: orchPromptOpts})
@@ -347,7 +347,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 				stream.Abort(msg)
 				*env.sessionErr = merr
 				finishTurn(env.sessTelemetry, env.turn, env.turnDecision, "error", env.turnInfo, merr)
-				
+
 				return turnExecutionResult{action: turnLoopReturn, result: Result{ExitCode: 1, Err: merr}, shellAgentUsed: shellAgentUsedThisTurn}
 			}
 		}
@@ -435,7 +435,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 		}
 		env.turnInfo["retrieved_count"] = len(retrieved)
 		*env.turnsCompleted++
-		
+
 		finishTurn(env.sessTelemetry, env.turn, env.turnDecision, "success", env.turnInfo, nil)
 		if *env.turnsCompleted == env.cfg.maxTurns {
 			return turnExecutionResult{action: turnLoopAnswerUser, shellAgentUsed: shellAgentUsedThisTurn}
@@ -447,14 +447,14 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 	}
 	sasID := fmt.Sprintf("%s/shell-agent/%d", env.sessionID, env.step)
 	input := runner.PromptInput{
-		Prompt:             question,
-		Mode:               "default",
-		IncludeHistory:     true,
-		OnStreamHeader:     func(s string) { stream.OnChunk(s) },
-		OnStreamToken:      func(s string) { stream.OnChunk(s) },
-		MaxInputTokens:     env.cfg.maxInputTokens,
+		Prompt:              question,
+		Mode:                "default",
+		IncludeHistory:      true,
+		OnStreamHeader:      func(s string) { stream.OnChunk(s) },
+		OnStreamToken:       func(s string) { stream.OnChunk(s) },
+		MaxInputTokens:      env.cfg.maxInputTokens,
 		ShellAgentSessionID: sasID,
-		ResponseDirectives: append([]string(nil), env.mctResponseDirectives...),
+		ResponseDirectives:  append([]string(nil), env.mctResponseDirectives...),
 	}
 	if useShellAgent && env.mctRunner.ShellAgentLibrary != nil {
 		tc := &TurnContext{TurnIndex: env.step, Conversation: env.recorder, ShellAgentLib: env.mctRunner.ShellAgentLibrary, HasNewInput: env.hasNewInput, ResumableShellAgentTrajectoryPath: env.resumableShellAgentTrajectoryPath, ShellAgentInterruptStep: env.shellAgentInterruptStep, ShellAgentStepLog: env.shellAgentStepLog}
@@ -496,7 +496,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 		stream.Abort(msg)
 		*env.sessionErr = merr
 		finishTurn(env.sessTelemetry, env.turn, env.turnDecision, "error", env.turnInfo, merr)
-		
+
 		return turnExecutionResult{action: turnLoopReturn, result: Result{ExitCode: 1, Err: merr}, shellAgentUsed: shellAgentUsedThisTurn}
 	}
 
@@ -582,7 +582,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 	if strings.TrimSpace(result.ShellAgentTrajectoryPath) != "" {
 		env.recorder.SetShellAgentMetadata(result.ShellAgentTrajectoryPath, false)
 	}
-	
+
 	finishTurn(env.sessTelemetry, env.turn, env.turnDecision, "success", env.turnInfo, nil)
 	if *env.turnsCompleted == env.cfg.maxTurns {
 		return turnExecutionResult{action: turnLoopAnswerUser, shellAgentUsed: shellAgentUsedThisTurn}
@@ -593,16 +593,15 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 	return turnExecutionResult{action: turnLoopAskWorker, shellAgentUsed: shellAgentUsedThisTurn}
 }
 
-
 // TurnContext bundles turn-scoped data for shell-agent request construction.
 type TurnContext struct {
-	HasNewInput  bool // from Options; determines ResumeAttempt on shellagent.Request
+	HasNewInput                       bool // from Options; determines ResumeAttempt on shellagent.Request
 	ResumableShellAgentTrajectoryPath string
-	TurnIndex    int
-	Conversation *conversationRecorder
-	ShellAgentLib *shellagent.ShellAgentLibrary
-	ShellAgentInterruptStep int
-	ShellAgentStepLog      string
+	TurnIndex                         int
+	Conversation                      *conversationRecorder
+	ShellAgentLib                     *shellagent.ShellAgentLibrary
+	ShellAgentInterruptStep           int
+	ShellAgentStepLog                 string
 }
 
 // buildShellAgentRequest constructs a shellagent.Request from the TurnContext
@@ -648,7 +647,7 @@ func (tc *TurnContext) buildShellAgentRequest(task string, sessionID string, ver
 	}
 
 	messages = append(messages, llm.Message{
-		Role: "user",
+		Role:    "user",
 		Content: instPrompt,
 	})
 
@@ -666,8 +665,9 @@ func (tc *TurnContext) buildShellAgentRequest(task string, sessionID string, ver
 		EnforceEarlyCommands:   tc.ShellAgentLib.EnforceEarlyCommands,
 		AnswerTag:              tc.ShellAgentLib.AnswerTag,
 		CommandTag:             tc.ShellAgentLib.CommandTag,
-		// ResumeAttempt is true when no new CLI input was provided, false when -t or -f were given.
-		ResumeAttempt: !tc.HasNewInput,
+		// ResumeAttempt is only valid after bootstrap has verified an
+		// existing shell-agent trajectory for the interrupted turn.
+		ResumeAttempt: !tc.HasNewInput && strings.TrimSpace(tc.ResumableShellAgentTrajectoryPath) != "",
 		InterruptStep: tc.ShellAgentInterruptStep,
 	}
 

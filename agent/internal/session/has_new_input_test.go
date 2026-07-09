@@ -98,9 +98,9 @@ func TestBuildShellAgentRequestResumeAttemptFalseWithNewInput(t *testing.T) {
 	}
 
 	tc := &TurnContext{
-		HasNewInput:  true,
-		TurnIndex:    1,
-		Conversation: recorder,
+		HasNewInput:   true,
+		TurnIndex:     1,
+		Conversation:  recorder,
 		ShellAgentLib: lib,
 	}
 
@@ -110,6 +110,79 @@ func TestBuildShellAgentRequestResumeAttemptFalseWithNewInput(t *testing.T) {
 	}
 	if req.ResumeAttempt {
 		t.Errorf("expected ResumeAttempt to be false when HasNewInput is true, got true")
+	}
+}
+
+func TestBuildShellAgentRequestResumeAttemptFalseWithoutValidatedTrajectory(t *testing.T) {
+	conv := conversation.New("test-session-build-req-no-traj", "Test goal")
+	recorder := &conversationRecorder{conversation: conv}
+
+	lib := &shellagent.ShellAgentLibrary{
+		ExtraInstructions: "extra instructions",
+		CommandTag:        "command",
+		AnswerTag:         "answer",
+		Prompts: &minisweagent.PromptsConfig{
+			Planner: &minisweagent.PlannerPromptsConfig{
+				SystemTemplate: "Planner system template placeholder",
+			},
+			ShellAgent: &minisweagent.ShellAgentPromptsConfig{
+				SystemTemplate:   "Shell-agent system template placeholder",
+				InstanceTemplate: "Instance template for task: {{.Task}}",
+			},
+		},
+		Config: &llm.ShellAgentConfig{MaxSteps: 10},
+	}
+
+	tc := &TurnContext{
+		HasNewInput:   false,
+		TurnIndex:     1,
+		Conversation:  recorder,
+		ShellAgentLib: lib,
+	}
+
+	req, err := tc.buildShellAgentRequest("dummy task", "test-session-build-req-no-traj", false, 4000)
+	if err != nil {
+		t.Fatalf("buildShellAgentRequest: %v", err)
+	}
+	if req.ResumeAttempt {
+		t.Errorf("expected ResumeAttempt to be false without a validated trajectory path, got true")
+	}
+}
+
+func TestBuildShellAgentRequestResumeAttemptTrueWithValidatedTrajectory(t *testing.T) {
+	conv := conversation.New("test-session-build-req-with-traj", "Test goal")
+	recorder := &conversationRecorder{conversation: conv}
+
+	lib := &shellagent.ShellAgentLibrary{
+		ExtraInstructions: "extra instructions",
+		CommandTag:        "command",
+		AnswerTag:         "answer",
+		Prompts: &minisweagent.PromptsConfig{
+			Planner: &minisweagent.PlannerPromptsConfig{
+				SystemTemplate: "Planner system template placeholder",
+			},
+			ShellAgent: &minisweagent.ShellAgentPromptsConfig{
+				SystemTemplate:   "Shell-agent system template placeholder",
+				InstanceTemplate: "Instance template for task: {{.Task}}",
+			},
+		},
+		Config: &llm.ShellAgentConfig{MaxSteps: 10},
+	}
+
+	tc := &TurnContext{
+		HasNewInput:                       false,
+		TurnIndex:                         1,
+		Conversation:                      recorder,
+		ShellAgentLib:                     lib,
+		ResumableShellAgentTrajectoryPath: "/tmp/existing-trajectory.json",
+	}
+
+	req, err := tc.buildShellAgentRequest("dummy task", "test-session-build-req-with-traj", false, 4000)
+	if err != nil {
+		t.Fatalf("buildShellAgentRequest: %v", err)
+	}
+	if !req.ResumeAttempt {
+		t.Errorf("expected ResumeAttempt to be true with a validated trajectory path")
 	}
 }
 
@@ -199,7 +272,7 @@ func TestResumeWithNewInputSetsHasNewInput(t *testing.T) {
 		"type":                        "work_request",
 		"turn":                        1,
 		"decision":                    "ask_worker",
-		"shell_agent_session_id":       sessionID + "/shell-agent/1",
+		"shell_agent_session_id":      sessionID + "/shell-agent/1",
 		"shell_agent_trajectory_path": "/tmp/dummy",
 		"shell_agent_resumable":       true,
 	})
