@@ -117,6 +117,7 @@ OUTPUT_BIN="${OUTPUT_BASE}/bin"
 JOBS_DIR="${OUTPUT_BASE}/jobs"
 TASKS="${HOME}/projects/deep-swe/tasks"
 DEEP_SWE_REPO="${HOME}/projects/deep-swe"
+SAFE_AGENT_MOUNTS_JSON='[{"type":"bind","source":"${HOST_AGENT_LOGS_PATH}","target":"${ENV_AGENT_LOGS_PATH}"},{"type":"bind","source":"${HOST_ARTIFACTS_PATH}","target":"${ENV_ARTIFACTS_PATH}"}]'
 
 AGENT_BIN="${OUTPUT_BIN}/mct-agent"
 META_BIN="${OUTPUT_BIN}/meta-orchestrator"
@@ -194,6 +195,7 @@ pier run \
     --include-task-name "${TASK_NAME}" \
     --n-concurrent 1 \
     --agent-timeout-multiplier 3.0 \
+    --mounts-json "${SAFE_AGENT_MOUNTS_JSON}" \
     -p "${TASKS}"
 
 kill $PRESERVE_PID 2>/dev/null || true; wait $PRESERVE_PID 2>/dev/null || true

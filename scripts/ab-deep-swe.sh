@@ -80,6 +80,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 OUTPUT_BASE="/tmp/mct-ab-deepswe"
 CONTROL_OUT="${OUTPUT_BASE}/control"
 TREATMENT_OUT="${OUTPUT_BASE}/treatment"
+SAFE_AGENT_MOUNTS_JSON='[{"type":"bind","source":"${HOST_AGENT_LOGS_PATH}","target":"${ENV_AGENT_LOGS_PATH}"},{"type":"bind","source":"${HOST_ARTIFACTS_PATH}","target":"${ENV_ARTIFACTS_PATH}"}]'
 
 # Per-task persistence tree under the repo for treatment results.
 BENCH_DIR="${REPO_ROOT}/.bench"
@@ -240,6 +241,7 @@ if [[ "${TREATMENT_ONLY}" != "true" ]]; then
         --jobs-dir "${CONTROL_OUT}/jobs" \
         --n-concurrent "${CONCURRENT}" \
         --agent-timeout-multiplier "${TIMEOUT_MULTIPLIER}" \
+        --mounts-json "${SAFE_AGENT_MOUNTS_JSON}" \
         -p "${TASKS}"
 
     echo "[run:control] Complete."
@@ -269,6 +271,7 @@ pier run \
     --jobs-dir "${TREATMENT_OUT}/jobs" \
     --n-concurrent "${CONCURRENT}" \
     --agent-timeout-multiplier "${TIMEOUT_MULTIPLIER}" \
+    --mounts-json "${SAFE_AGENT_MOUNTS_JSON}" \
     -p "${TASKS}"
 
 echo "[run:treatment] Complete."

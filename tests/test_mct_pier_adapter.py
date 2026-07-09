@@ -104,5 +104,22 @@ class ArtifactPreservationCommandTest(unittest.TestCase):
         self.assertNotIn("git commit", commands)
 
 
+class SafePierMountsTest(unittest.TestCase):
+    def test_benchmark_launchers_do_not_mount_verifier_logs_into_agents(self):
+        repo_root = Path(__file__).resolve().parents[1]
+
+        for script in (
+            repo_root / "scripts" / "run-batch-subset.sh",
+            repo_root / "scripts" / "run-single-treatment.sh",
+            repo_root / "scripts" / "ab-deep-swe.sh",
+        ):
+            text = script.read_text(encoding="utf-8")
+            self.assertIn("--mounts-json", text, script)
+            self.assertIn("HOST_AGENT_LOGS_PATH", text, script)
+            self.assertIn("HOST_ARTIFACTS_PATH", text, script)
+            self.assertNotIn("HOST_VERIFIER_LOGS_PATH", text, script)
+            self.assertNotIn("ENV_VERIFIER_LOGS_PATH", text, script)
+
+
 if __name__ == "__main__":
     unittest.main()

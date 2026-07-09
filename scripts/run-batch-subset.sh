@@ -223,6 +223,7 @@ TREATMENT_DIR="${WORK_DIR}/treatment"
 CONTROL_JOBS="${CONTROL_DIR}/jobs"
 TREATMENT_JOBS="${TREATMENT_DIR}/jobs"
 BIN_DIR="${WORK_DIR}/bin"
+SAFE_AGENT_MOUNTS_JSON='[{"type":"bind","source":"${HOST_AGENT_LOGS_PATH}","target":"${ENV_AGENT_LOGS_PATH}"},{"type":"bind","source":"${HOST_ARTIFACTS_PATH}","target":"${ENV_ARTIFACTS_PATH}"}]'
 
 TMP_AVAIL_KB="$(df -Pk /tmp | awk 'NR==2 {print $4}')"
 MIN_TMP_AVAIL_KB=$((1024 * 1024))
@@ -314,6 +315,7 @@ if [[ "${TREATMENT_ONLY}" != "true" ]]; then
         --job-name "${CONTROL_JOB_NAME}" \
         --n-concurrent "${CONCURRENT}" \
         --agent-timeout-multiplier "${TIMEOUT_MULTIPLIER}" \
+        --mounts-json "${SAFE_AGENT_MOUNTS_JSON}" \
         -p "${TASKS_PATH}" \
         "${INCLUDE_FLAGS[@]}" \
         > "${CONTROL_DIR}/pier.log" 2>&1 &
@@ -347,6 +349,7 @@ env \
     --job-name "${TREATMENT_JOB_NAME}" \
     --n-concurrent "${CONCURRENT}" \
     --agent-timeout-multiplier "${TIMEOUT_MULTIPLIER}" \
+    --mounts-json "${SAFE_AGENT_MOUNTS_JSON}" \
     -p "${TASKS_PATH}" \
     "${INCLUDE_FLAGS[@]}" \
     > "${TREATMENT_DIR}/pier.log" 2>&1 &
