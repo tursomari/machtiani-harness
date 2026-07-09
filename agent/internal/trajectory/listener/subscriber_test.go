@@ -308,7 +308,7 @@ func TestSubscriberHandlesMissingFile(t *testing.T) {
 	}
 }
 
-func TestSubscriberDetectsTruncation(t *testing.T) {
+func TestSubscriberRecoversFromTruncation(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "agent.jsonl")
 
@@ -325,13 +325,34 @@ func TestSubscriberDetectsTruncation(t *testing.T) {
 		t.Fatalf("new subscriber: %v", err)
 	}
 
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	errCh := make(chan error, 1)
 	seen := make(chan struct{}, 1)
+	truncated := make(chan struct{}, 1)
+	secondSeen := make(chan struct{}, 1)
 
 	go func() {
-		errCh <- sub.Subscribe(ctx, SubscribeOptions{PollInterval: 5 * time.Millisecond}, func(ctx context.Context, evt Event) error {
+		errCh <- sub.Subscribe(ctx, SubscribeOptions{
+			PollInterval: 5 * time.Millisecond,
+			ErrorHandler: func(err error) {
+				if strings.Contains(err.Error(), "file truncated") {
+					select {
+					case truncated <- struct{}{}:
+					default:
+					}
+				}
+			},
+		}, func(ctx context.Context, evt Event) error {
+			if evt.Kind == "agent.turn.after-truncate" {
+				select {
+				case secondSeen <- struct{}{}:
+				default:
+				}
+				cancel()
+				return nil
+			}
 			select {
 			case seen <- struct{}{}:
 			default:
@@ -358,11 +379,111 @@ func TestSubscriberDetectsTruncation(t *testing.T) {
 	}
 
 	select {
+	case <-truncated:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timeout waiting for truncation notification")
+	}
+
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close first writer: %v", err)
+	}
+	writer2, err := trajectory.New(trajectory.Config{SessionID: "sess", Path: path, Component: "agent"})
+	if err != nil {
+		t.Fatalf("new second writer: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = writer2.Close()
+	})
+	if err := writer2.Emit(context.Background(), trajectory.Event{Kind: "agent.turn.after-truncate", Payload: map[string]any{"event_version": 1}}); err != nil {
+		t.Fatalf("emit after truncate: %v", err)
+	}
+
+	select {
+	case <-secondSeen:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timeout waiting for event after truncation")
+	}
+
+	select {
 	case err := <-errCh:
-		if err == nil || !strings.Contains(err.Error(), "file truncated") {
-			t.Fatalf("unexpected error: %v", err)
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("subscribe returned unexpected error: %v", err)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatalf("timeout waiting for truncation error")
+		t.Fatalf("timeout waiting for subscriber")
+	}
+}
+
+func TestSubscriberSkipsMalformedJSONLine(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "agent.jsonl")
+
+	if err := os.WriteFile(path, []byte("definitely not json\n"), 0o644); err != nil {
+		t.Fatalf("write malformed line: %v", err)
+	}
+
+	sub, err := New(path)
+	if err != nil {
+		t.Fatalf("new subscriber: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	decodeErr := make(chan struct{}, 1)
+	seen := make(chan struct{}, 1)
+	errCh := make(chan error, 1)
+
+	go func() {
+		errCh <- sub.Subscribe(ctx, SubscribeOptions{
+			PollInterval: 5 * time.Millisecond,
+			ErrorHandler: func(err error) {
+				if strings.Contains(err.Error(), "decode event") {
+					select {
+					case decodeErr <- struct{}{}:
+					default:
+					}
+				}
+			},
+		}, func(ctx context.Context, evt Event) error {
+			select {
+			case seen <- struct{}{}:
+			default:
+			}
+			cancel()
+			return nil
+		})
+	}()
+
+	select {
+	case <-decodeErr:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timeout waiting for decode error notification")
+	}
+
+	writer, err := trajectory.New(trajectory.Config{SessionID: "sess", Path: path, Component: "agent"})
+	if err != nil {
+		t.Fatalf("new writer: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = writer.Close()
+	})
+	if err := writer.Emit(context.Background(), trajectory.Event{Kind: "agent.turn.valid", Payload: map[string]any{"event_version": 1}}); err != nil {
+		t.Fatalf("emit valid event: %v", err)
+	}
+
+	select {
+	case <-seen:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timeout waiting for valid event after malformed line")
+	}
+
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("subscribe returned unexpected error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timeout waiting for subscriber")
 	}
 }

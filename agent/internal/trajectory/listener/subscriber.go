@@ -206,7 +206,10 @@ func (s *Subscriber) Subscribe(ctx context.Context, opts SubscribeOptions, handl
 
 			size := info.Size()
 			if size < offset {
-				return fmt.Errorf("trajectory/listener: file truncated (size %d < offset %d)", size, offset)
+				emitErr(fmt.Errorf("trajectory/listener: file truncated (size %d < offset %d)", size, offset))
+				offset = 0
+				pending = pending[:0]
+				continue
 			}
 
 			if size == offset {
