@@ -117,7 +117,7 @@ You MUST:
 2. Inspect the current implementation and all added/modified tests. Do not rely on previous agents' summaries.
 3. Build a spec-to-test matrix. For every requirement, identify the test evidence proving it. If coverage is missing, weak, implementation-coupled, or appears to encode a misreading of the spec, write stronger tests.
 4. Add adversarial public-API tests for plausible spec misinterpretations. For typed languages, include compile-time/type-level tests for exact API contracts, overloads/inference, invalid usage, and negative cases where the spec implies type errors.
-5. Run the relevant compile/typecheck/build commands and the full relevant test suite. Also run any focused adversarial tests you added. Capture exact command output.
+5. Run the relevant compile/typecheck/build commands and the full relevant test suite. Also run any focused adversarial tests you added. Record the exact commands, exit status or pass/fail result, and the evidence you used to confirm the result. You may ask to confirm whether each command passed or failed. ***Do not require or expect verbatim/raw shell output in the final answer.***
 6. Fix every failure or uncovered requirement. Do not give up after one attempt. Continue editing, compiling, and testing until the instruction is fully satisfied.
 7. Remove temporary validation files unless they are intentionally committed as permanent tests. Ensure the working tree contains only appropriate deliverables.
 8. Commit all fixes and tests.
@@ -126,7 +126,7 @@ You MUST:
 Your final answer must include:
 - The requirement checklist with status for every item.
 - The spec-to-test matrix with file paths and commands.
-- Exact compile/typecheck/build/test commands run and whether they passed.
+- Exact compile/typecheck/build/test commands run, whether they passed, and how the result was confirmed. ***Do not include or invent raw command output unless it is already available and directly relevant.***
 - Exact post-commit verification commands run after the final commit and whether they passed.
 - The final changed-file set and confirmation that accidental artifacts were excluded.
 - Any fixes made during this Hail Mary pass with commit hashes.
@@ -815,6 +815,27 @@ func invokeMCTAgentRun(
 	return invokeMCTAgent(ctx, metaSessionID, trajDir, mctSessionID, args...)
 }
 
+func buildHailMaryRunArgs(mode string, model string, shellAgentModel string, tag string, persistTmpData bool) []string {
+	var args []string
+	if mode != "" {
+		args = append(args, "--mode", mode)
+	}
+	if model != "" {
+		args = append(args, "--model", model)
+	}
+	if shellAgentModel != "" {
+		args = append(args, "--shell-agent-model", shellAgentModel)
+	}
+	if tag != "" {
+		args = append(args, "--tag", tag+"-hail-mary")
+	}
+	args = append(args, "-t", hailMaryInstruction)
+	if persistTmpData {
+		args = append(args, "--persist-tmp-data")
+	}
+	return args
+}
+
 // cleanContent strips the "The agent exited with code N. Output:\n\n" prefix
 // from error content strings, if present. Returns the raw output content
 // suitable for comparison.
@@ -835,9 +856,38 @@ type sessionOutput struct {
 	suspended bool
 }
 
+func finalAnswerPath(sessionID string) string {
+	return filepath.Join(".machtiani", "sessions", sessionID, "chat", "agent-final-answer.md")
+}
+
+func clearFinalAnswerBeforeRun(sessionID string, trajDir string, label string) error {
+	path := finalAnswerPath(sessionID)
+	err := os.Remove(path)
+	removed := err == nil
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		writeTrajectoryLine(trajDir, map[string]interface{}{
+			"type":      "final_answer_cleanup_failed",
+			"label":     label,
+			"path":      path,
+			"timestamp": time.Now().UTC().Format(time.RFC3339),
+			"error":     err.Error(),
+		})
+		return err
+	}
+
+	writeTrajectoryLine(trajDir, map[string]interface{}{
+		"type":      "final_answer_cleared_before_run",
+		"label":     label,
+		"path":      path,
+		"removed":   removed,
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+	})
+	return nil
+}
+
 func readSessionOutput(sessionID string) (sessionOutput, error) {
-	finalAnswerPath := filepath.Join(".machtiani", "sessions", sessionID, "chat", "agent-final-answer.md")
-	if data, err := os.ReadFile(finalAnswerPath); err == nil {
+	path := finalAnswerPath(sessionID)
+	if data, err := os.ReadFile(path); err == nil {
 		if content := strings.TrimSpace(string(data)); content != "" {
 			return sessionOutput{content: content}, nil
 		}
@@ -866,7 +916,7 @@ func readSessionOutput(sessionID string) (sessionOutput, error) {
 		}, nil
 	}
 
-	return sessionOutput{}, fmt.Errorf("reading final answer: open %s: no final answer or suspended user input found", finalAnswerPath)
+	return sessionOutput{}, fmt.Errorf("reading final answer: open %s: no final answer or suspended user input found", path)
 }
 
 func suspendedUserInputSummary(conv *conversation.Conversation) (string, bool) {
@@ -965,8 +1015,9 @@ func RunLoop(
 	}
 	defer runtimeSnapshot.cleanup()
 
-	finalAnswerPath := filepath.Join(".machtiani", "sessions", mctSessionID, "chat", "agent-final-answer.md")
-	os.Remove(finalAnswerPath)
+	if err := clearFinalAnswerBeforeRun(mctSessionID, trajDir, "initial-agent-run"); err != nil {
+		return 1, err
+	}
 
 	instructionContent := ""
 	if data, err := os.ReadFile("/app/instruction.md"); err != nil {
@@ -1163,8 +1214,9 @@ func RunLoop(
 				return 1, syncErr
 			}
 
-			finalAnswerPath := filepath.Join(".machtiani", "sessions", mctSessionID, "chat", "agent-final-answer.md")
-			os.Remove(finalAnswerPath)
+			if err := clearFinalAnswerBeforeRun(mctSessionID, trajDir, "continue-before-agent-run"); err != nil {
+				return 1, err
+			}
 
 			exitCode, err := invokeMCTAgent(ctx, metaSessionID, trajDir, mctSessionID, args...)
 			if err != nil || exitCode != 0 {
@@ -1293,6 +1345,9 @@ func RunLoop(
 					if syncErr := syncMCTAgent(ctx, trajDir, "before-review-feedback", model, runtimeSnapshot); syncErr != nil {
 						return 1, syncErr
 					}
+					if err := clearFinalAnswerBeforeRun(mctSessionID, trajDir, "before-review-feedback"); err != nil {
+						return 1, err
+					}
 
 					reviewExitCode, reviewInvokeErr := invokeMCTAgent(ctx, metaSessionID, trajDir, mctSessionID, reviewArgs...)
 					if reviewInvokeErr != nil || reviewExitCode != 0 {
@@ -1353,14 +1408,11 @@ func RunLoop(
 					})
 
 					// After the first review feedback is successfully processed, sync git
-					// state and remove the final answer. Then fall through to the second
-					// peer review round below - both rounds fire deterministically within
-					// the same shouldPeerReview block without loop re-entry.
+					// state. The produced final answer is intentionally left in place until
+					// the next child continuation is about to start.
 					if syncErr := syncMCTAgent(ctx, trajDir, "after-review-feedback", model, runtimeSnapshot); syncErr != nil {
 						return 1, syncErr
 					}
-					// Remove final answer so agent produces fresh output on next iteration
-					os.Remove(filepath.Join(".machtiani", "sessions", mctSessionID, "chat", "agent-final-answer.md"))
 				}
 
 				// Second peer review round - only fires when the first review just
@@ -1412,6 +1464,9 @@ func RunLoop(
 
 					if syncErr := syncMCTAgent(ctx, trajDir, "before-second-review-feedback", model, runtimeSnapshot); syncErr != nil {
 						return 1, syncErr
+					}
+					if err := clearFinalAnswerBeforeRun(mctSessionID, trajDir, "before-second-review-feedback"); err != nil {
+						return 1, err
 					}
 
 					reviewExitCode2, reviewInvokeErr2 := invokeMCTAgent(ctx, metaSessionID, trajDir, mctSessionID, reviewArgs2...)
@@ -1475,7 +1530,6 @@ func RunLoop(
 					if syncErr := syncMCTAgent(ctx, trajDir, "after-second-review-feedback", model, runtimeSnapshot); syncErr != nil {
 						return 1, syncErr
 					}
-					os.Remove(filepath.Join(".machtiani", "sessions", mctSessionID, "chat", "agent-final-answer.md"))
 					continue
 				}
 			}
@@ -1494,7 +1548,6 @@ func RunLoop(
 				goto parseAction
 			}
 			if peerReviewDone && !hailMaryDone && !reviewMode {
-				hailMaryDone = true
 				hailMarySessionID := fmt.Sprintf("agent-%s-hail-mary", time.Now().UTC().Format("20060102T150405"))
 				mctSessionID = hailMarySessionID
 				writeTrajectoryLine(trajDir, map[string]interface{}{
@@ -1503,26 +1556,13 @@ func RunLoop(
 					"timestamp":  time.Now().UTC().Format(time.RFC3339),
 				})
 
-				var hailMaryArgs []string
-				if mode != "" {
-					hailMaryArgs = append(hailMaryArgs, "--mode", mode)
-				}
-				if model != "" {
-					hailMaryArgs = append(hailMaryArgs, "--model", model)
-				}
-				if shellAgentModel != "" {
-					hailMaryArgs = append(hailMaryArgs, "--shell-agent-model", shellAgentModel)
-				}
-				if tag != "" {
-					hailMaryArgs = append(hailMaryArgs, "--tag", tag+"-hail-mary")
-				}
-				hailMaryArgs = append(hailMaryArgs, "--session-id", hailMarySessionID, "-t", hailMaryInstruction)
-				if persistTmpData {
-					hailMaryArgs = append(hailMaryArgs, "--persist-tmp-data")
-				}
+				hailMaryArgs := buildHailMaryRunArgs(mode, model, shellAgentModel, tag, persistTmpData)
 
 				if syncErr := syncMCTAgent(ctx, trajDir, "before-hail-mary", model, runtimeSnapshot); syncErr != nil {
 					return 1, syncErr
+				}
+				if err := clearFinalAnswerBeforeRun(hailMarySessionID, trajDir, "before-hail-mary"); err != nil {
+					return 1, err
 				}
 
 				hailMaryExitCode, hailMaryErr := invokeMCTAgent(ctx, metaSessionID, trajDir, hailMarySessionID, hailMaryArgs...)
@@ -1537,6 +1577,9 @@ func RunLoop(
 				}
 				if hailMaryErr != nil || hailMaryExitCode != 0 {
 					hailMaryContent = fmt.Sprintf("The Hail Mary verification-and-repair pass failed. Continue from this fresh session and complete it.\n\n%s", hailMaryContent)
+				}
+				if hailMaryErr == nil && hailMaryExitCode == 0 && outputErr == nil && strings.TrimSpace(hailMaryOutput.content) != "" {
+					hailMaryDone = true
 				}
 
 				messages = append(messages, llm.Message{Role: "assistant", Content: "ACTION: CONTINUE\nMESSAGE: Fresh-session Hail Mary verification-and-repair pass has run. Evaluate its final answer against the original instruction and the required evidence. Continue the Hail Mary session unless the answer proves 100% success."})
@@ -1556,7 +1599,6 @@ func RunLoop(
 				if syncErr := syncMCTAgent(ctx, trajDir, "after-hail-mary", model, runtimeSnapshot); syncErr != nil {
 					return 1, syncErr
 				}
-				os.Remove(filepath.Join(".machtiani", "sessions", hailMarySessionID, "chat", "agent-final-answer.md"))
 				continue
 			}
 			return 0, nil

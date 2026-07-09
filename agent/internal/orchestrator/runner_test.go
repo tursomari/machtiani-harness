@@ -231,6 +231,31 @@ func TestCodeStrongForgePromptProtectsRepoLocalRuntimeArtifacts(t *testing.T) {
 	}
 }
 
+func TestBuildHailMaryRunArgsStartsFreshSessionWithoutSessionIDFlag(t *testing.T) {
+	args := buildHailMaryRunArgs("code-strong-forge", "planner-model", "shell-model", "task-tag", true)
+
+	if containsString(args, "--session-id") {
+		t.Fatalf("fresh Hail Mary run args must not include --session-id: %#v", args)
+	}
+	for _, want := range []string{
+		"--mode",
+		"code-strong-forge",
+		"--model",
+		"planner-model",
+		"--shell-agent-model",
+		"shell-model",
+		"--tag",
+		"task-tag-hail-mary",
+		"-t",
+		hailMaryInstruction,
+		"--persist-tmp-data",
+	} {
+		if !containsString(args, want) {
+			t.Fatalf("hail mary args missing %q: %#v", want, args)
+		}
+	}
+}
+
 // TestRunLoop_StatefulSignature is a compile-time type check that verifies the
 // RunLoop function signature compiles and can be called with the expected
 // argument types. We skip actual execution because RunLoop spawns real
@@ -351,6 +376,65 @@ func TestReadSessionOutputPrefersFinalAnswer(t *testing.T) {
 	}
 	if output.content != "Implementation complete." {
 		t.Fatalf("content = %q, want %q", output.content, "Implementation complete.")
+	}
+}
+
+func TestClearFinalAnswerBeforeRunRemovesAndLogs(t *testing.T) {
+	tmp := t.TempDir()
+	prevWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	defer func() {
+		if chdirErr := os.Chdir(prevWD); chdirErr != nil {
+			t.Fatalf("restore cwd: %v", chdirErr)
+		}
+	}()
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatalf("chdir temp dir: %v", err)
+	}
+
+	sessionID := "agent-test-cleanup"
+	finalAnswerPath := filepath.Join(".machtiani", "sessions", sessionID, "chat", "agent-final-answer.md")
+	writeFile(t, finalAnswerPath, "stale answer\n")
+
+	trajDir := filepath.Join(".machtiani", "meta-orchestrator", "sessions", "meta-test")
+	if err := clearFinalAnswerBeforeRun(sessionID, trajDir, "before-test-run"); err != nil {
+		t.Fatalf("clearFinalAnswerBeforeRun: %v", err)
+	}
+	if _, err := os.Stat(finalAnswerPath); !os.IsNotExist(err) {
+		t.Fatalf("final answer should be removed, stat err = %v", err)
+	}
+
+	trajectory, err := os.ReadFile(filepath.Join(trajDir, "trajectory.jsonl"))
+	if err != nil {
+		t.Fatalf("read trajectory: %v", err)
+	}
+	for _, want := range []string{
+		`"type":"final_answer_cleared_before_run"`,
+		`"label":"before-test-run"`,
+		`"removed":true`,
+		`agent-final-answer.md`,
+	} {
+		if !strings.Contains(string(trajectory), want) {
+			t.Fatalf("trajectory missing %q:\n%s", want, trajectory)
+		}
+	}
+
+	if err := clearFinalAnswerBeforeRun(sessionID, trajDir, "before-test-run-again"); err != nil {
+		t.Fatalf("second clearFinalAnswerBeforeRun: %v", err)
+	}
+	trajectory, err = os.ReadFile(filepath.Join(trajDir, "trajectory.jsonl"))
+	if err != nil {
+		t.Fatalf("read trajectory after second clear: %v", err)
+	}
+	for _, want := range []string{
+		`"label":"before-test-run-again"`,
+		`"removed":false`,
+	} {
+		if !strings.Contains(string(trajectory), want) {
+			t.Fatalf("trajectory missing %q after second clear:\n%s", want, trajectory)
+		}
 	}
 }
 
