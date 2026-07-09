@@ -9,6 +9,55 @@ from pier.models.agent.install import AgentInstallSpec, InstallStep
 from pier.models.agent.network import NetworkAllowlist
 
 
+PROTECTED_RUNTIME_GIT_PATHS = (
+    ".machtiani",
+    "instruction.md",
+    "review-instruction.md",
+    "stdout.log",
+    "stderr.log",
+)
+
+
+def protected_runtime_exclude_command() -> str:
+    patterns = " ".join(
+        shlex.quote(path + "/" if path == ".machtiani" else path)
+        for path in PROTECTED_RUNTIME_GIT_PATHS
+    )
+    return (
+        "mkdir -p .git/info && "
+        f"for p in {patterns}; do "
+        "grep -qxF \"$p\" .git/info/exclude 2>/dev/null || "
+        "printf '%s\\n' \"$p\" >> .git/info/exclude; "
+        "done"
+    )
+
+
+def filtered_git_stage_command() -> str:
+    excludes = " ".join(shlex.quote(f":(exclude){path}") for path in PROTECTED_RUNTIME_GIT_PATHS)
+    unstage_paths = " ".join(shlex.quote(path) for path in PROTECTED_RUNTIME_GIT_PATHS)
+    return (
+        f"(git add -u -- . {excludes} && "
+        f"git ls-files --others --exclude-standard -z -- . {excludes} | "
+        "xargs -0r git add --); "
+        f"git reset -q -- {unstage_paths} 2>/dev/null || true"
+    )
+
+
+def artifact_preservation_commands() -> tuple[str, ...]:
+    return (
+        "mkdir -p /logs/agent && cp -r /app/.machtiani/sessions /logs/agent/sessions 2>/dev/null || true",
+        "mkdir -p /logs/agent && cp -r /app/.machtiani/meta-orchestrator /logs/agent/meta-orchestrator 2>/dev/null || true",
+        "mkdir -p /logs/agent/repo && "
+        "(git status --short > /logs/agent/repo/git-status.txt 2>/dev/null || true) && "
+        "(git diff > /logs/agent/repo/git-diff.patch 2>/dev/null || true) && "
+        "(git diff --cached > /logs/agent/repo/git-diff-cached.patch 2>/dev/null || true) && "
+        "(git log --oneline -n 20 > /logs/agent/repo/git-log.txt 2>/dev/null || true)",
+        "mkdir -p /logs/agent/tmp-data && "
+        "(cp -r /tmp/mct-agent /logs/agent/tmp-data/ 2>/dev/null; "
+        "cp -r /app/.machtiani/tmp-data /logs/agent/tmp-data/ 2>/dev/null; true)",
+    )
+
+
 class MctAgent(BaseInstalledAgent):
     """Pier agent adapter that runs mct-agent inside a task container.
 
@@ -52,6 +101,13 @@ class MctAgent(BaseInstalledAgent):
             pass
 
         return NetworkAllowlist(domains=["api.deepseek.com", "api.deepinfra.com", "openrouter.ai"])
+
+    async def _preserve_artifacts(self, environment: BaseEnvironment) -> None:
+        for command in artifact_preservation_commands():
+            try:
+                await self.exec_as_agent(environment, command)
+            except NonZeroAgentExitCodeError:
+                pass
 
     async def setup(self, environment: BaseEnvironment) -> None:
         await super().setup(environment)
@@ -122,6 +178,13 @@ class MctAgent(BaseInstalledAgent):
             env={"MCT_INSTRUCTION": instruction},
         )
 
+        # Keep repo-local runtime state available to the agent, but out of the
+        # submitted patch Pier builds from the final commit.
+        try:
+            await self.exec_as_agent(environment, protected_runtime_exclude_command())
+        except NonZeroAgentExitCodeError:
+            pass
+
         # Step 5: Run mct-agent sync with retries.
         import asyncio
         sync_model = os.environ.get("MCT_SYNC_MODEL", "deepseek-v4-pro")
@@ -171,6 +234,8 @@ class MctAgent(BaseInstalledAgent):
             await self.exec_as_agent(environment, run_cmd)
         except NonZeroAgentExitCodeError:
             pass
+        finally:
+            await self._preserve_artifacts(environment)
 
         # Step 7: Commit all changes so the Pier verifier can capture the model patch.
         try:
@@ -183,9 +248,7 @@ class MctAgent(BaseInstalledAgent):
         try:
             await self.exec_as_agent(
                 environment,
-                "git add -u && "
-                "git ls-files --others --exclude-standard -z | "
-                "xargs -0r git add --",
+                filtered_git_stage_command(),
             )
         except NonZeroAgentExitCodeError:
             pass
@@ -196,45 +259,9 @@ class MctAgent(BaseInstalledAgent):
         except NonZeroAgentExitCodeError:
             pass
 
-        # Step 8: Copy sessions directory to host-visible logs directory.
-        try:
-            await self.exec_as_agent(
-                environment,
-                "mkdir -p /logs/agent && cp -r /app/.machtiani/sessions /logs/agent/sessions 2>/dev/null || true",
-            )
-        except NonZeroAgentExitCodeError:
-            pass
-
-        # Step 8b: Copy meta-orchestrator trajectory to host-visible logs directory.
-        try:
-            await self.exec_as_agent(
-                environment,
-                "mkdir -p /logs/agent && cp -r /app/.machtiani/meta-orchestrator /logs/agent/meta-orchestrator 2>/dev/null || true",
-            )
-        except NonZeroAgentExitCodeError:
-            pass
-
-        # Step 9: Copy git working tree to host-visible logs directory.
-        try:
-            await self.exec_as_agent(
-                environment,
-                "mkdir -p /logs/agent/repo && "
-                "(git status --short > /logs/agent/repo/git-status.txt 2>/dev/null || true) && "
-                "(git diff > /logs/agent/repo/git-diff.patch 2>/dev/null || true) && "
-                "(git diff --cached > /logs/agent/repo/git-diff-cached.patch 2>/dev/null || true) && "
-                "(git log --oneline -n 20 > /logs/agent/repo/git-log.txt 2>/dev/null || true)",
-            )
-        except NonZeroAgentExitCodeError:
-            pass
-
-        # Step 10: Copy persisted temp data to host-visible logs directory.
-        try:
-            await self.exec_as_agent(
-                environment,
-                "mkdir -p /logs/agent/tmp-data && (cp -r /tmp/mct-agent /logs/agent/tmp-data/ 2>/dev/null; cp -r /app/.machtiani/tmp-data /logs/agent/tmp-data/ 2>/dev/null; true)",
-            )
-        except NonZeroAgentExitCodeError:
-            pass
+        # Step 8: Copy diagnostics to host-visible logs directory after the
+        # final commit path as well as after the long agent invocation.
+        await self._preserve_artifacts(environment)
 
     def populate_context_post_run(self, context: AgentContext) -> None:
         """Minimal stub - no trajectory parsing needed for grading."""
