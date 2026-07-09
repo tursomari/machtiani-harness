@@ -52,6 +52,22 @@ func TestPhase2PromptProtectsRuntimeState(t *testing.T) {
 	}
 }
 
+func TestSanityCheckPromptsDoNotRequireRawShellOutput(t *testing.T) {
+	for _, unwanted := range []string{
+		"capture the full test output",
+		"Show the actual test output",
+		"do not summarize",
+	} {
+		if strings.Contains(orchestratorSystemPrompt, unwanted) {
+			t.Fatalf("orchestratorSystemPrompt should not require raw shell output, found %q", unwanted)
+		}
+	}
+	want := "***Do not require or expect verbatim/raw shell output in the final answer.***"
+	if count := strings.Count(orchestratorSystemPrompt, want); count < 2 {
+		t.Fatalf("orchestratorSystemPrompt should include raw-output disclaimer for Phase 1 and Phase 3, count = %d", count)
+	}
+}
+
 func TestWriteTrajectoryLineRecreatesRemovedDirectory(t *testing.T) {
 	trajDir := filepath.Join(t.TempDir(), ".machtiani", "meta-orchestrator", "sessions", "meta-test")
 	if err := os.MkdirAll(trajDir, 0755); err != nil {
