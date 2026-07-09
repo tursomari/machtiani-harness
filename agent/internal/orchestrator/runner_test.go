@@ -68,6 +68,37 @@ func TestSanityCheckPromptsDoNotRequireRawShellOutput(t *testing.T) {
 	}
 }
 
+func TestPeerReviewPromptsInspectFullWorktree(t *testing.T) {
+	for name, prompt := range map[string]string{
+		"peerReviewInstruction":   peerReviewInstruction,
+		"secondReviewInstruction": secondReviewInstruction,
+	} {
+		for _, want := range []string{
+			"git status --short",
+			"git diff --cached",
+			"git diff",
+			"git ls-files --others --exclude-standard",
+			"staged",
+			"unstaged",
+			"untracked",
+			"HIGH severity process failure",
+		} {
+			if !strings.Contains(prompt, want) {
+				t.Fatalf("%s missing %q", name, want)
+			}
+		}
+	}
+
+	for _, want := range []string{
+		"committed, staged, unstaged, and relevant untracked deliverable files",
+		"still review them and flag that state as a HIGH severity process failure",
+	} {
+		if !strings.Contains(reviewSystemPrompt, want) {
+			t.Fatalf("reviewSystemPrompt missing %q", want)
+		}
+	}
+}
+
 func TestWriteTrajectoryLineRecreatesRemovedDirectory(t *testing.T) {
 	trajDir := filepath.Join(t.TempDir(), ".machtiani", "meta-orchestrator", "sessions", "meta-test")
 	if err := os.MkdirAll(trajDir, 0755); err != nil {
