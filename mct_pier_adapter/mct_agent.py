@@ -65,6 +65,7 @@ class MctAgent(BaseInstalledAgent):
         forge_binary = os.path.expanduser(os.environ.get("MCT_FORGE_BINARY", "~/.local/bin/forge"))
         await environment.upload_file(forge_binary, "/usr/local/bin/forge")
         await self.exec_as_root(environment, "chmod +x /usr/local/bin/forge")
+        await self.exec_as_root(environment, "/usr/local/bin/forge --version")
 
         # Upload mct-forge wrapper.
         forge_wrapper = os.path.expanduser(os.environ.get("MCT_FORGE_WRAPPER", "peripherals/mct-forge"))
@@ -125,10 +126,13 @@ class MctAgent(BaseInstalledAgent):
         import asyncio
         sync_model = os.environ.get("MCT_SYNC_MODEL", "deepseek-v4-pro")
         max_input_tokens = os.environ.get("MCT_MAX_INPUT_TOKENS", "800000")
+        sync_log = "/logs/agent/mct-sync.log"
         sync_cmd = (
-            f"mct-agent sync"
+            f"mkdir -p /logs/agent && "
+            f"(mct-agent sync"
             f" --model {shlex.quote(sync_model)}"
             f" --max-input-tokens {shlex.quote(max_input_tokens)}"
+            f") >> {shlex.quote(sync_log)} 2>&1"
         )
         for i in range(10):
             try:
@@ -152,14 +156,16 @@ class MctAgent(BaseInstalledAgent):
         binary = "meta-orchestrator" if use_meta else "mct-agent run"
         if not use_meta:
             print("Meta-orchestrator not available; falling back to mct-agent run")
+        run_log = "/logs/agent/mct-run.log"
         run_cmd = (
-            f"mkdir -p /logs/agent && {binary}"
+            f"mkdir -p /logs/agent && ({binary}"
             f" --mode {shlex.quote(mode)}"
             f" --model {shlex.quote(model)}"
             f" --shell-agent-model {shlex.quote(shell_agent_model)}"
             f" --tag now"
             f" --persist-tmp-data"
             f" -f /app/instruction.md"
+            f") >> {shlex.quote(run_log)} 2>&1"
         )
         try:
             await self.exec_as_agent(environment, run_cmd)
@@ -212,7 +218,11 @@ class MctAgent(BaseInstalledAgent):
         try:
             await self.exec_as_agent(
                 environment,
-                "mkdir -p /logs/agent/repo && cp -a /app/. /logs/agent/repo/ 2>/dev/null || true",
+                "mkdir -p /logs/agent/repo && "
+                "(git status --short > /logs/agent/repo/git-status.txt 2>/dev/null || true) && "
+                "(git diff > /logs/agent/repo/git-diff.patch 2>/dev/null || true) && "
+                "(git diff --cached > /logs/agent/repo/git-diff-cached.patch 2>/dev/null || true) && "
+                "(git log --oneline -n 20 > /logs/agent/repo/git-log.txt 2>/dev/null || true)",
             )
         except NonZeroAgentExitCodeError:
             pass

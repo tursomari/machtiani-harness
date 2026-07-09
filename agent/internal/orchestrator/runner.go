@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -12,7 +13,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tursomari/machtiani/agent/internal/conversation"
 	"github.com/tursomari/machtiani/agent/internal/llm"
+	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
 )
 
 const orchestratorSystemPrompt = `You are a meta-orchestrator agent. Your job is to instruct mct-agent to completion through a rigorous, multi-stage validation process. You will receive the contents of mct-agents agent-final-answer.md after each invocation. Evaluate the current state of the work and guide the agent accordingly.
@@ -41,7 +44,7 @@ Rules and Phases of Operation:
    - When the agent returns claiming the first sanity check and subsequent fixes are complete, DO NOT accept it as done.
    - Respond with ACTION: CONTINUE and instruct the agent to:
      a) Re-read the original instruction file (/app/instruction.md) to ground the re-implementation in the original requirements.
-     b) Reset the git project completely and discard all current changes.
+     b) Reset tracked project source state only. Return to main, discard tracked implementation changes, and recreate the feature branch/plan from a clean tracked source baseline. Preserve protected runtime paths and orchestration state. NEVER delete, modify, move, clean, or overwrite /app/.machtiani/, /app/instruction.md, active session state, transcripts, locks, tmp/state directories, or meta-orchestrator artifacts. NEVER run repo-wide destructive cleanup such as git clean -fd, git clean -fdx, or equivalent broad cleanup commands in the benchmark/eval repo. If cleanup is needed, target tracked source files explicitly and preserve protected runtime paths.
      c) Taking everything it learned from the first implementation attempt, create /app/implementation-plan.md from scratch using a structured plan format with these sections: Intent, Requirement Checklist, Spec-to-Test Matrix, Safety Rules (NEVER and ALWAYS), Pre-flight Checks, Execution Phases with checkboxes, Verification, Cleanup, Progress Log, and Status Table. Your plan must include all of these sections: Intent, Requirement Checklist with one item per distinct requirement from /app/instruction.md, Spec-to-Test Matrix mapping each requirement to planned public-API/runtime/type-level tests, Safety Rules (NEVER and ALWAYS), Pre-flight Checks with "- [ ]" checkboxes, Execution Phases with "- [ ]" checkboxes for each task, Verification with "- [ ]" checkboxes, Cleanup with "- [ ]" checkboxes, Progress Log table, and Status Table. Commit the plan file immediately after creating it so it survives any subsequent git operations.
      d) Execute the plan fully. As work progresses, check off completed items using [x] and update the Progress Log and Status Table after each completed checkbox or phase. Do NOT claim implementation is complete until every checkbox in every phase is checked. Commit your work as you go.
 
@@ -136,6 +139,13 @@ const (
 	mctAgentSyncMaxInputTokens = 850000
 )
 
+var protectedRuntimePaths = []string{
+	filepath.Join(".machtiani", "config.toml"),
+	filepath.Join(".machtiani", "sessions"),
+	filepath.Join(".machtiani", "meta-orchestrator"),
+	"instruction.md",
+}
+
 const reviewSystemPrompt = `You are a review-mode orchestrator. Your sole job is to ensure mct-agent produces a thorough, substantive peer review of an implementation. You will receive the contents of mct-agents agent-final-answer.md after each invocation and must evaluate whether the review is complete.
 
 Respond with exactly one of these three formats:
@@ -217,7 +227,26 @@ func invokeMCTAgent(ctx context.Context, metaSessionID string, trajDir string, m
 	cmd.Stderr = io.MultiWriter(os.Stderr, &stderrBuf)
 	cmd.Env = append(os.Environ(), "MACHTIANI_SESSION_ID="+mctSessionID, "MACHTIANI_CONFIG=/app/.machtiani/config.toml")
 
+	runSnapshot, snapshotErr := snapshotProtectedRuntimeState("/app")
+	if snapshotErr != nil {
+		writeTrajectoryLine(trajDir, map[string]interface{}{
+			"type":      "runtime_state_snapshot_failed",
+			"label":     "before-mct-agent-run",
+			"timestamp": time.Now().UTC().Format(time.RFC3339),
+			"error":     snapshotErr.Error(),
+		})
+	}
+
 	err := cmd.Run()
+
+	if runSnapshot != nil {
+		if restoreErr := restoreProtectedRuntimeState(runSnapshot, trajDir, "after-mct-agent-run"); restoreErr != nil {
+			runSnapshot.cleanup()
+			return -1, restoreErr
+		}
+		runSnapshot.cleanup()
+	}
+
 	var exitCode int
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
@@ -278,9 +307,202 @@ func invokeMCTAgent(ctx context.Context, metaSessionID string, trajDir string, m
 	return exitCode, nil
 }
 
-func syncMCTAgent(ctx context.Context, trajDir string, label string, model string) error {
+type runtimeStateSnapshot struct {
+	appDir      string
+	snapshotDir string
+	captured    map[string]bool
+}
+
+func snapshotProtectedRuntimeState(appDir string) (*runtimeStateSnapshot, error) {
+	snapshotDir, err := os.MkdirTemp("", "mct-runtime-state-*")
+	if err != nil {
+		return nil, fmt.Errorf("creating runtime state snapshot: %w", err)
+	}
+
+	snapshot := &runtimeStateSnapshot{
+		appDir:      appDir,
+		snapshotDir: snapshotDir,
+		captured:    make(map[string]bool, len(protectedRuntimePaths)),
+	}
+
+	for _, rel := range protectedRuntimePaths {
+		src := filepath.Join(appDir, rel)
+		if _, err := os.Lstat(src); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			_ = os.RemoveAll(snapshotDir)
+			return nil, fmt.Errorf("snapshot protected runtime path %s: %w", rel, err)
+		}
+		dst := filepath.Join(snapshotDir, rel)
+		if err := copyPath(src, dst); err != nil {
+			_ = os.RemoveAll(snapshotDir)
+			return nil, fmt.Errorf("snapshot protected runtime path %s: %w", rel, err)
+		}
+		snapshot.captured[rel] = true
+	}
+
+	return snapshot, nil
+}
+
+func (s *runtimeStateSnapshot) cleanup() {
+	if s == nil || s.snapshotDir == "" {
+		return
+	}
+	_ = os.RemoveAll(s.snapshotDir)
+}
+
+func (s *runtimeStateSnapshot) restoreMissing() ([]string, error) {
+	if s == nil {
+		return nil, nil
+	}
+
+	var restored []string
+	for _, rel := range protectedRuntimePaths {
+		if !s.captured[rel] {
+			continue
+		}
+		src := filepath.Join(s.snapshotDir, rel)
+		dst := filepath.Join(s.appDir, rel)
+		changed, err := restoreMissingPath(src, dst)
+		if err != nil {
+			return restored, fmt.Errorf("restore protected runtime path %s: %w", rel, err)
+		}
+		if changed {
+			restored = append(restored, rel)
+		}
+	}
+	return restored, nil
+}
+
+func restoreProtectedRuntimeState(snapshot *runtimeStateSnapshot, trajDir string, label string) error {
+	restored, err := snapshot.restoreMissing()
+	if err != nil {
+		writeTrajectoryLine(trajDir, map[string]interface{}{
+			"type":      "runtime_state_restore_failed",
+			"label":     label,
+			"timestamp": time.Now().UTC().Format(time.RFC3339),
+			"error":     err.Error(),
+		})
+		return err
+	}
+	if len(restored) > 0 {
+		writeTrajectoryLine(trajDir, map[string]interface{}{
+			"type":           "runtime_state_restored",
+			"label":          label,
+			"timestamp":      time.Now().UTC().Format(time.RFC3339),
+			"restored_paths": restored,
+		})
+	}
+	return nil
+}
+
+func restoreMissingPath(src string, dst string) (bool, error) {
+	srcInfo, err := os.Lstat(src)
+	if err != nil {
+		return false, err
+	}
+	dstInfo, err := os.Lstat(dst)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return true, copyPath(src, dst)
+		}
+		return false, err
+	}
+
+	if !srcInfo.IsDir() || !dstInfo.IsDir() || srcInfo.Mode()&os.ModeSymlink != 0 {
+		return false, nil
+	}
+
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return false, err
+	}
+	changed := false
+	for _, entry := range entries {
+		childChanged, err := restoreMissingPath(filepath.Join(src, entry.Name()), filepath.Join(dst, entry.Name()))
+		if err != nil {
+			return changed, err
+		}
+		changed = changed || childChanged
+	}
+	return changed, nil
+}
+
+func copyPath(src string, dst string) error {
+	info, err := os.Lstat(src)
+	if err != nil {
+		return err
+	}
+
+	if info.Mode()&os.ModeSymlink != 0 {
+		target, err := os.Readlink(src)
+		if err != nil {
+			return err
+		}
+		if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+			return err
+		}
+		_ = os.RemoveAll(dst)
+		return os.Symlink(target, dst)
+	}
+
+	if info.IsDir() {
+		return copyDir(src, dst, info.Mode().Perm())
+	}
+	return copyFile(src, dst, info.Mode().Perm())
+}
+
+func copyDir(src string, dst string, mode os.FileMode) error {
+	if err := os.MkdirAll(dst, mode); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if err := copyPath(filepath.Join(src, entry.Name()), filepath.Join(dst, entry.Name())); err != nil {
+			return err
+		}
+	}
+	return os.Chmod(dst, mode)
+}
+
+func copyFile(src string, dst string, mode os.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		return err
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
+	if err != nil {
+		return err
+	}
+	_, copyErr := io.Copy(out, in)
+	closeErr := out.Close()
+	if copyErr != nil {
+		return copyErr
+	}
+	return closeErr
+}
+
+func syncMCTAgent(ctx context.Context, trajDir string, label string, model string, snapshot *runtimeStateSnapshot) error {
 	var lastErr error
 	for attempt := 1; attempt <= mctAgentSyncAttempts; attempt++ {
+		if err := restoreProtectedRuntimeState(snapshot, trajDir, label+"-before-sync"); err != nil {
+			return err
+		}
+
+		syncSnapshot, snapshotErr := snapshotProtectedRuntimeState("/app")
+		if snapshotErr != nil {
+			return snapshotErr
+		}
+
 		syncArgs := []string{
 			"sync",
 			"--max-input-tokens",
@@ -299,6 +521,12 @@ func syncMCTAgent(ctx context.Context, trajDir string, label string, model strin
 		cmd.Env = append(os.Environ(), "MACHTIANI_CONFIG=/app/.machtiani/config.toml")
 
 		err := cmd.Run()
+		restoreErr := restoreProtectedRuntimeState(syncSnapshot, trajDir, label+"-after-sync")
+		syncSnapshot.cleanup()
+		if restoreErr != nil {
+			return restoreErr
+		}
+
 		exitCode := 0
 		if err != nil {
 			if exitErr, ok := err.(*exec.ExitError); ok {
@@ -374,14 +602,14 @@ func parseOrchestratorResponse(response string) (string, string, error) {
 
 // invokeReviewer runs a child meta-orchestrator in review mode to evaluate
 // the main agent's implementation. It returns the review content as a string.
-func invokeReviewer(ctx context.Context, reviewInstruction string, reviewMode string, metaSessionID string, trajDir string, model string, shellAgentModel string, mainSessionID string) (string, error) {
+func invokeReviewer(ctx context.Context, reviewInstruction string, reviewMode string, metaSessionID string, trajDir string, model string, shellAgentModel string, mainSessionID string, snapshot *runtimeStateSnapshot) (string, error) {
 	// 1. Write peer review instruction file.
 	if err := os.WriteFile("/app/review-instruction.md", []byte(reviewInstruction), 0644); err != nil {
 		return "", err
 	}
 
 	// 2. Run mct-agent sync to refresh internal state after the main agent commits.
-	if err := syncMCTAgent(ctx, trajDir, "reviewer-before-child-meta", model); err != nil {
+	if err := syncMCTAgent(ctx, trajDir, "reviewer-before-child-meta", model, snapshot); err != nil {
 		return "", err
 	}
 
@@ -415,6 +643,12 @@ func invokeReviewer(ctx context.Context, reviewInstruction string, reviewMode st
 	cmd.Dir = "/app"
 	cmd.Env = append(os.Environ(), "MACHTIANI_CONFIG=/app/.machtiani/config.toml")
 
+	reviewSnapshot, snapshotErr := snapshotProtectedRuntimeState("/app")
+	if snapshotErr != nil {
+		return "", snapshotErr
+	}
+	defer reviewSnapshot.cleanup()
+
 	// 5. Set up stdout pipe and stderr capture.
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
@@ -433,6 +667,9 @@ func invokeReviewer(ctx context.Context, reviewInstruction string, reviewMode st
 	stdoutData, err := io.ReadAll(stdoutPipe)
 	if err != nil {
 		cmd.Wait()
+		if restoreErr := restoreProtectedRuntimeState(reviewSnapshot, trajDir, "after-reviewer-child-meta-read-error"); restoreErr != nil {
+			return "", restoreErr
+		}
 		return "", err
 	}
 
@@ -474,6 +711,9 @@ func invokeReviewer(ctx context.Context, reviewInstruction string, reviewMode st
 
 	// 8. Wait for the child to finish.
 	waitErr := cmd.Wait()
+	if err := restoreProtectedRuntimeState(reviewSnapshot, trajDir, "after-reviewer-child-meta"); err != nil {
+		return "", err
+	}
 
 	// 9. If the child exited with a non-zero code, record and return an error.
 	if waitErr != nil {
@@ -519,6 +759,12 @@ func invokeReviewer(ctx context.Context, reviewInstruction string, reviewMode st
 // writeTrajectoryLine appends a JSON line to the trajectory file.
 // It never returns an error so that trajectory issues do not break the loop.
 func writeTrajectoryLine(dir string, entry interface{}) {
+	if dir != "" {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			fmt.Fprintf(os.Stderr, "trajectory: mkdir: %v\n", err)
+			return
+		}
+	}
 	f, err := os.OpenFile(filepath.Join(dir, "trajectory.jsonl"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "trajectory: open: %v\n", err)
@@ -584,6 +830,114 @@ func cleanContent(s string) string {
 	return s[idx+2:]
 }
 
+type sessionOutput struct {
+	content   string
+	suspended bool
+}
+
+func readSessionOutput(sessionID string) (sessionOutput, error) {
+	finalAnswerPath := filepath.Join(".machtiani", "sessions", sessionID, "chat", "agent-final-answer.md")
+	if data, err := os.ReadFile(finalAnswerPath); err == nil {
+		if content := strings.TrimSpace(string(data)); content != "" {
+			return sessionOutput{content: content}, nil
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return sessionOutput{}, err
+	}
+
+	convPath, err := artifacts.SessionConversationFile(sessionID)
+	if err != nil {
+		return sessionOutput{}, err
+	}
+	data, err := os.ReadFile(convPath)
+	if err != nil {
+		return sessionOutput{}, fmt.Errorf("reading final answer: %w", err)
+	}
+	conv, err := conversation.Unmarshal(data)
+	if err != nil {
+		return sessionOutput{}, fmt.Errorf("parsing conversation for session %s: %w", sessionID, err)
+	}
+
+	suspended, ok := suspendedUserInputSummary(conv)
+	if ok {
+		return sessionOutput{
+			content:   suspended,
+			suspended: true,
+		}, nil
+	}
+
+	return sessionOutput{}, fmt.Errorf("reading final answer: open %s: no final answer or suspended user input found", finalAnswerPath)
+}
+
+func suspendedUserInputSummary(conv *conversation.Conversation) (string, bool) {
+	if conv == nil {
+		return "", false
+	}
+
+	var question string
+	var context string
+	var reason string
+	var originalAsk string
+
+	if conv.SuspendedUserInput != nil {
+		question = strings.TrimSpace(conv.SuspendedUserInput.Question)
+		context = strings.TrimSpace(conv.SuspendedUserInput.Context)
+		reason = strings.TrimSpace(conv.SuspendedUserInput.Reason)
+		originalAsk = strings.TrimSpace(conv.SuspendedUserInput.OriginalAsk)
+	}
+
+	if question == "" {
+		for i := len(conv.Messages) - 1; i >= 0; i-- {
+			msg := conv.Messages[i]
+			if msg.Role != "assistant" {
+				continue
+			}
+			if msg.Metadata == nil {
+				continue
+			}
+			msgType, _ := msg.Metadata["type"].(string)
+			if strings.TrimSpace(strings.ToLower(msgType)) != "user_input_request" {
+				continue
+			}
+			question = strings.TrimSpace(msg.Content)
+			break
+		}
+	}
+
+	statusSuspended := strings.TrimSpace(conv.Status) == "suspended_user_input"
+	if question == "" && !statusSuspended {
+		return "", false
+	}
+
+	var b strings.Builder
+	b.WriteString("The agent suspended for user input instead of continuing autonomously.")
+	if question != "" {
+		b.WriteString("\n\nQuestion:\n")
+		b.WriteString(question)
+	}
+	if context != "" {
+		b.WriteString("\n\nContext:\n")
+		b.WriteString(context)
+	}
+	if reason != "" {
+		b.WriteString("\n\nReason:\n")
+		b.WriteString(reason)
+	}
+	if originalAsk != "" {
+		b.WriteString("\n\nOriginal ask:\n")
+		b.WriteString(originalAsk)
+	}
+	b.WriteString("\n\nThis is incomplete work. Treat it as a permission/status ask and continue the session without requesting user input.")
+	return b.String(), true
+}
+
+func forcedContinueResponseForSuspendedUserInput(reviewMode bool) string {
+	if reviewMode {
+		return "ACTION: CONTINUE\nMESSAGE: Do not ask for user input or permission. Continue the review autonomously. Read the instruction, inspect the changed code and tests directly, produce the full required review with concrete file:line evidence, and only stop when the review is complete."
+	}
+	return "ACTION: CONTINUE\nMESSAGE: Do not ask for user input or permission. Continue this session autonomously. If you proposed fixes, apply them now. Address every outstanding requirement or review finding, run the relevant build/typecheck/test commands, and only claim completion with concrete evidence."
+}
+
 // RunLoop runs the meta-orchestrator loop: invoke mct-agent, evaluate the
 // final answer with a conversational LLM, and continue, finish, or block
 // based on the orchestrator's decision.
@@ -604,6 +958,12 @@ func RunLoop(
 	if err := os.MkdirAll(trajDir, 0755); err != nil {
 		return 1, fmt.Errorf("creating trajectory directory: %w", err)
 	}
+
+	runtimeSnapshot, err := snapshotProtectedRuntimeState("/app")
+	if err != nil {
+		return 1, err
+	}
+	defer runtimeSnapshot.cleanup()
 
 	finalAnswerPath := filepath.Join(".machtiani", "sessions", mctSessionID, "chat", "agent-final-answer.md")
 	os.Remove(finalAnswerPath)
@@ -710,13 +1070,14 @@ func RunLoop(
 	}
 
 	for {
+		var currentOutput sessionOutput
 		if !initialError {
-			data, err := os.ReadFile(filepath.Join(".machtiani", "sessions", mctSessionID, "chat", "agent-final-answer.md"))
+			currentOutput, err = readSessionOutput(mctSessionID)
 			if err != nil {
-				return 1, fmt.Errorf("reading final answer: %w", err)
+				return 1, err
 			}
 
-			content := strings.TrimSpace(string(data))
+			content := strings.TrimSpace(currentOutput.content)
 
 			if cleanContent(content) == cleanContent(lastFinalAnswer) {
 				repeatCount++
@@ -750,9 +1111,19 @@ func RunLoop(
 		}
 		initialError = false
 
-		response, err := llm.Chat(ctx, model, nil, messages)
-		if err != nil {
-			return 1, fmt.Errorf("orchestrator LLM call failed: %w", err)
+		var response string
+		if currentOutput.suspended {
+			response = forcedContinueResponseForSuspendedUserInput(reviewMode)
+			writeTrajectoryLine(trajDir, map[string]interface{}{
+				"type":       "forced_continue_for_suspended_user_input",
+				"session_id": mctSessionID,
+				"timestamp":  time.Now().UTC().Format(time.RFC3339),
+			})
+		} else {
+			response, err = llm.Chat(ctx, model, nil, messages)
+			if err != nil {
+				return 1, fmt.Errorf("orchestrator LLM call failed: %w", err)
+			}
 		}
 
 	parseAction:
@@ -788,7 +1159,7 @@ func RunLoop(
 
 			// Re-sync internal git state before the run so that mct-agent
 			// reads the current commit rather than a stale snapshot.
-			if syncErr := syncMCTAgent(ctx, trajDir, "continue-before-agent-run", model); syncErr != nil {
+			if syncErr := syncMCTAgent(ctx, trajDir, "continue-before-agent-run", model, runtimeSnapshot); syncErr != nil {
 				return 1, syncErr
 			}
 
@@ -881,7 +1252,7 @@ func RunLoop(
 						"timestamp": time.Now().UTC().Format(time.RFC3339),
 					})
 
-					reviewContent, reviewErr := invokeReviewer(ctx, peerReviewInstruction, mode, metaSessionID, trajDir, model, shellAgentModel, mctSessionID)
+					reviewContent, reviewErr := invokeReviewer(ctx, peerReviewInstruction, mode, metaSessionID, trajDir, model, shellAgentModel, mctSessionID, runtimeSnapshot)
 					if reviewErr != nil {
 						peerReviewDone = true
 						fmt.Fprintf(os.Stderr, "Peer review failed: %v\n", reviewErr)
@@ -919,7 +1290,7 @@ func RunLoop(
 						reviewArgs = append(reviewArgs, "--persist-tmp-data")
 					}
 
-					if syncErr := syncMCTAgent(ctx, trajDir, "before-review-feedback", model); syncErr != nil {
+					if syncErr := syncMCTAgent(ctx, trajDir, "before-review-feedback", model, runtimeSnapshot); syncErr != nil {
 						return 1, syncErr
 					}
 
@@ -985,7 +1356,7 @@ func RunLoop(
 					// state and remove the final answer. Then fall through to the second
 					// peer review round below - both rounds fire deterministically within
 					// the same shouldPeerReview block without loop re-entry.
-					if syncErr := syncMCTAgent(ctx, trajDir, "after-review-feedback", model); syncErr != nil {
+					if syncErr := syncMCTAgent(ctx, trajDir, "after-review-feedback", model, runtimeSnapshot); syncErr != nil {
 						return 1, syncErr
 					}
 					// Remove final answer so agent produces fresh output on next iteration
@@ -1001,7 +1372,7 @@ func RunLoop(
 						"timestamp": time.Now().UTC().Format(time.RFC3339),
 					})
 
-					reviewContent2, reviewErr2 := invokeReviewer(ctx, secondReviewInstruction, mode, metaSessionID, trajDir, model, shellAgentModel, mctSessionID)
+					reviewContent2, reviewErr2 := invokeReviewer(ctx, secondReviewInstruction, mode, metaSessionID, trajDir, model, shellAgentModel, mctSessionID, runtimeSnapshot)
 					peerReviewDone = true
 					if reviewErr2 != nil {
 						fmt.Fprintf(os.Stderr, "Second peer review failed: %v\n", reviewErr2)
@@ -1039,7 +1410,7 @@ func RunLoop(
 						reviewArgs2 = append(reviewArgs2, "--persist-tmp-data")
 					}
 
-					if syncErr := syncMCTAgent(ctx, trajDir, "before-second-review-feedback", model); syncErr != nil {
+					if syncErr := syncMCTAgent(ctx, trajDir, "before-second-review-feedback", model, runtimeSnapshot); syncErr != nil {
 						return 1, syncErr
 					}
 
@@ -1101,7 +1472,7 @@ func RunLoop(
 						"content": reviewMessage2,
 					})
 
-					if syncErr := syncMCTAgent(ctx, trajDir, "after-second-review-feedback", model); syncErr != nil {
+					if syncErr := syncMCTAgent(ctx, trajDir, "after-second-review-feedback", model, runtimeSnapshot); syncErr != nil {
 						return 1, syncErr
 					}
 					os.Remove(filepath.Join(".machtiani", "sessions", mctSessionID, "chat", "agent-final-answer.md"))
@@ -1150,20 +1521,19 @@ func RunLoop(
 					hailMaryArgs = append(hailMaryArgs, "--persist-tmp-data")
 				}
 
-				if syncErr := syncMCTAgent(ctx, trajDir, "before-hail-mary", model); syncErr != nil {
+				if syncErr := syncMCTAgent(ctx, trajDir, "before-hail-mary", model, runtimeSnapshot); syncErr != nil {
 					return 1, syncErr
 				}
 
 				hailMaryExitCode, hailMaryErr := invokeMCTAgent(ctx, metaSessionID, trajDir, hailMarySessionID, hailMaryArgs...)
-				finalAnswerPath := filepath.Join(".machtiani", "sessions", hailMarySessionID, "chat", "agent-final-answer.md")
-				data, readErr := os.ReadFile(finalAnswerPath)
 				var hailMaryContent string
-				if readErr == nil && strings.TrimSpace(string(data)) != "" {
-					hailMaryContent = strings.TrimSpace(string(data))
+				hailMaryOutput, outputErr := readSessionOutput(hailMarySessionID)
+				if outputErr == nil && strings.TrimSpace(hailMaryOutput.content) != "" {
+					hailMaryContent = strings.TrimSpace(hailMaryOutput.content)
 				} else if hailMaryErr != nil {
 					hailMaryContent = fmt.Sprintf("The Hail Mary agent exited with code %d. Error: %v", hailMaryExitCode, hailMaryErr)
 				} else {
-					hailMaryContent = fmt.Sprintf("The Hail Mary agent exited with code %d without producing a final answer.", hailMaryExitCode)
+					hailMaryContent = fmt.Sprintf("The Hail Mary agent exited with code %d without producing a final answer. Read error: %v", hailMaryExitCode, outputErr)
 				}
 				if hailMaryErr != nil || hailMaryExitCode != 0 {
 					hailMaryContent = fmt.Sprintf("The Hail Mary verification-and-repair pass failed. Continue from this fresh session and complete it.\n\n%s", hailMaryContent)
@@ -1183,10 +1553,10 @@ func RunLoop(
 					"content": hailMaryContent,
 				})
 
-				if syncErr := syncMCTAgent(ctx, trajDir, "after-hail-mary", model); syncErr != nil {
+				if syncErr := syncMCTAgent(ctx, trajDir, "after-hail-mary", model, runtimeSnapshot); syncErr != nil {
 					return 1, syncErr
 				}
-				os.Remove(finalAnswerPath)
+				os.Remove(filepath.Join(".machtiani", "sessions", hailMarySessionID, "chat", "agent-final-answer.md"))
 				continue
 			}
 			return 0, nil

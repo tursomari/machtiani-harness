@@ -37,6 +37,7 @@ Options:
                             (default: default)
   --treatment-treatment L   Treatment subdir for treatment
                             (default: with-peer-review)
+  --treatment-only          Skip control and run only the 12-task treatment
   --work-dir PATH           Working directory for binaries and jobs
                             (default: REPO/.data/mct-batch-subset)
   -h, --help                Print this help message and exit
@@ -63,6 +64,7 @@ CONTROL_AGENT_LABEL="mini-swe-agent"
 TREATMENT_AGENT_LABEL="mct-orchestrator"
 CONTROL_TREATMENT_LABEL="default"
 TREATMENT_TREATMENT_LABEL="with-peer-review"
+TREATMENT_ONLY="false"
 WORK_DIR="__REPO_DATA_MCT_BATCH_SUBSET__"
 
 while [[ $# -gt 0 ]]; do
@@ -147,6 +149,10 @@ while [[ $# -gt 0 ]]; do
             TREATMENT_TREATMENT_LABEL="${1#*=}"
             shift
             ;;
+        --treatment-only)
+            TREATMENT_ONLY="true"
+            shift
+            ;;
         --work-dir)
             WORK_DIR="${2:?--work-dir requires a value}"
             shift 2
@@ -187,6 +193,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 if [[ "$WORK_DIR" == "__REPO_DATA_MCT_BATCH_SUBSET__" ]]; then
     WORK_DIR="${REPO_ROOT}/.data/mct-batch-subset"
+elif [[ "${WORK_DIR}" != /* ]]; then
+    WORK_DIR="${REPO_ROOT}/${WORK_DIR}"
 fi
 
 # ----------------------------------------------------------------------------
@@ -234,6 +242,7 @@ mkdir -p "${CONTROL_JOBS}" "${TREATMENT_JOBS}" "${BIN_DIR}"
 # ----------------------------------------------------------------------------
 AGENT_BIN="${BIN_DIR}/mct-agent"
 META_BIN="${BIN_DIR}/meta-orchestrator"
+FORGE_BIN="${BIN_DIR}/forge"
 
 echo "[build] Building mct-agent from HEAD -> ${AGENT_BIN}"
 ( cd "${REPO_ROOT}/agent" && go build -o "${AGENT_BIN}" ./cmd/mct-agent )
@@ -252,6 +261,10 @@ if [[ ! -x "${META_BIN}" ]]; then
     exit 1
 fi
 echo "[build] meta-orchestrator done."
+
+echo "[build] Downloading Forge musl binary -> ${FORGE_BIN}"
+"${REPO_ROOT}/scripts/download-forge-musl.sh" "${FORGE_BIN}"
+echo "[build] forge done."
 
 # ----------------------------------------------------------------------------
 # Build INCLUDE_FLAGS array (-i <task> for each task)
@@ -287,23 +300,29 @@ echo "[setup] deep-swe head:   ${DEEP_SWE_HEAD}"
 # ----------------------------------------------------------------------------
 # Launch control pier run in background
 # ----------------------------------------------------------------------------
-echo ""
-echo "==== Launching control (mini-swe-agent) ===="
-pier run \
-    --agent mini-swe-agent \
-    --model "${LITELLM_MODEL}" \
-    --ak reasoning_effort=max \
-    --ae "DEEPSEEK_API_KEY=${TEST_API_KEY}" \
-    --ae "MSWEA_API_KEY=${TEST_API_KEY}" \
-    --jobs-dir "${CONTROL_JOBS}" \
-    --job-name "${CONTROL_JOB_NAME}" \
-    --n-concurrent "${CONCURRENT}" \
-    --agent-timeout-multiplier "${TIMEOUT_MULTIPLIER}" \
-    -p "${TASKS_PATH}" \
-    "${INCLUDE_FLAGS[@]}" \
-    > "${CONTROL_DIR}/pier.log" 2>&1 &
-CONTROL_PID=$!
-echo "[run:control] Launched pier (PID ${CONTROL_PID}) -> ${CONTROL_DIR}/pier.log"
+CONTROL_PID=""
+if [[ "${TREATMENT_ONLY}" != "true" ]]; then
+    echo ""
+    echo "==== Launching control (mini-swe-agent) ===="
+    pier run \
+        --agent mini-swe-agent \
+        --model "${LITELLM_MODEL}" \
+        --ak reasoning_effort=max \
+        --ae "DEEPSEEK_API_KEY=${TEST_API_KEY}" \
+        --ae "MSWEA_API_KEY=${TEST_API_KEY}" \
+        --jobs-dir "${CONTROL_JOBS}" \
+        --job-name "${CONTROL_JOB_NAME}" \
+        --n-concurrent "${CONCURRENT}" \
+        --agent-timeout-multiplier "${TIMEOUT_MULTIPLIER}" \
+        -p "${TASKS_PATH}" \
+        "${INCLUDE_FLAGS[@]}" \
+        > "${CONTROL_DIR}/pier.log" 2>&1 &
+    CONTROL_PID=$!
+    echo "[run:control] Launched pier (PID ${CONTROL_PID}) -> ${CONTROL_DIR}/pier.log"
+else
+    echo ""
+    echo "==== Skipping control (--treatment-only) ===="
+fi
 
 # ----------------------------------------------------------------------------
 # Launch treatment pier run in background
@@ -313,10 +332,12 @@ echo "==== Launching treatment (mct-orchestrator) ===="
 env \
     MCT_AGENT_BINARY="${AGENT_BIN}" \
     MCT_META_ORCHESTRATOR_BINARY="${META_BIN}" \
+    MCT_FORGE_BINARY="${FORGE_BIN}" \
     pier run \
     --agent-import-path mct_pier_adapter.mct_agent:MctAgent \
     --ae "MCT_AGENT_BINARY=${AGENT_BIN}" \
     --ae "MCT_META_ORCHESTRATOR_BINARY=${META_BIN}" \
+    --ae "MCT_FORGE_BINARY=${FORGE_BIN}" \
     --ae "MCT_MODEL=${MODEL}" \
     --ae "MCT_SHELL_AGENT_MODEL=${MODEL}" \
     --ae "TEST_API_KEY=${TEST_API_KEY}" \
@@ -339,7 +360,9 @@ echo ""
 echo "==== Waiting for both runs to complete ===="
 CONTROL_EXIT=0
 TREATMENT_EXIT=0
-wait "${CONTROL_PID}" || CONTROL_EXIT=$?
+if [[ -n "${CONTROL_PID}" ]]; then
+    wait "${CONTROL_PID}" || CONTROL_EXIT=$?
+fi
 wait "${TREATMENT_PID}" || TREATMENT_EXIT=$?
 echo "[wait] control exit:   ${CONTROL_EXIT}"
 echo "[wait] treatment exit: ${TREATMENT_EXIT}"
@@ -491,15 +514,19 @@ persist_side() {
 # Persist both sides
 # ----------------------------------------------------------------------------
 echo ""
-echo "==== Persisting control results ===="
-persist_side \
-    "control" \
-    "${CONTROL_AGENT_LABEL}" \
-    "${CONTROL_TREATMENT_LABEL}" \
-    "${CONTROL_JOBS}" \
-    "${CONTROL_JOB_NAME}" \
-    "${LITELLM_MODEL}" \
-    "n/a"
+if [[ "${TREATMENT_ONLY}" != "true" ]]; then
+    echo "==== Persisting control results ===="
+    persist_side \
+        "control" \
+        "${CONTROL_AGENT_LABEL}" \
+        "${CONTROL_TREATMENT_LABEL}" \
+        "${CONTROL_JOBS}" \
+        "${CONTROL_JOB_NAME}" \
+        "${LITELLM_MODEL}" \
+        "n/a"
+else
+    echo "==== Skipping control persistence (--treatment-only) ===="
+fi
 
 echo ""
 echo "==== Persisting treatment results ===="
@@ -541,9 +568,17 @@ echo "========================================"
 echo "  Control exit:    ${CONTROL_EXIT}"
 echo "  Treatment exit:  ${TREATMENT_EXIT}"
 echo ""
-echo "  Control bench:   ${CONTROL_BENCH_DIR}"
+if [[ "${TREATMENT_ONLY}" != "true" ]]; then
+    echo "  Control bench:   ${CONTROL_BENCH_DIR}"
+else
+    echo "  Control bench:   skipped"
+fi
 echo "  Treatment bench: ${TREATMENT_BENCH_DIR}"
 echo ""
-echo "  Control log:     ${CONTROL_DIR}/pier.log"
+if [[ "${TREATMENT_ONLY}" != "true" ]]; then
+    echo "  Control log:     ${CONTROL_DIR}/pier.log"
+else
+    echo "  Control log:     skipped"
+fi
 echo "  Treatment log:   ${TREATMENT_DIR}/pier.log"
 echo "========================================"

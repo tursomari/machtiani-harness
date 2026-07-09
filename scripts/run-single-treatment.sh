@@ -120,6 +120,7 @@ DEEP_SWE_REPO="${HOME}/projects/deep-swe"
 
 AGENT_BIN="${OUTPUT_BIN}/mct-agent"
 META_BIN="${OUTPUT_BIN}/meta-orchestrator"
+FORGE_BIN="${OUTPUT_BIN}/forge"
 
 echo "[setup] Preparing ${OUTPUT_BASE}"
 rm -rf "${OUTPUT_BASE}"
@@ -146,6 +147,11 @@ if [[ ! -x "${META_BIN}" ]]; then
 fi
 echo "[build] meta-orchestrator done."
 
+echo "[build] Downloading Forge musl binary -> ${FORGE_BIN}"
+"${REPO_ROOT}/scripts/download-forge-musl.sh" "${FORGE_BIN}"
+echo "[build] forge done."
+
+
 # ---------------------------------------------------------------------------
 # Run the single treatment benchmark
 # ---------------------------------------------------------------------------
@@ -161,6 +167,7 @@ echo ""
 
 export MCT_AGENT_BINARY="${AGENT_BIN}"
 export MCT_META_ORCHESTRATOR_BINARY="${META_BIN}"
+export MCT_FORGE_BINARY="${FORGE_BIN}"
 export MCT_MODEL="${MODEL}"
 export MCT_SHELL_AGENT_MODEL="${SHELL_AGENT_MODEL}"
 
@@ -175,6 +182,7 @@ echo "[preserve] Background preservation loop started (PID ${PRESERVE_PID}) -> $
 pier run \
     --ae "MCT_AGENT_BINARY=${AGENT_BIN}" \
     --ae "MCT_META_ORCHESTRATOR_BINARY=${META_BIN}" \
+    --ae "MCT_FORGE_BINARY=${FORGE_BIN}" \
     --ae "MCT_MODEL=${MODEL}" \
     --ae "MCT_SHELL_AGENT_MODEL=${SHELL_AGENT_MODEL}" \
     --ae "TEST_API_KEY=${TEST_API_KEY}" \

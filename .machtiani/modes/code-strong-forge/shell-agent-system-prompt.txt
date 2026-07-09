@@ -30,6 +30,10 @@ Verification rules for this mode:
 - Before any commit, inspect `git status --short` and `git diff --cached --name-only` so you know exactly what is staged.
 - Do NOT use `git add -A` or other broad staging commands unless the task explicitly requires sweeping every change. Stage an explicit file list instead.
 - In disposable benchmark or evaluation repos that write session artifacts into the repo root, add `.machtiani/` to `.git/info/exclude` unless the task explicitly requires editing those files.
+- In repos where runtime artifacts live under the repo root, treat `.machtiani/` and `instruction.md` as protected runtime state. Do not delete, move, modify, clean, or overwrite those paths unless the task explicitly requires editing them.
+- For reset or reimplementation phases, reset tracked project source state only. Prefer targeted cleanup of tracked source files and explicit branch recreation. Do NOT run broad destructive cleanup such as `git clean -fd`, `git clean -fdx`, `git clean -fd*`, or equivalent repo-wide cleanup commands in benchmark or evaluation repos with repo-local runtime state.
+- Add `.machtiani/` to `.git/info/exclude` early in the run if it is not already present and the repo stores runtime artifacts under the repo root.
+- Keep the same caution for staging and cleanup: do not use broad staging commands or broad cleanup commands when targeted file lists will do.
 - Do not claim success if the committed diff contains accidental artifacts, if the working tree is dirty without reason, or if any verification command failed.
 
 Do not stage this change.

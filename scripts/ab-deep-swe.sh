@@ -99,6 +99,8 @@ CONTROL_BIN="${CONTROL_OUT}/mct-agent"
 TREATMENT_BIN="${TREATMENT_OUT}/mct-agent"
 CONTROL_META_BIN="${CONTROL_OUT}/meta-orchestrator"
 TREATMENT_META_BIN="${TREATMENT_OUT}/meta-orchestrator"
+CONTROL_FORGE_BIN="${CONTROL_OUT}/forge"
+TREATMENT_FORGE_BIN="${TREATMENT_OUT}/forge"
 
 # ----------------------------------------------------------------------------
 # Helper: build mct-agent from a given commit into a given output path
@@ -211,8 +213,10 @@ persist_results() {
 # Treatment binary is always built, even in --treatment-only mode.
 if [[ "${TREATMENT_ONLY}" != "true" ]]; then
     build_agent "${CONTROL_COMMIT}" "${CONTROL_BIN}" "control" "${CONTROL_META_BIN}"
+    "${REPO_ROOT}/scripts/download-forge-musl.sh" "${CONTROL_FORGE_BIN}"
 fi
 build_agent "${TREATMENT_COMMIT}" "${TREATMENT_BIN}" "treatment" "${TREATMENT_META_BIN}"
+"${REPO_ROOT}/scripts/download-forge-musl.sh" "${TREATMENT_FORGE_BIN}"
 
 # ----------------------------------------------------------------------------
 # Run control benchmark
@@ -223,9 +227,11 @@ if [[ "${TREATMENT_ONLY}" != "true" ]]; then
 
     export MCT_META_ORCHESTRATOR_BINARY=${CONTROL_META_BIN}
     export MCT_AGENT_BINARY=${CONTROL_BIN}
+    export MCT_FORGE_BINARY=${CONTROL_FORGE_BIN}
     pier run \
         --ae "MCT_AGENT_BINARY=${CONTROL_BIN}" \
         --ae "MCT_META_ORCHESTRATOR_BINARY=${CONTROL_META_BIN}" \
+        --ae "MCT_FORGE_BINARY=${CONTROL_FORGE_BIN}" \
         --ae "TEST_API_KEY=${TEST_API_KEY}" \
         --ae "TEST_BASE_URL=${TEST_BASE_URL}" \
         --ae "TEST_MODEL=${TEST_MODEL}" \
@@ -250,9 +256,11 @@ echo "==== Step 2 — Run treatment benchmark ===="
 
 export MCT_META_ORCHESTRATOR_BINARY=${TREATMENT_META_BIN}
 export MCT_AGENT_BINARY=${TREATMENT_BIN}
+export MCT_FORGE_BINARY=${TREATMENT_FORGE_BIN}
 pier run \
     --ae "MCT_AGENT_BINARY=${TREATMENT_BIN}" \
     --ae "MCT_META_ORCHESTRATOR_BINARY=${TREATMENT_META_BIN}" \
+    --ae "MCT_FORGE_BINARY=${TREATMENT_FORGE_BIN}" \
     --ae "TEST_API_KEY=${TEST_API_KEY}" \
     --ae "TEST_BASE_URL=${TEST_BASE_URL}" \
     --ae "TEST_MODEL=${TEST_MODEL}" \
