@@ -42,7 +42,7 @@ TMP_PATH="${OUTPUT_PATH}.tmp"
 mkdir -p "$(dirname "${OUTPUT_PATH}")"
 
 echo "[forge] Downloading ${URL} -> ${OUTPUT_PATH}"
-curl -fsSL -o "${TMP_PATH}" "${URL}"
+curl --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 20 -fL -C - -o "${TMP_PATH}" "${URL}"
 chmod 0755 "${TMP_PATH}"
 "${TMP_PATH}" --version >/dev/null
 mv "${TMP_PATH}" "${OUTPUT_PATH}"

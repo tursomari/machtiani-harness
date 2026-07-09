@@ -62,6 +62,7 @@ Rules and Phases of Operation:
    - If the deliverables are fully executed and complete, respond with ACTION: DONE.
 
 Global Rules:
+- The runner may append a "RUNNER-OBSERVED WORKTREE AUDIT" block after an agent final answer. Treat this audit as authoritative for phase-gating. If its gate_result is BLOCK_NEXT_PHASE, respond with ACTION: CONTINUE and instruct mct-agent to commit intentional deliverables and remove accidental deliverables before proceeding. If its gate_result is AUDIT_ERROR, respond with ACTION: CONTINUE and instruct mct-agent to perform the same git status/diff/untracked audit itself and resolve any dirty deliverable state. Do not proceed to the next phase or final DONE while the runner-observed audit blocks.
 - If the final answer describes an irrecoverable hard blocker (e.g. no API credits available, critical missing dependency that cannot be resolved), respond with ACTION: BLOCKED.
 - Maintain context across rounds. Use the chat history to determine which phase the agent is currently in. Escalate the firmness of your instructions if mct-agent stalls or attempts to bypass a phase.`
 
@@ -120,24 +121,26 @@ const hailMaryInstruction = `You are a fresh final verification-and-repair agent
 You MUST:
 1. Re-read /app/instruction.md in full and extract every distinct requirement into a checklist.
 2. Inspect the current implementation and all added/modified tests. Do not rely on previous agents' summaries.
-3. Build a spec-to-test matrix. For every requirement, identify the test evidence proving it. If coverage is missing, weak, implementation-coupled, or appears to encode a misreading of the spec, write stronger tests.
-4. Add adversarial public-API tests for plausible spec misinterpretations. For typed languages, include compile-time/type-level tests for exact API contracts, overloads/inference, invalid usage, and negative cases where the spec implies type errors.
-5. Run the relevant compile/typecheck/build commands and the full relevant test suite. Also run any focused adversarial tests you added. Record the exact commands, exit status or pass/fail result, and the evidence you used to confirm the result. You may ask to confirm whether each command passed or failed. ***Do not require or expect verbatim/raw shell output in the final answer.***
-6. Fix every failure or uncovered requirement. Do not give up after one attempt. Continue editing, compiling, and testing until the instruction is fully satisfied.
-7. Remove temporary validation files unless they are intentionally committed as permanent tests. Ensure the working tree contains only appropriate deliverables.
-8. Commit all fixes and tests.
-9. After the final commit, rerun the key verification commands from the committed state and inspect git status --short plus the final changed-file set. If any accidental artifacts are staged or present in the deliverable, fix that before answering.
+3. Audit the full deliverable state, not only committed history: inspect git status --short, git diff main...HEAD, git diff --cached, git diff, and git ls-files --others --exclude-standard. Treat the implementation as the union of committed changes, staged changes, unstaged tracked changes, and relevant untracked deliverable files. Relevant untracked deliverables include source files, tests, fixtures, configuration, documentation, generated type declarations, lockfiles, and plan files needed for the solution. Exclude runtime/session artifacts, logs, caches, temporary scratch directories, and orchestrator-owned state.
+4. Build a spec-to-test matrix. For every requirement, identify the test evidence proving it. If coverage is missing, weak, implementation-coupled, or appears to encode a misreading of the spec, write stronger tests.
+5. Add adversarial public-API tests for plausible spec misinterpretations. For typed languages, include compile-time/type-level tests for exact API contracts, overloads/inference, invalid usage, and negative cases where the spec implies type errors.
+6. Run the relevant compile/typecheck/build commands and the full relevant test suite. Also run any focused adversarial tests you added. Record the exact commands, exit status or pass/fail result, and the evidence you used to confirm the result. You may ask to confirm whether each command passed or failed. ***Do not require or expect verbatim/raw shell output in the final answer.***
+7. Fix every failure or uncovered requirement. Do not give up after one attempt. Continue editing, compiling, and testing until the instruction is fully satisfied.
+8. Remove temporary validation files unless they are intentionally committed as permanent tests. Ensure the working tree contains only appropriate deliverables.
+9. If any required implementation, test, fixture, or configuration exists only staged, unstaged, or untracked, either commit it as an intentional deliverable or remove it if accidental.
+10. Commit all fixes and tests.
+11. After the final commit, rerun the key verification commands from the committed state and inspect git status --short plus the final changed-file set. If any accidental artifacts are staged or present in the deliverable, fix that before answering.
 
 Your final answer must include:
 - The requirement checklist with status for every item.
 - The spec-to-test matrix with file paths and commands.
 - Exact compile/typecheck/build/test commands run, whether they passed, and how the result was confirmed. ***Do not include or invent raw command output unless it is already available and directly relevant.***
 - Exact post-commit verification commands run after the final commit and whether they passed.
-- The final changed-file set and confirmation that accidental artifacts were excluded.
+- The final deliverable-state audit: committed files, staged files, unstaged tracked files, relevant untracked files, and what was committed or removed.
 - Any fixes made during this Hail Mary pass with commit hashes.
 - Confirmation that temporary files were removed or intentionally committed as permanent tests.
 
-Do not claim success unless every requirement is implemented, the tests prove the requirement text rather than an implementation assumption, all relevant verification commands pass, and the final state is committed.`
+Do not claim success unless every requirement is implemented, the tests prove the requirement text rather than an implementation assumption, all relevant verification commands pass, and the final deliverable is fully committed with no unintended deliverable files.`
 
 const (
 	mctAgentSyncAttempts       = 10
@@ -857,6 +860,202 @@ func cleanContent(s string) string {
 	return s[idx+2:]
 }
 
+type runnerWorktreeAudit struct {
+	StatusShort                  []string
+	StagedDeliverables           []string
+	UnstagedDeliverables         []string
+	UntrackedDeliverables        []string
+	ProtectedOrRuntimeDirtyPaths []string
+	Errors                       []string
+}
+
+func (a runnerWorktreeAudit) gateResult() string {
+	if len(a.Errors) > 0 {
+		return "AUDIT_ERROR"
+	}
+	if len(a.StagedDeliverables) > 0 || len(a.UnstagedDeliverables) > 0 || len(a.UntrackedDeliverables) > 0 {
+		return "BLOCK_NEXT_PHASE"
+	}
+	return "PASS"
+}
+
+func collectRunnerWorktreeAudit(ctx context.Context, repoDir string) runnerWorktreeAudit {
+	audit := runnerWorktreeAudit{}
+
+	status, err := gitLines(ctx, repoDir, "status", "--short")
+	if err != nil {
+		audit.Errors = append(audit.Errors, err.Error())
+	} else {
+		audit.StatusShort = status
+	}
+
+	staged, err := gitLines(ctx, repoDir, "diff", "--cached", "--name-only")
+	if err != nil {
+		audit.Errors = append(audit.Errors, err.Error())
+	} else {
+		audit.StagedDeliverables = audit.classifyDeliverables(staged)
+	}
+
+	unstaged, err := gitLines(ctx, repoDir, "diff", "--name-only")
+	if err != nil {
+		audit.Errors = append(audit.Errors, err.Error())
+	} else {
+		audit.UnstagedDeliverables = audit.classifyDeliverables(unstaged)
+	}
+
+	untracked, err := gitLines(ctx, repoDir, "ls-files", "--others", "--exclude-standard")
+	if err != nil {
+		audit.Errors = append(audit.Errors, err.Error())
+	} else {
+		audit.UntrackedDeliverables = audit.classifyDeliverables(untracked)
+	}
+
+	return audit
+}
+
+func gitLines(ctx context.Context, repoDir string, args ...string) ([]string, error) {
+	gitCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(gitCtx, "git", args...)
+	cmd.Dir = repoDir
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		detail := strings.TrimSpace(stderr.String())
+		if detail == "" {
+			detail = err.Error()
+		}
+		return nil, fmt.Errorf("git %s failed: %s", strings.Join(args, " "), detail)
+	}
+
+	var lines []string
+	for _, line := range strings.Split(stdout.String(), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return lines, nil
+}
+
+func (a *runnerWorktreeAudit) classifyDeliverables(paths []string) []string {
+	var deliverables []string
+	for _, path := range paths {
+		normalized := normalizeAuditPath(path)
+		if normalized == "" {
+			continue
+		}
+		if isProtectedOrRuntimeAuditPath(normalized) {
+			addUniqueString(&a.ProtectedOrRuntimeDirtyPaths, normalized)
+			continue
+		}
+		addUniqueString(&deliverables, normalized)
+	}
+	return deliverables
+}
+
+func normalizeAuditPath(path string) string {
+	path = strings.TrimSpace(filepath.ToSlash(path))
+	path = strings.TrimPrefix(path, "./")
+	return path
+}
+
+func isProtectedOrRuntimeAuditPath(path string) bool {
+	path = normalizeAuditPath(path)
+	if path == "" {
+		return false
+	}
+	if path == ".machtiani" || strings.HasPrefix(path, ".machtiani/") {
+		return true
+	}
+	switch path {
+	case "instruction.md", "review-instruction.md", "stdout.log", "stderr.log", ".coverage":
+		return true
+	}
+
+	parts := strings.Split(path, "/")
+	runtimeDirs := map[string]bool{
+		"logs":          true,
+		"log":           true,
+		"tmp":           true,
+		"temp":          true,
+		".tmp":          true,
+		".cache":        true,
+		"__pycache__":   true,
+		".pytest_cache": true,
+		".mypy_cache":   true,
+		".ruff_cache":   true,
+		"node_modules":  true,
+	}
+	for _, part := range parts {
+		if runtimeDirs[part] {
+			return true
+		}
+	}
+	return strings.HasSuffix(path, ".log")
+}
+
+func addUniqueString(values *[]string, value string) {
+	for _, existing := range *values {
+		if existing == value {
+			return
+		}
+	}
+	*values = append(*values, value)
+}
+
+func formatRunnerWorktreeAudit(audit runnerWorktreeAudit) string {
+	var b strings.Builder
+	b.WriteString("=== RUNNER-OBSERVED WORKTREE AUDIT ===\n")
+	b.WriteString("This audit was generated by the runner after the child invocation and is authoritative for phase-gating.\n")
+	b.WriteString("gate_result: ")
+	b.WriteString(audit.gateResult())
+	b.WriteString("\n")
+	writeAuditList(&b, "staged_deliverables", audit.StagedDeliverables)
+	writeAuditList(&b, "unstaged_deliverables", audit.UnstagedDeliverables)
+	writeAuditList(&b, "untracked_deliverables", audit.UntrackedDeliverables)
+	writeAuditList(&b, "protected_or_runtime_dirty_paths", audit.ProtectedOrRuntimeDirtyPaths)
+	writeAuditList(&b, "raw_git_status_short", audit.StatusShort)
+	writeAuditList(&b, "audit_errors", audit.Errors)
+	b.WriteString("Gate rule: if gate_result is BLOCK_NEXT_PHASE or AUDIT_ERROR, do not proceed to the next phase or final DONE.\n")
+	b.WriteString("=== END RUNNER-OBSERVED WORKTREE AUDIT ===")
+	return b.String()
+}
+
+func writeAuditList(b *strings.Builder, label string, values []string) {
+	b.WriteString(label)
+	b.WriteString(":\n")
+	if len(values) == 0 {
+		b.WriteString("- none\n")
+		return
+	}
+	for _, value := range values {
+		b.WriteString("- ")
+		b.WriteString(value)
+		b.WriteString("\n")
+	}
+}
+
+func appendRunnerWorktreeAudit(ctx context.Context, trajDir string, label string, content string) string {
+	audit := collectRunnerWorktreeAudit(ctx, "/app")
+	writeTrajectoryLine(trajDir, map[string]interface{}{
+		"type":                             "runner_worktree_audit",
+		"label":                            label,
+		"timestamp":                        time.Now().UTC().Format(time.RFC3339),
+		"gate_result":                      audit.gateResult(),
+		"staged_deliverables":              audit.StagedDeliverables,
+		"unstaged_deliverables":            audit.UnstagedDeliverables,
+		"untracked_deliverables":           audit.UntrackedDeliverables,
+		"protected_or_runtime_dirty_paths": audit.ProtectedOrRuntimeDirtyPaths,
+		"raw_git_status_short":             audit.StatusShort,
+		"audit_errors":                     audit.Errors,
+	})
+	return strings.TrimSpace(content) + "\n\n" + formatRunnerWorktreeAudit(audit)
+}
+
 type sessionOutput struct {
 	content   string
 	suspended bool
@@ -1117,11 +1316,12 @@ func RunLoop(
 			lastFinalAnswer = errorContent
 		}
 
-		messages = append(messages, llm.Message{Role: "user", Content: errorContent})
+		errorContentWithAudit := appendRunnerWorktreeAudit(ctx, trajDir, "initial-agent-run-error", errorContent)
+		messages = append(messages, llm.Message{Role: "user", Content: errorContentWithAudit})
 		writeTrajectoryLine(trajDir, map[string]interface{}{
 			"type":    "llm_message",
 			"role":    "user",
-			"content": errorContent,
+			"content": errorContentWithAudit,
 		})
 		initialError = true
 	}
@@ -1158,12 +1358,13 @@ func RunLoop(
 				return 1, fmt.Errorf("final answer file is empty for session %s", mctSessionID)
 			}
 
-			messages = append(messages, llm.Message{Role: "user", Content: content})
+			contentWithAudit := appendRunnerWorktreeAudit(ctx, trajDir, "agent-final-answer", content)
+			messages = append(messages, llm.Message{Role: "user", Content: contentWithAudit})
 
 			writeTrajectoryLine(trajDir, map[string]interface{}{
 				"type":    "llm_message",
 				"role":    "user",
-				"content": content,
+				"content": contentWithAudit,
 			})
 		}
 		initialError = false
@@ -1273,11 +1474,12 @@ func RunLoop(
 					lastFinalAnswer = errorContent
 				}
 
-				messages = append(messages, llm.Message{Role: "user", Content: errorContent})
+				errorContentWithAudit := appendRunnerWorktreeAudit(ctx, trajDir, "continue-agent-run-error", errorContent)
+				messages = append(messages, llm.Message{Role: "user", Content: errorContentWithAudit})
 				writeTrajectoryLine(trajDir, map[string]interface{}{
 					"type":    "llm_message",
 					"role":    "user",
-					"content": errorContent,
+					"content": errorContentWithAudit,
 				})
 				continue
 			}
@@ -1397,11 +1599,12 @@ func RunLoop(
 							repeatCount = 0
 							lastFinalAnswer = errorContent
 						}
-						messages = append(messages, llm.Message{Role: "user", Content: errorContent})
+						errorContentWithAudit := appendRunnerWorktreeAudit(ctx, trajDir, "review-feedback-error", errorContent)
+						messages = append(messages, llm.Message{Role: "user", Content: errorContentWithAudit})
 						writeTrajectoryLine(trajDir, map[string]interface{}{
 							"type":    "llm_message",
 							"role":    "user",
-							"content": errorContent,
+							"content": errorContentWithAudit,
 						})
 						continue
 					}
@@ -1517,11 +1720,12 @@ func RunLoop(
 							repeatCount = 0
 							lastFinalAnswer = errorContent
 						}
-						messages = append(messages, llm.Message{Role: "user", Content: errorContent})
+						errorContentWithAudit := appendRunnerWorktreeAudit(ctx, trajDir, "second-review-feedback-error", errorContent)
+						messages = append(messages, llm.Message{Role: "user", Content: errorContentWithAudit})
 						writeTrajectoryLine(trajDir, map[string]interface{}{
 							"type":    "llm_message",
 							"role":    "user",
-							"content": errorContent,
+							"content": errorContentWithAudit,
 						})
 						continue
 					}
@@ -1588,8 +1792,9 @@ func RunLoop(
 					hailMaryDone = true
 				}
 
+				hailMaryContentWithAudit := appendRunnerWorktreeAudit(ctx, trajDir, "hail-mary-final-answer", hailMaryContent)
 				messages = append(messages, llm.Message{Role: "assistant", Content: "ACTION: CONTINUE\nMESSAGE: Fresh-session Hail Mary verification-and-repair pass has run. Evaluate its final answer against the original instruction and the required evidence. Continue the Hail Mary session unless the answer proves 100% success."})
-				messages = append(messages, llm.Message{Role: "user", Content: hailMaryContent})
+				messages = append(messages, llm.Message{Role: "user", Content: hailMaryContentWithAudit})
 				writeTrajectoryLine(trajDir, map[string]interface{}{
 					"type":       "hail_mary_phase_completed",
 					"session_id": hailMarySessionID,
@@ -1599,7 +1804,7 @@ func RunLoop(
 				writeTrajectoryLine(trajDir, map[string]interface{}{
 					"type":    "llm_message",
 					"role":    "user",
-					"content": hailMaryContent,
+					"content": hailMaryContentWithAudit,
 				})
 
 				if syncErr := syncMCTAgent(ctx, trajDir, "after-hail-mary", model, runtimeSnapshot); syncErr != nil {

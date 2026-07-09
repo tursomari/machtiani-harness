@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -68,6 +69,21 @@ func TestSanityCheckPromptsDoNotRequireRawShellOutput(t *testing.T) {
 	}
 }
 
+func TestOrchestratorSystemPromptGatesOnRunnerWorktreeAudit(t *testing.T) {
+	for _, want := range []string{
+		"RUNNER-OBSERVED WORKTREE AUDIT",
+		"authoritative for phase-gating",
+		"gate_result is BLOCK_NEXT_PHASE",
+		"commit intentional deliverables and remove accidental deliverables",
+		"gate_result is AUDIT_ERROR",
+		"Do not proceed to the next phase or final DONE while the runner-observed audit blocks",
+	} {
+		if !strings.Contains(orchestratorSystemPrompt, want) {
+			t.Fatalf("orchestratorSystemPrompt missing %q", want)
+		}
+	}
+}
+
 func TestPeerReviewPromptsInspectFullWorktree(t *testing.T) {
 	for name, prompt := range map[string]string{
 		"peerReviewInstruction":   peerReviewInstruction,
@@ -95,6 +111,121 @@ func TestPeerReviewPromptsInspectFullWorktree(t *testing.T) {
 	} {
 		if !strings.Contains(reviewSystemPrompt, want) {
 			t.Fatalf("reviewSystemPrompt missing %q", want)
+		}
+	}
+}
+
+func TestHailMaryPromptAuditsFullDeliverableState(t *testing.T) {
+	for _, want := range []string{
+		"Audit the full deliverable state, not only committed history",
+		"git status --short",
+		"git diff main...HEAD",
+		"git diff --cached",
+		"git diff",
+		"git ls-files --others --exclude-standard",
+		"committed changes, staged changes, unstaged tracked changes, and relevant untracked deliverable files",
+		"source files, tests, fixtures, configuration, documentation, generated type declarations, lockfiles, and plan files",
+		"runtime/session artifacts, logs, caches, temporary scratch directories, and orchestrator-owned state",
+		"commit it as an intentional deliverable or remove it if accidental",
+		"The final deliverable-state audit",
+		"fully committed with no unintended deliverable files",
+	} {
+		if !strings.Contains(hailMaryInstruction, want) {
+			t.Fatalf("hailMaryInstruction missing %q", want)
+		}
+	}
+}
+
+func TestRunnerWorktreeAuditClassifiesDeliverablesAndRuntimePaths(t *testing.T) {
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	runGit(t, repo, "config", "user.name", "Test User")
+	runGit(t, repo, "config", "user.email", "test@example.com")
+
+	writeFile(t, filepath.Join(repo, "src", "app.txt"), "base\n")
+	runGit(t, repo, "add", "src/app.txt")
+	runGit(t, repo, "commit", "-m", "initial")
+
+	writeFile(t, filepath.Join(repo, "src", "app.txt"), "changed\n")
+	writeFile(t, filepath.Join(repo, "tests", "app_test.txt"), "test\n")
+	runGit(t, repo, "add", "tests/app_test.txt")
+	writeFile(t, filepath.Join(repo, "docs", "new.md"), "docs\n")
+	writeFile(t, filepath.Join(repo, ".machtiani", "sessions", "agent-1", "state"), "runtime\n")
+	writeFile(t, filepath.Join(repo, "logs", "runner.log"), "log\n")
+	writeFile(t, filepath.Join(repo, "__pycache__", "x.pyc"), "cache\n")
+
+	audit := collectRunnerWorktreeAudit(context.Background(), repo)
+	if audit.gateResult() != "BLOCK_NEXT_PHASE" {
+		t.Fatalf("gateResult = %q, want BLOCK_NEXT_PHASE: %#v", audit.gateResult(), audit)
+	}
+	for _, want := range []string{"tests/app_test.txt"} {
+		if !containsString(audit.StagedDeliverables, want) {
+			t.Fatalf("staged deliverables missing %q: %#v", want, audit.StagedDeliverables)
+		}
+	}
+	for _, want := range []string{"src/app.txt"} {
+		if !containsString(audit.UnstagedDeliverables, want) {
+			t.Fatalf("unstaged deliverables missing %q: %#v", want, audit.UnstagedDeliverables)
+		}
+	}
+	for _, want := range []string{"docs/new.md"} {
+		if !containsString(audit.UntrackedDeliverables, want) {
+			t.Fatalf("untracked deliverables missing %q: %#v", want, audit.UntrackedDeliverables)
+		}
+	}
+	for _, want := range []string{
+		".machtiani/sessions/agent-1/state",
+		"logs/runner.log",
+		"__pycache__/x.pyc",
+	} {
+		if !containsString(audit.ProtectedOrRuntimeDirtyPaths, want) {
+			t.Fatalf("runtime paths missing %q: %#v", want, audit.ProtectedOrRuntimeDirtyPaths)
+		}
+	}
+
+	formatted := formatRunnerWorktreeAudit(audit)
+	for _, want := range []string{
+		"gate_result: BLOCK_NEXT_PHASE",
+		"staged_deliverables:",
+		"unstaged_deliverables:",
+		"untracked_deliverables:",
+		"protected_or_runtime_dirty_paths:",
+		"Gate rule: if gate_result is BLOCK_NEXT_PHASE or AUDIT_ERROR",
+	} {
+		if !strings.Contains(formatted, want) {
+			t.Fatalf("formatted audit missing %q:\n%s", want, formatted)
+		}
+	}
+}
+
+func TestRunnerWorktreeAuditPassesWithOnlyRuntimePaths(t *testing.T) {
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	runGit(t, repo, "config", "user.name", "Test User")
+	runGit(t, repo, "config", "user.email", "test@example.com")
+
+	writeFile(t, filepath.Join(repo, "README.md"), "base\n")
+	runGit(t, repo, "add", "README.md")
+	runGit(t, repo, "commit", "-m", "initial")
+
+	writeFile(t, filepath.Join(repo, ".machtiani", "sessions", "agent-1", "state"), "runtime\n")
+	writeFile(t, filepath.Join(repo, "logs", "runner.log"), "log\n")
+	writeFile(t, filepath.Join(repo, ".pytest_cache", "state"), "cache\n")
+
+	audit := collectRunnerWorktreeAudit(context.Background(), repo)
+	if audit.gateResult() != "PASS" {
+		t.Fatalf("gateResult = %q, want PASS: %#v", audit.gateResult(), audit)
+	}
+	if len(audit.StagedDeliverables) != 0 || len(audit.UnstagedDeliverables) != 0 || len(audit.UntrackedDeliverables) != 0 {
+		t.Fatalf("runtime-only audit should not report deliverables: %#v", audit)
+	}
+	for _, want := range []string{
+		".machtiani/sessions/agent-1/state",
+		"logs/runner.log",
+		".pytest_cache/state",
+	} {
+		if !containsString(audit.ProtectedOrRuntimeDirtyPaths, want) {
+			t.Fatalf("runtime paths missing %q: %#v", want, audit.ProtectedOrRuntimeDirtyPaths)
 		}
 	}
 }
@@ -513,6 +644,16 @@ func containsString(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, output)
+	}
 }
 
 func repoRoot(t *testing.T) string {
