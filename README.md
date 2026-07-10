@@ -455,7 +455,7 @@ There is a second evaluation script at scripts/run_eval_head.sh for tasks withou
 
 For the Docker-based development workflow (incremental builds, A/B comparison of changes, and containerized testing), see [docs/development-workflow.md](docs/development-workflow.md).
 
-For live monitoring of a benchmark treatment running inside a Docker container, see docs/live-treatment-monitoring.md.
+For Deep-SWE bench execution, monitoring commands, score summaries, reward locations, and common failure modes, see [BENCHING.md](BENCHING.md).
 
 ## Uninstall
 Remove the installed binaries (adjust paths to your environment):
