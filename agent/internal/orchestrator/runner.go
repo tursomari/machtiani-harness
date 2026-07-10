@@ -18,6 +18,12 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
 )
 
+var (
+	mctAgentBinary           = "mct-agent"
+	mctAgentAppDir           = "/app"
+	mctAgentRecoveryAttempts = 1
+)
+
 const orchestratorSystemPrompt = `You are a meta-orchestrator agent. Your job is to instruct mct-agent to completion through a rigorous, multi-stage validation process. You will receive the contents of mct-agents agent-final-answer.md after each invocation. Evaluate the current state of the work and guide the agent accordingly.
 
 Respond with exactly one of these three formats:
@@ -227,16 +233,16 @@ func extractPrompt(args []string) string {
 // of the subprocess and any error.
 func invokeMCTAgent(ctx context.Context, metaSessionID string, trajDir string, mctSessionID string, args ...string) (int, error) {
 	fullArgs := append([]string{"run"}, args...)
-	cmd := exec.CommandContext(ctx, "mct-agent", fullArgs...)
-	cmd.Dir = "/app"
+	cmd := exec.CommandContext(ctx, mctAgentBinary, fullArgs...)
+	cmd.Dir = mctAgentAppDir
 
 	var stdoutBuf bytes.Buffer
 	var stderrBuf bytes.Buffer
 	cmd.Stdout = io.MultiWriter(os.Stdout, &stdoutBuf)
 	cmd.Stderr = io.MultiWriter(os.Stderr, &stderrBuf)
-	cmd.Env = append(os.Environ(), "MACHTIANI_SESSION_ID="+mctSessionID, "MACHTIANI_CONFIG=/app/.machtiani/config.toml")
+	cmd.Env = append(os.Environ(), "MACHTIANI_SESSION_ID="+mctSessionID, "MACHTIANI_CONFIG="+filepath.Join(mctAgentAppDir, ".machtiani", "config.toml"))
 
-	runSnapshot, snapshotErr := snapshotProtectedRuntimeState("/app")
+	runSnapshot, snapshotErr := snapshotProtectedRuntimeState(mctAgentAppDir)
 	if snapshotErr != nil {
 		writeTrajectoryLine(trajDir, map[string]interface{}{
 			"type":      "runtime_state_snapshot_failed",
@@ -314,6 +320,66 @@ func invokeMCTAgent(ctx context.Context, metaSessionID string, trajDir string, m
 		return exitCode, err
 	}
 	return exitCode, nil
+}
+
+func invokeMCTAgentWithRecovery(ctx context.Context, metaSessionID string, trajDir string, mctSessionID string, label string, snapshot *runtimeStateSnapshot, args ...string) (int, error) {
+	exitCode, err := invokeMCTAgent(ctx, metaSessionID, trajDir, mctSessionID, args...)
+	if err == nil && exitCode == 0 {
+		return exitCode, nil
+	}
+	if ctx.Err() != nil {
+		return exitCode, err
+	}
+
+	lastExitCode := exitCode
+	lastErr := err
+	retryArgs := ensureSessionIDArg(args, mctSessionID)
+	for attempt := 1; attempt <= mctAgentRecoveryAttempts; attempt++ {
+		if restoreErr := restoreProtectedRuntimeState(snapshot, trajDir, label+"-before-recovery"); restoreErr != nil {
+			return -1, restoreErr
+		}
+		if clearErr := clearFinalAnswerBeforeRun(mctSessionID, trajDir, label+"-before-recovery"); clearErr != nil {
+			return -1, clearErr
+		}
+
+		writeTrajectoryLine(trajDir, map[string]interface{}{
+			"type":            "mct_invocation_recovery_attempt",
+			"label":           label,
+			"timestamp":       time.Now().UTC().Format(time.RFC3339),
+			"session_id":      mctSessionID,
+			"attempt":         attempt,
+			"max_attempts":    mctAgentRecoveryAttempts,
+			"prior_exit_code": lastExitCode,
+			"prior_error":     errorString(lastErr),
+			"args":            append([]string{"run"}, retryArgs...),
+		})
+
+		lastExitCode, lastErr = invokeMCTAgent(ctx, metaSessionID, trajDir, mctSessionID, retryArgs...)
+		if lastErr == nil && lastExitCode == 0 {
+			return lastExitCode, nil
+		}
+		if ctx.Err() != nil {
+			return lastExitCode, lastErr
+		}
+	}
+	return lastExitCode, lastErr
+}
+
+func ensureSessionIDArg(args []string, sessionID string) []string {
+	out := append([]string(nil), args...)
+	for _, arg := range out {
+		if arg == "--session-id" || strings.HasPrefix(arg, "--session-id=") {
+			return out
+		}
+	}
+	return append(out, "--session-id", sessionID)
+}
+
+func errorString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 type runtimeStateSnapshot struct {
@@ -507,7 +573,7 @@ func syncMCTAgent(ctx context.Context, trajDir string, label string, model strin
 			return err
 		}
 
-		syncSnapshot, snapshotErr := snapshotProtectedRuntimeState("/app")
+		syncSnapshot, snapshotErr := snapshotProtectedRuntimeState(mctAgentAppDir)
 		if snapshotErr != nil {
 			return snapshotErr
 		}
@@ -521,13 +587,13 @@ func syncMCTAgent(ctx context.Context, trajDir string, label string, model strin
 			syncArgs = append(syncArgs, "--model", model)
 		}
 
-		cmd := exec.CommandContext(ctx, "mct-agent", syncArgs...)
-		cmd.Dir = "/app"
+		cmd := exec.CommandContext(ctx, mctAgentBinary, syncArgs...)
+		cmd.Dir = mctAgentAppDir
 		var stdoutBuf bytes.Buffer
 		var stderrBuf bytes.Buffer
 		cmd.Stdout = &stdoutBuf
 		cmd.Stderr = &stderrBuf
-		cmd.Env = append(os.Environ(), "MACHTIANI_CONFIG=/app/.machtiani/config.toml")
+		cmd.Env = append(os.Environ(), "MACHTIANI_CONFIG="+filepath.Join(mctAgentAppDir, ".machtiani", "config.toml"))
 
 		err := cmd.Run()
 		restoreErr := restoreProtectedRuntimeState(syncSnapshot, trajDir, label+"-after-sync")
@@ -613,7 +679,8 @@ func parseOrchestratorResponse(response string) (string, string, error) {
 // the main agent's implementation. It returns the review content as a string.
 func invokeReviewer(ctx context.Context, reviewInstruction string, reviewMode string, metaSessionID string, trajDir string, model string, shellAgentModel string, mainSessionID string, snapshot *runtimeStateSnapshot) (string, error) {
 	// 1. Write peer review instruction file.
-	if err := os.WriteFile("/app/review-instruction.md", []byte(reviewInstruction), 0644); err != nil {
+	reviewInstructionPath := filepath.Join(mctAgentAppDir, "review-instruction.md")
+	if err := os.WriteFile(reviewInstructionPath, []byte(reviewInstruction), 0644); err != nil {
 		return "", err
 	}
 
@@ -644,15 +711,15 @@ func invokeReviewer(ctx context.Context, reviewInstruction string, reviewMode st
 	if shellAgentModel != "" {
 		childArgs = append(childArgs, "--shell-agent-model", shellAgentModel)
 	}
-	childArgs = append(childArgs, "--tag", "review", "-f", "/app/review-instruction.md")
+	childArgs = append(childArgs, "--tag", "review", "-f", reviewInstructionPath)
 
 	reviewCtx, cancel := context.WithTimeout(ctx, 30*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(reviewCtx, binaryPath, childArgs...)
-	cmd.Dir = "/app"
-	cmd.Env = append(os.Environ(), "MACHTIANI_CONFIG=/app/.machtiani/config.toml")
+	cmd.Dir = mctAgentAppDir
+	cmd.Env = append(os.Environ(), "MACHTIANI_CONFIG="+filepath.Join(mctAgentAppDir, ".machtiani", "config.toml"))
 
-	reviewSnapshot, snapshotErr := snapshotProtectedRuntimeState("/app")
+	reviewSnapshot, snapshotErr := snapshotProtectedRuntimeState(mctAgentAppDir)
 	if snapshotErr != nil {
 		return "", snapshotErr
 	}
@@ -1040,7 +1107,7 @@ func writeAuditList(b *strings.Builder, label string, values []string) {
 }
 
 func appendRunnerWorktreeAudit(ctx context.Context, trajDir string, label string, content string) string {
-	audit := collectRunnerWorktreeAudit(ctx, "/app")
+	audit := collectRunnerWorktreeAudit(ctx, mctAgentAppDir)
 	writeTrajectoryLine(trajDir, map[string]interface{}{
 		"type":                             "runner_worktree_audit",
 		"label":                            label,
@@ -1062,7 +1129,7 @@ type sessionOutput struct {
 }
 
 func finalAnswerPath(sessionID string) string {
-	return filepath.Join(".machtiani", "sessions", sessionID, "chat", "agent-final-answer.md")
+	return filepath.Join(mctAgentAppDir, ".machtiani", "sessions", sessionID, "chat", "agent-final-answer.md")
 }
 
 func clearFinalAnswerBeforeRun(sessionID string, trajDir string, label string) error {
@@ -1214,7 +1281,7 @@ func RunLoop(
 		return 1, fmt.Errorf("creating trajectory directory: %w", err)
 	}
 
-	runtimeSnapshot, err := snapshotProtectedRuntimeState("/app")
+	runtimeSnapshot, err := snapshotProtectedRuntimeState(mctAgentAppDir)
 	if err != nil {
 		return 1, err
 	}
@@ -1225,8 +1292,8 @@ func RunLoop(
 	}
 
 	instructionContent := ""
-	if data, err := os.ReadFile("/app/instruction.md"); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: unable to read /app/instruction.md: %v\n", err)
+	if data, err := os.ReadFile(filepath.Join(mctAgentAppDir, "instruction.md")); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: unable to read %s: %v\n", filepath.Join(mctAgentAppDir, "instruction.md"), err)
 	} else {
 		trimmed := strings.TrimSpace(string(data))
 		if trimmed != "" {
@@ -1425,7 +1492,7 @@ func RunLoop(
 				return 1, err
 			}
 
-			exitCode, err := invokeMCTAgent(ctx, metaSessionID, trajDir, mctSessionID, args...)
+			exitCode, err := invokeMCTAgentWithRecovery(ctx, metaSessionID, trajDir, mctSessionID, "continue-agent-run", runtimeSnapshot, args...)
 			if err != nil || exitCode != 0 {
 				// Append the assistant response (the CONTINUE classification) before the error message.
 				messages = append(messages, llm.Message{Role: "assistant", Content: response})
@@ -1557,7 +1624,7 @@ func RunLoop(
 						return 1, err
 					}
 
-					reviewExitCode, reviewInvokeErr := invokeMCTAgent(ctx, metaSessionID, trajDir, mctSessionID, reviewArgs...)
+					reviewExitCode, reviewInvokeErr := invokeMCTAgentWithRecovery(ctx, metaSessionID, trajDir, mctSessionID, "review-feedback", runtimeSnapshot, reviewArgs...)
 					if reviewInvokeErr != nil || reviewExitCode != 0 {
 						messages = append(messages, llm.Message{Role: "assistant", Content: reviewMessage})
 						writeTrajectoryLine(trajDir, map[string]interface{}{
@@ -1678,7 +1745,7 @@ func RunLoop(
 						return 1, err
 					}
 
-					reviewExitCode2, reviewInvokeErr2 := invokeMCTAgent(ctx, metaSessionID, trajDir, mctSessionID, reviewArgs2...)
+					reviewExitCode2, reviewInvokeErr2 := invokeMCTAgentWithRecovery(ctx, metaSessionID, trajDir, mctSessionID, "second-review-feedback", runtimeSnapshot, reviewArgs2...)
 					if reviewInvokeErr2 != nil || reviewExitCode2 != 0 {
 						messages = append(messages, llm.Message{Role: "assistant", Content: reviewMessage2})
 						writeTrajectoryLine(trajDir, map[string]interface{}{
@@ -1775,7 +1842,7 @@ func RunLoop(
 					return 1, err
 				}
 
-				hailMaryExitCode, hailMaryErr := invokeMCTAgent(ctx, metaSessionID, trajDir, hailMarySessionID, hailMaryArgs...)
+				hailMaryExitCode, hailMaryErr := invokeMCTAgentWithRecovery(ctx, metaSessionID, trajDir, hailMarySessionID, "hail-mary", runtimeSnapshot, hailMaryArgs...)
 				var hailMaryContent string
 				hailMaryOutput, outputErr := readSessionOutput(hailMarySessionID)
 				if outputErr == nil && strings.TrimSpace(hailMaryOutput.content) != "" {

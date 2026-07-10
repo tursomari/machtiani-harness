@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -402,6 +403,9 @@ func TestCodeStrongForgePromptProtectsRepoLocalRuntimeArtifacts(t *testing.T) {
 		"`git clean -fd*`",
 		"Add `.machtiani/` to `.git/info/exclude` early",
 		"do not use broad staging commands or broad cleanup commands",
+		"mct-forge may take several minutes",
+		"Do not kill, interrupt, background-kill, or replace a running mct-forge command merely because it is slow or quiet",
+		"Do not switch to direct file writes merely because forge is slow",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("code-strong-forge prompt missing %q", want)
@@ -456,8 +460,125 @@ func TestInvokeMCTAgent_Signature(t *testing.T) {
 	_, _ = invokeMCTAgent(ctx, "test-meta-session", "/tmp/traj", "test-mct-session", "--mode", "code")
 }
 
+func TestEnsureSessionIDArgAddsMissingSessionID(t *testing.T) {
+	args := ensureSessionIDArg([]string{"--mode", "code", "-t", "continue"}, "agent-1")
+	if !containsString(args, "--session-id") || !containsString(args, "agent-1") {
+		t.Fatalf("args missing session id: %#v", args)
+	}
+	if countString(args, "--session-id") != 1 {
+		t.Fatalf("args should contain one --session-id: %#v", args)
+	}
+}
+
+func TestEnsureSessionIDArgDoesNotDuplicateSessionID(t *testing.T) {
+	args := ensureSessionIDArg([]string{"--mode", "code", "--session-id", "agent-existing", "-t", "continue"}, "agent-1")
+	if countString(args, "--session-id") != 1 {
+		t.Fatalf("args should contain one --session-id: %#v", args)
+	}
+	if !containsString(args, "agent-existing") || containsString(args, "agent-1") {
+		t.Fatalf("existing session id should be preserved: %#v", args)
+	}
+
+	args = ensureSessionIDArg([]string{"--mode", "code", "--session-id=agent-inline", "-t", "continue"}, "agent-1")
+	if !containsString(args, "--session-id=agent-inline") || containsString(args, "agent-1") {
+		t.Fatalf("inline session id should be preserved: %#v", args)
+	}
+}
+
+func TestInvokeMCTAgentWithRecoveryRetriesFailedRunWithSameSession(t *testing.T) {
+	appDir := t.TempDir()
+	writeFile(t, filepath.Join(appDir, ".machtiani", "config.toml"), "config = true\n")
+	writeFile(t, filepath.Join(appDir, ".machtiani", "sessions", "agent-1", "chat", "agent-final-answer.md"), "stale\n")
+	writeFile(t, filepath.Join(appDir, ".machtiani", "meta-orchestrator", "sessions", "meta-1", "trajectory.jsonl"), "")
+	writeFile(t, filepath.Join(appDir, "instruction.md"), "requirements\n")
+
+	fakeAgent := filepath.Join(t.TempDir(), "mct-agent")
+	writeFakeMCTAgent(t, fakeAgent, appDir, true)
+
+	restore := overrideMCTAgentTestConfig(t, fakeAgent, appDir)
+	defer restore()
+
+	snapshot, err := snapshotProtectedRuntimeState(appDir)
+	if err != nil {
+		t.Fatalf("snapshotProtectedRuntimeState: %v", err)
+	}
+	defer snapshot.cleanup()
+
+	trajDir := filepath.Join(appDir, ".machtiani", "meta-orchestrator", "sessions", "meta-1")
+	exitCode, err := invokeMCTAgentWithRecovery(context.Background(), "meta-1", trajDir, "agent-1", "test-run", snapshot, "--mode", "code", "-t", "continue")
+	if err != nil {
+		t.Fatalf("invokeMCTAgentWithRecovery returned error: %v", err)
+	}
+	if exitCode != 0 {
+		t.Fatalf("exitCode = %d, want 0", exitCode)
+	}
+
+	calls, err := os.ReadFile(filepath.Join(appDir, "calls.txt"))
+	if err != nil {
+		t.Fatalf("read calls: %v", err)
+	}
+	callLines := strings.Split(strings.TrimSpace(string(calls)), "\n")
+	if len(callLines) != 2 {
+		t.Fatalf("expected two mct-agent calls, got %d:\n%s", len(callLines), calls)
+	}
+	if !strings.Contains(callLines[1], "--session-id agent-1") {
+		t.Fatalf("retry did not use same session id:\n%s", calls)
+	}
+
+	trajectory, err := os.ReadFile(filepath.Join(trajDir, "trajectory.jsonl"))
+	if err != nil {
+		t.Fatalf("read trajectory: %v", err)
+	}
+	for _, want := range []string{
+		`"type":"mct_invocation_recovery_attempt"`,
+		`"label":"test-run"`,
+		`"prior_exit_code":42`,
+		`"type":"mct_invocation"`,
+	} {
+		if !strings.Contains(string(trajectory), want) {
+			t.Fatalf("trajectory missing %q:\n%s", want, trajectory)
+		}
+	}
+}
+
+func TestInvokeMCTAgentWithRecoveryRestoresRuntimeStateBeforeRetry(t *testing.T) {
+	appDir := t.TempDir()
+	writeFile(t, filepath.Join(appDir, ".machtiani", "config.toml"), "config = true\n")
+	writeFile(t, filepath.Join(appDir, ".machtiani", "sessions", "agent-1", "state"), "session\n")
+	writeFile(t, filepath.Join(appDir, ".machtiani", "meta-orchestrator", "sessions", "meta-1", "trajectory.jsonl"), "")
+	writeFile(t, filepath.Join(appDir, "instruction.md"), "requirements\n")
+
+	fakeAgent := filepath.Join(t.TempDir(), "mct-agent")
+	writeFakeMCTAgent(t, fakeAgent, appDir, true)
+
+	restore := overrideMCTAgentTestConfig(t, fakeAgent, appDir)
+	defer restore()
+
+	snapshot, err := snapshotProtectedRuntimeState(appDir)
+	if err != nil {
+		t.Fatalf("snapshotProtectedRuntimeState: %v", err)
+	}
+	defer snapshot.cleanup()
+
+	trajDir := filepath.Join(appDir, ".machtiani", "meta-orchestrator", "sessions", "meta-1")
+	exitCode, err := invokeMCTAgentWithRecovery(context.Background(), "meta-1", trajDir, "agent-1", "test-run", snapshot, "--mode", "code", "-t", "continue")
+	if err != nil {
+		t.Fatalf("invokeMCTAgentWithRecovery returned error: %v", err)
+	}
+	if exitCode != 0 {
+		t.Fatalf("exitCode = %d, want 0", exitCode)
+	}
+
+	assertFileContent(t, filepath.Join(appDir, ".machtiani", "config.toml"), "config = true\n")
+	assertFileContent(t, filepath.Join(appDir, ".machtiani", "sessions", "agent-1", "state"), "session\n")
+	assertFileContent(t, filepath.Join(appDir, "instruction.md"), "requirements\n")
+}
+
 func TestReadSessionOutputReturnsSuspendedUserInputSummary(t *testing.T) {
 	tmp := t.TempDir()
+	restore := overrideMCTAgentTestConfig(t, mctAgentBinary, tmp)
+	defer restore()
+
 	prevWD, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("getwd: %v", err)
@@ -523,6 +644,9 @@ func TestReadSessionOutputReturnsSuspendedUserInputSummary(t *testing.T) {
 
 func TestReadSessionOutputPrefersFinalAnswer(t *testing.T) {
 	tmp := t.TempDir()
+	restore := overrideMCTAgentTestConfig(t, mctAgentBinary, tmp)
+	defer restore()
+
 	prevWD, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("getwd: %v", err)
@@ -559,6 +683,9 @@ func TestReadSessionOutputPrefersFinalAnswer(t *testing.T) {
 
 func TestClearFinalAnswerBeforeRunRemovesAndLogs(t *testing.T) {
 	tmp := t.TempDir()
+	restore := overrideMCTAgentTestConfig(t, mctAgentBinary, tmp)
+	defer restore()
+
 	prevWD, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("getwd: %v", err)
@@ -644,6 +771,65 @@ func containsString(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func countString(values []string, want string) int {
+	count := 0
+	for _, value := range values {
+		if value == want {
+			count++
+		}
+	}
+	return count
+}
+
+func overrideMCTAgentTestConfig(t *testing.T, binary string, appDir string) func() {
+	t.Helper()
+	oldBinary := mctAgentBinary
+	oldAppDir := mctAgentAppDir
+	oldRecoveryAttempts := mctAgentRecoveryAttempts
+
+	mctAgentBinary = binary
+	mctAgentAppDir = appDir
+	mctAgentRecoveryAttempts = 1
+
+	return func() {
+		mctAgentBinary = oldBinary
+		mctAgentAppDir = oldAppDir
+		mctAgentRecoveryAttempts = oldRecoveryAttempts
+	}
+}
+
+func writeFakeMCTAgent(t *testing.T, path string, appDir string, deleteRuntimeOnFirstRun bool) {
+	t.Helper()
+	deleteRuntime := "false"
+	if deleteRuntimeOnFirstRun {
+		deleteRuntime = "true"
+	}
+	script := fmt.Sprintf(`#!/bin/sh
+set -eu
+app_dir=%q
+count_file="$app_dir/count.txt"
+calls_file="$app_dir/calls.txt"
+count=0
+if [ -f "$count_file" ]; then
+  count=$(cat "$count_file")
+fi
+count=$((count + 1))
+printf '%%s' "$count" > "$count_file"
+printf '%%s\n' "$*" >> "$calls_file"
+if [ "$count" -eq 1 ]; then
+  if [ %q = "true" ]; then
+    rm -rf "$app_dir/.machtiani/sessions" "$app_dir/.machtiani/meta-orchestrator"
+  fi
+  exit 42
+fi
+exit 0
+`, appDir, deleteRuntime)
+	writeFile(t, path, script)
+	if err := os.Chmod(path, 0755); err != nil {
+		t.Fatalf("chmod fake mct-agent: %v", err)
+	}
 }
 
 func runGit(t *testing.T, dir string, args ...string) {

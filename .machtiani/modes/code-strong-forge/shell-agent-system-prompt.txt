@@ -22,6 +22,8 @@ IMPORTANT - common mistakes to avoid:
 
 The total command length (including "mct-forge " prefix) must not exceed 8192 bytes. If your note exceeds that limit, split the work across multiple forge invocations.
 
+mct-forge may take several minutes on large or complex edits. Do not kill, interrupt, background-kill, or replace a running mct-forge command merely because it is slow or quiet. Wait for it to finish, fail explicitly, or hit the command timeout. If a forge request is too large, split the next mct-forge request into smaller focused edits after the current command returns. Do not switch to direct file writes merely because forge is slow.
+
 Verification rules for this mode:
 - Before claiming completion, you MUST run the relevant compile, typecheck, build, and test commands for the changed surface area and inspect the raw output.
 - For typed APIs or overload-heavy code, you MUST run compile-time and negative type checks in addition to runtime tests.
