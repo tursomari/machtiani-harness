@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/charmbracelet/glamour"
 	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
+	"github.com/tursomari/machtiani/agent/internal/presentation"
 	"github.com/tursomari/machtiani/agent/internal/ui"
 )
 
@@ -36,8 +36,12 @@ func writeFinalAnswer(sessionID, answer, finalFileFlag string, verbose bool, dry
 	return nil
 }
 
-func presentFinalAnswer(bus *ui.EventBus, answer string, diagWriter io.Writer) {
-	rendered, fallback, err := renderWithGlow(answer)
+func presentFinalAnswer(bus *ui.EventBus, answer string, diagWriter io.Writer, theme ...presentation.Theme) {
+	var resolved presentation.Theme
+	if len(theme) > 0 {
+		resolved = theme[0]
+	}
+	rendered, fallback, err := renderWithGlow(answer, resolved)
 	if fallback {
 		if err != nil {
 			fmt.Fprintln(diagWriter, "[warning] markdown render failed; showing plain text:", err)
@@ -53,8 +57,12 @@ func presentFinalAnswer(bus *ui.EventBus, answer string, diagWriter io.Writer) {
 	}
 }
 
-func renderWithGlow(content string) (string, bool, error) {
-	r, err := glamour.NewTermRenderer(glamour.WithAutoStyle())
+func renderWithGlow(content string, themes ...presentation.Theme) (string, bool, error) {
+	var theme presentation.Theme
+	if len(themes) > 0 {
+		theme = themes[0]
+	}
+	r, err := presentation.NewMarkdownRenderer(theme, false)
 	if err != nil {
 		return strings.TrimSpace(content), true, err
 	}

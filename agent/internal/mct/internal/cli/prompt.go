@@ -14,6 +14,7 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/readme"
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/utils"
 	promptsvc "github.com/tursomari/machtiani/agent/internal/mct/prompt"
+	"github.com/tursomari/machtiani/agent/internal/presentation"
 )
 
 const (
@@ -201,7 +202,21 @@ func handlePrompt(args []string) {
 
 	ctx := context.Background()
 
-	ms, _ := llm.NewMarkdownStreamer()
+	globalConfig, _, configErr := llm.LoadGlobalConfig()
+	if configErr != nil {
+		fmt.Fprintf(os.Stderr, "Error loading UI theme: %v\n", configErr)
+		os.Exit(2)
+	}
+	themeName := string(presentation.ProfileTerminal)
+	if globalConfig.UI != nil {
+		themeName = globalConfig.UI.Theme
+	}
+	uiTheme, themeErr := presentation.Resolve(themeName, os.Stdout)
+	if themeErr != nil {
+		fmt.Fprintf(os.Stderr, "Error resolving UI theme: %v\n", themeErr)
+		os.Exit(2)
+	}
+	ms, _ := llm.NewMarkdownStreamer(uiTheme)
 	streamHeader := func(chunk string) {
 		if ms != nil {
 			_ = ms.Feed(chunk)

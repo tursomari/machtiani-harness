@@ -32,6 +32,10 @@ type = "local"
 command_timeout = 9999
 cwd = "."
 
+[ui]
+# terminal | machtiani-dark | machtiani-light | none
+theme = "terminal"
+
 # Optional behavioral settings (all default to what is shown):
 # verbose = false
 # persist_tmp_data = false

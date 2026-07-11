@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"sort"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 	"github.com/spf13/pflag"
@@ -266,7 +266,10 @@ func handleConfigShowCommand(args []string) int {
 	}
 
 	defaults := llm.DefaultConfig()
-	configPath := filepath.Join(".machtiani", "config.toml")
+	configPath := strings.TrimSpace(os.Getenv("MACHTIANI_CONFIG"))
+	if configPath == "" {
+		configPath = filepath.Join(".machtiani", "config.toml")
+	}
 
 	var fileConfig llm.Config
 	if _, err := toml.DecodeFile(configPath, &fileConfig); err != nil {
@@ -452,6 +455,15 @@ var fieldDocs = map[string]fieldDoc{
 		example:     "verbose = false",
 		details: []string{
 			"Default: false",
+		},
+	},
+	"ui.theme": {
+		summary:     "Terminal presentation theme",
+		explanation: "Selects the semantic color profile for interactive TUI and human-facing Markdown output.",
+		example:     `ui.theme = "terminal"`,
+		details: []string{
+			"Valid values: terminal, machtiani-dark, machtiani-light, none.",
+			"MACHTIANI_THEME overrides this value. Default: terminal.",
 		},
 	},
 	"persist_tmp_data": {
@@ -683,7 +695,6 @@ var fieldDocs = map[string]fieldDoc{
 			"Prevents overly aggressive cache truncation.",
 		},
 	},
-
 }
 
 // getFieldValue returns the string representation of a config key's value and source.
@@ -711,6 +722,14 @@ func getFieldValue(effective llm.Config, key string) (value string, source strin
 		return fmt.Sprintf("%d", effective.Environment.MaxCommandOutputBytes), sourceLabel(effective.Environment.MaxCommandOutputBytesSource)
 	case "verbose":
 		return fmt.Sprintf("%v", effective.Verbose), sourceLabel(effective.VerboseSource)
+	case "ui.theme":
+		if override := strings.TrimSpace(os.Getenv("MACHTIANI_THEME")); override != "" {
+			return override, "env"
+		}
+		if effective.UI != nil {
+			return effective.UI.Theme, sourceLabel(effective.UI.ThemeSource)
+		}
+		return "terminal", "default"
 	case "persist_tmp_data":
 		return fmt.Sprintf("%v", effective.PersistTmpData), sourceLabel(effective.PersistTmpDataSource)
 	case "dry_run":
@@ -917,7 +936,6 @@ func printKeyDetail(effective llm.Config, key string) error {
 	return nil
 }
 
-
 type configEntry struct {
 	key    string
 	value  string
@@ -930,7 +948,6 @@ type aliasEntry struct {
 	source string
 	keys   []configEntry
 }
-
 
 // maskAPIKey masks an API key, showing only "********" if non-empty.
 func maskAPIKey(key string) string {
@@ -1026,7 +1043,6 @@ func printConfigWithSources(effective, defaults llm.Config, showFull bool) {
 	}
 	renderAliasSection(&buf, "Providers", "Base URLs, API keys, and endpoints for each LLM provider", providerAliases)
 
-
 	// --- Models ---
 	modelNames := make([]string, 0, len(effective.Models))
 	for n := range effective.Models {
@@ -1073,7 +1089,6 @@ func printConfigWithSources(effective, defaults llm.Config, showFull bool) {
 	}
 	renderAliasSection(&buf, "Models", "Model identifiers and provider bindings for each alias", modelAliases)
 
-
 	// --- Planner ---
 	var plannerEntries []configEntry
 	if effective.Planner != nil {
@@ -1118,6 +1133,19 @@ func printConfigWithSources(effective, defaults llm.Config, showFull bool) {
 	}
 	renderScalarSection(&buf, "Environment", "Execution environment and workspace settings", envEntries)
 
+	// --- User Interface ---
+	uiTheme := "terminal"
+	uiSource := "default"
+	if effective.UI != nil {
+		uiTheme = effective.UI.Theme
+		uiSource = sourceLabel(effective.UI.ThemeSource)
+	}
+	if override := strings.TrimSpace(os.Getenv("MACHTIANI_THEME")); override != "" {
+		uiTheme = override
+		uiSource = "env"
+	}
+	renderScalarSection(&buf, "User Interface", "Semantic terminal presentation", []configEntry{{key: "ui.theme", value: uiTheme, source: uiSource}})
+
 	// --- General ---
 	generalEntries := []configEntry{
 		{key: "default_model", value: effective.DefaultModel, source: sourceLabel(effective.DefaultModelSource)},
@@ -1161,8 +1189,6 @@ func printConfigWithSources(effective, defaults llm.Config, showFull bool) {
 
 	fmt.Print(buf.String())
 }
-
-
 
 // formatParamValue formats a parameter value for display.
 func printModelAliasDetail(model *llm.ModelDefinition, alias string) error {
@@ -1275,4 +1301,3 @@ func flattenMap(m map[string]any) string {
 	}
 	return strings.Join(parts, " ")
 }
-

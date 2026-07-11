@@ -83,6 +83,9 @@ type = "local"
 command_timeout = 45
 cwd = "."
 
+[ui]
+theme = "machtiani-light"
+
 [providers.fake]
 base_url = "https://example.com/v1"
 api_key = "provider-key"
@@ -118,6 +121,9 @@ git_synced_only = true
 	if cfg.ShellAgent.MaxSteps != 110 {
 		t.Fatalf("expected shell-agent max_steps 110 (default from MergeConfig), got %+v", cfg.ShellAgent)
 	}
+	if cfg.UI == nil || cfg.UI.Theme != "machtiani-light" {
+		t.Fatalf("expected UI theme to be parsed, got %+v", cfg.UI)
+	}
 	if cfg.Prompts == nil || cfg.Prompts.Planner == nil {
 		t.Fatalf("expected planner prompts to be parsed, got %+v", cfg.Prompts)
 	}
@@ -141,6 +147,19 @@ git_synced_only = true
 	}
 	if cfg.Environment == nil || cfg.Environment.CommandTimeout != 45 {
 		t.Fatalf("expected environment command_timeout 45, got %+v", cfg.Environment)
+	}
+}
+
+func TestLoadGlobalConfigRejectsUnknownUITheme(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	mustWriteFile(t, path, "[ui]\ntheme = \"auto\"\n")
+	t.Setenv("MACHTIANI_CONFIG", path)
+	ResetConfigForTesting()
+	t.Cleanup(ResetConfigForTesting)
+
+	_, _, err := LoadGlobalConfig()
+	if err == nil || !strings.Contains(err.Error(), "unknown UI theme") {
+		t.Fatalf("expected an unknown UI theme error, got %v", err)
 	}
 }
 

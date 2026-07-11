@@ -13,7 +13,7 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/ui"
 )
 
-func startLLMCacheUsageLogger(bus *ui.EventBus, path string, diagWriter io.Writer) (context.CancelFunc, <-chan struct{}, error) {
+func startLLMCacheUsageLogger(bus *ui.EventBus, path string, diagWriter io.Writer, initial ui.TokenUsageUpdatedEvent, onUpdate func(ui.TokenUsageUpdatedEvent)) (context.CancelFunc, <-chan struct{}, error) {
 	sub, err := listener.New(path)
 	if err != nil {
 		return nil, nil, err
@@ -27,11 +27,26 @@ func startLLMCacheUsageLogger(bus *ui.EventBus, path string, diagWriter io.Write
 			fmt.Fprintf(diagWriter, "[trajectory] cache usage listener error: %v\n", err)
 		},
 	}
+	totals := tokenUsageTotals{
+		InputHit:  initial.InputHit,
+		InputMiss: initial.InputMiss,
+		Output:    initial.Output,
+	}
 	go func() {
 		defer close(done)
 		err := sub.Subscribe(ctx, opts, func(ctx context.Context, evt listener.Event) error {
-			if msg := formatLLMCacheUsageEvent(evt); strings.TrimSpace(msg) != "" {
-				bus.Emit(ui.NotificationEvent{Level: ui.NotificationInfo, Message: msg})
+			if totals.addEvent(evt) {
+				update := ui.TokenUsageUpdatedEvent{
+					InputHit:  totals.InputHit,
+					InputMiss: totals.InputMiss,
+					Output:    totals.Output,
+				}
+				if onUpdate != nil {
+					onUpdate(update)
+				}
+				if bus != nil {
+					bus.Emit(update)
+				}
 			}
 			return nil
 		})
@@ -42,35 +57,84 @@ func startLLMCacheUsageLogger(bus *ui.EventBus, path string, diagWriter io.Write
 	return cancel, done, nil
 }
 
-func formatLLMCacheUsageEvent(evt listener.Event) string {
-	if evt.Payload == nil {
-		return ""
+type tokenUsageTotals struct {
+	InputHit  int
+	InputMiss int
+	Output    int
+}
+
+func (t *tokenUsageTotals) addEvent(evt listener.Event) bool {
+	if t == nil || evt.Payload == nil {
+		return false
 	}
-	parts := []string{}
-	if promptTokens, ok := intFromAny(evt.Payload["prompt_tokens"]); ok {
-		parts = append(parts, fmt.Sprintf("prompt=%d", promptTokens))
+	delta, ok := tokenUsageDeltaFromPayload(evt.Payload)
+	if !ok {
+		return false
 	}
-	if cachedTokens, ok := intFromAny(evt.Payload["cached_tokens"]); ok {
-		parts = append(parts, fmt.Sprintf("cached=%d", cachedTokens))
+	t.InputHit += delta.InputHit
+	t.InputMiss += delta.InputMiss
+	t.Output += delta.Output
+	return true
+}
+
+func tokenUsageDeltaFromPayload(payload map[string]any) (ui.TokenUsageUpdatedEvent, bool) {
+	var delta ui.TokenUsageUpdatedEvent
+	var saw bool
+
+	promptTokens, ok := intFromAny(payload["prompt_tokens"])
+	if ok {
+		saw = true
 	}
-	if writeTokens, ok := intFromAny(evt.Payload["cache_write_tokens"]); ok {
-		parts = append(parts, fmt.Sprintf("cache-write=%d", writeTokens))
+	cachedTokens, cachedOK := cachedTokensFromPayload(payload)
+	if cachedOK {
+		saw = true
 	}
-	if discount, ok := floatFromAny(evt.Payload["cache_discount"]); ok {
-		parts = append(parts, fmt.Sprintf("discount=%.2f", discount))
+	completionTokens, completionOK := intFromAny(payload["completion_tokens"])
+	if completionOK {
+		saw = true
 	}
-	if len(parts) == 0 {
-		return ""
+	if !saw {
+		return delta, false
 	}
-	modelLabel := describeFailoverModel(evt.Payload["model"])
-	componentLabel := strings.TrimSpace(evt.Component)
-	if componentLabel == "" {
-		componentLabel = "unknown"
+
+	if cachedTokens < 0 {
+		cachedTokens = 0
 	}
-	if modelLabel != "" && modelLabel != "unknown model" {
-		return fmt.Sprintf("[llm cache] %s (%s): %s", modelLabel, componentLabel, strings.Join(parts, " "))
+	if promptTokens < 0 {
+		promptTokens = 0
 	}
-	return fmt.Sprintf("[llm cache] (%s): %s", componentLabel, strings.Join(parts, " "))
+	inputMiss := promptTokens - cachedTokens
+	if inputMiss < 0 {
+		inputMiss = 0
+	}
+	if completionTokens < 0 {
+		completionTokens = 0
+	}
+
+	delta.InputHit = cachedTokens
+	delta.InputMiss = inputMiss
+	delta.Output = completionTokens
+	return delta, true
+}
+
+func cachedTokensFromPayload(payload map[string]any) (int, bool) {
+	if payload == nil {
+		return 0, false
+	}
+	if details, ok := mapFromAny(payload["prompt_tokens_details"]); ok {
+		if cachedTokens, ok := intFromAny(details["cached_tokens"]); ok {
+			return cachedTokens, true
+		}
+	}
+	return intFromAny(payload["cached_tokens"])
+}
+
+func mapFromAny(v any) (map[string]any, bool) {
+	switch val := v.(type) {
+	case map[string]any:
+		return val, true
+	}
+	return nil, false
 }
 
 func intFromAny(v any) (int, bool) {

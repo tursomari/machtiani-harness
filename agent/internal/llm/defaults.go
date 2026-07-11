@@ -6,8 +6,8 @@ func DefaultConfig() Config {
 	return Config{
 		DefaultModel: "",
 		Planner: &PlannerConfig{
-			MaxTurns:      150,
-			TurnTimeout:   0,
+			MaxTurns:       150,
+			TurnTimeout:    0,
 			MaxInputTokens: 180000,
 		},
 		ShellAgent: &ShellAgentConfig{
@@ -16,7 +16,7 @@ func DefaultConfig() Config {
 		},
 		Environment: &EnvironmentConfig{
 			Type:                  "local",
-			CommandTimeout:       9999,
+			CommandTimeout:        9999,
 			CWD:                   ".",
 			MaxCommandOutputBytes: 65536,
 		},
@@ -28,6 +28,7 @@ func DefaultConfig() Config {
 			Excerpt:      512,
 			OmitRepoRoot: false,
 		},
+		UI:                      &UIConfig{Theme: "terminal"},
 		Verbose:                 false,
 		PersistTmpData:          false,
 		DryRun:                  false,
@@ -66,9 +67,12 @@ func DefaultMinimalConfigMap() map[string]any {
 		},
 		"environment": map[string]any{
 			"type":                     "local",
-			"command_timeout":         int64(9999),
+			"command_timeout":          int64(9999),
 			"cwd":                      ".",
 			"max_command_output_bytes": int64(65536),
+		},
+		"ui": map[string]any{
+			"theme": "terminal",
 		},
 		"providers": map[string]any{},
 		"models":    map[string]any{},
@@ -150,6 +154,17 @@ func overlayConfig(target *Config, source Config, srcSource FieldSource) {
 		}
 	}
 
+	// --- user interface -------------------------------------------------
+	if source.UI != nil {
+		if target.UI == nil {
+			target.UI = &UIConfig{}
+		}
+		if source.UI.Theme != "" {
+			target.UI.Theme = source.UI.Theme
+			target.UI.ThemeSource = srcSource
+		}
+	}
+
 	// --- providers ------------------------------------------------------
 	if len(source.Providers) > 0 {
 		if target.Providers == nil {
@@ -195,11 +210,11 @@ func overlayConfig(target *Config, source Config, srcSource FieldSource) {
 				copyProv.EndpointSource = srcSource
 				if len(v.Headers) > 0 {
 					copyProv.Headers = copyStringMap(v.Headers)
-				copyProv.HeadersSource = srcSource
+					copyProv.HeadersSource = srcSource
 				}
 				if len(v.Query) > 0 {
 					copyProv.Query = copyStringMap(v.Query)
-				copyProv.QuerySource = srcSource
+					copyProv.QuerySource = srcSource
 				}
 				target.Providers[k] = copyProv
 			}

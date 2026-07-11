@@ -436,10 +436,20 @@ func TestConversationRoundTripWithResumabilityFields(t *testing.T) {
 	conv.PlannerOverlay = "overlay1"
 	conv.TaskDescription = "A task"
 	conv.Status = "running"
+	conv.RuntimeStats = NewRuntimeStatsState(12345, 1234, 56789, 1000)
 
 	data, err := conv.Marshal()
 	if err != nil {
 		t.Fatalf("Marshal returned error: %v", err)
+	}
+	if !strings.Contains(string(data), `"input_hit_tokens_display": "1,234"`) {
+		t.Fatalf("expected human-readable input hit tokens in JSON:\n%s", string(data))
+	}
+	if !strings.Contains(string(data), `"input_miss_tokens_display": "56,789"`) {
+		t.Fatalf("expected human-readable input miss tokens in JSON:\n%s", string(data))
+	}
+	if !strings.Contains(string(data), `"output_tokens_display": "1,000"`) {
+		t.Fatalf("expected human-readable output tokens in JSON:\n%s", string(data))
 	}
 
 	loaded, err := Unmarshal(data)
@@ -470,6 +480,15 @@ func TestConversationRoundTripWithResumabilityFields(t *testing.T) {
 	}
 	if loaded.OriginalPrompt != conv.OriginalPrompt {
 		t.Fatalf("OriginalPrompt mismatch: got %q want %q", loaded.OriginalPrompt, conv.OriginalPrompt)
+	}
+	if loaded.RuntimeStats == nil {
+		t.Fatalf("RuntimeStats mismatch: got nil, want non-nil")
+	}
+	if loaded.RuntimeStats.ActiveElapsedMS != 12345 {
+		t.Fatalf("RuntimeStats.ActiveElapsedMS mismatch: got %d", loaded.RuntimeStats.ActiveElapsedMS)
+	}
+	if loaded.RuntimeStats.InputHitTokens != 1234 || loaded.RuntimeStats.InputMissTokens != 56789 || loaded.RuntimeStats.OutputTokens != 1000 {
+		t.Fatalf("RuntimeStats token mismatch: %+v", loaded.RuntimeStats)
 	}
 
 	if conv.SuspendedUserInput == nil {

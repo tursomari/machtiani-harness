@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	pathpkg "path"
 	"path/filepath"
@@ -13,15 +14,16 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/tursomari/machtiani/agent/internal/conversation"
 	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/mct/readmesync"
 	"github.com/tursomari/machtiani/agent/internal/planner"
+	"github.com/tursomari/machtiani/agent/internal/presentation"
 	"github.com/tursomari/machtiani/agent/internal/runner"
 	shellagent "github.com/tursomari/machtiani/agent/internal/shell-agent"
 	"github.com/tursomari/machtiani/agent/internal/trajectory"
 	"github.com/tursomari/machtiani/agent/internal/transcript"
 	"github.com/tursomari/machtiani/agent/internal/ui"
-	"github.com/tursomari/machtiani/agent/internal/conversation"
 )
 
 const (
@@ -35,6 +37,28 @@ var (
 	readmeCheckoutReadonlyFn = readmesync.CheckoutReadonlyREADME
 	tagFormatPattern         = regexp.MustCompile(`\[(?P<path>[^\[\]|]+?)\s*\|\s*(?P<start>[^:\]]+)\s*:\s*(?P<end>[^\]]+)\]`)
 )
+
+type terminalTeeWriter struct {
+	terminal *os.File
+	capture  io.Writer
+}
+
+func (w terminalTeeWriter) Write(p []byte) (int, error) {
+	n, err := w.terminal.Write(p)
+	if err != nil {
+		return n, err
+	}
+	if w.capture != nil {
+		if _, captureErr := w.capture.Write(p); captureErr != nil {
+			return n, captureErr
+		}
+	}
+	return n, nil
+}
+
+func (w terminalTeeWriter) Fd() uintptr {
+	return w.terminal.Fd()
+}
 
 func isLocalSessionEnvironment(cfg *llm.Config) bool {
 	if cfg == nil || cfg.Environment == nil {
@@ -307,21 +331,44 @@ func runSession(ctx context.Context, opts Options) Result {
 		fmt.Fprintln(diagWriter, "Trajectory setup error:", trajErr)
 		return Result{ExitCode: 1, Err: trajErr}
 	}
-	if trajectoryWriter != nil {
+	if cfg.verbose && trajectoryWriter != nil {
 		fmt.Fprintln(diagWriter, "[trajectory] unified stream:", trajectoryWriter.Config().Path)
 	}
 
 	var eventBus *ui.EventBus = ui.NewEventBus(256)
-	formatter := ui.NewFormatter(os.Stdout, eventBus, ui.DefaultTheme(), timerMgr, sessionID)
-	_ = formatter
+	var captureWriter io.Writer = os.Stdout
+	var captureFile *os.File
+	if capturePath := os.Getenv("MACHTIANI_TUI_CAPTURE"); strings.TrimSpace(capturePath) != "" {
+		var captureErr error
+		captureFile, captureErr = os.Create(capturePath)
+		if captureErr != nil {
+			fmt.Fprintf(diagWriter, "Warning: unable to open capture file %q for writing; falling back to stdout: %v\n", capturePath, captureErr)
+		} else {
+			defer captureFile.Close()
+			captureWriter = terminalTeeWriter{terminal: os.Stdout, capture: captureFile}
+		}
+	}
+	themeName := string(presentation.ProfileTerminal)
+	if opts.GlobalConfig.UI != nil {
+		themeName = opts.GlobalConfig.UI.Theme
+	}
+	presentationTheme, themeErr := presentation.Resolve(themeName, captureWriter)
+	if themeErr != nil {
+		fmt.Fprintln(diagWriter, "Error resolving UI theme:", themeErr)
+		return Result{ExitCode: 2, Err: themeErr}
+	}
+	runState.presentation = presentationTheme
+	formatter := ui.NewFormatter(captureWriter, eventBus, ui.DefaultTheme(presentationTheme), timerMgr, sessionID)
+	diagWriter = formatter.CoordinateWriter(diagWriter)
+	previousLogWriter := log.Writer()
+	log.SetOutput(diagWriter)
+	defer log.SetOutput(previousLogWriter)
 	var failoverCancel context.CancelFunc
 	var failoverDone <-chan struct{}
 	var retryCancel context.CancelFunc
 	var retryDone <-chan struct{}
 	var cacheUsageCancel context.CancelFunc
 	var cacheUsageDone <-chan struct{}
-	var cacheDiagnosticsCancel context.CancelFunc
-	var cacheDiagnosticsDone <-chan struct{}
 	var shellActionCancel context.CancelFunc
 	var shellActionDone <-chan struct{}
 	if trajectoryWriter != nil {
@@ -339,19 +386,12 @@ func runSession(ctx context.Context, opts Options) Result {
 			retryCancel = cancel
 			retryDone = done
 		}
-		cancel, done, err = startLLMCacheUsageLogger(eventBus, trajectoryWriter.Config().Path, diagWriter)
+		cancel, done, err = startLLMCacheUsageLogger(eventBus, trajectoryWriter.Config().Path, diagWriter, runState.runtimeTokenUsageSnapshot(), runState.updateRuntimeTokenUsage)
 		if err != nil {
 			fmt.Fprintf(diagWriter, "[trajectory] cache usage listener setup error: %v\n", err)
 		} else {
 			cacheUsageCancel = cancel
 			cacheUsageDone = done
-		}
-		cancel, done, err = startLLMCacheDiagnosticsLogger(eventBus, trajectoryWriter.Config().Path, diagWriter)
-		if err != nil {
-			fmt.Fprintf(diagWriter, "[trajectory] cache diagnostics listener setup error: %v\n", err)
-		} else {
-			cacheDiagnosticsCancel = cancel
-			cacheDiagnosticsDone = done
 		}
 		// Start shell-agent action streamer to surface shell actions in real-time
 		cancel, done, err = startShellActionStreamer(eventBus, trajectoryWriter.Config().Path, diagWriter)
@@ -380,12 +420,6 @@ func runSession(ctx context.Context, opts Options) Result {
 		}
 		if cacheUsageDone != nil {
 			<-cacheUsageDone
-		}
-		if cacheDiagnosticsCancel != nil {
-			cacheDiagnosticsCancel()
-		}
-		if cacheDiagnosticsDone != nil {
-			<-cacheDiagnosticsDone
 		}
 		if shellActionCancel != nil {
 			shellActionCancel()
@@ -422,13 +456,12 @@ func runSession(ctx context.Context, opts Options) Result {
 	writeTurn := transcriptSetup.writeTurn
 	appendConversationRaw := transcriptSetup.appendConversationRaw
 	conv := transcriptSetup.conversation
-	interruptedResult := runState.interruptedResult
+	interruptedResult := func(err error) Result { return runState.interruptedResultWithHint(eventBus, diagWriter, err) }
 	isContextCancelled := runState.isContextCancelled
-	fmt.Fprintln(diagWriter, "Session:", sessionID)
 	if cfg.verbose {
+		fmt.Fprintln(diagWriter, "Session:", sessionID)
 		fmt.Fprintln(diagWriter, "mct-agent starting; transcript:", tr.Path())
 	}
-
 
 	trajectoryPath, err := resolveFileDiscoveryTrajectory(cfg, sessionID)
 	if err != nil {
@@ -493,6 +526,8 @@ func runSession(ctx context.Context, opts Options) Result {
 		PersistTmpData:          cfg.persistTmpData,
 		SessionTempRoot:         sessionTempRoot,
 		Prompts:                 opts.GlobalConfig.Prompts,
+		UITheme:                 themeName,
+		Diagnostics:             diagWriter,
 	}
 	if err := mctRunner.Resolve(); err != nil {
 		fmt.Fprintln(diagWriter, "mct resolution error:", err)
@@ -546,7 +581,7 @@ func runSession(ctx context.Context, opts Options) Result {
 			ResumePrompt:    resumePrompt,
 			Config:          cfg,
 			Options:         opts,
-			EventBus:       eventBus,
+			EventBus:        eventBus,
 			InstructionPath: modeInstructionPath,
 			Instruction:     modeInstructions,
 			DiagWriter:      diagWriter,
@@ -607,10 +642,19 @@ func runSession(ctx context.Context, opts Options) Result {
 			SessionID:         sessionID,
 			PlannerOverlay:    plannerOverlay,
 			Prompts:           plannerPrompts,
+			Diagnostics:       diagWriter,
 		})
 	}
 
-	eventBus.Emit(ui.SessionStartedEvent{Goal: goal})
+	runState.startRuntimeClock()
+	eventBus.Emit(ui.SessionStartedEvent{
+		SessionID:  sessionID,
+		Goal:       goal,
+		Turn:       runState.turnsCompleted + 1,
+		Elapsed:    runState.runtimeElapsedSnapshot(),
+		TokenUsage: runState.runtimeTokenUsageSnapshot(),
+		Models:     footerModelMetadata(models),
+	})
 	if resumeMode {
 		eventBus.Emit(ui.RawStringEvent{Text: "Resuming session " + sessionID + " ..."})
 	}
@@ -627,6 +671,7 @@ func runSession(ctx context.Context, opts Options) Result {
 			return runState.interruptedResult(err)
 		}
 		step := runState.turnsCompleted + 1
+		eventBus.Emit(ui.TurnStatusUpdatedEvent{Turn: step})
 		var turn *turnTelemetry
 		if sessTelemetry != nil {
 			turn = sessTelemetry.StartTurn(step, cfg.maxTurns)
@@ -668,7 +713,7 @@ func runSession(ctx context.Context, opts Options) Result {
 				fmt.Fprintln(diagWriter, "Transcript write error:", err)
 				runState.sessionErr = err
 				finishTurn(sessTelemetry, turn, "user-feedback", "error", turnInfo, err)
-				
+
 				return Result{ExitCode: 1, Err: err}
 			}
 			if resumeSuspendedInput != nil {
@@ -684,7 +729,7 @@ func runSession(ctx context.Context, opts Options) Result {
 			isResumePrompt = true
 		}
 		isResumingFromShellAgent := resumableShellAgent
-	if resumableShellAgent && step == loadedState.TurnsCompleted+1 {
+		if resumableShellAgent && step == loadedState.TurnsCompleted+1 {
 			recoveredQuestion := ExtractResumableWorkRequestQuestion(conv)
 			if recoveredQuestion != "" {
 				decision = planner.DecisionAskWorker
@@ -719,7 +764,7 @@ func runSession(ctx context.Context, opts Options) Result {
 				fmt.Fprintf(diagWriter, "Planner error: timed out after %ds. Increase --turn-timeout or set 0 for unlimited.\n", cfg.timeoutPerTurn)
 				runState.sessionErr = perr
 				finishTurn(sessTelemetry, turn, "planner", "error", turnInfo, perr)
-				
+
 				return Result{ExitCode: 1, Err: perr}
 			}
 			perrStr := strings.ToLower(perr.Error())
@@ -755,13 +800,13 @@ func runSession(ctx context.Context, opts Options) Result {
 					}
 					runState.sessionErr = ferr
 					finishTurn(sessTelemetry, turn, "finalize", "error", turnInfo, ferr)
-					
+
 					return Result{ExitCode: 1, Err: ferr}
 				}
 				if err := runState.completeSession(eventBus, diagWriter, answer, step, runState.turnsCompleted, true); err != nil {
 					fmt.Fprintln(diagWriter, "Final file write error:", err)
 					finishTurn(sessTelemetry, turn, "finalize", "error", turnInfo, err)
-					
+
 					return Result{ExitCode: 1, Err: err}
 				}
 				sessionClosed = true
@@ -773,7 +818,7 @@ func runSession(ctx context.Context, opts Options) Result {
 			fmt.Fprintln(diagWriter, "Planner error:", perr)
 			runState.sessionErr = perr
 			finishTurn(sessTelemetry, turn, "planner", "error", turnInfo, perr)
-			
+
 			return Result{ExitCode: 1, Err: perr}
 		}
 
@@ -812,7 +857,7 @@ func runSession(ctx context.Context, opts Options) Result {
 				if suspendErr != nil {
 					runState.sessionErr = suspendErr
 					finishTurn(sessTelemetry, turn, turnDecision, "error", turnInfo, suspendErr)
-					
+
 					return Result{ExitCode: 1, Err: suspendErr}
 				}
 				finishTurn(sessTelemetry, turn, turnDecision, "suspended", turnInfo, nil)
@@ -846,13 +891,13 @@ func runSession(ctx context.Context, opts Options) Result {
 				}
 				runState.sessionErr = ferr
 				finishTurn(sessTelemetry, turn, "finalize", "error", turnInfo, ferr)
-				
+
 				return Result{ExitCode: 1, Err: ferr}
 			}
 			if err := runState.completeSession(eventBus, diagWriter, answer, step, runState.turnsCompleted, false); err != nil {
 				fmt.Fprintln(diagWriter, "Final file write error:", err)
 				finishTurn(sessTelemetry, turn, "finalize", "error", turnInfo, err)
-				
+
 				return Result{ExitCode: 1, Err: err}
 			}
 			sessionClosed = true
@@ -863,39 +908,39 @@ func runSession(ctx context.Context, opts Options) Result {
 		}
 
 		turnEnv := &runTurnEnv{
-			rootCtx:                     rootCtx,
-			cfg:                         cfg,
-			sessionID:                   sessionID,
-			goal:                        goal,
-			repoRoot:                    repoRoot,
-			step:                        step,
-			sessionErr:                  &runState.sessionErr,
-			turnsCompleted:              &runState.turnsCompleted,
-			
-			plannerProgress:             plannerProgress,
-			bus:                         eventBus,
-			diagWriter:                  diagWriter,
-			hasNewInput:                 bootstrap.hasNewInput,
+			rootCtx:        rootCtx,
+			cfg:            cfg,
+			sessionID:      sessionID,
+			goal:           goal,
+			repoRoot:       repoRoot,
+			step:           step,
+			sessionErr:     &runState.sessionErr,
+			turnsCompleted: &runState.turnsCompleted,
+
+			plannerProgress:                   plannerProgress,
+			bus:                               eventBus,
+			diagWriter:                        diagWriter,
+			hasNewInput:                       bootstrap.hasNewInput,
 			resumableShellAgentTrajectoryPath: bootstrap.resumableShellAgentTrajectoryPath,
-			isResumingTurn:              isResumingFromShellAgent,
-			shellAgentInterruptStep:     bootstrap.shellAgentInterruptStep,
-			shellAgentStepLog:           bootstrap.shellAgentStepLog,
-			sessTelemetry:               sessTelemetry,
-			turn:                        turn,
-			turnDecision:                turnDecision,
-			turnInfo:                    turnInfo,
-			parentSpanID:                parentSpanID,
-			trajectoryWriter:            trajectoryWriter,
-			writeTurn:                   writeTurn,
-			interruptedResult:           interruptedResult,
-			isContextCancelled:          isContextCancelled,
-			mctRunner:                   &mctRunner,
-			pl:                          pl,
-			tr:                          tr,
-			recorder:                    runState.recorder,
-			orchPromptOpts:              &orchPromptOpts,
-			baseOrchMetadata:            baseOrchMetadata,
-			mctResponseDirectives:       mctResponseDirectives,
+			isResumingTurn:                    isResumingFromShellAgent,
+			shellAgentInterruptStep:           bootstrap.shellAgentInterruptStep,
+			shellAgentStepLog:                 bootstrap.shellAgentStepLog,
+			sessTelemetry:                     sessTelemetry,
+			turn:                              turn,
+			turnDecision:                      turnDecision,
+			turnInfo:                          turnInfo,
+			parentSpanID:                      parentSpanID,
+			trajectoryWriter:                  trajectoryWriter,
+			writeTurn:                         writeTurn,
+			interruptedResult:                 interruptedResult,
+			isContextCancelled:                isContextCancelled,
+			mctRunner:                         &mctRunner,
+			pl:                                pl,
+			tr:                                tr,
+			recorder:                          runState.recorder,
+			orchPromptOpts:                    &orchPromptOpts,
+			baseOrchMetadata:                  baseOrchMetadata,
+			mctResponseDirectives:             mctResponseDirectives,
 		}
 
 		switch decision {
@@ -938,7 +983,7 @@ func runSession(ctx context.Context, opts Options) Result {
 				if suspendErr != nil {
 					runState.sessionErr = suspendErr
 					finishTurn(sessTelemetry, turn, turnDecision, "error", turnInfo, suspendErr)
-					
+
 					return Result{ExitCode: 1, Err: suspendErr}
 				}
 				finishTurn(sessTelemetry, turn, turnDecision, "suspended", turnInfo, nil)
@@ -1196,5 +1241,3 @@ func normalizeTagPath(path string) string {
 	trimmed = strings.TrimPrefix(trimmed, "./")
 	return filepath.ToSlash(trimmed)
 }
-
-

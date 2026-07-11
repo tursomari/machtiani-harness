@@ -228,7 +228,28 @@ cache_reanchor_min_cached_tokens = 2048
 Other helpful overrides:
 - `MACHTIANI_CONFIG`: explicit path to the config file.
 - `MACHTIANI_SESSION_ID`: pre-set session ID to use for the current run; overridden by `--session-id` flag.
+- `MACHTIANI_THEME`: override `[ui].theme` with `terminal`, `machtiani-dark`, `machtiani-light`, or `none`.
 - `FILE_DISCOVERY_BIN`: override the discovery binary that `mct` invokes.
+
+### Terminal Theme
+
+Human-facing `mct-agent run` output and Markdown rendered by the standalone
+`mct` command share a semantic theme. Configure it globally:
+
+```toml
+[ui]
+theme = "terminal"
+```
+
+- `terminal` uses the terminal's standard cyan, green, magenta, yellow, and red foregrounds, so the terminal controls their light/dark appearance.
+- `machtiani-dark` and `machtiani-light` use muted palettes designed for the corresponding background. Selection is explicit and reproducible; Machtiani does not query terminal background color or transparency.
+- `none` emits no ANSI styling. `TERM=dumb` and non-terminal output also disable ANSI automatically.
+- `NO_COLOR` removes color while retaining useful emphasis such as bold, italic, and underline on an interactive terminal.
+
+The roles express the Machtiani aesthetic: Truth identifies structure and live
+state, Goodness marks successful continuation, Beauty marks final responses and
+links, provenance identifies models/sessions/tokens/code, and rupture marks
+errors. Verbose diagnostic lines and machine-oriented subcommands remain plain.
 
 ## Verify Installation
 ```
@@ -286,6 +307,9 @@ mct-agent run --t "Fix all lint issues" --verbose
 # Later, continue the same session with new instructions
 mct-agent run --t "Also ensure comments are updated" --session-id <session-id>
 ```
+
+Normal completion output shows only the continuation command. Add `--verbose`
+when you also want the detailed session ID, turn count, and goal summary.
 
 When resuming, the agent:
 - Loads the prior goal and transcript from disk

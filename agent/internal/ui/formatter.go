@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/tursomari/machtiani/agent/internal/presentation"
 	"golang.org/x/term"
 )
 
@@ -17,11 +18,12 @@ import (
 type promptStreamState struct {
 	streamID      string
 	buffer        strings.Builder
-	actionBuffer  strings.Builder
 	started       bool
 	done          bool
 	linesPrinted  int
 	renderedLines []string
+	role          presentation.Role
+	bold          bool
 }
 
 // FormatterPromptStream implements the PromptStream interface by emitting
@@ -43,12 +45,12 @@ func (s *FormatterPromptStream) Abort(message string) {
 	s.Bus.Emit(PromptAbortedEvent{StreamID: s.StreamID, Message: message})
 }
 
-
 // NewFormatterPromptStream creates a new FormatterPromptStream that emits
 // events into the given EventBus using the given streamID for correlation.
 func NewFormatterPromptStream(bus *EventBus, streamID string) *FormatterPromptStream {
 	return &FormatterPromptStream{Bus: bus, StreamID: streamID}
 }
+
 // Formatter replaces TerminalDisplay with event-bus-based rendering. It
 // subscribes to an EventBus and processes DisplayEvents in a dedicated
 // goroutine, serializing all output through the embedded mutex.
@@ -61,18 +63,42 @@ type Formatter struct {
 	closed          bool
 	hasPrompt       bool
 	width           int
+	height          int
 	currentStreamID string
 	streams         map[string]*promptStreamState
 	streamCounter   atomic.Int64
 
-	timerEnabled bool
-	timerStart   time.Time
-	timerTicker  *time.Ticker
-	timerStop    chan struct{}
-	timerVisible bool
-	lastTimer    string
-	manager      *ProcessTimerManager
-	id           string
+	timerEnabled   bool
+	timerStart     time.Time
+	elapsedOffset  time.Duration
+	timerTicker    *time.Ticker
+	timerStop      chan struct{}
+	timerVisible   bool
+	footerOffset   int
+	lastFooter     []string
+	tokenUsage     TokenUsageUpdatedEvent
+	footerModels   FooterModelMetadata
+	sessionID      string
+	turnNumber     int
+	modeTasks      []ModeTaskDisplay
+	activeModeTask int
+	manager        *ProcessTimerManager
+	id             string
+}
+
+type coordinatedWriter struct {
+	formatter *Formatter
+	writer    io.Writer
+}
+
+func (w coordinatedWriter) Write(p []byte) (int, error) {
+	if w.formatter == nil {
+		return w.writer.Write(p)
+	}
+	w.formatter.mu.Lock()
+	defer w.formatter.mu.Unlock()
+	w.formatter.clearLiveFooterLocked()
+	return w.writer.Write(p)
 }
 
 // NewFormatter constructs a Formatter writing to out (defaults to os.Stdout).
@@ -90,14 +116,16 @@ func NewFormatter(out io.Writer, bus *EventBus, theme Theme, manager *ProcessTim
 		theme = DefaultTheme()
 	}
 	f := &Formatter{
-		out:          out,
-		Bus:          bus,
-		theme:        theme,
-		width:        detectWidth(out),
-		timerEnabled: isTerminalWriter(out),
-		streams:      make(map[string]*promptStreamState),
-		manager:      manager,
-		id:           strings.TrimSpace(id),
+		out:            out,
+		Bus:            bus,
+		theme:          theme,
+		width:          detectWidth(out),
+		height:         detectHeight(out),
+		timerEnabled:   isTerminalWriter(out),
+		streams:        make(map[string]*promptStreamState),
+		activeModeTask: -1,
+		manager:        manager,
+		id:             strings.TrimSpace(id),
 	}
 
 	sub := bus.Subscribe()
@@ -106,6 +134,17 @@ func NewFormatter(out io.Writer, bus *EventBus, theme Theme, manager *ProcessTim
 	}
 
 	return f
+}
+
+// CoordinateWriter returns a writer that clears this formatter's live footer
+// before external output advances the shared terminal cursor. This is used for
+// diagnostics, which otherwise bypass the event bus and can overwrite the
+// first footer row during verbose runs.
+func (f *Formatter) CoordinateWriter(writer io.Writer) io.Writer {
+	if writer == nil {
+		writer = io.Discard
+	}
+	return coordinatedWriter{formatter: f, writer: writer}
 }
 
 // eventLoop processes DisplayEvent values from the subscription channel.
@@ -130,8 +169,16 @@ func (f *Formatter) eventLoop(ch <-chan DisplayEvent) {
 			f.handlePromptAborted(e)
 		case NotificationEvent:
 			f.handleNotification(e)
+		case TokenUsageUpdatedEvent:
+			f.handleTokenUsageUpdated(e)
+		case TurnStatusUpdatedEvent:
+			f.handleTurnStatusUpdated(e)
 		case FinalAnswerEvent:
 			f.handleFinalAnswer(e)
+		case ContinuationHintEvent:
+			f.handleContinuationHint(e)
+		case UserInputHintEvent:
+			f.handleUserInputHint(e)
 		case ModeTaskPlanDisplayEvent:
 			f.handleModeTaskPlanDisplay(e)
 		case ModeTaskStatusUpdateEvent:
@@ -147,11 +194,20 @@ func (f *Formatter) eventLoop(ch <-chan DisplayEvent) {
 
 func (f *Formatter) handleSessionStarted(e SessionStartedEvent) {
 	f.started = true
-	f.ensureTimerLocked()
-	f.renderTimerLocked()
+	if e.Elapsed > 0 {
+		f.elapsedOffset = e.Elapsed
+	}
+	f.tokenUsage = e.TokenUsage
+	f.footerModels = e.Models
+	f.sessionID = sanitizeLine(e.SessionID)
+	if e.Turn > 0 {
+		f.turnNumber = e.Turn
+	}
 	if f.manager != nil {
 		f.manager.RegisterDisplay(f.id, f)
 	}
+	f.ensureTimerLocked()
+	f.renderTimerLocked()
 	_ = e.Goal // preserved but not displayed
 }
 
@@ -159,12 +215,14 @@ func (f *Formatter) handleSessionEnded(_ SessionEndedEvent) {
 	if f.closed {
 		return
 	}
-	ResetTerminal(f.out)
+	finalFooter := f.finalFooterLinesLocked()
 	f.closed = true
 	f.stopTimerLocked()
+	ResetTerminal(f.out)
 	if f.manager != nil {
 		f.manager.UnregisterDisplay(f.id)
 	}
+	f.printFinalFooterLinesLocked(finalFooter)
 }
 
 func (f *Formatter) handlePromptStarted(e PromptStartedEvent) {
@@ -178,22 +236,26 @@ func (f *Formatter) handlePromptStarted(e PromptStartedEvent) {
 		}
 	}
 
+	f.clearLiveFooterLocked()
 	fmt.Fprintln(f.out)
-	fmt.Fprintf(f.out, "%s%s%s\n", f.theme.GrayColor, strings.TrimSpace(e.Prompt), f.theme.ResetColor)
+	fmt.Fprintln(f.out, f.theme.render(presentation.StyledLine{presentation.Text(strings.TrimSpace(e.Prompt))}))
 
 	if e.Opts != nil {
 		if mode := strings.TrimSpace(e.Opts.ModeIndicator); mode != "" {
-			fmt.Fprintf(f.out, "%s|   [mct:%s]%s\n", f.theme.GrayColor, mode, f.theme.ResetColor)
+			fmt.Fprintln(f.out, f.theme.render(presentation.StyledLine{
+				presentation.Text("|   "),
+				presentation.Bold(presentation.RoleTruth, "[mct:"+mode+"]"),
+			}))
 		}
 		for _, meta := range e.Opts.Metadata {
 			clean := strings.TrimSpace(meta)
 			if clean == "" {
 				continue
 			}
-			fmt.Fprintf(f.out, "%s|   %s%s\n", f.theme.GrayColor, clean, f.theme.ResetColor)
+			fmt.Fprintln(f.out, f.theme.render(styleMetadataLine(clean)))
 		}
 	}
-	fmt.Fprintf(f.out, "%s|%s\n", f.theme.GrayColor, f.theme.ResetColor)
+	fmt.Fprintln(f.out, f.theme.render(presentation.StyledLine{presentation.RoleText(presentation.RoleTruth, "|")}))
 
 	f.hasPrompt = true
 	f.currentStreamID = e.StreamID
@@ -211,19 +273,15 @@ func (f *Formatter) handleChunkReceived(e ChunkReceivedEvent) {
 }
 
 func (f *Formatter) handleActionExecuted(e ActionExecutedEvent) {
-	if f.currentStreamID == "" {
-		f.printNotificationLineLocked(e.Description, "")
+	if e.Command == "" && e.Step == 0 && e.StepLimit == 0 {
+		f.printNotificationLineLocked(e.Description, presentation.RoleNormal, false)
 		return
 	}
 	st := f.streams[f.currentStreamID]
-	if st == nil || st.done {
-		f.printNotificationLineLocked(e.Description, "")
-		return
+	if st != nil && !st.done {
+		f.flushLineLocked(st)
 	}
-	st.actionBuffer.WriteString(e.Description)
-	st.actionBuffer.WriteString("\n")
-	combined := st.buffer.String() + st.actionBuffer.String()
-	f.renderTextLocked(combined, st)
+	f.printActionBlockLocked(e)
 }
 
 func (f *Formatter) handlePromptCompleted(e PromptCompletedEvent) {
@@ -254,6 +312,7 @@ func (f *Formatter) handlePromptCompleted(e PromptCompletedEvent) {
 	}
 
 	f.printLinesLocked(lines, st)
+	f.clearLiveFooterLocked()
 	fmt.Fprintln(f.out)
 	f.renderTimerLocked()
 	st.done = true
@@ -272,8 +331,11 @@ func (f *Formatter) handlePromptAborted(e PromptAbortedEvent) {
 	if !strings.HasPrefix(strings.ToLower(text), "error") {
 		text = f.theme.ErrorPrefix + text
 	}
+	st.role = presentation.RoleRupture
+	st.bold = true
 
 	f.printLinesLocked([]string{text}, st)
+	f.clearLiveFooterLocked()
 	fmt.Fprintln(f.out)
 	f.renderTimerLocked()
 	st.done = true
@@ -288,25 +350,40 @@ func (f *Formatter) handleNotification(e NotificationEvent) {
 		return
 	}
 
-	var color string
+	role := presentation.RoleTruth
+	bold := false
 	switch e.Level {
 	case NotificationError:
-		color = f.theme.ErrorColor
+		role = presentation.RoleRupture
+		bold = true
 	case NotificationWarning:
-		color = f.theme.WarningColor
-	default:
-		color = f.theme.InfoColor
+		role = presentation.RoleProvenance
+		bold = true
 	}
 
 	st := f.streams[f.currentStreamID]
 	if st != nil && !st.done && st.started {
-		f.interruptWithNotificationLocked(lines, color, st)
+		f.interruptWithNotificationLocked(lines, role, bold, st)
 		return
 	}
 	if st != nil {
 		f.flushLineLocked(st)
 	}
-	f.printNotificationLinesLocked(lines, color)
+	f.printNotificationLinesLocked(lines, role, bold)
+}
+
+func (f *Formatter) handleTokenUsageUpdated(e TokenUsageUpdatedEvent) {
+	f.tokenUsage = e
+	f.ensureTimerLocked()
+	f.renderTimerLocked()
+}
+
+func (f *Formatter) handleTurnStatusUpdated(e TurnStatusUpdatedEvent) {
+	if e.Turn > 0 {
+		f.turnNumber = e.Turn
+	}
+	f.ensureTimerLocked()
+	f.renderTimerLocked()
 }
 
 func (f *Formatter) handleFinalAnswer(e FinalAnswerEvent) {
@@ -322,46 +399,207 @@ func (f *Formatter) handleFinalAnswer(e FinalAnswerEvent) {
 		}
 	}
 
+	f.clearLiveFooterLocked()
 	fmt.Fprintln(f.out)
-	fmt.Fprintln(f.out, f.theme.FinalAnswerHeader)
+	fmt.Fprintln(f.out, f.theme.render(presentation.StyledLine{presentation.Bold(presentation.RoleBeauty, f.theme.FinalAnswerHeader)}))
 	fmt.Fprintln(f.out, final)
 	f.renderTimerLocked()
+}
+
+func (f *Formatter) handleContinuationHint(e ContinuationHintEvent) {
+	f.clearLiveFooterLocked()
+	fmt.Fprintln(f.out)
+	if strings.TrimSpace(e.Header) != "" {
+		role := presentation.RoleTruth
+		if strings.Contains(strings.ToUpper(e.Header), "COMPLETE") {
+			role = presentation.RoleGoodness
+		} else if strings.Contains(strings.ToUpper(e.Header), "INTERRUPT") {
+			role = presentation.RoleRupture
+		}
+		fmt.Fprintln(f.out, f.theme.render(presentation.StyledLine{
+			presentation.Bold(role, strings.TrimSpace(e.Header)),
+		}))
+		for _, detail := range e.DetailLines {
+			fmt.Fprintln(f.out, f.theme.render(styleCompletionDetail(detail)))
+		}
+		fmt.Fprintln(f.out)
+	}
+	instruction := strings.TrimSpace(e.Instruction)
+	if instruction == "" {
+		instruction = "Continue with your next instruction:"
+	}
+	fmt.Fprintln(f.out, f.theme.render(presentation.StyledLine{
+		presentation.Bold(presentation.RoleGoodness, instruction),
+	}))
+	f.printCommandBlockLocked(e.Command)
+}
+
+func (f *Formatter) handleUserInputHint(e UserInputHintEvent) {
+	f.clearLiveFooterLocked()
+	fmt.Fprintln(f.out, f.theme.render(presentation.StyledLine{
+		presentation.Bold(presentation.RoleProvenance, "=== USER INPUT NEEDED ==="),
+	}))
+	fmt.Fprintln(f.out, f.theme.render(presentation.StyledLine{
+		presentation.RoleText(presentation.RoleTruth, "Session ID:"),
+		presentation.Text(" "),
+		presentation.RoleText(presentation.RoleProvenance, strings.TrimSpace(e.SessionID)),
+	}))
+	if context := strings.TrimSpace(e.Context); context != "" {
+		fmt.Fprintln(f.out, context)
+		fmt.Fprintln(f.out)
+	}
+	fmt.Fprintln(f.out, strings.TrimSpace(e.Question))
+	fmt.Fprintln(f.out)
+	fmt.Fprintln(f.out, f.theme.render(presentation.StyledLine{
+		presentation.Bold(presentation.RoleGoodness, "To continue, answer with:"),
+	}))
+	f.printCommandBlockLocked(e.Command)
+}
+
+func (f *Formatter) printCommandBlockLocked(command string) {
+	fmt.Fprintln(f.out, f.theme.render(commandBlockRuleLine(command)))
+	fmt.Fprintln(f.out, f.theme.render(styleCommandLine(command)))
+	fmt.Fprintln(f.out, f.theme.render(commandBlockRuleLine(command)))
+}
+
+func commandBlockRuleLine(command string) presentation.StyledLine {
+	width := runeLen("  $ " + strings.TrimSpace(command))
+	if width < 36 {
+		width = 36
+	}
+	if width > 96 {
+		width = 96
+	}
+	return presentation.StyledLine{
+		presentation.Text("  "),
+		presentation.Bold(presentation.RoleTruth, strings.Repeat("-", width)),
+	}
+}
+
+func styleCommandLine(command string) presentation.StyledLine {
+	command = strings.TrimSpace(command)
+	const executable = "mct-agent run"
+	if strings.HasPrefix(command, executable) {
+		return presentation.StyledLine{
+			presentation.Text("  "),
+			presentation.Bold(presentation.RoleGoodness, "$ "),
+			presentation.Bold(presentation.RoleProvenance, executable),
+			presentation.Text(strings.TrimPrefix(command, executable)),
+		}
+	}
+	return presentation.StyledLine{
+		presentation.Text("  "),
+		presentation.Bold(presentation.RoleGoodness, "$ "),
+		presentation.RoleText(presentation.RoleProvenance, command),
+	}
 }
 
 func (f *Formatter) handleModeTaskPlanDisplay(e ModeTaskPlanDisplayEvent) {
 	if len(e.Tasks) == 0 {
 		return
 	}
-
-	fmt.Fprintln(f.out)
-	fmt.Fprintln(f.out, f.theme.ModePlanHeader)
-	for _, task := range e.Tasks {
-		mode := strings.ToLower(strings.TrimSpace(task.Mode))
-		if mode == "" {
-			mode = "-"
-		}
-		status := strings.TrimSpace(task.Status)
-		if status == "" {
-			status = "pending"
-		}
-		line := fmt.Sprintf("  %d. [%s] %s -- %s", task.Index, mode, task.Title, status)
-		fmt.Fprintln(f.out, line)
-	}
+	f.modeTasks = cloneModeTaskDisplays(e.Tasks)
+	f.activeModeTask = activeModeTaskIndex(f.modeTasks)
+	f.renderTimerLocked()
 }
 
 func (f *Formatter) handleModeTaskStatusUpdate(e ModeTaskStatusUpdateEvent) {
-	idx := e.Index + 1
 	cleanStatus := strings.TrimSpace(e.Status)
 	if cleanStatus == "" {
 		cleanStatus = "pending"
 	}
-	message := fmt.Sprintf("%s task %d (%s): %s", f.theme.ModeTaskPrefix, idx, e.Title, cleanStatus)
-	fmt.Fprintln(f.out)
-	fmt.Fprintln(f.out, message)
+	if e.Index >= 0 {
+		for len(f.modeTasks) <= e.Index {
+			f.modeTasks = append(f.modeTasks, ModeTaskDisplay{Index: len(f.modeTasks) + 1})
+		}
+		task := &f.modeTasks[e.Index]
+		if task.Index <= 0 {
+			task.Index = e.Index + 1
+		}
+		if title := strings.TrimSpace(e.Title); title != "" {
+			task.Title = title
+		}
+		task.Status = cleanStatus
+		f.activeModeTask = e.Index
+	}
+	f.renderTimerLocked()
 }
 
 func (f *Formatter) handleRawString(e RawStringEvent) {
+	f.clearLiveFooterLocked()
 	fmt.Fprintln(f.out, e.Text)
+	f.renderTimerLocked()
+}
+
+func (f *Formatter) printActionBlockLocked(e ActionExecutedEvent) {
+	command := sanitizeLine(e.Command)
+	description := CleanActionDescription(e.Description)
+	if description == "" {
+		description = command
+	}
+	if command == "" {
+		command = sanitizeLine(description)
+	}
+	if strings.EqualFold(sanitizeLine(description), command) {
+		description = ""
+	}
+	if command == "" && description == "" && e.Step <= 0 {
+		return
+	}
+	f.clearLiveFooterLocked()
+	if e.Step > 0 {
+		label := fmt.Sprintf("Step %d", e.Step)
+		if e.StepLimit > 0 {
+			label = fmt.Sprintf("Step %d of %d", e.Step, e.StepLimit)
+		}
+		fmt.Fprintln(f.out, f.theme.render(presentation.StyledLine{presentation.Bold(presentation.RoleTruth, label)}))
+		fmt.Fprintln(f.out)
+	}
+	for _, line := range sanitizeLines(description) {
+		fmt.Fprintln(f.out, line)
+	}
+	if description != "" {
+		fmt.Fprintln(f.out)
+	}
+	if command != "" {
+		fmt.Fprintln(f.out, f.theme.render(presentation.StyledLine{
+			presentation.Bold(presentation.RoleGoodness, "$ "),
+			presentation.Text(command),
+		}))
+		fmt.Fprintln(f.out)
+	}
+	f.renderTimerLocked()
+}
+
+func actionBlockLines(e ActionExecutedEvent) []string {
+	command := sanitizeLine(e.Command)
+	description := CleanActionDescription(e.Description)
+	if description == "" {
+		description = command
+	}
+	if command == "" {
+		command = sanitizeLine(description)
+	}
+	if strings.EqualFold(sanitizeLine(description), command) {
+		description = ""
+	}
+
+	var lines []string
+	switch {
+	case e.Step > 0 && e.StepLimit > 0:
+		lines = append(lines, fmt.Sprintf("Step %d of %d", e.Step, e.StepLimit), "")
+	case e.Step > 0:
+		lines = append(lines, fmt.Sprintf("Step %d", e.Step), "")
+	}
+	if description != "" {
+		lines = append(lines, sanitizeLines(description)...)
+		lines = append(lines, "")
+	}
+	if command != "" {
+		lines = append(lines, "$ "+command)
+		lines = append(lines, "")
+	}
+	return lines
 }
 
 // --- unified render ---------------------------------------------------------
@@ -427,6 +665,7 @@ func (f *Formatter) clearPreviousLinesLocked(st *promptStreamState) {
 	if !st.started || st.linesPrinted == 0 {
 		return
 	}
+	f.clearLiveFooterLocked()
 	ClearLinesAbove(st.linesPrinted, f.out)
 }
 
@@ -440,14 +679,19 @@ func (f *Formatter) writeSanitizedLinesLocked(window []string, st *promptStreamS
 		return
 	}
 
+	f.clearLiveFooterLocked()
 	for i, line := range window {
 		prefix := f.theme.PromptSpacerPrefix
 		if i == 0 {
 			prefix = f.theme.PromptFirstLinePrefix
 		}
-		full := prefix + line
-		colored := f.theme.GrayColor + full + f.theme.ResetColor
-		fmt.Fprint(f.out, colored)
+		content := presentation.RoleText(st.role, line)
+		content.Bold = st.bold
+		styled := presentation.StyledLine{presentation.Text(prefix), content}
+		if i == 0 {
+			styled[0] = presentation.RoleText(presentation.RoleTruth, prefix)
+		}
+		fmt.Fprint(f.out, f.theme.render(styled))
 		if i < len(window)-1 {
 			fmt.Fprint(f.out, "\n")
 		}
@@ -465,6 +709,7 @@ func (f *Formatter) flushLineLocked(st *promptStreamState) {
 		return
 	}
 	f.ensureTimerLocked()
+	f.clearLiveFooterLocked()
 	fmt.Fprintln(f.out)
 	f.renderTimerLocked()
 	st.started = false
@@ -474,27 +719,27 @@ func (f *Formatter) flushLineLocked(st *promptStreamState) {
 
 // --- notifications ----------------------------------------------------------
 
-func (f *Formatter) printNotificationLinesLocked(lines []string, color string) {
+func (f *Formatter) printNotificationLinesLocked(lines []string, role presentation.Role, bold bool) {
 	for _, line := range lines {
-		f.printNotificationLineLocked(line, color)
+		f.printNotificationLineLocked(line, role, bold)
 	}
 }
 
-func (f *Formatter) printNotificationLineLocked(message string, color string) {
-	if color == "" {
-		color = f.theme.GrayColor
-	}
+func (f *Formatter) printNotificationLineLocked(message string, role presentation.Role, bold bool) {
 	text := sanitizeLine(message)
 	if text == "" {
 		return
 	}
+	f.clearLiveFooterLocked()
 	if f.hasPrompt {
 		maxWidth := f.width - len(f.theme.NotificationPrefix)
 		if maxWidth <= 0 {
 			maxWidth = 1
 		}
 		text = truncate(text, maxWidth)
-		fmt.Fprintf(f.out, "%s%s%s%s\n", color, f.theme.NotificationPrefix, text, f.theme.ResetColor)
+		span := presentation.RoleText(role, f.theme.NotificationPrefix+text)
+		span.Bold = bold
+		fmt.Fprintln(f.out, f.theme.render(presentation.StyledLine{span}))
 	}
 	if !f.hasPrompt {
 		fmt.Fprintln(f.out, text)
@@ -502,13 +747,13 @@ func (f *Formatter) printNotificationLineLocked(message string, color string) {
 	f.renderTimerLocked()
 }
 
-func (f *Formatter) interruptWithNotificationLocked(lines []string, color string, st *promptStreamState) bool {
+func (f *Formatter) interruptWithNotificationLocked(lines []string, role presentation.Role, bold bool, st *promptStreamState) bool {
 	if st == nil || st.done || !st.started || st.linesPrinted == 0 || len(lines) == 0 {
 		return false
 	}
 	sanitizedSnapshot := append([]string(nil), st.renderedLines...)
 	f.clearPreviousLinesLocked(st)
-	f.printNotificationLinesLocked(lines, color)
+	f.printNotificationLinesLocked(lines, role, bold)
 	f.writeSanitizedLinesLocked(sanitizedSnapshot, st)
 	return true
 }
@@ -523,9 +768,13 @@ func (f *Formatter) ensureTimerLocked() {
 		return
 	}
 	f.refreshTerminalSizeLocked()
+	if f.footerLineCountLocked() == 0 {
+		f.clearLiveFooterLocked()
+		return
+	}
 	f.timerStart = time.Now()
 	f.timerVisible = false
-	f.lastTimer = ""
+	f.lastFooter = nil
 	stop := make(chan struct{})
 	f.timerStop = stop
 	f.timerTicker = time.NewTicker(time.Second)
@@ -536,22 +785,63 @@ func (f *Formatter) refreshTerminalSizeLocked() {
 	if !f.timerEnabled {
 		return
 	}
-	file, ok := f.out.(*os.File)
+	fd, ok := writerFD(f.out)
 	if !ok {
 		return
 	}
-	fd := int(file.Fd())
-	if !term.IsTerminal(fd) {
+	if !term.IsTerminal(int(fd)) {
 		f.timerEnabled = false
 		return
 	}
-	w, _, err := term.GetSize(fd)
-	if err != nil {
-		return
+	w, h, err := term.GetSize(int(fd))
+	if err != nil || h <= 0 {
+		h = detectHeight(f.out)
 	}
 	if w > 0 {
 		f.width = w
 	}
+	if h > 0 {
+		f.height = h
+	}
+}
+
+func (f *Formatter) clearLiveFooterLocked() {
+	if !f.timerVisible || len(f.lastFooter) == 0 {
+		return
+	}
+	ClearFooterLinesBelow(len(f.lastFooter), f.footerOffset, f.out)
+	f.timerVisible = false
+	f.footerOffset = 0
+	f.lastFooter = nil
+}
+
+// liveFooterOffsetLocked returns the first footer row relative to the current
+// cursor. A streaming prompt leaves the cursor on its final rendered line, so
+// it needs one additional row to preserve the blank separator.
+func (f *Formatter) liveFooterOffsetLocked() int {
+	if f.currentStreamID != "" {
+		if st := f.streams[f.currentStreamID]; st != nil && st.started && !st.done {
+			return 2
+		}
+	}
+	return 1
+}
+
+func (f *Formatter) footerTooSmallLocked() bool {
+	return f.height > 0 && f.height < minFooterHeight
+}
+
+func (f *Formatter) footerLineCountLocked() int {
+	if f.footerTooSmallLocked() {
+		return 0
+	}
+	if f.height == 0 {
+		return 2
+	}
+	if f.height >= minFooterHeight+1 {
+		return 2
+	}
+	return 1
 }
 
 func (f *Formatter) renderTimerLocked() {
@@ -559,26 +849,528 @@ func (f *Formatter) renderTimerLocked() {
 		return
 	}
 	f.refreshTerminalSizeLocked()
-	elapsed := time.Since(f.timerStart)
-	formatted := formatElapsed(elapsed)
-	if f.timerVisible && formatted == f.lastTimer {
+	lineCount := f.footerLineCountLocked()
+	if lineCount == 0 {
+		f.clearLiveFooterLocked()
 		return
 	}
-	if f.manager != nil {
-		f.manager.RenderFooter(f.id, formatted)
-	} else {
-		coloredTime := f.theme.GrayColor + formatted + f.theme.ResetColor
-		RenderFooterLine(coloredTime, f.out)
+	elapsed := f.elapsedOffset + time.Since(f.timerStart)
+	lines := f.formatFooterLinesLocked(elapsed, lineCount)
+	offset := f.liveFooterOffsetLocked()
+	if f.timerVisible && f.footerOffset == offset && footerLinesEqual(lines, f.lastFooter) {
+		return
 	}
-	f.lastTimer = formatted
+	if f.timerVisible && (f.footerOffset != offset || len(f.lastFooter) != len(lines)) {
+		f.clearLiveFooterLocked()
+	}
+	allocate := !f.timerVisible
+	rendered := f.styleFooterLinesLocked(lines)
+	if f.manager != nil {
+		f.manager.RenderFooterLinesBelow(f.id, rendered, offset, allocate)
+	} else {
+		RenderFooterLinesBelow(rendered, offset, allocate, f.out)
+	}
+	f.lastFooter = append(f.lastFooter[:0], lines...)
+	f.footerOffset = offset
 	f.timerVisible = true
 }
 
-func (f *Formatter) stopTimerLocked() {
-	if f.timerTicker == nil {
+func (f *Formatter) formatFooterLinesLocked(elapsed time.Duration, lineCount int) []string {
+	width := f.width
+	if width <= 0 {
+		width = defaultWidth
+	}
+	tokenLine := formatTokenFooterLine(elapsed, f.tokenUsage, width)
+	if lineCount <= 1 {
+		return []string{tokenLine}
+	}
+	statusLine := formatStatusFooterLine(f.modeTasks, f.activeModeTask, f.turnNumber, f.sessionID, f.footerModels, width)
+	if statusLine == "" {
+		return []string{tokenLine, ""}
+	}
+	return []string{tokenLine, statusLine}
+}
+
+func (f *Formatter) finalFooterLinesLocked() []string {
+	if !f.timerEnabled || !f.started {
+		return nil
+	}
+	elapsed := f.elapsedOffset
+	if !f.timerStart.IsZero() {
+		elapsed += time.Since(f.timerStart)
+	}
+	lines := f.formatFooterLinesLocked(elapsed, 2)
+	for len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "" {
+		lines = lines[:len(lines)-1]
+	}
+	return append([]string(nil), lines...)
+}
+
+func (f *Formatter) printFinalFooterLinesLocked(lines []string) {
+	if len(lines) == 0 {
 		return
 	}
-	f.timerTicker.Stop()
+	for i := 0; i < f.liveFooterOffsetLocked(); i++ {
+		fmt.Fprint(f.out, "\r\n")
+	}
+	for _, line := range f.styleFooterLinesLocked(lines) {
+		fmt.Fprintf(f.out, "\r%s%s\n", ansiClearLine, line)
+	}
+}
+
+type footerHighlight struct {
+	text string
+	role presentation.Role
+	bold bool
+}
+
+func (f *Formatter) styleFooterLinesLocked(lines []string) []string {
+	styled := make([]string, 0, len(lines))
+	for i, line := range lines {
+		var highlights []footerHighlight
+		if i == 0 {
+			separator := strings.Index(line, "  ")
+			if separator < 0 {
+				styled = append(styled, f.theme.render(presentation.StyledLine{presentation.Bold(presentation.RoleTruth, line)}))
+				continue
+			}
+			for _, value := range []int{f.tokenUsage.InputHit, f.tokenUsage.InputMiss, f.tokenUsage.Output} {
+				highlights = append(highlights, footerHighlight{text: formatTokenCount(value), role: presentation.RoleProvenance})
+			}
+			tokenLine := highlightFooterText(line[separator:], highlights)
+			styled = append(styled, f.theme.render(append(presentation.StyledLine{
+				presentation.Bold(presentation.RoleTruth, line[:separator]),
+			}, tokenLine...)))
+			continue
+		} else {
+			if f.turnNumber > 0 {
+				highlights = append(highlights, footerHighlight{text: formatTurnFooterSegment(f.turnNumber), role: presentation.RoleTruth, bold: true})
+			}
+			if f.sessionID != "" {
+				highlights = append(highlights, footerHighlight{text: f.sessionID, role: presentation.RoleProvenance})
+			}
+			for _, label := range []string{f.footerModels.OrchestratorLabel, f.footerModels.ShellAgentLabel} {
+				if label != "" {
+					highlights = append(highlights, footerHighlight{text: label, role: presentation.RoleProvenance})
+				}
+			}
+			if task := f.activeFooterTaskLocked(); task != nil {
+				label := strings.ToLower(strings.TrimSpace(task.Mode))
+				if label == "" {
+					label = sanitizeLine(task.Title)
+				}
+				if label != "" {
+					highlights = append(highlights, footerHighlight{text: label, role: presentation.RoleBeauty, bold: true})
+				}
+				status := strings.ToLower(strings.TrimSpace(task.Status))
+				role := presentation.RoleTruth
+				switch status {
+				case "complete", "completed", "success":
+					role = presentation.RoleGoodness
+				case "pending", "waiting":
+					role = presentation.RoleProvenance
+				case "failed", "error":
+					role = presentation.RoleRupture
+				}
+				if status != "" {
+					highlights = append(highlights, footerHighlight{text: status, role: role, bold: true})
+				}
+			}
+		}
+		styled = append(styled, f.theme.render(highlightFooterText(line, highlights)))
+	}
+	return styled
+}
+
+func (f *Formatter) activeFooterTaskLocked() *ModeTaskDisplay {
+	if len(f.modeTasks) == 0 {
+		return nil
+	}
+	idx := f.activeModeTask
+	if idx < 0 || idx >= len(f.modeTasks) {
+		idx = activeModeTaskIndex(f.modeTasks)
+	}
+	if idx < 0 || idx >= len(f.modeTasks) {
+		return nil
+	}
+	return &f.modeTasks[idx]
+}
+
+func highlightFooterText(text string, highlights []footerHighlight) presentation.StyledLine {
+	line := presentation.StyledLine{}
+	remaining := text
+	for remaining != "" {
+		bestIndex := -1
+		best := footerHighlight{}
+		for _, candidate := range highlights {
+			if candidate.text == "" {
+				continue
+			}
+			idx := strings.Index(remaining, candidate.text)
+			if idx >= 0 && (bestIndex < 0 || idx < bestIndex || (idx == bestIndex && len(candidate.text) > len(best.text))) {
+				bestIndex = idx
+				best = candidate
+			}
+		}
+		if bestIndex < 0 {
+			line = append(line, presentation.Text(remaining))
+			break
+		}
+		if bestIndex > 0 {
+			line = append(line, presentation.Text(remaining[:bestIndex]))
+		}
+		span := presentation.RoleText(best.role, best.text)
+		span.Bold = best.bold
+		line = append(line, span)
+		remaining = remaining[bestIndex+len(best.text):]
+	}
+	return line
+}
+
+func styleMetadataLine(text string) presentation.StyledLine {
+	valueRole := presentation.RoleNormal
+	if idx := strings.Index(text, ":"); idx >= 0 && strings.Contains(strings.ToLower(text[:idx]), "model") {
+		valueRole = presentation.RoleProvenance
+	}
+	return append(presentation.StyledLine{presentation.Text("|   ")}, styleLabelValue(text, valueRole, false)...)
+}
+
+func styleCompletionDetail(text string) presentation.StyledLine {
+	role := presentation.RoleNormal
+	bold := false
+	switch {
+	case strings.HasPrefix(text, "Session ID:"):
+		role = presentation.RoleProvenance
+	case strings.HasPrefix(text, "Turns completed:"):
+		role = presentation.RoleTruth
+		bold = true
+	}
+	return styleLabelValue(text, role, bold)
+}
+
+func styleLabelValue(text string, valueRole presentation.Role, bold bool) presentation.StyledLine {
+	line := presentation.StyledLine{}
+	if idx := strings.Index(text, ":"); idx >= 0 {
+		value := presentation.RoleText(valueRole, text[idx+1:])
+		value.Bold = bold
+		line = append(line,
+			presentation.RoleText(presentation.RoleTruth, text[:idx+1]),
+			value,
+		)
+		return line
+	}
+	return append(line, presentation.Text(text))
+}
+
+func formatTokenFooterLine(elapsed time.Duration, usage TokenUsageUpdatedEvent, width int) string {
+	elapsedText := formatElapsed(elapsed)
+	hit := formatTokenCount(usage.InputHit)
+	miss := formatTokenCount(usage.InputMiss)
+	out := formatTokenCount(usage.Output)
+	candidates := []string{
+		fmt.Sprintf("%s  tokens  input hit %s  input miss %s  output %s", elapsedText, hit, miss, out),
+		fmt.Sprintf("%s  tokens  hit %s  miss %s  out %s", elapsedText, hit, miss, out),
+		fmt.Sprintf("%s  hit %s  miss %s  out %s", elapsedText, hit, miss, out),
+		fmt.Sprintf("%s  in %s/%s  out %s", elapsedText, hit, miss, out),
+	}
+	for _, candidate := range candidates {
+		if fitsWidth(candidate, width) {
+			return candidate
+		}
+	}
+	return truncate(candidates[len(candidates)-1], width)
+}
+
+func formatStatusFooterLine(tasks []ModeTaskDisplay, active int, turn int, sessionID string, models FooterModelMetadata, width int) string {
+	task := formatModeTaskFooterSegment(tasks, active, turn, width)
+	session := formatSessionFooterSegment(sessionID)
+	modelWidth := availableModelFooterWidth(width, task, session)
+	modelsWithReasoning := formatModelFooterSegment(models, true, 0)
+	modelsWithoutReasoning := formatModelFooterSegment(models, false, 0)
+	modelsTruncated := fitModelFooterSegment(models, false, modelWidth)
+	candidates := compactFooterCandidates(task, session, modelsWithReasoning, modelsWithoutReasoning, modelsTruncated)
+	for _, candidate := range candidates {
+		if fitsWidth(candidate, width) {
+			return candidate
+		}
+	}
+	if session != "" {
+		return truncate(session, width)
+	}
+	if task != "" {
+		return truncate(task, width)
+	}
+	if modelsWithoutReasoning != "" {
+		return truncate(modelsWithoutReasoning, width)
+	}
+	return ""
+}
+
+func availableModelFooterWidth(width int, leadingSegments ...string) int {
+	if width <= 0 {
+		return 0
+	}
+	used := 0
+	for _, segment := range leadingSegments {
+		if segment == "" {
+			continue
+		}
+		if used > 0 {
+			used += 2
+		}
+		used += runeLen(segment)
+	}
+	if used == 0 {
+		return width
+	}
+	return width - used - 2
+}
+
+func fitModelFooterSegment(models FooterModelMetadata, includeReasoning bool, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	full := formatModelFooterSegment(models, includeReasoning, 0)
+	if fitsWidth(full, width) {
+		return full
+	}
+	maxLabelWidth := maxFooterModelLabelWidth(models)
+	for labelWidth := maxLabelWidth - 1; labelWidth >= 1; labelWidth-- {
+		segment := formatModelFooterSegment(models, includeReasoning, labelWidth)
+		if segment != "" && fitsWidth(segment, width) {
+			return segment
+		}
+	}
+	return ""
+}
+
+func maxFooterModelLabelWidth(models FooterModelMetadata) int {
+	maxWidth := 0
+	for _, label := range []string{models.OrchestratorLabel, models.ShellAgentLabel} {
+		if n := runeLen(sanitizeLine(label)); n > maxWidth {
+			maxWidth = n
+		}
+	}
+	return maxWidth
+}
+
+func compactFooterCandidates(task string, session string, modelSegments ...string) []string {
+	var candidates []string
+	for _, model := range modelSegments {
+		switch {
+		case task != "" && session != "" && model != "":
+			candidates = append(candidates, task+"  "+session+"  "+model)
+		case task != "" && session != "":
+			candidates = append(candidates, task+"  "+session)
+		case session != "" && model != "":
+			candidates = append(candidates, session+"  "+model)
+		case task != "" && model != "":
+			candidates = append(candidates, task+"  "+model)
+		case session != "":
+			candidates = append(candidates, session)
+		case task != "":
+			candidates = append(candidates, task)
+		case model != "":
+			candidates = append(candidates, model)
+		}
+	}
+	if task != "" && session != "" {
+		candidates = append(candidates, task+"  "+session)
+	}
+	if session != "" {
+		candidates = append(candidates, session)
+	}
+	if task != "" {
+		candidates = append(candidates, task)
+	}
+	return dedupeStrings(candidates)
+}
+
+func formatSessionFooterSegment(sessionID string) string {
+	sessionID = sanitizeLine(sessionID)
+	if sessionID == "" {
+		return ""
+	}
+	return "session " + sessionID
+}
+
+func formatModeTaskFooterSegment(tasks []ModeTaskDisplay, active int, turn int, width int) string {
+	if len(tasks) == 0 {
+		return formatTurnFooterSegment(turn)
+	}
+	if active < 0 || active >= len(tasks) {
+		active = activeModeTaskIndex(tasks)
+	}
+	if active < 0 || active >= len(tasks) {
+		active = 0
+	}
+	task := tasks[active]
+	label := strings.ToLower(strings.TrimSpace(task.Mode))
+	if label == "" {
+		label = sanitizeLine(task.Title)
+	}
+	if label == "" {
+		label = "task"
+	}
+	status := strings.ToLower(strings.TrimSpace(task.Status))
+	if status == "" {
+		status = "pending"
+	}
+	index := task.Index
+	if index <= 0 {
+		index = active + 1
+	}
+	total := len(tasks)
+	if total <= 1 {
+		turnSegment := formatTurnFooterSegment(turn)
+		candidate := joinFooterSegments(label, turnSegment, status)
+		if fitsWidth(candidate, width) {
+			return candidate
+		}
+		if turnSegment != "" {
+			withoutTurn := joinFooterSegments(label, status)
+			if fitsWidth(withoutTurn, width) {
+				return withoutTurn
+			}
+		}
+		reserve := len(" " + status)
+		return fmt.Sprintf("%s %s", truncate(label, width-reserve), status)
+	}
+	taskSegment := fmt.Sprintf("task %d/%d", index, total)
+	turnSegment := formatTurnFooterSegment(turn)
+	candidate := joinFooterSegments(label, taskSegment, turnSegment, status)
+	if fitsWidth(candidate, width) {
+		return candidate
+	}
+	withoutTurn := joinFooterSegments(label, taskSegment, status)
+	if fitsWidth(withoutTurn, width) {
+		return withoutTurn
+	}
+	reserve := len(fmt.Sprintf(" %s %s", taskSegment, status))
+	return fmt.Sprintf("%s %s %s", truncate(label, width-reserve), taskSegment, status)
+}
+
+func formatTurnFooterSegment(turn int) string {
+	if turn <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("turn %d", turn)
+}
+
+func joinFooterSegments(segments ...string) string {
+	parts := make([]string, 0, len(segments))
+	for _, segment := range segments {
+		segment = strings.TrimSpace(segment)
+		if segment != "" {
+			parts = append(parts, segment)
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+func formatModelFooterSegment(models FooterModelMetadata, includeReasoning bool, labelWidth int) string {
+	var parts []string
+	if part := formatOneModelFooterSegment("planner", models.OrchestratorLabel, models.OrchestratorReasoning, includeReasoning, labelWidth); part != "" {
+		parts = append(parts, part)
+	}
+	if part := formatOneModelFooterSegment("shell", models.ShellAgentLabel, models.ShellAgentReasoning, includeReasoning, labelWidth); part != "" {
+		parts = append(parts, part)
+	}
+	return strings.Join(parts, "  ")
+}
+
+func formatOneModelFooterSegment(prefix, label, reasoning string, includeReasoning bool, labelWidth int) string {
+	label = sanitizeLine(label)
+	if label == "" {
+		return ""
+	}
+	if labelWidth > 0 {
+		label = truncate(label, labelWidth)
+	}
+	if includeReasoning {
+		reasoning = sanitizeLine(reasoning)
+		if reasoning != "" {
+			return prefix + " " + label + " " + reasoning
+		}
+	}
+	return prefix + " " + label
+}
+
+func cloneModeTaskDisplays(tasks []ModeTaskDisplay) []ModeTaskDisplay {
+	if len(tasks) == 0 {
+		return nil
+	}
+	out := make([]ModeTaskDisplay, 0, len(tasks))
+	for _, task := range tasks {
+		task.Title = sanitizeLine(task.Title)
+		task.Mode = sanitizeLine(task.Mode)
+		task.Status = sanitizeLine(task.Status)
+		out = append(out, task)
+	}
+	return out
+}
+
+func activeModeTaskIndex(tasks []ModeTaskDisplay) int {
+	for i, task := range tasks {
+		if strings.EqualFold(strings.TrimSpace(task.Status), "running") {
+			return i
+		}
+	}
+	for i, task := range tasks {
+		if !strings.EqualFold(strings.TrimSpace(task.Status), "complete") {
+			return i
+		}
+	}
+	if len(tasks) > 0 {
+		return len(tasks) - 1
+	}
+	return -1
+}
+
+func footerLinesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func fitsWidth(text string, width int) bool {
+	if width <= 0 {
+		return true
+	}
+	return runeLen(text) <= width
+}
+
+func runeLen(text string) int {
+	return len([]rune(text))
+}
+
+func dedupeStrings(in []string) []string {
+	seen := make(map[string]struct{}, len(in))
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		if s == "" {
+			continue
+		}
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	return out
+}
+
+func (f *Formatter) stopTimerLocked() {
+	f.clearLiveFooterLocked()
+	if f.timerTicker != nil {
+		f.timerTicker.Stop()
+	}
 	if f.timerStop != nil {
 		close(f.timerStop)
 	}
@@ -586,11 +1378,11 @@ func (f *Formatter) stopTimerLocked() {
 	f.timerStop = nil
 	f.timerStart = time.Time{}
 	f.timerVisible = false
-	f.lastTimer = ""
+	f.footerOffset = 0
+	f.lastFooter = nil
 }
 
 func (f *Formatter) timerLoop(ticker *time.Ticker, stop <-chan struct{}) {
-	defer func() { f.mu.Lock(); ResetTerminal(f.out); f.mu.Unlock() }()
 	for {
 		select {
 		case <-ticker.C:
@@ -614,6 +1406,7 @@ func (f *Formatter) PromptSelection(prompt string, options []string) (string, er
 	defer f.mu.Unlock()
 
 	f.refreshTerminalSizeLocked()
+	f.clearLiveFooterLocked()
 	prompt = strings.TrimSpace(prompt)
 	if prompt != "" {
 		fmt.Fprintln(f.out, prompt)
@@ -631,6 +1424,7 @@ func (f *Formatter) PromptSelection(prompt string, options []string) (string, er
 	if err != nil {
 		return "", err
 	}
+	f.renderTimerLocked()
 	return strings.TrimSpace(input), nil
 }
 
@@ -641,12 +1435,14 @@ func (f *Formatter) PromptUser(prompt string) bool {
 	defer f.mu.Unlock()
 
 	f.refreshTerminalSizeLocked()
+	f.clearLiveFooterLocked()
 	fmt.Fprintf(f.out, "%s%s", prompt, f.theme.ConfirmPromptSuffix)
 	reader := bufio.NewReader(os.Stdin)
 	input, err := reader.ReadString('\n')
 	if err != nil {
 		return false
 	}
+	f.renderTimerLocked()
 	input = strings.TrimSpace(strings.ToLower(input))
 	return input == "y" || input == "yes"
 }
@@ -658,12 +1454,14 @@ func (f *Formatter) PromptInput(prompt string) (string, error) {
 	defer f.mu.Unlock()
 
 	f.refreshTerminalSizeLocked()
+	f.clearLiveFooterLocked()
 	fmt.Fprintf(f.out, "%s%s", prompt, f.theme.InputPromptSuffix)
 	reader := bufio.NewReader(os.Stdin)
 	input, err := reader.ReadString('\n')
 	if err != nil {
 		return "", err
 	}
+	f.renderTimerLocked()
 	return strings.TrimSpace(input), nil
 }
 

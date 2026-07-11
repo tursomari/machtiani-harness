@@ -4,25 +4,31 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"golang.org/x/term"
 )
 
 const (
-	defaultWidth = 80
+	defaultWidth  = 80
+	defaultHeight = 24
 
-	ansiReset         = "\033[0m"
-	ansiGray          = "\033[37m"
-	ansiSaveCursor    = "\033[s"
-	ansiRestoreCursor = "\033[u"
-	ansiClearLine     = "\033[2K"
+	ansiReset             = "\033[0m"
+	ansiSaveCursor        = "\033[s"
+	ansiRestoreCursor     = "\033[u"
+	ansiClearLine         = "\033[2K"
+	ansiResetScrollRegion = "\033[r"
 
 	promptWindowLines  = 9
 	promptContentLines = promptWindowLines - 1
+	minFooterHeight    = promptWindowLines + 3
 )
+
+var commandTagBlockPattern = regexp.MustCompile(`(?is)<command(?:-[a-z0-9_-]+)?\b[^>]*>.*?</command(?:-[a-z0-9_-]+)?>`)
 
 // PromptOptions controls how prompts are rendered in the terminal chain.
 type PromptOptions struct {
@@ -36,6 +42,37 @@ type ModeTaskDisplay struct {
 	Title  string
 	Mode   string
 	Status string
+}
+
+func CleanActionDescription(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	text = commandTagBlockPattern.ReplaceAllString(text, "")
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	lines := strings.Split(strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n"), "\n")
+	end := len(lines)
+	for end > 0 && isPunctuationOnlyLine(lines[end-1]) {
+		end--
+	}
+	return strings.TrimSpace(strings.Join(lines[:end], "\n"))
+}
+
+func isPunctuationOnlyLine(line string) bool {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return true
+	}
+	for _, r := range line {
+		if !unicode.IsPunct(r) && !unicode.IsSymbol(r) {
+			return false
+		}
+	}
+	return true
 }
 
 func sanitizeLine(text string) string {
@@ -98,16 +135,34 @@ func detectWidth(out io.Writer) int {
 	return defaultWidth
 }
 
-func widthFromWriter(out io.Writer) int {
-	file, ok := out.(*os.File)
+func detectHeight(out io.Writer) int {
+	fd, ok := writerFD(out)
 	if !ok {
 		return 0
 	}
-	fd := int(file.Fd())
-	if !term.IsTerminal(fd) {
+	if !term.IsTerminal(int(fd)) {
 		return 0
 	}
-	w, _, err := term.GetSize(fd)
+	if _, h, err := term.GetSize(int(fd)); err == nil && h > 0 {
+		return h
+	}
+	if lines := os.Getenv("LINES"); lines != "" {
+		if n, err := strconv.Atoi(lines); err == nil && n > 1 {
+			return n
+		}
+	}
+	return defaultHeight
+}
+
+func widthFromWriter(out io.Writer) int {
+	fd, ok := writerFD(out)
+	if !ok {
+		return 0
+	}
+	if !term.IsTerminal(int(fd)) {
+		return 0
+	}
+	w, _, err := term.GetSize(int(fd))
 	if err != nil || w <= 0 {
 		return 0
 	}
@@ -115,11 +170,23 @@ func widthFromWriter(out io.Writer) int {
 }
 
 func isTerminalWriter(out io.Writer) bool {
-	file, ok := out.(*os.File)
+	fd, ok := writerFD(out)
 	if !ok {
 		return false
 	}
-	return term.IsTerminal(int(file.Fd()))
+	return term.IsTerminal(int(fd))
+}
+
+type fdWriter interface {
+	Fd() uintptr
+}
+
+func writerFD(out io.Writer) (uintptr, bool) {
+	file, ok := out.(fdWriter)
+	if !ok {
+		return 0, false
+	}
+	return file.Fd(), true
 }
 
 func truncate(text string, width int) string {
@@ -170,4 +237,25 @@ func formatElapsed(d time.Duration) string {
 	minutes := seconds / 60
 	remaining := seconds % 60
 	return fmt.Sprintf("%d:%02d", minutes, remaining)
+}
+
+func formatTokenCount(n int) string {
+	if n < 0 {
+		n = 0
+	}
+	s := strconv.Itoa(n)
+	if len(s) <= 3 {
+		return s
+	}
+	var b strings.Builder
+	prefix := len(s) % 3
+	if prefix == 0 {
+		prefix = 3
+	}
+	b.WriteString(s[:prefix])
+	for i := prefix; i < len(s); i += 3 {
+		b.WriteByte(',')
+		b.WriteString(s[i : i+3])
+	}
+	return b.String()
 }

@@ -8,11 +8,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/tursomari/machtiani/agent/internal/conversation"
 	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
 	"github.com/tursomari/machtiani/agent/internal/planner"
+	"github.com/tursomari/machtiani/agent/internal/presentation"
 	"github.com/tursomari/machtiani/agent/internal/runner"
 	"github.com/tursomari/machtiani/agent/internal/tempdir"
 	"github.com/tursomari/machtiani/agent/internal/trajectory"
@@ -413,6 +416,17 @@ func newRunLifecycleState(rootCtx context.Context, cfg legacyConfig, sessionID, 
 	if loadedState != nil {
 		plannerProgress = newPlannerProgressTracker(loadedState.PlannerProgress)
 	}
+	var runtimeBaseElapsed time.Duration
+	var runtimeTokenUsage ui.TokenUsageUpdatedEvent
+	if loadedState != nil && loadedState.RuntimeStats != nil {
+		stats := loadedState.RuntimeStats.Clone()
+		runtimeBaseElapsed = time.Duration(stats.ActiveElapsedMS) * time.Millisecond
+		runtimeTokenUsage = ui.TokenUsageUpdatedEvent{
+			InputHit:  stats.InputHitTokens,
+			InputMiss: stats.InputMissTokens,
+			Output:    stats.OutputTokens,
+		}
+	}
 	originalGoalVal := originalPrompt
 	if loadedState != nil && loadedState.OriginalGoal != "" {
 		originalGoalVal = loadedState.OriginalGoal
@@ -431,6 +445,8 @@ func newRunLifecycleState(rootCtx context.Context, cfg legacyConfig, sessionID, 
 		modeInstructionPath:     modeInstructionPath,
 		mode:                    cfg.mode,
 		plannerProgress:         plannerProgress,
+		runtimeBaseElapsed:      runtimeBaseElapsed,
+		runtimeTokenUsage:       runtimeTokenUsage,
 		suspendedUserInput:      loadedStateSuspendedInput(loadedState),
 		sessionStatus:           "error",
 		turnsCompleted:          turnsCompleted,
@@ -868,6 +884,11 @@ type runLifecycleState struct {
 	mode                string
 	recorder            *conversationRecorder
 	plannerProgress     *plannerProgressTracker
+	runtimeMu           sync.Mutex
+	runtimeBaseElapsed  time.Duration
+	runtimeRunStarted   time.Time
+	runtimeTokenUsage   ui.TokenUsageUpdatedEvent
+	presentation        presentation.Theme
 
 	repoRoot                string
 	trajectoryWriter        *trajectory.Writer
@@ -901,6 +922,79 @@ func (r *runLifecycleState) transition(target SessionStatus) error {
 	return nil
 }
 
+func (r *runLifecycleState) startRuntimeClock() {
+	if r == nil {
+		return
+	}
+	r.runtimeMu.Lock()
+	defer r.runtimeMu.Unlock()
+	if r.runtimeRunStarted.IsZero() {
+		r.runtimeRunStarted = time.Now()
+	}
+}
+
+func (r *runLifecycleState) runtimeElapsedLocked(now time.Time) time.Duration {
+	elapsed := r.runtimeBaseElapsed
+	if !r.runtimeRunStarted.IsZero() {
+		elapsed += now.Sub(r.runtimeRunStarted)
+	}
+	if elapsed < 0 {
+		return 0
+	}
+	return elapsed
+}
+
+func (r *runLifecycleState) runtimeElapsedSnapshot() time.Duration {
+	if r == nil {
+		return 0
+	}
+	r.runtimeMu.Lock()
+	defer r.runtimeMu.Unlock()
+	return r.runtimeElapsedLocked(time.Now())
+}
+
+func (r *runLifecycleState) runtimeTokenUsageSnapshot() ui.TokenUsageUpdatedEvent {
+	if r == nil {
+		return ui.TokenUsageUpdatedEvent{}
+	}
+	r.runtimeMu.Lock()
+	defer r.runtimeMu.Unlock()
+	return r.runtimeTokenUsage
+}
+
+func (r *runLifecycleState) updateRuntimeTokenUsage(usage ui.TokenUsageUpdatedEvent) {
+	if r == nil {
+		return
+	}
+	r.runtimeMu.Lock()
+	defer r.runtimeMu.Unlock()
+	if usage.InputHit < 0 {
+		usage.InputHit = 0
+	}
+	if usage.InputMiss < 0 {
+		usage.InputMiss = 0
+	}
+	if usage.Output < 0 {
+		usage.Output = 0
+	}
+	r.runtimeTokenUsage = usage
+}
+
+func (r *runLifecycleState) runtimeStatsSnapshot() *conversation.RuntimeStatsState {
+	if r == nil {
+		return nil
+	}
+	r.runtimeMu.Lock()
+	defer r.runtimeMu.Unlock()
+	elapsed := r.runtimeElapsedLocked(time.Now())
+	return conversation.NewRuntimeStatsState(
+		elapsed.Milliseconds(),
+		r.runtimeTokenUsage.InputHit,
+		r.runtimeTokenUsage.InputMiss,
+		r.runtimeTokenUsage.Output,
+	)
+}
+
 func (r *runLifecycleState) interruptedResult(err error) Result {
 	r.interrupted = true
 	if err == nil {
@@ -909,6 +1003,24 @@ func (r *runLifecycleState) interruptedResult(err error) Result {
 	r.sessionErr = err
 	r.transition(StateInterrupted)
 	return Result{ExitCode: 130, Status: r.sessionStatus, Turns: r.turnsCompleted, SessionID: r.sessionID, Err: err}
+}
+
+func (r *runLifecycleState) interruptedResultWithHint(bus *ui.EventBus, diagWriter io.Writer, err error) Result {
+	result := r.interruptedResult(err)
+	if r.hasResumableShellAgent() {
+		r.printShellAgentResumeHint(bus, diagWriter)
+		if bus != nil {
+			bus.Emit(ui.SessionEndedEvent{})
+		}
+	}
+	return result
+}
+
+func (r *runLifecycleState) hasResumableShellAgent() bool {
+	if r == nil || r.recorder == nil {
+		return false
+	}
+	return r.recorder.shellAgentResumable
 }
 
 func (r *runLifecycleState) isContextCancelled(err error) bool {
@@ -925,33 +1037,70 @@ func (r *runLifecycleState) isContextCancelled(err error) bool {
 }
 
 func (r *runLifecycleState) printResumeHint(bus *ui.EventBus, diagWriter io.Writer, header string, turns int) {
+	command := fmt.Sprintf("mct-agent run \"<next instruction>\" --session-id %s", r.sessionID)
+	continueHint := "Continue with your next instruction:\n" + formatCommandBlock(command)
+	if !r.cfg.verbose {
+		if bus != nil {
+			bus.Emit(ui.ContinuationHintEvent{Command: command})
+		} else {
+			fmt.Fprintln(diagWriter)
+			fmt.Fprintln(diagWriter, continueHint)
+		}
+		return
+	}
+
 	if bus != nil {
-		bus.Emit(ui.RawStringEvent{Text: header})
-		bus.Emit(ui.RawStringEvent{Text: fmt.Sprintf("Session ID: %s", r.sessionID)})
-		bus.Emit(ui.RawStringEvent{Text: fmt.Sprintf("Turns completed: %d", turns)})
-		bus.Emit(ui.RawStringEvent{Text: fmt.Sprintf("Goal so far: %q", r.goal)})
-		bus.Emit(ui.RawStringEvent{Text: ""})
-		bus.Emit(ui.RawStringEvent{Text: fmt.Sprintf("To continue, provide your next instruction, for example:\n  mct-agent run \"<next instruction>\" --session-id %s", r.sessionID)})
-		bus.Emit(ui.RawStringEvent{Text: ""})
+		bus.Emit(ui.ContinuationHintEvent{
+			Header: header,
+			DetailLines: []string{
+				fmt.Sprintf("Session ID: %s", r.sessionID),
+				fmt.Sprintf("Turns completed: %d", turns),
+				fmt.Sprintf("Goal so far: %q", r.goal),
+			},
+			Command: command,
+		})
 	} else {
+		fmt.Fprintln(diagWriter)
 		fmt.Fprintf(diagWriter, "%s\nSession ID: %s\nTurns completed: %d\nGoal so far: %q\n\n", header, r.sessionID, turns, r.goal)
-		fmt.Fprintf(diagWriter, "To continue, provide your next instruction, for example:\n  mct-agent run \"<next instruction>\" --session-id %s\n", r.sessionID)
+		fmt.Fprintln(diagWriter, continueHint)
 		fmt.Fprintln(diagWriter)
 	}
 }
 
+func (r *runLifecycleState) printShellAgentResumeHint(bus *ui.EventBus, diagWriter io.Writer) {
+	command := fmt.Sprintf("mct-agent run --session-id %s", r.sessionID)
+	if bus != nil {
+		bus.Emit(ui.ContinuationHintEvent{
+			Header:      "=== SHELL-AGENT INTERRUPTED ===",
+			DetailLines: []string{"Shell-agent work is resumable."},
+			Instruction: "Resume the interrupted shell-agent work:",
+			Command:     command,
+		})
+		return
+	}
+	fmt.Fprintln(diagWriter)
+	fmt.Fprintln(diagWriter, "=== SHELL-AGENT INTERRUPTED ===")
+	fmt.Fprintln(diagWriter, "Shell-agent work is resumable.")
+	fmt.Fprintln(diagWriter)
+	fmt.Fprintln(diagWriter, "Resume the interrupted shell-agent work:")
+	fmt.Fprintln(diagWriter, formatCommandBlock(command))
+	fmt.Fprintln(diagWriter)
+}
+
+func formatCommandBlock(command string) string {
+	command = strings.TrimSpace(command)
+	rule := strings.Repeat("-", len("  $ "+command))
+	return "  " + rule + "\n  $ " + command + "\n  " + rule
+}
+
 func (r *runLifecycleState) printUserInputHint(bus *ui.EventBus, diagWriter io.Writer, question, context string) {
 	if bus != nil {
-		bus.Emit(ui.RawStringEvent{Text: "=== USER INPUT NEEDED ==="})
-		bus.Emit(ui.RawStringEvent{Text: fmt.Sprintf("Session ID: %s", r.sessionID)})
-		if strings.TrimSpace(context) != "" {
-			bus.Emit(ui.RawStringEvent{Text: strings.TrimSpace(context)})
-			bus.Emit(ui.RawStringEvent{Text: ""})
-		}
-		bus.Emit(ui.RawStringEvent{Text: strings.TrimSpace(question)})
-		bus.Emit(ui.RawStringEvent{Text: ""})
-		bus.Emit(ui.RawStringEvent{Text: fmt.Sprintf("To continue, answer with:\n  mct-agent run \"<your answer>\" --session-id %s", r.sessionID)})
-		bus.Emit(ui.RawStringEvent{Text: ""})
+		bus.Emit(ui.UserInputHintEvent{
+			SessionID: r.sessionID,
+			Context:   strings.TrimSpace(context),
+			Question:  strings.TrimSpace(question),
+			Command:   fmt.Sprintf("mct-agent run \"<your answer>\" --session-id %s", r.sessionID),
+		})
 	} else {
 		fmt.Fprintln(diagWriter, "=== USER INPUT NEEDED ===")
 		fmt.Fprintf(diagWriter, "Session ID: %s\n", r.sessionID)
@@ -994,6 +1143,7 @@ func (r *runLifecycleState) baseSessionState() SessionState {
 		PlannerOverlay:  r.plannerOverlay,
 		Status:          r.sessionStatus,
 		TurnsCompleted:  r.turnsCompleted,
+		RuntimeStats:    r.runtimeStatsSnapshot(),
 	}
 	if r.suspendedUserInput != nil {
 		state.SuspendedUserInput = r.suspendedUserInput.Clone()
@@ -1010,6 +1160,7 @@ func (r *runLifecycleState) hydrateState(state *SessionState, diagWriter io.Writ
 	if state == nil {
 		return
 	}
+	state.RuntimeStats = r.runtimeStatsSnapshot()
 	// Persist the conversation to disk so that future resumes can
 	// regenerate the transcript without relying on inline state copies.
 	if r.recorder != nil && r.recorder.HasConversation() {
@@ -1035,6 +1186,9 @@ func (r *runLifecycleState) hydrateState(state *SessionState, diagWriter io.Writ
 	}
 	if r.recorder != nil && r.recorder.HasConversation() {
 		r.recorder.conversation.SuspendedUserInput = state.SuspendedUserInput
+	}
+	if r.recorder != nil && r.recorder.HasConversation() {
+		r.recorder.conversation.RuntimeStats = state.RuntimeStats.Clone()
 	}
 	if r.recorder != nil && r.recorder.HasConversation() {
 		_ = r.recorder.Save()
@@ -1082,9 +1236,6 @@ func (r *runLifecycleState) suspendForUserInput(bus *ui.EventBus, diagWriter io.
 	if err := r.recorder.AppendRaw("assistant", content, "user_input_request"); err != nil {
 		return Result{}, err
 	}
-	if bus != nil {
-		bus.Emit(ui.SessionEndedEvent{})
-	}
 	r.sessionErr = nil
 	if err := r.transition(StateSuspendedUserInput); err != nil {
 		return Result{}, err
@@ -1100,5 +1251,8 @@ func (r *runLifecycleState) suspendForUserInput(bus *ui.EventBus, diagWriter io.
 	r.pendingState = &state
 	r.hydrateState(r.pendingState, diagWriter)
 	r.printUserInputHint(bus, diagWriter, question, context)
+	if bus != nil {
+		bus.Emit(ui.SessionEndedEvent{})
+	}
 	return Result{ExitCode: 0, Status: r.sessionStatus, Turns: r.turnsCompleted, SessionID: r.sessionID}, nil
 }

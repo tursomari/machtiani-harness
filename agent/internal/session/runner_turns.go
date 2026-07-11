@@ -356,8 +356,18 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 			<-shellDone
 		}
 		result.ShellAgentTrajectoryMessages = shellResult.TrajectoryMessages
+		result.ShellAgentTrajectoryPath = shellResult.TrajectoryPath
 		if shellErr != nil {
 			env.turnInfo["shell_agent_error"] = trimTo(shellErr.Error(), 200)
+			if env.isContextCancelled(shellErr) {
+				if strings.TrimSpace(shellResult.TrajectoryPath) != "" {
+					env.turnInfo["shell_agent_trajectory"] = trimTo(shellResult.TrajectoryPath, 200)
+					env.recorder.SetShellAgentMetadata(shellResult.TrajectoryPath, true)
+				}
+				stream.Abort("interrupted")
+				finishTurn(env.sessTelemetry, env.turn, env.turnDecision, "interrupted", env.turnInfo, shellErr)
+				return turnExecutionResult{action: turnLoopReturn, result: env.interruptedResult(shellErr), shellAgentUsed: shellAgentUsedThisTurn}
+			}
 		}
 		if shellResult.Cancelled {
 			if strings.TrimSpace(shellResult.TrajectoryPath) != "" {

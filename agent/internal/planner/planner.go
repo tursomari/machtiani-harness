@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -57,6 +58,7 @@ type ClientConfig struct {
 	SessionID         string
 	PlannerOverlay    string
 	Prompts           *llm.PlannerPromptsConfig
+	Diagnostics       io.Writer
 }
 
 type Client struct {
@@ -167,6 +169,13 @@ func NewClient(cfg ClientConfig) *Client {
 	return &Client{cfg: cfg}
 }
 
+func (c *Client) diagnosticsWriter() io.Writer {
+	if c != nil && c.cfg.Diagnostics != nil {
+		return c.cfg.Diagnostics
+	}
+	return os.Stderr
+}
+
 // UpdateProgress refreshes planner-aware session progress (e.g. prior
 // success files) so prompts can steer the model away from redundant work.
 func (c *Client) UpdateProgress(progress Progress) {
@@ -267,7 +276,7 @@ func (c *Client) Plan(ctx context.Context, conv *conversation.Conversation, goal
 		}
 		payload = trajectory.MergeExcerptWithPrefix(payload, trajectory.MakeTextExcerpt(promptLog, w.ExcerptLen()), "prompt")
 		if err := w.Emit(ctx, trajectory.Event{Kind: "planner.request", SpanID: span.ID, ParentSpanID: parentSpan, Payload: payload}); err != nil {
-			reportTrajectoryError(err)
+			reportTrajectoryError(c.diagnosticsWriter(), err)
 		}
 		chatCtx = trajectory.ContextWithParentSpan(ctx, span.ID)
 	}
@@ -304,7 +313,7 @@ func (c *Client) Plan(ctx context.Context, conv *conversation.Conversation, goal
 				},
 			}
 			if emitErr := w.Emit(ctx, evt); emitErr != nil {
-				reportTrajectoryError(emitErr)
+				reportTrajectoryError(c.diagnosticsWriter(), emitErr)
 			}
 		}
 		return "", "", err
@@ -313,7 +322,7 @@ func (c *Client) Plan(ctx context.Context, conv *conversation.Conversation, goal
 		usageTracker.UpdateConversation(conv)
 	}
 	if c.cfg.Verbose {
-		fmt.Fprintln(os.Stderr, "[planner] model response:", truncateMiddle(strings.TrimSpace(resp), 1800))
+		fmt.Fprintln(c.diagnosticsWriter(), "[planner] model response:", truncateMiddle(strings.TrimSpace(resp), 1800))
 	}
 	dec, q, preamble := parseDecision(resp)
 	if hasWriter {
@@ -349,7 +358,7 @@ func (c *Client) Plan(ctx context.Context, conv *conversation.Conversation, goal
 			Err:          errInfo,
 		}
 		if emitErr := w.Emit(ctx, evt); emitErr != nil {
-			reportTrajectoryError(emitErr)
+			reportTrajectoryError(c.diagnosticsWriter(), emitErr)
 		}
 	}
 	if dec == "" {
@@ -369,7 +378,7 @@ func (c *Client) Plan(ctx context.Context, conv *conversation.Conversation, goal
 				}
 				payload = trajectory.MergeExcerptWithPrefix(payload, trajectory.MakeTextExcerpt(retryPromptLog, w.ExcerptLen()), "prompt")
 				if err := w.Emit(ctx, trajectory.Event{Kind: "planner.request", SpanID: span.ID, ParentSpanID: parentSpan, Payload: payload}); err != nil {
-					reportTrajectoryError(err)
+					reportTrajectoryError(c.diagnosticsWriter(), err)
 				}
 			}
 			retryStart := time.Now()
@@ -416,7 +425,7 @@ func (c *Client) Plan(ctx context.Context, conv *conversation.Conversation, goal
 					Err:          errInfo,
 				}
 				if emitErr := w.Emit(ctx, evt); emitErr != nil {
-					reportTrajectoryError(emitErr)
+					reportTrajectoryError(c.diagnosticsWriter(), emitErr)
 				}
 			}
 		}
@@ -1016,7 +1025,7 @@ func (c *Client) logTokenEstimate(messages []llm.Message) {
 	for _, msg := range messages {
 		total += llm.EstimateMessageTokens(msg)
 	}
-	fmt.Fprintf(os.Stderr, "[planner] estimated prompt tokens: %d\n", total)
+	fmt.Fprintf(c.diagnosticsWriter(), "[planner] estimated prompt tokens: %d\n", total)
 }
 
 func renderMessagesForLogging(messages []llm.Message) string {
@@ -1063,7 +1072,7 @@ func (c *Client) Finalize(ctx context.Context, conv *conversation.Conversation, 
 		}
 		payload = trajectory.MergeExcerptWithPrefix(payload, trajectory.MakeTextExcerpt(promptLog, w.ExcerptLen()), "prompt")
 		if err := w.Emit(ctx, trajectory.Event{Kind: "planner.request", SpanID: span.ID, ParentSpanID: parentSpan, Payload: payload}); err != nil {
-			reportTrajectoryError(err)
+			reportTrajectoryError(c.diagnosticsWriter(), err)
 		}
 		callCtx = trajectory.ContextWithParentSpan(ctx, span.ID)
 	}
@@ -1099,7 +1108,7 @@ func (c *Client) Finalize(ctx context.Context, conv *conversation.Conversation, 
 				},
 			}
 			if emitErr := w.Emit(ctx, evt); emitErr != nil {
-				reportTrajectoryError(emitErr)
+				reportTrajectoryError(c.diagnosticsWriter(), emitErr)
 			}
 		}
 		return "", err
@@ -1127,7 +1136,7 @@ func (c *Client) Finalize(ctx context.Context, conv *conversation.Conversation, 
 			Payload:      payload,
 		}
 		if emitErr := w.Emit(ctx, evt); emitErr != nil {
-			reportTrajectoryError(emitErr)
+			reportTrajectoryError(c.diagnosticsWriter(), emitErr)
 		}
 	}
 	return trimmed, nil
@@ -1170,13 +1179,13 @@ func (c *Client) chat(ctx context.Context, prompt string) (string, error) {
 func (c *Client) planSystemPrompt(conv *conversation.Conversation, goal string, step, maxSteps int) string {
 	tpl := c.planSystemTemplate()
 	if tpl == "" {
-		fmt.Fprintln(os.Stderr, "[planner] plan system template missing")
+		fmt.Fprintln(c.diagnosticsWriter(), "[planner] plan system template missing")
 		return ""
 	}
 	data := c.buildPlanTemplateData(conv, goal, "", step, maxSteps)
 	rendered, err := prompts.Render("planner_plan_system_prompt", tpl, data, nil)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "[planner] plan system template error: %v\n", err)
+		fmt.Fprintf(c.diagnosticsWriter(), "[planner] plan system template error: %v\n", err)
 		return ""
 	}
 	return rendered
@@ -1197,13 +1206,13 @@ func (c *Client) planSystemTemplate() string {
 func (c *Client) planPrompt(conv *conversation.Conversation, goal string, transcript string, step, maxSteps int) string {
 	tpl := c.planTemplate()
 	if tpl == "" {
-		fmt.Fprintln(os.Stderr, "[planner] plan prompt template missing")
+		fmt.Fprintln(c.diagnosticsWriter(), "[planner] plan prompt template missing")
 		return ""
 	}
 	data := c.buildPlanTemplateData(conv, goal, transcript, step, maxSteps)
 	rendered, err := prompts.Render("planner_plan_prompt", tpl, data, nil)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "[planner] plan prompt template error: %v\n", err)
+		fmt.Fprintf(c.diagnosticsWriter(), "[planner] plan prompt template error: %v\n", err)
 		return ""
 	}
 	return rendered
@@ -1212,7 +1221,7 @@ func (c *Client) planPrompt(conv *conversation.Conversation, goal string, transc
 func (c *Client) askPrompt(askRequest, guardrail string) string {
 	tpl := c.askPromptTemplate()
 	if tpl == "" {
-		fmt.Fprintln(os.Stderr, "[planner] ask prompt template missing")
+		fmt.Fprintln(c.diagnosticsWriter(), "[planner] ask prompt template missing")
 		return ""
 	}
 	data := askTemplateData{
@@ -1221,7 +1230,7 @@ func (c *Client) askPrompt(askRequest, guardrail string) string {
 	}
 	rendered, err := prompts.Render("planner_ask_prompt", tpl, data, nil)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "[planner] ask prompt template error: %v\n", err)
+		fmt.Fprintf(c.diagnosticsWriter(), "[planner] ask prompt template error: %v\n", err)
 		return ""
 	}
 	return rendered
@@ -1258,13 +1267,13 @@ func userDirectedJSONFormatRetryPrompt() string {
 func (c *Client) askMixedMonitorPrompt(ask string) string {
 	tpl := c.askMixedMonitorTemplate()
 	if tpl == "" {
-		fmt.Fprintln(os.Stderr, "[planner] ask mixed monitor template missing")
+		fmt.Fprintln(c.diagnosticsWriter(), "[planner] ask mixed monitor template missing")
 		return ""
 	}
 	data := askMixedMonitorData{Ask: strings.TrimSpace(ask)}
 	rendered, err := prompts.Render("planner_ask_mixed_monitor", tpl, data, nil)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "[planner] ask mixed monitor template error: %v\n", err)
+		fmt.Fprintf(c.diagnosticsWriter(), "[planner] ask mixed monitor template error: %v\n", err)
 		return ""
 	}
 	return rendered
@@ -1280,13 +1289,13 @@ func (c *Client) askMixedMonitorTemplate() string {
 func (c *Client) askUserDirectedMonitorPrompt(ask string) string {
 	tpl := c.askUserDirectedMonitorTemplate()
 	if tpl == "" {
-		fmt.Fprintln(os.Stderr, "[planner] ask user-directed monitor template missing")
+		fmt.Fprintln(c.diagnosticsWriter(), "[planner] ask user-directed monitor template missing")
 		return ""
 	}
 	data := askUserDirectedMonitorData{Ask: strings.TrimSpace(ask), InternetAccess: c.cfg.InternetAccess}
 	rendered, err := prompts.Render("planner_ask_user_directed_monitor", tpl, data, nil)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "[planner] ask user-directed monitor template error: %v\n", err)
+		fmt.Fprintf(c.diagnosticsWriter(), "[planner] ask user-directed monitor template error: %v\n", err)
 		return ""
 	}
 	return rendered
@@ -1302,13 +1311,13 @@ func (c *Client) askUserDirectedMonitorTemplate() string {
 func (c *Client) askUserDirectedPurifierPrompt(ask, reason string) string {
 	tpl := c.askUserDirectedPurifierTemplate()
 	if tpl == "" {
-		fmt.Fprintln(os.Stderr, "[planner] ask user-directed purifier template missing")
+		fmt.Fprintln(c.diagnosticsWriter(), "[planner] ask user-directed purifier template missing")
 		return ""
 	}
 	data := askUserDirectedPurifierData{Ask: strings.TrimSpace(ask), Reason: strings.TrimSpace(reason)}
 	rendered, err := prompts.Render("planner_ask_user_directed_purifier", tpl, data, nil)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "[planner] ask user-directed purifier template error: %v\n", err)
+		fmt.Fprintf(c.diagnosticsWriter(), "[planner] ask user-directed purifier template error: %v\n", err)
 		return ""
 	}
 	return rendered
@@ -1369,7 +1378,7 @@ func (c *Client) finalizePrompt(goal string, transcript string) string {
 		if err == nil {
 			return rendered
 		}
-		fmt.Fprintf(os.Stderr, "[planner] finalize prompt template error: %v\n", err)
+		fmt.Fprintf(c.diagnosticsWriter(), "[planner] finalize prompt template error: %v\n", err)
 	}
 	return c.finalizePromptFallback(goal, "")
 }
@@ -1810,9 +1819,12 @@ func removeLinesWithPrefixes(text string, labels ...string) string {
 	return strings.TrimSpace(strings.Join(filtered, "\n"))
 }
 
-func reportTrajectoryError(err error) {
+func reportTrajectoryError(writer io.Writer, err error) {
 	if err == nil {
 		return
 	}
-	fmt.Fprintf(os.Stderr, "[trajectory] emit error: %v\n", err)
+	if writer == nil {
+		writer = os.Stderr
+	}
+	fmt.Fprintf(writer, "[trajectory] emit error: %v\n", err)
 }

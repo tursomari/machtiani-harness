@@ -449,6 +449,54 @@ assert_file_not_contains() {
   fi
 }
 
+extract_agent_session_id() {
+  local stdout_file="$1"
+  local stderr_file="$2"
+  local since_epoch="${3:-0}"
+  local sid=""
+
+  sid=$(grep -m1 '^Session ID:' "$stdout_file" 2>/dev/null | awk '{print $NF}' || true)
+	if [[ -z "$sid" ]]; then
+		sid=$(grep -oE -- '--session-id agent-[0-9TZ]+-[0-9]+' "$stdout_file" 2>/dev/null \
+			| head -1 | awk '{print $2}' || true)
+	fi
+  if [[ -z "$sid" ]]; then
+    sid=$(grep -m1 '^Session:' "$stderr_file" 2>/dev/null | awk '{print $2}' || true)
+  fi
+  if [[ -z "$sid" ]]; then
+    sid=$(grep -oE 'session agent-[0-9TZ]+-[0-9]+' "$stdout_file" "$stderr_file" 2>/dev/null \
+      | head -1 | awk '{print $2}' || true)
+  fi
+  if [[ -z "$sid" ]]; then
+    sid=$(grep -oE '/sessions/(agent-[0-9TZ]+-[0-9]+)/' "$stdout_file" "$stderr_file" 2>/dev/null \
+      | head -1 | sed -E 's#.*/sessions/(agent-[0-9TZ]+-[0-9]+)/.*#\1#' || true)
+  fi
+  if [[ -z "$sid" && "$since_epoch" != "0" ]]; then
+    sid=$("$PYTHON_BIN" - "$REPO_ROOT/.machtiani/sessions" "$since_epoch" <<'PY'
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+since = float(sys.argv[2])
+best = None
+if root.exists():
+    for path in root.glob("agent-*"):
+        conv = path / "artifacts" / "conversation.json"
+        if not conv.exists():
+            continue
+        mtime = conv.stat().st_mtime
+        if mtime + 2 < since:
+            continue
+        if best is None or mtime > best[0]:
+            best = (mtime, path.name)
+if best:
+    print(best[1])
+PY
+    )
+  fi
+  printf '%s\n' "$sid"
+}
+
 stop_llm_stub_server() {
   if [[ -n "${STUB_SERVER_PID:-}" ]]; then
     kill "$STUB_SERVER_PID" 2>/dev/null || true
@@ -1148,7 +1196,6 @@ PY
 
 validate_turn_counts() {
   local case_id="$1"
-  local stdout_file="$2"
   local transcript_path="$3"
   local session_dir="$4"
 
@@ -1158,15 +1205,8 @@ validate_turn_counts() {
     return 0
   fi
 
-  # 2. Parse turns from stdout
-  local stdout_turns
-  stdout_turns=$(grep -a "Turns completed:" "$stdout_file" 2>/dev/null | head -1 | sed -n 's/.*Turns completed: *\([0-9][0-9]*\).*/\1/p')
-  if [[ -z "$stdout_turns" ]]; then
-    printf "ERROR: unable to parse Turns completed from stdout for %s\n" "$case_id" >&2
-    return 1
-  fi
-
-  # 3. Read turns_completed from conversation.json
+  # 2. Read turns_completed from conversation.json. Normal output intentionally
+  # omits the redundant completion summary unless --verbose is enabled.
   local conv_turns
   conv_turns=$(jq -r ".turns_completed" "$session_dir/artifacts/conversation.json" 2>/dev/null)
   if [[ -z "$conv_turns" || "$conv_turns" == "null" ]]; then
@@ -1174,7 +1214,7 @@ validate_turn_counts() {
     return 1
   fi
 
-  # 4. Count unique turn numbers in the transcript
+  # 3. Count unique turn numbers in the transcript
   local trans_turns
   trans_turns=$(grep -oP "^== TURN \K[0-9]+" "$transcript_path" 2>/dev/null | sort -n -u | wc -l)
   if [[ -z "$trans_turns" || "$trans_turns" -eq 0 ]]; then
@@ -1186,12 +1226,12 @@ validate_turn_counts() {
     trans_turns=$((trans_turns - 1))
   fi
 
-  # 5. Assert all three values are equal
-  if [[ "$stdout_turns" -eq "$conv_turns" ]] && [[ "$stdout_turns" -eq "$trans_turns" ]]; then
-    printf "Turn count cross-validation PASSED: %s (stdout=%s, conv=%s, trans=%s)\n" "$case_id" "$stdout_turns" "$conv_turns" "$trans_turns" >&2
+  # 4. Assert the persisted state and transcript agree.
+  if [[ "$conv_turns" -eq "$trans_turns" ]]; then
+    printf "Turn count cross-validation PASSED: %s (conv=%s, trans=%s)\n" "$case_id" "$conv_turns" "$trans_turns" >&2
     return 0
   else
-    printf "ERROR: Turn count mismatch for %s: stdout=%s, conv=%s, trans=%s\n" "$case_id" "$stdout_turns" "$conv_turns" "$trans_turns" >&2
+    printf "ERROR: Turn count mismatch for %s: conv=%s, trans=%s\n" "$case_id" "$conv_turns" "$trans_turns" >&2
     return 1
   fi
 }
@@ -1756,9 +1796,9 @@ EOF
   fi
 
   local agent_session
-  agent_session=$(grep -m1 '^Session:' "$stderr_file" | awk '{print $2}' || true)
+  agent_session=$(extract_agent_session_id "$stdout_file" "$stderr_file")
   if [[ -z "$agent_session" ]]; then
-    echo "Failed to parse session ID from stderr for $case_id" >&2
+    echo "Failed to parse session ID for $case_id" >&2
     return_with_cleanup 1 || return 1
   fi
 
@@ -1834,9 +1874,9 @@ run_shell_command_trajectory_live_case() {
   fi
 
   local agent_session
-  agent_session=$(grep -m1 '^Session:' "$stderr_file" | awk '{print $2}' || true)
+  agent_session=$(extract_agent_session_id "$stdout_file" "$stderr_file")
   if [[ -z "$agent_session" ]]; then
-    echo "Failed to parse session ID from stderr for $case_id (verbose)" >&2
+    echo "Failed to parse session ID for $case_id (verbose)" >&2
     return 1
   fi
 
@@ -1917,9 +1957,9 @@ PY
   fi
 
   local agent_session2
-  agent_session2=$(grep -m1 '^Session:' "$stderr_file2" | awk '{print $2}' || true)
+  agent_session2=$(extract_agent_session_id "$stdout_file2" "$stderr_file2")
   if [[ -z "$agent_session2" ]]; then
-    echo "Failed to parse session ID from stderr for $case_id (non-verbose)" >&2
+    echo "Failed to parse session ID for $case_id (non-verbose)" >&2
     return 1
   fi
 
@@ -2064,10 +2104,7 @@ run_resume_without_mode_case() {
 
   # Extract the session ID from stderr.
   local agent_session
-  agent_session=$(grep -m1 '^Session ID:' "$stdout_init" | awk '{print $NF}' || true)
-  if [[ -z "$agent_session" ]]; then
-    agent_session=$(grep -m1 '^Session:' "$stderr_init" | awk '{print $2}' || true)
-  fi
+  agent_session=$(extract_agent_session_id "$stdout_init" "$stderr_init")
   if [[ -z "$agent_session" ]]; then
     echo "Failed to parse session ID for $case_id" >&2
     cat "$stderr_init" >&2 || true
@@ -2159,7 +2196,7 @@ test_code_no_forge() {
   fi
 
   local agent_session
-  agent_session=$(grep -m1 '^Session:' "$stderr_file" | awk '{print $2}' || true)
+  agent_session=$(extract_agent_session_id "$stdout_file" "$stderr_file")
   if [[ -z "$agent_session" ]]; then
     echo "Failed to parse session ID for $case_id" >&2
     stop_llm_stub_server
@@ -2261,7 +2298,7 @@ run_enforce_early_commands_case() {
   fi
 
   local agent_session
-  agent_session=$(grep -m1 '^Session:' "$stderr_file" | awk '{print $2}' || true)
+  agent_session=$(extract_agent_session_id "$stdout_file" "$stderr_file")
   if [[ -z "$agent_session" ]]; then
     echo "Failed to parse session ID for $case_id" >&2
     stop_llm_stub_server
@@ -2415,7 +2452,7 @@ test_code_forge_initial() {
   fi
 
   local agent_session
-  agent_session=$(grep -m1 '^Session:' "$stderr_file" | awk '{print $2}' || true)
+  agent_session=$(extract_agent_session_id "$stdout_file" "$stderr_file")
   if [[ -z "$agent_session" ]]; then
     echo "Failed to parse session ID for $case_id" >&2
     stop_llm_stub_server
@@ -2505,7 +2542,7 @@ test_code_forge_resume_with_mode() {
   fi
 
   local agent_session
-  agent_session=$(grep -m1 '^Session:' "$stderr_init" | awk '{print $2}' || true)
+  agent_session=$(extract_agent_session_id "$stdout_init" "$stderr_init")
   if [[ -z "$agent_session" ]]; then
     echo "Failed to parse session ID for $case_id" >&2
     stop_llm_stub_server
@@ -2632,7 +2669,7 @@ test_code_forge_resume_without_mode() {
   fi
 
   local agent_session
-  agent_session=$(grep -m1 '^Session:' "$stderr_init" | awk '{print $2}' || true)
+  agent_session=$(extract_agent_session_id "$stdout_init" "$stderr_init")
   if [[ -z "$agent_session" ]]; then
     echo "Failed to parse session ID for $case_id" >&2
     stop_llm_stub_server
@@ -2758,7 +2795,7 @@ test_code_resume_without_mode_no_forge() {
   fi
 
   local agent_session
-  agent_session=$(grep -m1 '^Session:' "$stderr_init" | awk '{print $2}' || true)
+  agent_session=$(extract_agent_session_id "$stdout_init" "$stderr_init")
   if [[ -z "$agent_session" ]]; then
     echo "Failed to parse session ID for $case_id" >&2
     stop_llm_stub_server
@@ -2966,6 +3003,8 @@ run_resume_from_conversation_json_case() {
   # Run 1: start a session that completes 1-2 turns, then SIGINT it via timeout.
   # The agent handles SIGTERM gracefully and saves session state.
   local rc=0
+  local run_started_epoch
+  run_started_epoch=$(date +%s)
   pushd "$REPO_ROOT" >/dev/null
   set +e
   timeout 420 "$MCT_AGENT" run \
@@ -2985,9 +3024,9 @@ run_resume_from_conversation_json_case() {
   fi
 
   local agent_session
-  agent_session=$(grep -m1 '^Session:' "$stderr_interrupt" | awk '{print $2}' || true)
+  agent_session=$(extract_agent_session_id "$stdout_interrupt" "$stderr_interrupt" "$run_started_epoch")
   if [[ -z "$agent_session" ]]; then
-    echo "Failed to parse session ID from interrupted stderr for $case_id" >&2
+    echo "Failed to parse session ID for interrupted run in $case_id" >&2
     return 1
   fi
 

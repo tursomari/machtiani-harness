@@ -6,49 +6,50 @@ import (
 	"os"
 	"time"
 
-	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
 	"github.com/tursomari/machtiani/agent/internal/conversation"
+	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
 )
 
 type SessionState struct {
-	SessionID          string                   `json:"session_id"`
-	Goal               string                   `json:"goal"`
-	OriginalGoal       string                   `json:"original_goal,omitempty"`
-	OriginalPrompt     string                   `json:"original_prompt,omitempty"`
-	TaskDescription    string                   `json:"task_description,omitempty"`
-	PlannerOverlay     string                   `json:"planner_overlay,omitempty"`
-	Status             string                   `json:"status,omitempty"`
-	TurnsCompleted     int                      `json:"turns_completed"`
-	UpdatedAt          time.Time                `json:"updated_at"`
-	Modes              []string                 `json:"modes,omitempty"`
-	ModeInstructionDir string                   `json:"mode_instruction_dir,omitempty"`
-	PlannerProgress    *conversation.PlannerProgressState    `json:"planner_progress,omitempty"`
-	SuspendedUserInput  *conversation.SuspendedUserInputState `json:"suspended_user_input,omitempty"`
-	ShellAgentResumable         bool                     `json:"shell_agent_resumable"`
-	ShellAgentTrajectoryPath    string                   `json:"shell_agent_trajectory_path"`
-	ShellAgentInterruptStep     int                      `json:"shell_agent_interrupt_step"`
+	SessionID                string                                `json:"session_id"`
+	Goal                     string                                `json:"goal"`
+	OriginalGoal             string                                `json:"original_goal,omitempty"`
+	OriginalPrompt           string                                `json:"original_prompt,omitempty"`
+	TaskDescription          string                                `json:"task_description,omitempty"`
+	PlannerOverlay           string                                `json:"planner_overlay,omitempty"`
+	Status                   string                                `json:"status,omitempty"`
+	TurnsCompleted           int                                   `json:"turns_completed"`
+	UpdatedAt                time.Time                             `json:"updated_at"`
+	Modes                    []string                              `json:"modes,omitempty"`
+	ModeInstructionDir       string                                `json:"mode_instruction_dir,omitempty"`
+	PlannerProgress          *conversation.PlannerProgressState    `json:"planner_progress,omitempty"`
+	SuspendedUserInput       *conversation.SuspendedUserInputState `json:"suspended_user_input,omitempty"`
+	RuntimeStats             *conversation.RuntimeStatsState       `json:"runtime_stats,omitempty"`
+	ShellAgentResumable      bool                                  `json:"shell_agent_resumable"`
+	ShellAgentTrajectoryPath string                                `json:"shell_agent_trajectory_path"`
+	ShellAgentInterruptStep  int                                   `json:"shell_agent_interrupt_step"`
 }
-
 
 func sessionStateFromConversation(conv *conversation.Conversation, sessionID string) (*SessionState, error) {
 	if conv != nil && conv.Goal != "" {
 		ss := SessionState{
-			SessionID:                  conv.SessionID,
-			Goal:                       conv.Goal,
-			OriginalGoal:               conv.OriginalGoal,
-			OriginalPrompt:             conv.OriginalPrompt,
-			ShellAgentResumable:        conv.ShellAgentResumable,
-			ShellAgentTrajectoryPath:   conv.ShellAgentTrajectoryPath,
-			ShellAgentInterruptStep:    conv.ShellAgentInterruptStep,
-			TurnsCompleted:             conv.TurnsCompleted,
-			SuspendedUserInput:         conv.SuspendedUserInput,
-			PlannerProgress:            conv.PlannerProgress,
-			Modes:                      conv.Modes,
-			ModeInstructionDir:         conv.ModeInstructionDir,
-			PlannerOverlay:             conv.PlannerOverlay,
-			TaskDescription:            conv.TaskDescription,
-			Status:                     conv.Status,
-			UpdatedAt:                  conv.UpdatedAt,
+			SessionID:                conv.SessionID,
+			Goal:                     conv.Goal,
+			OriginalGoal:             conv.OriginalGoal,
+			OriginalPrompt:           conv.OriginalPrompt,
+			ShellAgentResumable:      conv.ShellAgentResumable,
+			ShellAgentTrajectoryPath: conv.ShellAgentTrajectoryPath,
+			ShellAgentInterruptStep:  conv.ShellAgentInterruptStep,
+			TurnsCompleted:           conv.TurnsCompleted,
+			SuspendedUserInput:       conv.SuspendedUserInput,
+			PlannerProgress:          conv.PlannerProgress,
+			RuntimeStats:             conv.RuntimeStats.Clone(),
+			Modes:                    conv.Modes,
+			ModeInstructionDir:       conv.ModeInstructionDir,
+			PlannerOverlay:           conv.PlannerOverlay,
+			TaskDescription:          conv.TaskDescription,
+			Status:                   conv.Status,
+			UpdatedAt:                conv.UpdatedAt,
 		}
 		return &ss, nil
 	}
@@ -61,8 +62,6 @@ func sessionStateFromConversation(conv *conversation.Conversation, sessionID str
 func SessionStateFromConversation(conv *conversation.Conversation, sessionID string) (*SessionState, error) {
 	return sessionStateFromConversation(conv, sessionID)
 }
-
-
 
 // ListSessions returns all session states found in the sessions directory,
 // sorted by UpdatedAt in descending order (most recent first).
@@ -118,4 +117,3 @@ func ListSessions() ([]SessionState, error) {
 
 	return sessions, nil
 }
-

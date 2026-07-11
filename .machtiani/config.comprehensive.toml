@@ -71,6 +71,14 @@ type = "local"
 command_timeout = 30
 # cwd: working directory for subprocesses (default: ".").
 cwd = "."
+
+# ── [ui] ────────────────────────────────────────────────────────────────────────
+# Human-facing terminal presentation. MACHTIANI_THEME overrides this value.
+[ui]
+# terminal uses the terminal's ANSI palette. Exact branded profiles use
+# truecolor when available and fall back to semantic ANSI colors otherwise.
+# Valid: terminal, machtiani-dark, machtiani-light, none.
+theme = "terminal"
 # ── [providers] ─────────────────────────────────────────────────────────────────
 # Each provider defines an API endpoint. Models reference a provider by name.
 

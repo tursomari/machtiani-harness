@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"fmt"
 	"io"
 	"os"
 	"sync"
@@ -55,8 +54,16 @@ func (m *ProcessTimerManager) UnregisterDisplay(id string) {
 
 // RenderFooter renders the timer footer if the display ID is active.
 // Only the active timer is rendered to prevent collisions on the footer line.
-func (m *ProcessTimerManager) RenderFooter(id string, formattedTime string) {
+func (m *ProcessTimerManager) RenderFooter(id string, formattedTime string, row int) {
+	m.RenderFooterLines(id, []string{formattedTime}, row)
+}
+
+// RenderFooterLines renders footer lines if the display ID is active.
+func (m *ProcessTimerManager) RenderFooterLines(id string, lines []string, row int) {
 	if m == nil {
+		return
+	}
+	if len(lines) == 0 {
 		return
 	}
 	m.mu.Lock()
@@ -64,10 +71,22 @@ func (m *ProcessTimerManager) RenderFooter(id string, formattedTime string) {
 	if id != m.activeID {
 		return // Only render if active; silence others
 	}
-	// Standard render logic (ANSI codes for cursor positioning and timer display)
-	fmt.Fprint(m.writer, ansiSaveCursor)
-	fmt.Fprint(m.writer, "\033[999;1H") // Position at row 999, column 1 (footer)
-	fmt.Fprint(m.writer, ansiClearLine)
-	fmt.Fprintf(m.writer, "%s%s%s", ansiGray, formattedTime, ansiReset)
-	fmt.Fprint(m.writer, ansiRestoreCursor)
+	if row <= 0 {
+		row = 999 - len(lines) + 1
+	}
+	RenderFooterLinesAtRow(lines, row, m.writer)
+}
+
+// RenderFooterLinesBelow renders footer lines relative to the active
+// display's output cursor.
+func (m *ProcessTimerManager) RenderFooterLinesBelow(id string, lines []string, offset int, allocate bool) {
+	if m == nil || len(lines) == 0 {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if id != m.activeID {
+		return
+	}
+	RenderFooterLinesBelow(lines, offset, allocate, m.writer)
 }

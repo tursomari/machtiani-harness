@@ -18,24 +18,25 @@ import (
 //
 // Timestamps are stored in RFC3339 format via the default json marshaler.
 type Conversation struct {
-	SessionID    string    `json:"session_id"`
-	OriginalGoal string    `json:"original_goal"`
-	Messages     []Message `json:"messages"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt                 time.Time                 `json:"updated_at"`
-	ShellAgentResumable       bool                      `json:"shell_agent_resumable"`
-	ShellAgentTrajectoryPath  string                    `json:"shell_agent_trajectory_path,omitempty"`
-	ShellAgentInterruptStep   int                       `json:"shell_agent_interrupt_step,omitempty"`
-	TurnsCompleted            int                       `json:"turns_completed"`
-	Goal                      string                    `json:"goal"`
-	OriginalPrompt            string                    `json:"original_prompt,omitempty"`
-	SuspendedUserInput        *SuspendedUserInputState  `json:"suspended_user_input,omitempty"`
-	PlannerProgress           *PlannerProgressState     `json:"planner_progress,omitempty"`
-	Modes                     []string                  `json:"modes,omitempty"`
-	ModeInstructionDir        string                    `json:"mode_instruction_dir,omitempty"`
-	PlannerOverlay            string                    `json:"planner_overlay,omitempty"`
-	TaskDescription           string                    `json:"task_description,omitempty"`
-	Status                    string                    `json:"status,omitempty"`
+	SessionID                string                   `json:"session_id"`
+	OriginalGoal             string                   `json:"original_goal"`
+	Messages                 []Message                `json:"messages"`
+	CreatedAt                time.Time                `json:"created_at"`
+	UpdatedAt                time.Time                `json:"updated_at"`
+	ShellAgentResumable      bool                     `json:"shell_agent_resumable"`
+	ShellAgentTrajectoryPath string                   `json:"shell_agent_trajectory_path,omitempty"`
+	ShellAgentInterruptStep  int                      `json:"shell_agent_interrupt_step,omitempty"`
+	TurnsCompleted           int                      `json:"turns_completed"`
+	Goal                     string                   `json:"goal"`
+	OriginalPrompt           string                   `json:"original_prompt,omitempty"`
+	SuspendedUserInput       *SuspendedUserInputState `json:"suspended_user_input,omitempty"`
+	PlannerProgress          *PlannerProgressState    `json:"planner_progress,omitempty"`
+	Modes                    []string                 `json:"modes,omitempty"`
+	ModeInstructionDir       string                   `json:"mode_instruction_dir,omitempty"`
+	PlannerOverlay           string                   `json:"planner_overlay,omitempty"`
+	TaskDescription          string                   `json:"task_description,omitempty"`
+	Status                   string                   `json:"status,omitempty"`
+	RuntimeStats             *RuntimeStatsState       `json:"runtime_stats,omitempty"`
 }
 
 type SuspendedUserInputState struct {
@@ -69,6 +70,93 @@ func (p *PlannerProgressState) Clone() *PlannerProgressState {
 		clone.SuccessFiles = append([]string(nil), p.SuccessFiles...)
 	}
 	return clone
+}
+
+// RuntimeStatsState captures user-visible session runtime and token usage
+// totals. Numeric fields are kept for resumability; display fields keep the
+// persisted JSON readable without affecting parsing.
+type RuntimeStatsState struct {
+	ActiveElapsedMS        int64  `json:"active_elapsed_ms,omitempty"`
+	InputHitTokens         int    `json:"input_hit_tokens,omitempty"`
+	InputHitTokensDisplay  string `json:"input_hit_tokens_display,omitempty"`
+	InputMissTokens        int    `json:"input_miss_tokens,omitempty"`
+	InputMissTokensDisplay string `json:"input_miss_tokens_display,omitempty"`
+	OutputTokens           int    `json:"output_tokens,omitempty"`
+	OutputTokensDisplay    string `json:"output_tokens_display,omitempty"`
+}
+
+func NewRuntimeStatsState(activeElapsedMS int64, inputHit, inputMiss, output int) *RuntimeStatsState {
+	if activeElapsedMS < 0 {
+		activeElapsedMS = 0
+	}
+	if inputHit < 0 {
+		inputHit = 0
+	}
+	if inputMiss < 0 {
+		inputMiss = 0
+	}
+	if output < 0 {
+		output = 0
+	}
+	stats := &RuntimeStatsState{
+		ActiveElapsedMS: activeElapsedMS,
+		InputHitTokens:  inputHit,
+		InputMissTokens: inputMiss,
+		OutputTokens:    output,
+	}
+	stats.Normalize()
+	return stats
+}
+
+func (s *RuntimeStatsState) Clone() *RuntimeStatsState {
+	if s == nil {
+		return nil
+	}
+	clone := *s
+	clone.Normalize()
+	return &clone
+}
+
+func (s *RuntimeStatsState) Normalize() {
+	if s == nil {
+		return
+	}
+	if s.ActiveElapsedMS < 0 {
+		s.ActiveElapsedMS = 0
+	}
+	if s.InputHitTokens < 0 {
+		s.InputHitTokens = 0
+	}
+	if s.InputMissTokens < 0 {
+		s.InputMissTokens = 0
+	}
+	if s.OutputTokens < 0 {
+		s.OutputTokens = 0
+	}
+	s.InputHitTokensDisplay = formatTokenCount(s.InputHitTokens)
+	s.InputMissTokensDisplay = formatTokenCount(s.InputMissTokens)
+	s.OutputTokensDisplay = formatTokenCount(s.OutputTokens)
+}
+
+func formatTokenCount(n int) string {
+	if n < 0 {
+		n = 0
+	}
+	s := strconv.Itoa(n)
+	if len(s) <= 3 {
+		return s
+	}
+	var b strings.Builder
+	prefix := len(s) % 3
+	if prefix == 0 {
+		prefix = 3
+	}
+	b.WriteString(s[:prefix])
+	for i := prefix; i < len(s); i += 3 {
+		b.WriteByte(',')
+		b.WriteString(s[i : i+3])
+	}
+	return b.String()
 }
 
 const (
@@ -174,6 +262,9 @@ func (c *Conversation) InsertMessageAt(index int, role, content string, metadata
 func (c *Conversation) Marshal() ([]byte, error) {
 	if c == nil {
 		return nil, errors.New("conversation is nil")
+	}
+	if c.RuntimeStats != nil {
+		c.RuntimeStats.Normalize()
 	}
 	return json.MarshalIndent(c, "", "  ")
 }

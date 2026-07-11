@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"fmt"
+	"io"
 	"math/rand"
 	"os"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/tursomari/machtiani/agent/internal/llm"
 	promptsvc "github.com/tursomari/machtiani/agent/internal/mct/prompt"
+	"github.com/tursomari/machtiani/agent/internal/presentation"
 	shellagent "github.com/tursomari/machtiani/agent/internal/shell-agent"
 	"github.com/tursomari/machtiani/agent/internal/trajectory"
 )
@@ -28,6 +30,8 @@ type Runner struct {
 	PersistTmpData          bool
 	SessionTempRoot         string
 	Prompts                 *llm.PromptsConfig
+	UITheme                 string
+	Diagnostics             io.Writer
 
 	// ShellAgentLibrary holds the pre-built model, environment, config,
 	// and prompts for the in-process shell-agent library path. When
@@ -61,6 +65,13 @@ func (r *Runner) Resolve() error {
 	return nil
 }
 
+func (r *Runner) diagnosticsWriter() io.Writer {
+	if r != nil && r.Diagnostics != nil {
+		return r.Diagnostics
+	}
+	return os.Stderr
+}
+
 func (r *Runner) RunPrompt(ctx context.Context, sessionID string, in PromptInput) (promptsvc.Result, error) {
 	safeMode := strings.TrimSpace(in.Mode)
 	if safeMode == "" {
@@ -71,7 +82,7 @@ func (r *Runner) RunPrompt(ctx context.Context, sessionID string, in PromptInput
 		if len(snippet) > 120 {
 			snippet = snippet[:120] + "…"
 		}
-		fmt.Printf("[mct] prompt mode=%s include-history=%t prompt=%q\n", safeMode, in.IncludeHistory, snippet)
+		fmt.Fprintf(r.diagnosticsWriter(), "[mct] prompt mode=%s include-history=%t prompt=%q\n", safeMode, in.IncludeHistory, snippet)
 	}
 	if r.DryRun {
 		return promptsvc.Result{}, nil
@@ -92,7 +103,11 @@ func (r *Runner) RunPrompt(ctx context.Context, sessionID string, in PromptInput
 	}
 
 	if onHeader == nil || onToken == nil {
-		ms, _ = llm.NewMarkdownStreamer()
+		theme, themeErr := presentation.Resolve(r.UITheme, os.Stdout)
+		if themeErr != nil {
+			return promptsvc.Result{}, fmt.Errorf("resolve UI theme: %w", themeErr)
+		}
+		ms, _ = llm.NewMarkdownStreamer(theme)
 		useMarkdown = ms != nil
 	}
 
@@ -143,7 +158,7 @@ func (r *Runner) RunPrompt(ctx context.Context, sessionID string, in PromptInput
 		payload = trajectory.MergeExcerptWithPrefix(payload, trajectory.MakeTextExcerpt(in.Prompt, w.ExcerptLen()), "prompt")
 		evt := trajectory.Event{Kind: "mct.prompt.start", SpanID: span.ID, ParentSpanID: parentSpan, Payload: payload}
 		if err := w.Emit(ctx, evt); err != nil {
-			reportRunnerTrajectoryError(err)
+			r.reportRunnerTrajectoryError(err)
 		}
 	}
 	start := time.Now()
@@ -220,7 +235,7 @@ func (r *Runner) RunPrompt(ctx context.Context, sessionID string, in PromptInput
 				},
 			}
 			if emitErr := w.Emit(ctx, evt); emitErr != nil {
-				reportRunnerTrajectoryError(emitErr)
+				r.reportRunnerTrajectoryError(emitErr)
 			}
 		}
 		return promptsvc.Result{}, err
@@ -283,7 +298,7 @@ func (r *Runner) RunPrompt(ctx context.Context, sessionID string, in PromptInput
 		payload = trajectory.MergeExcerptWithPrefix(payload, trajectory.MakeTextExcerpt(res.Assistant, w.ExcerptLen()), "answer")
 		evt := trajectory.Event{Kind: "mct.prompt.result", SpanID: span.ID, ParentSpanID: parentSpan, Payload: payload}
 		if emitErr := w.Emit(ctx, evt); emitErr != nil {
-			reportRunnerTrajectoryError(emitErr)
+			r.reportRunnerTrajectoryError(emitErr)
 		}
 	}
 	return res, nil
@@ -295,9 +310,9 @@ func GenerateSessionID() string {
 	return fmt.Sprintf("agent-%s-%04d", now, rand.Intn(10000))
 }
 
-func reportRunnerTrajectoryError(err error) {
+func (r *Runner) reportRunnerTrajectoryError(err error) {
 	if err == nil {
 		return
 	}
-	fmt.Fprintf(os.Stderr, "[trajectory] runner emit error: %v\n", err)
+	fmt.Fprintf(r.diagnosticsWriter(), "[trajectory] runner emit error: %v\n", err)
 }

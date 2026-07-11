@@ -98,7 +98,7 @@ Monitoring a live run
   tail -f test-out-*/stderr-*.txt
   tail -f test-out-*/stdout-*.txt
   ```
-- Parse the active session ID from stderr (`Session: <id>`), then inspect `.machtiani/sessions/<id>/trajectory/agent.jsonl` for ground truth.
+- Parse the session ID from stdout (`Session ID: <id>` in the final resume hint, or the footer's `session <id>` segment), then inspect `.machtiani/sessions/<id>/trajectory/agent.jsonl` for ground truth. With `--verbose`, stderr also includes `Session: <id>`.
 - To confirm that `TEST_*` wiring is actually in effect, look for all of these in stdout or trajectory:
   - `provider":"run-live-provider"`
   - `base_url":"https://openrouter.ai/api/v1"`
@@ -193,3 +193,77 @@ When using an alternate install location, replicate the manual build block from 
 Notes
 - The script never mutates PATH or accepts binary override flags; ensure the install location is already on PATH before invoking it.
 - Timeout simulations that previously used stubs are skipped; rely on the live preflight + PATH binaries instead.
+
+## TUI Record and Replay Harness
+
+### Whole-Terminal Record/Replay
+
+For golden TUI comparisons, prefer the repo harness:
+
+```bash
+scripts/tui-record-replay.sh
+```
+
+By default it uses `.data/tui-replay/planner-shell-agent-cache/prompt.txt` and writes a timestamped run under `.data/tui-replay/planner-shell-agent-cache/runs/`. It always runs the `mct-agent` found on `PATH`, records that binary path/version in the run directory, starts `replay-server` with the recorded LLM fixture, replays the same prompt, and writes a manifest. If `replay-server` is not on `PATH`, the harness builds only that helper into `.data/bin`.
+
+Important artifacts:
+
+- `live.terminal.log` / `replay.terminal.log` — whole-terminal PTY transcripts captured with `script(1)`. Use these as the user-visible golden outputs.
+- `live.tui.txt` / `replay.tui.txt` — formatter-level capture from `MACHTIANI_TUI_CAPTURE`.
+- `live.llm-fixtures.jsonl` — recorded LLM fixture used by replay.
+- `replay.config.toml` — sanitized config with provider URLs pointed at the local replay server and API keys set to `dummy`.
+- `manifest.txt` — session ids, line counts, shell-action counts, and final-answer hashes.
+
+You can override the prompt and fixture name:
+
+```bash
+scripts/tui-record-replay.sh \
+  --name planner-shell-agent-cache \
+  --prompt-file .data/tui-replay/planner-shell-agent-cache/prompt.txt
+```
+
+### Stdout Capture (MACHTIANI_TUI_CAPTURE)
+
+Set the env var `MACHTIANI_TUI_CAPTURE` to a file path. Formatter-rendered TUI output is teed to that file and stdout. Diagnostics and direct process writes may still go to stderr/stdout separately, so this is a formatter capture, not a whole-process terminal transcript. Use `scripts/tui-record-replay.sh` when the goal is to preserve exactly what the terminal showed.
+
+Example:
+
+```bash
+MACHTIANI_TUI_CAPTURE=/tmp/tui-capture.txt mct-agent run --text "hello"
+```
+
+If the file cannot be opened, a warning is logged to stderr and output falls back to stdout only. Implementation: `agent/internal/session/runner.go` uses `io.MultiWriter` at the Formatter construction site when the env var is set.
+
+### LLM Response Recording (LLM_RECORD_FIXTURES)
+
+Set the env var `LLM_RECORD_FIXTURES` to a file path. Every HTTP round-trip to the LLM provider is recorded as a JSONL entry containing `index`, `method`, `url`, `response_status`, `response_headers`, and `response_body`. The `request_body` field is `nil` (recording occurs at the HTTP response layer where the request body bytes are not available). The fixture file is thread-safe and written incrementally.
+
+Example:
+
+```bash
+LLM_RECORD_FIXTURES=/tmp/fixtures.jsonl mct-agent run --text "hello"
+```
+
+Implementation: `agent/internal/llm/recorder.go` with integration points in `performStream` and `performNonStream` in `llm.go`.
+
+### Replay Server (cmd/replay-server)
+
+Build the replay server:
+
+```bash
+go build -o replay-server ./cmd/replay-server
+```
+
+Run it with `-fixtures` pointing to a recorded JSONL file and optional `-port` (default `9876`, also configurable via the `REPLAY_SERVER_PORT` env var). The server responds to each incoming HTTP request with the next recorded fixture entry in sequence order. When fixtures are exhausted, it returns HTTP `502`. Graceful shutdown on `SIGINT`/`SIGTERM`. The server prints a startup summary to stdout showing the number of loaded fixtures and the listening address.
+
+### End-to-End Record and Replay Workflow
+
+Prefer `scripts/tui-record-replay.sh` for the complete workflow. Manual workflow:
+
+1. **Record a session** by setting both `MACHTIANI_TUI_CAPTURE` and `LLM_RECORD_FIXTURES` while running `mct-agent run`. If terminal repaint behavior matters, run the command through `script(1)` or another PTY recorder.
+2. **Start the replay server** with the recorded fixture file:
+   ```bash
+   ./replay-server -fixtures /tmp/fixtures.jsonl
+   ```
+3. **Run `mct-agent run` again** pointing at the replay server via `OPENAI_BASE_URL=http://localhost:PORT` and `OPENAI_API_KEY=dummy`, with `MACHTIANI_TUI_CAPTURE` set to a new output file.
+4. **Compare the original and replayed captures.** For terminal UI regressions, compare the PTY transcripts. For formatter-only changes, compare `MACHTIANI_TUI_CAPTURE` outputs. Differences are expected when the model path is not replayed from the same fixture; with fixture replay, final-answer hashes and semantic event counts should normally match.

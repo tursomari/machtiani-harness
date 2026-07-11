@@ -1,8 +1,10 @@
 package session
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -10,6 +12,7 @@ import (
 
 	"github.com/tursomari/machtiani/agent/internal/conversation"
 	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
+	"github.com/tursomari/machtiani/agent/internal/ui"
 )
 
 func TestListSessionsEmpty(t *testing.T) {
@@ -231,6 +234,50 @@ func TestPersistSessionStateNormalExit(t *testing.T) {
 
 }
 
+func TestRuntimeStatsSeedAndHydrateConversation(t *testing.T) {
+	loaded := &SessionState{
+		SessionID: "runtime-seed",
+		Goal:      "Goal",
+		RuntimeStats: conversation.NewRuntimeStatsState(
+			65_000,
+			1_234,
+			56_789,
+			1_000,
+		),
+	}
+	runState := newRunLifecycleState(context.Background(), legacyConfig{}, loaded.SessionID, loaded.Goal, loaded.Goal, "", "", "", 0, "", loaded)
+	runState.recorder = &conversationRecorder{
+		conversation: conversation.New(loaded.SessionID, loaded.Goal),
+	}
+	runState.updateRuntimeTokenUsage(ui.TokenUsageUpdatedEvent{
+		InputHit:  2_000,
+		InputMiss: 60_000,
+		Output:    1_500,
+	})
+
+	state := runState.baseSessionState()
+	runState.hydrateState(&state, io.Discard)
+
+	if state.RuntimeStats == nil {
+		t.Fatal("expected runtime stats")
+	}
+	if state.RuntimeStats.ActiveElapsedMS < 65_000 {
+		t.Fatalf("elapsed = %d, want at least seed", state.RuntimeStats.ActiveElapsedMS)
+	}
+	if state.RuntimeStats.InputHitTokens != 2_000 || state.RuntimeStats.InputMissTokens != 60_000 || state.RuntimeStats.OutputTokens != 1_500 {
+		t.Fatalf("runtime token stats = %+v", state.RuntimeStats)
+	}
+	if got := state.RuntimeStats.InputMissTokensDisplay; got != "60,000" {
+		t.Fatalf("InputMissTokensDisplay = %q, want 60,000", got)
+	}
+	if runState.recorder.conversation.RuntimeStats == nil {
+		t.Fatal("expected runtime stats to hydrate conversation")
+	}
+	if got := runState.recorder.conversation.RuntimeStats.OutputTokensDisplay; got != "1,500" {
+		t.Fatalf("conversation OutputTokensDisplay = %q, want 1,500", got)
+	}
+}
+
 func TestPersistSessionStateInterrupted(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("HOME", tmpDir)
@@ -413,12 +460,12 @@ func TestSessionStateFromConversationFields(t *testing.T) {
 		PlannerProgress: &conversation.PlannerProgressState{
 			SuccessFiles: []string{"db/migrations/001.sql", "README.md"},
 		},
-		Modes:             []string{"coding", "database"},
+		Modes:              []string{"coding", "database"},
 		ModeInstructionDir: "/modes/database",
-		PlannerOverlay:    "Prefer index-only scans",
-		TaskDescription:   "Analyze and optimize slow queries",
-		Status:            "suspended_user_input",
-		UpdatedAt:         now,
+		PlannerOverlay:     "Prefer index-only scans",
+		TaskDescription:    "Analyze and optimize slow queries",
+		Status:             "suspended_user_input",
+		UpdatedAt:          now,
 	}
 
 	state, err := sessionStateFromConversation(conv, sessionID)
@@ -509,4 +556,3 @@ func TestSessionStateFromConversationFields(t *testing.T) {
 		t.Fatalf("UpdatedAt mismatch: got %v want %v", state.UpdatedAt, conv.UpdatedAt)
 	}
 }
-

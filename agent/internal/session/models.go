@@ -53,6 +53,20 @@ func (m modelRuntime) displayLabel() string {
 	return ""
 }
 
+func (m modelRuntime) footerLabel() string {
+	resolvedModel := strings.TrimSpace(m.resolved.Model)
+	provider := strings.TrimSpace(m.resolved.ProviderName)
+	switch {
+	case provider != "" && resolvedModel != "":
+		return fmt.Sprintf("%s:%s", provider, resolvedModel)
+	case resolvedModel != "":
+		return resolvedModel
+	case provider != "":
+		return provider
+	}
+	return strings.TrimSpace(m.resolved.BaseURL)
+}
+
 type componentModelRuntimes struct {
 	orchestrator  modelRuntime
 	answer        modelRuntime
@@ -179,6 +193,57 @@ func describeModel(system string, runtime modelRuntime) string {
 		return ""
 	}
 	return fmt.Sprintf("%s model: %s", system, label)
+}
+
+func footerModelMetadata(models componentModelRuntimes) ui.FooterModelMetadata {
+	shellAgent := models.shellAgent
+	if strings.TrimSpace(shellAgent.footerLabel()) == "" {
+		shellAgent = models.orchestrator
+	}
+	return ui.FooterModelMetadata{
+		OrchestratorLabel:     models.orchestrator.footerLabel(),
+		OrchestratorReasoning: reasoningEffort(models.orchestrator),
+		ShellAgentLabel:       shellAgent.footerLabel(),
+		ShellAgentReasoning:   reasoningEffort(shellAgent),
+	}
+}
+
+func reasoningEffort(runtime modelRuntime) string {
+	if effort := reasoningEffortFromParams(runtime.extras); effort != "" {
+		return effort
+	}
+	return reasoningEffortFromParams(runtime.resolved.Params)
+}
+
+func reasoningEffortFromParams(params map[string]any) string {
+	if len(params) == 0 {
+		return ""
+	}
+	if effort := valueAsString(params["reasoning_effort"]); effort != "" {
+		return effort
+	}
+	reasoning, ok := params["reasoning"]
+	if !ok {
+		return ""
+	}
+	switch v := reasoning.(type) {
+	case map[string]any:
+		return valueAsString(v["effort"])
+	case map[string]string:
+		return strings.TrimSpace(v["effort"])
+	}
+	return ""
+}
+
+func valueAsString(v any) string {
+	switch typed := v.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case fmt.Stringer:
+		return strings.TrimSpace(typed.String())
+	default:
+		return ""
+	}
 }
 
 func promptOptions(lines ...string) *ui.PromptOptions {

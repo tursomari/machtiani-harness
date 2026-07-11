@@ -60,7 +60,7 @@ func RunShellAgentOnly(ctx context.Context, opts RunOptions, req shellagent.Requ
 	if req.PreconstructedMessages == nil || len(req.PreconstructedMessages) == 0 {
 		return res, fmt.Errorf("shell-agent request has no preconstructed messages")
 	}
-	result, err := shellagent.Run(ctx, req)
+	result, err := shellAgentRun(ctx, req)
 	if err != nil {
 		return res, err
 	}

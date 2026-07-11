@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/tursomari/machtiani/agent/internal/transcript"
+	"github.com/tursomari/machtiani/agent/internal/ui"
 )
 
 // ---------------------------------------------------------------------------
@@ -133,7 +134,7 @@ func TestStartLLMCacheUsageLoggerDiagWriterCapturesListenerError(t *testing.T) {
 	missingPath := filepath.Join(t.TempDir(), "does-not-exist.jsonl")
 
 	var diagBuf bytes.Buffer
-	cancel, done, err := startLLMCacheUsageLogger(nil, missingPath, &diagBuf)
+	cancel, done, err := startLLMCacheUsageLogger(nil, missingPath, &diagBuf, ui.TokenUsageUpdatedEvent{}, nil)
 	if err != nil {
 		t.Fatalf("startLLMCacheUsageLogger: %v", err)
 	}

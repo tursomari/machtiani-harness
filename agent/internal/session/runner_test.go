@@ -1,6 +1,7 @@
 package session
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -31,6 +32,37 @@ func TestIsLocalSessionEnvironment(t *testing.T) {
 				t.Fatalf("isLocalSessionEnvironment() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestTerminalTeeWriterWritesCaptureAndExposesTerminalFD(t *testing.T) {
+	terminalPath := filepath.Join(t.TempDir(), "terminal")
+	terminal, err := os.Create(terminalPath)
+	if err != nil {
+		t.Fatalf("create terminal file: %v", err)
+	}
+	defer terminal.Close()
+
+	var capture bytes.Buffer
+	writer := terminalTeeWriter{terminal: terminal, capture: &capture}
+	if got := writer.Fd(); got != terminal.Fd() {
+		t.Fatalf("Fd() = %d, want %d", got, terminal.Fd())
+	}
+	if _, err := writer.Write([]byte("footer\n")); err != nil {
+		t.Fatalf("Write returned error: %v", err)
+	}
+	if got := capture.String(); got != "footer\n" {
+		t.Fatalf("capture = %q, want footer line", got)
+	}
+	if _, err := terminal.Seek(0, 0); err != nil {
+		t.Fatalf("seek terminal file: %v", err)
+	}
+	data, err := os.ReadFile(terminalPath)
+	if err != nil {
+		t.Fatalf("read terminal file: %v", err)
+	}
+	if got := string(data); got != "footer\n" {
+		t.Fatalf("terminal = %q, want footer line", got)
 	}
 }
 

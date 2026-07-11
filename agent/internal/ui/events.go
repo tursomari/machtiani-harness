@@ -1,5 +1,7 @@
 package ui
 
+import "time"
+
 // DisplayEvent is the interface implemented by all event types.
 // Each event returns a unique string discriminator via Type().
 type DisplayEvent interface {
@@ -17,7 +19,12 @@ const (
 
 // SessionStartedEvent signals the beginning of an agent session.
 type SessionStartedEvent struct {
-	Goal string
+	SessionID  string
+	Goal       string
+	Turn       int
+	Elapsed    time.Duration
+	TokenUsage TokenUsageUpdatedEvent
+	Models     FooterModelMetadata
 }
 
 func (e SessionStartedEvent) Type() string { return "SessionStarted" }
@@ -62,8 +69,12 @@ func (e PromptAbortedEvent) Type() string { return "PromptAborted" }
 
 // ActionExecutedEvent represents an action being performed by the agent.
 type ActionExecutedEvent struct {
-	Step        int
-	Description string
+	Step             int
+	StepLimit        int
+	RemainingSteps   int
+	CommandsExecuted int
+	Command          string
+	Description      string
 }
 
 func (e ActionExecutedEvent) Type() string { return "ActionExecuted" }
@@ -76,12 +87,58 @@ type NotificationEvent struct {
 
 func (e NotificationEvent) Type() string { return "Notification" }
 
+// TokenUsageUpdatedEvent carries cumulative LLM token usage for the session.
+type TokenUsageUpdatedEvent struct {
+	InputHit  int
+	InputMiss int
+	Output    int
+}
+
+func (e TokenUsageUpdatedEvent) Type() string { return "TokenUsageUpdated" }
+
+// TurnStatusUpdatedEvent carries the current agent turn for footer display.
+type TurnStatusUpdatedEvent struct {
+	Turn int
+}
+
+func (e TurnStatusUpdatedEvent) Type() string { return "TurnStatusUpdated" }
+
+// FooterModelMetadata carries model labels for compact footer display.
+type FooterModelMetadata struct {
+	OrchestratorLabel     string
+	OrchestratorReasoning string
+	ShellAgentLabel       string
+	ShellAgentReasoning   string
+}
+
 // FinalAnswerEvent carries the final rendered answer text.
 type FinalAnswerEvent struct {
 	RenderedText string
 }
 
 func (e FinalAnswerEvent) Type() string { return "FinalAnswer" }
+
+// ContinuationHintEvent renders the concise instruction used to resume a
+// session. DetailLines are populated only for verbose output.
+type ContinuationHintEvent struct {
+	Header      string
+	DetailLines []string
+	Instruction string
+	Command     string
+}
+
+func (e ContinuationHintEvent) Type() string { return "ContinuationHint" }
+
+// UserInputHintEvent renders a suspended-session question and its resume
+// command without requiring callers to embed terminal styling in raw strings.
+type UserInputHintEvent struct {
+	SessionID string
+	Context   string
+	Question  string
+	Command   string
+}
+
+func (e UserInputHintEvent) Type() string { return "UserInputHint" }
 
 // ModeTaskPlanDisplayEvent renders an initial set of mode tasks.
 type ModeTaskPlanDisplayEvent struct {

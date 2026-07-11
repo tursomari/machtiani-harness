@@ -19,10 +19,7 @@ func (r *runLifecycleState) completeSession(bus *ui.EventBus, diagWriter io.Writ
 		r.turnsCompleted = turnsCompleted
 		return err
 	}
-	presentFinalAnswer(bus, finalAnswer, diagWriter)
-	if bus != nil {
-		bus.Emit(ui.SessionEndedEvent{})
-	}
+	presentFinalAnswer(bus, finalAnswer, diagWriter, r.presentation)
 	r.turnsCompleted = turnsCompleted
 	if err := r.transition(StateSuccess); err != nil {
 		return err
@@ -35,6 +32,8 @@ func (r *runLifecycleState) completeSession(bus *ui.EventBus, diagWriter io.Writ
 	r.pendingState = &state
 	r.hydrateState(r.pendingState, diagWriter)
 	r.printResumeHint(bus, diagWriter, "=== SESSION COMPLETE ===", r.turnsCompleted)
+	if bus != nil {
+		bus.Emit(ui.SessionEndedEvent{})
+	}
 	return nil
 }
-

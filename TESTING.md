@@ -18,6 +18,7 @@ cd ..
 ```
 
 - No environment variables are required.
+
 ## Integration Tests
 All integration harnesses default to deterministic stub or dry-run behavior. Export the listed environment variables to invoke live LLM calls.
 
@@ -69,6 +70,113 @@ bash agent/internal/mct/tests/run-undici-readme-integration.sh
 - Uses stub providers by default (`MCT_LLM_TEST_STUB=stub-echo`, `MCT_README_TEST_STUB=mock`).
 - Supply the `OPENAI_*` variables to exercise live mode; the script falls back to stub credentials otherwise.
 - Produces artifacts in `agent/internal/mct/tests/artifacts/readme/` and cleans its temp workspace unless `KEEP_README_TEST_TMP=true` is set.
+
+## TUI Record and Replay
+
+Use the record/replay harness when changing terminal output, footer rendering, startup headers, token accounting, final-answer presentation, or anything else where a normal stdout diff misses cursor movement. The harness records one live `mct-agent run`, captures the LLM responses as fixtures, then replays the same prompt against a local replay server.
+
+### Record a Fresh Session
+
+Build the binaries you want to test, then make sure the repo-built `mct-agent` is first on `PATH`:
+
+```bash
+cd agent
+GOCACHE=$(pwd)/.gocache go build -o ../.data/bin/mct-agent ./cmd/mct-agent
+GOCACHE=$(pwd)/.gocache go build -o ../.data/bin/replay-server ./cmd/replay-server
+cd ..
+
+PATH="$PWD/.data/bin:$PATH" ./scripts/tui-record-replay.sh \
+  --name planner-shell-agent-cache \
+  --prompt-file .data/tui-replay/planner-shell-agent-cache/prompt.txt
+```
+
+Use `--verbose` to capture the diagnostic control path. Use
+`--theme machtiani-dark` (or `machtiani-light`, `terminal`, `none`) to pin the
+visual profile in both live and replay phases.
+
+The harness prints `run_dir=...`. A typical path is:
+
+```text
+.data/tui-replay/planner-shell-agent-cache/runs/20260710T010414Z
+```
+
+The live phase requires network access to the configured LLM provider. The replay phase does not; it uses the captured fixtures.
+
+### Artifact Layout
+
+Each run directory contains:
+
+- `live.terminal.log` and `replay.terminal.log` — full PTY transcripts captured with `script(1)`. Use these for user-visible TUI regressions, because they include ANSI cursor movement.
+- `live.tui.txt` and `replay.tui.txt` — formatter-level capture from `MACHTIANI_TUI_CAPTURE`. Use these for event-rendering checks, but not for exact terminal repaint behavior.
+- `live.llm-fixtures.jsonl` — recorded provider responses used by replay.
+- `replay.config.toml` — sanitized config whose provider URLs point to the local replay server and whose API keys are `dummy`.
+- `manifest.txt` — run directory, binary paths, session ids, fixture count, line counts, trajectory action counts, and final-answer hashes.
+- `mct-agent.version.txt`, `binaries.txt`, `live.exit`, `replay.exit`, and `replay-server.log` — provenance and process diagnostics.
+
+### What to Check
+
+Start with `manifest.txt`. For a healthy deterministic replay, the live and replay final-answer hashes should match, and event/action counts should be equal:
+
+```bash
+RUN_DIR=.data/tui-replay/planner-shell-agent-cache/runs/<timestamp>
+cat "$RUN_DIR/manifest.txt"
+```
+
+For TUI-specific checks, inspect targeted substrings instead of line-by-line plaintext diffs. ANSI scroll regions and footer repainting can make stripped logs look concatenated.
+
+Useful checks:
+
+```bash
+rg -- 'Continue with your next instruction:|--session-id|tokens|session agent-|turn [0-9]+' "$RUN_DIR/replay.terminal.log"
+rg '^\[trajectory\] unified stream:|^Session: ' "$RUN_DIR/replay.terminal.log" || true
+rg 'achtiani|\x1b\[6n|\x1b\]11;\?' "$RUN_DIR/replay.terminal.log" || true
+```
+
+Expected normal-output behavior:
+
+- no startup `[trajectory] unified stream: ...`
+- no startup `Session: <id>`
+- normal completion output contains only the concise `--session-id <id>` continuation command; the detailed completion summary is reserved for `--verbose`
+- final footer includes elapsed time, token totals, turn, and `session <id>`
+- fresh-session logo appears once when that feature is enabled
+- no unexpected terminal cursor/background queries such as `ESC[6n` or `OSC 11`; theme selection never probes the background
+
+### Development Feedback Loop
+
+Use the full harness when you need new live fixtures, then iterate quickly with fixture replay:
+
+1. Build the local binary into `.data/bin/mct-agent`.
+2. Run `scripts/tui-record-replay.sh` once to create a fresh run directory.
+3. Inspect `live.terminal.log`, `replay.terminal.log`, and `manifest.txt`.
+4. Make a focused code change.
+5. Rebuild `.data/bin/mct-agent`.
+6. Replay from the existing `live.llm-fixtures.jsonl` instead of spending another live LLM run.
+
+Manual replay from an existing fixture:
+
+```bash
+SRC=.data/tui-replay/planner-shell-agent-cache/runs/<timestamp>
+RUN_DIR=.data/tui-replay/planner-shell-agent-cache/runs/manual-replay
+PORT=20115
+mkdir -p "$RUN_DIR"
+cp "$SRC/replay.config.toml" "$RUN_DIR/replay.config.toml"
+perl -0pi -e "s#http://127\\.0\\.0\\.1:[0-9]+#http://127.0.0.1:$PORT#g" "$RUN_DIR/replay.config.toml"
+
+.data/bin/replay-server \
+  -port "$PORT" \
+  -fixtures "$SRC/live.llm-fixtures.jsonl" \
+  > "$RUN_DIR/replay-server.log" 2>&1 &
+server_pid=$!
+
+PROMPT="$(cat "$SRC/prompt.txt")"
+MACHTIANI_CONFIG="$PWD/$RUN_DIR/replay.config.toml" \
+  script -q -f -e -c "env MACHTIANI_CONFIG='$PWD/$RUN_DIR/replay.config.toml' MACHTIANI_TUI_CAPTURE='$PWD/$RUN_DIR/replay.tui.txt' '$PWD/.data/bin/mct-agent' run --text '$PROMPT' --turn-timeout 0" \
+  "$RUN_DIR/replay.terminal.log"
+
+kill "$server_pid"
+```
+
+When running under a sandbox, the replay server needs permission to bind a local `127.0.0.1` port. If the replay appears stuck with zero token usage, check `replay-server.log` for a socket bind error.
 
 ## Evaluation
 
@@ -158,6 +266,9 @@ The original evaluation pipeline, documented in scripts/run_eval.sh itself. It c
 - `DISABLE_MCT_STUBS` — set to `true` to disable stubbed LLM providers in the undici harness and force real calls.
 - `KEEP_AGENT_TMP`, `KEEP_README_TEST_TMP` — keep the temporary workspaces for post-run inspection.
 - `MAX_STEPS`, `TIMEOUT_PER_TURN` — tuning knobs for the undici harness plan/execution loop.
+- `MACHTIANI_TUI_CAPTURE` — formatter-level TUI capture path. The record/replay harness sets this automatically for `live.tui.txt` and `replay.tui.txt`.
+- `MACHTIANI_THEME` — overrides `[ui].theme` with `terminal`, `machtiani-dark`, `machtiani-light`, or `none`. The record/replay harness also accepts `--theme`.
+- `LLM_RECORD_FIXTURES` — JSONL fixture output path for recorded LLM responses. The record/replay harness sets this automatically for `live.llm-fixtures.jsonl`.
 
 ## Troubleshooting
 - Unit tests should pass without extra setup; if they fail due to missing cache directories, ensure your shell honors the `GOCACHE` export above.

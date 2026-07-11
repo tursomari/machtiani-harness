@@ -185,6 +185,9 @@ func TestPrintResumeHintDiagWriterFallback(t *testing.T) {
 	runState.printResumeHint(nil, &diagBuf, "=== SESSION COMPLETE ===", 3)
 
 	output := diagBuf.String()
+	if !strings.HasPrefix(output, "\n=== SESSION COMPLETE ===\n") {
+		t.Fatalf("expected one blank line before verbose completion output, got:\n%q", output)
+	}
 	for _, want := range []string{
 		"=== SESSION COMPLETE ===",
 		"Session ID: resume-hint-test",
@@ -216,24 +219,28 @@ func TestPrintResumeHintDisplayPath(t *testing.T) {
 	events := bus.Subscribe()
 	runState.printResumeHint(bus, io.Discard, "=== SESSION INTERRUPTED ===", 5)
 
-	// The bus should have received multiple RawStringEvent emissions.
-	var writtenStrings []string
+	var hint ui.ContinuationHintEvent
+	seen := false
 	for {
 		select {
 		case e := <-events:
-			if re, ok := e.(ui.RawStringEvent); ok {
-				writtenStrings = append(writtenStrings, re.Text)
+			if value, ok := e.(ui.ContinuationHintEvent); ok {
+				hint = value
+				seen = true
 			}
 		default:
 			goto donePrintResume
 		}
 	}
 donePrintResume:
-	if len(writtenStrings) == 0 {
-		t.Fatal("expected RawStringEvent to be emitted")
+	if !seen {
+		t.Fatal("expected ContinuationHintEvent to be emitted")
+	}
+	if hint.Header != "=== SESSION INTERRUPTED ===" {
+		t.Fatalf("unexpected continuation header %q", hint.Header)
 	}
 
-	joined := strings.Join(writtenStrings, "\n")
+	joined := hint.Header + "\n" + strings.Join(hint.DetailLines, "\n") + "\n" + hint.Command
 	for _, want := range []string{
 		"=== SESSION INTERRUPTED ===",
 		"Session ID: resume-hint-display",
@@ -243,6 +250,145 @@ donePrintResume:
 	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("expected %q in display output, got:\n%s", want, joined)
+		}
+	}
+}
+
+func TestPrintResumeHintNonVerboseOnlyPrintsContinuation(t *testing.T) {
+	runState := newRunLifecycleState(
+		context.Background(),
+		legacyConfig{verbose: false},
+		"resume-hint-quiet",
+		"Goal that should stay hidden",
+		"Goal that should stay hidden",
+		"",
+		"",
+		"",
+		0, "",
+		nil,
+	)
+
+	command := `mct-agent run "<next instruction>" --session-id resume-hint-quiet`
+	rule := strings.Repeat("-", len("  $ "+command))
+	want := "Continue with your next instruction:\n  " + rule + "\n  $ " + command + "\n  " + rule
+
+	var diagBuf bytes.Buffer
+	runState.printResumeHint(nil, &diagBuf, "=== SESSION COMPLETE ===", 4)
+	if got := diagBuf.String(); got != "\n"+want+"\n" {
+		t.Fatalf("quiet diag output mismatch\nwant: %q\n got: %q", "\n"+want+"\n", got)
+	}
+
+	bus := ui.NewEventBus(0)
+	events := bus.Subscribe()
+	runState.printResumeHint(bus, io.Discard, "=== SESSION COMPLETE ===", 4)
+
+	select {
+	case event := <-events:
+		hint, ok := event.(ui.ContinuationHintEvent)
+		if !ok {
+			t.Fatalf("event type = %T, want ui.ContinuationHintEvent", event)
+		}
+		if hint.Header != "" || len(hint.DetailLines) != 0 {
+			t.Fatalf("quiet continuation leaked verbose detail: %#v", hint)
+		}
+		if hint.Command != `mct-agent run "<next instruction>" --session-id resume-hint-quiet` {
+			t.Fatalf("quiet display command mismatch: %q", hint.Command)
+		}
+	default:
+		t.Fatal("expected quiet continuation event")
+	}
+
+	select {
+	case event := <-events:
+		t.Fatalf("unexpected extra quiet output event: %#v", event)
+	default:
+	}
+}
+
+func TestShellAgentResumeHintDisplayPath(t *testing.T) {
+	runState := newRunLifecycleState(
+		context.Background(),
+		legacyConfig{verbose: false},
+		"shell-resume-display",
+		"Goal with interrupted shell-agent work",
+		"Goal with interrupted shell-agent work",
+		"",
+		"",
+		"",
+		0, "",
+		nil,
+	)
+
+	bus := ui.NewEventBus(0)
+	events := bus.Subscribe()
+	runState.printShellAgentResumeHint(bus, io.Discard)
+
+	select {
+	case event := <-events:
+		hint, ok := event.(ui.ContinuationHintEvent)
+		if !ok {
+			t.Fatalf("event type = %T, want ui.ContinuationHintEvent", event)
+		}
+		if hint.Header != "=== SHELL-AGENT INTERRUPTED ===" {
+			t.Fatalf("header = %q", hint.Header)
+		}
+		if hint.Instruction != "Resume the interrupted shell-agent work:" {
+			t.Fatalf("instruction = %q", hint.Instruction)
+		}
+		if hint.Command != "mct-agent run --session-id shell-resume-display" {
+			t.Fatalf("command = %q", hint.Command)
+		}
+		if got := strings.Join(hint.DetailLines, "\n"); !strings.Contains(got, "Shell-agent work is resumable.") {
+			t.Fatalf("detail lines missing resumable note: %#v", hint.DetailLines)
+		}
+	default:
+		t.Fatal("expected shell-agent resume hint event")
+	}
+}
+
+func TestInterruptedResultWithHintEmitsShellAgentResumeInstruction(t *testing.T) {
+	runState := newRunLifecycleState(
+		context.Background(),
+		legacyConfig{verbose: false},
+		"shell-resume-interrupted",
+		"Goal with interrupted shell-agent work",
+		"Goal with interrupted shell-agent work",
+		"",
+		"",
+		"",
+		0, "",
+		nil,
+	)
+	runState.recorder = &conversationRecorder{shellAgentResumable: true}
+
+	bus := ui.NewEventBus(0)
+	events := bus.Subscribe()
+	result := runState.interruptedResultWithHint(bus, io.Discard, context.Canceled)
+	if result.ExitCode != 130 {
+		t.Fatalf("ExitCode = %d, want 130", result.ExitCode)
+	}
+
+	var sawHint, sawEnded bool
+	for {
+		select {
+		case event := <-events:
+			switch e := event.(type) {
+			case ui.ContinuationHintEvent:
+				sawHint = true
+				if e.Command != "mct-agent run --session-id shell-resume-interrupted" {
+					t.Fatalf("command = %q", e.Command)
+				}
+			case ui.SessionEndedEvent:
+				sawEnded = true
+			}
+		default:
+			if !sawHint {
+				t.Fatal("expected shell-agent resume hint")
+			}
+			if !sawEnded {
+				t.Fatal("expected session ended event after shell-agent resume hint")
+			}
+			return
 		}
 	}
 }

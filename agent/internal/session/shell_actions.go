@@ -28,9 +28,9 @@ func startShellActionStreamer(bus *ui.EventBus, path string, diagWriter io.Write
 	go func() {
 		defer close(done)
 		err := sub.Subscribe(ctx, opts, func(ctx context.Context, evt listener.Event) error {
-			line := formatShellActionLine(evt.Payload)
-			if line != "" {
-				bus.Emit(ui.ActionExecutedEvent{Description: line})
+			action, ok := shellActionEventFromPayload(evt.Payload)
+			if ok {
+				bus.Emit(action)
 			}
 			return nil
 		})
@@ -41,23 +41,32 @@ func startShellActionStreamer(bus *ui.EventBus, path string, diagWriter io.Write
 	return cancel, done, nil
 }
 
-func formatShellActionLine(payload map[string]any) string {
+func shellActionEventFromPayload(payload map[string]any) (ui.ActionExecutedEvent, bool) {
 	if payload == nil {
-		return ""
+		return ui.ActionExecutedEvent{}, false
 	}
-	description := strings.TrimSpace(stringFromAny(payload["description"]))
+	command := strings.TrimSpace(stringFromAny(payload["command"]))
+	description := ui.CleanActionDescription(stringFromAny(payload["description"]))
 	if description == "" {
-		description = strings.TrimSpace(stringFromAny(payload["command"]))
+		description = command
 	}
-	if description == "" {
-		return ""
+	if description == "" && command == "" {
+		return ui.ActionExecutedEvent{}, false
 	}
 
-	modelCallsUsed, hasModelCallsUsed := intFromAny(payload["model_calls_used"])
-	stepLimit, hasStepLimit := intFromAny(payload["step_limit"])
-	commandsExecuted, hasCommandsExecuted := intFromAny(payload["commands_executed"])
-	if hasModelCallsUsed && hasStepLimit && hasCommandsExecuted && modelCallsUsed >= 0 && stepLimit > 0 && commandsExecuted >= 0 {
-		return fmt.Sprintf("[shell step %d/%d cmd %d] %s", modelCallsUsed, stepLimit, commandsExecuted, description)
+	action := ui.ActionExecutedEvent{
+		Command:     command,
+		Description: description,
 	}
-	return fmt.Sprintf("[shell] %s", description)
+	if stepLimit, ok := intFromAny(payload["step_limit"]); ok && stepLimit >= 0 {
+		action.StepLimit = stepLimit
+	}
+	if remainingSteps, ok := intFromAny(payload["remaining_steps"]); ok && remainingSteps >= 0 {
+		action.RemainingSteps = remainingSteps
+	}
+	if commandsExecuted, ok := intFromAny(payload["commands_executed"]); ok && commandsExecuted >= 0 {
+		action.CommandsExecuted = commandsExecuted
+		action.Step = commandsExecuted
+	}
+	return action, true
 }

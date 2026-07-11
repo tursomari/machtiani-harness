@@ -20,8 +20,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/charmbracelet/glamour"
 	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
+	"github.com/tursomari/machtiani/agent/internal/presentation"
 	"github.com/tursomari/machtiani/agent/internal/trajectory"
 )
 
@@ -254,7 +254,7 @@ func applyCacheControl(ctx context.Context, messages []Message, model ResolvedMo
 		// stripping cache_control because total tokens dropped below threshold.
 		if activeIdx := cacheAnchorMessageIndex(messages); activeIdx >= 0 {
 			EmitCacheWarning(ctx, "threshold_stripped", map[string]any{
-				"anchor_sequence":  metadataInt(messages[activeIdx].Metadata, CacheAnchorSequenceMetadataKey),
+				"anchor_sequence": metadataInt(messages[activeIdx].Metadata, CacheAnchorSequenceMetadataKey),
 				"total_tokens":    totalTokens,
 				"threshold":       model.CacheTriggerThreshold,
 				"anchor_index":    activeIdx,
@@ -517,10 +517,10 @@ func detectCachePrefixDrift(ctx context.Context, useStoredAnchor bool, messages 
 		return
 	}
 	EmitCacheWarning(ctx, "prefix_drift", map[string]any{
-		"anchor_sequence":        metadataInt(messages[anchorIndex].Metadata, CacheAnchorSequenceMetadataKey),
-		"anchor_index":           anchorIndex,
-		"prefix_hash_expected":   storedHashStr,
-		"prefix_hash_actual":     currentHash,
+		"anchor_sequence":      metadataInt(messages[anchorIndex].Metadata, CacheAnchorSequenceMetadataKey),
+		"anchor_index":         anchorIndex,
+		"prefix_hash_expected": storedHashStr,
+		"prefix_hash_actual":   currentHash,
 	})
 }
 
@@ -1072,9 +1072,6 @@ func emitCacheUsage(ctx context.Context, model ResolvedModel, usage *responseUsa
 	if usage == nil {
 		return
 	}
-	if usage.PromptTokensDetails == nil && usage.CacheDiscount == nil {
-		return
-	}
 	if observer := cacheUsageObserverFromContext(ctx); observer != nil {
 		info := CacheUsageInfo{}
 		if usage.PromptTokensDetails != nil {
@@ -1095,6 +1092,10 @@ func emitCacheUsage(ctx context.Context, model ResolvedModel, usage *responseUsa
 	if usage.PromptTokensDetails != nil {
 		payload["cached_tokens"] = usage.PromptTokensDetails.CachedTokens
 		payload["cache_write_tokens"] = usage.PromptTokensDetails.CacheWriteTokens
+		payload["prompt_tokens_details"] = map[string]any{
+			"cached_tokens":      usage.PromptTokensDetails.CachedTokens,
+			"cache_write_tokens": usage.PromptTokensDetails.CacheWriteTokens,
+		}
 	}
 	if usage.CacheDiscount != nil {
 		payload["cache_discount"] = *usage.CacheDiscount
@@ -1573,8 +1574,8 @@ func executeStream(ctx context.Context, model ResolvedModel, body []byte, onToke
 // It's used to avoid burning full conversation tokens during 429 rate-limit retries.
 func probeModel(ctx context.Context, model ResolvedModel) error {
 	probePayload := map[string]any{
-		"model":    model.Model,
-		"messages": []Message{{Role: "user", Content: "."}},
+		"model":      model.Model,
+		"messages":   []Message{{Role: "user", Content: "."}},
 		"max_tokens": 1,
 	}
 	body, err := json.Marshal(probePayload)
@@ -1753,6 +1754,9 @@ func performStream(req *http.Request, onToken func(string)) (string, *responseUs
 
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
+		if IsRecording() {
+			RecordRoundTrip(req, nil, resp.StatusCode, resp.Header, b)
+		}
 		return "", nil, &HTTPResponseError{URL: req.URL.String(), Status: resp.StatusCode, Body: strings.TrimSpace(string(b)), Header: resp.Header.Clone()}
 	}
 
@@ -1795,8 +1799,14 @@ func performStream(req *http.Request, onToken func(string)) (string, *responseUs
 			break
 		}
 		if err != nil {
+			if resp != nil && IsRecording() {
+				RecordRoundTrip(req, nil, resp.StatusCode, resp.Header, []byte(full.String()))
+			}
 			return full.String(), usage, err
 		}
+	}
+	if IsRecording() {
+		RecordRoundTrip(req, nil, resp.StatusCode, resp.Header, []byte(full.String()))
 	}
 	return full.String(), usage, nil
 }
@@ -1813,7 +1823,18 @@ func performNonStream(req *http.Request) (string, *responseUsage, error) {
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
+		if IsRecording() {
+			RecordRoundTrip(req, nil, resp.StatusCode, resp.Header, body)
+		}
 		return "", nil, &HTTPResponseError{URL: req.URL.String(), Status: resp.StatusCode, Body: strings.TrimSpace(string(body)), Header: resp.Header.Clone()}
+	}
+
+	rawBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", nil, err
+	}
+	if IsRecording() {
+		RecordRoundTrip(req, nil, resp.StatusCode, resp.Header, rawBody)
 	}
 
 	var parsed struct {
@@ -1824,7 +1845,7 @@ func performNonStream(req *http.Request) (string, *responseUsage, error) {
 		} `json:"choices"`
 		Usage *responseUsage `json:"usage"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+	if err := json.NewDecoder(bytes.NewReader(rawBody)).Decode(&parsed); err != nil {
 		return "", nil, err
 	}
 	if len(parsed.Choices) == 0 {
@@ -2021,16 +2042,23 @@ func buildStubResponse(mode string, messages []Message) string {
 // Markdown streaming helpers remain unchanged
 
 type MarkdownStreamer struct {
-	renderer *glamour.TermRenderer
+	renderer *presentation.MarkdownRenderer
 	buf      strings.Builder
 	inCode   bool
 }
 
-func NewMarkdownStreamer() (*MarkdownStreamer, error) {
-	r, err := glamour.NewTermRenderer(
-		glamour.WithAutoStyle(),
-		glamour.WithPreservedNewLines(),
-	)
+func NewMarkdownStreamer(themes ...presentation.Theme) (*MarkdownStreamer, error) {
+	var theme presentation.Theme
+	if len(themes) > 0 {
+		theme = themes[0]
+	} else {
+		var err error
+		theme, err = presentation.Resolve(string(presentation.ProfileTerminal), os.Stdout)
+		if err != nil {
+			return nil, err
+		}
+	}
+	r, err := presentation.NewMarkdownRenderer(theme, true)
 	if err != nil {
 		return nil, err
 	}

@@ -59,10 +59,17 @@ run_session() {
   local rc=$?
 
   local sid
-  # Try several known formats (stderr emits "Session: <id>" and
-  # "[trajectory] unified stream: <path>").
-  sid=$(grep -oE "Session: agent-[0-9TZ]+-[0-9]+" "$stderr_log" 2>/dev/null \
-        | head -1 | awk '{print $2}' || true)
+  # Try several known formats from stdout/stderr.
+  sid=$(grep -oE "Session ID: agent-[0-9TZ]+-[0-9]+" "$stdout_log" "$stderr_log" 2>/dev/null \
+        | head -1 | awk '{print $NF}' || true)
+  if [[ -z "$sid" ]]; then
+    sid=$(grep -oE "Session: agent-[0-9TZ]+-[0-9]+" "$stderr_log" 2>/dev/null \
+          | head -1 | awk '{print $2}' || true)
+  fi
+  if [[ -z "$sid" ]]; then
+    sid=$(grep -oE "session agent-[0-9TZ]+-[0-9]+" "$stdout_log" "$stderr_log" 2>/dev/null \
+          | head -1 | awk '{print $2}' || true)
+  fi
   if [[ -z "$sid" ]]; then
     sid=$(grep -oE "/sessions/(agent-[0-9TZ]+-[0-9]+)/trajectory" "$stderr_log" 2>/dev/null \
           | head -1 | awk -F/ '{print $3}' || true)
