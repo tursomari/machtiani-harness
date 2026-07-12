@@ -2,6 +2,16 @@
 
 This is the canonical, self-contained guide for every test harness in the `mct-agent` monorepo. Test commands, prerequisites, environment variables, artifacts, and debugging guidance belong here rather than in component-local testing documents.
 
+## Test Layout
+
+- Go `*_test.go` files stay beside the packages they exercise.
+- `agent/tests/` owns integration harnesses specific to the `mct-agent` binary and their helpers.
+- `tests/smoke/` owns the clean-container smoke Dockerfile, host runner, and container assertions.
+- `tests/tui/` owns whole-terminal record/replay regression tooling.
+- `tests/python/` owns Python adapter tests.
+- Other root `tests/` subtrees hold cross-component fixtures and integration harnesses such as Undici.
+- `scripts/` retains installation, benchmark, treatment, and evaluation runners; those stable paths are intentionally separate from test harnesses.
+
 ## Prerequisites
 - Go 1.23+ installed and on PATH.
 - `git` for cloning fixture repositories during integration tests.
@@ -20,6 +30,84 @@ cd ..
 
 - No environment variables are required.
 
+### Targeted Component Suites
+
+The root sweep covers the standard Go suites below. Use these commands when focusing on one component or enabling a non-default build tag.
+
+#### File Discovery
+
+```bash
+cd agent/internal/file-discovery
+go test ./...
+go test ./e2e -v
+go test ./internal/discovery -run TestToolCallExecution_RealCommands -v
+go test -tags e2e_slow_rg ./e2e -run CmdTimeout -v
+```
+
+The E2E and real-command suites require `rg`; tool-call execution also uses `sed` and `ls`. To exercise the flag suite in its component test image:
+
+```bash
+cd agent/internal/file-discovery
+docker build -f tests/Dockerfile -t file-discovery-tests .
+docker run --rm -it --entrypoint /usr/local/bin/run-flags.sh file-discovery-tests
+docker run --rm -it -e RUN_SLOW=1 --entrypoint /usr/local/bin/run-flags.sh file-discovery-tests
+```
+
+For the live Undici scenarios, first install the peripheral binary, then run the component harness with live credentials:
+
+```bash
+./scripts/install.sh --install-peripherals
+cd agent/internal/file-discovery/tests/undici
+export OPENAI_API_KEY=...
+export OPENAI_BASE_URL=...
+export OPENAI_MODEL=...
+bash ../run-live.sh
+```
+
+The live harness writes per-scenario stdout, stderr, and trajectory JSONL artifacts. Exit code `2` means the API key is missing; exit code `127` usually means a mounted binary has the wrong OS or architecture.
+
+#### Internal README Manager
+
+```bash
+cd agent/internal/mct
+GOCACHE=$(pwd)/.gocache go test ./...
+```
+
+Its five-scenario offline Undici synchronization harness is documented under “Internal Undici Regression Harness” below.
+
+#### Shell Agent
+
+From `agent/internal/shell-agent`:
+
+```bash
+GOCACHE=$(pwd)/.gocache go test ./...
+GOCACHE=$(pwd)/.gocache go test ./tests/integration/shell-integration
+GOCACHE=$(pwd)/.gocache go test ./tests/e2e/run-live
+GOCACHE=$(pwd)/.gocache go test ./tests/e2e/shell-subprocess
+GOCACHE=$(pwd)/.gocache go test ./tests/e2e/run-live \
+  -run TestRetryShellCallRecoversAfterTransientFailure
+```
+
+These deterministic suites exercise real local shell behavior but do not call model providers or require API keys.
+
+#### Snippet Discovery
+
+```bash
+cd agent/internal/snippet-discovery
+go test ./internal/...
+go test ./e2e -tags e2e_stub_llm
+```
+
+The tagged E2E suite builds a temporary binary and supplies stub responses through `SNIPPET_DISCOVERY_E2E_RESPONSES`.
+
+#### Python Pier Adapter
+
+```bash
+python3 tests/python/test_mct_pier_adapter.py
+```
+
+This suite tests protected-artifact staging and preservation commands and verifies that the existing benchmark treatment launchers do not expose verifier logs to agents.
+
 ## Clean-Container Smoke Test
 
 The Docker smoke test builds `mct-agent` in a clean image, initializes a new configuration, performs a live agent run, and verifies that the session conversation artifact was created.
@@ -28,7 +116,7 @@ The Docker smoke test builds `mct-agent` in a clean image, initializes a new con
 export TEST_API_KEY=sk_...
 export TEST_BASE_URL=https://api.openai.com/v1
 export TEST_MODEL=gpt-4o-mini
-./scripts/run-smoke-test.sh
+./tests/smoke/run.sh
 ```
 
 Prerequisites:
@@ -37,14 +125,16 @@ Prerequisites:
 - Git.
 - Non-empty `TEST_API_KEY`, `TEST_BASE_URL`, and `TEST_MODEL` values. This harness has no stub or dry-run mode.
 
-The host runner creates a detached Git worktree at the current committed `HEAD`, copies populated submodules from the host checkout, builds `Dockerfile.smoke`, and runs `scripts/smoke-test.sh` inside the resulting image. Consequently, uncommitted changes are not included. Commit the changes you intend to test, or manually build the image from the current checkout when iterating on the smoke infrastructure itself.
+The host runner creates a detached Git worktree at the current committed `HEAD`, copies populated submodules from the host checkout, builds `tests/smoke/Dockerfile`, and runs `tests/smoke/container.sh` inside the resulting image. Consequently, uncommitted changes are not included. Commit the changes you intend to test, or manually build the image from the current checkout when iterating on the smoke infrastructure itself.
 
 The container test must complete all of these checks before printing its success message:
 
-1. `mct-agent --version` runs.
-2. `mct-agent init` creates `.machtiani/config.toml` containing `TEST_MODEL`.
-3. `mct-agent run` completes successfully against the live provider.
-4. `.machtiani/sessions/*/artifacts/conversation.json` exists.
+1. A clean Git repository with an initial commit is created in `/workspace`.
+2. `mct-agent --version` runs.
+3. `mct-agent init` creates `.machtiani/config.toml` containing `TEST_MODEL`.
+4. `mct-agent sync` initializes the repository's internal README state.
+5. `mct-agent run` completes successfully against the live provider.
+6. `.machtiani/sessions/*/artifacts/conversation.json` exists.
 
 The scripts use `set -euo pipefail`; any failed command must produce a non-zero harness exit and must not print `SMOKE TEST PASSED`.
 
@@ -197,7 +287,7 @@ GOCACHE=$(pwd)/.gocache go build -o ../.data/bin/mct-agent ./cmd/mct-agent
 GOCACHE=$(pwd)/.gocache go build -o ../.data/bin/replay-server ./cmd/replay-server
 cd ..
 
-PATH="$PWD/.data/bin:$PATH" ./scripts/tui-record-replay.sh \
+PATH="$PWD/.data/bin:$PATH" ./tests/tui/record-replay.sh \
   --name planner-shell-agent-cache \
   --prompt-file .data/tui-replay/planner-shell-agent-cache/prompt.txt
 ```
@@ -258,7 +348,7 @@ Expected normal-output behavior:
 Use the full harness when you need new live fixtures, then iterate quickly with fixture replay:
 
 1. Build the local binary into `.data/bin/mct-agent`.
-2. Run `scripts/tui-record-replay.sh` once to create a fresh run directory.
+2. Run `tests/tui/record-replay.sh` once to create a fresh run directory.
 3. Inspect `live.terminal.log`, `replay.terminal.log`, and `manifest.txt`.
 4. Make a focused code change.
 5. Rebuild `.data/bin/mct-agent`.
@@ -302,7 +392,7 @@ go build -o ../.data/bin/replay-server ./cmd/replay-server
 cd ..
 ```
 
-Run it with `.data/bin/replay-server -fixtures <fixture.jsonl> -port <port>`. Responses are replayed sequentially; requests after fixture exhaustion receive HTTP 502. Prefer `scripts/tui-record-replay.sh` over manually coordinating these components unless debugging the recorder or server itself.
+Run it with `.data/bin/replay-server -fixtures <fixture.jsonl> -port <port>`. Responses are replayed sequentially; requests after fixture exhaustion receive HTTP 502. Prefer `tests/tui/record-replay.sh` over manually coordinating these components unless debugging the recorder or server itself.
 
 ## Evaluation
 
