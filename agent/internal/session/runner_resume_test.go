@@ -1001,6 +1001,111 @@ func TestPrepareRunBootstrapRestoresTagsWithoutResumeFlags(t *testing.T) {
 	}
 }
 
+func TestPrepareRunBootstrapRestoresModelsWithoutResumeFlags(t *testing.T) {
+	sessionID := fmt.Sprintf("model-bootstrap-resume-%d", time.Now().UnixNano())
+	convPath, err := artifacts.SessionConversationFile(sessionID)
+	if err != nil {
+		t.Fatalf("resolve conversation path: %v", err)
+	}
+	defer os.RemoveAll(filepath.Dir(filepath.Dir(convPath)))
+	if err := os.MkdirAll(filepath.Dir(convPath), 0o755); err != nil {
+		t.Fatalf("create conversation directory: %v", err)
+	}
+	conv := conversation.New(sessionID, "Model resume goal")
+	conv.Goal = "Model resume goal"
+	conv.ModelSelection = &conversation.ModelSelectionState{
+		OrchestratorAlias:  "original-orchestrator",
+		AnswerAlias:        "original-answer",
+		FileDiscoveryAlias: "original-discovery",
+		ShellAgentAlias:    "original-shell",
+	}
+	data, err := conv.Marshal()
+	if err != nil {
+		t.Fatalf("marshal conversation: %v", err)
+	}
+	if err := os.WriteFile(convPath, data, 0o644); err != nil {
+		t.Fatalf("write conversation: %v", err)
+	}
+
+	bootstrap, result, ok := prepareRunBootstrap(context.Background(), Options{
+		Config: Config{
+			SessionID:          sessionID,
+			OrchModel:          "deepseek-v4-flash",
+			AnswerModel:        "deepseek-v4-flash",
+			FileDiscoveryModel: "deepseek-v4-flash",
+			ShellAgentModel:    "deepseek-v4-flash",
+			OpenAIAPIKey:       "stale-direct-key",
+			OpenAIBaseURL:      "https://stale.example/v1",
+			OpenAIModel:        "deepseek-v4-flash",
+		},
+	}, io.Discard)
+	if !ok {
+		t.Fatalf("prepareRunBootstrap failed: %+v", result)
+	}
+	if got := bootstrap.cfg.orchModel; got != "original-orchestrator" {
+		t.Fatalf("orchestrator model = %q, want original-orchestrator", got)
+	}
+	if got := bootstrap.cfg.answerModel; got != "original-answer" {
+		t.Fatalf("answer model = %q, want original-answer", got)
+	}
+	if got := bootstrap.cfg.fileDiscoveryModel; got != "original-discovery" {
+		t.Fatalf("file discovery model = %q, want original-discovery", got)
+	}
+	if got := bootstrap.cfg.shellAgentModel; got != "original-shell" {
+		t.Fatalf("shell agent model = %q, want original-shell", got)
+	}
+	if bootstrap.cfg.openAIAPIKey != "" || bootstrap.cfg.openAIBaseURL != "" || bootstrap.cfg.openAIModel != "" {
+		t.Fatalf("stale direct model settings survived alias restore: %#v", bootstrap.cfg)
+	}
+}
+
+func TestRestorePersistedModelSelectionHonorsExplicitOverrides(t *testing.T) {
+	state := &SessionState{ModelSelection: &conversation.ModelSelectionState{
+		OrchestratorAlias:  "saved-orchestrator",
+		AnswerAlias:        "saved-answer",
+		FileDiscoveryAlias: "saved-discovery",
+		ShellAgentAlias:    "saved-shell",
+	}}
+	cfg := Config{
+		OrchModel:          "override-orchestrator",
+		AnswerModel:        "override-answer",
+		FileDiscoveryModel: "override-discovery",
+		ShellAgentModel:    "override-shell",
+		ModelOverrides: ModelOverrideFlags{
+			Orchestrator:  true,
+			Answer:        true,
+			FileDiscovery: true,
+			ShellAgent:    true,
+		},
+	}
+
+	restorePersistedModelSelection(&cfg, state)
+
+	if cfg.OrchModel != "override-orchestrator" || cfg.AnswerModel != "override-answer" ||
+		cfg.FileDiscoveryModel != "override-discovery" || cfg.ShellAgentModel != "override-shell" {
+		t.Fatalf("explicit model overrides were replaced: %#v", cfg)
+	}
+}
+
+func TestRestorePersistedModelSelectionHonorsExplicitDirectOverride(t *testing.T) {
+	state := &SessionState{ModelSelection: &conversation.ModelSelectionState{
+		OrchestratorAlias: "saved-orchestrator",
+	}}
+	cfg := Config{
+		OpenAIBaseURL: "https://override.example/v1",
+		OpenAIModel:   "override-direct-model",
+		ModelOverrides: ModelOverrideFlags{
+			Direct: true,
+		},
+	}
+
+	restorePersistedModelSelection(&cfg, state)
+
+	if cfg.OpenAIBaseURL != "https://override.example/v1" || cfg.OpenAIModel != "override-direct-model" {
+		t.Fatalf("explicit direct model override was replaced: %#v", cfg)
+	}
+}
+
 func TestRestorePersistedShellAgentTagsFromLegacyTrajectory(t *testing.T) {
 	sessionID := fmt.Sprintf("tagged-legacy-resume-%d", time.Now().UnixNano())
 	trajPath, err := artifacts.ShellAgentTrajectoryPath(sessionID, 1)

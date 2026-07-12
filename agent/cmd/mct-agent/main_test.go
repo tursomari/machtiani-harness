@@ -594,6 +594,40 @@ func TestFileFlagRegisteredInHelp(t *testing.T) {
 	}
 }
 
+func TestMarkExplicitModelOverrides(t *testing.T) {
+	cfg := session.Config{}
+	r := newRunFlagSet(&cfg)
+	if err := r.fs.Parse([]string{
+		"--model", "override-orchestrator",
+		"--answer-model", "override-answer",
+		"--file-discovery-model", "override-discovery",
+		"--shell-agent-model", "override-shell",
+	}); err != nil {
+		t.Fatalf("parse model overrides: %v", err)
+	}
+
+	markExplicitModelOverrides(r.fs, &cfg)
+
+	got := cfg.ModelOverrides
+	if !got.Orchestrator || !got.Answer || !got.FileDiscovery || !got.ShellAgent || got.Direct {
+		t.Fatalf("unexpected explicit model overrides: %#v", got)
+	}
+}
+
+func TestMarkExplicitDirectModelOverride(t *testing.T) {
+	cfg := session.Config{}
+	r := newRunFlagSet(&cfg)
+	if err := r.fs.Parse([]string{"--openai-model", "override-direct"}); err != nil {
+		t.Fatalf("parse direct model override: %v", err)
+	}
+
+	markExplicitModelOverrides(r.fs, &cfg)
+
+	if !cfg.ModelOverrides.Direct || cfg.ModelOverrides.Orchestrator {
+		t.Fatalf("unexpected explicit direct model override: %#v", cfg.ModelOverrides)
+	}
+}
+
 func TestFileFlagReadsGoalFromFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	goalPath := filepath.Join(tmpDir, "goal.txt")

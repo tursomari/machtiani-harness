@@ -451,7 +451,13 @@ func TestSessionStateFromConversationFields(t *testing.T) {
 		ShellAgentInterruptStep:  3,
 		AnswerTag:                "answer-review",
 		CommandTag:               "command-review",
-		TurnsCompleted:           5,
+		ModelSelection: &conversation.ModelSelectionState{
+			OrchestratorAlias:  "orchestrator-review",
+			AnswerAlias:        "answer-review-model",
+			FileDiscoveryAlias: "discovery-review",
+			ShellAgentAlias:    "shell-review",
+		},
+		TurnsCompleted: 5,
 		SuspendedUserInput: &conversation.SuspendedUserInputState{
 			Kind:        "user-directed-ask",
 			Question:    "Which index strategy do you prefer?",
@@ -502,6 +508,9 @@ func TestSessionStateFromConversationFields(t *testing.T) {
 	}
 	if state.AnswerTag != conv.AnswerTag || state.CommandTag != conv.CommandTag {
 		t.Fatalf("tag mismatch: got (%q, %q) want (%q, %q)", state.AnswerTag, state.CommandTag, conv.AnswerTag, conv.CommandTag)
+	}
+	if state.ModelSelection == nil || *state.ModelSelection != *conv.ModelSelection {
+		t.Fatalf("model selection mismatch: got %#v want %#v", state.ModelSelection, conv.ModelSelection)
 	}
 	if state.TurnsCompleted != conv.TurnsCompleted {
 		t.Fatalf("TurnsCompleted mismatch: got %d want %d", state.TurnsCompleted, conv.TurnsCompleted)

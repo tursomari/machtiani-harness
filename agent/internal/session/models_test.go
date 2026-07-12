@@ -1,6 +1,7 @@
 package session
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -164,6 +165,47 @@ func TestFooterModelMetadataIncludesReasoningAndShellFallback(t *testing.T) {
 	}
 	if got := meta.ShellAgentReasoning; got != "medium" {
 		t.Fatalf("shell reasoning = %q", got)
+	}
+}
+
+func TestPersistedModelSelectionCapturesEffectiveAliases(t *testing.T) {
+	models := componentModelRuntimes{
+		orchestrator: modelRuntime{alias: "original-orchestrator", usingAlias: true},
+		answer:       modelRuntime{alias: "original-answer", usingAlias: true},
+		fileDiscovery: modelRuntime{
+			alias:      "original-discovery",
+			usingAlias: true,
+		},
+	}
+
+	selection := persistedModelSelection(models, "original-shell")
+	if selection.OrchestratorAlias != "original-orchestrator" ||
+		selection.AnswerAlias != "original-answer" ||
+		selection.FileDiscoveryAlias != "original-discovery" ||
+		selection.ShellAgentAlias != "original-shell" {
+		t.Fatalf("unexpected persisted model selection: %#v", selection)
+	}
+}
+
+func TestPersistedModelSelectionCapturesDirectModelWithoutCredentials(t *testing.T) {
+	models := componentModelRuntimes{
+		orchestrator: modelRuntime{resolved: llm.ResolvedModel{
+			Model:   "upstream-model",
+			BaseURL: "https://provider.example/v1",
+			APIKey:  "must-not-be-persisted",
+		}},
+	}
+
+	selection := persistedModelSelection(models, "")
+	if selection.DirectModel != "upstream-model" || selection.DirectBaseURL != "https://provider.example/v1" {
+		t.Fatalf("unexpected direct model selection: %#v", selection)
+	}
+	data, err := json.Marshal(selection)
+	if err != nil {
+		t.Fatalf("marshal model selection: %v", err)
+	}
+	if strings.Contains(string(data), "must-not-be-persisted") {
+		t.Fatalf("persisted model selection contains API key: %s", data)
 	}
 }
 

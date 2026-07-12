@@ -51,6 +51,18 @@ type Config struct {
 	ModeInstructionDir    string
 	ShellAgentInterruptStep int
 	ShellAgentStepLog      string `json:"shell_agent_step_log,omitempty"`
+	ModelOverrides ModelOverrideFlags
+}
+
+// ModelOverrideFlags records which model selectors were explicitly present on
+// the current command line. Persisted session models only fill selectors that
+// the continuing command did not override.
+type ModelOverrideFlags struct {
+	Orchestrator  bool
+	Answer        bool
+	FileDiscovery bool
+	ShellAgent    bool
+	Direct        bool
 }
 
 type BuildInfo struct {

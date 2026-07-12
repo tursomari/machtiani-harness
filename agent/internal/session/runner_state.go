@@ -109,6 +109,7 @@ func prepareRunBootstrap(rootCtx context.Context, opts Options, diagWriter io.Wr
 		resumeMode = true
 		loadedState = state
 		resumePrompt = strings.TrimSpace(inputPrompt)
+		restorePersistedModelSelection(&cfgInput, state)
 		restorePersistedShellAgentTags(&cfgInput, state)
 
 		if loadedState != nil && loadedState.OriginalGoal == "" {
@@ -227,6 +228,36 @@ func prepareRunBootstrap(rootCtx context.Context, opts Options, diagWriter io.Wr
 		}
 	}
 	return bootstrap, Result{}, true
+}
+
+func restorePersistedModelSelection(cfg *Config, state *SessionState) {
+	if cfg == nil || state == nil || state.ModelSelection == nil {
+		return
+	}
+	selection := state.ModelSelection
+	if !cfg.ModelOverrides.Orchestrator && !cfg.ModelOverrides.Direct {
+		if alias := strings.TrimSpace(selection.OrchestratorAlias); alias != "" {
+			cfg.OrchModel = alias
+			cfg.OpenAIAPIKey = ""
+			cfg.OpenAIBaseURL = ""
+			cfg.OpenAIModel = ""
+		} else if model := strings.TrimSpace(selection.DirectModel); model != "" {
+			cfg.OrchModel = ""
+			cfg.OpenAIModel = model
+			if baseURL := strings.TrimSpace(selection.DirectBaseURL); baseURL != "" {
+				cfg.OpenAIBaseURL = baseURL
+			}
+		}
+	}
+	if alias := strings.TrimSpace(selection.AnswerAlias); alias != "" && !cfg.ModelOverrides.Answer {
+		cfg.AnswerModel = alias
+	}
+	if alias := strings.TrimSpace(selection.FileDiscoveryAlias); alias != "" && !cfg.ModelOverrides.FileDiscovery {
+		cfg.FileDiscoveryModel = alias
+	}
+	if alias := strings.TrimSpace(selection.ShellAgentAlias); alias != "" && !cfg.ModelOverrides.ShellAgent {
+		cfg.ShellAgentModel = alias
+	}
 }
 
 func validatedShellAgentResumeTrajectory(sessionID string, state *SessionState) (string, error) {

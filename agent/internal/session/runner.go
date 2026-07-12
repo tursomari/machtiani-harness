@@ -512,6 +512,13 @@ func runSession(ctx context.Context, opts Options) Result {
 	if shellAgentModel == "" && strings.TrimSpace(models.orchestrator.alias) != "" && models.orchestrator.usingAlias {
 		shellAgentModel = strings.TrimSpace(models.orchestrator.alias)
 	}
+	if conv.ModelSelection == nil {
+		conv.ModelSelection = persistedModelSelection(models, shellAgentModel)
+		if err := transcriptSetup.recorder.Save(); err != nil {
+			fmt.Fprintln(diagWriter, "Error persisting session model selection:", err)
+			return Result{ExitCode: 1, Err: err}
+		}
+	}
 
 	mctRunner := runner.Runner{
 		Verbose:                 cfg.verbose,

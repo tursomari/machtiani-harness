@@ -207,6 +207,7 @@ func handleRunCommand(args []string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
+	markExplicitModelOverrides(fs, &cfg)
 	if cfg.MaxInputTokens < 0 {
 		fmt.Fprintln(os.Stderr, "Error: --max-input-tokens must be zero or positive")
 		return 2
@@ -563,6 +564,19 @@ func handleSyncCommand(args []string) int {
 
 	fmt.Printf("Readme synced for commit %s\n", shortCommit(commit))
 	return 0
+}
+
+func markExplicitModelOverrides(fs *pflag.FlagSet, cfg *session.Config) {
+	if fs == nil || cfg == nil {
+		return
+	}
+	cfg.ModelOverrides = session.ModelOverrideFlags{
+		Orchestrator:  fs.Changed("model") || fs.Changed("orch-model") || fs.Changed("agent-model"),
+		Answer:        fs.Changed("answer-model"),
+		FileDiscovery: fs.Changed("file-discovery-model"),
+		ShellAgent:    fs.Changed("shell-agent-model"),
+		Direct:        fs.Changed("openai-api-key") || fs.Changed("openai-base-url") || fs.Changed("openai-model"),
+	}
 }
 
 func configureSessionFlags(fs *pflag.FlagSet, cfg *session.Config, paramFlags, paramJSON, apiKeyFlags *multiString) {

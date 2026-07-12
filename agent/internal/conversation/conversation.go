@@ -28,6 +28,7 @@ type Conversation struct {
 	ShellAgentInterruptStep  int                      `json:"shell_agent_interrupt_step,omitempty"`
 	AnswerTag                string                   `json:"answer_tag,omitempty"`
 	CommandTag               string                   `json:"command_tag,omitempty"`
+	ModelSelection           *ModelSelectionState     `json:"model_selection,omitempty"`
 	TurnsCompleted           int                      `json:"turns_completed"`
 	Goal                     string                   `json:"goal"`
 	OriginalPrompt           string                   `json:"original_prompt,omitempty"`
@@ -39,6 +40,26 @@ type Conversation struct {
 	TaskDescription          string                   `json:"task_description,omitempty"`
 	Status                   string                   `json:"status,omitempty"`
 	RuntimeStats             *RuntimeStatsState       `json:"runtime_stats,omitempty"`
+}
+
+// ModelSelectionState records the effective model choices for a session.
+// Aliases are persisted instead of credentials so a resumed session can
+// resolve the same configured models without storing secrets.
+type ModelSelectionState struct {
+	OrchestratorAlias  string `json:"orchestrator_alias,omitempty"`
+	AnswerAlias        string `json:"answer_alias,omitempty"`
+	FileDiscoveryAlias string `json:"file_discovery_alias,omitempty"`
+	ShellAgentAlias    string `json:"shell_agent_alias,omitempty"`
+	DirectModel        string `json:"direct_model,omitempty"`
+	DirectBaseURL      string `json:"direct_base_url,omitempty"`
+}
+
+func (s *ModelSelectionState) Clone() *ModelSelectionState {
+	if s == nil {
+		return nil
+	}
+	clone := *s
+	return &clone
 }
 
 type SuspendedUserInputState struct {

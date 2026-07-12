@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/tursomari/machtiani/agent/internal/conversation"
 	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
 	promptsvc "github.com/tursomari/machtiani/agent/internal/mct/prompt"
@@ -72,6 +73,27 @@ type componentModelRuntimes struct {
 	answer        modelRuntime
 	fileDiscovery modelRuntime
 	shellAgent    modelRuntime
+}
+
+func persistedModelSelection(models componentModelRuntimes, shellAgentAlias string) *conversation.ModelSelectionState {
+	selection := &conversation.ModelSelectionState{
+		OrchestratorAlias:  modelRuntimeAlias(models.orchestrator),
+		AnswerAlias:        modelRuntimeAlias(models.answer),
+		FileDiscoveryAlias: modelRuntimeAlias(models.fileDiscovery),
+		ShellAgentAlias:    strings.TrimSpace(shellAgentAlias),
+	}
+	if selection.OrchestratorAlias == "" {
+		selection.DirectModel = strings.TrimSpace(models.orchestrator.resolved.Model)
+		selection.DirectBaseURL = strings.TrimSpace(models.orchestrator.resolved.BaseURL)
+	}
+	return selection
+}
+
+func modelRuntimeAlias(runtime modelRuntime) string {
+	if !runtime.usingAlias {
+		return ""
+	}
+	return strings.TrimSpace(runtime.alias)
 }
 
 // PromptRuntimes exposes resolved model runtimes for callers outside the
