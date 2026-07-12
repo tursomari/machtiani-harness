@@ -2,10 +2,10 @@
 # Multi-stage: builder compiles the binary, runtime is a clean minimal image.
 #
 # Build:
-#   docker build -f Dockerfile.smoke -t mct-agent-smoke .
+#   docker build -f tests/smoke/Dockerfile -t mct-agent-smoke .
 #
 # Run (no secrets in build layers):
-#   docker run --rm -e TEST_API_KEY=... mct-agent-smoke bash /scripts/smoke-test.sh
+#   docker run --rm -e TEST_API_KEY=... mct-agent-smoke bash /tests/smoke/container.sh
 
 # ---------------------------------------------------------------------------
 # Builder stage: compile mct-agent and any peripherals
@@ -53,7 +53,7 @@ COPY --from=builder /out/bin /usr/local/bin/
 
 # Smoke-test script (created in a later phase; referenced here so the
 # Dockerfile is self-documenting).
-COPY scripts/smoke-test.sh /scripts/smoke-test.sh
+COPY tests/smoke/container.sh /tests/smoke/container.sh
 
 WORKDIR /workspace
 

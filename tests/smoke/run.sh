@@ -13,14 +13,17 @@ set -euo pipefail
 #       TEST_MODEL
 #
 # Usage:
-#   ./scripts/run-smoke-test.sh
+#   ./tests/smoke/run.sh
 #
 # This script builds a clean Docker image from a git worktree at HEAD so
 # that only committed sources are tested.  Submodules are populated from
 # the host's shared .git/modules/ directory without any network access.
 # ---------------------------------------------------------------------------
 
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WORKTREE="/tmp/mct-agent-smoke-context"
+
+cd "$ROOT"
 
 # --- Ensure the worktree is always cleaned up on exit ----------------------
 cleanup() {
@@ -79,7 +82,7 @@ done
 
 # --- Build the Docker image from the worktree ------------------------------
 echo "==> Building Docker image 'mct-agent-smoke'..."
-docker build -f "$WORKTREE/Dockerfile.smoke" -t mct-agent-smoke "$WORKTREE"
+docker build -f "$WORKTREE/tests/smoke/Dockerfile" -t mct-agent-smoke "$WORKTREE"
 
 # --- Run the smoke test ----------------------------------------------------
 echo "==> Running smoke-test container..."
@@ -89,7 +92,7 @@ docker run --rm \
   -e TEST_BASE_URL \
   -e TEST_MODEL \
   mct-agent-smoke \
-  bash /scripts/smoke-test.sh
+  bash /tests/smoke/container.sh
 exit_code=$?
 set -e
 

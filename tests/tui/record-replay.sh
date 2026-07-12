@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-Usage: scripts/tui-record-replay.sh [options]
+Usage: tests/tui/record-replay.sh [options]
 
 Record a live mct-agent run and replay it from recorded LLM fixtures.
 
@@ -28,7 +28,7 @@ session ids, and a manifest.
 USAGE
 }
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 NAME="planner-shell-agent-cache"
 BASE_DIR="$ROOT/.data/tui-replay"
 PROMPT=""

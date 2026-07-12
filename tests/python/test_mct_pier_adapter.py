@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from mct_pier_adapter.mct_agent import (
     PROTECTED_RUNTIME_GIT_PATHS,
@@ -106,7 +106,7 @@ class ArtifactPreservationCommandTest(unittest.TestCase):
 
 class SafePierMountsTest(unittest.TestCase):
     def test_benchmark_launchers_do_not_mount_verifier_logs_into_agents(self):
-        repo_root = Path(__file__).resolve().parents[1]
+        repo_root = Path(__file__).resolve().parents[2]
 
         for script in (
             repo_root / "scripts" / "run-batch-subset.sh",
