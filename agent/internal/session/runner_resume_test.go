@@ -934,6 +934,110 @@ func TestLoadTrajectoryForResumeSuccess(t *testing.T) {
 	}
 }
 
+func TestRestorePersistedShellAgentTagsFromConversation(t *testing.T) {
+	cfg := Config{AnswerTag: "answer", CommandTag: "command"}
+	state := &SessionState{
+		SessionID:           "tagged-resume",
+		ShellAgentResumable: true,
+		AnswerTag:           "answer-review",
+		CommandTag:          "command-review",
+	}
+
+	restorePersistedShellAgentTags(&cfg, state)
+
+	if cfg.AnswerTag != "answer-review" {
+		t.Fatalf("AnswerTag = %q, want answer-review", cfg.AnswerTag)
+	}
+	if cfg.CommandTag != "command-review" {
+		t.Fatalf("CommandTag = %q, want command-review", cfg.CommandTag)
+	}
+}
+
+func TestPrepareRunBootstrapRestoresTagsWithoutResumeFlags(t *testing.T) {
+	sessionID := fmt.Sprintf("tagged-bootstrap-resume-%d", time.Now().UnixNano())
+	convPath, err := artifacts.SessionConversationFile(sessionID)
+	if err != nil {
+		t.Fatalf("resolve conversation path: %v", err)
+	}
+	defer os.RemoveAll(filepath.Dir(filepath.Dir(convPath)))
+	if err := os.MkdirAll(filepath.Dir(convPath), 0o755); err != nil {
+		t.Fatalf("create conversation directory: %v", err)
+	}
+	conv := conversation.New(sessionID, "Tagged resume goal")
+	conv.Goal = "Tagged resume goal"
+	conv.ShellAgentResumable = true
+	conv.AnswerTag = "answer-review"
+	conv.CommandTag = "command-review"
+	data, err := conv.Marshal()
+	if err != nil {
+		t.Fatalf("marshal conversation: %v", err)
+	}
+	if err := os.WriteFile(convPath, data, 0o644); err != nil {
+		t.Fatalf("write conversation: %v", err)
+	}
+	trajPath, err := artifacts.ShellAgentTrajectoryPath(sessionID, 1)
+	if err != nil {
+		t.Fatalf("resolve trajectory: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(trajPath), 0o755); err != nil {
+		t.Fatalf("create trajectory directory: %v", err)
+	}
+	if err := os.WriteFile(trajPath, []byte(`{"messages":[]}`), 0o644); err != nil {
+		t.Fatalf("write trajectory: %v", err)
+	}
+
+	bootstrap, result, ok := prepareRunBootstrap(context.Background(), Options{
+		Config: Config{
+			SessionID:  sessionID,
+			AnswerTag:  "answer",
+			CommandTag: "command",
+		},
+	}, io.Discard)
+	if !ok {
+		t.Fatalf("prepareRunBootstrap failed: %+v", result)
+	}
+	if bootstrap.cfg.answerTag != "answer-review" || bootstrap.cfg.commandTag != "command-review" {
+		t.Fatalf("bootstrap tags = (%q, %q), want (answer-review, command-review)", bootstrap.cfg.answerTag, bootstrap.cfg.commandTag)
+	}
+}
+
+func TestRestorePersistedShellAgentTagsFromLegacyTrajectory(t *testing.T) {
+	sessionID := fmt.Sprintf("tagged-legacy-resume-%d", time.Now().UnixNano())
+	trajPath, err := artifacts.ShellAgentTrajectoryPath(sessionID, 1)
+	if err != nil {
+		t.Fatalf("resolve trajectory path: %v", err)
+	}
+	defer os.RemoveAll(filepath.Dir(filepath.Dir(trajPath)))
+	if err := os.MkdirAll(filepath.Dir(trajPath), 0o755); err != nil {
+		t.Fatalf("create trajectory directory: %v", err)
+	}
+	legacy := map[string]any{
+		"resume_state": map[string]any{
+			"version":       1,
+			"system_prompt": "Respond with exactly one <command-review>...</command-review> block, or conclude with <answer-review>...</answer-review>.",
+		},
+		"messages": []any{},
+	}
+	data, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatalf("marshal trajectory: %v", err)
+	}
+	if err := os.WriteFile(trajPath, data, 0o644); err != nil {
+		t.Fatalf("write trajectory: %v", err)
+	}
+
+	cfg := Config{AnswerTag: "answer", CommandTag: "command"}
+	state := &SessionState{SessionID: sessionID, ShellAgentResumable: true}
+	restorePersistedShellAgentTags(&cfg, state)
+
+	if cfg.AnswerTag != "answer-review" || cfg.CommandTag != "command-review" {
+		t.Fatalf("restored tags = (%q, %q), want (answer-review, command-review)", cfg.AnswerTag, cfg.CommandTag)
+	}
+	if state.AnswerTag != cfg.AnswerTag || state.CommandTag != cfg.CommandTag {
+		t.Fatalf("state tags were not backfilled: %#v", state)
+	}
+}
+
 // TestLoadTrajectoryForResumeNotFound verifies that loadTrajectoryForResume
 // returns an error when no trajectory file exists for the given session.
 func TestLoadTrajectoryForResumeNotFound(t *testing.T) {

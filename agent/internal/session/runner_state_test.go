@@ -12,6 +12,35 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/transcript"
 )
 
+func TestPrepareTranscriptBootstrapPersistsEffectiveTags(t *testing.T) {
+	dir := t.TempDir()
+	cfg := legacyConfig{
+		transcriptFile: filepath.Join(dir, "agent-transcript.adoc"),
+		answerTag:      "answer-review",
+		commandTag:     "command-review",
+	}
+	sessionID := "persist-effective-tags"
+	conversationPath := filepath.Join(dir, "conversation.json")
+	runState := newRunLifecycleState(context.Background(), cfg, sessionID, "Goal", "Goal", "", "", "", 0, "", nil)
+
+	setup, err := prepareTranscriptBootstrap(cfg, sessionID, "Goal", conversationPath, false, nil, false, nil, dir, runState, os.Stderr)
+	if err != nil {
+		t.Fatalf("prepareTranscriptBootstrap: %v", err)
+	}
+	defer setup.transcript.Close()
+
+	if setup.conversation.AnswerTag != "answer-review" || setup.conversation.CommandTag != "command-review" {
+		t.Fatalf("conversation tags = (%q, %q), want (answer-review, command-review)", setup.conversation.AnswerTag, setup.conversation.CommandTag)
+	}
+	data, err := os.ReadFile(conversationPath)
+	if err != nil {
+		t.Fatalf("read conversation: %v", err)
+	}
+	if !strings.Contains(string(data), `"answer_tag": "answer-review"`) || !strings.Contains(string(data), `"command_tag": "command-review"`) {
+		t.Fatalf("persisted conversation missing effective tags: %s", data)
+	}
+}
+
 func initGitRepoForSessionEnvTest(t *testing.T, dir string) {
 	t.Helper()
 	cmd := exec.Command("git", "-C", dir, "init", "-q")
@@ -299,4 +328,3 @@ func TestPrepareSessionEnvironment_ExplicitTempRootHonoredWhenNotChildProcess(t 
 		t.Fatalf("MACHTIANI_SESSION_TEMP_ROOT = %s, want /tmp/explicit-temp-root", got)
 	}
 }
-

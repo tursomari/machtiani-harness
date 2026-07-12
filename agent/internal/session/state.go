@@ -28,6 +28,8 @@ type SessionState struct {
 	ShellAgentResumable      bool                                  `json:"shell_agent_resumable"`
 	ShellAgentTrajectoryPath string                                `json:"shell_agent_trajectory_path"`
 	ShellAgentInterruptStep  int                                   `json:"shell_agent_interrupt_step"`
+	AnswerTag                string                                `json:"answer_tag,omitempty"`
+	CommandTag               string                                `json:"command_tag,omitempty"`
 }
 
 func sessionStateFromConversation(conv *conversation.Conversation, sessionID string) (*SessionState, error) {
@@ -40,6 +42,8 @@ func sessionStateFromConversation(conv *conversation.Conversation, sessionID str
 			ShellAgentResumable:      conv.ShellAgentResumable,
 			ShellAgentTrajectoryPath: conv.ShellAgentTrajectoryPath,
 			ShellAgentInterruptStep:  conv.ShellAgentInterruptStep,
+			AnswerTag:                conv.AnswerTag,
+			CommandTag:               conv.CommandTag,
 			TurnsCompleted:           conv.TurnsCompleted,
 			SuspendedUserInput:       conv.SuspendedUserInput,
 			PlannerProgress:          conv.PlannerProgress,

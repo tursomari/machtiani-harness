@@ -449,6 +449,8 @@ func TestSessionStateFromConversationFields(t *testing.T) {
 		ShellAgentResumable:      true,
 		ShellAgentTrajectoryPath: "/tmp/test-trajectory.json",
 		ShellAgentInterruptStep:  3,
+		AnswerTag:                "answer-review",
+		CommandTag:               "command-review",
 		TurnsCompleted:           5,
 		SuspendedUserInput: &conversation.SuspendedUserInputState{
 			Kind:        "user-directed-ask",
@@ -497,6 +499,9 @@ func TestSessionStateFromConversationFields(t *testing.T) {
 	}
 	if state.ShellAgentInterruptStep != conv.ShellAgentInterruptStep {
 		t.Fatalf("ShellAgentInterruptStep mismatch: got %d want %d", state.ShellAgentInterruptStep, conv.ShellAgentInterruptStep)
+	}
+	if state.AnswerTag != conv.AnswerTag || state.CommandTag != conv.CommandTag {
+		t.Fatalf("tag mismatch: got (%q, %q) want (%q, %q)", state.AnswerTag, state.CommandTag, conv.AnswerTag, conv.CommandTag)
 	}
 	if state.TurnsCompleted != conv.TurnsCompleted {
 		t.Fatalf("TurnsCompleted mismatch: got %d want %d", state.TurnsCompleted, conv.TurnsCompleted)

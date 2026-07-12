@@ -26,6 +26,8 @@ type Conversation struct {
 	ShellAgentResumable      bool                     `json:"shell_agent_resumable"`
 	ShellAgentTrajectoryPath string                   `json:"shell_agent_trajectory_path,omitempty"`
 	ShellAgentInterruptStep  int                      `json:"shell_agent_interrupt_step,omitempty"`
+	AnswerTag                string                   `json:"answer_tag,omitempty"`
+	CommandTag               string                   `json:"command_tag,omitempty"`
 	TurnsCompleted           int                      `json:"turns_completed"`
 	Goal                     string                   `json:"goal"`
 	OriginalPrompt           string                   `json:"original_prompt,omitempty"`

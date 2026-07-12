@@ -2,11 +2,13 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -107,6 +109,7 @@ func prepareRunBootstrap(rootCtx context.Context, opts Options, diagWriter io.Wr
 		resumeMode = true
 		loadedState = state
 		resumePrompt = strings.TrimSpace(inputPrompt)
+		restorePersistedShellAgentTags(&cfgInput, state)
 
 		if loadedState != nil && loadedState.OriginalGoal == "" {
 			loadedState.OriginalGoal = loadedState.Goal
@@ -241,6 +244,84 @@ func validatedShellAgentResumeTrajectory(sessionID string, state *SessionState) 
 	return path, nil
 }
 
+var persistedTagPairPattern = regexp.MustCompile(`<([^<>/]+)>\.\.\.</([^<>]+)>`)
+
+func restorePersistedShellAgentTags(cfg *Config, state *SessionState) {
+	if cfg == nil || state == nil || !state.ShellAgentResumable {
+		return
+	}
+	answerTag := strings.TrimSpace(state.AnswerTag)
+	commandTag := strings.TrimSpace(state.CommandTag)
+	if answerTag == "" || commandTag == "" {
+		storedAnswer, storedCommand := loadShellAgentResumeTags(state.SessionID, state.TurnsCompleted+1)
+		if answerTag == "" {
+			answerTag = storedAnswer
+		}
+		if commandTag == "" {
+			commandTag = storedCommand
+		}
+	}
+	if answerTag != "" {
+		cfg.AnswerTag = answerTag
+		state.AnswerTag = answerTag
+	}
+	if commandTag != "" {
+		cfg.CommandTag = commandTag
+		state.CommandTag = commandTag
+	}
+}
+
+func loadShellAgentResumeTags(sessionID string, turn int) (string, string) {
+	path, err := artifacts.ShellAgentTrajectoryPath(sessionID, turn)
+	if err != nil {
+		return "", ""
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", ""
+	}
+	var stored struct {
+		ResumeState *struct {
+			AnswerTag    string `json:"answer_tag"`
+			CommandTag   string `json:"command_tag"`
+			SystemPrompt string `json:"system_prompt"`
+		} `json:"resume_state"`
+	}
+	if err := json.Unmarshal(data, &stored); err != nil || stored.ResumeState == nil {
+		return "", ""
+	}
+	answerTag := strings.TrimSpace(stored.ResumeState.AnswerTag)
+	commandTag := strings.TrimSpace(stored.ResumeState.CommandTag)
+	if answerTag != "" && commandTag != "" {
+		return answerTag, commandTag
+	}
+	legacyAnswer, legacyCommand := inferTagsFromSystemPrompt(stored.ResumeState.SystemPrompt)
+	if answerTag == "" {
+		answerTag = legacyAnswer
+	}
+	if commandTag == "" {
+		commandTag = legacyCommand
+	}
+	return answerTag, commandTag
+}
+
+func inferTagsFromSystemPrompt(prompt string) (string, string) {
+	var answerTag, commandTag string
+	for _, match := range persistedTagPairPattern.FindAllStringSubmatch(prompt, -1) {
+		if len(match) != 3 || match[1] != match[2] {
+			continue
+		}
+		tag := strings.TrimSpace(match[1])
+		switch {
+		case answerTag == "" && (tag == "answer" || strings.HasPrefix(tag, "answer-")):
+			answerTag = tag
+		case commandTag == "" && (tag == "command" || strings.HasPrefix(tag, "command-")):
+			commandTag = tag
+		}
+	}
+	return answerTag, commandTag
+}
+
 func loadedStateSuspendedInput(state *SessionState) *conversation.SuspendedUserInputState {
 	if state == nil || state.SuspendedUserInput == nil {
 		return nil
@@ -349,6 +430,14 @@ func prepareTranscriptBootstrap(cfg legacyConfig, sessionID, conversationGoal, c
 	if err := recorder.Load(); err != nil {
 		_ = tr.Close()
 		return nil, err
+	}
+	if conv := recorder.Conversation(); conv != nil {
+		if strings.TrimSpace(conv.AnswerTag) == "" {
+			conv.AnswerTag = cfg.answerTag
+		}
+		if strings.TrimSpace(conv.CommandTag) == "" {
+			conv.CommandTag = cfg.commandTag
+		}
 	}
 	if err := restoreTranscriptFromConversation(tr, recorder.Rendered(), resumeMode); err != nil {
 		_ = tr.Close()
@@ -1144,6 +1233,8 @@ func (r *runLifecycleState) baseSessionState() SessionState {
 		Status:          r.sessionStatus,
 		TurnsCompleted:  r.turnsCompleted,
 		RuntimeStats:    r.runtimeStatsSnapshot(),
+		AnswerTag:       r.cfg.answerTag,
+		CommandTag:      r.cfg.commandTag,
 	}
 	if r.suspendedUserInput != nil {
 		state.SuspendedUserInput = r.suspendedUserInput.Clone()
