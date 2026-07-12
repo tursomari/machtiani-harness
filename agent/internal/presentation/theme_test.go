@@ -152,3 +152,24 @@ func TestMarkdownRendererNoneEmitsNoANSI(t *testing.T) {
 		}
 	}
 }
+
+func TestNormalizeGlowWordWrapWidth(t *testing.T) {
+	tests := []struct {
+		name  string
+		width int
+		want  int
+	}{
+		{name: "unavailable", width: 0, want: 80},
+		{name: "error", width: -1, want: 80},
+		{name: "terminal width", width: 100, want: 100},
+		{name: "maximum", width: 120, want: 120},
+		{name: "capped", width: 200, want: 120},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := normalizeGlowWordWrapWidth(test.width); got != test.want {
+				t.Fatalf("normalizeGlowWordWrapWidth(%d) = %d, want %d", test.width, got, test.want)
+			}
+		})
+	}
+}

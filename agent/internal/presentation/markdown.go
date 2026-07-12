@@ -1,12 +1,14 @@
 package presentation
 
 import (
+	"os"
 	"regexp"
 
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/glamour/ansi"
 	"github.com/charmbracelet/glamour/styles"
 	"github.com/muesli/termenv"
+	"golang.org/x/term"
 )
 
 type MarkdownRenderer struct {
@@ -15,6 +17,11 @@ type MarkdownRenderer struct {
 }
 
 var markdownANSI = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
+
+const (
+	glowDefaultWordWrap = 80
+	glowMaxWordWrap     = 120
+)
 
 func (r *MarkdownRenderer) Render(content string) (string, error) {
 	rendered, err := r.renderer.Render(content)
@@ -28,7 +35,9 @@ func (r *MarkdownRenderer) Render(content string) (string, error) {
 // theme. It never probes the terminal background, so Markdown and the TUI use
 // the same explicit profile and never emit background-query control sequences.
 func NewMarkdownRenderer(theme Theme, preserveNewLines bool) (*MarkdownRenderer, error) {
-	options := []glamour.TermRendererOption{}
+	options := []glamour.TermRendererOption{
+		glamour.WithWordWrap(glowWordWrapWidth()),
+	}
 	if theme.ansiEnabled {
 		profile := termenv.ANSI
 		if theme.trueColor {
@@ -46,6 +55,28 @@ func NewMarkdownRenderer(theme Theme, preserveNewLines bool) (*MarkdownRenderer,
 		return nil, err
 	}
 	return &MarkdownRenderer{renderer: renderer, stripANSI: !theme.ansiEnabled}, nil
+}
+
+// glowWordWrapWidth follows the Glow CLI's default width selection: use the
+// stdout terminal width, cap it at 120 columns, and fall back to 80 columns.
+func glowWordWrapWidth() int {
+	width := 0
+	if term.IsTerminal(int(os.Stdout.Fd())) {
+		if terminalWidth, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil {
+			width = terminalWidth
+		}
+	}
+	return normalizeGlowWordWrapWidth(width)
+}
+
+func normalizeGlowWordWrapWidth(width int) int {
+	if width <= 0 {
+		return glowDefaultWordWrap
+	}
+	if width > glowMaxWordWrap {
+		return glowMaxWordWrap
+	}
+	return width
 }
 
 func markdownStyle(theme Theme) ansi.StyleConfig {
