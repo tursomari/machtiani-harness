@@ -94,7 +94,7 @@ bash agent/internal/mct/tests/run-undici-readme-integration.sh
 - Accepts `KEEP_README_TEST_TMP=true` to retain the temporary workspace.
 - Produces artifacts under `agent/internal/mct/tests/artifacts/readme/`.
 
-See `TESTING.md` for a full matrix of options and links to component-specific guides (`agent/TESTING.md`, `tests/TESTING.md`).
+See `TESTING.md` for the complete testing guide, including prerequisites, commands, environment variables, artifacts, and debugging workflows for every harness.
 
 ## Quick Install (mct-agent)
 Run the installer from the repo root to build **mct-agent** into `~/.local/bin`:

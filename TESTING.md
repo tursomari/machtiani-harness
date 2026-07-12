@@ -1,12 +1,13 @@
 # Project-Wide Testing Guide
 
-This guide collects the commands and environment settings needed to run the unit and integration suites in the `mct-agent` monorepo. Use it as the single entry point for local development or CI pipelines.
+This is the canonical, self-contained guide for every test harness in the `mct-agent` monorepo. Test commands, prerequisites, environment variables, artifacts, and debugging guidance belong here rather than in component-local testing documents.
 
 ## Prerequisites
 - Go 1.23+ installed and on PATH.
 - `git` for cloning fixture repositories during integration tests.
 - `rg` (ripgrep) recommended on PATH; the integration harnesses expect it when exercising the toolchain.
-- For live LLM runs: valid values for `OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_MODEL`.
+- Docker, for the clean-container smoke test.
+- For live LLM runs: valid `TEST_API_KEY`, `TEST_BASE_URL`, and `TEST_MODEL` values, or the `OPENAI_*` fallbacks supported by the selected harness.
 
 ## Unit Tests
 Run from the repository root to cover all Go packages without touching integration harnesses:
@@ -19,6 +20,34 @@ cd ..
 
 - No environment variables are required.
 
+## Clean-Container Smoke Test
+
+The Docker smoke test builds `mct-agent` in a clean image, initializes a new configuration, performs a live agent run, and verifies that the session conversation artifact was created.
+
+```bash
+export TEST_API_KEY=sk_...
+export TEST_BASE_URL=https://api.openai.com/v1
+export TEST_MODEL=gpt-4o-mini
+./scripts/run-smoke-test.sh
+```
+
+Prerequisites:
+
+- Docker with a running daemon.
+- Git.
+- Non-empty `TEST_API_KEY`, `TEST_BASE_URL`, and `TEST_MODEL` values. This harness has no stub or dry-run mode.
+
+The host runner creates a detached Git worktree at the current committed `HEAD`, copies populated submodules from the host checkout, builds `Dockerfile.smoke`, and runs `scripts/smoke-test.sh` inside the resulting image. Consequently, uncommitted changes are not included. Commit the changes you intend to test, or manually build the image from the current checkout when iterating on the smoke infrastructure itself.
+
+The container test must complete all of these checks before printing its success message:
+
+1. `mct-agent --version` runs.
+2. `mct-agent init` creates `.machtiani/config.toml` containing `TEST_MODEL`.
+3. `mct-agent run` completes successfully against the live provider.
+4. `.machtiani/sessions/*/artifacts/conversation.json` exists.
+
+The scripts use `set -euo pipefail`; any failed command must produce a non-zero harness exit and must not print `SMOKE TEST PASSED`.
+
 ## Integration Tests
 All integration harnesses default to deterministic stub or dry-run behavior. Export the listed environment variables to invoke live LLM calls.
 
@@ -26,19 +55,90 @@ All integration harnesses default to deterministic stub or dry-run behavior. Exp
 End-to-end regression suite for the installed `mct-agent` binary.
 
 ```bash
-export OPENAI_API_KEY=sk_...
-export OPENAI_BASE_URL=https://api.openai.com/v1
-export OPENAI_MODEL=gpt-4o-mini
+export TEST_API_KEY=sk_...
+export TEST_BASE_URL=https://api.openai.com/v1
+export TEST_MODEL=gpt-4o-mini
 ./scripts/install.sh && bash agent/tests/run-live.sh
 ```
 
 - Assumes `mct-agent` is on PATH; `./scripts/install.sh` handles this in CI or a clean checkout.
-- When the `OPENAI_*` variables are missing the script generates stub credentials, writes a temporary `config.toml`, and forces `--dry-run`.
+- `TEST_*` takes precedence over `OPENAI_*`. When neither complete set is available, the script generates stub credentials, writes a temporary `config.toml`, and forces `--dry-run`.
 - Artifacts land in `test-out-*` directories at the repo root; each case includes stdout, stderr, transcripts, and (for live runs) generated assets.
 - Optional overrides:
-  - `OPENAI_ORCH_MODEL`, `OPENAI_FILE_DISCOVERY_MODEL` — pick specific remote models per component.
+  - `TEST_ORCH_MODEL`, `TEST_FILE_DISCOVERY_MODEL` — preferred per-component remote-model overrides; the corresponding `OPENAI_*` values are fallbacks.
   - `OPENAI_ORCH_MODEL_ALIAS`, `OPENAI_FILE_DISCOVERY_MODEL_ALIAS` — supply config aliases when reusing a shared `config.toml`.
   - `OPENAI_API_KEY`/`BASE_URL`/`MODEL` remain authoritative even when aliases are set.
+
+Scenarios include Issue A/B/C happy paths, one-turn and three-turn bounds, per-component model selection, the `--mode code` regression in stub and live paths, empty prompts, missing configuration, menu flow, shell-command trajectory events, and related error paths.
+
+#### Targeting Cases
+
+Run every registered case with no arguments, or pass one or more case names:
+
+```bash
+bash agent/tests/run-live.sh
+bash agent/tests/run-live.sh issue-a-1turn
+bash agent/tests/run-live.sh issue-a-1turn empty-goal test_code_no_forge
+```
+
+Dedicated test functions use underscore names, while generic happy/error cases may use hyphenated IDs. Passing an unknown name prints the registered case list:
+
+```bash
+bash agent/tests/run-live.sh no-such-case 2>&1 | head -5
+```
+
+#### Repo Synchronization and Installed Binary
+
+The harness uses `mct-agent` from `PATH`; it does not build the binary or mutate `PATH`. Install it first:
+
+```bash
+./scripts/install.sh
+```
+
+If a run reports that `mct` is not synced at the current Git state, synchronize it and rerun the harness:
+
+```bash
+MACHTIANI_CONFIG=.machtiani/config.toml \
+mct-agent sync \
+  --api-key "openrouter:$TEST_API_KEY" \
+  --model glm-5-high \
+  --max-input-tokens 180000
+```
+
+The harness pre-assigns session IDs and reads turn counts and final-answer assertions directly from session artifacts rather than scraping stderr.
+
+#### Artifacts and Live Debugging
+
+Each case writes a `test-out-*` directory with stdout, stderr, transcripts, and final artifacts. The authoritative trajectory is `.machtiani/sessions/<session-id>/trajectory/agent.jsonl`.
+
+```bash
+ls -dt test-out-* | head
+tail -f test-out-*/stderr-*.txt
+tail -f test-out-*/stdout-*.txt
+jq -r '.kind' .machtiani/sessions/<session-id>/trajectory/agent.jsonl | sort -u
+jq 'select(.level != "info") | {ts, level, kind, err: (.err.message // null)}' \
+  .machtiani/sessions/<session-id>/trajectory/agent.jsonl
+jq 'select(.kind == "agent.turn.end") | {step: .payload.step, decision: .payload.decision, status: .payload.status, finalized: (.payload.finalized // false), err: (.err.message // null)}' \
+  .machtiani/sessions/<session-id>/trajectory/agent.jsonl
+```
+
+Useful harness toggles:
+
+- `TRACE_TEST_CONFIG=true` prints the generated test configuration; do not expose real credentials in shared logs.
+- `KEEP_TEST_CONFIG=true` preserves the generated configuration under `agent/tests/tmp/`.
+- `TEST_ORCH_MODEL` and `TEST_FILE_DISCOVERY_MODEL` override component models in live mode.
+
+The harness stops at the first failing case. Immediate DNS or connection failures usually indicate unavailable network access. A later shell-agent timeout points to the ask execution path, not initial provider wiring.
+
+#### Concurrent Startup Cleanup Reproduction
+
+The targeted regression harness launches overlapping sessions to verify that a second startup does not delete the first session's live workspace:
+
+```bash
+EXPECT_REPRO=false bash agent/tests/repro-concurrent-run-cleanup.sh
+```
+
+Use `EXPECT_REPRO=true` only to confirm the historical buggy behavior. `KEEP_REPRO_ARTIFACTS=true` preserves logs, and `STUB_DELAY_SECONDS=...` adjusts the overlap window.
 
 ### Undici Harness (`tests/run-agent-undici.sh`)
 Validates README regeneration against the undici fixture repository.
@@ -56,6 +156,18 @@ MODEL_ALIAS=qwen3-coder-plus \
 - Defaults to offline stubs unless `DISABLE_MCT_STUBS=true` is exported. Live runs need the `OPENAI_*` variables above plus a valid `MACHTIANI_CONFIG` and `MODEL_ALIAS` that maps to credentials in that config file.
 - Emits artifacts under `tests/artifacts/agent-undici/<case>/`. Preserve the temp workspace by setting `KEEP_AGENT_TMP=true`.
 - Additional knobs mirror the script defaults: `MAX_STEPS`, `TIMEOUT_PER_TURN`, `MCT_LLM_TEST_STUB`, `MCT_README_TEST_STUB`.
+
+The five scenarios cover initial generation, a significant change, a repeated run, a docs-only change, and the latest state. The harness asserts README tags and commit behavior and exits non-zero on the first failed assertion.
+
+Set `KEEP_AGENT_TMP=true` to retain the scratch repository and its `.machtiani` state. Useful diagnostics include:
+
+```bash
+find tests/tmp -name agent.jsonl
+jq -r '.kind' <trajectory>/agent.jsonl | sort -u
+jq 'select(.level != "info") | {ts, level, kind, err: (.err.message // null)}' \
+  <trajectory>/agent.jsonl
+jq -r '.type' tests/artifacts/agent-undici/<case>/file-discovery/file-discovery.jsonl | sort -u
+```
 
 ### Internal Undici Regression Harness (`agent/internal/mct/tests/run-undici-readme-integration.sh`)
 Maintains backward-compatibility checks for the internal README manager using the same undici fixture.
@@ -178,6 +290,20 @@ kill "$server_pid"
 
 When running under a sandbox, the replay server needs permission to bind a local `127.0.0.1` port. If the replay appears stuck with zero token usage, check `replay-server.log` for a socket bind error.
 
+### Capture and Replay Components
+
+`MACHTIANI_TUI_CAPTURE=/path/to/file` tees formatter-rendered output to a file. It does not capture all direct process writes or terminal cursor behavior, so use the PTY-based harness for visual regressions.
+
+`LLM_RECORD_FIXTURES=/path/to/fixtures.jsonl` records provider HTTP responses for deterministic replay. Build the standalone replay server with:
+
+```bash
+cd agent
+go build -o ../.data/bin/replay-server ./cmd/replay-server
+cd ..
+```
+
+Run it with `.data/bin/replay-server -fixtures <fixture.jsonl> -port <port>`. Responses are replayed sequentially; requests after fixture exhaustion receive HTTP 502. Prefer `scripts/tui-record-replay.sh` over manually coordinating these components unless debugging the recorder or server itself.
+
 ## Evaluation
 
 ### HEAD-Based Evaluation (run_eval_head.sh)
@@ -260,7 +386,8 @@ After a successful run, verify:
 The original evaluation pipeline, documented in scripts/run_eval.sh itself. It compares agent outputs against a known ground truth commit and requires --eval-commit and --ground-truth flags. Refer to the script header and inline comments for usage details.
 
 ## Environment Variable Reference
-- `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL` — primary credentials for live runs; omitting them keeps all harnesses in stub/dry-run mode.
+- `TEST_API_KEY`, `TEST_BASE_URL`, `TEST_MODEL` — preferred live credentials for repository test harnesses and required by the Docker smoke test.
+- `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL` — general runtime credentials and the fallback for live harnesses that prefer `TEST_*`; harnesses with stubs use stub/dry-run mode when neither set is available.
 - `MACHTIANI_CONFIG` — optional path to a pre-existing Machtiani config. Required when `tests/run-agent-undici.sh` runs live because it overrides `HOME`.
 - `MODEL_ALIAS` — maps to a section inside `MACHTIANI_CONFIG` for undici live runs.
 - `DISABLE_MCT_STUBS` — set to `true` to disable stubbed LLM providers in the undici harness and force real calls.
@@ -274,9 +401,9 @@ The original evaluation pipeline, documented in scripts/run_eval.sh itself. It c
 - Unit tests should pass without extra setup; if they fail due to missing cache directories, ensure your shell honors the `GOCACHE` export above.
 - Integration runs that report missing binaries typically mean the PATH does not include the install prefix. Re-run `./scripts/install.sh` or inspect the temp PATH emitted by the harness.
 - Stub mode is active when outputs mention `stub-echo`, `mock`, or `--dry-run`. Verify that the required `OPENAI_*`/`MACHTIANI_CONFIG` values are exported to switch to live mode.
-- Inspect `agent/TESTING.md` and `tests/TESTING.md` for deep-dive scenarios, debugging scripts, and additional `jq` helpers.
+- The Docker smoke runner tests committed `HEAD`, not working-tree changes. A surprising old result usually means the intended change has not been committed.
+- A Docker smoke run must not be considered successful merely because configuration initialization passed; verify the live run and conversation artifact checks also completed.
 
 ## Related Documentation
-- `agent/TESTING.md` — detailed walkthrough of `agent/tests/run-live.sh` scenarios, including the meta-mode `--mode code` regression coverage and telemetry.
-- `tests/TESTING.md` — advanced options for the undici harness.
 - `README.md` — quick-start install and environment setup guidance.
+- `docs/mct-agent-runbook.md` — repo-local synchronization and operation guidance.
