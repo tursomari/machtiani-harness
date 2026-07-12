@@ -1157,7 +1157,7 @@ func (r *runLifecycleState) isContextCancelled(err error) bool {
 }
 
 func (r *runLifecycleState) printResumeHint(bus *ui.EventBus, diagWriter io.Writer, header string, turns int) {
-	command := fmt.Sprintf("mct-agent run \"<next instruction>\" --session-id %s", r.sessionID)
+	command := fmt.Sprintf("mct-agent run -t \"<next instruction>\" --session-id %s", r.sessionID)
 	continueHint := "Continue with your next instruction:\n" + formatCommandBlock(command)
 	if !r.cfg.verbose {
 		if bus != nil {
@@ -1219,7 +1219,7 @@ func (r *runLifecycleState) printUserInputHint(bus *ui.EventBus, diagWriter io.W
 			SessionID: r.sessionID,
 			Context:   strings.TrimSpace(context),
 			Question:  strings.TrimSpace(question),
-			Command:   fmt.Sprintf("mct-agent run \"<your answer>\" --session-id %s", r.sessionID),
+			Command:   fmt.Sprintf("mct-agent run -t \"<your answer>\" --session-id %s", r.sessionID),
 		})
 	} else {
 		fmt.Fprintln(diagWriter, "=== USER INPUT NEEDED ===")
@@ -1228,7 +1228,7 @@ func (r *runLifecycleState) printUserInputHint(bus *ui.EventBus, diagWriter io.W
 			fmt.Fprintf(diagWriter, "%s\n\n", strings.TrimSpace(context))
 		}
 		fmt.Fprintf(diagWriter, "%s\n\n", strings.TrimSpace(question))
-		fmt.Fprintf(diagWriter, "To continue, answer with:\n  mct-agent run \"<your answer>\" --session-id %s\n", r.sessionID)
+		fmt.Fprintf(diagWriter, "To continue, answer with:\n  mct-agent run -t \"<your answer>\" --session-id %s\n", r.sessionID)
 		fmt.Fprintln(diagWriter)
 	}
 }

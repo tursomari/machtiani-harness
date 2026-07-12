@@ -83,7 +83,7 @@ func TestFormatterContinuationHintSemanticRoles(t *testing.T) {
 	defer bus.Close()
 	f.theme.Presentation = presentation.NewForTest(presentation.ProfileTerminal, true, false)
 
-	bus.Emit(ContinuationHintEvent{Command: `mct-agent run "<next instruction>" --session-id agent-test`})
+	bus.Emit(ContinuationHintEvent{Command: `mct-agent run -t "<next instruction>" --session-id agent-test`})
 	time.Sleep(20 * time.Millisecond)
 
 	output := buf.String()
@@ -109,14 +109,14 @@ func TestFormatterContinuationHasOneBlankLineAfterFinalOutput(t *testing.T) {
 
 	f.mu.Lock()
 	f.handleFinalAnswer(FinalAnswerEvent{RenderedText: "last stdout line"})
-	f.handleContinuationHint(ContinuationHintEvent{Command: `mct-agent run "<next instruction>" --session-id agent-test`})
+	f.handleContinuationHint(ContinuationHintEvent{Command: `mct-agent run -t "<next instruction>" --session-id agent-test`})
 	f.mu.Unlock()
 
 	output := stripANSI(buf.String())
 	if !strings.Contains(output, "last stdout line\n\nContinue with your next instruction:") {
 		t.Fatalf("expected exactly one blank line before completion output, got %q", output)
 	}
-	if !strings.Contains(output, "  $ mct-agent run \"<next instruction>\" --session-id agent-test") {
+	if !strings.Contains(output, "  $ mct-agent run -t \"<next instruction>\" --session-id agent-test") {
 		t.Fatalf("expected shell-style continuation command, got %q", output)
 	}
 	if strings.Count(output, "  --------------------------------") != 2 {

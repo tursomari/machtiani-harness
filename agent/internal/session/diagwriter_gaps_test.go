@@ -268,7 +268,7 @@ func TestPrintResumeHintNonVerboseOnlyPrintsContinuation(t *testing.T) {
 		nil,
 	)
 
-	command := `mct-agent run "<next instruction>" --session-id resume-hint-quiet`
+	command := `mct-agent run -t "<next instruction>" --session-id resume-hint-quiet`
 	rule := strings.Repeat("-", len("  $ "+command))
 	want := "Continue with your next instruction:\n  " + rule + "\n  $ " + command + "\n  " + rule
 
@@ -291,7 +291,7 @@ func TestPrintResumeHintNonVerboseOnlyPrintsContinuation(t *testing.T) {
 		if hint.Header != "" || len(hint.DetailLines) != 0 {
 			t.Fatalf("quiet continuation leaked verbose detail: %#v", hint)
 		}
-		if hint.Command != `mct-agent run "<next instruction>" --session-id resume-hint-quiet` {
+		if hint.Command != `mct-agent run -t "<next instruction>" --session-id resume-hint-quiet` {
 			t.Fatalf("quiet display command mismatch: %q", hint.Command)
 		}
 	default:
