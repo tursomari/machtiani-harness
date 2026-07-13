@@ -140,10 +140,27 @@ The manual snippets skip the ldflags metadata that the installer uses, so versio
 
 ## Quick Start
 
-Initialize a minimal configuration:
+Run the interactive setup wizard:
+
+```
+mct-agent init
+```
+
+The wizard collects the provider URL, API key, model, reasoning effort, and
+model alias one step at a time. Prompt caching defaults to enabled for all
+configured models; answer `n` at the caching prompt to disable it.
+
+For scripts and CI, provide the required values as flags. This remains
+non-interactive and also enables the global caching defaults unless
+`--no-cache` is supplied:
+
 ```
 mct-agent init --provider-url https://api.example.com/v1 --api-key sk-xxx --model my-model
 ```
+
+Use `--no-cache` when the selected provider or model does not support explicit
+cache markers.
+
 Then adjust settings as needed:
 ```
 mct-agent config provider url https://api.example.com/v1
@@ -196,8 +213,38 @@ See `.machtiani/config.minimal.toml` for a minimal getting-started config, or `.
 
 Keys inside `[planner]`, `[shell-agent]`, `[model]`, and `[environment]` are shared across Machtiani binaries; omit `model.api_key` to keep credentials out of the file. `[environment].internet_access` is only a capability hint for planner guardrails so the agent can distinguish information gaps from user-authority gaps; it does not itself force escalation to the user. When you need an alternate model temporarily, pass `--shell-agent-model <alias>` to `mct-agent run --shell-agent` or to the standalone `shell-agent` binary.
 
-### Prompt Caching (per model)
-Prompt caching is configured per entry under `[models.<alias>]`. To enable it, set a cache key name, cache control payload, a token threshold, and (optionally) a lookback offset for the initial anchor placement:
+### Prompt Caching
+
+New configurations created by `mct-agent init` enable prompt caching through
+inheritable model defaults:
+
+```toml
+[model_defaults]
+cache_enabled = true
+cache_key_name = "cache_control"
+cache_control = { type = "ephemeral" }
+cache_trigger_threshold = 4096
+cache_lookback_offset = 1
+```
+
+Every named model inherits these values. A model can disable caching or
+override individual defaults:
+
+```toml
+[models.uncached]
+provider = "openrouter"
+model = "example/model"
+cache_enabled = false
+
+[models.large-context]
+provider = "openrouter"
+model = "example/large-context-model"
+cache_trigger_threshold = 8192
+```
+
+Existing per-model caching configuration remains supported. Without
+`[model_defaults]`, set a cache key name, cache control payload, token
+threshold, and optionally a lookback offset directly on the model:
 
 ```toml
 [models.haiku]

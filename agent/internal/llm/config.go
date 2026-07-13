@@ -24,6 +24,7 @@ type Config struct {
 	Trajectory         *TrajectoryConfig          `toml:"trajectory"`
 	Providers          map[string]ProviderConfig  `toml:"providers"`
 	Models             map[string]ModelDefinition `toml:"models"`
+	ModelDefaults      *ModelDefaultsConfig       `toml:"model_defaults"`
 	ProviderSources    map[string]FieldSource     `toml:"-"`
 	ModelSources       map[string]FieldSource     `toml:"-"`
 	Mode               *ModeConfig                `toml:"mode"`
@@ -277,6 +278,38 @@ type ModelDefinition struct {
 	CacheReanchorTokens          int            `toml:"cache_reanchor_tokens"`
 	CacheReanchorMessages        int            `toml:"cache_reanchor_messages"`
 	CacheReanchorMinCachedTokens int            `toml:"cache_reanchor_min_cached_tokens"`
+	CacheEnabled                 bool           `toml:"cache_enabled"`
+
+	cacheEnabledSet                 bool `toml:"-"`
+	cacheKeyNameSet                 bool `toml:"-"`
+	cacheControlSet                 bool `toml:"-"`
+	cacheTriggerThresholdSet        bool `toml:"-"`
+	cacheLookbackOffsetSet          bool `toml:"-"`
+	cacheReanchorTokensSet          bool `toml:"-"`
+	cacheReanchorMessagesSet        bool `toml:"-"`
+	cacheReanchorMinCachedTokensSet bool `toml:"-"`
+}
+
+// ModelDefaultsConfig supplies cache settings inherited by named models.
+// Presence markers distinguish an omitted value from an explicit zero/false.
+type ModelDefaultsConfig struct {
+	CacheEnabled                 bool           `toml:"cache_enabled"`
+	CacheKeyName                 string         `toml:"cache_key_name"`
+	CacheControl                 map[string]any `toml:"cache_control"`
+	CacheTriggerThreshold        int            `toml:"cache_trigger_threshold"`
+	CacheLookbackOffset          int            `toml:"cache_lookback_offset"`
+	CacheReanchorTokens          int            `toml:"cache_reanchor_tokens"`
+	CacheReanchorMessages        int            `toml:"cache_reanchor_messages"`
+	CacheReanchorMinCachedTokens int            `toml:"cache_reanchor_min_cached_tokens"`
+
+	cacheEnabledSet                 bool `toml:"-"`
+	cacheKeyNameSet                 bool `toml:"-"`
+	cacheControlSet                 bool `toml:"-"`
+	cacheTriggerThresholdSet        bool `toml:"-"`
+	cacheLookbackOffsetSet          bool `toml:"-"`
+	cacheReanchorTokensSet          bool `toml:"-"`
+	cacheReanchorMessagesSet        bool `toml:"-"`
+	cacheReanchorMinCachedTokensSet bool `toml:"-"`
 }
 
 type ResolvedModel struct {
@@ -369,6 +402,11 @@ func ResolveModelWithOverrides(alias string, overrides map[string]string) (Resol
 		return ResolvedModel{}, err
 	}
 
+	cache, err := resolveEffectiveCache(cfg.config.ModelDefaults, modelDef, effectiveAlias, cfg.path)
+	if err != nil {
+		return ResolvedModel{}, err
+	}
+
 	resolved := ResolvedModel{
 		Alias:                        effectiveAlias,
 		ProviderName:                 providerName,
@@ -378,13 +416,13 @@ func ResolveModelWithOverrides(alias string, overrides map[string]string) (Resol
 		Endpoint:                     strings.TrimSpace(provider.Endpoint),
 		Model:                        strings.TrimSpace(modelDef.Model),
 		Params:                       deepCopyMap(modelDef.Params),
-		CacheKeyName:                 strings.TrimSpace(modelDef.CacheKeyName),
-		CacheControl:                 deepCopyMap(modelDef.CacheControl),
-		CacheTriggerThreshold:        modelDef.CacheTriggerThreshold,
-		CacheLookbackOffset:          modelDef.CacheLookbackOffset,
-		CacheReanchorTokens:          modelDef.CacheReanchorTokens,
-		CacheReanchorMessages:        modelDef.CacheReanchorMessages,
-		CacheReanchorMinCachedTokens: modelDef.CacheReanchorMinCachedTokens,
+		CacheKeyName:                 cache.CacheKeyName,
+		CacheControl:                 cache.CacheControl,
+		CacheTriggerThreshold:        cache.CacheTriggerThreshold,
+		CacheLookbackOffset:          cache.CacheLookbackOffset,
+		CacheReanchorTokens:          cache.CacheReanchorTokens,
+		CacheReanchorMessages:        cache.CacheReanchorMessages,
+		CacheReanchorMinCachedTokens: cache.CacheReanchorMinCachedTokens,
 	}
 
 	configKey := strings.TrimSpace(provider.APIKey)
@@ -656,6 +694,13 @@ func parseConfig(path string) (Config, error) {
 		}
 		cfg.UI = uiCfg
 	}
+	if defaultsRaw, ok := toMap(raw["model_defaults"]); ok {
+		defaults, err := parseModelDefaultsSection(path, defaultsRaw)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.ModelDefaults = defaults
+	}
 	if trajRaw, ok := toMap(raw["trajectory"]); ok {
 		trajCfg := &TrajectoryConfig{}
 		if v, ok := trajRaw["enabled"].(bool); ok {
@@ -739,42 +784,56 @@ func parseConfig(path string) (Config, error) {
 						return Config{}, fmt.Errorf("parse %s [models.%s]: cache_key_name must be string", path, name)
 					}
 					model.CacheKeyName = str
+					model.cacheKeyNameSet = true
 				case "cache_control":
 					m, ok := toMap(v)
 					if !ok {
 						return Config{}, fmt.Errorf("parse %s [models.%s.cache_control]: expected table", path, name)
 					}
 					model.CacheControl = deepCopyMap(m)
+					model.cacheControlSet = true
 				case "cache_trigger_threshold":
 					val, ok := toInt(v)
 					if !ok {
 						return Config{}, fmt.Errorf("parse %s [models.%s]: cache_trigger_threshold must be number", path, name)
 					}
 					model.CacheTriggerThreshold = val
+					model.cacheTriggerThresholdSet = true
 				case "cache_lookback_offset":
 					val, ok := toInt(v)
 					if !ok {
 						return Config{}, fmt.Errorf("parse %s [models.%s]: cache_lookback_offset must be number", path, name)
 					}
 					model.CacheLookbackOffset = val
+					model.cacheLookbackOffsetSet = true
 				case "cache_reanchor_tokens":
 					val, ok := toInt(v)
 					if !ok {
 						return Config{}, fmt.Errorf("parse %s [models.%s]: cache_reanchor_tokens must be number", path, name)
 					}
 					model.CacheReanchorTokens = val
+					model.cacheReanchorTokensSet = true
 				case "cache_reanchor_messages":
 					val, ok := toInt(v)
 					if !ok {
 						return Config{}, fmt.Errorf("parse %s [models.%s]: cache_reanchor_messages must be number", path, name)
 					}
 					model.CacheReanchorMessages = val
+					model.cacheReanchorMessagesSet = true
 				case "cache_reanchor_min_cached_tokens":
 					val, ok := toInt(v)
 					if !ok {
 						return Config{}, fmt.Errorf("parse %s [models.%s]: cache_reanchor_min_cached_tokens must be number", path, name)
 					}
 					model.CacheReanchorMinCachedTokens = val
+					model.cacheReanchorMinCachedTokensSet = true
+				case "cache_enabled":
+					val, ok := v.(bool)
+					if !ok {
+						return Config{}, fmt.Errorf("parse %s [models.%s]: cache_enabled must be boolean", path, name)
+					}
+					model.CacheEnabled = val
+					model.cacheEnabledSet = true
 				case "params":
 					m, ok := toMap(v)
 					if !ok {
@@ -795,6 +854,106 @@ func parseConfig(path string) (Config, error) {
 		}
 	}
 	return cfg, nil
+}
+
+func parseModelDefaultsSection(path string, data map[string]any) (*ModelDefaultsConfig, error) {
+	defaults := &ModelDefaultsConfig{}
+	for key, raw := range data {
+		switch key {
+		case "cache_enabled":
+			value, ok := raw.(bool)
+			if !ok {
+				return nil, fmt.Errorf("parse %s [model_defaults]: cache_enabled must be boolean", path)
+			}
+			defaults.CacheEnabled, defaults.cacheEnabledSet = value, true
+		case "cache_key_name":
+			value, ok := raw.(string)
+			if !ok {
+				return nil, fmt.Errorf("parse %s [model_defaults]: cache_key_name must be string", path)
+			}
+			defaults.CacheKeyName, defaults.cacheKeyNameSet = value, true
+		case "cache_control":
+			value, ok := toMap(raw)
+			if !ok {
+				return nil, fmt.Errorf("parse %s [model_defaults.cache_control]: expected table", path)
+			}
+			defaults.CacheControl, defaults.cacheControlSet = deepCopyMap(value), true
+		case "cache_trigger_threshold", "cache_lookback_offset", "cache_reanchor_tokens", "cache_reanchor_messages", "cache_reanchor_min_cached_tokens":
+			value, ok := toInt(raw)
+			if !ok {
+				return nil, fmt.Errorf("parse %s [model_defaults]: %s must be number", path, key)
+			}
+			switch key {
+			case "cache_trigger_threshold":
+				defaults.CacheTriggerThreshold, defaults.cacheTriggerThresholdSet = value, true
+			case "cache_lookback_offset":
+				defaults.CacheLookbackOffset, defaults.cacheLookbackOffsetSet = value, true
+			case "cache_reanchor_tokens":
+				defaults.CacheReanchorTokens, defaults.cacheReanchorTokensSet = value, true
+			case "cache_reanchor_messages":
+				defaults.CacheReanchorMessages, defaults.cacheReanchorMessagesSet = value, true
+			case "cache_reanchor_min_cached_tokens":
+				defaults.CacheReanchorMinCachedTokens, defaults.cacheReanchorMinCachedTokensSet = value, true
+			}
+		}
+	}
+	return defaults, nil
+}
+
+func resolveEffectiveCache(defaults *ModelDefaultsConfig, model ModelDefinition, alias, path string) (ResolvedModel, error) {
+	cache := ResolvedModel{}
+	if defaults != nil {
+		cache.CacheKeyName = strings.TrimSpace(defaults.CacheKeyName)
+		cache.CacheControl = deepCopyMap(defaults.CacheControl)
+		cache.CacheTriggerThreshold = defaults.CacheTriggerThreshold
+		cache.CacheLookbackOffset = defaults.CacheLookbackOffset
+		cache.CacheReanchorTokens = defaults.CacheReanchorTokens
+		cache.CacheReanchorMessages = defaults.CacheReanchorMessages
+		cache.CacheReanchorMinCachedTokens = defaults.CacheReanchorMinCachedTokens
+	}
+	if model.cacheKeyNameSet || model.CacheKeyName != "" {
+		cache.CacheKeyName = strings.TrimSpace(model.CacheKeyName)
+	}
+	if model.cacheControlSet || len(model.CacheControl) > 0 {
+		cache.CacheControl = deepCopyMap(model.CacheControl)
+	}
+	if model.cacheTriggerThresholdSet || model.CacheTriggerThreshold != 0 {
+		cache.CacheTriggerThreshold = model.CacheTriggerThreshold
+	}
+	if model.cacheLookbackOffsetSet || model.CacheLookbackOffset != 0 {
+		cache.CacheLookbackOffset = model.CacheLookbackOffset
+	}
+	if model.cacheReanchorTokensSet || model.CacheReanchorTokens != 0 {
+		cache.CacheReanchorTokens = model.CacheReanchorTokens
+	}
+	if model.cacheReanchorMessagesSet || model.CacheReanchorMessages != 0 {
+		cache.CacheReanchorMessages = model.CacheReanchorMessages
+	}
+	if model.cacheReanchorMinCachedTokensSet || model.CacheReanchorMinCachedTokens != 0 {
+		cache.CacheReanchorMinCachedTokens = model.CacheReanchorMinCachedTokens
+	}
+
+	legacyModelEnabled := strings.TrimSpace(model.CacheKeyName) != "" && len(model.CacheControl) > 0 && model.CacheTriggerThreshold > 0
+	enabled := legacyModelEnabled
+	if !legacyModelEnabled && defaults != nil {
+		enabled = defaults.CacheEnabled || (!defaults.cacheEnabledSet && strings.TrimSpace(defaults.CacheKeyName) != "" && len(defaults.CacheControl) > 0 && defaults.CacheTriggerThreshold > 0)
+	}
+	if model.cacheEnabledSet || model.CacheEnabled {
+		enabled = model.CacheEnabled
+	}
+	if !enabled {
+		return ResolvedModel{}, nil
+	}
+	if cache.CacheKeyName == "" {
+		return ResolvedModel{}, fmt.Errorf("model alias %q has caching enabled but cache_key_name is empty in %s", alias, path)
+	}
+	if len(cache.CacheControl) == 0 {
+		return ResolvedModel{}, fmt.Errorf("model alias %q has caching enabled but cache_control is empty in %s", alias, path)
+	}
+	if cache.CacheTriggerThreshold <= 0 {
+		return ResolvedModel{}, fmt.Errorf("model alias %q has caching enabled but cache_trigger_threshold is not positive in %s", alias, path)
+	}
+	return cache, nil
 }
 
 func parseShellAgentSection(path, section string, data map[string]any) (*ShellAgentConfig, *ShellAgentPromptsConfig, *PlannerPromptsConfig, error) {
@@ -1523,6 +1682,11 @@ func cloneConfig(in Config) Config {
 		Providers:    make(map[string]ProviderConfig, len(in.Providers)),
 		Models:       make(map[string]ModelDefinition, len(in.Models)),
 	}
+	if in.ModelDefaults != nil {
+		defaults := *in.ModelDefaults
+		defaults.CacheControl = deepCopyMap(in.ModelDefaults.CacheControl)
+		clone.ModelDefaults = &defaults
+	}
 	if in.ShellAgent != nil {
 		agent := *in.ShellAgent
 		clone.ShellAgent = &agent
@@ -1588,15 +1752,24 @@ func cloneConfig(in Config) Config {
 	}
 	for name, model := range in.Models {
 		copyModel := ModelDefinition{
-			Provider:                     model.Provider,
-			Model:                        model.Model,
-			CacheKeyName:                 model.CacheKeyName,
-			CacheControl:                 deepCopyMap(model.CacheControl),
-			CacheTriggerThreshold:        model.CacheTriggerThreshold,
-			CacheLookbackOffset:          model.CacheLookbackOffset,
-			CacheReanchorTokens:          model.CacheReanchorTokens,
-			CacheReanchorMessages:        model.CacheReanchorMessages,
-			CacheReanchorMinCachedTokens: model.CacheReanchorMinCachedTokens,
+			Provider:                        model.Provider,
+			Model:                           model.Model,
+			CacheKeyName:                    model.CacheKeyName,
+			CacheControl:                    deepCopyMap(model.CacheControl),
+			CacheTriggerThreshold:           model.CacheTriggerThreshold,
+			CacheLookbackOffset:             model.CacheLookbackOffset,
+			CacheReanchorTokens:             model.CacheReanchorTokens,
+			CacheReanchorMessages:           model.CacheReanchorMessages,
+			CacheReanchorMinCachedTokens:    model.CacheReanchorMinCachedTokens,
+			CacheEnabled:                    model.CacheEnabled,
+			cacheEnabledSet:                 model.cacheEnabledSet,
+			cacheKeyNameSet:                 model.cacheKeyNameSet,
+			cacheControlSet:                 model.cacheControlSet,
+			cacheTriggerThresholdSet:        model.cacheTriggerThresholdSet,
+			cacheLookbackOffsetSet:          model.cacheLookbackOffsetSet,
+			cacheReanchorTokensSet:          model.cacheReanchorTokensSet,
+			cacheReanchorMessagesSet:        model.cacheReanchorMessagesSet,
+			cacheReanchorMinCachedTokensSet: model.cacheReanchorMinCachedTokensSet,
 		}
 		if len(model.Params) > 0 {
 			copyModel.Params = deepCopyMap(model.Params)

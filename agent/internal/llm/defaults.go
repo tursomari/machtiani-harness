@@ -165,6 +165,41 @@ func overlayConfig(target *Config, source Config, srcSource FieldSource) {
 		}
 	}
 
+	// --- model defaults -------------------------------------------------
+	if source.ModelDefaults != nil {
+		if target.ModelDefaults == nil {
+			copyDefaults := *source.ModelDefaults
+			copyDefaults.CacheControl = deepCopyMap(source.ModelDefaults.CacheControl)
+			target.ModelDefaults = &copyDefaults
+		} else {
+			dst, src := target.ModelDefaults, source.ModelDefaults
+			if src.cacheEnabledSet || src.CacheEnabled {
+				dst.CacheEnabled, dst.cacheEnabledSet = src.CacheEnabled, true
+			}
+			if src.cacheKeyNameSet || src.CacheKeyName != "" {
+				dst.CacheKeyName, dst.cacheKeyNameSet = src.CacheKeyName, true
+			}
+			if src.cacheControlSet || len(src.CacheControl) > 0 {
+				dst.CacheControl, dst.cacheControlSet = deepCopyMap(src.CacheControl), true
+			}
+			if src.cacheTriggerThresholdSet || src.CacheTriggerThreshold != 0 {
+				dst.CacheTriggerThreshold, dst.cacheTriggerThresholdSet = src.CacheTriggerThreshold, true
+			}
+			if src.cacheLookbackOffsetSet || src.CacheLookbackOffset != 0 {
+				dst.CacheLookbackOffset, dst.cacheLookbackOffsetSet = src.CacheLookbackOffset, true
+			}
+			if src.cacheReanchorTokensSet || src.CacheReanchorTokens != 0 {
+				dst.CacheReanchorTokens, dst.cacheReanchorTokensSet = src.CacheReanchorTokens, true
+			}
+			if src.cacheReanchorMessagesSet || src.CacheReanchorMessages != 0 {
+				dst.CacheReanchorMessages, dst.cacheReanchorMessagesSet = src.CacheReanchorMessages, true
+			}
+			if src.cacheReanchorMinCachedTokensSet || src.CacheReanchorMinCachedTokens != 0 {
+				dst.CacheReanchorMinCachedTokens, dst.cacheReanchorMinCachedTokensSet = src.CacheReanchorMinCachedTokens, true
+			}
+		}
+	}
+
 	// --- providers ------------------------------------------------------
 	if len(source.Providers) > 0 {
 		if target.Providers == nil {
@@ -241,32 +276,43 @@ func overlayConfig(target *Config, source Config, srcSource FieldSource) {
 					existing.Model = v.Model
 					existing.ModelSource = srcSource
 				}
-				if v.CacheKeyName != "" {
+				if v.cacheEnabledSet || v.CacheEnabled {
+					existing.CacheEnabled = v.CacheEnabled
+					existing.cacheEnabledSet = true
+				}
+				if v.cacheKeyNameSet || v.CacheKeyName != "" {
 					existing.CacheKeyName = v.CacheKeyName
+					existing.cacheKeyNameSet = true
 					existing.CacheKeyNameSource = srcSource
 				}
-				if len(v.CacheControl) > 0 {
+				if v.cacheControlSet || len(v.CacheControl) > 0 {
 					existing.CacheControl = deepCopyMap(v.CacheControl)
+					existing.cacheControlSet = true
 					existing.CacheControlSource = srcSource
 				}
-				if v.CacheTriggerThreshold != 0 {
+				if v.cacheTriggerThresholdSet || v.CacheTriggerThreshold != 0 {
 					existing.CacheTriggerThreshold = v.CacheTriggerThreshold
+					existing.cacheTriggerThresholdSet = true
 					existing.CacheTriggerThresholdSource = srcSource
 				}
-				if v.CacheLookbackOffset != 0 {
+				if v.cacheLookbackOffsetSet || v.CacheLookbackOffset != 0 {
 					existing.CacheLookbackOffset = v.CacheLookbackOffset
+					existing.cacheLookbackOffsetSet = true
 					existing.CacheLookbackOffsetSource = srcSource
 				}
-				if v.CacheReanchorTokens != 0 {
+				if v.cacheReanchorTokensSet || v.CacheReanchorTokens != 0 {
 					existing.CacheReanchorTokens = v.CacheReanchorTokens
+					existing.cacheReanchorTokensSet = true
 					existing.CacheReanchorTokensSource = srcSource
 				}
-				if v.CacheReanchorMessages != 0 {
+				if v.cacheReanchorMessagesSet || v.CacheReanchorMessages != 0 {
 					existing.CacheReanchorMessages = v.CacheReanchorMessages
+					existing.cacheReanchorMessagesSet = true
 					existing.CacheReanchorMessagesSource = srcSource
 				}
-				if v.CacheReanchorMinCachedTokens != 0 {
+				if v.cacheReanchorMinCachedTokensSet || v.CacheReanchorMinCachedTokens != 0 {
 					existing.CacheReanchorMinCachedTokens = v.CacheReanchorMinCachedTokens
+					existing.cacheReanchorMinCachedTokensSet = true
 					existing.CacheReanchorMinCachedTokensSource = srcSource
 				}
 				if len(v.Params) > 0 {
@@ -277,15 +323,24 @@ func overlayConfig(target *Config, source Config, srcSource FieldSource) {
 			} else {
 				// deep-copy a brand-new model definition
 				copyModel := ModelDefinition{
-					Provider:                     v.Provider,
-					Model:                        v.Model,
-					CacheKeyName:                 v.CacheKeyName,
-					CacheControl:                 deepCopyMap(v.CacheControl),
-					CacheTriggerThreshold:        v.CacheTriggerThreshold,
-					CacheLookbackOffset:          v.CacheLookbackOffset,
-					CacheReanchorTokens:          v.CacheReanchorTokens,
-					CacheReanchorMessages:        v.CacheReanchorMessages,
-					CacheReanchorMinCachedTokens: v.CacheReanchorMinCachedTokens,
+					Provider:                        v.Provider,
+					Model:                           v.Model,
+					CacheKeyName:                    v.CacheKeyName,
+					CacheControl:                    deepCopyMap(v.CacheControl),
+					CacheTriggerThreshold:           v.CacheTriggerThreshold,
+					CacheLookbackOffset:             v.CacheLookbackOffset,
+					CacheReanchorTokens:             v.CacheReanchorTokens,
+					CacheReanchorMessages:           v.CacheReanchorMessages,
+					CacheReanchorMinCachedTokens:    v.CacheReanchorMinCachedTokens,
+					CacheEnabled:                    v.CacheEnabled,
+					cacheEnabledSet:                 v.cacheEnabledSet,
+					cacheKeyNameSet:                 v.cacheKeyNameSet,
+					cacheControlSet:                 v.cacheControlSet,
+					cacheTriggerThresholdSet:        v.cacheTriggerThresholdSet,
+					cacheLookbackOffsetSet:          v.cacheLookbackOffsetSet,
+					cacheReanchorTokensSet:          v.cacheReanchorTokensSet,
+					cacheReanchorMessagesSet:        v.cacheReanchorMessagesSet,
+					cacheReanchorMinCachedTokensSet: v.cacheReanchorMinCachedTokensSet,
 				}
 				copyModel.ProviderSource = srcSource
 				copyModel.ModelSource = srcSource

@@ -311,6 +311,114 @@ cache_trigger_threshold = 100
 	}
 }
 
+func TestResolveModelInheritsAndOverridesModelCacheDefaults(t *testing.T) {
+	content := `default_model = "inherited"
+
+[model_defaults]
+cache_enabled = true
+cache_key_name = "cache_control"
+cache_control = { type = "ephemeral" }
+cache_trigger_threshold = 4096
+cache_lookback_offset = 1
+cache_reanchor_tokens = 500
+
+[providers.fake]
+base_url = "https://example.com/v1"
+api_key = "provider-key"
+
+[models.inherited]
+provider = "fake"
+model = "inherited-model"
+
+[models.overridden]
+provider = "fake"
+model = "overridden-model"
+cache_trigger_threshold = 8192
+cache_reanchor_tokens = 0
+
+[models.disabled]
+provider = "fake"
+model = "disabled-model"
+cache_enabled = false
+`
+
+	path := filepath.Join(t.TempDir(), "config.toml")
+	mustWriteFile(t, path, content)
+	t.Setenv("MACHTIANI_CONFIG", path)
+	ResetConfigForTesting()
+	t.Cleanup(ResetConfigForTesting)
+
+	inherited, err := ResolveModel("inherited")
+	if err != nil {
+		t.Fatalf("ResolveModel inherited: %v", err)
+	}
+	if inherited.CacheKeyName != "cache_control" || inherited.CacheTriggerThreshold != 4096 || inherited.CacheLookbackOffset != 1 {
+		t.Fatalf("unexpected inherited cache settings: %+v", inherited)
+	}
+	if inherited.CacheControl["type"] != "ephemeral" || inherited.CacheReanchorTokens != 500 {
+		t.Fatalf("unexpected inherited cache control: %+v", inherited)
+	}
+
+	overridden, err := ResolveModel("overridden")
+	if err != nil {
+		t.Fatalf("ResolveModel overridden: %v", err)
+	}
+	if overridden.CacheTriggerThreshold != 8192 {
+		t.Fatalf("expected threshold override 8192, got %d", overridden.CacheTriggerThreshold)
+	}
+	if overridden.CacheReanchorTokens != 0 {
+		t.Fatalf("expected explicit zero to disable inherited reanchoring, got %d", overridden.CacheReanchorTokens)
+	}
+
+	disabled, err := ResolveModel("disabled")
+	if err != nil {
+		t.Fatalf("ResolveModel disabled: %v", err)
+	}
+	if disabled.CacheKeyName != "" || len(disabled.CacheControl) != 0 || disabled.CacheTriggerThreshold != 0 {
+		t.Fatalf("expected model cache to be disabled, got %+v", disabled)
+	}
+
+	cfg, _, err := LoadGlobalConfig()
+	if err != nil {
+		t.Fatalf("LoadGlobalConfig: %v", err)
+	}
+	cfg.ModelDefaults.CacheControl["type"] = "mutated"
+	fresh, _, err := LoadGlobalConfig()
+	if err != nil {
+		t.Fatalf("LoadGlobalConfig fresh copy: %v", err)
+	}
+	if got := fresh.ModelDefaults.CacheControl["type"]; got != "ephemeral" {
+		t.Fatalf("model default cache control was not deeply cloned: %v", got)
+	}
+}
+
+func TestResolveModelRejectsIncompleteEnabledCacheDefaults(t *testing.T) {
+	content := `default_model = "broken"
+
+[model_defaults]
+cache_enabled = true
+cache_key_name = "cache_control"
+
+[providers.fake]
+base_url = "https://example.com/v1"
+api_key = "provider-key"
+
+[models.broken]
+provider = "fake"
+model = "broken-model"
+`
+	path := filepath.Join(t.TempDir(), "config.toml")
+	mustWriteFile(t, path, content)
+	t.Setenv("MACHTIANI_CONFIG", path)
+	ResetConfigForTesting()
+	t.Cleanup(ResetConfigForTesting)
+
+	_, err := ResolveModel("broken")
+	if err == nil || !strings.Contains(err.Error(), "cache_control is empty") {
+		t.Fatalf("expected incomplete cache error, got %v", err)
+	}
+}
+
 func TestLoadModeInstructionsPrefersTomlInOverrideDir(t *testing.T) {
 	override := filepath.Join(t.TempDir(), "override")
 	mustWriteFile(t, filepath.Join(override, "coding", "tasks.toml"), sampleCodingToml())

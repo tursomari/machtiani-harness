@@ -131,7 +131,9 @@ The container test must complete all of these checks before printing its success
 
 1. A clean Git repository with an initial commit is created in `/workspace`.
 2. `mct-agent --version` runs.
-3. `mct-agent init` creates `.machtiani/config.toml` containing `TEST_MODEL`.
+3. `mct-agent init --no-cache` creates `.machtiani/config.toml` containing
+   `TEST_MODEL`; caching is disabled so the live smoke provider need not
+   support explicit cache markers.
 4. `mct-agent sync` initializes the repository's internal README state.
 5. `mct-agent run` completes successfully against the live provider.
 6. `.machtiani/sessions/*/artifacts/conversation.json` exists.

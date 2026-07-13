@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,7 +31,8 @@ func TestHandleInitCommand(t *testing.T) {
 	// 1. No flags provided - pflag parses successfully but required flags
 	//    are missing, so expects return code 1.
 	t.Run("no flags", func(t *testing.T) {
-		code := handleInitCommand([]string{})
+		deps, _, _ := testInitDeps("", "", false)
+		code := handleInitCommandWithDeps([]string{}, deps)
 		if code != 1 {
 			t.Fatalf("expected return code 1, got %d", code)
 		}
@@ -75,11 +78,21 @@ func TestHandleInitCommand(t *testing.T) {
 			"gpt-4o",
 			`effort = "high"`,
 			`default_model = "default"`,
+			`cache_enabled = true`,
+			`cache_key_name = "cache_control"`,
+			`cache_trigger_threshold = 4096`,
 		}
 		for _, check := range checks {
 			if !strings.Contains(content, check) {
 				t.Fatalf("config.toml content missing %q:\n%s", check, content)
 			}
+		}
+		info, err := os.Stat(configPath)
+		if err != nil {
+			t.Fatalf("stat config.toml: %v", err)
+		}
+		if got := info.Mode().Perm(); got != 0600 {
+			t.Fatalf("expected config permissions 0600, got %04o", got)
 		}
 	})
 
@@ -191,4 +204,151 @@ func TestHandleInitCommand(t *testing.T) {
 
 		llm.ResetConfigForTesting()
 	})
+}
+
+func TestHandleInitCommandInteractiveWizard(t *testing.T) {
+	withInitWorkingDir(t, func() {
+		deps, stdout, stderr := testInitDeps("https://api.example.com/v1\ngpt-5\n\n\n\n", "sk-hidden", true)
+		code := handleInitCommandWithDeps(nil, deps)
+		if code != 0 {
+			t.Fatalf("expected return code 0, got %d; stderr=%s", code, stderr.String())
+		}
+		data, err := os.ReadFile(filepath.Join(".machtiani", "config.toml"))
+		if err != nil {
+			t.Fatalf("read generated config: %v", err)
+		}
+		content := string(data)
+		for _, expected := range []string{
+			`base_url = "https://api.example.com/v1"`,
+			`api_key = "sk-hidden"`,
+			`model = "gpt-5"`,
+			`effort = "medium"`,
+			`default_model = "default"`,
+			`cache_enabled = true`,
+			`cache_control`,
+		} {
+			if !strings.Contains(content, expected) {
+				t.Fatalf("config missing %q:\n%s", expected, content)
+			}
+		}
+		if strings.Contains(stdout.String(), "sk-hidden") {
+			t.Fatalf("wizard echoed API key: %s", stdout.String())
+		}
+		if !strings.Contains(stdout.String(), "Enable caching? [Y/n]") {
+			t.Fatalf("wizard did not show caching prompt: %s", stdout.String())
+		}
+	})
+}
+
+func TestHandleInitCommandInteractiveDeclinesCache(t *testing.T) {
+	withInitWorkingDir(t, func() {
+		deps, _, stderr := testInitDeps("https://api.example.com/v1\ngpt-5\nhigh\nwork\nmaybe\nNo\n", "sk-hidden", true)
+		code := handleInitCommandWithDeps(nil, deps)
+		if code != 0 {
+			t.Fatalf("expected return code 0, got %d; stderr=%s", code, stderr.String())
+		}
+		data, err := os.ReadFile(filepath.Join(".machtiani", "config.toml"))
+		if err != nil {
+			t.Fatalf("read generated config: %v", err)
+		}
+		content := string(data)
+		if !strings.Contains(content, `cache_enabled = false`) {
+			t.Fatalf("expected caching to be disabled:\n%s", content)
+		}
+		if strings.Contains(content, "cache_key_name") {
+			t.Fatalf("disabled defaults should omit cache payload:\n%s", content)
+		}
+	})
+}
+
+func TestHandleInitCommandNoCacheFlag(t *testing.T) {
+	withInitWorkingDir(t, func() {
+		deps, stdout, stderr := testInitDeps("https://api.example.com/v1\ngpt-5\n\n\n", "sk-hidden", true)
+		code := handleInitCommandWithDeps([]string{"--no-cache"}, deps)
+		if code != 0 {
+			t.Fatalf("expected return code 0, got %d; stderr=%s", code, stderr.String())
+		}
+		if !strings.Contains(stdout.String(), "disabled by --no-cache") {
+			t.Fatalf("expected no-cache notice: %s", stdout.String())
+		}
+		data, err := os.ReadFile(filepath.Join(".machtiani", "config.toml"))
+		if err != nil {
+			t.Fatalf("read generated config: %v", err)
+		}
+		if !strings.Contains(string(data), `cache_enabled = false`) {
+			t.Fatalf("expected caching disabled:\n%s", data)
+		}
+	})
+}
+
+func TestHandleInitCommandInteractiveEOFLeavesNoConfig(t *testing.T) {
+	withInitWorkingDir(t, func() {
+		deps, _, _ := testInitDeps("https://api.example.com/v1\n", "sk-hidden", true)
+		code := handleInitCommandWithDeps(nil, deps)
+		if code != 1 {
+			t.Fatalf("expected return code 1, got %d", code)
+		}
+		if _, err := os.Stat(filepath.Join(".machtiani", "config.toml")); !os.IsNotExist(err) {
+			t.Fatalf("expected no config after EOF, got %v", err)
+		}
+	})
+}
+
+func TestHandleInitCommandFlaggedNoCache(t *testing.T) {
+	withInitWorkingDir(t, func() {
+		deps, _, stderr := testInitDeps("", "", false)
+		code := handleInitCommandWithDeps([]string{
+			"--provider-url", "https://api.example.com/v1",
+			"--api-key", "sk-test",
+			"--model", "gpt-5",
+			"--no-cache",
+		}, deps)
+		if code != 0 {
+			t.Fatalf("expected return code 0, got %d; stderr=%s", code, stderr.String())
+		}
+		data, err := os.ReadFile(filepath.Join(".machtiani", "config.toml"))
+		if err != nil {
+			t.Fatalf("read generated config: %v", err)
+		}
+		if !strings.Contains(string(data), `cache_enabled = false`) || strings.Contains(string(data), "cache_key_name") {
+			t.Fatalf("unexpected no-cache config:\n%s", data)
+		}
+	})
+}
+
+func testInitDeps(input, password string, terminal bool) (initCommandDeps, *bytes.Buffer, *bytes.Buffer) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	return initCommandDeps{
+		in:         strings.NewReader(input),
+		out:        stdout,
+		errOut:     stderr,
+		stdinFD:    0,
+		isTerminal: func(int) bool { return terminal },
+		readPassword: func(int) ([]byte, error) {
+			if password == "" {
+				return nil, io.EOF
+			}
+			return []byte(password), nil
+		},
+	}, stdout, stderr
+}
+
+func withInitWorkingDir(t *testing.T, fn func()) {
+	t.Helper()
+	original, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(t.TempDir()); err != nil {
+		t.Fatalf("chdir temp: %v", err)
+	}
+	defer func() {
+		if err := os.Chdir(original); err != nil {
+			t.Fatalf("restore working directory: %v", err)
+		}
+	}()
+	llm.ResetConfigForTesting()
+	defer llm.ResetConfigForTesting()
+	fn()
 }
