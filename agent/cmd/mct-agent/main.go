@@ -16,8 +16,8 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
 	"github.com/tursomari/machtiani/agent/internal/mct/readmesync"
-	shellagent "github.com/tursomari/machtiani/agent/internal/shell-agent"
 	"github.com/tursomari/machtiani/agent/internal/session"
+	shellagent "github.com/tursomari/machtiani/agent/internal/shell-agent"
 	"github.com/tursomari/machtiani/agent/internal/ui"
 )
 
@@ -65,7 +65,7 @@ var cliCommands = []cliCommand{
 	{name: "run", description: "Run an agent session with a prompt", handler: handleRunCommand},
 	{name: "sync", description: "Sync the internal README with current git state", handler: handleSyncCommand},
 	{name: "session", description: "Manage sessions (list, show)", handler: handleSessionCommand},
-	{name: "config", description: "Validate configuration", handler: handleConfigCommand},
+	{name: "config", description: "Create and manage configuration", handler: handleConfigCommand},
 	{name: "shell-agent", description: "Run a shell-agent task directly (no planner)", handler: handleShellAgentCommand},
 }
 
@@ -329,8 +329,8 @@ func handleRunCommand(args []string) int {
 		APIKeyOverrides:         apiOverrides,
 		ProcessTimerManager:     globalTimerMgr,
 		ShellAgentInterruptStep: cfg.ShellAgentInterruptStep,
-		ShellAgentStepLog:      cfg.ShellAgentStepLog,
-		HasNewInput:            hasNewInput,
+		ShellAgentStepLog:       cfg.ShellAgentStepLog,
+		HasNewInput:             hasNewInput,
 	}
 	opts.Config.APIKeyOverrides = llm.CopyAPIKeyOverridesForRuntime(apiOverrides)
 
@@ -630,36 +630,47 @@ func configureSessionFlags(fs *pflag.FlagSet, cfg *session.Config, paramFlags, p
 	fs.MarkHidden("openai-model")
 }
 func handleConfigCommand(args []string) int {
-	if len(args) < 1 || args[0] == "--help" || args[0] == "-h" {
-		fmt.Fprintln(os.Stderr, "Usage: mct-agent config <check|show|url|api-key|model|reasoning>")
-		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "Subcommands:")
-		fmt.Fprintln(os.Stderr, "  check       Validate the configuration file")
-		fmt.Fprintln(os.Stderr, "  show        Print the effective configuration with source annotations")
-		fmt.Fprintln(os.Stderr, "  url         Set the provider base URL")
-		fmt.Fprintln(os.Stderr, "  api-key     Set the provider API key")
-		fmt.Fprintln(os.Stderr, "  model       Set the model identifier")
-		fmt.Fprintln(os.Stderr, "  reasoning   Set the reasoning effort level (low, medium, or high)")
-		return 2
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		if len(args) > 0 && (args[0] == "--help" || args[0] == "-h") {
+			printConfigUsage()
+			return 0
+		}
+		return handleConfigManager(args)
 	}
 	switch args[0] {
 	case "check":
-		return handleConfigCheckCommand(args[1:])
+		return handleManagedConfigCheck(args[1:])
 	case "show":
-		return handleConfigShowCommand(args[1:])
-	case "url":
-		return handleConfigURLCommand(args[1:])
-	case "api-key":
-		return handleConfigAPIKeyCommand(args[1:])
+		return handleManagedConfigShow(args[1:])
+	case "add":
+		return handleConfigAddCommand(args[1:])
+	case "provider":
+		return handleConfigProviderCommand(args[1:])
 	case "model":
 		return handleConfigModelCommand(args[1:])
-	case "reasoning":
-		return handleConfigReasoningCommand(args[1:])
+	case "cache":
+		return handleConfigCacheCommand(args[1:])
+	case "url", "api-key", "reasoning":
+		fmt.Fprintf(os.Stderr, "The 'config %s' command was removed; use 'config provider set' or 'config model set'.\n", args[0])
+		return 2
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown config subcommand: %s\n", args[0])
-		fmt.Fprintln(os.Stderr, "Usage: mct-agent config <check|show|url|api-key|model|reasoning>")
+		printConfigUsage()
 		return 2
 	}
+}
+
+func printConfigUsage() {
+	fmt.Fprintln(os.Stderr, "Usage: mct-agent config [--global | --path <file>]")
+	fmt.Fprintln(os.Stderr, "       mct-agent config <subcommand> [flags]")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Subcommands:")
+	fmt.Fprintln(os.Stderr, "  add         Add a provider/model set")
+	fmt.Fprintln(os.Stderr, "  provider    Manage providers")
+	fmt.Fprintln(os.Stderr, "  model       Manage models and the default selection")
+	fmt.Fprintln(os.Stderr, "  cache       Manage global and per-model caching")
+	fmt.Fprintln(os.Stderr, "  check       Validate the selected configuration file")
+	fmt.Fprintln(os.Stderr, "  show        Print the effective configuration")
 }
 
 func handleConfigCheckCommand(args []string) int {

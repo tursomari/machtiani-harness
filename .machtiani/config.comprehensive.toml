@@ -104,7 +104,8 @@ api_key = "${OPENROUTER_API_KEY}"
 
 # ── [models] ────────────────────────────────────────────────────────────────────
 # Each model alias maps to a provider and an upstream model identifier.
-# Note: model 'provider' must reference a [providers] key (this is NOT validated by config check).
+# A model's provider must reference a [providers] key; `mct-agent config check`
+# validates this relationship.
 
 [models.foo]
 provider = "openrouter"

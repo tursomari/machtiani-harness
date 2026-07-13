@@ -156,7 +156,7 @@ func handleConfigAPIKeyCommand(args []string) int {
 
 // handleConfigModelCommand sets a model name entry in the config.
 // Usage: mct-agent config model [--alias <name>] <model-name>
-func handleConfigModelCommand(args []string) int {
+func handleLegacyConfigModelCommand(args []string) int {
 	configPath := filepath.Join(".machtiani", "config.toml")
 
 	fs := pflag.NewFlagSet("mct-agent config model", pflag.ContinueOnError)

@@ -213,7 +213,7 @@ func TestConfigModelCommand_UpdatesField(t *testing.T) {
 	if err := setNestedConfig(configPath, "old-model", "models", "default", "model"); err != nil {
 		t.Fatalf("setNestedConfig (initial): %v", err)
 	}
-	code := handleConfigModelCommand([]string{"new-model"})
+	code := handleLegacyConfigModelCommand([]string{"new-model"})
 	if code != 0 {
 		t.Fatalf("expected return code 0, got %d", code)
 	}
@@ -265,7 +265,7 @@ func TestConfigCommand_NoConfigFile(t *testing.T) {
 	}{
 		{"url", handleConfigURLCommand, []string{"x"}},
 		{"api-key", handleConfigAPIKeyCommand, []string{"x"}},
-		{"model", handleConfigModelCommand, []string{"x"}},
+		{"model", handleLegacyConfigModelCommand, []string{"x"}},
 		{"reasoning", handleConfigReasoningCommand, []string{"x"}},
 	}
 	for _, sc := range subcommands {
@@ -303,7 +303,7 @@ model = "old-model"
 	if err := os.WriteFile(configPath, content, 0644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
-	code := handleConfigModelCommand([]string{"new-model"})
+	code := handleLegacyConfigModelCommand([]string{"new-model"})
 	if code != 0 {
 		t.Fatalf("expected return code 0, got %d", code)
 	}
@@ -686,4 +686,3 @@ params = { temperature = 0.7 }
 // ---------------------------------------------------------------------------
 // TestConfigShowCommand_KeyDetail_Valid
 // ---------------------------------------------------------------------------
-

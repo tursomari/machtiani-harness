@@ -1,0 +1,330 @@
+# Machtiani Configuration Guide
+
+`mct-agent config` creates and manages the unified Machtiani configuration used
+by `mct-agent`, `mct`, and `shell-agent`. The configuration connects local model
+aliases to named providers and stores shared defaults such as prompt caching.
+
+For the complete TOML schema beyond providers and models, see
+[`../.machtiani/config.comprehensive.toml`](../.machtiani/config.comprehensive.toml).
+
+## Interactive and scripted operation
+
+Run the configuration manager without a subcommand:
+
+```bash
+mct-agent config
+```
+
+If the selected file does not exist, this opens initial setup. Otherwise it
+opens menus for providers, models, the default model, caching, and validation.
+
+Mutating commands are interactive by default. Supplied flags prefill answers;
+the command prompts for missing information and confirms before writing.
+
+Use `--no-interactive` for scripts and CI:
+
+```bash
+mct-agent config add \
+  --provider openai \
+  --url https://api.openai.com/v1 \
+  --api-key-env OPENAI_API_KEY \
+  --model gpt-5 \
+  --alias primary \
+  --reasoning high \
+  --no-interactive
+```
+
+`--no-interactive` is the only prompt-bypass flag. It guarantees that the
+command never reads stdin, skips confirmation, and reports missing arguments as
+an error. A mutating command attached to a non-terminal must include it.
+
+## Selecting the configuration file
+
+All config commands accept these target flags:
+
+| Flag | Target |
+| --- | --- |
+| `--path <file>` | Exactly the supplied path |
+| `--global` | `$HOME/.machtiani/config.toml` |
+
+`--path` and `--global` are mutually exclusive. Without either flag, selection
+uses this order:
+
+1. `MACHTIANI_CONFIG`, when set.
+2. `.machtiani/config.toml` at the Git project root.
+3. `.machtiani/config.toml` in the current directory outside a Git project.
+
+Every command displays the selected absolute path. An explicit `--path` or
+`--global` overrides `MACHTIANI_CONFIG` and reports that the environment value
+was ignored.
+
+Examples:
+
+```bash
+mct-agent config --global
+mct-agent config check --path ./configs/agent.toml
+mct-agent config model list --global
+```
+
+## Adding a provider and model together
+
+`config add` is the shortest path for initial setup and for adding another
+model/provider set:
+
+```text
+mct-agent config add [flags]
+```
+
+| Flag | Meaning |
+| --- | --- |
+| `--provider <name>` | Local provider name |
+| `--url <url>` | Base URL for a new provider |
+| `--api-key <value>` | Literal API key for a new provider |
+| `--api-key-env <name>` | Store `${NAME}` instead of a literal key |
+| `--model <id>` | Exact upstream model identifier |
+| `--alias <name>` | Local model alias |
+| `--reasoning <value>` | Optional reasoning effort |
+| `--default` | Make the added model the default |
+| `--no-cache` | Disable global caching when creating a new file |
+| `--no-interactive` | Require complete arguments and never prompt |
+
+When `--provider` names an existing provider, its URL and credentials are
+reused. Provider-definition flags are rejected in that case; use `provider set`
+to modify the existing provider. A new provider requires a URL and either
+`--api-key` or `--api-key-env`.
+
+The first model becomes the default automatically. Interactive additions ask
+whether a later model should become the default and offer to add another set.
+`--no-cache` is only valid while creating a new configuration; later additions
+do not change the existing global cache policy.
+
+Prefer `--api-key-env` in scripts so secrets do not enter shell history or the
+configuration file:
+
+```bash
+export OPENAI_API_KEY=sk-...
+mct-agent config add \
+  --provider openai \
+  --url https://api.openai.com/v1 \
+  --api-key-env OPENAI_API_KEY \
+  --model gpt-5 \
+  --alias primary \
+  --no-interactive
+```
+
+This writes:
+
+```toml
+[providers.openai]
+base_url = "https://api.openai.com/v1"
+api_key = "${OPENAI_API_KEY}"
+
+[models.primary]
+provider = "openai"
+model = "gpt-5"
+```
+
+## Provider commands
+
+```text
+mct-agent config provider list
+mct-agent config provider show <name>
+mct-agent config provider add [<name>] [flags]
+mct-agent config provider set [<name>] [flags]
+mct-agent config provider rename <old> <new> [flags]
+mct-agent config provider remove [<name>] [flags]
+```
+
+`list` prints provider names and base URLs. `show` displays the URL, endpoint,
+headers, and query values. Literal API keys are always redacted; environment
+references are displayed by name.
+
+Provider `add` and `set` support:
+
+| Flag | Meaning |
+| --- | --- |
+| `--url <url>` | Set `base_url` |
+| `--api-key <value>` | Store a literal API key |
+| `--api-key-env <name>` | Store an environment reference |
+| `--clear-api-key` | Remove the configured API key |
+| `--endpoint <path>` | Set a provider-specific endpoint |
+| `--clear-endpoint` | Remove the endpoint override |
+| `--header <key=value>` | Add or replace a header; repeatable |
+| `--remove-header <key>` | Remove a header; repeatable |
+| `--query <key=value>` | Add or replace a query parameter; repeatable |
+| `--remove-query <key>` | Remove a query parameter; repeatable |
+
+Examples:
+
+```bash
+mct-agent config provider add azure \
+  --url https://example.openai.azure.com \
+  --api-key-env AZURE_OPENAI_API_KEY \
+  --endpoint /openai/deployments/coder/chat/completions \
+  --query api-version=2025-04-01-preview
+
+mct-agent config provider set azure \
+  --header X-Client=machtiani \
+  --remove-query old-parameter
+
+mct-agent config provider rename azure azure-production
+```
+
+Renaming a provider updates every model that references it. A provider cannot
+be removed while models still reference it; reassign or remove those models
+first. Provider removal never cascades.
+
+## Model commands
+
+```text
+mct-agent config model list
+mct-agent config model show <alias>
+mct-agent config model add [<alias>] [flags]
+mct-agent config model set [<alias>] [flags]
+mct-agent config model rename <old> <new> [flags]
+mct-agent config model remove [<alias>] [flags]
+mct-agent config model default [<alias>] [flags]
+```
+
+`list` displays each alias, provider, upstream model identifier, and marks the
+default with `*`. `show` displays one model's configured definition.
+
+Model `add` and `set` support:
+
+| Flag | Meaning |
+| --- | --- |
+| `--provider <name>` | Assign the model to an existing provider |
+| `--model <id>` | Set the upstream model identifier |
+| `--reasoning <value>` | Set reasoning effort |
+| `--clear-reasoning` | Remove the override and use the provider default |
+| `--param <key=value>` | Add or replace a string request parameter; repeatable |
+| `--param-json <json>` | Merge typed values from a JSON object into `params` |
+| `--remove-param <key>` | Remove a request parameter; repeatable |
+
+Reasoning accepts `low`, `medium`, `high`, `xhigh`, `max`, and arbitrary
+provider-specific values. Interactive operation checks likely misspellings of
+`xhigh` and `max` and confirms unknown values. Noninteractive operation rejects
+likely misspellings but otherwise passes provider-specific values through.
+
+Examples:
+
+```bash
+mct-agent config model add reviewer \
+  --provider openai \
+  --model gpt-5 \
+  --reasoning xhigh
+
+mct-agent config model set reviewer \
+  --param-json '{"temperature":0.2,"max_tokens":8192}'
+
+mct-agent config model set reviewer --clear-reasoning
+mct-agent config model default reviewer
+mct-agent config model rename reviewer final-reviewer
+```
+
+Renaming a model updates `default_model`, `shell_agent_model`, `answer_model`,
+`file_discovery_model`, and legacy `[model].model_name` references. Removing a
+referenced model requires selecting a replacement interactively or supplying
+`--replacement <alias>` with `--no-interactive`:
+
+```bash
+mct-agent config model remove old-model \
+  --replacement primary \
+  --no-interactive
+```
+
+The only configured model cannot be removed because a valid default must
+remain.
+
+## Prompt-cache commands
+
+```text
+mct-agent config cache show [--model <alias>]
+mct-agent config cache enable [--model <alias>]
+mct-agent config cache disable [--model <alias>]
+mct-agent config cache inherit --model <alias>
+mct-agent config cache set [--model <alias>] [flags]
+```
+
+Without `--model`, cache commands operate on `[model_defaults]`. With
+`--model`, they operate on one `[models.<alias>]` override.
+
+- Global `enable` sets `cache_enabled = true` and fills missing canonical cache
+  settings.
+- Global `disable` sets `cache_enabled = false` without deleting tuning values.
+- Model `enable` or `disable` writes a model-specific boolean override.
+- Model `inherit` removes every cache override from that model.
+- `show --model` labels values as inherited or model-specific.
+
+`cache set` accepts:
+
+| Flag | TOML key |
+| --- | --- |
+| `--key-name <name>` | `cache_key_name` |
+| `--control-json <json>` | `cache_control` |
+| `--trigger-threshold <tokens>` | `cache_trigger_threshold` |
+| `--lookback-offset <messages>` | `cache_lookback_offset` |
+| `--reanchor-tokens <tokens>` | `cache_reanchor_tokens` |
+| `--reanchor-messages <count>` | `cache_reanchor_messages` |
+| `--min-cached-tokens <tokens>` | `cache_reanchor_min_cached_tokens` |
+
+Numeric values must be non-negative.
+
+Examples:
+
+```bash
+mct-agent config cache enable --no-interactive
+mct-agent config cache disable --model uncached --no-interactive
+mct-agent config cache inherit --model uncached --no-interactive
+
+mct-agent config cache set \
+  --trigger-threshold 8192 \
+  --lookback-offset 2 \
+  --control-json '{"type":"ephemeral"}' \
+  --no-interactive
+```
+
+## Inspection and validation
+
+Validate relationships and value types:
+
+```bash
+mct-agent config check
+```
+
+Validation checks that providers and models are well formed, every model names
+an existing provider, selectors name configured models, and cache thresholds
+are non-negative.
+
+Display the effective configuration with source annotations:
+
+```bash
+mct-agent config show
+mct-agent config show --full
+mct-agent config show --key models.primary
+```
+
+API keys are redacted from inspection output.
+
+## Write and error behavior
+
+- `add` fails if the provider or model already exists.
+- `set`, `rename`, and `remove` fail if the target does not exist.
+- A proposed change is validated before replacing the original file.
+- Writes use a temporary file and atomic rename with permissions `0600`.
+- Unknown parsed TOML keys are retained.
+- TOML is canonically re-encoded, so comments and original ordering may be lost.
+- Rejected or cancelled changes leave the original file untouched.
+
+Exit status `0` means success or a user-cancelled interactive confirmation,
+`1` means a configuration or filesystem failure, and `2` means invalid command
+usage or missing noninteractive arguments.
+
+## Compatibility
+
+`mct-agent init` remains available for initial setup. New documentation and
+automation should use `mct-agent config` and `mct-agent config add`.
+
+The former scalar commands `config url`, `config api-key`, `config model
+<identifier>`, and `config reasoning` have been removed. Use the corresponding
+`config provider set` or `config model set` resource command instead.

@@ -140,45 +140,87 @@ The manual snippets skip the ldflags metadata that the installer uses, so versio
 
 ## Quick Start
 
-Run the interactive setup wizard:
+Open the interactive configuration manager:
 
 ```
-mct-agent init
+mct-agent config
 ```
 
-The wizard collects a provider name, URL, API key, model, reasoning effort, and
-model alias one step at a time. The reasoning menu uses the Up/Down arrows and
-defaults to the provider's own setting; choose `Other...` for values such as
-`xhigh`, `max`, or another provider-specific value.
+When no configuration exists, this starts the setup wizard. It collects a
+provider name, URL, API key, model, reasoning effort, and model alias one step
+at a time. With an existing configuration it opens a manager for adding or
+editing providers and models, selecting the default model, configuring caching,
+and validating the result. `mct-agent init` remains available for compatibility.
 
-After each model, choose `Finish setup`, add another model that reuses the
-current provider's URL and credentials, or add another provider and its first
-model. When more than one model is configured, the wizard asks which alias
-should be the default. `Finish setup` is selected initially so a single-model
-configuration remains the quick path. Prompt caching defaults to enabled
-globally for all configured models; answer `n` at the caching prompt to disable
-it.
+Reasoning defaults to the provider's own setting and accepts provider-specific
+values such as `xhigh` and `max`. Prompt caching defaults to enabled globally
+for configurations created by the wizard.
 
-For scripts and CI, provide the required values as flags. This remains
-non-interactive and also enables the global caching defaults unless
-`--no-cache` is supplied:
+Flags prefill interactive answers. For scripts and CI, pass
+`--no-interactive`; this guarantees that the command never reads stdin and
+fails if required information is missing:
 
 ```
-mct-agent init --provider-url https://api.example.com/v1 --api-key sk-xxx --model my-model
+mct-agent config add \
+  --provider example \
+  --url https://api.example.com/v1 \
+  --api-key-env EXAMPLE_API_KEY \
+  --model my-model \
+  --alias default \
+  --no-interactive
 ```
 
-Use `--no-cache` when the selected provider or model does not support explicit
-cache markers. Use `--reasoning <value>` to set a reasoning effort in scripts;
-omit it to use the provider default.
+Use `--no-cache` while creating a configuration when the provider does not
+support explicit cache markers. Omit `--reasoning` to use the provider default.
+`--api-key-env NAME` stores `${NAME}` rather than copying the secret into TOML.
 
-Then adjust settings as needed:
+Manage resources with typed subcommands:
+
 ```
-mct-agent config provider url https://api.example.com/v1
-mct-agent config provider reasoning high
+mct-agent config provider list
+mct-agent config provider set example --url https://api.example.com/v1
+mct-agent config model add reviewer --provider example --model review-model
+mct-agent config model set reviewer --reasoning xhigh
+mct-agent config model default reviewer
+mct-agent config cache disable --model reviewer
 mct-agent config show
+mct-agent config check
 ```
+
+Mutations are interactive by default, even when flags prefill their values. Add
+`--no-interactive` for an immediate validated write. Use `--global` to target
+`$HOME/.machtiani/config.toml` or `--path <file>` for an exact path. Otherwise
+`MACHTIANI_CONFIG` wins when set, followed by the project-local configuration.
+Every command prints the selected absolute path. Explicit path flags override
+`MACHTIANI_CONFIG` and report that override.
+
+Configuration mutations preserve parsed keys and write atomically with mode
+`0600`, but canonically re-encode TOML; comments and original ordering may be
+lost.
+
+See the [comprehensive configuration guide](docs/configuration.md) for every
+provider, model, cache, path-selection, interactive, and scripting command.
+
+The resource command groups are:
+
+```text
+mct-agent config provider <list|show|add|set|rename|remove>
+mct-agent config model <list|show|add|set|rename|remove|default>
+mct-agent config cache <show|enable|disable|inherit|set>
+```
+
+Provider `set` supports URL, API-key, endpoint, header, and query changes.
+Model `set` supports provider/model reassignment, reasoning, request parameters,
+and restoring provider-default reasoning with `--clear-reasoning`. Renames
+update references. Referenced providers cannot be removed; removing a selected
+model requires `--replacement <alias>` in noninteractive mode. Run the relevant
+command with `--help` for its complete flags.
 
 ## Global Configuration (.machtiani/config.toml)
+
+For command-by-command management instructions and provider/model/cache
+semantics, read the [comprehensive configuration guide](docs/configuration.md).
+
 All binaries now read a unified TOML configuration. By default `mct-agent`, `mct`, and `shell-agent` look for:
 
 1. The path set in `MACHTIANI_CONFIG` (recommended for scripts/CI), or

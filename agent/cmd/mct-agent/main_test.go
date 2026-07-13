@@ -475,14 +475,11 @@ func TestConfigCommandNoSubcommand(t *testing.T) {
 	stderr := captureStderr(t, func() {
 		code = handleConfigCommand([]string{})
 	})
-	if code != 2 {
-		t.Fatalf("expected exit 2, got %d", code)
+	if code != 1 {
+		t.Fatalf("expected exit 1 without a terminal, got %d", code)
 	}
-	if !strings.Contains(stderr, "Usage: mct-agent config") {
-		t.Fatalf("expected usage in stderr, got %q", stderr)
-	}
-	if !strings.Contains(stderr, "check") {
-		t.Fatalf("expected 'check' subcommand in stderr, got %q", stderr)
+	if !strings.Contains(stderr, "interactive configuration requires a terminal") {
+		t.Fatalf("expected terminal error in stderr, got %q", stderr)
 	}
 }
 

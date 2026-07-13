@@ -12,19 +12,23 @@ git commit --allow-empty -m "Initial commit"
 echo "==> Checking binary version..."
 mct-agent --version
 
-# Step 3: Initialize config
+# Step 3: Initialize config through the script-safe resource command
 echo "==> Initializing configuration..."
-mct-agent init \
-  --provider-url "$TEST_BASE_URL" \
+mct-agent config add \
+  --provider default \
+  --url "$TEST_BASE_URL" \
   --api-key "$TEST_API_KEY" \
   --model "$TEST_MODEL" \
-  --no-cache
+  --alias default \
+  --no-cache \
+  --no-interactive
 
 # Step 4: Verify config file exists and contains the expected model
 echo "==> Verifying config file..."
 test -f .machtiani/config.toml
 grep -q "$TEST_MODEL" .machtiani/config.toml
 grep -q 'cache_enabled = false' .machtiani/config.toml
+mct-agent config check
 
 # Step 5: Initialize the repository's internal README state
 echo "==> Synchronizing repository state..."
