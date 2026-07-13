@@ -13,7 +13,7 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/llm"
 )
 
-func TestHandleInitCommand(t *testing.T) {
+func TestLegacyHandleInitCommandWithDeps(t *testing.T) {
 	tmpDir := t.TempDir()
 	origDir, err := os.Getwd()
 	if err != nil {
@@ -29,6 +29,10 @@ func TestHandleInitCommand(t *testing.T) {
 	}()
 	llm.ResetConfigForTesting()
 	t.Cleanup(llm.ResetConfigForTesting)
+	legacyDeps, _, _ := testInitDeps("", "", false)
+	handleInitCommand := func(args []string) int {
+		return handleInitCommandWithDeps(args, legacyDeps)
+	}
 
 	// 1. No flags provided - pflag parses successfully but required flags
 	//    are missing, so expects return code 1.
@@ -209,6 +213,64 @@ func TestHandleInitCommand(t *testing.T) {
 
 		llm.ResetConfigForTesting()
 	})
+}
+
+func TestInitStartsNewConfigurationWizard(t *testing.T) {
+	_, cleanup := setupConfigTest(t)
+	defer cleanup()
+	_, stderr := captureOutput(func() {
+		if code := handleInitCommand(nil); code != 1 {
+			t.Errorf("init exit = %d, want 1 without a terminal", code)
+		}
+	})
+	if !strings.Contains(stderr, "interactive configuration requires a terminal") {
+		t.Fatalf("stderr = %q", stderr)
+	}
+	if strings.Contains(stderr, "provider-url") {
+		t.Fatalf("init exposed the legacy wizard: %q", stderr)
+	}
+}
+
+func TestInitRefusesExistingConfiguration(t *testing.T) {
+	_, cleanup := setupConfigTest(t)
+	defer cleanup()
+	if code := handleConfigAddCommand([]string{
+		"--provider", "p", "--url", "https://example.com/v1", "--api-key-env", "TEST_API_KEY",
+		"--model", "one", "--alias", "one", "--no-interactive",
+	}); code != 0 {
+		t.Fatalf("config add exit = %d", code)
+	}
+	path := filepath.Join(".machtiani", "config.toml")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, stderr := captureOutput(func() {
+		if code := handleInitCommand(nil); code != 1 {
+			t.Errorf("init exit = %d, want 1", code)
+		}
+	})
+	if !strings.Contains(stderr, "Configuration already exists") || !strings.Contains(stderr, "mct-agent config") {
+		t.Fatalf("stderr = %q", stderr)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatal("init changed an existing configuration")
+	}
+}
+
+func TestInitRejectsLegacyAutomationFlags(t *testing.T) {
+	_, stderr := captureOutput(func() {
+		if code := handleInitCommand([]string{"--provider-url", "https://example.com"}); code != 2 {
+			t.Errorf("init exit = %d, want 2", code)
+		}
+	})
+	if !strings.Contains(stderr, "config add --no-interactive") {
+		t.Fatalf("stderr = %q", stderr)
+	}
 }
 
 func TestHandleInitCommandInteractiveWizard(t *testing.T) {

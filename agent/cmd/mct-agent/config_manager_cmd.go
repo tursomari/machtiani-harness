@@ -39,13 +39,13 @@ func handleConfigManager(args []string) int {
 	}
 	for {
 		choice, err := promptInitMenu(os.Stdin, os.Stdout, int(os.Stdin.Fd()), "Configuration", "Choose an action. Changes are confirmed before writing.", []initMenuOption{
+			{label: "Finish", value: "finish"},
 			{label: "Add provider or model", value: "add"},
 			{label: "Manage providers", value: "provider"},
 			{label: "Manage models", value: "model"},
 			{label: "Set default model", value: "default"},
 			{label: "Configure caching", value: "cache"},
 			{label: "Validate configuration", value: "check"},
-			{label: "Finish", value: "finish"},
 		})
 		if err != nil {
 			return configError(err)

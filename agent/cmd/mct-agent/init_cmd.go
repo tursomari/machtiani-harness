@@ -59,17 +59,54 @@ func init() {
 }
 
 func handleInitCommand(args []string) int {
-	return handleInitCommandWithDeps(args, initCommandDeps{
-		in:              os.Stdin,
-		out:             os.Stdout,
-		errOut:          os.Stderr,
-		stdinFD:         int(os.Stdin.Fd()),
-		isTerminal:      term.IsTerminal,
-		readPassword:    term.ReadPassword,
-		selectReasoning: promptReasoningMenu,
-		selectNextStep:  promptInitNextStepMenu,
-		selectDefault:   promptInitDefaultModelMenu,
-	})
+	for _, arg := range args {
+		name := strings.SplitN(arg, "=", 2)[0]
+		switch name {
+		case "--provider-url", "--api-key", "--model", "--reasoning", "--alias", "--force":
+			fmt.Fprintln(os.Stderr, "Legacy mct-agent init flags were removed. Use 'mct-agent init' for interactive setup or 'mct-agent config add --no-interactive' for automation.")
+			return 2
+		}
+	}
+
+	fs := pflag.NewFlagSet("mct-agent init", pflag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	var flags configTargetFlags
+	addConfigTargetFlags(fs, &flags)
+	noCache := fs.Bool("no-cache", false, "disable global prompt caching in the new configuration")
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, "Usage: mct-agent init [--global | --path <file>] [--no-cache]")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Start first-time interactive setup. Use 'mct-agent config' to modify an existing configuration.")
+		fmt.Fprintln(os.Stderr, "For automation, use 'mct-agent config add --no-interactive'.")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Flags:")
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(args); err != nil {
+		if err == pflag.ErrHelp {
+			return 0
+		}
+		return 2
+	}
+	if fs.NArg() != 0 {
+		return configUsageError("mct-agent init takes flags, not positional arguments")
+	}
+	target, err := resolveConfigTarget(flags)
+	if err != nil {
+		return configError(err)
+	}
+	if _, err := os.Stat(target.path); err == nil {
+		fmt.Fprintf(os.Stderr, "Configuration already exists at %s. Run 'mct-agent config' to modify it.\n", target.path)
+		return 1
+	} else if !os.IsNotExist(err) {
+		return configError(fmt.Errorf("inspect %s: %w", target.path, err))
+	}
+
+	forwarded := configTargetArgs(flags)
+	if *noCache {
+		forwarded = append(forwarded, "--no-cache")
+	}
+	return handleConfigAddCommand(forwarded)
 }
 
 func handleInitCommandWithDeps(args []string, deps initCommandDeps) int {

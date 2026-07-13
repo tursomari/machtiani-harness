@@ -41,6 +41,86 @@ func TestConfigAddNonInteractiveCreatesResourceConfig(t *testing.T) {
 	}
 }
 
+func TestConfigAddPresetCreatesCompleteProviderAndModel(t *testing.T) {
+	_, cleanup := setupConfigTest(t)
+	defer cleanup()
+	if code := handleConfigAddCommand([]string{"--preset", "deepseek", "--no-interactive"}); code != 0 {
+		t.Fatalf("config add preset exit = %d", code)
+	}
+	raw := readTOML(t, filepath.Join(".machtiani", "config.toml"))
+	if raw["default_model"] != "deepseek" {
+		t.Fatalf("default_model = %#v", raw["default_model"])
+	}
+	provider := raw["providers"].(map[string]any)["deepseek"].(map[string]any)
+	if provider["base_url"] != "https://api.deepseek.com" || provider["endpoint"] != "/chat/completions" {
+		t.Fatalf("provider = %#v", provider)
+	}
+	if provider["api_key"] != "${DEEPSEEK_API_KEY}" {
+		t.Fatalf("api_key = %#v", provider["api_key"])
+	}
+	model := raw["models"].(map[string]any)["deepseek"].(map[string]any)
+	if model["model"] != "deepseek-v4-flash" || model["cache_enabled"] != false {
+		t.Fatalf("model = %#v", model)
+	}
+}
+
+func TestConfigAddPresetAllowsCompleteOverrides(t *testing.T) {
+	_, cleanup := setupConfigTest(t)
+	defer cleanup()
+	if code := handleConfigAddCommand([]string{
+		"--preset", "openrouter", "--url", "https://gateway.example/v1", "--endpoint", "/chat",
+		"--api-key-env", "ROUTER_TOKEN", "--header", "X-Tenant=alpha", "--query", "version=2",
+		"--model", "vendor/new-model", "--alias", "custom", "--reasoning", "experimental", "--no-interactive",
+	}); code != 0 {
+		t.Fatalf("config add preset overrides exit = %d", code)
+	}
+	raw := readTOML(t, filepath.Join(".machtiani", "config.toml"))
+	provider := raw["providers"].(map[string]any)["openrouter"].(map[string]any)
+	if provider["base_url"] != "https://gateway.example/v1" || provider["endpoint"] != "/chat" {
+		t.Fatalf("provider = %#v", provider)
+	}
+	if provider["headers"].(map[string]any)["X-Tenant"] != "alpha" || provider["query"].(map[string]any)["version"] != "2" {
+		t.Fatalf("provider advanced values = %#v", provider)
+	}
+	model := raw["models"].(map[string]any)["custom"].(map[string]any)
+	effort := model["params"].(map[string]any)["reasoning"].(map[string]any)["effort"]
+	if effort != "experimental" {
+		t.Fatalf("reasoning effort = %#v", effort)
+	}
+}
+
+func TestConfigCatalogListAndShow(t *testing.T) {
+	stdout, stderr := captureOutput(func() {
+		if code := handleConfigCatalogCommand([]string{"list"}); code != 0 {
+			t.Errorf("catalog list exit = %d", code)
+		}
+		if code := handleConfigCatalogCommand([]string{"show", "openai"}); code != 0 {
+			t.Errorf("catalog show exit = %d", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("stderr = %q", stderr)
+	}
+	for _, want := range []string{"deepseek", "openrouter", "gpt-5.5", "OPENAI_API_KEY"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("catalog output missing %q: %s", want, stdout)
+		}
+	}
+}
+
+func TestConfigAddRejectsUnknownPreset(t *testing.T) {
+	_, cleanup := setupConfigTest(t)
+	defer cleanup()
+	_, stderr := captureOutput(func() {
+		if code := handleConfigAddCommand([]string{"--preset", "missing", "--no-interactive"}); code != 2 {
+			t.Errorf("exit = %d", code)
+		}
+	})
+	if !strings.Contains(stderr, "unknown provider preset") {
+		t.Fatalf("stderr = %q", stderr)
+	}
+}
+
 func TestConfigResourceRenameAndReferenceAwareRemoval(t *testing.T) {
 	_, cleanup := setupConfigTest(t)
 	defer cleanup()

@@ -140,17 +140,25 @@ The manual snippets skip the ldflags metadata that the installer uses, so versio
 
 ## Quick Start
 
-Open the interactive configuration manager:
+Start first-time interactive setup:
+
+```
+mct-agent init
+```
+
+The setup wizard offers built-in
+DeepSeek, OpenAI, and OpenRouter presets, then collects only the values that are
+not supplied by the preset. Every provider, model, and reasoning menu includes
+an `Other` path for custom integrations. If a configuration already exists,
+`init` refuses to overwrite it and directs you to the configuration manager:
 
 ```
 mct-agent config
 ```
 
-When no configuration exists, this starts the setup wizard. It collects a
-provider name, URL, API key, model, reasoning effort, and model alias one step
-at a time. With an existing configuration it opens a manager for adding or
-editing providers and models, selecting the default model, configuring caching,
-and validating the result. `mct-agent init` remains available for compatibility.
+The manager safely adds or edits providers and models, selects the default
+model, configures caching, and validates the result without replacing unrelated
+settings.
 
 Reasoning defaults to the provider's own setting and accepts provider-specific
 values such as `xhigh` and `max`. Prompt caching defaults to enabled globally
@@ -158,7 +166,17 @@ for configurations created by the wizard.
 
 Flags prefill interactive answers. For scripts and CI, pass
 `--no-interactive`; this guarantees that the command never reads stdin and
-fails if required information is missing:
+fails if required information is missing. A preset supplies the URL, endpoint,
+credential environment variable, default model, alias, and cache compatibility:
+
+```
+export DEEPSEEK_API_KEY=...
+mct-agent config add --preset deepseek --no-interactive
+```
+
+Inspect the available values with `mct-agent config catalog list` and
+`mct-agent config catalog show deepseek`. Raw flags remain available for custom
+providers and as preset overrides:
 
 ```
 mct-agent config add \
@@ -178,6 +196,7 @@ Manage resources with typed subcommands:
 
 ```
 mct-agent config provider list
+mct-agent config catalog list
 mct-agent config provider set example --url https://api.example.com/v1
 mct-agent config model add reviewer --provider example --model review-model
 mct-agent config model set reviewer --reasoning xhigh
@@ -207,6 +226,7 @@ The resource command groups are:
 mct-agent config provider <list|show|add|set|rename|remove>
 mct-agent config model <list|show|add|set|rename|remove|default>
 mct-agent config cache <show|enable|disable|inherit|set>
+mct-agent config catalog <list|show>
 ```
 
 Provider `set` supports URL, API-key, endpoint, header, and query changes.

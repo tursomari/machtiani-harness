@@ -59,9 +59,17 @@ assert_unchanged() {
   [[ "$actual" == "$expected" ]] || fail "rejected mutation changed $CONFIG_PATH"
 }
 
-echo "==> Exercising config add and initial validation..."
+echo "==> Exercising the provider catalogue..."
+mct-agent config catalog list >"$SCRATCH_DIR/catalog-list"
+assert_file_contains 'deepseek' "$SCRATCH_DIR/catalog-list"
+assert_file_contains 'openai' "$SCRATCH_DIR/catalog-list"
+mct-agent config catalog show deepseek >"$SCRATCH_DIR/catalog-show"
+assert_file_contains 'DEEPSEEK_API_KEY' "$SCRATCH_DIR/catalog-show"
+assert_file_contains 'deepseek-v4-flash' "$SCRATCH_DIR/catalog-show"
+
+echo "==> Exercising preset config add and initial validation..."
 mct-agent config add \
-  --provider deepseek \
+  --preset deepseek \
   --url "$TEST_BASE_URL" \
   --api-key-env TEST_API_KEY \
   --model "$TEST_MODEL" \
@@ -74,7 +82,14 @@ test -f "$CONFIG_PATH"
 assert_file_contains 'api_key = "${TEST_API_KEY}"' "$CONFIG_PATH"
 assert_file_contains 'default_model = "deepseek-primary"' "$CONFIG_PATH"
 assert_file_contains 'cache_enabled = false' "$CONFIG_PATH"
+assert_file_contains 'endpoint = "/chat/completions"' "$CONFIG_PATH"
 mct-agent config check
+
+echo "==> Verifying init protects an existing configuration..."
+initial_checksum=$(checksum "$CONFIG_PATH")
+expect_exit 1 mct-agent init
+assert_file_contains 'Run '\''mct-agent config'\'' to modify it' "$SCRATCH_DIR/expected-stderr"
+assert_unchanged "$initial_checksum"
 
 echo "==> Exercising provider list, show, add, set, rename, and remove..."
 mct-agent config provider list >"$SCRATCH_DIR/provider-list"

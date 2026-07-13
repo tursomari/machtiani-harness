@@ -9,7 +9,19 @@ For the complete TOML schema beyond providers and models, see
 
 ## Interactive and scripted operation
 
-Run the configuration manager without a subcommand:
+Use `init` for first-time interactive setup:
+
+```bash
+mct-agent init
+```
+
+`init` starts the same catalogue-aware setup flow used when `config` encounters
+a missing configuration. It never overwrites an existing file; when one is
+present, it directs the user to the configuration manager. The optional
+`--global`, `--path`, and `--no-cache` flags select the destination and initial
+cache policy.
+
+Run the configuration manager without a subcommand for follow-up changes:
 
 ```bash
 mct-agent config
@@ -24,14 +36,8 @@ the command prompts for missing information and confirms before writing.
 Use `--no-interactive` for scripts and CI:
 
 ```bash
-mct-agent config add \
-  --provider openai \
-  --url https://api.openai.com/v1 \
-  --api-key-env OPENAI_API_KEY \
-  --model gpt-5 \
-  --alias primary \
-  --reasoning high \
-  --no-interactive
+export OPENAI_API_KEY=sk-...
+mct-agent config add --preset openai --no-interactive
 ```
 
 `--no-interactive` is the only prompt-bypass flag. It guarantees that the
@@ -77,10 +83,14 @@ mct-agent config add [flags]
 
 | Flag | Meaning |
 | --- | --- |
+| `--preset <id>` | Fill values from the built-in provider catalogue |
 | `--provider <name>` | Local provider name |
 | `--url <url>` | Base URL for a new provider |
+| `--endpoint <path>` | Optional request endpoint for a new provider |
 | `--api-key <value>` | Literal API key for a new provider |
 | `--api-key-env <name>` | Store `${NAME}` instead of a literal key |
+| `--header <key=value>` | Provider header; repeatable |
+| `--query <key=value>` | Provider query parameter; repeatable |
 | `--model <id>` | Exact upstream model identifier |
 | `--alias <name>` | Local model alias |
 | `--reasoning <value>` | Optional reasoning effort |
@@ -97,6 +107,60 @@ The first model becomes the default automatically. Interactive additions ask
 whether a later model should become the default and offer to add another set.
 `--no-cache` is only valid while creating a new configuration; later additions
 do not change the existing global cache policy.
+
+## Built-in provider catalogue
+
+The embedded catalogue supplies setup defaults for OpenAI-compatible providers
+that Machtiani can configure directly:
+
+```text
+mct-agent config catalog list
+mct-agent config catalog show <provider>
+mct-agent config catalog show <provider> --json
+```
+
+The initial catalogue contains `deepseek`, `openai`, and `openrouter`. Each
+preset defines its base URL, chat endpoint, conventional API-key environment
+variable, default model and local alias, known reasoning choices, and model
+cache compatibility. The values are intentionally scoped instead of mirroring
+every entry in a general provider database: providers with a native request
+protocol are not offered until the runtime supports that protocol.
+
+For example, this creates a complete DeepSeek configuration containing an
+environment reference, without putting the live key in TOML or on the command
+line:
+
+```bash
+export DEEPSEEK_API_KEY=...
+mct-agent config add --preset deepseek --no-interactive
+```
+
+Preset values are starting points. Explicit flags override the URL, endpoint,
+credential reference, model, alias, reasoning, headers, or query parameters:
+
+```bash
+mct-agent config add \
+  --preset openrouter \
+  --model vendor/new-model \
+  --alias experimental \
+  --reasoning provider-specific \
+  --header X-Tenant=team-a \
+  --no-interactive
+```
+
+Interactive menus always include `Other provider`, `Other model`, and `Other`
+reasoning choices. Arbitrary reasoning values pass through after typo checks
+for common `xhigh` and `max` misspellings. For a completely custom integration,
+omit `--preset` and supply `--provider`, `--url`, credentials, `--model`, and
+`--alias`; `--endpoint`, `--header`, and `--query` expose the remaining provider
+transport settings.
+
+The catalogue is consulted only while adding a provider/model set. Generated
+TOML remains explicit, so a future catalogue update never silently changes an
+existing configuration. Catalogue source values are maintained against the
+[DeepSeek API documentation](https://api-docs.deepseek.com/),
+[OpenAI model documentation](https://developers.openai.com/api/docs/models),
+and [OpenRouter quickstart](https://openrouter.ai/docs/quickstart).
 
 Prefer `--api-key-env` in scripts so secrets do not enter shell history or the
 configuration file:
@@ -320,10 +384,13 @@ Exit status `0` means success or a user-cancelled interactive confirmation,
 `1` means a configuration or filesystem failure, and `2` means invalid command
 usage or missing noninteractive arguments.
 
-## Compatibility
+## Initial setup and compatibility
 
-`mct-agent init` remains available for initial setup. New documentation and
-automation should use `mct-agent config` and `mct-agent config add`.
+`mct-agent init` is the first-time interactive entrypoint. The former
+`--provider-url`, `--api-key`, `--model`, `--reasoning`, `--alias`, and `--force`
+init flags have been removed so there is only one setup model. Automation should
+use `mct-agent config add --no-interactive`; ongoing interactive changes should
+use `mct-agent config`.
 
 The former scalar commands `config url`, `config api-key`, `config model
 <identifier>`, and `config reasoning` have been removed. Use the corresponding

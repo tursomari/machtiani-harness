@@ -135,20 +135,23 @@ The container test must complete all of these checks before printing its success
 
 1. A clean Git repository with an initial commit is created in `/workspace`.
 2. `mct-agent --version` runs.
-3. `config-crud.sh` creates the primary provider/model with `config add` and an
-   API-key environment reference; the literal live key is never passed as a CLI
-   argument or written to TOML.
-4. Every provider, model, and cache subcommand is exercised, including
+3. `config-crud.sh` inspects the built-in provider catalogue, then creates the
+   primary provider/model with the DeepSeek preset and an API-key environment
+   reference; the literal live key is never passed as a CLI argument or written
+   to TOML.
+4. `mct-agent init` is verified to refuse and preserve an existing
+   configuration while directing the user to `mct-agent config`.
+5. Every provider, model, and cache subcommand is exercised, including
    reference-aware rename/removal, reasoning and parameter updates, cache
    inheritance, inspection, validation, and expected failure paths.
-5. `--path`, `--global`, `MACHTIANI_CONFIG`, and explicit environment override
+6. `--path`, `--global`, `MACHTIANI_CONFIG`, and explicit environment override
    behavior are verified with disposable configurations.
-6. Rejected mutations are checksum-verified as non-writing, scratch resources
+7. Rejected mutations are checksum-verified as non-writing, scratch resources
    are removed, and the final primary configuration is validated with caching
    disabled.
-7. `mct-agent sync` initializes the repository's internal README state.
-8. `mct-agent run` completes successfully against the live provider.
-9. `.machtiani/sessions/*/artifacts/conversation.json` exists.
+8. `mct-agent sync` initializes the repository's internal README state.
+9. `mct-agent run` completes successfully against the live provider.
+10. `.machtiani/sessions/*/artifacts/conversation.json` exists.
 
 The scripts use `set -euo pipefail`; any failed command must produce a non-zero harness exit and must not print `SMOKE TEST PASSED`.
 
