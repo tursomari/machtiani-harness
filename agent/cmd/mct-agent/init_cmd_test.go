@@ -213,7 +213,7 @@ func TestHandleInitCommand(t *testing.T) {
 
 func TestHandleInitCommandInteractiveWizard(t *testing.T) {
 	withInitWorkingDir(t, func() {
-		deps, stdout, stderr := testInitDeps("https://api.example.com/v1\ngpt-5\n\n\n", "sk-hidden", true)
+		deps, stdout, stderr := testInitDeps("\nhttps://api.example.com/v1\ngpt-5\n\n\n", "sk-hidden", true)
 		code := handleInitCommandWithDeps(nil, deps)
 		if code != 0 {
 			t.Fatalf("expected return code 0, got %d; stderr=%s", code, stderr.String())
@@ -249,7 +249,7 @@ func TestHandleInitCommandInteractiveWizard(t *testing.T) {
 
 func TestHandleInitCommandInteractiveDeclinesCache(t *testing.T) {
 	withInitWorkingDir(t, func() {
-		deps, _, stderr := testInitDepsWithReasoning("https://api.example.com/v1\ngpt-5\nwork\nmaybe\nNo\n", "sk-hidden", true, "high")
+		deps, _, stderr := testInitDepsWithReasoning("\nhttps://api.example.com/v1\ngpt-5\nwork\nmaybe\nNo\n", "sk-hidden", true, "high")
 		code := handleInitCommandWithDeps(nil, deps)
 		if code != 0 {
 			t.Fatalf("expected return code 0, got %d; stderr=%s", code, stderr.String())
@@ -273,7 +273,7 @@ func TestHandleInitCommandInteractiveDeclinesCache(t *testing.T) {
 
 func TestHandleInitCommandNoCacheFlag(t *testing.T) {
 	withInitWorkingDir(t, func() {
-		deps, stdout, stderr := testInitDeps("https://api.example.com/v1\ngpt-5\n\n", "sk-hidden", true)
+		deps, stdout, stderr := testInitDeps("\nhttps://api.example.com/v1\ngpt-5\n\n", "sk-hidden", true)
 		code := handleInitCommandWithDeps([]string{"--no-cache"}, deps)
 		if code != 0 {
 			t.Fatalf("expected return code 0, got %d; stderr=%s", code, stderr.String())
@@ -293,7 +293,7 @@ func TestHandleInitCommandNoCacheFlag(t *testing.T) {
 
 func TestHandleInitCommandInteractiveEOFLeavesNoConfig(t *testing.T) {
 	withInitWorkingDir(t, func() {
-		deps, _, _ := testInitDeps("https://api.example.com/v1\n", "sk-hidden", true)
+		deps, _, _ := testInitDeps("\nhttps://api.example.com/v1\n", "sk-hidden", true)
 		code := handleInitCommandWithDeps(nil, deps)
 		if code != 1 {
 			t.Fatalf("expected return code 1, got %d", code)
@@ -340,6 +340,112 @@ func TestReasoningArrowMenu(t *testing.T) {
 		if !strings.Contains(out.String(), label) {
 			t.Fatalf("menu output missing %q: %q", label, out.String())
 		}
+	}
+}
+
+func TestHandleInitCommandInteractiveAddsModelToProvider(t *testing.T) {
+	withInitWorkingDir(t, func() {
+		deps, stdout, stderr := testInitDeps("\nhttps://api.one.example/v1\nmodel-one\nprimary\nmodel-two\nfast\n\n", "sk-one", true)
+		steps := []string{"model", "finish"}
+		deps.selectNextStep = func(io.Reader, io.Writer, int, string) (string, error) {
+			step := steps[0]
+			steps = steps[1:]
+			return step, nil
+		}
+		deps.selectDefault = func(_ io.Reader, _ io.Writer, _ int, models []initModel) (string, error) {
+			if len(models) != 2 {
+				t.Fatalf("default selector received %d models", len(models))
+			}
+			return "fast", nil
+		}
+
+		if code := handleInitCommandWithDeps(nil, deps); code != 0 {
+			t.Fatalf("expected return code 0, got %d; stderr=%s", code, stderr.String())
+		}
+		data, err := os.ReadFile(filepath.Join(".machtiani", "config.toml"))
+		if err != nil {
+			t.Fatalf("read generated config: %v", err)
+		}
+		content := string(data)
+		for _, expected := range []string{
+			`default_model = "fast"`,
+			`[providers.default]`,
+			`[models.primary]`,
+			`[models.fast]`,
+			`model = "model-one"`,
+			`model = "model-two"`,
+		} {
+			if !strings.Contains(content, expected) {
+				t.Fatalf("config missing %q:\n%s", expected, content)
+			}
+		}
+		if got := strings.Count(content, "[providers."); got != 1 {
+			t.Fatalf("expected one provider table, got %d:\n%s", got, content)
+		}
+		if !strings.Contains(stdout.String(), "Models: 2") {
+			t.Fatalf("summary did not report two models: %s", stdout.String())
+		}
+	})
+}
+
+func TestHandleInitCommandInteractiveAddsProvider(t *testing.T) {
+	withInitWorkingDir(t, func() {
+		deps, stdout, stderr := testInitDeps("\nhttps://api.one.example/v1\nmodel-one\nprimary\nother\nhttps://api.two.example/v1\nmodel-two\nsecondary\n\n", "", true)
+		passwords := []string{"sk-one", "sk-two"}
+		deps.readPassword = func(int) ([]byte, error) {
+			password := passwords[0]
+			passwords = passwords[1:]
+			return []byte(password), nil
+		}
+		steps := []string{"provider", "finish"}
+		deps.selectNextStep = func(io.Reader, io.Writer, int, string) (string, error) {
+			step := steps[0]
+			steps = steps[1:]
+			return step, nil
+		}
+		deps.selectDefault = func(io.Reader, io.Writer, int, []initModel) (string, error) {
+			return "secondary", nil
+		}
+
+		if code := handleInitCommandWithDeps(nil, deps); code != 0 {
+			t.Fatalf("expected return code 0, got %d; stderr=%s", code, stderr.String())
+		}
+		data, err := os.ReadFile(filepath.Join(".machtiani", "config.toml"))
+		if err != nil {
+			t.Fatalf("read generated config: %v", err)
+		}
+		content := string(data)
+		for _, expected := range []string{
+			`default_model = "secondary"`,
+			`[providers.default]`,
+			`[providers.other]`,
+			`api_key = "sk-one"`,
+			`api_key = "sk-two"`,
+			`provider = "default"`,
+			`provider = "other"`,
+		} {
+			if !strings.Contains(content, expected) {
+				t.Fatalf("config missing %q:\n%s", expected, content)
+			}
+		}
+		if !strings.Contains(stdout.String(), "Providers: 2") {
+			t.Fatalf("summary did not report two providers: %s", stdout.String())
+		}
+	})
+}
+
+func TestInitNextStepArrowMenu(t *testing.T) {
+	out := &bytes.Buffer{}
+	got, err := runInitMenu(strings.NewReader("\x1b[B\r"), out, "What would you like to do?", "Use arrows.", []initMenuOption{
+		{label: "Finish setup", value: "finish"},
+		{label: "Add another model", value: "model"},
+		{label: "Add another provider", value: "provider"},
+	})
+	if err != nil {
+		t.Fatalf("runInitMenu: %v", err)
+	}
+	if got != "model" {
+		t.Fatalf("expected model selection, got %q", got)
 	}
 }
 
@@ -445,6 +551,12 @@ func testInitDepsWithReasoning(input, password string, terminal bool, reasoning 
 		},
 		selectReasoning: func(io.Reader, io.Writer, int) (string, error) {
 			return reasoning, nil
+		},
+		selectNextStep: func(io.Reader, io.Writer, int, string) (string, error) {
+			return "finish", nil
+		},
+		selectDefault: func(_ io.Reader, _ io.Writer, _ int, models []initModel) (string, error) {
+			return models[0].alias, nil
 		},
 	}, stdout, stderr
 }

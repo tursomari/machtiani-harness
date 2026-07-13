@@ -28,12 +28,32 @@ type initCommandDeps struct {
 	isTerminal      func(int) bool
 	readPassword    func(int) ([]byte, error)
 	selectReasoning func(io.Reader, io.Writer, int) (string, error)
+	selectNextStep  func(io.Reader, io.Writer, int, string) (string, error)
+	selectDefault   func(io.Reader, io.Writer, int, []initModel) (string, error)
+}
+
+type initProvider struct {
+	name    string
+	baseURL string
+	apiKey  string
+}
+
+type initModel struct {
+	alias     string
+	provider  string
+	model     string
+	reasoning string
+}
+
+type initMenuOption struct {
+	label string
+	value string
 }
 
 func init() {
 	cliCommands = append(cliCommands, cliCommand{
 		name:        "init",
-		description: "Initialize a minimal .machtiani/config.toml",
+		description: "Initialize .machtiani/config.toml",
 		handler:     handleInitCommand,
 	})
 }
@@ -47,6 +67,8 @@ func handleInitCommand(args []string) int {
 		isTerminal:      term.IsTerminal,
 		readPassword:    term.ReadPassword,
 		selectReasoning: promptReasoningMenu,
+		selectNextStep:  promptInitNextStepMenu,
+		selectDefault:   promptInitDefaultModelMenu,
 	})
 }
 
@@ -98,6 +120,9 @@ func handleInitCommandWithDeps(args []string, deps initCommandDeps) int {
 	}
 
 	cacheEnabled := !*noCache
+	var providersToWrite []initProvider
+	var modelsToWrite []initModel
+	defaultModel := strings.TrimSpace(*alias)
 	if interactive {
 		if deps.isTerminal == nil || !deps.isTerminal(deps.stdinFD) {
 			fmt.Fprintln(deps.errOut, "Error: interactive init requires a terminal; provide --provider-url, --api-key, and --model for non-interactive use")
@@ -108,42 +133,63 @@ func handleInitCommandWithDeps(args []string, deps initCommandDeps) int {
 		fmt.Fprintln(deps.out, "This creates .machtiani/config.toml for local LLM access.")
 		fmt.Fprintln(deps.out)
 
-		var err error
-		if *providerURL, err = promptRequired(reader, deps.out, "Provider base URL", "The OpenAI-compatible API base endpoint.", "Example: https://api.openai.com/v1"); err != nil {
+		if deps.selectReasoning == nil || deps.selectNextStep == nil || deps.selectDefault == nil {
+			return initPromptError(deps.errOut, fmt.Errorf("interactive selector is unavailable"))
+		}
+
+		providerEntry, err := promptInitProvider(reader, deps, "default", nil)
+		if err != nil {
 			return initPromptError(deps.errOut, err)
 		}
-		fmt.Fprintln(deps.out, "\nAPI key")
-		fmt.Fprintln(deps.out, "  Stored in the local configuration file.")
-		for {
-			fmt.Fprint(deps.out, "API key: ")
-			password, passwordErr := deps.readPassword(deps.stdinFD)
-			fmt.Fprintln(deps.out)
-			if passwordErr != nil {
-				return initPromptError(deps.errOut, fmt.Errorf("read API key: %w", passwordErr))
-			}
-			*apiKey = strings.TrimSpace(string(password))
-			if *apiKey != "" {
-				break
-			}
-			fmt.Fprintln(deps.out, "API key cannot be empty.")
-		}
-		if *model, err = promptRequired(reader, deps.out, "Model", "Exact model name your provider expects.", "Example: gpt-4.1"); err != nil {
+		providersToWrite = append(providersToWrite, providerEntry)
+		modelEntry, err := promptInitModel(reader, deps, providerEntry.name, "default", nil)
+		if err != nil {
 			return initPromptError(deps.errOut, err)
 		}
-		if deps.selectReasoning == nil {
-			return initPromptError(deps.errOut, fmt.Errorf("reasoning selector is unavailable"))
-		}
-		if *reasoning, err = deps.selectReasoning(deps.in, deps.out, deps.stdinFD); err != nil {
-			return initPromptError(deps.errOut, err)
-		}
-		if *reasoning == "other" {
-			if *reasoning, err = promptOtherReasoning(reader, deps.out); err != nil {
+		modelsToWrite = append(modelsToWrite, modelEntry)
+
+		finished := false
+		for !finished {
+			printInitModels(deps.out, modelsToWrite)
+			next, err := deps.selectNextStep(reader, deps.out, deps.stdinFD, providerEntry.name)
+			if err != nil {
 				return initPromptError(deps.errOut, err)
 			}
+			switch next {
+			case "finish":
+				finished = true
+			case "model":
+				entry, err := promptInitModel(reader, deps, providerEntry.name, fmt.Sprintf("model-%d", len(modelsToWrite)+1), modelsToWrite)
+				if err != nil {
+					return initPromptError(deps.errOut, err)
+				}
+				modelsToWrite = append(modelsToWrite, entry)
+			case "provider":
+				entry, err := promptInitProvider(reader, deps, fmt.Sprintf("provider-%d", len(providersToWrite)+1), providersToWrite)
+				if err != nil {
+					return initPromptError(deps.errOut, err)
+				}
+				providersToWrite = append(providersToWrite, entry)
+				providerEntry = entry
+				newModel, err := promptInitModel(reader, deps, providerEntry.name, fmt.Sprintf("model-%d", len(modelsToWrite)+1), modelsToWrite)
+				if err != nil {
+					return initPromptError(deps.errOut, err)
+				}
+				modelsToWrite = append(modelsToWrite, newModel)
+			default:
+				return initPromptError(deps.errOut, fmt.Errorf("unknown setup action %q", next))
+			}
 		}
-		if *alias, err = promptDefault(reader, deps.out, "Model alias", "Local name used by mct-agent commands.", "Alias [default]: ", "default"); err != nil {
-			return initPromptError(deps.errOut, err)
+
+		defaultModel = modelsToWrite[0].alias
+		if len(modelsToWrite) > 1 {
+			selected, err := deps.selectDefault(reader, deps.out, deps.stdinFD, modelsToWrite)
+			if err != nil {
+				return initPromptError(deps.errOut, err)
+			}
+			defaultModel = selected
 		}
+		printInitSummary(deps.out, providersToWrite, modelsToWrite, defaultModel)
 		if *noCache {
 			fmt.Fprintln(deps.out, "\nPrompt caching disabled by --no-cache.")
 		} else {
@@ -161,6 +207,10 @@ func handleInitCommandWithDeps(args []string, deps initCommandDeps) int {
 		fmt.Fprintf(deps.errOut, "Error: reasoning value %q looks misspelled; did you mean %q?\n", *reasoning, suggestion)
 		return 1
 	}
+	if !interactive {
+		providersToWrite = []initProvider{{name: strings.TrimSpace(*alias), baseURL: strings.TrimSpace(*providerURL), apiKey: strings.TrimSpace(*apiKey)}}
+		modelsToWrite = []initModel{{alias: strings.TrimSpace(*alias), provider: strings.TrimSpace(*alias), model: strings.TrimSpace(*model), reasoning: strings.TrimSpace(*reasoning)}}
+	}
 
 	if err := os.MkdirAll(".machtiani", 0755); err != nil {
 		fmt.Fprintf(deps.errOut, "Error: %v\n", err)
@@ -170,7 +220,7 @@ func handleInitCommandWithDeps(args []string, deps initCommandDeps) int {
 	cfg := llm.DefaultMinimalConfigMap()
 
 	// Set default_model
-	cfg["default_model"] = *alias
+	cfg["default_model"] = defaultModel
 
 	// Create or get providers map
 	providers, ok := cfg["providers"].(map[string]any)
@@ -178,9 +228,11 @@ func handleInitCommandWithDeps(args []string, deps initCommandDeps) int {
 		providers = make(map[string]any)
 		cfg["providers"] = providers
 	}
-	providers[*alias] = map[string]any{
-		"base_url": *providerURL,
-		"api_key":  *apiKey,
+	for _, providerEntry := range providersToWrite {
+		providers[providerEntry.name] = map[string]any{
+			"base_url": providerEntry.baseURL,
+			"api_key":  providerEntry.apiKey,
+		}
 	}
 
 	// Create or get models map
@@ -189,18 +241,20 @@ func handleInitCommandWithDeps(args []string, deps initCommandDeps) int {
 		models = make(map[string]any)
 		cfg["models"] = models
 	}
-	modelEntry := map[string]any{
-		"provider": *alias,
-		"model":    *model,
-	}
-	if strings.TrimSpace(*reasoning) != "" {
-		modelEntry["params"] = map[string]any{
-			"reasoning": map[string]any{
-				"effort": strings.TrimSpace(*reasoning),
-			},
+	for _, configuredModel := range modelsToWrite {
+		modelEntry := map[string]any{
+			"provider": configuredModel.provider,
+			"model":    configuredModel.model,
 		}
+		if configuredModel.reasoning != "" {
+			modelEntry["params"] = map[string]any{
+				"reasoning": map[string]any{
+					"effort": configuredModel.reasoning,
+				},
+			}
+		}
+		models[configuredModel.alias] = modelEntry
 	}
-	models[*alias] = modelEntry
 	modelDefaults := map[string]any{"cache_enabled": cacheEnabled}
 	if cacheEnabled {
 		modelDefaults["cache_key_name"] = defaultCacheKeyName
@@ -217,6 +271,211 @@ func handleInitCommandWithDeps(args []string, deps initCommandDeps) int {
 
 	fmt.Fprintf(deps.out, "Configuration initialized at %s\n", configPath)
 	return 0
+}
+
+func promptInitProvider(reader *bufio.Reader, deps initCommandDeps, defaultName string, existing []initProvider) (initProvider, error) {
+	name, err := promptUniqueDefault(
+		reader,
+		deps.out,
+		"Provider name",
+		"Local identifier shared by models that use these credentials.",
+		fmt.Sprintf("Provider name [%s]: ", defaultName),
+		defaultName,
+		func(value string) bool {
+			for _, provider := range existing {
+				if provider.name == value {
+					return true
+				}
+			}
+			return false
+		},
+	)
+	if err != nil {
+		return initProvider{}, err
+	}
+	baseURL, err := promptRequired(reader, deps.out, "Provider base URL", "The OpenAI-compatible API base endpoint.", "Example: https://api.openai.com/v1")
+	if err != nil {
+		return initProvider{}, err
+	}
+	if deps.readPassword == nil {
+		return initProvider{}, fmt.Errorf("API key reader is unavailable")
+	}
+	fmt.Fprintln(deps.out, "\nAPI key")
+	fmt.Fprintln(deps.out, "  Stored in the local configuration file.")
+	for {
+		fmt.Fprint(deps.out, "API key: ")
+		password, passwordErr := deps.readPassword(deps.stdinFD)
+		fmt.Fprintln(deps.out)
+		if passwordErr != nil {
+			return initProvider{}, fmt.Errorf("read API key: %w", passwordErr)
+		}
+		apiKey := strings.TrimSpace(string(password))
+		if apiKey != "" {
+			return initProvider{name: name, baseURL: baseURL, apiKey: apiKey}, nil
+		}
+		fmt.Fprintln(deps.out, "API key cannot be empty.")
+	}
+}
+
+func promptInitModel(reader *bufio.Reader, deps initCommandDeps, provider, defaultAlias string, existing []initModel) (initModel, error) {
+	modelName, err := promptRequired(reader, deps.out, "Model", "Exact model name your provider expects.", "Example: gpt-4.1")
+	if err != nil {
+		return initModel{}, err
+	}
+	reasoning, err := deps.selectReasoning(reader, deps.out, deps.stdinFD)
+	if err != nil {
+		return initModel{}, err
+	}
+	if reasoning == "other" {
+		reasoning, err = promptOtherReasoning(reader, deps.out)
+		if err != nil {
+			return initModel{}, err
+		}
+	}
+	alias, err := promptUniqueDefault(
+		reader,
+		deps.out,
+		"Model alias",
+		"Local name used by mct-agent commands.",
+		fmt.Sprintf("Alias [%s]: ", defaultAlias),
+		defaultAlias,
+		func(value string) bool {
+			for _, model := range existing {
+				if model.alias == value {
+					return true
+				}
+			}
+			return false
+		},
+	)
+	if err != nil {
+		return initModel{}, err
+	}
+	return initModel{alias: alias, provider: provider, model: modelName, reasoning: strings.TrimSpace(reasoning)}, nil
+}
+
+func promptUniqueDefault(reader *bufio.Reader, out io.Writer, heading, explanation, prompt, defaultValue string, exists func(string) bool) (string, error) {
+	for {
+		value, err := promptDefault(reader, out, heading, explanation, prompt, defaultValue)
+		if err != nil {
+			return "", err
+		}
+		if !exists(value) {
+			return value, nil
+		}
+		fmt.Fprintf(out, "%s %q is already configured. Choose another name.\n", heading, value)
+	}
+}
+
+func promptInitNextStepMenu(in io.Reader, out io.Writer, fd int, provider string) (string, error) {
+	return promptInitMenu(in, out, fd, "What would you like to do?", "Use Up/Down arrows and Enter.", []initMenuOption{
+		{label: "Finish setup", value: "finish"},
+		{label: fmt.Sprintf("Add another model to %s", provider), value: "model"},
+		{label: "Add another provider", value: "provider"},
+	})
+}
+
+func promptInitDefaultModelMenu(in io.Reader, out io.Writer, fd int, models []initModel) (string, error) {
+	options := make([]initMenuOption, 0, len(models))
+	for _, model := range models {
+		options = append(options, initMenuOption{
+			label: fmt.Sprintf("%s  (%s / %s)", model.alias, model.provider, model.model),
+			value: model.alias,
+		})
+	}
+	return promptInitMenu(in, out, fd, "Default model", "Used when a command does not specify a model alias.", options)
+}
+
+func promptInitMenu(in io.Reader, out io.Writer, fd int, title, help string, options []initMenuOption) (string, error) {
+	state, err := term.MakeRaw(fd)
+	if err != nil {
+		return "", fmt.Errorf("enable %s selection: %w", strings.ToLower(title), err)
+	}
+	defer func() { _ = term.Restore(fd, state) }()
+	return runInitMenu(in, out, title, help, options)
+}
+
+func runInitMenu(in io.Reader, out io.Writer, title, help string, options []initMenuOption) (string, error) {
+	if len(options) == 0 {
+		return "", fmt.Errorf("%s has no options", title)
+	}
+	fmt.Fprintf(out, "\r\n%s\r\n", title)
+	if help != "" {
+		fmt.Fprintf(out, "  %s\r\n", help)
+	}
+	selected := 0
+	renderInitMenuOptions(out, options, selected, false)
+	for {
+		key, err := readInitByte(in)
+		if err != nil {
+			return "", err
+		}
+		switch key {
+		case '\r', '\n':
+			return options[selected].value, nil
+		case 3:
+			return "", fmt.Errorf("setup interrupted")
+		case 4:
+			return "", io.EOF
+		case 'k':
+			selected = (selected - 1 + len(options)) % len(options)
+			renderInitMenuOptions(out, options, selected, true)
+		case 'j':
+			selected = (selected + 1) % len(options)
+			renderInitMenuOptions(out, options, selected, true)
+		case 0x1b:
+			second, err := readInitByte(in)
+			if err != nil {
+				return "", err
+			}
+			third, err := readInitByte(in)
+			if err != nil {
+				return "", err
+			}
+			if second != '[' {
+				continue
+			}
+			switch third {
+			case 'A':
+				selected = (selected - 1 + len(options)) % len(options)
+				renderInitMenuOptions(out, options, selected, true)
+			case 'B':
+				selected = (selected + 1) % len(options)
+				renderInitMenuOptions(out, options, selected, true)
+			}
+		}
+	}
+}
+
+func renderInitMenuOptions(out io.Writer, options []initMenuOption, selected int, redraw bool) {
+	if redraw {
+		fmt.Fprintf(out, "\x1b[%dA", len(options))
+	}
+	for i, option := range options {
+		marker := "  "
+		if i == selected {
+			marker = "> "
+		}
+		fmt.Fprintf(out, "\r\x1b[2K%s%s\r\n", marker, option.label)
+	}
+}
+
+func printInitModels(out io.Writer, models []initModel) {
+	fmt.Fprintln(out, "\nConfigured models:")
+	for _, model := range models {
+		reasoning := model.reasoning
+		if reasoning == "" {
+			reasoning = "provider default"
+		}
+		fmt.Fprintf(out, "  %s -> %s / %s (reasoning: %s)\n", model.alias, model.provider, model.model, reasoning)
+	}
+}
+
+func printInitSummary(out io.Writer, providers []initProvider, models []initModel, defaultModel string) {
+	fmt.Fprintln(out, "\nSetup summary")
+	fmt.Fprintf(out, "  Providers: %d\n", len(providers))
+	fmt.Fprintf(out, "  Models: %d\n", len(models))
+	fmt.Fprintf(out, "  Default model: %s\n", defaultModel)
 }
 
 func promptRequired(reader *bufio.Reader, out io.Writer, heading, explanation, example string) (string, error) {
@@ -255,82 +514,19 @@ func promptReasoningMenu(in io.Reader, out io.Writer, fd int) (string, error) {
 }
 
 func runReasoningMenu(in io.Reader, out io.Writer) (string, error) {
-	options := []struct {
-		label string
-		value string
-	}{
+	return runInitMenu(in, out, "Reasoning effort", "Use Up/Down arrows and Enter. Provider default omits the setting.", []initMenuOption{
 		{label: "Provider default", value: ""},
 		{label: "Low", value: "low"},
 		{label: "Medium", value: "medium"},
 		{label: "High", value: "high"},
 		{label: "Other...", value: "other"},
-	}
-	fmt.Fprint(out, "\r\nReasoning effort\r\n")
-	fmt.Fprint(out, "  Use Up/Down arrows and Enter. Provider default omits the setting.\r\n")
-	selected := 0
-	renderReasoningOptions(out, options, selected, false)
-	for {
-		key, err := readInitByte(in)
-		if err != nil {
-			return "", err
-		}
-		switch key {
-		case '\r', '\n':
-			return options[selected].value, nil
-		case 3:
-			return "", fmt.Errorf("setup interrupted")
-		case 4:
-			return "", io.EOF
-		case 'k':
-			selected = (selected - 1 + len(options)) % len(options)
-			renderReasoningOptions(out, options, selected, true)
-		case 'j':
-			selected = (selected + 1) % len(options)
-			renderReasoningOptions(out, options, selected, true)
-		case 0x1b:
-			second, err := readInitByte(in)
-			if err != nil {
-				return "", err
-			}
-			third, err := readInitByte(in)
-			if err != nil {
-				return "", err
-			}
-			if second != '[' {
-				continue
-			}
-			switch third {
-			case 'A':
-				selected = (selected - 1 + len(options)) % len(options)
-				renderReasoningOptions(out, options, selected, true)
-			case 'B':
-				selected = (selected + 1) % len(options)
-				renderReasoningOptions(out, options, selected, true)
-			}
-		}
-	}
+	})
 }
 
 func readInitByte(in io.Reader) (byte, error) {
 	var value [1]byte
 	_, err := io.ReadFull(in, value[:])
 	return value[0], err
-}
-
-func renderReasoningOptions(out io.Writer, options []struct {
-	label string
-	value string
-}, selected int, redraw bool) {
-	if redraw {
-		fmt.Fprintf(out, "\x1b[%dA", len(options))
-	}
-	for i, option := range options {
-		marker := "  "
-		if i == selected {
-			marker = "> "
-		}
-		fmt.Fprintf(out, "\r\x1b[2K%s%s\r\n", marker, option.label)
-	}
 }
 
 func promptOtherReasoning(reader *bufio.Reader, out io.Writer) (string, error) {

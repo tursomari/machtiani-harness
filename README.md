@@ -146,11 +146,17 @@ Run the interactive setup wizard:
 mct-agent init
 ```
 
-The wizard collects the provider URL, API key, model, reasoning effort, and
+The wizard collects a provider name, URL, API key, model, reasoning effort, and
 model alias one step at a time. The reasoning menu uses the Up/Down arrows and
 defaults to the provider's own setting; choose `Other...` for values such as
-`xhigh`, `max`, or another provider-specific value. Prompt caching defaults to
-enabled for all configured models; answer `n` at the caching prompt to disable
+`xhigh`, `max`, or another provider-specific value.
+
+After each model, choose `Finish setup`, add another model that reuses the
+current provider's URL and credentials, or add another provider and its first
+model. When more than one model is configured, the wizard asks which alias
+should be the default. `Finish setup` is selected initially so a single-model
+configuration remains the quick path. Prompt caching defaults to enabled
+globally for all configured models; answer `n` at the caching prompt to disable
 it.
 
 For scripts and CI, provide the required values as flags. This remains
