@@ -23,6 +23,21 @@ func TestEmbeddedCatalogIsValid(t *testing.T) {
 	if _, ok := deepseek.Default(); !ok {
 		t.Fatal("deepseek default model missing")
 	}
+	openrouter, ok := catalog.Provider("openrouter")
+	if !ok || openrouter.ModelsURL != "https://openrouter.ai/api/v1/models" || openrouter.ModelsSearchParam != "q" {
+		t.Fatalf("openrouter model discovery = %#v", openrouter)
+	}
+}
+
+func TestValidateRejectsInsecureModelsURL(t *testing.T) {
+	catalog, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog.Providers[0].ModelsURL = "http://example.com/models"
+	if err := Validate(catalog); err == nil || !strings.Contains(err.Error(), "models_url") {
+		t.Fatalf("Validate() error = %v, want models_url error", err)
+	}
 }
 
 func TestValidateRejectsDuplicateProviders(t *testing.T) {

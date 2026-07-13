@@ -178,6 +178,14 @@ Inspect the available values with `mct-agent config catalog list` and
 `mct-agent config catalog show deepseek`. Raw flags remain available for custom
 providers and as preset overrides:
 
+OpenRouter's preset also offers **Search current model catalogue** in the
+interactive model menu. The wizard retrieves current model IDs from OpenRouter
+using the configured credential, shows up to 25 matches, and retains **Other
+model** as a manual fallback. The search remains available when adding more
+models to that configured provider, including within the same wizard session.
+Non-interactive setup remains deterministic and uses the preset's documented
+default unless `--model` overrides it.
+
 ```
 mct-agent config add \
   --provider example \

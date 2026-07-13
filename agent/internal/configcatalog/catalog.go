@@ -23,16 +23,18 @@ type Catalog struct {
 }
 
 type Provider struct {
-	ID               string  `json:"id"`
-	Name             string  `json:"name"`
-	Description      string  `json:"description"`
-	Protocol         string  `json:"protocol"`
-	BaseURL          string  `json:"base_url"`
-	Endpoint         string  `json:"endpoint"`
-	APIKeyEnv        string  `json:"api_key_env"`
-	DocumentationURL string  `json:"documentation_url"`
-	DefaultModel     string  `json:"default_model"`
-	Models           []Model `json:"models"`
+	ID                string  `json:"id"`
+	Name              string  `json:"name"`
+	Description       string  `json:"description"`
+	Protocol          string  `json:"protocol"`
+	BaseURL           string  `json:"base_url"`
+	Endpoint          string  `json:"endpoint"`
+	APIKeyEnv         string  `json:"api_key_env"`
+	DocumentationURL  string  `json:"documentation_url"`
+	ModelsURL         string  `json:"models_url,omitempty"`
+	ModelsSearchParam string  `json:"models_search_param,omitempty"`
+	DefaultModel      string  `json:"default_model"`
+	Models            []Model `json:"models"`
 }
 
 type Model struct {
@@ -115,6 +117,18 @@ func Validate(catalog Catalog) error {
 			if docsErr != nil || docsURL.Scheme != "https" || docsURL.Host == "" {
 				return fmt.Errorf("%s.documentation_url must be an HTTPS URL", path)
 			}
+		}
+		if provider.ModelsURL != "" {
+			modelsURL, modelsErr := url.Parse(provider.ModelsURL)
+			if modelsErr != nil || modelsURL.Scheme != "https" || modelsURL.Host == "" {
+				return fmt.Errorf("%s.models_url must be an HTTPS URL", path)
+			}
+		}
+		if provider.ModelsSearchParam != "" && provider.ModelsURL == "" {
+			return fmt.Errorf("%s.models_search_param requires models_url", path)
+		}
+		if strings.ContainsAny(provider.ModelsSearchParam, "&=?# ") {
+			return fmt.Errorf("%s.models_search_param %q is invalid", path, provider.ModelsSearchParam)
 		}
 		if len(provider.Models) == 0 {
 			return fmt.Errorf("%s.models must not be empty", path)

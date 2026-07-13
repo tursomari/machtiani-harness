@@ -46,7 +46,8 @@ FROM alpine:3.20
 #   ripgrep   – file-discovery engine
 #   curl      – smoke-test harness helper
 #   bash/sed  – shell scripting in the smoke-test entrypoint
-RUN apk add --no-cache git ripgrep curl bash sed
+#   expect    – deterministic pseudo-terminal coverage for interactive menus
+RUN apk add --no-cache git ripgrep curl bash sed expect
 
 # Pull built binaries from the builder stage.
 COPY --from=builder /out/bin /usr/local/bin/

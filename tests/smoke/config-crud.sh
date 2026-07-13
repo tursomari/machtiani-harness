@@ -66,6 +66,44 @@ assert_file_contains 'openai' "$SCRATCH_DIR/catalog-list"
 mct-agent config catalog show deepseek >"$SCRATCH_DIR/catalog-show"
 assert_file_contains 'DEEPSEEK_API_KEY' "$SCRATCH_DIR/catalog-show"
 assert_file_contains 'deepseek-v4-flash' "$SCRATCH_DIR/catalog-show"
+mct-agent config catalog show openrouter >"$SCRATCH_DIR/openrouter-catalog-show"
+assert_file_contains 'https://openrouter.ai/api/v1/models' "$SCRATCH_DIR/openrouter-catalog-show"
+
+echo "==> Verifying model search persists for an existing catalogue provider..."
+searchable_config="$SCRATCH_DIR/searchable/config.toml"
+mct-agent config add --path "$searchable_config" \
+  --preset openrouter \
+  --api-key smoke-placeholder-key \
+  --model '~openai/gpt-latest' \
+  --alias openrouter-first \
+  --no-interactive
+searchable_checksum=$(checksum "$searchable_config")
+export SEARCHABLE_CONFIG="$searchable_config"
+expect >"$SCRATCH_DIR/searchable-provider-wizard" 2>&1 <<'EXPECT_EOF'
+set timeout 10
+spawn -noecho mct-agent config add --path $env(SEARCHABLE_CONFIG)
+expect {
+  -re {Existing: openrouter} {}
+  timeout { exit 10 }
+  eof { exit 11 }
+}
+send "\r"
+expect {
+  -re {Search current model catalogue} {}
+  timeout { exit 12 }
+  eof { exit 13 }
+}
+send "\003"
+expect eof
+set child_status [lindex [wait] 3]
+if {$child_status != 1} {
+  exit 14
+}
+EXPECT_EOF
+unset SEARCHABLE_CONFIG
+assert_file_contains 'Existing: openrouter' "$SCRATCH_DIR/searchable-provider-wizard"
+assert_file_contains 'Search current model catalogue' "$SCRATCH_DIR/searchable-provider-wizard"
+[[ "$(checksum "$searchable_config")" == "$searchable_checksum" ]] || fail "cancelled searchable-provider wizard changed $searchable_config"
 
 echo "==> Exercising preset config add and initial validation..."
 mct-agent config add \

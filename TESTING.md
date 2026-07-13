@@ -141,17 +141,20 @@ The container test must complete all of these checks before printing its success
    to TOML.
 4. `mct-agent init` is verified to refuse and preserve an existing
    configuration while directing the user to `mct-agent config`.
-5. Every provider, model, and cache subcommand is exercised, including
+5. A pseudo-terminal wizard run verifies that an existing OpenRouter provider
+   retains `Search current model catalogue` when another model is added, without
+   making a live OpenRouter request or changing the disposable configuration.
+6. Every provider, model, and cache subcommand is exercised, including
    reference-aware rename/removal, reasoning and parameter updates, cache
    inheritance, inspection, validation, and expected failure paths.
-6. `--path`, `--global`, `MACHTIANI_CONFIG`, and explicit environment override
+7. `--path`, `--global`, `MACHTIANI_CONFIG`, and explicit environment override
    behavior are verified with disposable configurations.
-7. Rejected mutations are checksum-verified as non-writing, scratch resources
+8. Rejected mutations are checksum-verified as non-writing, scratch resources
    are removed, and the final primary configuration is validated with caching
    disabled.
-8. `mct-agent sync` initializes the repository's internal README state.
-9. `mct-agent run` completes successfully against the live provider.
-10. `.machtiani/sessions/*/artifacts/conversation.json` exists.
+9. `mct-agent sync` initializes the repository's internal README state.
+10. `mct-agent run` completes successfully against the live provider.
+11. `.machtiani/sessions/*/artifacts/conversation.json` exists.
 
 The scripts use `set -euo pipefail`; any failed command must produce a non-zero harness exit and must not print `SMOKE TEST PASSED`.
 

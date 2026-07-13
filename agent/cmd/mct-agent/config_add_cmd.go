@@ -192,13 +192,21 @@ func handleConfigAddCommand(args []string) int {
 		providers[*providerName] = providerEntry
 	}
 
+	modelCatalogProvider := preset
+	discoveryCredential := modelDiscoveryCredential(*apiKey, *apiKeyEnv)
+	if modelCatalogProvider == nil && providerExists && !*noInteractive {
+		if value, ok := catalogProviderForConfigured(*providerName, providers[*providerName], catalog); ok {
+			modelCatalogProvider = &value
+			discoveryCredential = configuredProviderCredential(providers[*providerName])
+		}
+	}
 	var catalogModel *configcatalog.Model
-	if preset != nil {
+	if modelCatalogProvider != nil {
 		if strings.TrimSpace(*modelID) == "" {
 			if *noInteractive {
-				*modelID = preset.DefaultModel
+				*modelID = modelCatalogProvider.DefaultModel
 			} else {
-				selected, selectErr := promptCatalogModel(*preset)
+				selected, selectErr := promptCatalogModel(reader, *modelCatalogProvider, discoveryCredential)
 				if selectErr != nil {
 					return configError(selectErr)
 				}
@@ -207,7 +215,7 @@ func handleConfigAddCommand(args []string) int {
 				}
 			}
 		}
-		if value, ok := preset.Model(strings.TrimSpace(*modelID)); ok {
+		if value, ok := modelCatalogProvider.Model(strings.TrimSpace(*modelID)); ok {
 			catalogModel = &value
 			if strings.TrimSpace(*alias) == "" {
 				*alias = value.Alias
@@ -222,10 +230,7 @@ func handleConfigAddCommand(args []string) int {
 			}
 		}
 		if strings.TrimSpace(*alias) == "" {
-			suggested := "default"
-			if len(models) > 0 {
-				suggested = fmt.Sprintf("model-%d", len(models)+1)
-			}
+			suggested := uniqueModelAliasSuggestion(*modelID, models)
 			*alias, err = promptLineDefault(reader, "Model alias", suggested, true)
 			if err != nil {
 				return configError(err)
@@ -331,8 +336,8 @@ func promptProviderChoice(existing map[string]any, catalog configcatalog.Catalog
 	return promptInitMenu(os.Stdin, os.Stdout, int(os.Stdin.Fd()), "Provider", "Choose a configured provider, a catalogue preset, or Other.", options)
 }
 
-func promptCatalogModel(provider configcatalog.Provider) (string, error) {
-	options := make([]initMenuOption, 0, len(provider.Models)+1)
+func promptCatalogModel(reader *bufio.Reader, provider configcatalog.Provider, apiKey string) (string, error) {
+	options := make([]initMenuOption, 0, len(provider.Models)+2)
 	for _, model := range provider.Models {
 		label := model.Name
 		if model.ID == provider.DefaultModel {
@@ -340,8 +345,94 @@ func promptCatalogModel(provider configcatalog.Provider) (string, error) {
 		}
 		options = append(options, initMenuOption{label: label + " — " + model.Description, value: model.ID})
 	}
+	if provider.ModelsURL != "" {
+		options = append(options, initMenuOption{label: "Search current model catalogue...", value: "search"})
+	}
 	options = append(options, initMenuOption{label: "Other model...", value: "other"})
-	return promptInitMenu(os.Stdin, os.Stdout, int(os.Stdin.Fd()), "Model", "Choose a known model or enter another provider model ID.", options)
+	selected, err := promptInitMenu(os.Stdin, os.Stdout, int(os.Stdin.Fd()), "Model", "Choose a recommended model, search the provider, or enter another model ID.", options)
+	if err != nil || selected != "search" {
+		return selected, err
+	}
+	for {
+		search, promptErr := promptLineDefault(reader, "Search model names or IDs", "", true)
+		if promptErr != nil {
+			return "", promptErr
+		}
+		matches, discoveryErr := discoverProviderModels(modelDiscoveryHTTPClient, provider, apiKey, search)
+		if discoveryErr != nil {
+			fmt.Fprintf(os.Stdout, "Could not load %s models: %v\nEnter the model ID manually instead.\n", provider.Name, discoveryErr)
+			return "other", nil
+		}
+		if len(matches) == 0 {
+			fmt.Fprintf(os.Stdout, "No %s models matched %q. Try another search.\n", provider.Name, search)
+			continue
+		}
+		matchOptions := make([]initMenuOption, 0, len(matches)+2)
+		for _, match := range matches {
+			label := match.Name
+			if label == "" {
+				label = match.ID
+			} else {
+				label += " — " + match.ID
+			}
+			matchOptions = append(matchOptions, initMenuOption{label: label, value: match.ID})
+		}
+		matchOptions = append(matchOptions,
+			initMenuOption{label: "Search again...", value: "search"},
+			initMenuOption{label: "Other model...", value: "other"},
+		)
+		selected, selectErr := promptInitMenu(os.Stdin, os.Stdout, int(os.Stdin.Fd()), "Search results", "Showing up to 25 matches. Choose a model or search again.", matchOptions)
+		if selectErr != nil {
+			return "", selectErr
+		}
+		if selected != "search" {
+			return selected, nil
+		}
+	}
+}
+
+func modelDiscoveryCredential(apiKey, apiKeyEnv string) string {
+	if value := strings.TrimSpace(apiKey); value != "" {
+		return value
+	}
+	if name := strings.TrimSpace(apiKeyEnv); name != "" {
+		return os.Getenv(name)
+	}
+	return ""
+}
+
+func catalogProviderForConfigured(name string, entry any, catalog configcatalog.Catalog) (configcatalog.Provider, bool) {
+	if provider, ok := catalog.Provider(strings.TrimSpace(name)); ok {
+		return provider, true
+	}
+	table, ok := entry.(map[string]any)
+	if !ok {
+		return configcatalog.Provider{}, false
+	}
+	baseURL, _ := table["base_url"].(string)
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if baseURL == "" {
+		return configcatalog.Provider{}, false
+	}
+	for _, provider := range catalog.Providers {
+		if strings.TrimRight(strings.TrimSpace(provider.BaseURL), "/") == baseURL {
+			return provider, true
+		}
+	}
+	return configcatalog.Provider{}, false
+}
+
+func configuredProviderCredential(entry any) string {
+	table, ok := entry.(map[string]any)
+	if !ok {
+		return ""
+	}
+	value, _ := table["api_key"].(string)
+	value = strings.TrimSpace(value)
+	if strings.HasPrefix(value, "${") && strings.HasSuffix(value, "}") {
+		return os.Getenv(strings.TrimSuffix(strings.TrimPrefix(value, "${"), "}"))
+	}
+	return value
 }
 
 func promptReasoningChoice(reader *bufio.Reader, model *configcatalog.Model) (string, error) {

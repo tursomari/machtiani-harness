@@ -66,6 +66,9 @@ func handleConfigCatalogCommand(args []string) int {
 		fmt.Printf("API key environment: %s\n", provider.APIKeyEnv)
 		fmt.Printf("Default model: %s\n", provider.DefaultModel)
 		fmt.Printf("Documentation: %s\n", provider.DocumentationURL)
+		if provider.ModelsURL != "" {
+			fmt.Printf("Model discovery: %s\n", provider.ModelsURL)
+		}
 		fmt.Println("Models:")
 		for _, model := range provider.Models {
 			reasoning := "provider-defined"

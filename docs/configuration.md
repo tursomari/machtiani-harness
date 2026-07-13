@@ -126,6 +126,21 @@ cache compatibility. The values are intentionally scoped instead of mirroring
 every entry in a general provider database: providers with a native request
 protocol are not offered until the runtime supports that protocol.
 
+Catalogue providers may also define a live model-discovery URL. OpenRouter does
+so because its available models change frequently. Its interactive model menu
+contains `Search current model catalogue`; after the user enters part of a name
+or model ID, the wizard retrieves the current list with bearer authentication
+and displays up to 25 matching IDs. Discovery happens only when that option is
+selected. A request failure falls back to manual model entry, and `Other model`
+is always available without discovery. Existing providers are matched back to
+their catalogue entry by provider ID or base URL, so search remains available
+when adding another model later or continuing the same setup session.
+
+Live discovery does not change scripted behavior. `--preset openrouter
+--no-interactive` uses the catalogue's stable default, while `--model <id>`
+selects any exact OpenRouter model deterministically. `config catalog show
+openrouter` displays the discovery endpoint for inspection.
+
 For example, this creates a complete DeepSeek configuration containing an
 environment reference, without putting the live key in TOML or on the command
 line:
