@@ -449,10 +449,13 @@ func runInitMenu(in io.Reader, out io.Writer, title, help string, options []init
 		}
 		switch key {
 		case '\r', '\n':
+			clearInitMenuScreen(out)
 			return options[selected].value, nil
 		case 3:
+			clearInitMenuScreen(out)
 			return "", fmt.Errorf("setup interrupted")
 		case 4:
+			clearInitMenuScreen(out)
 			return "", io.EOF
 		case 'k':
 			selected = (selected - 1 + len(options)) % len(options)
@@ -482,6 +485,13 @@ func runInitMenu(in io.Reader, out io.Writer, title, help string, options []init
 			}
 		}
 	}
+}
+
+func clearInitMenuScreen(out io.Writer) {
+	// Replace the previous menu/action view while preserving terminal
+	// scrollback. The selected action can then print its result above the next
+	// freshly rendered menu.
+	fmt.Fprint(out, "\x1b[2J\x1b[H")
 }
 
 func renderInitMenuOptions(out io.Writer, options []initMenuOption, selected int, redraw bool) {

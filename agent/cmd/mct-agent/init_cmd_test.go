@@ -509,6 +509,9 @@ func TestInitNextStepArrowMenu(t *testing.T) {
 	if got != "model" {
 		t.Fatalf("expected model selection, got %q", got)
 	}
+	if !strings.Contains(out.String(), "\x1b[2J\x1b[H") {
+		t.Fatal("expected selecting a menu action to clear the previous view")
+	}
 }
 
 func TestPromptOtherReasoning(t *testing.T) {

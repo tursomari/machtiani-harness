@@ -33,6 +33,10 @@ Choosing **Manage models → Add model** uses the same provider-first setup flow
 select an existing provider, a catalogue preset, or `Other provider` before
 choosing or entering the model.
 
+Interactive menus refresh the visible terminal after each selection. A submenu
+replaces its parent, and an action result is shown above only the current menu;
+the refresh does not erase existing terminal scrollback.
+
 Mutating commands are interactive by default. Supplied flags prefill answers;
 the command prompts for missing information and confirms before writing.
 
