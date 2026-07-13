@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -201,6 +203,9 @@ func TestHandleInitCommand(t *testing.T) {
 		if modelDef.Model != "gpt-4o" {
 			t.Fatalf("expected Models['default'].Model 'gpt-4o', got %q", modelDef.Model)
 		}
+		if len(modelDef.Params) != 0 {
+			t.Fatalf("expected provider-default reasoning to omit params, got %#v", modelDef.Params)
+		}
 
 		llm.ResetConfigForTesting()
 	})
@@ -208,7 +213,7 @@ func TestHandleInitCommand(t *testing.T) {
 
 func TestHandleInitCommandInteractiveWizard(t *testing.T) {
 	withInitWorkingDir(t, func() {
-		deps, stdout, stderr := testInitDeps("https://api.example.com/v1\ngpt-5\n\n\n\n", "sk-hidden", true)
+		deps, stdout, stderr := testInitDeps("https://api.example.com/v1\ngpt-5\n\n\n", "sk-hidden", true)
 		code := handleInitCommandWithDeps(nil, deps)
 		if code != 0 {
 			t.Fatalf("expected return code 0, got %d; stderr=%s", code, stderr.String())
@@ -222,7 +227,6 @@ func TestHandleInitCommandInteractiveWizard(t *testing.T) {
 			`base_url = "https://api.example.com/v1"`,
 			`api_key = "sk-hidden"`,
 			`model = "gpt-5"`,
-			`effort = "medium"`,
 			`default_model = "default"`,
 			`cache_enabled = true`,
 			`cache_control`,
@@ -230,6 +234,9 @@ func TestHandleInitCommandInteractiveWizard(t *testing.T) {
 			if !strings.Contains(content, expected) {
 				t.Fatalf("config missing %q:\n%s", expected, content)
 			}
+		}
+		if strings.Contains(content, "effort =") {
+			t.Fatalf("provider default should omit reasoning effort:\n%s", content)
 		}
 		if strings.Contains(stdout.String(), "sk-hidden") {
 			t.Fatalf("wizard echoed API key: %s", stdout.String())
@@ -242,7 +249,7 @@ func TestHandleInitCommandInteractiveWizard(t *testing.T) {
 
 func TestHandleInitCommandInteractiveDeclinesCache(t *testing.T) {
 	withInitWorkingDir(t, func() {
-		deps, _, stderr := testInitDeps("https://api.example.com/v1\ngpt-5\nhigh\nwork\nmaybe\nNo\n", "sk-hidden", true)
+		deps, _, stderr := testInitDepsWithReasoning("https://api.example.com/v1\ngpt-5\nwork\nmaybe\nNo\n", "sk-hidden", true, "high")
 		code := handleInitCommandWithDeps(nil, deps)
 		if code != 0 {
 			t.Fatalf("expected return code 0, got %d; stderr=%s", code, stderr.String())
@@ -258,12 +265,15 @@ func TestHandleInitCommandInteractiveDeclinesCache(t *testing.T) {
 		if strings.Contains(content, "cache_key_name") {
 			t.Fatalf("disabled defaults should omit cache payload:\n%s", content)
 		}
+		if !strings.Contains(content, `effort = "high"`) {
+			t.Fatalf("expected selected reasoning effort:\n%s", content)
+		}
 	})
 }
 
 func TestHandleInitCommandNoCacheFlag(t *testing.T) {
 	withInitWorkingDir(t, func() {
-		deps, stdout, stderr := testInitDeps("https://api.example.com/v1\ngpt-5\n\n\n", "sk-hidden", true)
+		deps, stdout, stderr := testInitDeps("https://api.example.com/v1\ngpt-5\n\n", "sk-hidden", true)
 		code := handleInitCommandWithDeps([]string{"--no-cache"}, deps)
 		if code != 0 {
 			t.Fatalf("expected return code 0, got %d; stderr=%s", code, stderr.String())
@@ -316,7 +326,109 @@ func TestHandleInitCommandFlaggedNoCache(t *testing.T) {
 	})
 }
 
+func TestReasoningArrowMenu(t *testing.T) {
+	input := strings.NewReader("\x1b[B\x1b[B\x1b[B\x1b[B\r")
+	out := &bytes.Buffer{}
+	got, err := runReasoningMenu(input, out)
+	if err != nil {
+		t.Fatalf("runReasoningMenu: %v", err)
+	}
+	if got != "other" {
+		t.Fatalf("expected Other selection, got %q", got)
+	}
+	for _, label := range []string{"Provider default", "Low", "Medium", "High", "Other..."} {
+		if !strings.Contains(out.String(), label) {
+			t.Fatalf("menu output missing %q: %q", label, out.String())
+		}
+	}
+}
+
+func TestPromptOtherReasoning(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "known xhigh", input: "xhigh\n", want: "xhigh"},
+		{name: "known max", input: "MAX\n", want: "max"},
+		{name: "correct typo", input: "xhig\n\n", want: "xhigh"},
+		{name: "confirm provider value", input: "minimal\ny\n", want: "minimal"},
+		{name: "provider default", input: "\n", want: ""},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			out := &bytes.Buffer{}
+			got, err := promptOtherReasoning(bufio.NewReader(strings.NewReader(test.input)), out)
+			if err != nil {
+				t.Fatalf("promptOtherReasoning: %v", err)
+			}
+			if got != test.want {
+				t.Fatalf("got %q, want %q; output=%s", got, test.want, out.String())
+			}
+		})
+	}
+}
+
+func TestHandleInitCommandRejectsLikelyReasoningTypo(t *testing.T) {
+	withInitWorkingDir(t, func() {
+		deps, _, stderr := testInitDeps("", "", false)
+		code := handleInitCommandWithDeps([]string{
+			"--provider-url", "https://api.example.com/v1",
+			"--api-key", "sk-test",
+			"--model", "gpt-5",
+			"--reasoning", "xhig",
+		}, deps)
+		if code != 1 || !strings.Contains(stderr.String(), `did you mean "xhigh"`) {
+			t.Fatalf("expected typo suggestion, code=%d stderr=%s", code, stderr.String())
+		}
+	})
+}
+
+func TestHandleInitCommandAcceptsExplicitProviderReasoning(t *testing.T) {
+	for _, reasoning := range []string{"xhigh", "max", "provider-special"} {
+		t.Run(reasoning, func(t *testing.T) {
+			withInitWorkingDir(t, func() {
+				deps, _, stderr := testInitDeps("", "", false)
+				code := handleInitCommandWithDeps([]string{
+					"--provider-url", "https://api.example.com/v1",
+					"--api-key", "sk-test",
+					"--model", "gpt-5",
+					"--reasoning", reasoning,
+				}, deps)
+				if code != 0 {
+					t.Fatalf("expected reasoning %q to pass, code=%d stderr=%s", reasoning, code, stderr.String())
+				}
+				data, err := os.ReadFile(filepath.Join(".machtiani", "config.toml"))
+				if err != nil {
+					t.Fatalf("read generated config: %v", err)
+				}
+				if !strings.Contains(string(data), fmt.Sprintf(`effort = %q`, reasoning)) {
+					t.Fatalf("reasoning value missing from config:\n%s", data)
+				}
+			})
+		})
+	}
+}
+
+func TestReasoningTypoSuggestion(t *testing.T) {
+	for input, want := range map[string]string{"xhig": "xhigh", "xhihg": "xhigh", "mx": "max"} {
+		got, ok := reasoningTypoSuggestion(input)
+		if !ok || got != want {
+			t.Fatalf("reasoningTypoSuggestion(%q) = %q, %t; want %q, true", input, got, ok, want)
+		}
+	}
+	for _, input := range []string{"xhigh", "max", "minimal", "provider-special"} {
+		if got, ok := reasoningTypoSuggestion(input); ok {
+			t.Fatalf("reasoningTypoSuggestion(%q) unexpectedly suggested %q", input, got)
+		}
+	}
+}
+
 func testInitDeps(input, password string, terminal bool) (initCommandDeps, *bytes.Buffer, *bytes.Buffer) {
+	return testInitDepsWithReasoning(input, password, terminal, "")
+}
+
+func testInitDepsWithReasoning(input, password string, terminal bool, reasoning string) (initCommandDeps, *bytes.Buffer, *bytes.Buffer) {
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 	return initCommandDeps{
@@ -330,6 +442,9 @@ func testInitDeps(input, password string, terminal bool) (initCommandDeps, *byte
 				return nil, io.EOF
 			}
 			return []byte(password), nil
+		},
+		selectReasoning: func(io.Reader, io.Writer, int) (string, error) {
+			return reasoning, nil
 		},
 	}, stdout, stderr
 }

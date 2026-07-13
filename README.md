@@ -147,8 +147,11 @@ mct-agent init
 ```
 
 The wizard collects the provider URL, API key, model, reasoning effort, and
-model alias one step at a time. Prompt caching defaults to enabled for all
-configured models; answer `n` at the caching prompt to disable it.
+model alias one step at a time. The reasoning menu uses the Up/Down arrows and
+defaults to the provider's own setting; choose `Other...` for values such as
+`xhigh`, `max`, or another provider-specific value. Prompt caching defaults to
+enabled for all configured models; answer `n` at the caching prompt to disable
+it.
 
 For scripts and CI, provide the required values as flags. This remains
 non-interactive and also enables the global caching defaults unless
@@ -159,7 +162,8 @@ mct-agent init --provider-url https://api.example.com/v1 --api-key sk-xxx --mode
 ```
 
 Use `--no-cache` when the selected provider or model does not support explicit
-cache markers.
+cache markers. Use `--reasoning <value>` to set a reasoning effort in scripts;
+omit it to use the provider default.
 
 Then adjust settings as needed:
 ```
