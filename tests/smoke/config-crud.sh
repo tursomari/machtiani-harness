@@ -123,6 +123,46 @@ assert_file_contains 'cache_enabled = false' "$CONFIG_PATH"
 assert_file_contains 'endpoint = "/chat/completions"' "$CONFIG_PATH"
 mct-agent config check
 
+echo "==> Verifying Manage models adds through the provider-first wizard..."
+manager_checksum=$(checksum "$CONFIG_PATH")
+expect >"$SCRATCH_DIR/manager-add-model-wizard" 2>&1 <<'EXPECT_EOF'
+set timeout 10
+spawn -noecho mct-agent config
+expect {
+  -re {Choose an action} {}
+  timeout { exit 20 }
+  eof { exit 21 }
+}
+# Configuration: Finish, Add provider or model, Manage providers, Manage models.
+send "\033\[B\033\[B\033\[B\r"
+expect {
+  -re {Models} {}
+  timeout { exit 22 }
+  eof { exit 23 }
+}
+# Models: List, Show, Add.
+send "\033\[B\033\[B\r"
+expect {
+  -re {Choose a configured provider, a catalogue preset, or Other} {}
+  timeout { exit 24 }
+  eof { exit 25 }
+}
+expect {
+  -re {Existing: deepseek} {}
+  timeout { exit 26 }
+  eof { exit 27 }
+}
+# Cancel the nested add flow, model menu, and configuration manager.
+send "\003"
+after 200
+send "\003"
+after 200
+send "\003"
+expect eof
+EXPECT_EOF
+assert_file_contains 'Existing: deepseek' "$SCRATCH_DIR/manager-add-model-wizard"
+[[ "$(checksum "$CONFIG_PATH")" == "$manager_checksum" ]] || fail "cancelled manager add-model wizard changed $CONFIG_PATH"
+
 echo "==> Verifying init protects an existing configuration..."
 initial_checksum=$(checksum "$CONFIG_PATH")
 expect_exit 1 mct-agent init

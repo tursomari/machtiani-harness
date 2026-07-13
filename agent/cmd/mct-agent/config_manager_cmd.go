@@ -129,7 +129,14 @@ func handleInteractiveModelMenu(flags configTargetFlags) {
 			handleConfigModelCommand(append([]string{"list"}, base...))
 			continue
 		}
-		if action == "add" || action == "set" || action == "remove" || action == "default" {
+		if action == "add" {
+			// Adding a model may also require choosing or creating its provider.
+			// Reuse the catalogue-aware setup flow so the provider is selected
+			// before model details are collected.
+			handleConfigAddCommand(base)
+			continue
+		}
+		if action == "set" || action == "remove" || action == "default" {
 			handleConfigModelCommand(append([]string{action}, base...))
 			continue
 		}

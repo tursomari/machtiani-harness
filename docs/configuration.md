@@ -29,6 +29,9 @@ mct-agent config
 
 If the selected file does not exist, this opens initial setup. Otherwise it
 opens menus for providers, models, the default model, caching, and validation.
+Choosing **Manage models → Add model** uses the same provider-first setup flow:
+select an existing provider, a catalogue preset, or `Other provider` before
+choosing or entering the model.
 
 Mutating commands are interactive by default. Supplied flags prefill answers;
 the command prompts for missing information and confirms before writing.
