@@ -12,40 +12,27 @@ git commit --allow-empty -m "Initial commit"
 echo "==> Checking binary version..."
 mct-agent --version
 
-# Step 3: Initialize config through the script-safe resource command
-echo "==> Initializing configuration..."
-mct-agent config add \
-  --provider default \
-  --url "$TEST_BASE_URL" \
-  --api-key "$TEST_API_KEY" \
-  --model "$TEST_MODEL" \
-  --alias default \
-  --no-cache \
-  --no-interactive
+# Step 3: Exercise the complete script-safe configuration lifecycle. This
+# leaves one clean DeepSeek-compatible provider/model configuration for the
+# live sync and run below.
+bash /tests/smoke/config-crud.sh
 
-# Step 4: Verify config file exists and contains the expected model
-echo "==> Verifying config file..."
-test -f .machtiani/config.toml
-grep -q "$TEST_MODEL" .machtiani/config.toml
-grep -q 'cache_enabled = false' .machtiani/config.toml
-mct-agent config check
-
-# Step 5: Initialize the repository's internal README state
+# Step 4: Initialize the repository's internal README state
 echo "==> Synchronizing repository state..."
 mct-agent sync
 
-# Step 6: Live execution
+# Step 5: Live execution
 echo "==> Running live smoke test..."
 mct-agent run -t "Reply with the word OK and nothing else."
 
-# Step 7: Verify session artifacts
+# Step 6: Verify session artifacts
 echo "==> Verifying session artifacts..."
 test -d .machtiani/sessions
 ls .machtiani/sessions/*/artifacts/conversation.json
 
-# Step 8: Cleanup
+# Step 7: Cleanup
 echo "==> Cleaning up..."
 rm -rf .machtiani/
 
-# Step 9: Print success message
+# Step 8: Print success message
 echo "SMOKE TEST PASSED: All checks completed successfully."

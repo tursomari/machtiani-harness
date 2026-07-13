@@ -434,7 +434,14 @@ func ResolveModelWithOverrides(alias string, overrides map[string]string) (Resol
 	if overrideKey, ok := lookupAPIKeyOverride(overrides, providerName, effectiveAlias); ok {
 		resolved.APIKey = overrideKey
 	} else if configKey != "" {
-		resolved.APIKey = configKey
+		configuredKey, envName, err := resolveConfiguredAPIKey(configKey)
+		if err != nil {
+			return ResolvedModel{}, fmt.Errorf("provider %q api_key in %s: %w", providerName, cfg.path, err)
+		}
+		if envName != "" && strings.TrimSpace(configuredKey) == "" {
+			return ResolvedModel{}, fmt.Errorf("provider %q api_key references unset environment variable %s in %s", providerName, envName, cfg.path)
+		}
+		resolved.APIKey = configuredKey
 	} else {
 		for _, envName := range envCandidates {
 			if strings.TrimSpace(envName) == "" {
@@ -465,6 +472,31 @@ func ResolveModelWithOverrides(alias string, overrides map[string]string) (Resol
 	}
 
 	return resolved, nil
+}
+
+func resolveConfiguredAPIKey(value string) (resolved, envName string, err error) {
+	trimmed := strings.TrimSpace(value)
+	if !strings.HasPrefix(trimmed, "${") && !strings.HasSuffix(trimmed, "}") {
+		return trimmed, "", nil
+	}
+	if len(trimmed) < 4 || !strings.HasPrefix(trimmed, "${") || !strings.HasSuffix(trimmed, "}") {
+		return "", "", fmt.Errorf("malformed environment reference %q", trimmed)
+	}
+	name := strings.TrimSuffix(strings.TrimPrefix(trimmed, "${"), "}")
+	if !validAPIKeyEnvironmentName(name) {
+		return "", "", fmt.Errorf("invalid environment variable name %q", name)
+	}
+	return os.Getenv(name), name, nil
+}
+
+func validAPIKeyEnvironmentName(value string) bool {
+	for index, r := range value {
+		if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || r == '_' || (index > 0 && r >= '0' && r <= '9') {
+			continue
+		}
+		return false
+	}
+	return value != ""
 }
 
 func DefaultModelAlias() (string, error) {

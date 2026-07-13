@@ -110,7 +110,11 @@ This suite tests protected-artifact staging and preservation commands and verifi
 
 ## Clean-Container Smoke Test
 
-The Docker smoke test builds `mct-agent` in a clean image, initializes a new configuration, performs a live agent run, and verifies that the session conversation artifact was created.
+The Docker smoke test builds `mct-agent` in a clean image, exercises the full
+script-safe configuration lifecycle, restores a clean provider configuration,
+performs one live agent run, and verifies that the session conversation artifact
+was created. Set `TEST_*` to DeepSeek credentials and a DeepSeek model to run
+the provider-specific smoke requested for that service.
 
 ```bash
 export TEST_API_KEY=sk_...
@@ -131,12 +135,20 @@ The container test must complete all of these checks before printing its success
 
 1. A clean Git repository with an initial commit is created in `/workspace`.
 2. `mct-agent --version` runs.
-3. `mct-agent init --no-cache` creates `.machtiani/config.toml` containing
-   `TEST_MODEL`; caching is disabled so the live smoke provider need not
-   support explicit cache markers.
-4. `mct-agent sync` initializes the repository's internal README state.
-5. `mct-agent run` completes successfully against the live provider.
-6. `.machtiani/sessions/*/artifacts/conversation.json` exists.
+3. `config-crud.sh` creates the primary provider/model with `config add` and an
+   API-key environment reference; the literal live key is never passed as a CLI
+   argument or written to TOML.
+4. Every provider, model, and cache subcommand is exercised, including
+   reference-aware rename/removal, reasoning and parameter updates, cache
+   inheritance, inspection, validation, and expected failure paths.
+5. `--path`, `--global`, `MACHTIANI_CONFIG`, and explicit environment override
+   behavior are verified with disposable configurations.
+6. Rejected mutations are checksum-verified as non-writing, scratch resources
+   are removed, and the final primary configuration is validated with caching
+   disabled.
+7. `mct-agent sync` initializes the repository's internal README state.
+8. `mct-agent run` completes successfully against the live provider.
+9. `.machtiani/sessions/*/artifacts/conversation.json` exists.
 
 The scripts use `set -euo pipefail`; any failed command must produce a non-zero harness exit and must not print `SMOKE TEST PASSED`.
 

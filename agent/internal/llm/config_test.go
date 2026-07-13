@@ -150,6 +150,55 @@ git_synced_only = true
 	}
 }
 
+func TestResolveModelExpandsConfiguredAPIKeyEnvironmentReference(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	mustWriteFile(t, path, `
+default_model = "alias"
+
+[providers.deepseek]
+base_url = "https://api.deepseek.example"
+api_key = "${TEST_DEEPSEEK_API_KEY}"
+
+[models.alias]
+provider = "deepseek"
+model = "deepseek-model"
+`)
+	t.Setenv("MACHTIANI_CONFIG", path)
+	t.Setenv("TEST_DEEPSEEK_API_KEY", "expanded-key")
+	ResetConfigForTesting()
+
+	resolved, err := ResolveModel("alias")
+	if err != nil {
+		t.Fatalf("ResolveModel: %v", err)
+	}
+	if resolved.APIKey != "expanded-key" {
+		t.Fatalf("APIKey = %q, want expanded environment value", resolved.APIKey)
+	}
+}
+
+func TestResolveModelRejectsUnsetConfiguredAPIKeyEnvironmentReference(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	mustWriteFile(t, path, `
+default_model = "alias"
+
+[providers.deepseek]
+base_url = "https://api.deepseek.example"
+api_key = "${MISSING_DEEPSEEK_API_KEY}"
+
+[models.alias]
+provider = "deepseek"
+model = "deepseek-model"
+`)
+	t.Setenv("MACHTIANI_CONFIG", path)
+	t.Setenv("MISSING_DEEPSEEK_API_KEY", "")
+	ResetConfigForTesting()
+
+	_, err := ResolveModel("alias")
+	if err == nil || !strings.Contains(err.Error(), "references unset environment variable MISSING_DEEPSEEK_API_KEY") {
+		t.Fatalf("ResolveModel error = %v", err)
+	}
+}
+
 func TestLoadGlobalConfigRejectsUnknownUITheme(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	mustWriteFile(t, path, "[ui]\ntheme = \"auto\"\n")

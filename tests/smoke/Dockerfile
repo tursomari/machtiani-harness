@@ -54,6 +54,7 @@ COPY --from=builder /out/bin /usr/local/bin/
 # Smoke-test script (created in a later phase; referenced here so the
 # Dockerfile is self-documenting).
 COPY tests/smoke/container.sh /tests/smoke/container.sh
+COPY tests/smoke/config-crud.sh /tests/smoke/config-crud.sh
 
 WORKDIR /workspace
 
