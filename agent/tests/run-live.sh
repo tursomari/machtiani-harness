@@ -17,6 +17,7 @@ if [[ "${MCT_RUN_LIVE_INNER:-}" != "1" ]]; then
 
   cleanup_isolated_run() {
     git -C "$SOURCE_ROOT" worktree remove --force "$WORKTREE" >/dev/null 2>&1 || true
+    chmod -R u+w "$RUN_ROOT" 2>/dev/null || true
     rm -rf "$RUN_ROOT"
   }
   trap cleanup_isolated_run EXIT
@@ -827,13 +828,10 @@ generate_test_config() {
     fd_remote_model="${TEST_FILE_DISCOVERY_MODEL:-${OPENAI_FILE_DISCOVERY_MODEL:-${orch_remote_model}}}"
   fi
 
-  ORCH_MODEL_ALIAS="${OPENAI_ORCH_MODEL_ALIAS:-${orch_remote_model}}"
-  FILE_DISCOVERY_MODEL_ALIAS="${OPENAI_FILE_DISCOVERY_MODEL_ALIAS:-${fd_remote_model}}"
-
   if [[ "$LIVE_MODE" == true ]]; then
-    # TEST_MODEL_ALIAS is already set by the caller, do nothing here
-    ORCH_MODEL_ALIAS="${TEST_MODEL_ALIAS}"
-    FILE_DISCOVERY_MODEL_ALIAS="${TEST_MODEL_ALIAS}"
+    TEST_MODEL_ALIAS="run-live-model"
+    ORCH_MODEL_ALIAS="${OPENAI_ORCH_MODEL_ALIAS:-run-live-orchestrator}"
+    FILE_DISCOVERY_MODEL_ALIAS="${OPENAI_FILE_DISCOVERY_MODEL_ALIAS:-run-live-file-discovery}"
   else
     TEST_MODEL_ALIAS="test-model"
     ORCH_MODEL_ALIAS="${TEST_MODEL_ALIAS}"
@@ -875,76 +873,6 @@ if not replaced:
 path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 PY
 
-if [[ "$LIVE_MODE" == true ]]; then
-  "$PYTHON_BIN" - "$config_file" "$TEST_MODEL_ALIAS" "$provider_api_key" "$provider_base_url" <<'PY'
-import pathlib
-import re
-import sys
-
-try:
-    import tomllib
-except ModuleNotFoundError:
-    import tomli as tomllib
-
-config_path = pathlib.Path(sys.argv[1])
-alias = sys.argv[2]
-api_key = sys.argv[3]
-base_url = sys.argv[4]
-
-# 1. Parse TOML to find which provider the model alias references.
-with config_path.open('rb') as fh:
-    data = tomllib.load(fh)
-
-models = data.get('models', {})
-if alias not in models:
-    print(f"ERROR: model alias '{alias}' not found in config", file=sys.stderr)
-    sys.exit(1)
-
-provider_name = models[alias].get('provider', '')
-if not provider_name:
-    print(f"ERROR: model alias '{alias}' has no provider field", file=sys.stderr)
-    sys.exit(1)
-
-# 2. Line-based edit: set api_key and base_url in the provider section.
-lines = config_path.read_text(encoding='utf-8').splitlines()
-
-def replace_section_key(src_lines, section_name, key, value):
-    out = []
-    in_section = False
-    found_section = False
-    wrote_key = False
-    for line in src_lines:
-        stripped = line.strip()
-        if stripped.startswith('[') and stripped.endswith(']'):
-            if in_section and not wrote_key:
-                out.append(f'{key} = "{value}"')
-                wrote_key = True
-            in_section = stripped == f'[{section_name}]'
-            if in_section:
-                found_section = True
-            out.append(line)
-            continue
-        if in_section and re.match(rf'^\s*{re.escape(key)}\s*=', line):
-            out.append(f'{key} = "{value}"')
-            wrote_key = True
-            continue
-        out.append(line)
-    if in_section and not wrote_key:
-        out.append(f'{key} = "{value}"')
-    if not found_section:
-        if out and out[-1] != '':
-            out.append('')
-        out.append(f'[{section_name}]')
-        out.append(f'{key} = "{value}"')
-    return out
-
-section = f'providers.{provider_name}'
-lines = replace_section_key(lines, section, 'api_key', api_key)
-lines = replace_section_key(lines, section, 'base_url', base_url)
-
-config_path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
-PY
-else
   cat >> "$config_file" <<EOF
 
 [providers.${test_provider_name}]
@@ -987,7 +915,6 @@ EOF
   write_model_block "$FILE_DISCOVERY_MODEL_ALIAS" "$fd_remote_model"
 
   unset -f write_model_block
-fi
 
   if [[ "${TRACE_TEST_CONFIG:-}" == "true" ]]; then
     echo "Generated test config ($config_file):" >&2
@@ -1192,16 +1119,9 @@ trap cleanup_config EXIT
 # Resolve model aliases in the parent shell so they are available
 # both inside generate_test_config (subshell) and to subsequent commands.
 if [[ "$LIVE_MODE" == true ]]; then
-  if [[ -n "${TEST_MODEL:-}" ]]; then
-    TEST_MODEL_ALIAS="$TEST_MODEL"
-  elif [[ -n "${TEST_MODEL_ALIAS:-}" ]]; then
-    : # already set
-  else
-    echo "Error: TEST_MODEL and TEST_MODEL_ALIAS are both unset" >&2
-    exit 1
-  fi
-  ORCH_MODEL_ALIAS="${TEST_MODEL_ALIAS}"
-  FILE_DISCOVERY_MODEL_ALIAS="${TEST_MODEL_ALIAS}"
+  TEST_MODEL_ALIAS="run-live-model"
+  ORCH_MODEL_ALIAS="${OPENAI_ORCH_MODEL_ALIAS:-run-live-orchestrator}"
+  FILE_DISCOVERY_MODEL_ALIAS="${OPENAI_FILE_DISCOVERY_MODEL_ALIAS:-run-live-file-discovery}"
 else
   TEST_MODEL_ALIAS="test-model"
   ORCH_MODEL_ALIAS="${TEST_MODEL_ALIAS}"
