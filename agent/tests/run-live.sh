@@ -31,6 +31,17 @@ if [[ "${MCT_RUN_LIVE_INNER:-}" != "1" ]]; then
     cp -R "$SOURCE_ROOT/.machtiani/templates" "$WORKTREE/.machtiani/templates"
   fi
 
+  if [[ -f "$WORKTREE/.machtiani/config.toml" ]]; then
+    (
+      cd "$WORKTREE"
+      HOME="$TEST_HOME" \
+        MACHTIANI_CONFIG="$WORKTREE/.machtiani/config.toml" \
+        MCT_LLM_TEST_STUB=stub-echo \
+        MCT_README_TEST_STUB=basic \
+        mct-agent sync >/dev/null
+    )
+  fi
+
   set +e
   (
     cd "$WORKTREE"
