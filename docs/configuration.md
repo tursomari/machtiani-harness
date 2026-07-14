@@ -150,6 +150,11 @@ is always available without discovery. Existing providers are matched back to
 their catalogue entry by provider ID or base URL, so search remains available
 when adding another model later or continuing the same setup session.
 
+Catalogue search is initially selected whenever a provider supports searchable
+models, so pressing Enter on OpenRouter starts a search rather than selecting
+the stable flagship alias. After choosing a model, the alias prompt shows the
+suggested shortened name and explicitly states that Enter accepts it.
+
 Live discovery does not change scripted behavior. `--preset openrouter
 --no-interactive` uses the catalogue's stable default, while `--model <id>`
 selects any exact OpenRouter model deterministically. `config catalog show

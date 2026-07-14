@@ -239,7 +239,7 @@ func handleConfigAddCommand(args []string) int {
 		}
 		if strings.TrimSpace(*alias) == "" {
 			suggested := uniqueModelAliasSuggestion(*modelID, models)
-			*alias, err = promptLineDefault(reader, "Model alias", suggested, true)
+			*alias, err = promptModelAlias(reader, suggested)
 			if err != nil {
 				return configError(err)
 			}
@@ -345,18 +345,7 @@ func promptProviderChoice(existing map[string]any, catalog configcatalog.Catalog
 }
 
 func promptCatalogModel(reader *bufio.Reader, provider configcatalog.Provider, apiKey string, menuTheme presentation.Theme) (string, error) {
-	options := make([]initMenuOption, 0, len(provider.Models)+2)
-	for _, model := range provider.Models {
-		label := model.Name
-		if model.ID == provider.DefaultModel {
-			label += " (default)"
-		}
-		options = append(options, initMenuOption{label: label + " — " + model.Description, value: model.ID})
-	}
-	if provider.ModelsURL != "" {
-		options = append(options, initMenuOption{label: "Search current model catalogue...", value: "search"})
-	}
-	options = append(options, initMenuOption{label: "Other model...", value: "other"})
+	options := catalogModelMenuOptions(provider)
 	selected, err := promptInitMenu(os.Stdin, os.Stdout, int(os.Stdin.Fd()), "Model", "Choose a recommended model, search the provider, or enter another model ID.", options, menuTheme)
 	if err != nil || selected != "search" {
 		return selected, err
@@ -397,6 +386,30 @@ func promptCatalogModel(reader *bufio.Reader, provider configcatalog.Provider, a
 			return selected, nil
 		}
 	}
+}
+
+func catalogModelMenuOptions(provider configcatalog.Provider) []initMenuOption {
+	options := make([]initMenuOption, 0, len(provider.Models)+2)
+	// Searchable catalogues change frequently, so discovery is the safest
+	// interactive default. Stable noninteractive setup still uses DefaultModel.
+	if provider.ModelsURL != "" {
+		options = append(options, initMenuOption{label: "Search current model catalogue...", value: "search"})
+	}
+	for _, model := range provider.Models {
+		label := model.Name
+		if model.ID == provider.DefaultModel {
+			label += " (default)"
+		}
+		options = append(options, initMenuOption{label: label + " — " + model.Description, value: model.ID})
+	}
+	options = append(options, initMenuOption{label: "Other model...", value: "other"})
+	return options
+}
+
+func promptModelAlias(reader *bufio.Reader, suggested string) (string, error) {
+	fmt.Println("Model alias / shortened model name")
+	fmt.Println("  Press Enter to use the suggested alias, or type a replacement.")
+	return promptLineDefault(reader, "Alias", suggested, true)
 }
 
 func modelDiscoveryCredential(apiKey, apiKeyEnv string) string {

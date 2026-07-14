@@ -183,6 +183,9 @@ interactive model menu. The wizard retrieves current model IDs from OpenRouter
 using the configured credential, shows up to 25 matches, and retains **Other
 model** as a manual fallback. The search remains available when adding more
 models to that configured provider, including within the same wizard session.
+For searchable providers such as OpenRouter, catalogue search is the initially
+selected model action; use Down to choose the stable preset instead. The alias
+prompt displays its suggested short name and states that Enter accepts it.
 Non-interactive setup remains deterministic and uses the preset's documented
 default unless `--model` overrides it.
 

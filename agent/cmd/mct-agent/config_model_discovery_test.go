@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -90,5 +91,49 @@ func TestConfiguredProviderCredential(t *testing.T) {
 	}
 	if got := configuredProviderCredential(map[string]any{"api_key": "literal-secret"}); got != "literal-secret" {
 		t.Fatalf("literal credential = %q", got)
+	}
+}
+
+func TestSearchableCatalogDefaultsModelMenuToSearch(t *testing.T) {
+	catalog, err := configcatalog.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	openrouter, ok := catalog.Provider("openrouter")
+	if !ok {
+		t.Fatal("openrouter missing from catalogue")
+	}
+	options := catalogModelMenuOptions(openrouter)
+	if len(options) == 0 || options[0].value != "search" {
+		t.Fatalf("first OpenRouter model option = %#v, want catalogue search", options)
+	}
+	if options[1].value != openrouter.DefaultModel {
+		t.Fatalf("second OpenRouter model option = %q, want flagship %q", options[1].value, openrouter.DefaultModel)
+	}
+}
+
+func TestPromptModelAliasExplainsAndAcceptsSuggestedAlias(t *testing.T) {
+	var got string
+	var promptErr error
+	stdout, stderr := captureOutput(func() {
+		got, promptErr = promptModelAlias(bufio.NewReader(strings.NewReader("\n")), "openrouter")
+	})
+	if promptErr != nil {
+		t.Fatalf("promptModelAlias: %v", promptErr)
+	}
+	if stderr != "" {
+		t.Fatalf("stderr = %q", stderr)
+	}
+	if got != "openrouter" {
+		t.Fatalf("alias = %q, want suggested alias", got)
+	}
+	for _, want := range []string{
+		"Model alias / shortened model name",
+		"Press Enter to use the suggested alias",
+		"Alias [openrouter]:",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("prompt missing %q: %q", want, stdout)
+		}
 	}
 }
