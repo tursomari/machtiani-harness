@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/tursomari/machtiani/agent/internal/git"
+	"github.com/tursomari/machtiani/agent/internal/projectstore"
 )
 
 const (
@@ -25,6 +26,9 @@ const (
 // When invoked inside a git repository it returns the repo-scoped `.machtiani/sessions` path.
 // Otherwise it returns the global `$HOME/.machtiani/sessions` location.
 func SessionsRoot() (string, error) {
+	if ctx, err := projectstore.Discover(""); err == nil && ctx.Status == projectstore.StatusInitialized {
+		return ctx.SessionsRoot(), nil
+	}
 	root, local, err := projectRoot()
 	if err != nil {
 		return "", err
@@ -42,14 +46,7 @@ func SessionDirectory(sessionID string) (string, error) {
 	if sessionID == "" {
 		return "", errors.New("session id required")
 	}
-	root, local, err := projectRoot()
-	if err != nil {
-		return "", err
-	}
-	if local {
-		return filepath.Join(root, machtianiRootDir, sessionsDirName, sessionID), nil
-	}
-	base, err := globalMachtianiPath(sessionsDirName)
+	base, err := SessionsRoot()
 	if err != nil {
 		return "", err
 	}
@@ -120,6 +117,9 @@ func ScratchRoot() (string, error) {
 	if root := strings.TrimSpace(os.Getenv("MACHTIANI_TMP_ROOT")); root != "" {
 		return root, nil
 	}
+	if ctx, err := projectstore.Discover(""); err == nil && ctx.Status == projectstore.StatusInitialized {
+		return ctx.ScratchRoot(), nil
+	}
 	root, local, err := projectRoot()
 	if err != nil {
 		return "", err
@@ -136,6 +136,9 @@ func ScratchRoot() (string, error) {
 // the repo-scoped `.machtiani/tmp` directory.
 func ScratchRoots() ([]string, error) {
 	var roots []string
+	if ctx, err := projectstore.Discover(""); err == nil && ctx.Status == projectstore.StatusInitialized {
+		return []string{ctx.ScratchRoot()}, nil
+	}
 	root, local, err := projectRoot()
 	if err != nil {
 		return nil, err
@@ -211,6 +214,9 @@ func FileDiscoveryTrajectoryPath(sessionID string) (string, error) {
 // ReadmeDirectory returns the directory to use for README artifacts.
 // It always resolves inside the current git repository root.
 func ReadmeDirectory() (string, error) {
+	if ctx, err := projectstore.Discover(""); err == nil && ctx.Status == projectstore.StatusInitialized {
+		return filepath.Join(ctx.ArtifactsRoot(), readmeDirName), nil
+	}
 	root, local, err := projectRoot()
 	if err != nil {
 		return "", err

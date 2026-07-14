@@ -7,7 +7,39 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/google/uuid"
+	"github.com/tursomari/machtiani/agent/internal/projectstore"
 )
+
+func TestLocateConfigUsesInitializedProjectScope(t *testing.T) {
+	t.Setenv("MACHTIANI_CONFIG", "")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	id := uuid.New()
+	if err := projectstore.WriteProjectUUID(repoDir, id); err != nil {
+		t.Fatal(err)
+	}
+	store := filepath.Join(home, ".machtiani", id.String())
+	if err := projectstore.WriteConfigScope(store, projectstore.ScopeProject); err != nil {
+		t.Fatal(err)
+	}
+	projectConfig := filepath.Join(store, "config.toml")
+	mustWriteFile(t, projectConfig, "project = true\n")
+	mustWriteFile(t, filepath.Join(home, ".machtiani", "config.toml"), "global = true\n")
+
+	withWorkingDir(t, repoDir, func() {
+		path, err := locateConfig()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if path != projectConfig {
+			t.Fatalf("config = %s, want %s", path, projectConfig)
+		}
+	})
+}
 
 func TestLocateConfigPrefersLocalWithinGitRoot(t *testing.T) {
 	t.Setenv("MACHTIANI_CONFIG", "")

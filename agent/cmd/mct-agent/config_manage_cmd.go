@@ -17,12 +17,14 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/presentation"
+	"github.com/tursomari/machtiani/agent/internal/projectstore"
 	"golang.org/x/term"
 )
 
 type configTargetFlags struct {
-	path   string
-	global bool
+	path    string
+	global  bool
+	project bool
 }
 
 type configTarget struct {
@@ -38,11 +40,22 @@ type configDocument struct {
 func addConfigTargetFlags(fs *pflag.FlagSet, flags *configTargetFlags) {
 	fs.StringVar(&flags.path, "path", "", "exact configuration file to use")
 	fs.BoolVar(&flags.global, "global", false, "use $HOME/.machtiani/config.toml")
+	fs.BoolVar(&flags.project, "project", false, "use the current UUID project's config.toml")
 }
 
 func resolveConfigTarget(flags configTargetFlags) (configTarget, error) {
-	if flags.path != "" && flags.global {
-		return configTarget{}, errors.New("--path and --global are mutually exclusive")
+	explicit := 0
+	if strings.TrimSpace(flags.path) != "" {
+		explicit++
+	}
+	if flags.global {
+		explicit++
+	}
+	if flags.project {
+		explicit++
+	}
+	if explicit > 1 {
+		return configTarget{}, errors.New("--path, --global, and --project are mutually exclusive")
 	}
 	envPath := strings.TrimSpace(os.Getenv("MACHTIANI_CONFIG"))
 	var selected string
@@ -52,20 +65,47 @@ func resolveConfigTarget(flags configTargetFlags) (configTarget, error) {
 		selected = strings.TrimSpace(flags.path)
 		overridden = envPath
 	case flags.global:
-		home, err := os.UserHomeDir()
+		var err error
+		selected, err = projectstore.GlobalConfigPath()
 		if err != nil {
-			return configTarget{}, fmt.Errorf("resolve home directory: %w", err)
+			return configTarget{}, err
 		}
-		selected = filepath.Join(home, ".machtiani", "config.toml")
+		overridden = envPath
+	case flags.project:
+		ctx, err := projectstore.Discover("")
+		if err != nil {
+			return configTarget{}, err
+		}
+		if ctx.Status != projectstore.StatusInitialized {
+			return configTarget{}, errors.New("--project requires an initialized project; run mct-agent init")
+		}
+		selected = ctx.ProjectConfigPath()
 		overridden = envPath
 	case envPath != "":
 		selected = envPath
 	default:
-		root, err := localConfigRoot()
+		ctx, err := projectstore.Discover("")
 		if err != nil {
 			return configTarget{}, err
 		}
-		selected = filepath.Join(root, ".machtiani", "config.toml")
+		switch ctx.Status {
+		case projectstore.StatusInitialized:
+			if ctx.ConfigScope == projectstore.ScopeProject {
+				selected = ctx.ProjectConfigPath()
+			} else {
+				selected, err = projectstore.GlobalConfigPath()
+				if err != nil {
+					return configTarget{}, err
+				}
+			}
+		case projectstore.StatusLegacy:
+			selected = filepath.Join(ctx.ProjectRoot, ".machtiani", "config.toml")
+		default:
+			selected, err = projectstore.GlobalConfigPath()
+			if err != nil {
+				return configTarget{}, err
+			}
+		}
 	}
 	abs, err := filepath.Abs(selected)
 	if err != nil {

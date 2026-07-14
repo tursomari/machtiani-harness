@@ -5,7 +5,38 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/google/uuid"
+	"github.com/tursomari/machtiani/agent/internal/projectstore"
 )
+
+func TestInitializedProjectUsesUUIDHomeStore(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	id := uuid.New()
+	if err := projectstore.WriteProjectUUID(repoDir, id); err != nil {
+		t.Fatal(err)
+	}
+
+	withWorkingDir(t, repoDir, func() {
+		sessions, err := SessionsRoot()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := filepath.Join(home, ".machtiani", id.String(), "sessions"); sessions != want {
+			t.Fatalf("sessions root = %s, want %s", sessions, want)
+		}
+		readme, err := ReadmeDirectory()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := filepath.Join(home, ".machtiani", id.String(), "artifacts", "readme"); readme != want {
+			t.Fatalf("README root = %s, want %s", readme, want)
+		}
+	})
+}
 
 func TestSessionChatDirectoryLocalRepo(t *testing.T) {
 	home := t.TempDir()

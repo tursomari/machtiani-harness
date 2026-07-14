@@ -19,6 +19,7 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/mct/readmesync"
 	"github.com/tursomari/machtiani/agent/internal/planner"
 	"github.com/tursomari/machtiani/agent/internal/presentation"
+	"github.com/tursomari/machtiani/agent/internal/projectstore"
 	"github.com/tursomari/machtiani/agent/internal/runner"
 	shellagent "github.com/tursomari/machtiani/agent/internal/shell-agent"
 	"github.com/tursomari/machtiani/agent/internal/trajectory"
@@ -1092,7 +1093,15 @@ func loadProjectBackground(repoRoot string) (string, error) {
 	if base == "" {
 		base = "."
 	}
-	path := filepath.Join(base, ".machtiani", "artifacts", "readme", "internal-readme.md")
+	readmeDir := filepath.Join(base, ".machtiani", "artifacts", "readme")
+	ctx, err := projectstore.Discover(base)
+	if err != nil {
+		return "", fmt.Errorf("resolve internal README path: %w", err)
+	}
+	if ctx.Status == projectstore.StatusInitialized {
+		readmeDir = filepath.Join(ctx.ArtifactsRoot(), "readme")
+	}
+	path := filepath.Join(readmeDir, "internal-readme.md")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", fmt.Errorf("read README at %s: %w", path, err)

@@ -23,27 +23,32 @@ if [[ "${MCT_RUN_LIVE_INNER:-}" != "1" ]]; then
 
   mkdir -p "$TEST_HOME"
   git -C "$SOURCE_ROOT" worktree add --detach "$WORKTREE" HEAD >/dev/null
-  mkdir -p "$WORKTREE/.machtiani"
+  mkdir -p "$WORKTREE/.machtiani" "$TEST_HOME/.machtiani"
   if [[ -f "$SOURCE_ROOT/.machtiani/config.toml" ]]; then
-    install -m 0600 "$SOURCE_ROOT/.machtiani/config.toml" "$WORKTREE/.machtiani/config.toml"
+    install -m 0600 "$SOURCE_ROOT/.machtiani/config.toml" "$TEST_HOME/.machtiani/config.toml"
   fi
   if [[ -d "$SOURCE_ROOT/.machtiani/templates" ]]; then
     cp -R "$SOURCE_ROOT/.machtiani/templates" "$WORKTREE/.machtiani/templates"
   fi
 
-  if [[ -f "$WORKTREE/.machtiani/config.toml" ]]; then
+  if [[ -f "$TEST_HOME/.machtiani/config.toml" ]]; then
     (
       cd "$WORKTREE"
       HOME="$TEST_HOME" \
-        MACHTIANI_CONFIG="$WORKTREE/.machtiani/config.toml" \
         mct-agent init --no-interactive >/dev/null
       HOME="$TEST_HOME" \
-        MACHTIANI_CONFIG="$WORKTREE/.machtiani/config.toml" \
+        MACHTIANI_CONFIG="$TEST_HOME/.machtiani/config.toml" \
         MCT_LLM_TEST_STUB=stub-echo \
         MCT_README_TEST_STUB=basic \
         mct-agent sync >/dev/null
     )
   fi
+
+  PROJECT_STORE=$(
+    cd "$WORKTREE"
+    HOME="$TEST_HOME" mct-agent project show --json |
+      python3 -c 'import json, sys; print(json.load(sys.stdin)["store"])'
+  )
 
   set +e
   (
@@ -51,6 +56,8 @@ if [[ "${MCT_RUN_LIVE_INNER:-}" != "1" ]]; then
     HOME="$TEST_HOME" \
       REPO_ROOT="$WORKTREE" \
       MCT_RUN_LIVE_INNER=1 \
+      MACHTIANI_TEST_SOURCE_CONFIG="$TEST_HOME/.machtiani/config.toml" \
+      MACHTIANI_TEST_SESSIONS_ROOT="$PROJECT_STORE/sessions" \
       bash "$WORKTREE/agent/tests/run-live.sh" "$@"
   )
   isolated_status=$?
@@ -528,7 +535,7 @@ extract_agent_session_id() {
       | head -1 | sed -E 's#.*/sessions/(agent-[0-9TZ]+-[0-9]+)/.*#\1#' || true)
   fi
   if [[ -z "$sid" && "$since_epoch" != "0" ]]; then
-    sid=$("$PYTHON_BIN" - "$REPO_ROOT/.machtiani/sessions" "$since_epoch" <<'PY'
+    sid=$("$PYTHON_BIN" - "${MACHTIANI_TEST_SESSIONS_ROOT:-$REPO_ROOT/.machtiani/sessions}" "$since_epoch" <<'PY'
 import pathlib
 import sys
 
@@ -798,7 +805,7 @@ generate_test_config() {
   local config_file="$config_dir/config.toml"
   mkdir -p "$config_dir"
 
-  local repo_config="$REPO_ROOT/.machtiani/config.toml"
+  local repo_config="${MACHTIANI_TEST_SOURCE_CONFIG:-$REPO_ROOT/.machtiani/config.toml}"
   if [[ ! -f "$repo_config" ]]; then
     echo "Missing repository config: $repo_config" >&2
     exit 1
@@ -1000,7 +1007,7 @@ generate_stub_config() {
   local config_file="$config_dir/config.toml"
   mkdir -p "$config_dir"
 
-  local repo_config="$REPO_ROOT/.machtiani/config.toml"
+  local repo_config="${MACHTIANI_TEST_SOURCE_CONFIG:-$REPO_ROOT/.machtiani/config.toml}"
   if [[ ! -f "$repo_config" ]]; then
     echo "Missing repository config: $repo_config" >&2
     exit 1
@@ -1429,7 +1436,7 @@ run_happy_case() {
 
   local agent_session="$session_id"
 
-  local sessions_root="$REPO_ROOT/.machtiani/sessions"
+  local sessions_root="${MACHTIANI_TEST_SESSIONS_ROOT:-$REPO_ROOT/.machtiani/sessions}"
   local session_dir="$sessions_root/$agent_session"
   if [[ ! -d "$session_dir" ]]; then
     echo "Session directory missing: $session_dir" >&2
@@ -1859,7 +1866,7 @@ EOF
     return_with_cleanup 1 || return 1
   fi
 
-  local session_dir="$REPO_ROOT/.machtiani/sessions/$agent_session"
+  local session_dir="${MACHTIANI_TEST_SESSIONS_ROOT:-$REPO_ROOT/.machtiani/sessions}/$agent_session"
   local transcript_path="$session_dir/chat/agent-transcript.adoc"
   local final_path="$session_dir/chat/agent-final-answer.md"
   if [[ ! -s "$transcript_path" || ! -s "$final_path" ]]; then
@@ -1937,7 +1944,7 @@ run_shell_command_trajectory_live_case() {
     return 1
   fi
 
-  local session_dir="$REPO_ROOT/.machtiani/sessions/$agent_session"
+  local session_dir="${MACHTIANI_TEST_SESSIONS_ROOT:-$REPO_ROOT/.machtiani/sessions}/$agent_session"
   if [[ ! -d "$session_dir" ]]; then
     echo "Session directory missing: $session_dir ($case_id verbose)" >&2
     return 1
@@ -2020,7 +2027,7 @@ PY
     return 1
   fi
 
-  local session_dir2="$REPO_ROOT/.machtiani/sessions/$agent_session2"
+  local session_dir2="${MACHTIANI_TEST_SESSIONS_ROOT:-$REPO_ROOT/.machtiani/sessions}/$agent_session2"
   if [[ ! -d "$session_dir2" ]]; then
     echo "Session directory missing: $session_dir2 ($case_id non-verbose)" >&2
     return 1
@@ -2169,7 +2176,7 @@ run_resume_without_mode_case() {
     return 1
   fi
 
-  local conv_path="$REPO_ROOT/.machtiani/sessions/$agent_session/artifacts/conversation.json"
+  local conv_path="${MACHTIANI_TEST_SESSIONS_ROOT:-$REPO_ROOT/.machtiani/sessions}/$agent_session/artifacts/conversation.json"
   if [[ ! -f "$conv_path" ]]; then
     echo "conversation.json missing after initial run: $conv_path" >&2
     stop_llm_stub_server
@@ -2261,7 +2268,7 @@ test_code_no_forge() {
     return 1
   fi
 
-  local sessions_root="$REPO_ROOT/.machtiani/sessions"
+  local sessions_root="${MACHTIANI_TEST_SESSIONS_ROOT:-$REPO_ROOT/.machtiani/sessions}"
   local session_dir="$sessions_root/$agent_session"
   local meta_plan="$session_dir/mode-plan.json"
   local inputs_jsonl="$session_dir/artifacts/llm/inputs.jsonl"
@@ -2362,7 +2369,7 @@ run_enforce_early_commands_case() {
     return 1
   fi
 
-  local sessions_root="$REPO_ROOT/.machtiani/sessions"
+  local sessions_root="${MACHTIANI_TEST_SESSIONS_ROOT:-$REPO_ROOT/.machtiani/sessions}"
   local session_dir="$sessions_root/$agent_session"
   local traj_file="$session_dir/trajectory/agent.jsonl"
   if [[ ! -f "$traj_file" ]]; then
@@ -2517,7 +2524,7 @@ test_code_forge_initial() {
     return 1
   fi
 
-  local sessions_root="$REPO_ROOT/.machtiani/sessions"
+  local sessions_root="${MACHTIANI_TEST_SESSIONS_ROOT:-$REPO_ROOT/.machtiani/sessions}"
   local session_dir="$sessions_root/$agent_session"
   local meta_plan="$session_dir/mode-plan.json"
   local inputs_jsonl="$session_dir/artifacts/llm/inputs.jsonl"
@@ -2607,7 +2614,7 @@ test_code_forge_resume_with_mode() {
     return 1
   fi
 
-  local sessions_root="$REPO_ROOT/.machtiani/sessions"
+  local sessions_root="${MACHTIANI_TEST_SESSIONS_ROOT:-$REPO_ROOT/.machtiani/sessions}"
   local session_dir="$sessions_root/$agent_session"
   local meta_plan="$session_dir/mode-plan.json"
   local inputs_jsonl="$session_dir/artifacts/llm/inputs.jsonl"
@@ -2734,7 +2741,7 @@ test_code_forge_resume_without_mode() {
     return 1
   fi
 
-  local sessions_root="$REPO_ROOT/.machtiani/sessions"
+  local sessions_root="${MACHTIANI_TEST_SESSIONS_ROOT:-$REPO_ROOT/.machtiani/sessions}"
   local session_dir="$sessions_root/$agent_session"
   local meta_plan="$session_dir/mode-plan.json"
   local inputs_jsonl="$session_dir/artifacts/llm/inputs.jsonl"
@@ -2860,7 +2867,7 @@ test_code_resume_without_mode_no_forge() {
     return 1
   fi
 
-  local sessions_root="$REPO_ROOT/.machtiani/sessions"
+  local sessions_root="${MACHTIANI_TEST_SESSIONS_ROOT:-$REPO_ROOT/.machtiani/sessions}"
   local session_dir="$sessions_root/$agent_session"
   local meta_plan="$session_dir/mode-plan.json"
   local inputs_jsonl="$session_dir/artifacts/llm/inputs.jsonl"
@@ -3013,7 +3020,7 @@ PY
 
   local agent_session="$session_id"
 
-  local sessions_root="$REPO_ROOT/.machtiani/sessions"
+  local sessions_root="${MACHTIANI_TEST_SESSIONS_ROOT:-$REPO_ROOT/.machtiani/sessions}"
   local session_dir="$sessions_root/$agent_session"
   if [[ ! -d "$session_dir" ]]; then
     echo "Session directory missing: $session_dir" >&2
@@ -3087,7 +3094,7 @@ run_resume_from_conversation_json_case() {
     return 1
   fi
 
-  local session_dir="$REPO_ROOT/.machtiani/sessions/$agent_session"
+  local session_dir="${MACHTIANI_TEST_SESSIONS_ROOT:-$REPO_ROOT/.machtiani/sessions}/$agent_session"
   local conv_path="$session_dir/artifacts/conversation.json"
   local state_path="$session_dir/session-state.json"
   local transcript_path="$session_dir/chat/agent-transcript.adoc"

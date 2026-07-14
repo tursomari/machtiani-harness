@@ -560,6 +560,21 @@ func locateConfig() (string, error) {
 		}
 		return env, nil
 	}
+	if ctx, err := projectstore.Discover(""); err == nil && ctx.Status == projectstore.StatusInitialized {
+		candidate := ctx.ProjectConfigPath()
+		if ctx.ConfigScope == projectstore.ScopeGlobal {
+			candidate, err = projectstore.GlobalConfigPath()
+			if err != nil {
+				return "", err
+			}
+		}
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate, nil
+		} else if !os.IsNotExist(err) {
+			return "", fmt.Errorf("inspect config %s: %w", candidate, err)
+		}
+		return "", fmt.Errorf("selected %s config not found at %s", ctx.ConfigScope, candidate)
+	}
 	if wd, err := os.Getwd(); err == nil {
 		local, err := findLocalConfig(wd)
 		if err != nil {

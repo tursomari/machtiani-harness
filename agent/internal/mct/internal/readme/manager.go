@@ -12,6 +12,7 @@ import (
 
 	"github.com/tursomari/machtiani/agent/internal/git"
 	"github.com/tursomari/machtiani/agent/internal/llm"
+	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
 	"github.com/tursomari/machtiani/agent/internal/mct/internal/utils"
 	"github.com/tursomari/machtiani/agent/internal/prompts"
 	"github.com/tursomari/machtiani/agent/internal/templates"
@@ -53,7 +54,10 @@ func NewManager(isAnswerOnly bool, verbose bool) (*Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	repoPath := filepath.Join(projectRoot, repoRelativePath)
+	repoPath, err := artifacts.ReadmeDirectory()
+	if err != nil {
+		return nil, err
+	}
 	stateDir := filepath.Join(repoPath, stateDirName)
 	envVerbose := strings.TrimSpace(os.Getenv(verboseEnv)) != ""
 
@@ -547,15 +551,7 @@ func GetREADMECommitForProject(projectCommitHash string) (string, error) {
 }
 
 func getReadmeRepoPath() (string, error) {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return "", fmt.Errorf("getwd: %w", err)
-	}
-	projectRoot, err := git.RepoRoot(cwd)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(projectRoot, repoRelativePath), nil
+	return artifacts.ReadmeDirectory()
 }
 
 func gitRevParse(dir, rev string) (string, error) {

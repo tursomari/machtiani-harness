@@ -656,6 +656,8 @@ func handleConfigCommand(args []string) int {
 		return handleConfigModelCommand(args[1:])
 	case "cache":
 		return handleConfigCacheCommand(args[1:])
+	case "scope":
+		return handleConfigScopeCommand(args[1:])
 	case "url", "api-key", "reasoning":
 		fmt.Fprintf(os.Stderr, "The 'config %s' command was removed; use 'config provider set' or 'config model set'.\n", args[0])
 		return 2
@@ -676,6 +678,7 @@ func printConfigUsage() {
 	fmt.Fprintln(os.Stderr, "  provider    Manage providers")
 	fmt.Fprintln(os.Stderr, "  model       Manage models and the default selection")
 	fmt.Fprintln(os.Stderr, "  cache       Manage global and per-model caching")
+	fmt.Fprintln(os.Stderr, "  scope       Show or select global/project configuration")
 	fmt.Fprintln(os.Stderr, "  check       Validate the selected configuration file")
 	fmt.Fprintln(os.Stderr, "  show        Print the effective configuration")
 }

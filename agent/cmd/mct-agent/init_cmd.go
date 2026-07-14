@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -9,10 +10,12 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+	"github.com/google/uuid"
 	"github.com/spf13/pflag"
 	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/modes"
 	"github.com/tursomari/machtiani/agent/internal/presentation"
+	"github.com/tursomari/machtiani/agent/internal/projectstore"
 	"golang.org/x/term"
 )
 
@@ -55,32 +58,34 @@ type initMenuOption struct {
 func init() {
 	cliCommands = append(cliCommands, cliCommand{
 		name:        "init",
-		description: "Initialize .machtiani/config.toml",
+		description: "Initialize project identity, modes, and configuration",
 		handler:     handleInitCommand,
 	})
 }
 
 func handleInitCommand(args []string) int {
-	for _, arg := range args {
-		name := strings.SplitN(arg, "=", 2)[0]
-		switch name {
-		case "--provider-url", "--api-key", "--model", "--reasoning", "--alias", "--force":
-			fmt.Fprintln(os.Stderr, "Legacy mct-agent init flags were removed. Use 'mct-agent init' for interactive setup or 'mct-agent config add --no-interactive' for automation.")
-			return 2
-		}
-	}
-
 	fs := pflag.NewFlagSet("mct-agent init", pflag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	var flags configTargetFlags
-	addConfigTargetFlags(fs, &flags)
 	noInteractive := fs.Bool("no-interactive", false, "never prompt; use existing or complete supplied configuration")
+	configScope := fs.String("config-scope", "", "configuration scope: global or project")
+	jsonOutput := fs.Bool("json", false, "print initialized project details as JSON")
+	preset := fs.String("preset", "", "provider catalogue preset")
+	provider := fs.String("provider", "", "provider name")
+	url := fs.String("url", "", "provider base URL")
+	endpoint := fs.String("endpoint", "", "provider endpoint path")
+	apiKey := fs.String("api-key", "", "literal provider API key")
+	apiKeyEnv := fs.String("api-key-env", "", "API key environment variable")
+	model := fs.String("model", "", "provider model identifier")
+	alias := fs.String("alias", "", "model alias")
+	reasoning := fs.String("reasoning", "", "reasoning effort")
+	headers := fs.StringArray("header", nil, "provider header key=value (repeatable)")
+	queries := fs.StringArray("query", nil, "provider query key=value (repeatable)")
 	noCache := fs.Bool("no-cache", false, "disable global prompt caching in the new configuration")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "Usage: mct-agent init [--global | --path <file>] [--no-cache]")
+		fmt.Fprintln(os.Stderr, "Usage: mct-agent init [--no-interactive] [--config-scope global|project] [configuration flags]")
 		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "Start first-time interactive setup. Use 'mct-agent config' to modify an existing configuration.")
-		fmt.Fprintln(os.Stderr, "For automation, use 'mct-agent config add --no-interactive'.")
+		fmt.Fprintln(os.Stderr, "Initialize a UUID-backed project store and synchronize canonical modes.")
+		fmt.Fprintln(os.Stderr, "Global configuration is used by default; select project scope to keep a complete project-specific config.")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Flags:")
 		fs.PrintDefaults()
@@ -94,28 +99,123 @@ func handleInitCommand(args []string) int {
 	if fs.NArg() != 0 {
 		return configUsageError("mct-agent init takes flags, not positional arguments")
 	}
-	target, err := resolveConfigTarget(flags)
+	ctx, err := projectstore.Discover("")
 	if err != nil {
 		return configError(err)
+	}
+	if ctx.Status == projectstore.StatusLegacy {
+		if err := modes.SyncCanonical(); err != nil {
+			return configError(err)
+		}
+		fmt.Fprintln(os.Stdout, "Legacy project configuration preserved; canonical modes synchronized. Run mct-agent migrate to adopt the UUID home store.")
+		return 0
+	}
+
+	scope := projectstore.ScopeGlobal
+	if ctx.Status == projectstore.StatusInitialized {
+		scope = ctx.ConfigScope
+	}
+	if value := strings.TrimSpace(*configScope); value != "" {
+		scope = projectstore.ConfigScope(value)
+		if err := scope.Validate(); err != nil {
+			return configUsageError(err.Error())
+		}
+	} else if !*noInteractive && term.IsTerminal(int(os.Stdin.Fd())) {
+		useGlobal, err := promptYesNo(bufio.NewReader(os.Stdin), os.Stdout, "Use global config? [Y/n]: ", true)
+		if err != nil {
+			return configError(err)
+		}
+		if !useGlobal {
+			scope = projectstore.ScopeProject
+		}
+	}
+
+	if ctx.Status != projectstore.StatusInitialized {
+		ctx.ID = uuid.New()
+		ctx.StoreRoot = filepath.Join(ctx.HomeRoot, ctx.ID.String())
+		ctx.Status = projectstore.StatusInitialized
+	}
+	target, err := projectstore.GlobalConfigPath()
+	if err != nil {
+		return configError(err)
+	}
+	if scope == projectstore.ScopeProject {
+		target = ctx.ProjectConfigPath()
+	}
+	if _, err := os.Stat(target); os.IsNotExist(err) {
+		hasCreationFlags := strings.TrimSpace(*preset+*provider+*url+*model+*alias) != ""
+		if scope == projectstore.ScopeProject && !hasCreationFlags {
+			global, globalErr := projectstore.GlobalConfigPath()
+			if globalErr == nil {
+				if data, readErr := os.ReadFile(global); readErr == nil {
+					if mkdirErr := os.MkdirAll(filepath.Dir(target), 0o700); mkdirErr != nil {
+						return configError(mkdirErr)
+					}
+					if writeErr := os.WriteFile(target, data, 0o600); writeErr != nil {
+						return configError(writeErr)
+					}
+				}
+			}
+		}
+		if _, statErr := os.Stat(target); os.IsNotExist(statErr) {
+			forwarded := []string{"--path", target}
+			appendFlag := func(name, value string) {
+				if strings.TrimSpace(value) != "" {
+					forwarded = append(forwarded, name, value)
+				}
+			}
+			appendFlag("--preset", *preset)
+			appendFlag("--provider", *provider)
+			appendFlag("--url", *url)
+			appendFlag("--endpoint", *endpoint)
+			appendFlag("--api-key", *apiKey)
+			appendFlag("--api-key-env", *apiKeyEnv)
+			appendFlag("--model", *model)
+			appendFlag("--alias", *alias)
+			appendFlag("--reasoning", *reasoning)
+			for _, value := range *headers {
+				forwarded = append(forwarded, "--header", value)
+			}
+			for _, value := range *queries {
+				forwarded = append(forwarded, "--query", value)
+			}
+			if *noCache {
+				forwarded = append(forwarded, "--no-cache")
+			}
+			if *noInteractive {
+				forwarded = append(forwarded, "--no-interactive")
+			}
+			if code := handleConfigAddCommand(forwarded); code != 0 {
+				return code
+			}
+		}
+	} else if err != nil {
+		return configError(fmt.Errorf("inspect %s: %w", target, err))
 	}
 	if err := modes.SyncCanonical(); err != nil {
 		return configError(err)
 	}
-	if _, err := os.Stat(target.path); err == nil {
-		fmt.Fprintf(os.Stdout, "Configuration already exists at %s; canonical modes synchronized.\n", target.path)
-		return 0
-	} else if !os.IsNotExist(err) {
-		return configError(fmt.Errorf("inspect %s: %w", target.path, err))
+	if err := projectstore.EnsureLayout(ctx.StoreRoot); err != nil {
+		return configError(err)
 	}
-
-	forwarded := configTargetArgs(flags)
-	if *noInteractive {
-		forwarded = append(forwarded, "--no-interactive")
+	if err := projectstore.WriteConfigScope(ctx.StoreRoot, scope); err != nil {
+		return configError(err)
 	}
-	if *noCache {
-		forwarded = append(forwarded, "--no-cache")
+	if _, ok, err := projectstore.ReadProjectUUID(ctx.ProjectRoot); err != nil {
+		return configError(err)
+	} else if !ok {
+		if err := projectstore.WriteProjectUUID(ctx.ProjectRoot, ctx.ID); err != nil {
+			return configError(err)
+		}
 	}
-	return handleConfigAddCommand(forwarded)
+	result := map[string]string{"uuid": ctx.ID.String(), "marker": ctx.MarkerPath, "store": ctx.StoreRoot, "config_scope": string(scope), "config": target}
+	if *jsonOutput {
+		data, _ := json.MarshalIndent(result, "", "  ")
+		fmt.Fprintln(os.Stdout, string(data))
+	} else {
+		fmt.Fprintf(os.Stdout, "Project initialized: %s\nProject store: %s\nConfiguration (%s): %s\n", ctx.ID, ctx.StoreRoot, scope, target)
+	}
+	return 0
 }
 
 func handleInitCommandWithDeps(args []string, deps initCommandDeps) int {

@@ -303,6 +303,9 @@ func configTargetArgs(flags configTargetFlags) []string {
 	if flags.global {
 		return []string{"--global"}
 	}
+	if flags.project {
+		return []string{"--project"}
+	}
 	return nil
 }
 

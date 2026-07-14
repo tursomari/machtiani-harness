@@ -12,6 +12,7 @@ import (
 
 	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/presentation"
+	"github.com/tursomari/machtiani/agent/internal/projectstore"
 )
 
 func TestLegacyHandleInitCommandWithDeps(t *testing.T) {
@@ -263,14 +264,70 @@ func TestInitPreservesExistingConfigurationAndSyncsModes(t *testing.T) {
 	}
 }
 
-func TestInitRejectsLegacyAutomationFlags(t *testing.T) {
-	_, stderr := captureOutput(func() {
+func TestInitRejectsUnknownLegacyProviderURLFlag(t *testing.T) {
+	captureOutput(func() {
 		if code := handleInitCommand([]string{"--provider-url", "https://example.com"}); code != 2 {
 			t.Errorf("init exit = %d, want 2", code)
 		}
 	})
-	if !strings.Contains(stderr, "config add --no-interactive") {
-		t.Fatalf("stderr = %q", stderr)
+}
+
+func TestInitNonInteractiveCreatesStableUUIDHomeStore(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("MACHTIANI_CONFIG", "")
+
+	original, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(project); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(original) })
+
+	global := filepath.Join(home, ".machtiani", "config.toml")
+	if code := handleConfigAddCommand([]string{
+		"--global", "--provider", "p", "--url", "https://example.com/v1",
+		"--api-key-env", "TEST_API_KEY", "--model", "one", "--alias", "one",
+		"--no-interactive",
+	}); code != 0 {
+		t.Fatalf("config add exit = %d", code)
+	}
+
+	if code := handleInitCommand([]string{"--no-interactive"}); code != 0 {
+		t.Fatalf("init exit = %d", code)
+	}
+	ctx, err := projectstore.Discover(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ctx.Status != projectstore.StatusInitialized || ctx.ConfigScope != projectstore.ScopeGlobal {
+		t.Fatalf("context = %#v", ctx)
+	}
+	if _, err := os.Stat(global); err != nil {
+		t.Fatalf("global config: %v", err)
+	}
+	if _, err := os.Stat(ctx.ProjectConfigPath()); !os.IsNotExist(err) {
+		t.Fatalf("default init created project config: %v", err)
+	}
+	for _, path := range []string{ctx.SessionsRoot(), ctx.ArtifactsRoot(), ctx.ScratchRoot(), ctx.MetaRoot()} {
+		if info, err := os.Stat(path); err != nil || !info.IsDir() {
+			t.Fatalf("layout path %s: info=%v err=%v", path, info, err)
+		}
+	}
+
+	firstID := ctx.ID
+	if code := handleInitCommand([]string{"--no-interactive"}); code != 0 {
+		t.Fatalf("second init exit = %d", code)
+	}
+	ctx, err = projectstore.Discover(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ctx.ID != firstID {
+		t.Fatalf("re-init changed UUID from %s to %s", firstID, ctx.ID)
 	}
 }
 
