@@ -36,6 +36,9 @@ if [[ "${MCT_RUN_LIVE_INNER:-}" != "1" ]]; then
       cd "$WORKTREE"
       HOME="$TEST_HOME" \
         MACHTIANI_CONFIG="$WORKTREE/.machtiani/config.toml" \
+        mct-agent init --no-interactive >/dev/null
+      HOME="$TEST_HOME" \
+        MACHTIANI_CONFIG="$WORKTREE/.machtiani/config.toml" \
         MCT_LLM_TEST_STUB=stub-echo \
         MCT_README_TEST_STUB=basic \
         mct-agent sync >/dev/null

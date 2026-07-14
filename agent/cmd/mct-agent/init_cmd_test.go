@@ -232,7 +232,7 @@ func TestInitStartsNewConfigurationWizard(t *testing.T) {
 	}
 }
 
-func TestInitRefusesExistingConfiguration(t *testing.T) {
+func TestInitPreservesExistingConfigurationAndSyncsModes(t *testing.T) {
 	_, cleanup := setupConfigTest(t)
 	defer cleanup()
 	if code := handleConfigAddCommand([]string{
@@ -246,13 +246,13 @@ func TestInitRefusesExistingConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, stderr := captureOutput(func() {
-		if code := handleInitCommand(nil); code != 1 {
-			t.Errorf("init exit = %d, want 1", code)
+	stdout, stderr := captureOutput(func() {
+		if code := handleInitCommand([]string{"--no-interactive"}); code != 0 {
+			t.Errorf("init exit = %d, want 0", code)
 		}
 	})
-	if !strings.Contains(stderr, "Configuration already exists") || !strings.Contains(stderr, "mct-agent config") {
-		t.Fatalf("stderr = %q", stderr)
+	if stderr != "" || !strings.Contains(stdout, "canonical modes synchronized") {
+		t.Fatalf("stdout = %q, stderr = %q", stdout, stderr)
 	}
 	after, err := os.ReadFile(path)
 	if err != nil {

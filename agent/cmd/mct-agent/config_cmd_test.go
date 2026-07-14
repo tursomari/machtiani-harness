@@ -15,6 +15,7 @@ import (
 func setupConfigTest(t *testing.T) (origDir string, cleanup func()) {
 	t.Helper()
 	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
 	origDir, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("getwd: %v", err)

@@ -462,61 +462,48 @@ model = "broken-model"
 	}
 }
 
-func TestLoadModeInstructionsPrefersTomlInOverrideDir(t *testing.T) {
+func TestLoadModeInstructionsRejectsOverrideDir(t *testing.T) {
 	override := filepath.Join(t.TempDir(), "override")
 	mustWriteFile(t, filepath.Join(override, "coding", "tasks.toml"), sampleCodingToml())
 
-	doc, err := LoadModeInstructions("coding", override, Config{}, "")
-	if err != nil {
-		t.Fatalf("LoadModeInstructions returned error: %v", err)
-	}
-	if doc.Format != ModeInstructionsFormatTOML {
-		t.Fatalf("expected TOML format, got %q", doc.Format)
-	}
-	if strings.TrimSpace(doc.Task.Title) == "" {
-		t.Fatalf("expected task title, got empty")
-	}
-	if doc.Task.Title != "Implement and validate" {
-		t.Fatalf("unexpected task title: %q", doc.Task.Title)
-	}
-	if doc.Path != filepath.Join(override, "coding", "tasks.toml") {
-		t.Fatalf("expected path %s, got %s", filepath.Join(override, "coding", "tasks.toml"), doc.Path)
+	_, err := LoadModeInstructions("coding", override, Config{}, "")
+	if err == nil || !strings.Contains(err.Error(), "no longer supported") {
+		t.Fatalf("expected unsupported override error, got %v", err)
 	}
 }
 
-func TestLoadModeInstructionsSearchOrder(t *testing.T) {
-	baseDir := t.TempDir()
-	configDir := filepath.Join(baseDir, "config")
-	mustWriteFile(t, filepath.Join(configDir, ".placeholder"), "")
-
-	configPath := filepath.Join(configDir, "config.toml")
-	mustWriteFile(t, configPath, "")
-
-	mustWriteFile(t, filepath.Join(configDir, "coding", "tasks.toml"), sampleCodingToml())
-
+func TestLoadModeInstructionsRejectsConfiguredPaths(t *testing.T) {
 	cfg := Config{
 		Mode: &ModeConfig{
-			InstructionDir: configDir,
+			InstructionDir: "/tmp/modes",
 		},
 	}
+	_, err := LoadModeInstructions("coding", "", cfg, "")
+	if err == nil || !strings.Contains(err.Error(), "no longer supported") {
+		t.Fatalf("expected unsupported config path error, got %v", err)
+	}
+}
 
-	doc, err := LoadModeInstructions("coding", "", cfg, configPath)
+func TestLoadModeInstructionsUsesHomeModes(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	path := filepath.Join(home, ".machtiani", "modes", "coding", "tasks.toml")
+	mustWriteFile(t, path, sampleCodingToml())
+	doc, err := LoadModeInstructions("coding", "", Config{}, "")
 	if err != nil {
-		t.Fatalf("LoadModeInstructions returned error: %v", err)
+		t.Fatal(err)
 	}
-	if !strings.HasSuffix(doc.Path, filepath.Join("coding", "tasks.toml")) {
-		t.Fatalf("expected coding/tasks.toml to be selected, got %s", doc.Path)
-	}
-	if doc.Format != ModeInstructionsFormatTOML {
-		t.Fatalf("expected TOML format, got %q", doc.Format)
+	if doc.Path != path || doc.Task.Title != "Implement and validate" {
+		t.Fatalf("unexpected mode: %+v", doc)
 	}
 }
 
 func TestLoadModeInstructionsInvalidTomlReturnsError(t *testing.T) {
-	dir := t.TempDir()
-	mustWriteFile(t, filepath.Join(dir, "coding", "tasks.toml"), "[[tasks]\n title = \"broken\"")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	mustWriteFile(t, filepath.Join(home, ".machtiani", "modes", "coding", "tasks.toml"), "[[tasks]\n title = \"broken\"")
 
-	_, err := LoadModeInstructions("coding", dir, Config{}, "")
+	_, err := LoadModeInstructions("coding", "", Config{}, "")
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}
@@ -526,15 +513,16 @@ func TestLoadModeInstructionsPermissionError(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("permissions semantics differ on Windows")
 	}
-	dir := t.TempDir()
-	path := filepath.Join(dir, "coding", "tasks.toml")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	path := filepath.Join(home, ".machtiani", "modes", "coding", "tasks.toml")
 	mustWriteFile(t, path, sampleCodingToml())
 	if err := os.Chmod(path, 0o000); err != nil {
 		t.Fatalf("chmod: %v", err)
 	}
 	defer os.Chmod(path, 0o644)
 
-	_, err := LoadModeInstructions("coding", dir, Config{}, "")
+	_, err := LoadModeInstructions("coding", "", Config{}, "")
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}

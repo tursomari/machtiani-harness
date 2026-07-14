@@ -169,9 +169,6 @@ func handleRunCommand(args []string) int {
 		if globalCfg.Environment != nil {
 			cfg.MaxCommandOutputBytes = globalCfg.Environment.MaxCommandOutputBytes
 		}
-		if globalCfg.Mode != nil {
-			cfg.ModeInstructionDir = globalCfg.Mode.InstructionDir
-		}
 		if globalCfg.Trajectory != nil {
 			cfg.TrajectoryFile = globalCfg.Trajectory.File
 			cfg.NoTrajectory = !globalCfg.Trajectory.Enabled
@@ -622,7 +619,6 @@ func configureSessionFlags(fs *pflag.FlagSet, cfg *session.Config, paramFlags, p
 	fs.IntVar(&cfg.ShellAgentInterruptStep, "shell-agent-interrupt-step", 0, "deterministic interrupt after this many shell-agent steps (0 = disabled)")
 	fs.StringVar(&cfg.ShellAgentStepLog, "shell-agent-step-log", "", "path for step-log JSONL file (empty disables)")
 	fs.StringVar(&cfg.Mode, "mode", "", "Operating mode")
-	fs.StringVar(&cfg.ModeInstructionDir, "mode-instruction-dir", cfg.ModeInstructionDir, "Directory containing mode custom instructions (overrides config)")
 	fs.StringVarP(&cfg.PromptText, "text", "t", "", "prompt text (alternative to positional argument)")
 	if apiKeyFlags != nil {
 		fs.Var(apiKeyFlags, "api-key", "Provider-specific API key override in provider:key format (repeatable)")

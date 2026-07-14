@@ -11,6 +11,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/spf13/pflag"
 	"github.com/tursomari/machtiani/agent/internal/llm"
+	"github.com/tursomari/machtiani/agent/internal/modes"
 	"github.com/tursomari/machtiani/agent/internal/presentation"
 	"golang.org/x/term"
 )
@@ -73,6 +74,7 @@ func handleInitCommand(args []string) int {
 	fs.SetOutput(os.Stderr)
 	var flags configTargetFlags
 	addConfigTargetFlags(fs, &flags)
+	noInteractive := fs.Bool("no-interactive", false, "never prompt; use existing or complete supplied configuration")
 	noCache := fs.Bool("no-cache", false, "disable global prompt caching in the new configuration")
 	fs.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage: mct-agent init [--global | --path <file>] [--no-cache]")
@@ -96,14 +98,20 @@ func handleInitCommand(args []string) int {
 	if err != nil {
 		return configError(err)
 	}
+	if err := modes.SyncCanonical(); err != nil {
+		return configError(err)
+	}
 	if _, err := os.Stat(target.path); err == nil {
-		fmt.Fprintf(os.Stderr, "Configuration already exists at %s. Run 'mct-agent config' to modify it.\n", target.path)
-		return 1
+		fmt.Fprintf(os.Stdout, "Configuration already exists at %s; canonical modes synchronized.\n", target.path)
+		return 0
 	} else if !os.IsNotExist(err) {
 		return configError(fmt.Errorf("inspect %s: %w", target.path, err))
 	}
 
 	forwarded := configTargetArgs(flags)
+	if *noInteractive {
+		forwarded = append(forwarded, "--no-interactive")
+	}
 	if *noCache {
 		forwarded = append(forwarded, "--no-cache")
 	}

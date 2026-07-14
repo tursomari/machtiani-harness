@@ -12,6 +12,7 @@ import (
 
 	"github.com/tursomari/machtiani/agent/internal/git"
 	"github.com/tursomari/machtiani/agent/internal/presentation"
+	"github.com/tursomari/machtiani/agent/internal/projectstore"
 )
 
 type Config struct {
@@ -1903,126 +1904,51 @@ func CloneResolvedModel(in ResolvedModel) ResolvedModel {
 	return clone
 }
 
-// LoadModeInstructions resolves the mode instructions for the
-// given mode. The lookup order is:
-//  1. --mode-instruction-dir (overrideDir)
-//  2. Mode-specific config entry [mode.modes.<mode>]
-//  3. [mode] instruction_dir
-//  4. Default .machtiani/modes relative to repo/config
-//
-// The function returns the resolved instruction payload including structured
-// tasks when a TOML file is used.
+// LoadModeInstructions resolves a mode only from ~/.machtiani/modes.
 func LoadModeInstructions(mode, overrideDir string, cfg Config, configPath string) (ModeInstructions, error) {
 	trimmedMode := strings.TrimSpace(mode)
 	if trimmedMode == "" {
 		return ModeInstructions{}, fmt.Errorf("mode name is required")
 	}
-	tasksFile := filepath.Join(trimmedMode, "tasks.toml")
-
-	var candidates []string
-	appendCandidate := func(path string) {
-		clean := filepath.Clean(path)
-		for _, existing := range candidates {
-			if existing == clean {
-				return
-			}
-		}
-		candidates = append(candidates, clean)
-	}
-
-	addDirCandidates := func(dir string) {
-		appendCandidate(filepath.Join(dir, tasksFile))
-	}
-
-	addFileCandidates := func(path string) {
-		appendCandidate(path)
-	}
-
-	configDir := effectiveConfigDir(configPath)
-	modeCfg := cfg.Mode
-
 	if strings.TrimSpace(overrideDir) != "" {
-		dirs, err := resolveModeInstructionDir(overrideDir, configDir)
+		return ModeInstructions{}, fmt.Errorf("mode instruction directory overrides are no longer supported; copy a mode under ~/.machtiani/modes instead")
+	}
+	if cfg.Mode != nil {
+		if strings.TrimSpace(cfg.Mode.InstructionDir) != "" || len(cfg.Mode.Modes) != 0 {
+			return ModeInstructions{}, fmt.Errorf("configured mode instruction paths are no longer supported; copy a mode under ~/.machtiani/modes instead")
+		}
+	}
+	root, err := projectstore.ModesRoot()
+	if err != nil {
+		return ModeInstructions{}, err
+	}
+	candidate := filepath.Join(root, trimmedMode, "tasks.toml")
+	data, err := os.ReadFile(candidate)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return ModeInstructions{}, fmt.Errorf("mode instructions for mode %q not found at %s; run mct-agent init or copy an existing home mode", trimmedMode, candidate)
+		}
+		return ModeInstructions{}, fmt.Errorf("read mode instructions %s: %w", candidate, err)
+	}
+	format := detectModeInstructionFormat(candidate)
+	raw := string(data)
+	if format != ModeInstructionsFormatTOML {
+		return ModeInstructions{Format: format, Path: candidate, Raw: raw}, nil
+	}
+	task, err := parseModeInstructionTOML(data, candidate)
+	if err != nil {
+		return ModeInstructions{}, fmt.Errorf("parse mode instructions %s: %w", candidate, err)
+	}
+	result := ModeInstructions{Format: format, Path: candidate, Raw: raw, Task: task}
+	if strings.TrimSpace(task.ShellPrompt) != "" {
+		shellPath := filepath.Join(filepath.Dir(candidate), task.ShellPrompt)
+		shellContent, err := os.ReadFile(shellPath)
 		if err != nil {
-			return ModeInstructions{}, err
+			return ModeInstructions{}, fmt.Errorf("read shell-agent instructions %s: %w", shellPath, err)
 		}
-		for _, dir := range dirs {
-			addDirCandidates(dir)
-		}
+		result.ShellInstruction = strings.TrimSpace(string(shellContent))
 	}
-
-	if modeCfg != nil {
-		modeKey := trimmedMode
-		modeOverride, ok := modeCfg.Modes[modeKey]
-		if !ok {
-			modeOverride, ok = modeCfg.Modes[strings.ToLower(modeKey)]
-		}
-		if ok && strings.TrimSpace(modeOverride.InstructionFile) != "" {
-			files, err := resolveModeInstructionFile(modeOverride.InstructionFile, configDir)
-			if err != nil {
-				return ModeInstructions{}, err
-			}
-			for _, file := range files {
-				addFileCandidates(file)
-			}
-		}
-		if strings.TrimSpace(modeCfg.InstructionDir) != "" {
-			dirs, err := resolveModeInstructionDir(modeCfg.InstructionDir, configDir)
-			if err != nil {
-				return ModeInstructions{}, err
-			}
-			for _, dir := range dirs {
-				addDirCandidates(dir)
-			}
-		}
-	}
-
-	defaultDirs, err := resolveModeInstructionDir(defaultModeInstructionDir, configDir)
-	if err == nil {
-		for _, dir := range defaultDirs {
-			addDirCandidates(dir)
-		}
-	}
-
-	if len(candidates) == 0 {
-		return ModeInstructions{}, fmt.Errorf("no search paths available for mode instructions (%s mode)", trimmedMode)
-	}
-
-	var notFound []string
-	for _, candidate := range candidates {
-		data, err := os.ReadFile(candidate)
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				notFound = append(notFound, candidate)
-				continue
-			}
-			return ModeInstructions{}, fmt.Errorf("read mode instructions %s: %w", candidate, err)
-		}
-		format := detectModeInstructionFormat(candidate)
-		raw := string(data)
-		switch format {
-		case ModeInstructionsFormatTOML:
-			task, perr := parseModeInstructionTOML(data, candidate)
-			if perr != nil {
-				return ModeInstructions{}, fmt.Errorf("parse mode instructions %s: %w", candidate, perr)
-			}
-			result := ModeInstructions{Format: format, Path: candidate, Raw: raw, Task: task}
-			if strings.TrimSpace(task.ShellPrompt) != "" {
-				baseDir := filepath.Dir(candidate)
-				shellPath := filepath.Join(baseDir, task.ShellPrompt)
-				shellContent, err := os.ReadFile(shellPath)
-				if err != nil {
-					return ModeInstructions{}, fmt.Errorf("read shell-agent instructions %s: %w", shellPath, err)
-				}
-				result.ShellInstruction = strings.TrimSpace(string(shellContent))
-			}
-			return result, nil
-		default:
-			return ModeInstructions{Format: format, Path: candidate, Raw: raw}, nil
-		}
-	}
-
-	return ModeInstructions{}, fmt.Errorf("mode instructions for mode %q not found (searched %s)", trimmedMode, strings.Join(notFound, ", "))
+	return result, nil
 }
 
 func detectModeInstructionFormat(path string) ModeInstructionsFormat {
