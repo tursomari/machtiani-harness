@@ -586,7 +586,7 @@ func markExplicitModelOverrides(fs *pflag.FlagSet, cfg *session.Config) {
 
 func configureSessionFlags(fs *pflag.FlagSet, cfg *session.Config, paramFlags, paramJSON, apiKeyFlags *multiString) {
 	fs.IntVar(&cfg.MaxTurns, "max-turns", cfg.MaxTurns, "maximum number of turns before finalizing (default 150)")
-	fs.StringVar(&cfg.OrchModel, "model", "", "Model alias defined in .machtiani/config.toml (alias for --orch-model)")
+	fs.StringVar(&cfg.OrchModel, "model", "", "Model alias defined in the selected Machtiani config (alias for --orch-model)")
 	fs.StringVar(&cfg.OrchModel, "orch-model", "", "Model alias for orchestration/planner steps (default: config or env)")
 	fs.StringVar(&cfg.AnswerModel, "answer-model", cfg.AnswerModel, "Model alias for final answer generation (defaults to --orch-model)")
 	fs.StringVar(&cfg.FileDiscoveryModel, "file-discovery-model", cfg.FileDiscoveryModel, "Model alias for file discovery runs (default: orchestration model)")
@@ -600,10 +600,10 @@ func configureSessionFlags(fs *pflag.FlagSet, cfg *session.Config, paramFlags, p
 	fs.StringVar(&cfg.ShellAgentModel, "shell-agent-model", cfg.ShellAgentModel, "Model alias override for shell-agent subprocesses (default: config)")
 	fs.StringVar(&cfg.AnswerTag, "answer-tag", cfg.AnswerTag, `Override the final-answer tag name used by the shell-agent parser and prompt templates. Must not contain "<", ">", "/", "{{", or "}}". Empty input keeps the default ("answer").`)
 	fs.StringVar(&cfg.CommandTag, "tag", cfg.CommandTag, "single suffix for both answer and command tags (e.g. --tag foo produces answer-foo and command-foo)")
-	fs.StringVar(&cfg.FinalFile, "final-file", cfg.FinalFile, "path to write final answer-only artifact (default: .machtiani/sessions/<sessionID>/chat/agent-final-answer.md)")
-	fs.StringVar(&cfg.TranscriptFile, "transcript-file", cfg.TranscriptFile, "path to write transcript file (default: .machtiani/sessions/<sessionID>/chat/agent-transcript.adoc)")
+	fs.StringVar(&cfg.FinalFile, "final-file", cfg.FinalFile, "path to write final answer-only artifact (default: project-store sessions/<sessionID>/chat/agent-final-answer.md)")
+	fs.StringVar(&cfg.TranscriptFile, "transcript-file", cfg.TranscriptFile, "path to write transcript file (default: project-store sessions/<sessionID>/chat/agent-transcript.adoc)")
 	fs.StringVar(&cfg.FileDiscoveryTrajectory, "file-discovery-trajectory", cfg.FileDiscoveryTrajectory, "path to write file-discovery trajectory JSONL (default: auto-named under session artifacts)")
-	fs.StringVar(&cfg.FileDiscoveryOutputDir, "file-discovery-output-dir", cfg.FileDiscoveryOutputDir, "directory for file-discovery artifacts (default: .machtiani/sessions/<sessionID>/artifacts)")
+	fs.StringVar(&cfg.FileDiscoveryOutputDir, "file-discovery-output-dir", cfg.FileDiscoveryOutputDir, "directory for file-discovery artifacts (default: project-store sessions/<sessionID>/artifacts)")
 	fs.IntVar(&cfg.MaxInputTokens, "max-input-tokens", cfg.MaxInputTokens, "maximum number of tokens allowed in constructed prompts (0 disables truncation)")
 	fs.StringVar(&cfg.TrajectoryFile, "trajectory-file", cfg.TrajectoryFile, "override path for unified trajectory JSONL (default: session-scoped path)")
 	fs.BoolVar(&cfg.NoTrajectory, "no-trajectory", cfg.NoTrajectory, "disable unified trajectory JSONL emission")
@@ -669,7 +669,7 @@ func handleConfigCommand(args []string) int {
 }
 
 func printConfigUsage() {
-	fmt.Fprintln(os.Stderr, "Usage: mct-agent config [--global | --path <file>]")
+	fmt.Fprintln(os.Stderr, "Usage: mct-agent config [--global | --project | --path <file>]")
 	fmt.Fprintln(os.Stderr, "       mct-agent config <subcommand> [flags]")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Subcommands:")

@@ -19,9 +19,13 @@ func handleConfigScopeCommand(args []string) int {
 	switch args[0] {
 	case "show":
 		fs := pflag.NewFlagSet("mct-agent config scope show", pflag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
 		jsonOutput := fs.Bool("json", false, "print scope as JSON")
 		if err := fs.Parse(args[1:]); err != nil {
 			return 2
+		}
+		if fs.NArg() != 0 {
+			return configUsageError("config scope show takes no positional arguments")
 		}
 		ctx, err := projectstore.Discover("")
 		if err != nil {
@@ -39,6 +43,7 @@ func handleConfigScopeCommand(args []string) int {
 		return 0
 	case "use":
 		fs := pflag.NewFlagSet("mct-agent config scope use", pflag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
 		noInteractive := fs.Bool("no-interactive", false, "never prompt")
 		copyGlobal := fs.Bool("copy-global", false, "copy global config when enabling project scope")
 		if err := fs.Parse(args[1:]); err != nil {

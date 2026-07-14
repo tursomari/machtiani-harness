@@ -1,5 +1,8 @@
 # mct-agent — Agent Orchestrator
 
+Initialize the current project with `mct-agent init`. Where paths below use
+`$PROJECT_STORE`, resolve it with
+`PROJECT_STORE="$HOME/.machtiani/$(cat .machtiani/project.uuid)"`.
 
 ## Requirements
 - Go 1.22+ (when building from source)
@@ -96,9 +99,9 @@ Flags:
 - `--verbose`: verbose agent logging (includes discovery and planner context)
 - `--shell-agent`: run the standalone `shell-agent` binary first, then send its transcript (prefixed context) to the LLM for the final answer (requires `shell-agent` on PATH)
 - `--final-file string`: path to write final answer-only artifact
-- `--transcript-file string`: path to write transcript (default: `.machtiani/sessions/<session-id>/chat/agent-transcript.adoc`)
+- `--transcript-file string`: path to write transcript (default: `$PROJECT_STORE/sessions/<session-id>/chat/agent-transcript.adoc`)
 - `--file-discovery-trajectory string`: absolute/relative file path for the file-discovery trajectory JSONL
-- `--file-discovery-output-dir string`: directory to place file-discovery artifacts (default: `.machtiani/sessions/<session-id>/artifacts`)
+- `--file-discovery-output-dir string`: directory to place file-discovery artifacts (default: `$PROJECT_STORE/sessions/<session-id>/artifacts`)
 
 Example: mix models from different providers by repeating `--api-key` for each provider referenced by your aliases:
 
@@ -112,11 +115,11 @@ mct-agent run "triage regression" \
 
 ## How It Works
 - The agent controls the loop: it plans either `Decision: ask` with one next question or `Decision: finalize`.
-- On `ask`, it runs the `mct` prompt service via Go packages, retrieving the answer text and retrieved-path metadata without invoking external binaries. The service still writes `.machtiani/sessions/<session-id>/chat/machtiani-response.md` for compatibility, and the agent records the paths plus answer payload directly from memory.
+- On `ask`, it runs the `mct` prompt service via Go packages, retrieving the answer text and retrieved-path metadata without invoking external binaries. The service still writes `$PROJECT_STORE/sessions/<session-id>/chat/machtiani-response.md` for compatibility, and the agent records the paths plus answer payload directly from memory.
 - When `--shell-agent` is enabled, the agent first invokes the external `shell-agent` binary, tags the combined prompt with the transcript (`Here is possibly relevant information from the shell agent.`), and then asks the configured LLM for the final response. The shell-agent trajectory JSON file is still saved for post-run inspection.
 - It maintains a concise evolving summary/evidence log across turns.
 - On finalize (or at `--max-steps`), the agent composes the final answer via its own LLM and prints it.
-- A transcript is saved to `.machtiani/sessions/<session-id>/chat/agent-transcript.adoc` with per-turn entries and the final conclusion.
+- A transcript is saved to `$PROJECT_STORE/sessions/<session-id>/chat/agent-transcript.adoc` with per-turn entries and the final conclusion.
 
 ## Environment Details
 - Component model selection precedence:
@@ -138,13 +141,13 @@ mct-agent run "triage regression" \
 - “Missing model configuration”
   - Provide a valid `.machtiani/config.toml` (or set `MACHTIANI_CONFIG`) containing the model alias, or export `OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_MODEL` so the agent can generate one.
 - “Saved chat missing/unreadable”
-  - The embedded discovery service still writes `.machtiani/sessions/<session-id>/chat/machtiani-response.md`. Ensure the workspace is writable and no other process removed the file mid-run.
+  - The embedded discovery service still writes `$PROJECT_STORE/sessions/<session-id>/chat/machtiani-response.md`. Ensure the workspace is writable and no other process removed the file mid-run.
 - “Discovery timed out”
   - Increase `--timeout-per-turn` (e.g., `--timeout-per-turn=600`) or set `--timeout-per-turn=0` to disable the deadline for discovery and planner steps.
 
 ## Notes
 - The agent links against the `mct` Go package directly; no external binaries are required for default operation.
-- Discovery responses are consumed in-memory while the library still persists `.machtiani/sessions/<session-id>/chat/machtiani-response.md` for compatibility.
+- Discovery responses are consumed in-memory while the library still persists `$PROJECT_STORE/sessions/<session-id>/chat/machtiani-response.md` for compatibility.
 - `--dry-run` simulates planning and discovery without making outbound LLM requests.
 - Patch planning is opt-in. Pass `--patch` to enable planner patch requests; without it the agent skips patch instructions entirely.
 - Use `--patch-no-apply` to capture patch diagnostics and transcript turns without touching the working tree.

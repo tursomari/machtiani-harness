@@ -22,6 +22,9 @@ func TestSyncCommandUsesHeadCommit(t *testing.T) {
 	t.Setenv("MCT_README_TEST_STUB", "basic")
 
 	repoDir := initTestRepo(t)
+	if err := os.MkdirAll(filepath.Join(repoDir, ".machtiani", "artifacts"), 0o755); err != nil {
+		t.Fatalf("create legacy artifact root: %v", err)
+	}
 	origWD := mustChdir(t, repoDir)
 	defer mustChdir(t, origWD)
 

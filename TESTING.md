@@ -150,8 +150,9 @@ The container test must complete all of these checks before printing its success
    primary provider/model with the DeepSeek preset and an API-key environment
    reference; the literal live key is never passed as a CLI argument or written
    to TOML.
-4. `mct-agent init` is verified to refuse and preserve an existing
-   configuration while directing the user to `mct-agent config`.
+4. `mct-agent init --no-interactive` creates a UUID marker/home store, installs
+   canonical modes, selects global config, and remains idempotent without
+   replacing existing configuration or runtime sentinels.
 5. A pseudo-terminal wizard run verifies that an existing OpenRouter provider
    retains `Search current model catalogue` when another model is added, without
    making a live OpenRouter request or changing the disposable configuration.
@@ -167,7 +168,11 @@ The container test must complete all of these checks before printing its success
 10. `mct-agent run` completes successfully against the primary live provider.
 11. Any additional discoverable provider targets are added with `config
     provider/model`, validated, and exercised with a low-reasoning live run.
-12. `.machtiani/sessions/*/artifacts/conversation.json` exists.
+12. `<project-store>/sessions/*/artifacts/conversation.json` exists and the
+    repository contains `.machtiani/project.uuid` rather than session data.
+13. A separate synthetic legacy repository passes migration dry-run and actual
+    non-interactive migration, including verified home-store data and a legacy
+    archive.
 
 The scripts use `set -euo pipefail`; any failed command must produce a non-zero harness exit and must not print `SMOKE TEST PASSED`.
 
@@ -232,17 +237,18 @@ The harness pre-assigns session IDs and reads turn counts and final-answer asser
 
 #### Artifacts and Live Debugging
 
-Each case writes a `test-out-*` directory with stdout, stderr, transcripts, and final artifacts. The authoritative trajectory is `.machtiani/sessions/<session-id>/trajectory/agent.jsonl`.
+Each case writes a `test-out-*` directory with stdout, stderr, transcripts, and final artifacts. The authoritative trajectory is under the UUID home store. Resolve it with `PROJECT_STORE="$HOME/.machtiani/$(cat .machtiani/project.uuid)"`.
 
 ```bash
 ls -dt test-out-* | head
 tail -f test-out-*/stderr-*.txt
 tail -f test-out-*/stdout-*.txt
-jq -r '.kind' .machtiani/sessions/<session-id>/trajectory/agent.jsonl | sort -u
+PROJECT_STORE="$HOME/.machtiani/$(cat .machtiani/project.uuid)"
+jq -r '.kind' "$PROJECT_STORE/sessions/<session-id>/trajectory/agent.jsonl" | sort -u
 jq 'select(.level != "info") | {ts, level, kind, err: (.err.message // null)}' \
-  .machtiani/sessions/<session-id>/trajectory/agent.jsonl
+  "$PROJECT_STORE/sessions/<session-id>/trajectory/agent.jsonl"
 jq 'select(.kind == "agent.turn.end") | {step: .payload.step, decision: .payload.decision, status: .payload.status, finalized: (.payload.finalized // false), err: (.err.message // null)}' \
-  .machtiani/sessions/<session-id>/trajectory/agent.jsonl
+  "$PROJECT_STORE/sessions/<session-id>/trajectory/agent.jsonl"
 ```
 
 Useful harness toggles:

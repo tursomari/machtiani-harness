@@ -38,6 +38,28 @@ func TestInitializedProjectUsesUUIDHomeStore(t *testing.T) {
 	})
 }
 
+func TestCleanGitProjectRequiresInitialization(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	if err := os.RemoveAll(filepath.Join(repoDir, ".machtiani")); err != nil {
+		t.Fatal(err)
+	}
+
+	withWorkingDir(t, repoDir, func() {
+		for name, resolve := range map[string]func() (string, error){
+			"sessions": SessionsRoot,
+			"scratch":  ScratchRoot,
+			"readme":   ReadmeDirectory,
+		} {
+			if _, err := resolve(); err == nil {
+				t.Fatalf("%s root unexpectedly resolved", name)
+			}
+		}
+	})
+}
+
 func TestSessionChatDirectoryLocalRepo(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -360,6 +382,9 @@ func initGitRepo(t *testing.T, dir string) {
 	cmd.Dir = dir
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git init %s: %v\n%s", dir, err, out)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, ".machtiani", "sessions"), 0o755); err != nil {
+		t.Fatalf("create legacy project state: %v", err)
 	}
 }
 

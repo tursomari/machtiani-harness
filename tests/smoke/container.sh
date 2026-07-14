@@ -62,12 +62,36 @@ done
 
 # Step 7: Verify session artifacts
 echo "==> Verifying session artifacts..."
-test -d .machtiani/sessions
-ls .machtiani/sessions/*/artifacts/conversation.json
+project_store=$(mct-agent project show --json | sed -n 's/^[[:space:]]*"store": "\([^"]*\)"[,]\{0,1\}$/\1/p')
+test -n "$project_store"
+test -f .machtiani/project.uuid
+test -d "$project_store/sessions"
+ls "$project_store"/sessions/*/artifacts/conversation.json
 
-# Step 8: Cleanup
+# Step 8: Exercise legacy migration in a separate disposable project.
+echo "==> Verifying legacy migration..."
+workspace=$PWD
+legacy_repo=$(mktemp -d)
+legacy_home=$(mktemp -d)
+git -C "$legacy_repo" init --quiet
+mkdir -p "$legacy_repo/.machtiani/sessions/legacy-session"
+printf 'legacy smoke artifact\n' >"$legacy_repo/.machtiani/sessions/legacy-session/result.txt"
+(
+  cd "$legacy_repo"
+  HOME="$legacy_home" mct-agent migrate --dry-run --no-interactive
+  test ! -f .machtiani/project.uuid
+  HOME="$legacy_home" mct-agent migrate --no-interactive --yes
+  test -f .machtiani/project.uuid
+  migrated_store=$(HOME="$legacy_home" mct-agent project show --json | sed -n 's/^[[:space:]]*"store": "\([^"]*\)"[,]\{0,1\}$/\1/p')
+  test -n "$migrated_store"
+  test -f "$migrated_store/sessions/legacy-session/result.txt"
+  ls -d .machtiani.legacy-*
+)
+cd "$workspace"
+
+# Step 9: Cleanup
 echo "==> Cleaning up..."
-rm -rf .machtiani/
+rm -rf .machtiani/ "$project_store" "$legacy_repo" "$legacy_home"
 
-# Step 9: Print success message
+# Step 10: Print success message
 echo "SMOKE TEST PASSED: All checks completed successfully."

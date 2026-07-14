@@ -9,17 +9,28 @@ For the complete TOML schema beyond providers and models, see
 
 ## Interactive and scripted operation
 
-Use `init` for first-time interactive setup:
+Use `init` from a project for first-time setup:
 
 ```bash
 mct-agent init
 ```
 
-`init` starts the same catalogue-aware setup flow used when `config` encounters
-a missing configuration. It never overwrites an existing file; when one is
-present, it directs the user to the configuration manager. The optional
-`--global`, `--path`, and `--no-cache` flags select the destination and initial
-cache policy.
+`init` creates `.machtiani/project.uuid`, the private
+`~/.machtiani/<uuid>/` project store, and the canonical mode library under
+`~/.machtiani/modes/`. It defaults to the global config and asks `Use global
+config? [Y/n]` on a terminal. Re-running it keeps the existing UUID and config.
+
+Every setup choice has a script-safe form. This selects global scope without
+reading stdin:
+
+```bash
+mct-agent init --no-interactive --config-scope global
+```
+
+Use `--config-scope project` to select a complete UUID-scoped config. Provider
+creation flags accepted by `config add`—including `--preset`, `--provider`,
+`--url`, `--model`, and `--api-key-env`—can be passed to init when the selected
+file does not yet exist.
 
 Run the configuration manager without a subcommand for follow-up changes:
 
@@ -66,24 +77,34 @@ All config commands accept these target flags:
 | --- | --- |
 | `--path <file>` | Exactly the supplied path |
 | `--global` | `$HOME/.machtiani/config.toml` |
+| `--project` | `$HOME/.machtiani/<uuid>/config.toml` for the initialized project |
 
-`--path` and `--global` are mutually exclusive. Without either flag, selection
-uses this order:
+The three flags are mutually exclusive. Without one, selection uses this order:
 
 1. `MACHTIANI_CONFIG`, when set.
-2. `.machtiani/config.toml` at the Git project root.
-3. `.machtiani/config.toml` in the current directory outside a Git project.
+2. The UUID-project config when its stored scope is `project`.
+3. A repo-local `.machtiani/config.toml` for an unmigrated legacy project.
+4. `$HOME/.machtiani/config.toml`.
 
 Every command displays the selected absolute path. An explicit `--path` or
-`--global` overrides `MACHTIANI_CONFIG` and reports that the environment value
-was ignored.
+An explicit target overrides `MACHTIANI_CONFIG` and reports that the
+environment value was ignored.
 
 Examples:
 
 ```bash
 mct-agent config --global
+mct-agent config check --project
 mct-agent config check --path ./configs/agent.toml
 mct-agent config model list --global
+```
+
+The selected project scope is itself scriptable:
+
+```bash
+mct-agent config scope show --json
+mct-agent config scope use project --copy-global --no-interactive
+mct-agent config scope use global --no-interactive
 ```
 
 ## Adding a provider and model together
@@ -456,11 +477,23 @@ usage or missing noninteractive arguments.
 
 ## Initial setup and compatibility
 
-`mct-agent init` is the first-time interactive entrypoint. The former
+`mct-agent init` initializes both project identity and configuration. The former
 `--provider-url`, `--api-key`, `--model`, `--reasoning`, `--alias`, and `--force`
-init flags have been removed so there is only one setup model. Automation should
-use `mct-agent config add --no-interactive`; ongoing interactive changes should
-use `mct-agent config`.
+init flags have been removed so there is only one setup model. Automation can
+use `mct-agent init --no-interactive` with configuration flags, or manage an
+already selected target with `mct-agent config ... --no-interactive`.
+
+Legacy repo-local state remains readable until explicitly migrated. Review and
+execute migration without menus as follows:
+
+```bash
+mct-agent migrate --dry-run --json
+mct-agent migrate --no-interactive --yes --json
+```
+
+The command copies through a private staging directory, checksum-verifies every
+regular file, writes the UUID marker, and then archives migrated legacy entries.
+Use `--keep-legacy` when the verified source copy must remain in place.
 
 The former scalar commands `config url`, `config api-key`, `config model
 <identifier>`, and `config reasoning` have been removed. Use the corresponding

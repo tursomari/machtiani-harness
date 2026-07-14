@@ -5,7 +5,7 @@ This repository now houses the full Machtiani toolchain inside a single Go modul
 1) `agent/internal/file-discovery` — the helper binary that performs LLM-guided file discovery using a strict RG> protocol.
 2) `agent` — the orchestrator that drives the loop and links against the internal libraries directly.
 
-Most users only need the `mct-agent` binary. The install script builds `mct-agent` by default and exposes an opt-in flag when you want the standalone `mct`, `file-discovery`, and `shell-agent` binaries. All of these tools now share one configuration source (`.machtiani/config.toml` or `MACHTIANI_CONFIG`).
+Most users only need the `mct-agent` binary. The install script builds `mct-agent` by default and exposes an opt-in flag when you want the standalone `mct`, `file-discovery`, and `shell-agent` binaries. Project state is keyed by a UUID in `~/.machtiani/<uuid>/`; the repository contains only `.machtiani/project.uuid` plus any tracked source examples.
 
 ## Repo-local `mct-agent` workflow
 
@@ -17,11 +17,11 @@ If you are using `mct-agent` inside this repository, start with `docs/mct-agent-
 ## Mode System
 The agent now ships with a mode system that supervises multi-step work. When you enable it, a top-level session applies the mode's PlannerOverlay and task guidance, runs the agent loop with the configured mode presets, and finally emits a summary artifact that records the result.
 
-- **Enable it per run** with `mct-agent run --mode <mode> "<goal>"`. For repo-local usage in this repository, follow `docs/mct-agent-runbook.md`. Each configured mode resolves its instructions from `.machtiani/modes/` (or configured overrides), and each non-empty bullet / line or declared task becomes a mode task.
-- **What happens during a run:** the terminal prints `[mode]` updates as the mode system works through the plan. For every task the session applies the task's PlannerOverlay and records progress to `.machtiani/sessions/<session-id>/mode-plan.json`.
+- **Enable it per run** with `mct-agent run --mode <mode> "<goal>"`. Modes are loaded only from `~/.machtiani/modes/<mode>/`. `mct-agent init` installs or refreshes the canonical modes shipped by this binary.
+- **What happens during a run:** the terminal prints `[mode]` updates as the mode system works through the plan. For every task the session applies the task's PlannerOverlay and records progress under the UUID project store returned by `mct-agent project show`.
 - **Outputs:** the session transcript collects all turns, and every task contributes its own artifacts under the session directory. The final summary lists the tasks, their status, and where to find the detailed artifacts.
-- **Resume support:** progress is stored in `.machtiani/sessions/<session-id>/mode-plan.json`, so resuming the session continues with the remaining tasks instead of replaying everything from scratch.
-- **Customize instructions** by editing the shipped mode files or pointing elsewhere with `--mode-instruction-dir <dir>`. Use `instruction` for task-local objectives, `description` for metadata/display text, and `system_prompt` for repo/mode planner guidance. You can also configure search paths in `[mode]` within `.machtiani/config.toml` (set `instruction_dir` or per-mode `instruction_file`). The agent looks in the override directory first, then the config entries, and finally falls back to repo-local custom instructions relative to the repo/config.
+- **Resume support:** progress is stored in `<project-store>/sessions/<session-id>/mode-plan.json`, so resuming the session continues with the remaining tasks instead of replaying everything from scratch.
+- **Customize instructions:** do not edit a canonical mode in place. Copy it to a new name, then edit the copy: `cp -r ~/.machtiani/modes/code ~/.machtiani/modes/my-code`. Canonical refreshes leave custom mode names untouched.
 - **Optional defaults:** when fewer than two tasks are defined for a mode, the mode system falls back to mode-specific defaults. Set different task files or bullet points if you want a custom workflow.
 - Available modes include code, code-forge, code-strong-forge, and code-forge-skyvern.
 
@@ -34,7 +34,7 @@ Sandboxing and environment isolation belong in an external scaffold layer, not i
 - OpenAI‑compatible API access:
   - API key and base URL for models used by `mct` and/or the agent.
 - A writable bin directory on PATH (e.g., `~/.local/bin`).
-- A `.machtiani/config.toml` (or `MACHTIANI_CONFIG` path) describing your agent, model, and environment settings. See the *Global Configuration* section below.
+- A global `~/.machtiani/config.toml`, a selected UUID-project config, or a `MACHTIANI_CONFIG` path describing your agent, model, and environment settings. See the *Configuration* section below.
 
 ## Testing
 
@@ -140,17 +140,34 @@ The manual snippets skip the ldflags metadata that the installer uses, so versio
 
 ## Quick Start
 
-Start first-time interactive setup:
+From the project you want to use, initialize its identity, home store, canonical modes, and configuration:
 
 ```
 mct-agent init
 ```
 
-The setup wizard offers built-in
-DeepSeek, OpenAI, and OpenRouter presets, then collects only the values that are
-not supplied by the preset. Every provider, model, and reasoning menu includes
-an `Other` path for custom integrations. If a configuration already exists,
-`init` refuses to overwrite it and directs you to the configuration manager:
+By default, init asks `Use global config? [Y/n]` and selects the existing
+`~/.machtiani/config.toml`. Choosing `n` creates a complete config under the
+UUID project store. It writes `.machtiani/project.uuid`; sessions, artifacts,
+README state, and scratch data remain outside the repository.
+
+The fully non-interactive equivalent is:
+
+```bash
+mct-agent init --no-interactive --config-scope global
+```
+
+Configuration flags such as `--preset`, `--provider`, `--url`, `--model`, and
+`--api-key-env` can be supplied directly to `init` when the selected config does
+not yet exist. Re-running init keeps the same UUID and never replaces an
+existing config. Inspect the resolved paths at any time:
+
+```bash
+mct-agent project show
+mct-agent project show --json
+```
+
+Use the configuration manager for follow-up changes:
 
 ```
 mct-agent config
@@ -219,8 +236,9 @@ mct-agent config check
 
 Mutations are interactive by default, even when flags prefill their values. Add
 `--no-interactive` for an immediate validated write. Use `--global` to target
-`$HOME/.machtiani/config.toml` or `--path <file>` for an exact path. Otherwise
-`MACHTIANI_CONFIG` wins when set, followed by the project-local configuration.
+`$HOME/.machtiani/config.toml`, `--project` for the UUID-project config, or
+`--path <file>` for an exact path. Otherwise `MACHTIANI_CONFIG` wins when set,
+followed by the initialized project's selected config scope.
 Every command prints the selected absolute path. Explicit path flags override
 `MACHTIANI_CONFIG` and report that override.
 
@@ -249,16 +267,37 @@ update references. Referenced providers cannot be removed; removing a selected
 model requires `--replacement <alias>` in noninteractive mode. Run the relevant
 command with `--help` for its complete flags.
 
-## Global Configuration (.machtiani/config.toml)
+## Configuration
 
 For command-by-command management instructions and provider/model/cache
 semantics, read the [comprehensive configuration guide](docs/configuration.md).
 
-All binaries now read a unified TOML configuration. By default `mct-agent`, `mct`, and `shell-agent` look for:
+All binaries read a unified TOML configuration. Resolution order is:
 
-1. The path set in `MACHTIANI_CONFIG` (recommended for scripts/CI), or
-2. `.machtiani/config.toml` at the repo root, or
-3. `$HOME/.machtiani/config.toml`.
+1. `MACHTIANI_CONFIG`, when set.
+2. `~/.machtiani/<uuid>/config.toml` when the initialized project selects `project` scope.
+3. A legacy repo-local `.machtiani/config.toml` before migration.
+4. `~/.machtiani/config.toml` for global scope and fallback.
+
+Switch scopes explicitly and without menus:
+
+```bash
+mct-agent config scope show
+mct-agent config scope use project --copy-global --no-interactive
+mct-agent config scope use global --no-interactive
+```
+
+Migrate a legacy repo-local state tree only after reviewing the plan:
+
+```bash
+mct-agent migrate --dry-run
+mct-agent migrate --no-interactive --yes
+```
+
+Migration copies and checksum-verifies runtime state in the UUID home store
+before writing the marker and archiving migrated source entries beside the
+repository's `.machtiani/` directory. Pass `--keep-legacy` to retain the
+verified source entries in place.
 
 Create one of these files before your first run. A minimal example that targets an OpenRouter alias and runs shell commands locally:
 
@@ -436,6 +475,12 @@ mct-agent run --t "triage regression" \
 
 Sessions are resumable by session ID. If your process is interrupted (Ctrl+C) or you'd like to append additional instructions to an ongoing task, specify the `--session-id` flag:
 
+The examples below use the initialized project store:
+
+```bash
+PROJECT_STORE="$HOME/.machtiani/$(cat .machtiani/project.uuid)"
+```
+
 ```bash
 # Start a new session (auto-assigned ID)
 mct-agent run --t "Fix all lint issues" --verbose
@@ -454,7 +499,7 @@ When resuming, the agent:
 - Continues the conversation from where it left off
 - Writes new turns to the same transcript and trajectory files
 
-Session state is stored in `.machtiani/sessions/<session-id>/session-state.json` and includes the goal, turn count, and paths to transcript artifacts. This allows you to pause, inspect results, and resume later without losing context.
+Session state is stored in `$PROJECT_STORE/sessions/<session-id>/session-state.json` and includes the goal, turn count, and paths to transcript artifacts. This allows you to pause, inspect results, and resume later without losing context.
 
 ### Session Management
 
@@ -491,7 +536,7 @@ No manual backup is needed. All context (transcript, goals, artifacts) is preser
 
 ### Session Artifacts & Trajectory Logs
 
-Every run stores artifacts under `.machtiani/sessions/<session-id>/`, including:
+Every run stores artifacts under `$PROJECT_STORE/sessions/<session-id>/`, including:
 - **`session-state.json`** — persisted session metadata (goal, turn count, transcript path) used for resuming sessions
 - **`chat/agent-transcript.adoc`** — per-turn planning decisions and evidence
 - **`chat/agent-final-answer.md`** — final answer from the orchestrator
@@ -511,15 +556,15 @@ Inspect the JSONL stream with `jq` or similar tools. Examples:
 ```bash
 # Summarise each turn outcome
 jq 'select(.kind == "agent.turn.end") | {turn: .payload.step, decision: .payload.decision, status: .payload.status}' \
-  .machtiani/sessions/<session-id>/trajectory/agent.jsonl
+  $PROJECT_STORE/sessions/<session-id>/trajectory/agent.jsonl
 
 # Show planner responses with timing and trimmed content
 jq 'select(.kind == "planner.response") | {step: .payload.step, duration_ms: .payload.duration_ms, response: .payload.response_excerpt_first}' \
-  .machtiani/sessions/<session-id>/trajectory/agent.jsonl
+  $PROJECT_STORE/sessions/<session-id>/trajectory/agent.jsonl
 
 # Quickly list error events emitted during the run
 jq 'select(.level == "error") | {kind, message: .err.message, span: .span_id}' \
-  .machtiani/sessions/<session-id>/trajectory/agent.jsonl
+  $PROJECT_STORE/sessions/<session-id>/trajectory/agent.jsonl
 ```
 
 These events complement the transcript and final artifact, providing structured telemetry that is easy to diff or feed into downstream tooling.
@@ -529,10 +574,10 @@ These events complement the transcript and final artifact, providing structured 
 Each run uses up to two per-session locations: the scratch root plus one durable session record.
 
 - **Session scratch root:** `<scratch-root>/<session-id>/`
-  - In a repo, `<scratch-root>` is usually `.machtiani/tmp/`. Outside a repo it is usually `$HOME/.machtiani/tmp/`.
+  - In an initialized repo, `<scratch-root>` is `$PROJECT_STORE/tmp/`. Outside a project it is usually `$HOME/.machtiani/tmp/`.
   - This is the host-local runtime directory that contains `session.lock`, shell-agent marker files, and other ephemeral session artifacts.
   - `session.lock` is created when the run starts, held with an exclusive flock, refreshed every second, and removed when the run exits normally unless `--persist-tmp-data` is set.
-- **Persistent session record:** `.machtiani/sessions/<session-id>/`
+- **Persistent session record:** `$PROJECT_STORE/sessions/<session-id>/`
   - This durable root holds `session-state.json`, transcripts, trajectories, and other resumable artifacts.
 
 The environment variable for the session scratch root:
@@ -544,9 +589,9 @@ Startup cleanup also treats these paths differently:
 
 - Session scratch directories are pruned when their `session.lock` is missing or older than three seconds.
 - Other stale temp directories under the scratch roots, including old `workspace-<session-id>` directories, are pruned after 24 hours.
-- The persistent session record under `.machtiani/sessions/<session-id>/` is not affected by temporary-directory pruning, so interrupted sessions remain resumable even after scratch cleanup.
+- The persistent session record under `$PROJECT_STORE/sessions/<session-id>/` is not affected by temporary-directory pruning, so interrupted sessions remain resumable even after scratch cleanup.
 
-When investigating failures, treat `.machtiani/tmp/<session-id>/session.lock` and nearby runtime artifacts as protected evidence. Do not delete or mutate them unless you are intentionally testing cleanup or recovery behavior.
+When investigating failures, treat `$PROJECT_STORE/tmp/<session-id>/session.lock` and nearby runtime artifacts as protected evidence. Do not delete or mutate them unless you are intentionally testing cleanup or recovery behavior.
 
 ## Internal Tools (Development/Debugging Only)
 
@@ -596,7 +641,7 @@ See `agent/internal/file-discovery/README.md` for direct `file-discovery` usage.
 - `rg` missing
   - Install ripgrep (`rg`) and ensure it’s on PATH.
 - Saved chat not found
-  - If you are using the optional `mct` CLI, ensure it completed successfully and wrote `.machtiani/sessions/<session-id>/chat/machtiani-response.md`.
+  - If you are using the optional `mct` CLI, ensure it completed successfully and wrote `$PROJECT_STORE/sessions/<session-id>/chat/machtiani-response.md`.
 
 ## Notes and Pointers
 - Detailed `mct` docs: see `agent/internal/mct/README.md` for configuration, discovery rules, and troubleshooting.

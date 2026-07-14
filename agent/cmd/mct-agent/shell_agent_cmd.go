@@ -23,7 +23,7 @@ func handleShellAgentCommand(args []string) int {
 	verbose := fs.BoolP("verbose", "v", false, "verbose agent logging")
 	maxInputTokens := fs.Int("max-input-tokens", 0, "maximum number of tokens allowed in constructed prompts (0 disables truncation)")
 	maxCommandOutputBytes := fs.Int("max-command-output-bytes", 65536, "maximum bytes of shell command output captured per step (default 64KB)")
-	modelFlag := fs.String("model", "", "Model alias defined in .machtiani/config.toml")
+	modelFlag := fs.String("model", "", "Model alias defined in the selected Machtiani config")
 	promptFile := fs.StringP("file", "f", "", "Read task from file (mutually exclusive with --text)")
 	var promptText string
 	fs.StringVarP(&promptText, "text", "t", "", "Task text (mutually exclusive with --file)")
@@ -89,8 +89,6 @@ func handleShellAgentCommand(args []string) int {
 		fmt.Fprintln(os.Stderr, "Error:", err)
 		return 1
 	}
-
-
 
 	apiOverrides, err := llm.ParseAPIKeyOverrides(apiKeyFlags)
 	if err != nil {

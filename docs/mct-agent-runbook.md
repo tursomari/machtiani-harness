@@ -4,8 +4,10 @@ Use this runbook when operating `mct-agent` from inside this repository.
 
 ## Start here
 
-- Run from the repo root so the agent picks up `.machtiani/config.toml` and writes artifacts under this repo's `.machtiani/sessions/` tree.
-- In this repo, prefer the `glm-5-high` model alias from `.machtiani/config.toml`.
+- Run from the repo root and initialize or migrate it before the first run. Use `mct-agent project show` to inspect the active UUID store.
+- This repository historically used repo-local state. Review `mct-agent migrate --dry-run`, then run `mct-agent migrate --no-interactive --yes` when ready to adopt the home store.
+- Set `PROJECT_STORE="$HOME/.machtiani/$(cat .machtiani/project.uuid)"` when using the artifact-path examples below.
+- In this repo, prefer the `glm-5-high` model alias from the selected global or UUID-project config.
 - See `.machtiani/config.minimal.toml` for a minimal getting-started config, or `.machtiani/config.comprehensive.toml` for a full reference of every section and field.
 - For OpenRouter-backed runs here, export `OPENROUTER_API_KEY` from the existing `TEST_API_KEY` environment variable.
 
@@ -13,7 +15,6 @@ Preferred live invocation:
 
 ```bash
 OPENROUTER_API_KEY="$TEST_API_KEY" \
-MACHTIANI_CONFIG=.machtiani/config.toml \
 mct-agent run --mode code --model glm-5-high \
   --max-steps 100 --timeout-per-turn 0 --verbose \
   -t "<goal>"
@@ -25,13 +26,13 @@ mct-agent run --mode code --model glm-5-high \
 ## Why `--mode code`
 
 - In this repo, the practical mode to use is `code`.
-- That creates a parent session first, then spawns child task sessions under `.machtiani/sessions/`.
-- The repo-local mode files live under `.machtiani/modes/custom-instructions/code/`.
+- That creates a parent session first, then spawns child task sessions under `$PROJECT_STORE/sessions/`.
+- Installed modes live under `~/.machtiani/modes/`. Copy a canonical mode to a new name before customizing it.
 
 ## Planner system prompt shape
 
-- For `--mode code`, the mode task definition lives in `.machtiani/modes/custom-instructions/code/tasks.toml`.
-- That file points `system_prompt` at `.machtiani/modes/custom-instructions/code/code.txt`.
+- For `--mode code`, the mode task definition lives in `~/.machtiani/modes/code/tasks.toml`.
+- That file points `system_prompt` at `~/.machtiani/modes/code/code.txt`.
 - The contents of `code.txt` are loaded as repo/mode planner guidance and injected into the planner system template inside `<REPO_MODE_GUIDANCE> ... </REPO_MODE_GUIDANCE>`.
 - `description` is metadata only, and `instruction` is the task-local objective that flows through the planner user-message path.
 - So the planner system prompt is not just `code.txt`; it is the base planner system template plus the full text of `code.txt` in the third system layer.
@@ -114,7 +115,7 @@ You are the planner for mct, orchestrating repository understanding and modifica
 - The parent session records the high-level orchestration and prompts for the next action after a child finishes.
 - In practice, entering `c` at the parent prompt marks the task complete and lets the parent emit its summary/final artifacts.
 
-Useful artifacts under `.machtiani/sessions/<session-id>/`:
+Useful artifacts under `$PROJECT_STORE/sessions/<session-id>/`:
 
 - `chat/agent-final-answer.md` — strongest signal that a session finished successfully.
 - `chat/agent-transcript.adoc` — readable transcript of the session.
@@ -138,7 +139,6 @@ Useful artifacts under `.machtiani/sessions/<session-id>/`:
 Repo-local sync command:
 
 ```bash
-MACHTIANI_CONFIG=.machtiani/config.toml \
 mct-agent sync \
   --api-key "openrouter:$TEST_API_KEY" \
   --model glm-5-high \
@@ -154,7 +154,6 @@ To continue a child session directly:
 
 ```bash
 OPENROUTER_API_KEY="$TEST_API_KEY" \
-MACHTIANI_CONFIG=.machtiani/config.toml \
 mct-agent run --model glm-5-high \
   --max-steps 100 --timeout-per-turn 0 \
   --session-id <child-session-id> -t "<follow-up>"
@@ -164,7 +163,6 @@ To resume or continue the parent session:
 
 ```bash
 OPENROUTER_API_KEY="$TEST_API_KEY" \
-MACHTIANI_CONFIG=.machtiani/config.toml \
 mct-agent run --model glm-5-high \
   --max-steps 100 --timeout-per-turn 0 \
   --session-id <parent-session-id> -t "<next instruction or original goal>"
@@ -195,7 +193,7 @@ mct-agent run --model glm-5-high \
 
 ## Example prompts
 
-These are adapted from actual local sessions under `.machtiani/sessions/`.
+These are adapted from actual local sessions under `$PROJECT_STORE/sessions/`.
 
 ### Starter: draft a commit subject from staged changes
 
@@ -203,7 +201,6 @@ Adapted from `agent-20260409T170609-4898`.
 
 ```bash
 OPENROUTER_API_KEY="$TEST_API_KEY" \
-MACHTIANI_CONFIG=.machtiani/config.toml \
 mct-agent run --model glm-5-high \
   --max-steps 100 --timeout-per-turn 0 --verbose \
   -t 'Inspect the recent git commit subject style in this repository and inspect the currently staged changes. Then draft exactly one conventional commit subject line that matches the existing style. Return only the commit subject line, with no quotes, no bullets, and no explanation. Do not modify files.'
@@ -215,7 +212,6 @@ Adapted from `agent-20260302T212840-6500`.
 
 ```bash
 OPENROUTER_API_KEY="$TEST_API_KEY" \
-MACHTIANI_CONFIG=.machtiani/config.toml \
 mct-agent run --mode code --model glm-5-high \
   --max-steps 100 --timeout-per-turn 0 --verbose \
   -t 'Explain the planner menu flow and what happens after an ask is selected. Also run `git diff --stat` and report the output. Do not modify files.'
@@ -230,7 +226,7 @@ PROMPT=$(cat <<'EOF'
 Create an issue for the engineering team.
 
 Problem:
-`file-discovery` is too lax when determining relevant files. In `.machtiani/sessions/agent-20260212T125514-5835/chat/agent-transcript.adoc`, planner messages focused exclusively on `README.md`, but `file-discovery` still returned clearly unrelated files.
+`file-discovery` is too lax when determining relevant files. In `$PROJECT_STORE/sessions/agent-20260212T125514-5835/chat/agent-transcript.adoc`, planner messages focused exclusively on `README.md`, but `file-discovery` still returned clearly unrelated files.
 
 Investigate at minimum:
 - the `file-discovery` system prompt and instructions
@@ -246,7 +242,6 @@ EOF
 )
 
 OPENROUTER_API_KEY="$TEST_API_KEY" \
-MACHTIANI_CONFIG=.machtiani/config.toml \
 mct-agent run --mode code --model glm-5-high \
   --max-steps 100 --timeout-per-turn 0 --verbose \
   -t "$PROMPT"

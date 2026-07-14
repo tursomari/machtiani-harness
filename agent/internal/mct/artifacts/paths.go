@@ -23,11 +23,18 @@ const (
 )
 
 // SessionsRoot returns the root directory containing all session directories.
-// When invoked inside a git repository it returns the repo-scoped `.machtiani/sessions` path.
-// Otherwise it returns the global `$HOME/.machtiani/sessions` location.
+// Initialized projects use their UUID home store; legacy projects retain their
+// local path until migration. Clean Git projects must be initialized first.
 func SessionsRoot() (string, error) {
-	if ctx, err := projectstore.Discover(""); err == nil && ctx.Status == projectstore.StatusInitialized {
+	ctx, err := projectstore.Discover("")
+	if err != nil {
+		return "", err
+	}
+	if ctx.Status == projectstore.StatusInitialized {
 		return ctx.SessionsRoot(), nil
+	}
+	if ctx.Status == projectstore.StatusUninitialized && git.IsGitRepo(ctx.ProjectRoot) {
+		return "", projectInitializationError(ctx.ProjectRoot)
 	}
 	root, local, err := projectRoot()
 	if err != nil {
@@ -110,15 +117,21 @@ func SessionScratchDirectory(sessionID string) (string, error) {
 }
 
 // ScratchRoot returns the base directory that should contain session scratch
-// data for the current working directory. When invoked inside a git
-// repository it returns the repo-scoped `.machtiani/tmp` path. Otherwise it
-// returns the global `$HOME/.machtiani/tmp` location.
+// data for the current working directory. Initialized projects use their UUID
+// home store and legacy projects retain their local scratch path.
 func ScratchRoot() (string, error) {
 	if root := strings.TrimSpace(os.Getenv("MACHTIANI_TMP_ROOT")); root != "" {
 		return root, nil
 	}
-	if ctx, err := projectstore.Discover(""); err == nil && ctx.Status == projectstore.StatusInitialized {
+	ctx, err := projectstore.Discover("")
+	if err != nil {
+		return "", err
+	}
+	if ctx.Status == projectstore.StatusInitialized {
 		return ctx.ScratchRoot(), nil
+	}
+	if ctx.Status == projectstore.StatusUninitialized && git.IsGitRepo(ctx.ProjectRoot) {
+		return "", projectInitializationError(ctx.ProjectRoot)
 	}
 	root, local, err := projectRoot()
 	if err != nil {
@@ -130,14 +143,18 @@ func ScratchRoot() (string, error) {
 	return globalMachtianiPath(scratchDirName)
 }
 
-// ScratchRoots returns the set of scratch roots that may contain session
-// directories relevant to the current context. It always includes the global
-// `$HOME/.machtiani/tmp` directory and, when running inside a git repository,
-// the repo-scoped `.machtiani/tmp` directory.
+// ScratchRoots returns the scratch roots relevant to the current context.
 func ScratchRoots() ([]string, error) {
 	var roots []string
-	if ctx, err := projectstore.Discover(""); err == nil && ctx.Status == projectstore.StatusInitialized {
+	ctx, err := projectstore.Discover("")
+	if err != nil {
+		return nil, err
+	}
+	if ctx.Status == projectstore.StatusInitialized {
 		return []string{ctx.ScratchRoot()}, nil
+	}
+	if ctx.Status == projectstore.StatusUninitialized && git.IsGitRepo(ctx.ProjectRoot) {
+		return nil, projectInitializationError(ctx.ProjectRoot)
 	}
 	root, local, err := projectRoot()
 	if err != nil {
@@ -212,10 +229,16 @@ func FileDiscoveryTrajectoryPath(sessionID string) (string, error) {
 }
 
 // ReadmeDirectory returns the directory to use for README artifacts.
-// It always resolves inside the current git repository root.
 func ReadmeDirectory() (string, error) {
-	if ctx, err := projectstore.Discover(""); err == nil && ctx.Status == projectstore.StatusInitialized {
+	ctx, err := projectstore.Discover("")
+	if err != nil {
+		return "", err
+	}
+	if ctx.Status == projectstore.StatusInitialized {
 		return filepath.Join(ctx.ArtifactsRoot(), readmeDirName), nil
+	}
+	if ctx.Status == projectstore.StatusUninitialized && git.IsGitRepo(ctx.ProjectRoot) {
+		return "", projectInitializationError(ctx.ProjectRoot)
 	}
 	root, local, err := projectRoot()
 	if err != nil {
@@ -225,6 +248,10 @@ func ReadmeDirectory() (string, error) {
 		return "", errors.New("readme artifacts require a git repository context")
 	}
 	return filepath.Join(root, machtianiRootDir, artifactDirName, readmeDirName), nil
+}
+
+func projectInitializationError(projectRoot string) error {
+	return fmt.Errorf("project at %s is not initialized; run mct-agent init", projectRoot)
 }
 
 // IsLocalContext reports whether the current working directory is inside a git repository.

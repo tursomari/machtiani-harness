@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CONFIG_PATH="$PWD/.machtiani/config.toml"
+CONFIG_PATH="$HOME/.machtiani/config.toml"
 SCRATCH_DIR=$(mktemp -d)
 
 cleanup_config_crud() {
@@ -118,6 +118,12 @@ mct-agent config add \
 
 test -f "$CONFIG_PATH"
 [[ "$(stat -c '%a' "$CONFIG_PATH")" == "600" ]] || fail "config permissions are not 0600"
+
+echo "==> Initializing UUID-backed project state..."
+mct-agent init --no-interactive --config-scope global
+mct-agent project show --json >"$SCRATCH_DIR/project-show"
+assert_file_contains '"status": "initialized"' "$SCRATCH_DIR/project-show"
+assert_file_contains '"config_scope": "global"' "$SCRATCH_DIR/project-show"
 assert_file_contains 'api_key = "${TEST_API_KEY}"' "$CONFIG_PATH"
 assert_file_contains 'default_model = "deepseek-primary"' "$CONFIG_PATH"
 assert_file_contains 'cache_enabled = false' "$CONFIG_PATH"
@@ -164,7 +170,7 @@ EXPECT_EOF
 assert_file_contains 'Existing: deepseek' "$SCRATCH_DIR/manager-add-model-wizard"
 [[ "$(checksum "$CONFIG_PATH")" == "$manager_checksum" ]] || fail "cancelled manager add-model wizard changed $CONFIG_PATH"
 
-echo "==> Verifying init protects an existing configuration..."
+echo "==> Verifying re-init is idempotent and protects existing state..."
 runtime_sentinels=(
   ".machtiani/sessions/init-safety-session/chat/agent-final-answer.md"
   ".machtiani/artifacts/init-safety-artifact.txt"
@@ -177,8 +183,8 @@ for sentinel in "${runtime_sentinels[@]}"; do
   printf 'preserve-existing-machtiani-data\n' >"$sentinel"
 done
 initial_checksum=$(checksum "$CONFIG_PATH")
-expect_exit 1 mct-agent init
-assert_file_contains 'Run '\''mct-agent config'\'' to modify it' "$SCRATCH_DIR/expected-stderr"
+expect_exit 0 mct-agent init --no-interactive
+assert_file_contains 'Project initialized:' "$SCRATCH_DIR/expected-stdout"
 assert_unchanged "$initial_checksum"
 for sentinel in "${runtime_sentinels[@]}"; do
   test -f "$sentinel" || fail "mct-agent init removed existing runtime file $sentinel"
