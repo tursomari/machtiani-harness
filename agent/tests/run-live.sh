@@ -1072,8 +1072,9 @@ def replace_environment_type(src_lines):
     return out
 
 lines = replace_environment_type(lines)
-lines = replace_section_key(lines, "environment", "timeout", "600")
-lines = replace_section_key(lines, "shell-agent", "step_limit", "2")
+lines = replace_section_key(lines, "environment", "command_timeout", "600")
+lines = replace_section_key(lines, "shell-agent", "max_steps", "2")
+lines = replace_section_key(lines, "shell-agent", "finalize_remaining_steps", "1")
 path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 PY
 
@@ -1635,7 +1636,7 @@ run_snippet_discovery_tightness_live_case() {
     --trajectory "$traj_file" \
     -timeout 120 \
     -max-rounds 8 \
-    -r "Find the line ranges in the repository-root README.md that contain HTML tags needing conversion to Markdown. Only return ranges for the relevant file." \
+    -r 'Find the line ranges containing the exact phrase "Search current model catalogue". Only return ranges for files that contain that exact phrase.' \
     -f README.md \
     -f agent/README.md \
     < /dev/null > "$stdout_file" 2>> "$stderr_file"
@@ -2919,7 +2920,7 @@ def replace_section_key(src_lines, section_name, key, value):
         out.extend([f"[{section_name}]", f"{key} = {value}"])
     return out
 
-lines = replace_section_key(lines, "shell-agent", "step_limit", "10")
+lines = replace_section_key(lines, "shell-agent", "max_steps", "10")
 lines = replace_section_key(lines, "shell-agent", "finalize_remaining_steps", "6")
 path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 PY

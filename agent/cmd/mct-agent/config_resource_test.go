@@ -41,6 +41,41 @@ func TestConfigAddNonInteractiveCreatesResourceConfig(t *testing.T) {
 	}
 }
 
+func TestManagedConfigCheckUsesExplicitPath(t *testing.T) {
+	dir := t.TempDir()
+	explicitPath := filepath.Join(dir, "explicit.toml")
+	otherPath := filepath.Join(dir, "other.toml")
+	valid := `default_model = "demo"
+
+[providers.fake]
+base_url = "https://example.com/v1"
+api_key = "test-key"
+
+[models.demo]
+provider = "fake"
+model = "demo-model"
+`
+	if err := os.WriteFile(explicitPath, []byte(valid), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(otherPath, []byte("unknown_top = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MACHTIANI_CONFIG", otherPath)
+
+	stdout, stderr := captureOutput(func() {
+		if code := handleManagedConfigCheck([]string{"--path", explicitPath}); code != 0 {
+			t.Errorf("config check exit = %d", code)
+		}
+	})
+	if !strings.Contains(stderr, "ignoring MACHTIANI_CONFIG=") {
+		t.Fatalf("expected explicit-target notice, got stderr = %q", stderr)
+	}
+	if !strings.Contains(stdout, "Config OK: "+explicitPath) {
+		t.Fatalf("explicit config was not checked: %s", stdout)
+	}
+}
+
 func TestConfigAddPresetCreatesCompleteProviderAndModel(t *testing.T) {
 	_, cleanup := setupConfigTest(t)
 	defer cleanup()

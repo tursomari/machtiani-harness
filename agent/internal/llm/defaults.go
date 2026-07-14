@@ -121,11 +121,11 @@ func overlayConfig(target *Config, source Config, srcSource FieldSource) {
 		if target.ShellAgent == nil {
 			target.ShellAgent = &ShellAgentConfig{}
 		}
-		if source.ShellAgent.MaxSteps != 0 {
+		if source.ShellAgent.maxStepsSet || source.ShellAgent.MaxSteps != 0 {
 			target.ShellAgent.MaxSteps = source.ShellAgent.MaxSteps
 			target.ShellAgent.MaxStepsSource = srcSource
 		}
-		if source.ShellAgent.FinalizeRemainingSteps != 0 {
+		if source.ShellAgent.finalizeRemainingStepsSet || source.ShellAgent.FinalizeRemainingSteps != 0 {
 			target.ShellAgent.FinalizeRemainingSteps = source.ShellAgent.FinalizeRemainingSteps
 			target.ShellAgent.FinalizeRemainingStepsSource = srcSource
 		}
@@ -136,19 +136,19 @@ func overlayConfig(target *Config, source Config, srcSource FieldSource) {
 		if target.Environment == nil {
 			target.Environment = &EnvironmentConfig{}
 		}
-		if source.Environment.Type != "" {
+		if source.Environment.typeSet || source.Environment.Type != "" {
 			target.Environment.Type = source.Environment.Type
 			target.Environment.TypeSource = srcSource
 		}
-		if source.Environment.CWD != "" {
+		if source.Environment.cwdSet || source.Environment.CWD != "" {
 			target.Environment.CWD = source.Environment.CWD
 			target.Environment.CWDSource = srcSource
 		}
-		if source.Environment.CommandTimeout != 0 {
+		if source.Environment.commandTimeoutSet || source.Environment.CommandTimeout != 0 {
 			target.Environment.CommandTimeout = source.Environment.CommandTimeout
 			target.Environment.CommandTimeoutSource = srcSource
 		}
-		if source.Environment.MaxCommandOutputBytes != 0 {
+		if source.Environment.maxCommandOutputBytesSet || source.Environment.MaxCommandOutputBytes != 0 {
 			target.Environment.MaxCommandOutputBytes = source.Environment.MaxCommandOutputBytes
 			target.Environment.MaxCommandOutputBytesSource = srcSource
 		}
@@ -378,7 +378,7 @@ func overlayConfig(target *Config, source Config, srcSource FieldSource) {
 		target.Trajectory.StreamTokensSource = srcSource
 		target.Trajectory.OmitRepoRoot = source.Trajectory.OmitRepoRoot
 		target.Trajectory.OmitRepoRootSource = srcSource
-		if source.Trajectory.Excerpt != 0 {
+		if source.Trajectory.excerptSet || source.Trajectory.Excerpt != 0 {
 			target.Trajectory.Excerpt = source.Trajectory.Excerpt
 			target.Trajectory.ExcerptSource = srcSource
 		}

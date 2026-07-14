@@ -296,6 +296,10 @@ func handleRunCommand(args []string) int {
 		fmt.Fprintln(os.Stderr, "Error:", err)
 		return 1
 	}
+	if err := llm.ValidateConfigError(globalCfg, configPath, llm.ValidationOptions{}); err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		return 1
+	}
 
 	warning, err := ensureInternalReadmeCurrent()
 	if err != nil {
@@ -507,8 +511,17 @@ func handleSyncCommand(args []string) int {
 		return 2
 	}
 
+	globalCfg, configPath, err := llm.LoadGlobalConfig()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		return 1
+	}
+	if err := llm.ValidateConfigError(globalCfg, configPath, llm.ValidationOptions{}); err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		return 1
+	}
+
 	commit := strings.TrimSpace(*commitRef)
-	var err error
 	if commit == "" {
 		commit, err = readmesync.HeadCommit()
 		if err != nil {
@@ -525,11 +538,6 @@ func handleSyncCommand(args []string) int {
 
 	paramPairs := append([]string(nil), paramFlags...)
 	paramJSONVals := append([]string(nil), paramJSON...)
-	globalCfg, _, err := llm.LoadGlobalConfig()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "Error:", err)
-		return 1
-	}
 	cfg.APIKeyOverrides = llm.CopyAPIKeyOverridesForRuntime(apiOverrides)
 
 	runtimes, err := session.ResolvePromptRuntimes(cfg, globalCfg, paramPairs, paramJSONVals, apiOverrides)
@@ -677,32 +685,23 @@ func printConfigUsage() {
 }
 
 func handleConfigCheckCommand(args []string) int {
+	if len(args) != 0 {
+		fmt.Fprintln(os.Stderr, "Usage: mct-agent config check")
+		return 2
+	}
 	cfg, path, err := llm.LoadGlobalConfig()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Config error: %v\n", err)
 		return 1
 	}
 
-	var issues []string
-
-	defaultModel := strings.TrimSpace(cfg.DefaultModel)
-	if defaultModel == "" {
-		issues = append(issues, "missing default_model")
-	} else {
-		if _, ok := cfg.Models[defaultModel]; !ok {
-			issues = append(issues, fmt.Sprintf("invalid model alias: %q not found in [models]", defaultModel))
-		}
-	}
-
-	if len(issues) > 0 {
-		fmt.Fprintf(os.Stderr, "Config issues found in %s:\n", path)
-		for _, issue := range issues {
-			fmt.Fprintf(os.Stderr, "  - %s\n", issue)
-		}
+	if err := llm.ValidateConfigError(cfg, path, llm.ValidationOptions{RequireAllCredentials: true, RequireDefaultModel: true}); err != nil {
+		fmt.Fprintf(os.Stderr, "Config error: %v\n", err)
 		return 1
 	}
 
 	fmt.Printf("Config OK: %s\n", path)
+	defaultModel := strings.TrimSpace(cfg.DefaultModel)
 	if defaultModel != "" {
 		fmt.Printf("Default model: %s\n", defaultModel)
 	}

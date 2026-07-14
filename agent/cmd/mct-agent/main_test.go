@@ -145,6 +145,105 @@ func TestRunCommandFailsWhenReadmeMissing(t *testing.T) {
 	}
 }
 
+func TestRunCommandRejectsWholeFileSemanticErrorBeforeReadmeCheck(t *testing.T) {
+	origHead := readmeHeadCommitFn
+	t.Cleanup(func() { readmeHeadCommitFn = origHead })
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	content := `default_model = "active"
+
+[providers.good]
+base_url = "https://example.com/v1"
+api_key = "test-key"
+
+[models.active]
+provider = "good"
+model = "active-model"
+
+[models.dormant]
+provider = "missing"
+model = "dormant-model"
+`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MACHTIANI_CONFIG", path)
+	llm.ResetConfigForTesting()
+	readmeHeadCommitFn = func() (string, error) {
+		t.Fatal("README check must not run after config validation fails")
+		return "", nil
+	}
+
+	var code int
+	stderr := captureStderr(t, func() {
+		code = handleRunCommand([]string{"-t", "test"})
+	})
+	if code != 1 {
+		t.Fatalf("expected exit 1, got %d", code)
+	}
+	if !strings.Contains(stderr, "models.dormant.provider") {
+		t.Fatalf("expected dormant provider diagnostic, got %q", stderr)
+	}
+}
+
+func TestSyncCommandRejectsWholeFileSemanticErrorBeforeGitCheck(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	content := `default_model = "active"
+
+[providers.good]
+base_url = "https://example.com/v1"
+api_key = "test-key"
+
+[models.active]
+provider = "good"
+model = "active-model"
+
+[models.dormant]
+provider = "missing"
+model = "dormant-model"
+`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MACHTIANI_CONFIG", path)
+	llm.ResetConfigForTesting()
+	origWD := mustChdir(t, dir)
+	defer mustChdir(t, origWD)
+
+	var code int
+	stderr := captureStderr(t, func() {
+		code = handleSyncCommand(nil)
+	})
+	if code != 1 {
+		t.Fatalf("expected exit 1, got %d", code)
+	}
+	if !strings.Contains(stderr, "models.dormant.provider") {
+		t.Fatalf("expected config diagnostic before git diagnostic, got %q", stderr)
+	}
+	if strings.Contains(stderr, "not a git repository") {
+		t.Fatalf("git check ran before config validation: %q", stderr)
+	}
+}
+
+func TestRunAndSyncHelpWorkWithInvalidConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("unknown_key = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MACHTIANI_CONFIG", path)
+	llm.ResetConfigForTesting()
+
+	if code := handleRunCommand([]string{"--help"}); code != 0 {
+		t.Fatalf("run --help returned %d", code)
+	}
+	llm.ResetConfigForTesting()
+	if code := handleSyncCommand([]string{"--help"}); code != 0 {
+		t.Fatalf("sync --help returned %d", code)
+	}
+}
+
 func TestRunCommandFailsWhenRepoHasNoCommits(t *testing.T) {
 	origHead := readmeHeadCommitFn
 	origCommit := readmeCommitForProjectFn
@@ -374,6 +473,10 @@ default_model = "gpt4"
 [models.gpt4]
 provider = "openai"
 model = "gpt-4"
+
+[providers.openai]
+base_url = "https://example.com/v1"
+api_key = "test-key"
 `
 	if err := os.WriteFile(cfgPath, []byte(content), 0644); err != nil {
 		t.Fatalf("writing config: %v", err)
@@ -433,11 +536,11 @@ func TestConfigCheckMissingDefaultModel(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("expected exit 1, got %d", code)
 	}
-	if !strings.Contains(stderr, "missing default_model") {
-		t.Fatalf("expected 'missing default_model' in stderr, got %q", stderr)
+	if !strings.Contains(stderr, "default_model is required") {
+		t.Fatalf("expected default_model error in stderr, got %q", stderr)
 	}
-	if !strings.Contains(stderr, "Config issues found in") {
-		t.Fatalf("expected 'Config issues found in' in stderr, got %q", stderr)
+	if !strings.Contains(stderr, "configuration validation failed") {
+		t.Fatalf("expected validation failure in stderr, got %q", stderr)
 	}
 }
 
@@ -451,6 +554,10 @@ default_model = "bogus"
 [models.gpt4]
 provider = "openai"
 model = "gpt-4"
+
+[providers.openai]
+base_url = "https://example.com/v1"
+api_key = "test-key"
 `
 	if err := os.WriteFile(cfgPath, []byte(content), 0644); err != nil {
 		t.Fatalf("writing config: %v", err)
@@ -465,7 +572,7 @@ model = "gpt-4"
 	if code != 1 {
 		t.Fatalf("expected exit 1, got %d", code)
 	}
-	if !strings.Contains(stderr, "invalid model alias: \"bogus\" not found in [models]") {
+	if !strings.Contains(stderr, "model alias \"bogus\" is not defined") {
 		t.Fatalf("expected alias error in stderr, got %q", stderr)
 	}
 }

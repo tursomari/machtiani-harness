@@ -94,10 +94,6 @@ api_key = "provider-key"
 provider = "fake"
 model = "alias-impl"
 
-[ignore]
-paths = ["tests/tmp/", "tests/repositories/undici"]
-extensions = [".log", ".tmp"]
-git_synced_only = true
 `
 
 	path := filepath.Join(t.TempDir(), "config.toml")
@@ -260,9 +256,7 @@ provider = "fake"
 }
 
 func TestLoadGlobalConfigParsesModelCacheConfig(t *testing.T) {
-	content := `listen = "127.0.0.1:0"
-
-[providers.fake]
+	content := `[providers.fake]
 base_url = "https://example.com/v1"
 api_key = "provider-key"
 
@@ -276,6 +270,8 @@ cache_lookback_offset = 3
 cache_reanchor_tokens = 500
 cache_reanchor_messages = 8
 cache_reanchor_min_cached_tokens = 200
+
+[models.cached.params]
 temperature = 0.2
 `
 
@@ -322,9 +318,7 @@ temperature = 0.2
 }
 
 func TestLoadGlobalConfigDefaultsReanchorFields(t *testing.T) {
-	content := `listen = "127.0.0.1:0"
-
-[providers.fake]
+	content := `[providers.fake]
 base_url = "https://example.com/v1"
 api_key = "provider-key"
 
@@ -691,9 +685,6 @@ func TestLoadGlobalConfigSupportsTemplateFiles(t *testing.T) {
 	mustWriteFile(t, filepath.Join(root, "templates", "planner", "system.tpl"), "planner system file")
 	mustWriteFile(t, filepath.Join(root, "templates", "planner", "plan_system_prompt.tpl"), "planner plan system file")
 	mustWriteFile(t, filepath.Join(root, "templates", "planner", "plan_prompt.tpl"), "plan prompt file")
-	mustWriteFile(t, filepath.Join(root, "templates", "planner", "plan_patch_rules.tpl"), "plan patch rules file")
-	mustWriteFile(t, filepath.Join(root, "templates", "planner", "plan_patch_strict_rules.tpl"), "plan patch strict rules file")
-	mustWriteFile(t, filepath.Join(root, "templates", "planner", "plan_patch_disabled_intro.tpl"), "disabled intro file")
 	mustWriteFile(t, filepath.Join(root, "templates", "planner", "finalize_prompt.tpl"), "finalize prompt file")
 	mustWriteFile(t, filepath.Join(root, "templates", "planner", "review_prompt.tpl"), "review prompt file")
 	mustWriteFile(t, filepath.Join(root, "templates", "shell-agent", "timeout_template.tpl"), "timeout file")
@@ -710,7 +701,6 @@ func TestLoadGlobalConfigSupportsTemplateFiles(t *testing.T) {
 	mustWriteFile(t, filepath.Join(root, "templates", "mct", "header_existing.tpl"), "header existing")
 	mustWriteFile(t, filepath.Join(root, "templates", "mct", "conversation_history.tpl"), "history {{len .History}}")
 	mustWriteFile(t, filepath.Join(root, "templates", "mct", "readme_system.tpl"), "readme system")
-	mustWriteFile(t, filepath.Join(root, "templates", "mct", "patch_success_note.tpl"), "patch success note")
 	mustWriteFile(t, filepath.Join(root, "templates", "mct", "full_diff_note.tpl"), "full diff note")
 
 	content := `
@@ -719,9 +709,6 @@ func TestLoadGlobalConfigSupportsTemplateFiles(t *testing.T) {
 system_template = { file = "templates/planner/system.tpl" }
 plan_system_prompt = { file = "templates/planner/plan_system_prompt.tpl" }
 plan_prompt = { file = "templates/planner/plan_prompt.tpl" }
-plan_patch_rules = { file = "templates/planner/plan_patch_rules.tpl" }
-plan_patch_strict_rules = { file = "templates/planner/plan_patch_strict_rules.tpl" }
-plan_patch_disabled_intro = { file = "templates/planner/plan_patch_disabled_intro.tpl" }
 finalize_prompt = { file = "templates/planner/finalize_prompt.tpl" }
 review_prompt = { file = "templates/planner/review_prompt.tpl" }
 
@@ -744,7 +731,6 @@ header_user_template = { file = "templates/mct/header_user.tpl" }
 header_existing_template = { file = "templates/mct/header_existing.tpl" }
 conversation_history_template = { file = "templates/mct/conversation_history.tpl" }
 readme_system_template = { file = "templates/mct/readme_system.tpl" }
-patch_success_note = { file = "templates/mct/patch_success_note.tpl" }
 full_diff_note = { file = "templates/mct/full_diff_note.tpl" }
 `
 

@@ -181,6 +181,9 @@ type EnvironmentConfig struct {
 	CWD                         string      `toml:"cwd"`
 	ComputedImageTag            string      `toml:"-"`
 	commandTimeoutSet           bool        `toml:"-"`
+	typeSet                     bool        `toml:"-"`
+	cwdSet                      bool        `toml:"-"`
+	maxCommandOutputBytesSet    bool        `toml:"-"`
 	TypeSource                  FieldSource `toml:"-"`
 	CommandTimeoutSource        FieldSource `toml:"-"`
 	MaxCommandOutputBytesSource FieldSource `toml:"-"`
@@ -201,6 +204,7 @@ type TrajectoryConfig struct {
 	StreamTokensSource FieldSource `toml:"-"`
 	ExcerptSource      FieldSource `toml:"-"`
 	OmitRepoRootSource FieldSource `toml:"-"`
+	excerptSet         bool        `toml:"-"`
 }
 
 type ModeConfig struct {
@@ -384,7 +388,11 @@ func ResolveModelWithOverrides(alias string, overrides map[string]string) (Resol
 
 	providerName := strings.TrimSpace(modelDef.Provider)
 	if providerName == "" {
-		providerName = effectiveAlias
+		return ResolvedModel{}, fmt.Errorf("model %q missing provider in %s", effectiveAlias, cfg.path)
+	}
+	modelName := strings.TrimSpace(modelDef.Model)
+	if modelName == "" {
+		return ResolvedModel{}, fmt.Errorf("model %q missing model identifier in %s", effectiveAlias, cfg.path)
 	}
 
 	provider, ok := cfg.config.Providers[providerName]
@@ -414,7 +422,7 @@ func ResolveModelWithOverrides(alias string, overrides map[string]string) (Resol
 		Headers:                      copyStringMap(provider.Headers),
 		Query:                        copyStringMap(provider.Query),
 		Endpoint:                     strings.TrimSpace(provider.Endpoint),
-		Model:                        strings.TrimSpace(modelDef.Model),
+		Model:                        modelName,
 		Params:                       deepCopyMap(modelDef.Params),
 		CacheKeyName:                 cache.CacheKeyName,
 		CacheControl:                 cache.CacheControl,
@@ -464,9 +472,6 @@ func ResolveModelWithOverrides(alias string, overrides map[string]string) (Resol
 		return ResolvedModel{}, fmt.Errorf("provider %q missing api_key in %s (set %s or use --api-key)", providerName, cfg.path, envHint)
 	}
 
-	if resolved.Model == "" {
-		resolved.Model = effectiveAlias
-	}
 	if resolved.Endpoint == "" {
 		resolved.Endpoint = "/chat/completions"
 	}
@@ -609,6 +614,9 @@ func parseConfig(path string) (Config, error) {
 	if _, err := toml.DecodeFile(path, &raw); err != nil {
 		return Config{}, err
 	}
+	if err := validateRawConfig(path, raw); err != nil {
+		return Config{}, err
+	}
 	cfg := Config{
 		Providers: make(map[string]ProviderConfig),
 		Models:    make(map[string]ModelDefinition),
@@ -749,6 +757,7 @@ func parseConfig(path string) (Config, error) {
 		}
 		if v, ok := toInt(trajRaw["excerpt"]); ok {
 			trajCfg.Excerpt = v
+			trajCfg.excerptSet = true
 		}
 		if v, ok := trajRaw["omit_repo_root"].(bool); ok {
 			trajCfg.OmitRepoRoot = v
@@ -1440,6 +1449,7 @@ func parseEnvironmentSection(path string, data map[string]any) (*EnvironmentConf
 	env := &EnvironmentConfig{}
 	if v, ok := data["type"].(string); ok {
 		env.Type = v
+		env.typeSet = true
 	}
 	if v, ok := toInt(data["command_timeout"]); ok {
 		env.CommandTimeout = v
@@ -1447,9 +1457,11 @@ func parseEnvironmentSection(path string, data map[string]any) (*EnvironmentConf
 	}
 	if v, ok := toInt(data["max_command_output_bytes"]); ok {
 		env.MaxCommandOutputBytes = v
+		env.maxCommandOutputBytesSet = true
 	}
 	if v, ok := data["cwd"].(string); ok {
 		env.CWD = v
+		env.cwdSet = true
 	}
 	if _, ok := data["image"]; ok {
 		return nil, fmt.Errorf("%s [environment.image] is no longer supported; use dockerfile_path", path)
@@ -1819,6 +1831,21 @@ func LoadGlobalConfig() (Config, string, error) {
 		return Config{}, "", err
 	}
 	return cloneConfig(data.config), data.path, nil
+}
+
+// LoadConfigFile parses, defaults, and returns an explicit configuration file
+// without changing or consulting the process-wide configuration cache.
+func LoadConfigFile(path string) (Config, error) {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return Config{}, errors.New("configuration path is required")
+	}
+	cfg, err := parseConfig(trimmed)
+	if err != nil {
+		return Config{}, err
+	}
+	merged := MergeConfig(DefaultConfig(), cfg, Config{})
+	return cloneConfig(merged), nil
 }
 
 // ResetConfigForTesting clears cached configuration state. It is intended for

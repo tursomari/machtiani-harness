@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/spf13/pflag"
+	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/presentation"
 )
 
@@ -246,15 +247,15 @@ func handleManagedConfigCheck(args []string) int {
 		return configError(err)
 	}
 	printConfigTarget(target)
-	doc, err := loadConfigDocument(target, false)
+	cfg, err := llm.LoadConfigFile(target.path)
 	if err != nil {
 		return configError(err)
 	}
-	if err := validateConfigDocument(doc.raw); err != nil {
+	if err := llm.ValidateConfigError(cfg, target.path, llm.ValidationOptions{RequireAllCredentials: true, RequireDefaultModel: true}); err != nil {
 		return configError(err)
 	}
 	fmt.Printf("Config OK: %s\n", target.path)
-	if value, _ := doc.raw["default_model"].(string); value != "" {
+	if value := strings.TrimSpace(cfg.DefaultModel); value != "" {
 		fmt.Printf("Default model: %s\n", value)
 	}
 	return 0

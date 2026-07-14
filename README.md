@@ -261,27 +261,25 @@ All binaries now read a unified TOML configuration. By default `mct-agent`, `mct
 Create one of these files before your first run. A minimal example that targets an OpenRouter alias and runs shell commands locally:
 
 ```toml
-listen = "127.0.0.1:8042"
 default_model = "foo"
 
 [planner]
-step_limit = 6
+max_turns = 150
+turn_timeout = 0
+max_input_tokens = 180000
 system_template = "You are the planning layer for the Machtiani shell agent."
 instance_template = "Task: {{.Task}}"
 
 [shell-agent]
+max_steps = 110
+finalize_remaining_steps = 10
 format_error_template = "Your response did not include a properly formatted bash command. Please respond with exactly one fenced bash command."
-lightweight_max_attempts = 3
-
-[model]
-model_name = "foo"        # alias defined under [models]
-api_key = ""              # omit to fall back to OPENROUTER_API_KEY / OPENAI_API_KEY
 
 [environment]
 type = "local"
-timeout = 30
+command_timeout = 30
 cwd = "."
-internet_access = true # capability hint for ask classification; not an escalation trigger
+max_command_output_bytes = 65536
 
 [providers.openrouter]
 base_url = "https://openrouter.ai/api/v1"
@@ -294,7 +292,9 @@ model    = "openai/gpt-5-nano"
 
 See `.machtiani/config.minimal.toml` for a minimal getting-started config, or `.machtiani/config.comprehensive.toml` for a full reference of every section and field.
 
-Keys inside `[planner]`, `[shell-agent]`, `[model]`, and `[environment]` are shared across Machtiani binaries; omit `model.api_key` to keep credentials out of the file. `[environment].internet_access` is only a capability hint for planner guardrails so the agent can distinguish information gaps from user-authority gaps; it does not itself force escalation to the user. When you need an alternate model temporarily, pass `--shell-agent-model <alias>` to `mct-agent run --shell-agent` or to the standalone `shell-agent` binary.
+Keys inside `[planner]`, `[shell-agent]`, `[providers]`, `[models]`, and `[environment]` are shared across Machtiani binaries. Omit `providers.<name>.api_key` to use the provider-derived environment variable, or set it to an exact `${NAME}` placeholder. When you need an alternate model temporarily, pass `--shell-agent-model <alias>` to `mct-agent run --shell-agent` or to the standalone `shell-agent` binary.
+
+Configuration is validated automatically before `mct-agent run` and `mct-agent sync`. Use `mct-agent config check` for an explicit preflight or CI check; it audits every configured model and requires credentials for every referenced provider to resolve from the current environment or configuration file. Unknown keys, wrong types, invalid references, and unknown inline model request parameters are rejected. Put extra request parameters under `[models.<alias>.params]`; legacy inline `reasoning` tables remain accepted for compatibility.
 
 ### Prompt Caching
 
