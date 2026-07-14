@@ -272,6 +272,26 @@ func TestInitRejectsUnknownLegacyProviderURLFlag(t *testing.T) {
 	})
 }
 
+func TestPromptInitConfigScopeRecommendsGlobal(t *testing.T) {
+	var out bytes.Buffer
+	useGlobal, err := promptInitConfigScope(bufio.NewReader(strings.NewReader("\n")), &out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !useGlobal {
+		t.Fatal("default scope was not global")
+	}
+	for _, want := range []string{
+		"Configuration scope",
+		"Global shares providers and models across projects. Sessions remain project-specific.",
+		"Use global config? [Y/n] (recommended):",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("prompt output %q does not contain %q", out.String(), want)
+		}
+	}
+}
+
 func TestInitNonInteractiveCreatesStableUUIDHomeStore(t *testing.T) {
 	home := t.TempDir()
 	project := t.TempDir()

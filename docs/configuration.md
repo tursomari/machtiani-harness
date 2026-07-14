@@ -17,8 +17,10 @@ mct-agent init
 
 `init` creates `.machtiani/project.uuid`, the private
 `~/.machtiani/<uuid>/` project store, and the canonical mode library under
-`~/.machtiani/modes/`. It defaults to the global config and asks `Use global
-config? [Y/n]` on a terminal. Re-running it keeps the existing UUID and config.
+`~/.machtiani/modes/`. It explains that global configuration shares providers
+and models while sessions remain project-specific, then asks
+`Use global config? [Y/n] (recommended)` on a terminal. Re-running it keeps the
+existing UUID and config.
 
 Every setup choice has a script-safe form. This selects global scope without
 reading stdin:

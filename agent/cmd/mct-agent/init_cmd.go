@@ -121,7 +121,7 @@ func handleInitCommand(args []string) int {
 			return configUsageError(err.Error())
 		}
 	} else if !*noInteractive && term.IsTerminal(int(os.Stdin.Fd())) {
-		useGlobal, err := promptYesNo(bufio.NewReader(os.Stdin), os.Stdout, "Use global config? [Y/n]: ", true)
+		useGlobal, err := promptInitConfigScope(bufio.NewReader(os.Stdin), os.Stdout)
 		if err != nil {
 			return configError(err)
 		}
@@ -216,6 +216,12 @@ func handleInitCommand(args []string) int {
 		fmt.Fprintf(os.Stdout, "Project initialized: %s\nProject store: %s\nConfiguration (%s): %s\n", ctx.ID, ctx.StoreRoot, scope, target)
 	}
 	return 0
+}
+
+func promptInitConfigScope(reader *bufio.Reader, out io.Writer) (bool, error) {
+	fmt.Fprintln(out, "Configuration scope")
+	fmt.Fprintln(out, "  Global shares providers and models across projects. Sessions remain project-specific.")
+	return promptYesNo(reader, out, "Use global config? [Y/n] (recommended): ", true)
 }
 
 func handleInitCommandWithDeps(args []string, deps initCommandDeps) int {

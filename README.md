@@ -146,7 +146,9 @@ From the project you want to use, initialize its identity, home store, canonical
 mct-agent init
 ```
 
-By default, init asks `Use global config? [Y/n]` and selects the existing
+By default, init explains that global configuration shares providers and models
+while sessions remain project-specific, then asks
+`Use global config? [Y/n] (recommended)`. It selects the existing
 `~/.machtiani/config.toml`. Choosing `n` creates a complete config under the
 UUID project store. It writes `.machtiani/project.uuid`; sessions, artifacts,
 README state, and scratch data remain outside the repository.
