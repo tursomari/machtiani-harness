@@ -4,12 +4,12 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
+	"github.com/tursomari/machtiani/agent/internal/projectstore"
 	"github.com/tursomari/machtiani/agent/internal/trajectory"
 )
 
@@ -91,9 +91,9 @@ func newTrajectoryWriter(cfg legacyConfig, sessionID string) (*trajectory.Writer
 	repoRoot := ""
 	if !cfg.trajectoryOmitRepoRoot {
 		if isLocal, _ := artifacts.IsLocalContext(); isLocal {
-			sessionDir, err := artifacts.SessionDirectory(sessionID)
+			project, err := projectstore.Discover("")
 			if err == nil {
-				repoRoot = filepath.Dir(filepath.Dir(filepath.Dir(sessionDir)))
+				repoRoot = project.ProjectRoot
 			}
 		}
 	}
