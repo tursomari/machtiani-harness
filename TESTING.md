@@ -112,9 +112,10 @@ This suite tests protected-artifact staging and preservation commands and verifi
 
 The Docker smoke test builds `mct-agent` in a clean image, exercises the full
 script-safe configuration lifecycle, restores a clean provider configuration,
-performs one live agent run, and verifies that the session conversation artifact
-was created. Set `TEST_*` to DeepSeek credentials and a DeepSeek model to run
-the provider-specific smoke requested for that service.
+performs live agent runs, and verifies that session conversation artifacts were
+created. Explicit `TEST_*` values select the primary target. When they are not
+set, the host runner reads `.machtiani/config.toml` and uses DeepSeek (or the
+first complete provider) as the primary target.
 
 ```bash
 export TEST_API_KEY=sk_...
@@ -127,7 +128,17 @@ Prerequisites:
 
 - Docker with a running daemon.
 - Git.
-- Non-empty `TEST_API_KEY`, `TEST_BASE_URL`, and `TEST_MODEL` values. This harness has no stub or dry-run mode.
+- Either non-empty `TEST_API_KEY`, `TEST_BASE_URL`, and `TEST_MODEL` values, or
+  a repository `.machtiani/config.toml` containing at least one complete
+  provider/model. This harness has no stub or dry-run mode.
+
+When the repository config contains complete entries for OpenAI, OpenRouter,
+DeepInfra, or DeepSeek, the runner also builds a best-effort live matrix. It
+uses OpenAI `gpt-5.6-luna`, OpenRouter `deepseek/deepseek-v4-flash`, DeepSeek
+`deepseek-v4-flash`, and a configured DeepInfra model, all at low reasoning.
+A matrix entry matching the primary `TEST_*` base URL and model is not run
+twice. Secrets are passed as environment variables only; the config file is
+not copied into the image and literal keys are not placed in CLI arguments.
 
 The host runner creates a detached Git worktree at the current committed `HEAD`, copies populated submodules from the host checkout, builds `tests/smoke/Dockerfile`, and runs `tests/smoke/container.sh` inside the resulting image. Consequently, uncommitted changes are not included. Commit the changes you intend to test, or manually build the image from the current checkout when iterating on the smoke infrastructure itself.
 
@@ -153,8 +164,10 @@ The container test must complete all of these checks before printing its success
    are removed, and the final primary configuration is validated with caching
    disabled.
 9. `mct-agent sync` initializes the repository's internal README state.
-10. `mct-agent run` completes successfully against the live provider.
-11. `.machtiani/sessions/*/artifacts/conversation.json` exists.
+10. `mct-agent run` completes successfully against the primary live provider.
+11. Any additional discoverable provider targets are added with `config
+    provider/model`, validated, and exercised with a low-reasoning live run.
+12. `.machtiani/sessions/*/artifacts/conversation.json` exists.
 
 The scripts use `set -euo pipefail`; any failed command must produce a non-zero harness exit and must not print `SMOKE TEST PASSED`.
 

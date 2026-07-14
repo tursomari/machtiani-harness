@@ -240,9 +240,11 @@ mct-agent config cache <show|enable|disable|inherit|set>
 mct-agent config catalog <list|show>
 ```
 
-Provider `set` supports URL, API-key, endpoint, header, and query changes.
+Provider `set` supports URL, API-key, endpoint, header, query, and reasoning
+wire-format changes.
 Model `set` supports provider/model reassignment, reasoning, request parameters,
-and restoring provider-default reasoning with `--clear-reasoning`. Renames
+exact inline JSON via `--param-json`, and restoring provider-default reasoning
+with `--clear-reasoning`. Renames
 update references. Referenced providers cannot be removed; removing a selected
 model requires `--replacement <alias>` in noninteractive mode. Run the relevant
 command with `--help` for its complete flags.
@@ -294,7 +296,7 @@ See `.machtiani/config.minimal.toml` for a minimal getting-started config, or `.
 
 Keys inside `[planner]`, `[shell-agent]`, `[providers]`, `[models]`, and `[environment]` are shared across Machtiani binaries. Omit `providers.<name>.api_key` to use the provider-derived environment variable, or set it to an exact `${NAME}` placeholder. When you need an alternate model temporarily, pass `--shell-agent-model <alias>` to `mct-agent run --shell-agent` or to the standalone `shell-agent` binary.
 
-Configuration is validated automatically before `mct-agent run` and `mct-agent sync`. Use `mct-agent config check` for an explicit preflight or CI check; it audits every configured model and requires credentials for every referenced provider to resolve from the current environment or configuration file. Unknown keys, wrong types, invalid references, and unknown inline model request parameters are rejected. Put extra request parameters under `[models.<alias>.params]`; legacy inline `reasoning` tables remain accepted for compatibility.
+Configuration is validated automatically before `mct-agent run` and `mct-agent sync`. Use `mct-agent config check` for an explicit preflight or CI check; it audits every configured model and requires credentials for every referenced provider to resolve from the current environment or configuration file. Unknown keys, wrong types, invalid references, and unknown inline model request parameters are rejected. Put ordinary request parameters under `[models.<alias>.params]`; use the inline `params_json` string when an exact JSON shape or `null` is required. Compatible reasoning shapes are negotiated only after a reasoning-specific HTTP 400 and remembered for the current process without rewriting configuration. See the [reasoning compatibility details](docs/configuration.md#reasoning-request-compatibility).
 
 ### Prompt Caching
 

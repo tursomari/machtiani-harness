@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -92,6 +93,7 @@ func handleConfigProviderWrite(action string, args []string) int {
 	clearAPIKey := fs.Bool("clear-api-key", false, "remove the configured API key")
 	endpoint := fs.String("endpoint", "", "provider endpoint path")
 	clearEndpoint := fs.Bool("clear-endpoint", false, "remove the provider endpoint")
+	reasoningFormat := fs.String("reasoning-format", "", "reasoning request format: auto, reasoning_effort, reasoning, or reasoning_explicit")
 	var headers, removeHeaders, queries, removeQueries multiString
 	fs.Var(&headers, "header", "set provider header key=value (repeatable)")
 	fs.Var(&removeHeaders, "remove-header", "remove provider header (repeatable)")
@@ -187,6 +189,16 @@ func handleConfigProviderWrite(action string, args []string) int {
 				_ = fs.Set("endpoint", *endpoint)
 			}
 		}
+		if !fs.Changed("reasoning-format") {
+			currentFormat, _ := entry["reasoning_format"].(string)
+			*reasoningFormat, err = promptLineDefault(reader, "Reasoning request format (auto/reasoning_effort/reasoning/reasoning_explicit)", currentFormat, false)
+			if err != nil {
+				return configError(err)
+			}
+			if *reasoningFormat != currentFormat {
+				_ = fs.Set("reasoning-format", *reasoningFormat)
+			}
+		}
 	}
 	if action == "add" && strings.TrimSpace(*url) == "" {
 		return configUsageError("--url is required")
@@ -216,6 +228,17 @@ func handleConfigProviderWrite(action string, args []string) int {
 	if *clearEndpoint {
 		delete(entry, "endpoint")
 	}
+	if fs.Changed("reasoning-format") {
+		format := strings.ToLower(strings.TrimSpace(*reasoningFormat))
+		switch format {
+		case "", "auto":
+			delete(entry, "reasoning_format")
+		case "reasoning_effort", "reasoning", "reasoning_explicit":
+			entry["reasoning_format"] = format
+		default:
+			return configUsageError("--reasoning-format must be auto, reasoning_effort, reasoning, or reasoning_explicit")
+		}
+	}
 	if err := applyStringTableChanges(entry, "headers", headers, removeHeaders); err != nil {
 		return configUsageError(err.Error())
 	}
@@ -242,7 +265,7 @@ func handleConfigProviderWrite(action string, args []string) int {
 }
 
 func providerMutationChanged(fs *pflag.FlagSet) bool {
-	for _, name := range []string{"url", "api-key", "api-key-env", "clear-api-key", "endpoint", "clear-endpoint", "header", "remove-header", "query", "remove-query"} {
+	for _, name := range []string{"url", "api-key", "api-key-env", "clear-api-key", "endpoint", "clear-endpoint", "reasoning-format", "header", "remove-header", "query", "remove-query"} {
 		if fs.Changed(name) {
 			return true
 		}
@@ -474,6 +497,7 @@ func handleConfigModelWrite(action string, args []string) int {
 	var params, removeParams multiString
 	fs.Var(&params, "param", "set request parameter key=value (repeatable)")
 	paramsJSON := fs.String("param-json", "", "merge a JSON object into request parameters")
+	clearParamsJSON := fs.Bool("clear-params-json", false, "remove the inline JSON request parameters")
 	fs.Var(&removeParams, "remove-param", "remove request parameter key (repeatable)")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, pflag.ErrHelp) {
@@ -497,6 +521,7 @@ func handleConfigModelWrite(action string, args []string) int {
 		return configError(err)
 	}
 	models := configTable(doc.raw, "models")
+	providers := configTable(doc.raw, "providers")
 	alias := ""
 	if fs.NArg() == 1 {
 		alias = strings.TrimSpace(fs.Arg(0))
@@ -571,6 +596,9 @@ func handleConfigModelWrite(action string, args []string) int {
 	if *reasoning != "" && *clearReasoning {
 		return configUsageError("--reasoning and --clear-reasoning are mutually exclusive")
 	}
+	if fs.Changed("param-json") && *clearParamsJSON {
+		return configUsageError("--param-json and --clear-params-json are mutually exclusive")
+	}
 	if suggestion, likely := reasoningTypoSuggestion(*reasoning); likely {
 		return configUsageError(fmt.Sprintf("reasoning value %q looks misspelled; did you mean %q?", *reasoning, suggestion))
 	}
@@ -585,19 +613,16 @@ func handleConfigModelWrite(action string, args []string) int {
 		paramTable = map[string]any{}
 	}
 	if *reasoning != "" {
-		reasoningTable, _ := paramTable["reasoning"].(map[string]any)
-		if reasoningTable == nil {
-			reasoningTable = map[string]any{}
-		}
-		reasoningTable["effort"] = strings.TrimSpace(*reasoning)
-		paramTable["reasoning"] = reasoningTable
+		entry["params"] = paramTable
+		setConfiguredReasoning(entry, providers, *reasoning)
+		paramTable, _ = entry["params"].(map[string]any)
 	}
 	if *clearReasoning {
-		if reasoningTable, ok := paramTable["reasoning"].(map[string]any); ok {
-			delete(reasoningTable, "effort")
-			if len(reasoningTable) == 0 {
-				delete(paramTable, "reasoning")
-			}
+		entry["params"] = paramTable
+		clearConfiguredReasoning(entry)
+		paramTable, _ = entry["params"].(map[string]any)
+		if paramTable == nil {
+			paramTable = map[string]any{}
 		}
 	}
 	assignments, err := parseAssignments(params)
@@ -607,15 +632,41 @@ func handleConfigModelWrite(action string, args []string) int {
 	for key, value := range assignments {
 		paramTable[key] = value
 	}
-	jsonMap, err := parseJSONMap(*paramsJSON)
-	if err != nil {
-		return configUsageError(err.Error())
+	if fs.Changed("param-json") {
+		jsonMap, err := parseJSONMap(*paramsJSON)
+		if err != nil {
+			return configUsageError(err.Error())
+		}
+		entry["params_json"] = strings.TrimSpace(*paramsJSON)
+		if _, hasEffort := jsonMap["reasoning_effort"]; hasEffort {
+			clearConfiguredReasoning(entry)
+			paramTable, _ = entry["params"].(map[string]any)
+		}
+		if _, hasObject := jsonMap["reasoning"]; hasObject {
+			clearConfiguredReasoning(entry)
+			paramTable, _ = entry["params"].(map[string]any)
+		}
+		if paramTable == nil {
+			paramTable = map[string]any{}
+		}
 	}
-	for key, value := range jsonMap {
-		paramTable[key] = value
+	if *clearParamsJSON {
+		delete(entry, "params_json")
 	}
 	for _, key := range removeParams {
 		delete(paramTable, key)
+		if raw, ok := entry["params_json"].(string); ok {
+			jsonMap, parseErr := parseJSONMap(raw)
+			if parseErr != nil {
+				return configError(parseErr)
+			}
+			delete(jsonMap, key)
+			if len(jsonMap) == 0 {
+				delete(entry, "params_json")
+			} else if encoded, marshalErr := json.Marshal(jsonMap); marshalErr == nil {
+				entry["params_json"] = string(encoded)
+			}
+		}
 	}
 	if len(paramTable) > 0 {
 		entry["params"] = paramTable
@@ -649,7 +700,7 @@ func handleConfigModelWrite(action string, args []string) int {
 }
 
 func modelMutationChanged(fs *pflag.FlagSet) bool {
-	for _, name := range []string{"provider", "model", "reasoning", "clear-reasoning", "param", "param-json", "remove-param"} {
+	for _, name := range []string{"provider", "model", "reasoning", "clear-reasoning", "param", "param-json", "clear-params-json", "remove-param"} {
 		if fs.Changed(name) {
 			return true
 		}
@@ -658,6 +709,9 @@ func modelMutationChanged(fs *pflag.FlagSet) bool {
 }
 func modelReasoning(entry map[string]any) string {
 	if params, ok := entry["params"].(map[string]any); ok {
+		if effort, ok := params["reasoning_effort"].(string); ok {
+			return effort
+		}
 		if r, ok := params["reasoning"].(map[string]any); ok {
 			if effort, ok := r["effort"].(string); ok {
 				return effort

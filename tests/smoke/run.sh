@@ -7,10 +7,9 @@ set -euo pipefail
 # Prerequisites
 #   - Docker
 #   - Git
-#   - Environment variables:
-#       TEST_API_KEY
-#       TEST_BASE_URL
-#       TEST_MODEL
+#   - A populated .machtiani/config.toml, or TEST_API_KEY, TEST_BASE_URL,
+#     and TEST_MODEL. Provider credentials are passed only through the
+#     container environment.
 #
 # Usage:
 #   ./tests/smoke/run.sh
@@ -24,6 +23,82 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WORKTREE="/tmp/mct-agent-smoke-context"
 
 cd "$ROOT"
+
+# Discover the requested live-provider matrix without printing credentials.
+# Explicit TEST_* values remain the primary smoke target. Otherwise the local
+# repository config supplies the primary target and any additional OpenAI,
+# OpenRouter, DeepInfra, and DeepSeek cases that can be configured completely.
+mapfile -t discovered_env < <(python3 - "$ROOT/.machtiani/config.toml" <<'PY'
+import base64
+import os
+import re
+import sys
+import tomllib
+from pathlib import Path
+
+def emit(name, value):
+    encoded = base64.b64encode(str(value).encode()).decode()
+    print(f"{name}\t{encoded}")
+
+path = Path(sys.argv[1])
+data = tomllib.loads(path.read_text()) if path.is_file() else {}
+providers = data.get("providers", {})
+models = data.get("models", {})
+
+def credential(value):
+    value = str(value or "").strip()
+    match = re.fullmatch(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", value)
+    return os.environ.get(match.group(1), "") if match else value
+
+targets = {}
+specs = {
+    "openai": "gpt-5.6-luna",
+    "openrouter": "deepseek/deepseek-v4-flash",
+    "deepseek": "deepseek-v4-flash",
+}
+for name, model_id in specs.items():
+    provider = providers.get(name, {})
+    key = credential(provider.get("api_key"))
+    url = str(provider.get("base_url", "")).strip()
+    if key and url:
+        targets[name] = (url, key, model_id)
+
+provider = providers.get("deepinfra", {})
+key = credential(provider.get("api_key"))
+url = str(provider.get("base_url", "")).strip()
+deepinfra_models = [str(v.get("model", "")).strip() for v in models.values() if v.get("provider") == "deepinfra"]
+preferred = next((m for m in deepinfra_models if "glm" in m.lower()), deepinfra_models[0] if deepinfra_models else "")
+if key and url and preferred:
+    targets["deepinfra"] = (url, key, preferred)
+
+explicit = tuple(os.environ.get(name, "").strip() for name in ("TEST_BASE_URL", "TEST_API_KEY", "TEST_MODEL"))
+if all(explicit):
+    primary = explicit
+else:
+    primary = targets.get("deepseek") or next(iter(targets.values()), None)
+if primary:
+    emit("TEST_BASE_URL", primary[0])
+    emit("TEST_API_KEY", primary[1])
+    emit("TEST_MODEL", primary[2])
+
+matrix = []
+for name, values in targets.items():
+    if primary and values[0].rstrip("/") == primary[0].rstrip("/") and values[2] == primary[2]:
+        continue
+    upper = name.upper()
+    emit(f"SMOKE_{upper}_BASE_URL", values[0])
+    emit(f"SMOKE_{upper}_API_KEY", values[1])
+    emit(f"SMOKE_{upper}_MODEL", values[2])
+    matrix.append(name)
+emit("SMOKE_MATRIX", ",".join(matrix))
+PY
+)
+for assignment in "${discovered_env[@]}"; do
+  name=${assignment%%$'\t'*}
+  encoded=${assignment#*$'\t'}
+  printf -v "$name" '%s' "$(printf '%s' "$encoded" | base64 --decode)"
+  export "$name"
+done
 
 # --- Ensure the worktree is always cleaned up on exit ----------------------
 cleanup() {
@@ -91,6 +166,11 @@ docker run --rm \
   -e TEST_API_KEY \
   -e TEST_BASE_URL \
   -e TEST_MODEL \
+  -e SMOKE_MATRIX \
+  -e SMOKE_OPENAI_API_KEY -e SMOKE_OPENAI_BASE_URL -e SMOKE_OPENAI_MODEL \
+  -e SMOKE_OPENROUTER_API_KEY -e SMOKE_OPENROUTER_BASE_URL -e SMOKE_OPENROUTER_MODEL \
+  -e SMOKE_DEEPINFRA_API_KEY -e SMOKE_DEEPINFRA_BASE_URL -e SMOKE_DEEPINFRA_MODEL \
+  -e SMOKE_DEEPSEEK_API_KEY -e SMOKE_DEEPSEEK_BASE_URL -e SMOKE_DEEPSEEK_MODEL \
   mct-agent-smoke \
   bash /tests/smoke/container.sh
 exit_code=$?

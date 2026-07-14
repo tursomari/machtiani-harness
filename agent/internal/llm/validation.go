@@ -254,7 +254,8 @@ func validateProvidersRaw(raw map[string]any, diagnostics *[]Diagnostic) {
 			continue
 		}
 		validateKnownMap(provider, path, map[string]string{
-			"base_url": "string", "api_key": "string", "endpoint": "string", "headers": "table", "query": "table",
+			"base_url": "string", "api_key": "string", "endpoint": "string", "reasoning_format": "string",
+			"headers": "table", "query": "table",
 		}, diagnostics)
 		for _, mapName := range []string{"headers", "query"} {
 			if values, ok := toMap(provider[mapName]); ok {
@@ -277,9 +278,11 @@ func validateModelsRaw(raw map[string]any, diagnostics *[]Diagnostic) {
 	fields["provider"] = "string"
 	fields["model"] = "string"
 	fields["params"] = "table"
+	fields["params_json"] = "string"
 	// reasoning is the one supported legacy inline request parameter. New
 	// configuration should place it below [models.<alias>.params].
 	fields["reasoning"] = "table"
+	fields["reasoning_effort"] = "string"
 	for name, value := range models {
 		path := "models." + name
 		model, ok := toMap(value)
@@ -441,6 +444,9 @@ func ValidateConfig(cfg Config, path string, options ValidationOptions) []Diagno
 			if _, _, err := resolveConfiguredAPIKey(provider.APIKey); err != nil {
 				diagnostics = append(diagnostics, configError(providerPath+".api_key", "invalid_placeholder", err.Error()))
 			}
+		}
+		if format := strings.TrimSpace(provider.ReasoningFormat); format != "" && format != reasoningFormatEffort && format != reasoningFormatObject && format != reasoningFormatExplicit {
+			diagnostics = append(diagnostics, configError(providerPath+".reasoning_format", "invalid_value", "must be reasoning_effort, reasoning, or reasoning_explicit"))
 		}
 	}
 

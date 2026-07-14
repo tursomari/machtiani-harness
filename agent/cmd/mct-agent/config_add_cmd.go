@@ -188,6 +188,9 @@ func handleConfigAddCommand(args []string) int {
 			return configUsageError(mapErr.Error())
 		}
 		providerEntry := map[string]any{"base_url": strings.TrimSpace(*providerURL), "api_key": key}
+		if preset != nil {
+			providerEntry["reasoning_format"] = preset.ReasoningFormat
+		}
 		if value := strings.TrimSpace(*endpoint); value != "" {
 			providerEntry["endpoint"] = value
 		}
@@ -267,7 +270,7 @@ func handleConfigAddCommand(args []string) int {
 	}
 	entry := map[string]any{"provider": *providerName, "model": *modelID}
 	if *reasoning != "" {
-		entry["params"] = map[string]any{"reasoning": map[string]any{"effort": *reasoning}}
+		setConfiguredReasoning(entry, providers, *reasoning)
 	}
 	if catalogModel != nil {
 		switch catalogModel.CacheDefault {

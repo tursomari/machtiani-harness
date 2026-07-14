@@ -267,10 +267,14 @@ func handleInitCommandWithDeps(args []string, deps initCommandDeps) int {
 		cfg["providers"] = providers
 	}
 	for _, providerEntry := range providersToWrite {
-		providers[providerEntry.name] = map[string]any{
+		entry := map[string]any{
 			"base_url": providerEntry.baseURL,
 			"api_key":  providerEntry.apiKey,
 		}
+		if format := configuredReasoningFormat(providerEntry.name, map[string]any{providerEntry.name: entry}); format != "" {
+			entry["reasoning_format"] = format
+		}
+		providers[providerEntry.name] = entry
 	}
 
 	// Create or get models map
@@ -285,11 +289,7 @@ func handleInitCommandWithDeps(args []string, deps initCommandDeps) int {
 			"model":    configuredModel.model,
 		}
 		if configuredModel.reasoning != "" {
-			modelEntry["params"] = map[string]any{
-				"reasoning": map[string]any{
-					"effort": configuredModel.reasoning,
-				},
-			}
+			setConfiguredReasoning(modelEntry, providers, configuredModel.reasoning)
 		}
 		models[configuredModel.alias] = modelEntry
 	}

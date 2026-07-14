@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/tursomari/machtiani/agent/internal/llm"
 )
 
 func TestConfigAddNonInteractiveCreatesResourceConfig(t *testing.T) {
@@ -121,6 +123,67 @@ func TestConfigAddPresetAllowsCompleteOverrides(t *testing.T) {
 	effort := model["params"].(map[string]any)["reasoning"].(map[string]any)["effort"]
 	if effort != "experimental" {
 		t.Fatalf("reasoning effort = %#v", effort)
+	}
+}
+
+func TestConfigProviderReasoningFormatAndModelParamsJSON(t *testing.T) {
+	_, cleanup := setupConfigTest(t)
+	defer cleanup()
+	if code := handleConfigAddCommand([]string{
+		"--provider", "custom", "--url", "https://api.example/v1", "--api-key", "secret",
+		"--model", "demo", "--alias", "demo", "--no-interactive",
+	}); code != 0 {
+		t.Fatalf("config add exit = %d", code)
+	}
+	if code := handleConfigProviderCommand([]string{
+		"set", "custom", "--reasoning-format", "reasoning_explicit", "--no-interactive",
+	}); code != 0 {
+		t.Fatalf("provider set exit = %d", code)
+	}
+	paramsJSON := `{"reasoning":{"effort":"high","budget_tokens":null,"enabled":true},"temperature":0.2}`
+	if code := handleConfigModelCommand([]string{
+		"set", "demo", "--param", "temperature=legacy", "--param-json", paramsJSON, "--no-interactive",
+	}); code != 0 {
+		t.Fatalf("model set exit = %d", code)
+	}
+
+	raw := readTOML(t, filepath.Join(".machtiani", "config.toml"))
+	provider := raw["providers"].(map[string]any)["custom"].(map[string]any)
+	if provider["reasoning_format"] != "reasoning_explicit" {
+		t.Fatalf("reasoning_format = %#v", provider["reasoning_format"])
+	}
+	model := raw["models"].(map[string]any)["demo"].(map[string]any)
+	if model["params_json"] != paramsJSON {
+		t.Fatalf("params_json = %#v", model["params_json"])
+	}
+
+	resolved, _, err := llm.LoadGlobalConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition := resolved.Models["demo"]
+	if definition.Params["temperature"] != float64(0.2) {
+		t.Fatalf("params_json did not overlay native params: %#v", definition.Params)
+	}
+	reasoning := definition.Params["reasoning"].(map[string]any)
+	if value, exists := reasoning["budget_tokens"]; !exists || value != nil {
+		t.Fatalf("JSON null was not preserved: %#v", reasoning)
+	}
+
+	if code := handleConfigModelCommand([]string{"set", "demo", "--clear-params-json", "--no-interactive"}); code != 0 {
+		t.Fatalf("clear params_json exit = %d", code)
+	}
+	if code := handleConfigProviderCommand([]string{"set", "custom", "--reasoning-format", "auto", "--no-interactive"}); code != 0 {
+		t.Fatalf("clear reasoning format exit = %d", code)
+	}
+	raw = readTOML(t, filepath.Join(".machtiani", "config.toml"))
+	provider = raw["providers"].(map[string]any)["custom"].(map[string]any)
+	model = raw["models"].(map[string]any)["demo"].(map[string]any)
+	if _, exists := provider["reasoning_format"]; exists {
+		t.Fatalf("reasoning_format was not cleared: %#v", provider)
+	}
+	if _, exists := model["params_json"]; exists {
+		t.Fatalf("params_json was not cleared: %#v", model)
 	}
 }
 

@@ -248,22 +248,24 @@ type ModeInstructions struct {
 }
 
 type ProviderConfig struct {
-	BaseURL        string            `toml:"base_url"`
-	APIKey         string            `toml:"api_key"`
-	Headers        map[string]string `toml:"headers"`
-	Query          map[string]string `toml:"query"`
-	Endpoint       string            `toml:"endpoint"`
-	BaseURLSource  FieldSource       `toml:"-"`
-	APIKeySource   FieldSource       `toml:"-"`
-	EndpointSource FieldSource       `toml:"-"`
-	HeadersSource  FieldSource       `toml:"-"`
-	QuerySource    FieldSource       `toml:"-"`
+	BaseURL         string            `toml:"base_url"`
+	APIKey          string            `toml:"api_key"`
+	Headers         map[string]string `toml:"headers"`
+	Query           map[string]string `toml:"query"`
+	Endpoint        string            `toml:"endpoint"`
+	ReasoningFormat string            `toml:"reasoning_format"`
+	BaseURLSource   FieldSource       `toml:"-"`
+	APIKeySource    FieldSource       `toml:"-"`
+	EndpointSource  FieldSource       `toml:"-"`
+	HeadersSource   FieldSource       `toml:"-"`
+	QuerySource     FieldSource       `toml:"-"`
 }
 
 type ModelDefinition struct {
 	Provider                           string         `toml:"provider"`
 	Model                              string         `toml:"model"`
 	Params                             map[string]any `toml:"params"`
+	ParamsJSON                         string         `toml:"params_json"`
 	ProviderSource                     FieldSource    `toml:"-"`
 	ModelSource                        FieldSource    `toml:"-"`
 	ParamsSource                       FieldSource    `toml:"-"`
@@ -317,15 +319,16 @@ type ModelDefaultsConfig struct {
 }
 
 type ResolvedModel struct {
-	Alias        string
-	ProviderName string
-	BaseURL      string
-	APIKey       string
-	Headers      map[string]string
-	Query        map[string]string
-	Endpoint     string
-	Model        string
-	Params       map[string]any
+	Alias           string
+	ProviderName    string
+	BaseURL         string
+	APIKey          string
+	Headers         map[string]string
+	Query           map[string]string
+	Endpoint        string
+	Model           string
+	Params          map[string]any
+	ReasoningFormat string
 
 	CacheKeyName                 string
 	CacheControl                 map[string]any
@@ -422,6 +425,7 @@ func ResolveModelWithOverrides(alias string, overrides map[string]string) (Resol
 		Headers:                      copyStringMap(provider.Headers),
 		Query:                        copyStringMap(provider.Query),
 		Endpoint:                     strings.TrimSpace(provider.Endpoint),
+		ReasoningFormat:              preferredReasoningFormat(providerName, baseURL, provider.ReasoningFormat),
 		Model:                        modelName,
 		Params:                       deepCopyMap(modelDef.Params),
 		CacheKeyName:                 cache.CacheKeyName,
@@ -780,6 +784,9 @@ func parseConfig(path string) (Config, error) {
 			if v, ok := entryMap["endpoint"].(string); ok {
 				prov.Endpoint = v
 			}
+			if v, ok := entryMap["reasoning_format"].(string); ok {
+				prov.ReasoningFormat = v
+			}
 			if v, ok := toMap(entryMap["headers"]); ok {
 				headers, err := mapStringString(v)
 				if err != nil {
@@ -805,6 +812,8 @@ func parseConfig(path string) (Config, error) {
 			}
 			model := ModelDefinition{}
 			params := map[string]any{}
+			nativeParams := map[string]any{}
+			jsonParams := map[string]any{}
 			for k, v := range entryMap {
 				switch k {
 				case "provider":
@@ -880,7 +889,18 @@ func parseConfig(path string) (Config, error) {
 					if !ok {
 						return Config{}, fmt.Errorf("parse %s [models.%s.params]: expected table", path, name)
 					}
-					params = mergeMaps(params, m)
+					nativeParams = mergeMaps(nativeParams, m)
+				case "params_json":
+					str, ok := v.(string)
+					if !ok {
+						return Config{}, fmt.Errorf("parse %s [models.%s]: params_json must be string", path, name)
+					}
+					decodedParams, err := parseParamsJSON(str)
+					if err != nil {
+						return Config{}, fmt.Errorf("parse %s [models.%s.params_json]: %w", path, name, err)
+					}
+					model.ParamsJSON = str
+					jsonParams = mergeMaps(jsonParams, decodedParams)
 				default:
 					if len(params) == 0 {
 						params = map[string]any{}
@@ -888,6 +908,8 @@ func parseConfig(path string) (Config, error) {
 					params[k] = deepCopyValue(v)
 				}
 			}
+			params = mergeMaps(params, nativeParams)
+			params = mergeMaps(params, jsonParams)
 			if len(params) > 0 {
 				model.Params = params
 			}
@@ -1782,9 +1804,7 @@ func cloneConfig(in Config) Config {
 	}
 	for name, prov := range in.Providers {
 		copyProv := ProviderConfig{
-			BaseURL:  prov.BaseURL,
-			APIKey:   prov.APIKey,
-			Endpoint: prov.Endpoint,
+			BaseURL: prov.BaseURL, APIKey: prov.APIKey, Endpoint: prov.Endpoint, ReasoningFormat: prov.ReasoningFormat,
 		}
 		if len(prov.Headers) > 0 {
 			copyProv.Headers = copyStringMap(prov.Headers)
@@ -1798,6 +1818,7 @@ func cloneConfig(in Config) Config {
 		copyModel := ModelDefinition{
 			Provider:                        model.Provider,
 			Model:                           model.Model,
+			ParamsJSON:                      model.ParamsJSON,
 			CacheKeyName:                    model.CacheKeyName,
 			CacheControl:                    deepCopyMap(model.CacheControl),
 			CacheTriggerThreshold:           model.CacheTriggerThreshold,
@@ -1870,6 +1891,7 @@ func CloneResolvedModel(in ResolvedModel) ResolvedModel {
 		Endpoint:                     in.Endpoint,
 		Model:                        in.Model,
 		Params:                       deepCopyMap(in.Params),
+		ReasoningFormat:              in.ReasoningFormat,
 		CacheKeyName:                 in.CacheKeyName,
 		CacheControl:                 deepCopyMap(in.CacheControl),
 		CacheTriggerThreshold:        in.CacheTriggerThreshold,

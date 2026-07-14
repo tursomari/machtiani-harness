@@ -1280,39 +1280,13 @@ func chatWithResolvedFallback(ctx context.Context, primary ResolvedModel, fallba
 		"payload": basePayload,
 	})
 
-	nonStreamBody, err := encodePayload(basePayload, false)
-	if err != nil {
-		return "", fmt.Errorf("encode request: %w", err)
-	}
-
 	var result string
 	var attemptErr error
 	emittedPrefix := ""
-
-	if stream {
-		streamBody, err := encodePayload(basePayload, true)
-		if err != nil {
-			return "", fmt.Errorf("encode request: %w", err)
-		}
-		result, attemptErr = tryStreamThenFallback(ctx, primary, streamBody, nonStreamBody, onToken)
-		if attemptErr == nil {
-			return result, nil
-		}
-		var partial *partialResponseError
-		if errors.As(attemptErr, &partial) {
-			emittedPrefix = partial.Prefix
-			attemptErr = partial.Err
-		}
-	} else {
-		primaryMeta := llmAttemptMeta{
-			Alias:  strings.TrimSpace(primary.Alias),
-			Mode:   "non-stream",
-			Source: "primary",
-		}
-		result, attemptErr = executeOnceWithRetries(ctx, primary, nonStreamBody, primaryMeta)
-		if attemptErr == nil {
-			return result, nil
-		}
+	primaryMeta := llmAttemptMeta{Alias: strings.TrimSpace(primary.Alias), Mode: "non-stream", Source: "primary"}
+	result, emittedPrefix, attemptErr = executeWithReasoningCompatibility(ctx, primary, basePayload, stream, onToken, primaryMeta)
+	if attemptErr == nil {
+		return result, nil
 	}
 
 	if len(targets) == 0 {
@@ -1359,12 +1333,6 @@ func chatWithResolvedFallback(ctx context.Context, primary ResolvedModel, fallba
 		payload["model"] = fallbackModel.Model
 		payload["messages"] = applyCacheControl(ctx, messages, fallbackModel)
 
-		body, err := encodePayload(payload, false)
-		if err != nil {
-			lastErr = fmt.Errorf("encode request: %w", err)
-			continue
-		}
-
 		emitFailoverStartEvent(ctx, primary, fallbackModel, source, alias, lastErr)
 		fallbackMeta := llmAttemptMeta{
 			Alias:    alias,
@@ -1375,10 +1343,11 @@ func chatWithResolvedFallback(ctx context.Context, primary ResolvedModel, fallba
 		if alias != "" {
 			fallbackMeta.Metadata = map[string]any{"fallback_alias": alias}
 		}
-		result, err = executeOnceWithRetries(ctx, fallbackModel, body, fallbackMeta)
-		emitFailoverResultEvent(ctx, primary, fallbackModel, source, alias, err)
-		if err != nil {
-			lastErr = err
+		var fallbackErr error
+		result, _, fallbackErr = executeWithReasoningCompatibility(ctx, fallbackModel, payload, false, nil, fallbackMeta)
+		emitFailoverResultEvent(ctx, primary, fallbackModel, source, alias, fallbackErr)
+		if fallbackErr != nil {
+			lastErr = fallbackErr
 			continue
 		}
 		if stream {
@@ -1391,6 +1360,77 @@ func chatWithResolvedFallback(ctx context.Context, primary ResolvedModel, fallba
 		return "", &partialResponseError{Prefix: emittedPrefix, Err: lastErr}
 	}
 	return "", lastErr
+}
+
+func executeWithReasoningCompatibility(ctx context.Context, model ResolvedModel, payload map[string]any, stream bool, onToken func(string), meta llmAttemptMeta) (string, string, error) {
+	effort, formats, standardized := reasoningFormatsFor(model, payload)
+	if !standardized {
+		formats = []string{""}
+	}
+	attempts := map[string]error{}
+	initialFormat := ""
+	if standardized {
+		initialFormat = formats[0]
+	}
+	for index, format := range formats {
+		candidate := payload
+		if standardized {
+			candidate = payloadWithReasoningFormat(payload, effort, format)
+		}
+		nonStreamBody, err := encodePayload(candidate, false)
+		if err != nil {
+			return "", "", fmt.Errorf("encode request: %w", err)
+		}
+		var result string
+		var prefix string
+		if stream {
+			streamBody, encodeErr := encodePayload(candidate, true)
+			if encodeErr != nil {
+				return "", "", fmt.Errorf("encode request: %w", encodeErr)
+			}
+			result, err = tryStreamThenFallback(ctx, model, streamBody, nonStreamBody, onToken)
+			var partial *partialResponseError
+			if errors.As(err, &partial) {
+				prefix, err = partial.Prefix, partial.Err
+			}
+		} else {
+			result, err = executeOnceWithRetries(ctx, model, nonStreamBody, meta)
+		}
+		if err == nil {
+			if standardized && index > 0 {
+				rememberReasoningFormat(model, initialFormat, format)
+			}
+			return result, prefix, nil
+		}
+		if prefix != "" || !standardized {
+			return "", prefix, err
+		}
+		attempts[format] = err
+		retry, sameTopLevelRejected := reasoningShapeError(err, format)
+		if !retry && !sameTopLevelRejected {
+			return "", "", err
+		}
+		if sameTopLevelRejected {
+			// The explicit object uses the same top-level `reasoning` key, so it
+			// cannot help after that key is rejected. A later reasoning_effort
+			// candidate can still be compatible when the provider preference put
+			// the object first.
+			hasDifferentTopLevel := false
+			for _, remaining := range formats[index+1:] {
+				if remaining == reasoningFormatEffort {
+					hasDifferentTopLevel = true
+					break
+				}
+			}
+			if !hasDifferentTopLevel {
+				return "", "", reasoningFailureGuidance(model, effort, attempts)
+			}
+		}
+		if index == len(formats)-1 {
+			return "", "", reasoningFailureGuidance(model, effort, attempts)
+		}
+	}
+	return "", "", reasoningFailureGuidance(model, effort, attempts)
 }
 
 func validateResolvedModel(model ResolvedModel) error {
@@ -1521,6 +1561,11 @@ func tryStreamThenFallback(ctx context.Context, model ResolvedModel, streamBody,
 		}
 		attemptErr = err
 		fallbackCtx = attemptCtx
+		if !emitted {
+			if retry, _ := reasoningShapeError(err, reasoningFormatEffort); retry {
+				return "", err
+			}
+		}
 		if !emitted && shouldRetry(err) {
 			if attempt >= maxRetries {
 				break

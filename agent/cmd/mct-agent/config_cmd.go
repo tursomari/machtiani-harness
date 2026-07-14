@@ -425,6 +425,15 @@ var fieldDocs = map[string]fieldDoc{
 			"Leave empty to use the provider's default endpoint.",
 		},
 	},
+	"providers.*.reasoning_format": {
+		summary:     "Reasoning request wire format",
+		explanation: "Preferred OpenAI-compatible reasoning shape: reasoning_effort, reasoning, or reasoning_explicit.",
+		example:     "providers.openrouter.reasoning_format = reasoning",
+		details: []string{
+			"Omit this key to infer the format from the provider name and base URL.",
+			"A compatible shape may be selected for the current run after a reasoning-specific HTTP 400.",
+		},
+	},
 	"models.*.provider": {
 		summary:     "Model provider alias",
 		explanation: "Which [[providers]] entry this model uses.",
@@ -447,6 +456,15 @@ var fieldDocs = map[string]fieldDoc{
 		example:     `models.default.params.reasoning.effort = "high"`,
 		details: []string{
 			"Params are forwarded to the provider as-is; supported keys depend on the provider.",
+		},
+	},
+	"models.*.params_json": {
+		summary:     "Exact inline JSON request parameters",
+		explanation: "A JSON object overlaid on native params, useful for exact structures and JSON null values.",
+		example:     `models.default.params_json = {"reasoning":{"effort":"high","budget_tokens":null,"enabled":true}}`,
+		details: []string{
+			"Keys in params_json take precedence over [models.<alias>.params].",
+			"The value is stored as a TOML string; the decoded value must be a JSON object.",
 		},
 	},
 	"verbose": {
@@ -788,6 +806,8 @@ func getFieldValue(effective llm.Config, key string) (value string, source strin
 				return "", sourceLabel(prov.APIKeySource)
 			case "endpoint":
 				return prov.Endpoint, sourceLabel(prov.EndpointSource)
+			case "reasoning_format":
+				return prov.ReasoningFormat, sourceLabel(effective.ProviderSources[alias])
 			default:
 				if strings.HasPrefix(sub, "headers.") {
 					hKey := strings.TrimPrefix(sub, "headers.")
@@ -818,6 +838,8 @@ func getFieldValue(effective llm.Config, key string) (value string, source strin
 				return model.Provider, sourceLabel(model.ProviderSource)
 			case "model":
 				return model.Model, sourceLabel(model.ModelSource)
+			case "params_json":
+				return model.ParamsJSON, sourceLabel(effective.ModelSources[alias])
 			case "cache_key_name":
 				return model.CacheKeyName, sourceLabel(model.CacheKeyNameSource)
 			case "cache_trigger_threshold":
@@ -1029,6 +1051,9 @@ func printConfigWithSources(effective, defaults llm.Config, showFull bool) {
 			{key: "providers." + name + ".api_key", value: maskAPIKey(prov.APIKey)},
 			{key: "providers." + name + ".endpoint", value: prov.Endpoint},
 		}
+		if prov.ReasoningFormat != "" {
+			keys = append(keys, configEntry{key: "providers." + name + ".reasoning_format", value: prov.ReasoningFormat})
+		}
 		if len(prov.Headers) > 0 {
 			for k, v := range prov.Headers {
 				keys = append(keys, configEntry{key: "providers." + name + ".headers." + k, value: v})
@@ -1084,6 +1109,9 @@ func printConfigWithSources(effective, defaults llm.Config, showFull bool) {
 			for k, v := range model.Params {
 				keys = append(keys, configEntry{key: "models." + name + ".params." + k, value: formatParamValue(v)})
 			}
+		}
+		if model.ParamsJSON != "" {
+			keys = append(keys, configEntry{key: "models." + name + ".params_json", value: model.ParamsJSON})
 		}
 		modelAliases = append(modelAliases, aliasEntry{name: name, source: label, keys: keys})
 	}

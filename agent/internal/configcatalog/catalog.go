@@ -33,6 +33,7 @@ type Provider struct {
 	DocumentationURL  string  `json:"documentation_url"`
 	ModelsURL         string  `json:"models_url,omitempty"`
 	ModelsSearchParam string  `json:"models_search_param,omitempty"`
+	ReasoningFormat   string  `json:"reasoning_format"`
 	DefaultModel      string  `json:"default_model"`
 	Models            []Model `json:"models"`
 }
@@ -101,6 +102,9 @@ func Validate(catalog Catalog) error {
 		}
 		if provider.Protocol != "openai-chat" {
 			return fmt.Errorf("%s.protocol %q is unsupported", path, provider.Protocol)
+		}
+		if provider.ReasoningFormat != "reasoning_effort" && provider.ReasoningFormat != "reasoning" {
+			return fmt.Errorf("%s.reasoning_format %q is unsupported", path, provider.ReasoningFormat)
 		}
 		parsedURL, err := url.Parse(provider.BaseURL)
 		if err != nil || parsedURL.Scheme != "https" || parsedURL.Host == "" {

@@ -223,11 +223,13 @@ mct-agent config provider add scratch-provider \
   --endpoint /chat/completions \
   --header X-Scratch=yes \
   --query test=true \
+	--reasoning-format reasoning \
   --no-interactive
 mct-agent config provider show scratch-provider >"$SCRATCH_DIR/scratch-provider-show"
 assert_file_contains '[redacted]' "$SCRATCH_DIR/scratch-provider-show"
+assert_file_contains 'reasoning_format: reasoning' "$SCRATCH_DIR/scratch-provider-show"
 mct-agent config provider set scratch-provider --clear-api-key --clear-endpoint \
-  --remove-header X-Scratch --remove-query test --no-interactive
+  --remove-header X-Scratch --remove-query test --reasoning-format auto --no-interactive
 mct-agent config provider set scratch-provider --api-key-env TEST_API_KEY --no-interactive
 mct-agent config provider remove scratch-provider --no-interactive
 
@@ -246,15 +248,14 @@ mct-agent config model add deepseek-scratch \
   --model "$TEST_MODEL" \
   --reasoning low \
   --param smoke=one \
-  --param-json '{"temperature":0.1,"enabled":true}' \
+  --param-json '{"temperature":0.1,"reasoning":{"effort":"low","budget_tokens":null,"enabled":true}}' \
   --no-interactive
-assert_file_contains 'effort = "low"' "$CONFIG_PATH"
-assert_file_contains 'temperature = 0.1' "$CONFIG_PATH"
-assert_file_contains 'enabled = true' "$CONFIG_PATH"
+assert_file_contains 'params_json = ' "$CONFIG_PATH"
+assert_file_contains 'budget_tokens' "$CONFIG_PATH"
 
 for reasoning in medium high xhigh max provider-special; do
   mct-agent config model set deepseek-scratch --reasoning "$reasoning" --no-interactive
-  assert_file_contains "effort = \"$reasoning\"" "$CONFIG_PATH"
+  assert_file_contains "reasoning_effort = \"$reasoning\"" "$CONFIG_PATH"
 done
 
 before=$(checksum "$CONFIG_PATH")
@@ -265,6 +266,7 @@ mct-agent config model set deepseek-scratch \
   --provider deepseek \
   --model "$TEST_MODEL" \
   --clear-reasoning \
+	--clear-params-json \
   --remove-param smoke \
   --remove-param temperature \
   --remove-param enabled \

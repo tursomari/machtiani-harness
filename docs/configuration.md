@@ -247,6 +247,7 @@ Provider `add` and `set` support:
 | `--clear-api-key` | Remove the configured API key |
 | `--endpoint <path>` | Set a provider-specific endpoint |
 | `--clear-endpoint` | Remove the endpoint override |
+| `--reasoning-format <format>` | Set `auto`, `reasoning_effort`, `reasoning`, or `reasoning_explicit` |
 | `--header <key=value>` | Add or replace a header; repeatable |
 | `--remove-header <key>` | Remove a header; repeatable |
 | `--query <key=value>` | Add or replace a query parameter; repeatable |
@@ -263,7 +264,8 @@ mct-agent config provider add azure \
 
 mct-agent config provider set azure \
   --header X-Client=machtiani \
-  --remove-query old-parameter
+  --remove-query old-parameter \
+  --reasoning-format reasoning_effort
 
 mct-agent config provider rename azure azure-production
 ```
@@ -296,7 +298,8 @@ Model `add` and `set` support:
 | `--reasoning <value>` | Set reasoning effort |
 | `--clear-reasoning` | Remove the override and use the provider default |
 | `--param <key=value>` | Add or replace a string request parameter; repeatable |
-| `--param-json <json>` | Merge typed values from a JSON object into `params` |
+| `--param-json <json>` | Store an inline JSON object that overlays native `params` |
+| `--clear-params-json` | Remove the inline JSON request parameters |
 | `--remove-param <key>` | Remove a request parameter; repeatable |
 
 Reasoning accepts `low`, `medium`, `high`, `xhigh`, `max`, and arbitrary
@@ -313,12 +316,45 @@ mct-agent config model add reviewer \
   --reasoning xhigh
 
 mct-agent config model set reviewer \
-  --param-json '{"temperature":0.2,"max_tokens":8192}'
+  --param-json '{"reasoning":{"effort":"high","budget_tokens":null,"enabled":true},"max_tokens":8192}'
 
 mct-agent config model set reviewer --clear-reasoning
 mct-agent config model default reviewer
 mct-agent config model rename reviewer final-reviewer
 ```
+
+### Reasoning request compatibility
+
+OpenAI-compatible APIs use more than one wire format for reasoning effort.
+Machtiani sends `reasoning_effort = "high"` by default. OpenRouter and
+DeepInfra prefer `reasoning = { effort = "high" }`. The provider catalogue or
+`providers.<name>.reasoning_format` can override that preference.
+
+When a provider returns a reasoning-parameter-specific HTTP 400 before any
+streamed output, the agent tries the compatible forms in this order (adjusted
+so the provider preference is first):
+
+1. `{"reasoning_effort":"high"}`
+2. `{"reasoning":{"effort":"high"}}`
+3. `{"reasoning":{"effort":"high","budget_tokens":null,"enabled":true}}`
+
+The successful form is reused for that provider endpoint and model for the
+rest of the process. A warning reports the switch; `config.toml` is never
+rewritten automatically. Unrelated HTTP errors are not retried.
+
+Use `params_json` for provider-specific structures that TOML cannot represent
+exactly, especially JSON `null`. It remains a quoted inline JSON object in
+`config.toml`, and its keys take precedence over `[models.<alias>.params]`:
+
+```toml
+[models.reviewer]
+provider = "custom"
+model = "review-model"
+params_json = '''{"reasoning":{"effort":"high","budget_tokens":null,"enabled":true}}'''
+```
+
+In the wizard, use `Manage models` → `Additional request parameters` to view,
+replace, or clear this JSON object.
 
 Renaming a model updates `default_model`, `shell_agent_model`, `answer_model`,
 `file_discovery_model`, and legacy `[model].model_name` references. Removing a

@@ -224,6 +224,9 @@ func overlayConfig(target *Config, source Config, srcSource FieldSource) {
 					existing.Endpoint = v.Endpoint
 					existing.EndpointSource = srcSource
 				}
+				if v.ReasoningFormat != "" {
+					existing.ReasoningFormat = v.ReasoningFormat
+				}
 				if len(v.Headers) > 0 {
 					existing.Headers = copyStringMap(v.Headers)
 					existing.HeadersSource = srcSource
@@ -236,9 +239,7 @@ func overlayConfig(target *Config, source Config, srcSource FieldSource) {
 			} else {
 				// deep-copy a brand-new provider entry
 				copyProv := ProviderConfig{
-					BaseURL:  v.BaseURL,
-					APIKey:   v.APIKey,
-					Endpoint: v.Endpoint,
+					BaseURL: v.BaseURL, APIKey: v.APIKey, Endpoint: v.Endpoint, ReasoningFormat: v.ReasoningFormat,
 				}
 				copyProv.BaseURLSource = srcSource
 				copyProv.APIKeySource = srcSource
@@ -319,12 +320,16 @@ func overlayConfig(target *Config, source Config, srcSource FieldSource) {
 					existing.Params = deepCopyMap(v.Params)
 					existing.ParamsSource = srcSource
 				}
+				if v.ParamsJSON != "" {
+					existing.ParamsJSON = v.ParamsJSON
+				}
 				target.Models[k] = existing
 			} else {
 				// deep-copy a brand-new model definition
 				copyModel := ModelDefinition{
 					Provider:                        v.Provider,
 					Model:                           v.Model,
+					ParamsJSON:                      v.ParamsJSON,
 					CacheKeyName:                    v.CacheKeyName,
 					CacheControl:                    deepCopyMap(v.CacheControl),
 					CacheTriggerThreshold:           v.CacheTriggerThreshold,

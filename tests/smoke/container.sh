@@ -23,16 +23,51 @@ mct-agent sync
 
 # Step 5: Live execution
 echo "==> Running live smoke test..."
-mct-agent run -t "Reply with the word OK and nothing else."
+mct-agent run -t "List the last commit message, then finish." --max-turns 5
 
-# Step 6: Verify session artifacts
+# Step 6: Best-effort additional provider matrix discovered from the host's
+# repository configuration. Each case is configured through the public CRUD
+# surface and uses low reasoning. Credentials remain environment references.
+IFS=',' read -r -a smoke_providers <<<"${SMOKE_MATRIX:-}"
+for provider in "${smoke_providers[@]}"; do
+  [[ -n "$provider" ]] || continue
+  upper=$(printf '%s' "$provider" | tr '[:lower:]' '[:upper:]')
+  key_var="SMOKE_${upper}_API_KEY"
+  url_var="SMOKE_${upper}_BASE_URL"
+  model_var="SMOKE_${upper}_MODEL"
+  key=${!key_var:-}
+  url=${!url_var:-}
+  model=${!model_var:-}
+  if [[ -z "$key" || -z "$url" || -z "$model" ]]; then
+    echo "==> Skipping incomplete ${provider} smoke target."
+    continue
+  fi
+
+  echo "==> Running ${provider} live configuration smoke..."
+  mct-agent config provider add "smoke-${provider}" \
+    --url "$url" \
+    --api-key-env "$key_var" \
+    --no-interactive
+  mct-agent config model add "smoke-${provider}" \
+    --provider "smoke-${provider}" \
+    --model "$model" \
+    --reasoning low \
+    --no-interactive
+  mct-agent config cache disable --model "smoke-${provider}" --no-interactive
+  mct-agent config check
+  mct-agent run --model "smoke-${provider}" \
+    -t "List the last commit message, then finish." \
+    --max-turns 5
+done
+
+# Step 7: Verify session artifacts
 echo "==> Verifying session artifacts..."
 test -d .machtiani/sessions
 ls .machtiani/sessions/*/artifacts/conversation.json
 
-# Step 7: Cleanup
+# Step 8: Cleanup
 echo "==> Cleaning up..."
 rm -rf .machtiani/
 
-# Step 8: Print success message
+# Step 9: Print success message
 echo "SMOKE TEST PASSED: All checks completed successfully."

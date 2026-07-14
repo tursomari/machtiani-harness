@@ -380,7 +380,7 @@ func validEnvironmentName(value string) bool {
 
 func printProvider(name string, provider map[string]any) {
 	fmt.Printf("Provider %s\n", name)
-	for _, key := range []string{"base_url", "endpoint"} {
+	for _, key := range []string{"base_url", "endpoint", "reasoning_format"} {
 		if value, ok := provider[key]; ok {
 			fmt.Printf("  %s: %v\n", key, value)
 		}
@@ -399,11 +399,17 @@ func printModel(alias string, model map[string]any) {
 	fmt.Printf("  provider: %v\n", model["provider"])
 	fmt.Printf("  model: %v\n", model["model"])
 	if params, ok := model["params"].(map[string]any); ok {
+		if effort, ok := params["reasoning_effort"]; ok {
+			fmt.Printf("  reasoning: %v\n", effort)
+		}
 		if reasoning, ok := params["reasoning"].(map[string]any); ok {
 			if effort, ok := reasoning["effort"]; ok {
 				fmt.Printf("  reasoning: %v\n", effort)
 			}
 		}
+	}
+	if value, ok := model["params_json"].(string); ok && strings.TrimSpace(value) != "" {
+		fmt.Printf("  params_json: %s\n", value)
 	}
 }
 
@@ -411,9 +417,13 @@ func parseJSONMap(value string) (map[string]any, error) {
 	if strings.TrimSpace(value) == "" {
 		return nil, nil
 	}
-	var result map[string]any
-	if err := json.Unmarshal([]byte(value), &result); err != nil {
+	var decoded any
+	if err := json.Unmarshal([]byte(value), &decoded); err != nil {
 		return nil, fmt.Errorf("invalid JSON object: %w", err)
+	}
+	result, ok := decoded.(map[string]any)
+	if !ok {
+		return nil, errors.New("invalid JSON object: value must be a top-level object")
 	}
 	return result, nil
 }

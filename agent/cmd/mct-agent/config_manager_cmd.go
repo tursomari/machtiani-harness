@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -129,6 +130,7 @@ func handleInteractiveModelMenu(flags configTargetFlags, menuTheme presentation.
 		action, err := promptInitMenu(os.Stdin, os.Stdout, int(os.Stdin.Fd()), "Models", "Choose an action.", []initMenuOption{
 			{label: "List models", value: "list"}, {label: "Show model", value: "show"},
 			{label: "Add model", value: "add"}, {label: "Edit model", value: "set"},
+			{label: "Additional request parameters", value: "params"},
 			{label: "Rename model", value: "rename"}, {label: "Remove model", value: "remove"},
 			{label: "Set default model", value: "default"}, {label: "Back", value: "back"},
 		}, menuTheme)
@@ -144,6 +146,10 @@ func handleInteractiveModelMenu(flags configTargetFlags, menuTheme presentation.
 			// Reuse the catalogue-aware setup flow so the provider is selected
 			// before model details are collected.
 			handleConfigAddCommand(base)
+			continue
+		}
+		if action == "params" {
+			handleInteractiveModelParams(flags, menuTheme)
 			continue
 		}
 		if action == "set" || action == "remove" || action == "default" {
@@ -171,6 +177,78 @@ func handleInteractiveModelMenu(flags configTargetFlags, menuTheme presentation.
 		}
 		handleConfigModelCommand(append([]string{"rename", name, newName}, base...))
 	}
+}
+
+func handleInteractiveModelParams(flags configTargetFlags, menuTheme presentation.Theme) {
+	target, err := resolveConfigTarget(flags)
+	if err != nil {
+		configError(err)
+		return
+	}
+	doc, err := loadConfigDocument(target, false)
+	if err != nil {
+		configError(err)
+		return
+	}
+	models := configTable(doc.raw, "models")
+	alias, err := promptSelection("Model", sortedKeys(models), menuTheme)
+	if err != nil {
+		configError(err)
+		return
+	}
+	entry, _ := models[alias].(map[string]any)
+	current, _ := entry["params_json"].(string)
+	if strings.TrimSpace(current) != "" {
+		fmt.Printf("Current inline JSON: %s\n", current)
+	}
+	fmt.Println("Paste a single JSON object. Enter keeps the current value; type 'clear' to remove it.")
+	value, err := promptLineDefault(bufio.NewReader(os.Stdin), "Additional request parameters", "", false)
+	if err != nil || strings.TrimSpace(value) == "" {
+		return
+	}
+	if strings.EqualFold(strings.TrimSpace(value), "clear") {
+		confirmed, promptErr := promptYesNo(bufio.NewReader(os.Stdin), os.Stdout, fmt.Sprintf("Clear additional request parameters for %q? [y/N]: ", alias), false)
+		if promptErr != nil || !confirmed {
+			return
+		}
+		delete(entry, "params_json")
+	} else {
+		decoded, parseErr := parseJSONMap(value)
+		if parseErr != nil {
+			configError(parseErr)
+			return
+		}
+		if _, ok := decoded["reasoning"]; ok {
+			clearConfiguredReasoning(entry)
+			fmt.Println("The standardized reasoning override will be cleared because the JSON supplies reasoning.")
+		}
+		if _, ok := decoded["reasoning_effort"]; ok {
+			clearConfiguredReasoning(entry)
+			fmt.Println("The standardized reasoning override will be cleared because the JSON supplies reasoning_effort.")
+		}
+		preview := map[string]any{}
+		if native, ok := entry["params"].(map[string]any); ok {
+			for key, item := range native {
+				preview[key] = item
+			}
+		}
+		for key, item := range decoded {
+			preview[key] = item
+		}
+		encoded, _ := json.MarshalIndent(preview, "", "  ")
+		fmt.Printf("Resulting request parameters:\n%s\n", encoded)
+		confirmed, promptErr := promptYesNo(bufio.NewReader(os.Stdin), os.Stdout, fmt.Sprintf("Save additional request parameters for %q? [y/N]: ", alias), false)
+		if promptErr != nil || !confirmed {
+			return
+		}
+		entry["params_json"] = strings.TrimSpace(value)
+	}
+	models[alias] = entry
+	if err := doc.save(); err != nil {
+		configError(err)
+		return
+	}
+	fmt.Printf("Updated additional request parameters for %s.\n", alias)
 }
 
 func handleInteractiveCacheMenu(flags configTargetFlags, menuTheme presentation.Theme) {
