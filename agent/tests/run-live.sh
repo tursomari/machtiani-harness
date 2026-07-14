@@ -2000,7 +2000,7 @@ run_shell_agent_subcommand_live_case() {
 
     local output
     output=$(${MCT_AGENT} shell-agent \
-        --model "${TEST_SHELL_AGENT_MODEL:-${TEST_MODEL}}" \
+        --model "${TEST_SHELL_AGENT_MODEL:-${TEST_MODEL_ALIAS}}" \
         --text "${prompt}" \
         2>&1)
     local exit_code=$?
