@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/spf13/pflag"
+	"github.com/tursomari/machtiani/agent/internal/presentation"
 )
 
 func handleConfigManager(args []string) int {
@@ -37,6 +38,14 @@ func handleConfigManager(args []string) int {
 		fmt.Println("No configuration exists at the selected path. Starting setup.")
 		return handleConfigAddCommand(configTargetArgs(flags))
 	}
+	doc, err := loadConfigDocument(target, false)
+	if err != nil {
+		return configError(err)
+	}
+	menuTheme, err := doc.menuTheme(os.Stdout)
+	if err != nil {
+		return configError(err)
+	}
 	for {
 		choice, err := promptInitMenu(os.Stdin, os.Stdout, int(os.Stdin.Fd()), "Configuration", "Choose an action. Changes are confirmed before writing.", []initMenuOption{
 			{label: "Finish", value: "finish"},
@@ -46,7 +55,7 @@ func handleConfigManager(args []string) int {
 			{label: "Set default model", value: "default"},
 			{label: "Configure caching", value: "cache"},
 			{label: "Validate configuration", value: "check"},
-		})
+		}, menuTheme)
 		if err != nil {
 			return configError(err)
 		}
@@ -55,13 +64,13 @@ func handleConfigManager(args []string) int {
 		case "add":
 			handleConfigAddCommand(base)
 		case "provider":
-			handleInteractiveProviderMenu(flags)
+			handleInteractiveProviderMenu(flags, menuTheme)
 		case "model":
-			handleInteractiveModelMenu(flags)
+			handleInteractiveModelMenu(flags, menuTheme)
 		case "default":
 			handleConfigModelCommand(append([]string{"default"}, base...))
 		case "cache":
-			handleInteractiveCacheMenu(flags)
+			handleInteractiveCacheMenu(flags, menuTheme)
 		case "check":
 			handleManagedConfigCheck(base)
 		case "finish":
@@ -70,7 +79,7 @@ func handleConfigManager(args []string) int {
 	}
 }
 
-func handleInteractiveProviderMenu(flags configTargetFlags) {
+func handleInteractiveProviderMenu(flags configTargetFlags, menuTheme presentation.Theme) {
 	base := configTargetArgs(flags)
 	for {
 		action, err := promptInitMenu(os.Stdin, os.Stdout, int(os.Stdin.Fd()), "Providers", "Choose an action.", []initMenuOption{
@@ -78,7 +87,7 @@ func handleInteractiveProviderMenu(flags configTargetFlags) {
 			{label: "Add provider", value: "add"}, {label: "Edit provider", value: "set"},
 			{label: "Rename provider", value: "rename"}, {label: "Remove provider", value: "remove"},
 			{label: "Back", value: "back"},
-		})
+		}, menuTheme)
 		if err != nil || action == "back" {
 			return
 		}
@@ -95,7 +104,7 @@ func handleInteractiveProviderMenu(flags configTargetFlags) {
 			configError(loadErr)
 			continue
 		}
-		name, selectErr := promptSelection("Provider", names)
+		name, selectErr := promptSelection("Provider", names, menuTheme)
 		if selectErr != nil {
 			configError(selectErr)
 			continue
@@ -113,7 +122,7 @@ func handleInteractiveProviderMenu(flags configTargetFlags) {
 	}
 }
 
-func handleInteractiveModelMenu(flags configTargetFlags) {
+func handleInteractiveModelMenu(flags configTargetFlags, menuTheme presentation.Theme) {
 	base := configTargetArgs(flags)
 	for {
 		action, err := promptInitMenu(os.Stdin, os.Stdout, int(os.Stdin.Fd()), "Models", "Choose an action.", []initMenuOption{
@@ -121,7 +130,7 @@ func handleInteractiveModelMenu(flags configTargetFlags) {
 			{label: "Add model", value: "add"}, {label: "Edit model", value: "set"},
 			{label: "Rename model", value: "rename"}, {label: "Remove model", value: "remove"},
 			{label: "Set default model", value: "default"}, {label: "Back", value: "back"},
-		})
+		}, menuTheme)
 		if err != nil || action == "back" {
 			return
 		}
@@ -145,7 +154,7 @@ func handleInteractiveModelMenu(flags configTargetFlags) {
 			configError(loadErr)
 			continue
 		}
-		name, selectErr := promptSelection("Model", names)
+		name, selectErr := promptSelection("Model", names, menuTheme)
 		if selectErr != nil {
 			configError(selectErr)
 			continue
@@ -163,7 +172,7 @@ func handleInteractiveModelMenu(flags configTargetFlags) {
 	}
 }
 
-func handleInteractiveCacheMenu(flags configTargetFlags) {
+func handleInteractiveCacheMenu(flags configTargetFlags, menuTheme presentation.Theme) {
 	base := configTargetArgs(flags)
 	for {
 		action, err := promptInitMenu(os.Stdin, os.Stdout, int(os.Stdin.Fd()), "Caching", "Choose an action.", []initMenuOption{
@@ -172,7 +181,7 @@ func handleInteractiveCacheMenu(flags configTargetFlags) {
 			{label: "Show model caching", value: "model-show"}, {label: "Enable model caching", value: "model-enable"},
 			{label: "Disable model caching", value: "model-disable"}, {label: "Restore model inheritance", value: "model-inherit"},
 			{label: "Back", value: "back"},
-		})
+		}, menuTheme)
 		if err != nil || action == "back" {
 			return
 		}
@@ -185,7 +194,7 @@ func handleInteractiveCacheMenu(flags configTargetFlags) {
 			configError(loadErr)
 			continue
 		}
-		name, selectErr := promptSelection("Model", names)
+		name, selectErr := promptSelection("Model", names, menuTheme)
 		if selectErr != nil {
 			configError(selectErr)
 			continue

@@ -126,7 +126,7 @@ func handleConfigProviderWrite(action string, args []string) int {
 	reader := bufio.NewReader(os.Stdin)
 	if name == "" && !*noInteractive {
 		if action == "set" {
-			name, err = promptSelection("Provider", sortedKeys(providers))
+			name, err = promptDocumentSelection(doc, "Provider", sortedKeys(providers))
 		} else {
 			name, err = promptLineDefault(reader, "Provider name", "", true)
 		}
@@ -356,7 +356,7 @@ func handleConfigProviderRemove(args []string) int {
 		return configUsageError("provider remove expects one name")
 	}
 	if name == "" && !*noInteractive {
-		name, err = promptSelection("Provider to remove", sortedKeys(providers))
+		name, err = promptDocumentSelection(doc, "Provider to remove", sortedKeys(providers))
 		if err != nil {
 			return configError(err)
 		}
@@ -504,7 +504,7 @@ func handleConfigModelWrite(action string, args []string) int {
 	reader := bufio.NewReader(os.Stdin)
 	if alias == "" && !*noInteractive {
 		if action == "set" {
-			alias, err = promptSelection("Model", sortedKeys(models))
+			alias, err = promptDocumentSelection(doc, "Model", sortedKeys(models))
 		} else {
 			alias, err = promptLineDefault(reader, "Model alias", "", true)
 		}
@@ -745,7 +745,7 @@ func handleConfigModelRemove(args []string) int {
 		return configUsageError("model remove expects one alias")
 	}
 	if alias == "" && !*noInteractive {
-		alias, err = promptSelection("Model to remove", sortedKeys(models))
+		alias, err = promptDocumentSelection(doc, "Model to remove", sortedKeys(models))
 		if err != nil {
 			return configError(err)
 		}
@@ -764,7 +764,7 @@ func handleConfigModelRemove(args []string) int {
 			if len(choices) == 0 {
 				return configError(errors.New("cannot remove the only configured model"))
 			}
-			*replacement, err = promptSelection("Replacement model", choices)
+			*replacement, err = promptDocumentSelection(doc, "Replacement model", choices)
 			if err != nil {
 				return configError(err)
 			}
@@ -822,7 +822,7 @@ func handleConfigModelDefault(args []string) int {
 		return configUsageError("model default expects at most one alias")
 	}
 	if alias == "" && !*noInteractive {
-		alias, err = promptSelection("Default model", sortedKeys(models))
+		alias, err = promptDocumentSelection(doc, "Default model", sortedKeys(models))
 		if err != nil {
 			return configError(err)
 		}

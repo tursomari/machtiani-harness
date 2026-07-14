@@ -11,6 +11,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/spf13/pflag"
 	"github.com/tursomari/machtiani/agent/internal/llm"
+	"github.com/tursomari/machtiani/agent/internal/presentation"
 	"golang.org/x/term"
 )
 
@@ -423,25 +424,29 @@ func promptInitDefaultModelMenu(in io.Reader, out io.Writer, fd int, models []in
 	return promptInitMenu(in, out, fd, "Default model", "Used when a command does not specify a model alias.", options)
 }
 
-func promptInitMenu(in io.Reader, out io.Writer, fd int, title, help string, options []initMenuOption) (string, error) {
+func promptInitMenu(in io.Reader, out io.Writer, fd int, title, help string, options []initMenuOption, themes ...presentation.Theme) (string, error) {
 	state, err := term.MakeRaw(fd)
 	if err != nil {
 		return "", fmt.Errorf("enable %s selection: %w", strings.ToLower(title), err)
 	}
 	defer func() { _ = term.Restore(fd, state) }()
-	return runInitMenu(in, out, title, help, options)
+	return runInitMenu(in, out, title, help, options, themes...)
 }
 
-func runInitMenu(in io.Reader, out io.Writer, title, help string, options []initMenuOption) (string, error) {
+func runInitMenu(in io.Reader, out io.Writer, title, help string, options []initMenuOption, themes ...presentation.Theme) (string, error) {
 	if len(options) == 0 {
 		return "", fmt.Errorf("%s has no options", title)
 	}
-	fmt.Fprintf(out, "\r\n%s\r\n", title)
+	theme, err := resolveInitMenuTheme(out, themes)
+	if err != nil {
+		return "", err
+	}
+	fmt.Fprintf(out, "\r\n%s\r\n", theme.RenderSpan(presentation.Bold(presentation.RoleTruth, title)))
 	if help != "" {
 		fmt.Fprintf(out, "  %s\r\n", help)
 	}
 	selected := 0
-	renderInitMenuOptions(out, options, selected, false)
+	renderInitMenuOptions(out, options, selected, false, theme)
 	for {
 		key, err := readInitByte(in)
 		if err != nil {
@@ -459,10 +464,10 @@ func runInitMenu(in io.Reader, out io.Writer, title, help string, options []init
 			return "", io.EOF
 		case 'k':
 			selected = (selected - 1 + len(options)) % len(options)
-			renderInitMenuOptions(out, options, selected, true)
+			renderInitMenuOptions(out, options, selected, true, theme)
 		case 'j':
 			selected = (selected + 1) % len(options)
-			renderInitMenuOptions(out, options, selected, true)
+			renderInitMenuOptions(out, options, selected, true, theme)
 		case 0x1b:
 			second, err := readInitByte(in)
 			if err != nil {
@@ -478,13 +483,24 @@ func runInitMenu(in io.Reader, out io.Writer, title, help string, options []init
 			switch third {
 			case 'A':
 				selected = (selected - 1 + len(options)) % len(options)
-				renderInitMenuOptions(out, options, selected, true)
+				renderInitMenuOptions(out, options, selected, true, theme)
 			case 'B':
 				selected = (selected + 1) % len(options)
-				renderInitMenuOptions(out, options, selected, true)
+				renderInitMenuOptions(out, options, selected, true, theme)
 			}
 		}
 	}
+}
+
+func resolveInitMenuTheme(out io.Writer, themes []presentation.Theme) (presentation.Theme, error) {
+	if len(themes) > 0 {
+		return themes[0], nil
+	}
+	theme, err := presentation.Resolve(string(presentation.ProfileTerminal), out)
+	if err != nil {
+		return presentation.Theme{}, fmt.Errorf("resolve interactive menu theme: %w", err)
+	}
+	return theme, nil
 }
 
 func clearInitMenuScreen(out io.Writer) {
@@ -494,7 +510,7 @@ func clearInitMenuScreen(out io.Writer) {
 	fmt.Fprint(out, "\x1b[2J\x1b[H")
 }
 
-func renderInitMenuOptions(out io.Writer, options []initMenuOption, selected int, redraw bool) {
+func renderInitMenuOptions(out io.Writer, options []initMenuOption, selected int, redraw bool, theme presentation.Theme) {
 	if redraw {
 		fmt.Fprintf(out, "\x1b[%dA", len(options))
 	}
@@ -503,7 +519,14 @@ func renderInitMenuOptions(out io.Writer, options []initMenuOption, selected int
 		if i == selected {
 			marker = "> "
 		}
-		fmt.Fprintf(out, "\r\x1b[2K%s%s\r\n", marker, option.label)
+		line := marker + option.label
+		switch {
+		case i == selected:
+			line = theme.RenderSpan(presentation.Bold(presentation.RoleTruth, line))
+		case option.value == "finish":
+			line = marker + theme.RenderSpan(presentation.RoleText(presentation.RoleGoodness, option.label))
+		}
+		fmt.Fprintf(out, "\r\x1b[2K%s\r\n", line)
 	}
 }
 

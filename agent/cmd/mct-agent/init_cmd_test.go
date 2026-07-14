@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/tursomari/machtiani/agent/internal/llm"
+	"github.com/tursomari/machtiani/agent/internal/presentation"
 )
 
 func TestLegacyHandleInitCommandWithDeps(t *testing.T) {
@@ -511,6 +512,98 @@ func TestInitNextStepArrowMenu(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "\x1b[2J\x1b[H") {
 		t.Fatal("expected selecting a menu action to clear the previous view")
+	}
+}
+
+func TestInitMenuSemanticColors(t *testing.T) {
+	tests := []struct {
+		name         string
+		theme        presentation.Theme
+		wantSelected string
+		wantFinish   string
+	}{
+		{
+			name:         "terminal palette",
+			theme:        presentation.NewForTest(presentation.ProfileTerminal, true, false),
+			wantSelected: "\x1b[1;36m> Manage models\x1b[0m",
+			wantFinish:   "  \x1b[32mFinish\x1b[0m",
+		},
+		{
+			name:         "dark palette",
+			theme:        presentation.NewForTest(presentation.ProfileMachtianiDark, true, true),
+			wantSelected: "\x1b[1;38;2;88;199;217m> Manage models\x1b[0m",
+			wantFinish:   "  \x1b[38;2;116;201;145mFinish\x1b[0m",
+		},
+		{
+			name:         "light palette",
+			theme:        presentation.NewForTest(presentation.ProfileMachtianiLight, true, true),
+			wantSelected: "\x1b[1;38;2;0;107;120m> Manage models\x1b[0m",
+			wantFinish:   "  \x1b[38;2;34;107;58mFinish\x1b[0m",
+		},
+		{
+			name:         "color disabled",
+			theme:        presentation.NewForTest(presentation.ProfileTerminal, false, false),
+			wantSelected: "\x1b[1m> Manage models\x1b[0m",
+			wantFinish:   "  Finish",
+		},
+	}
+
+	options := []initMenuOption{
+		{label: "Finish", value: "finish"},
+		{label: "Manage models", value: "model"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var out bytes.Buffer
+			renderInitMenuOptions(&out, options, 1, false, test.theme)
+			got := out.String()
+			if !strings.Contains(got, test.wantSelected) {
+				t.Fatalf("selected option did not use selection styling\nwant substring: %q\noutput: %q", test.wantSelected, got)
+			}
+			if !strings.Contains(got, test.wantFinish) {
+				t.Fatalf("unselected Finish did not use its semantic styling\nwant substring: %q\noutput: %q", test.wantFinish, got)
+			}
+		})
+	}
+}
+
+func TestSelectedFinishUsesOrdinarySelectionColor(t *testing.T) {
+	theme := presentation.NewForTest(presentation.ProfileTerminal, true, false)
+	var out bytes.Buffer
+	renderInitMenuOptions(&out, []initMenuOption{
+		{label: "Finish", value: "finish"},
+		{label: "Manage models", value: "model"},
+	}, 0, false, theme)
+
+	got := out.String()
+	if !strings.Contains(got, "\x1b[1;36m> Finish\x1b[0m") {
+		t.Fatalf("selected Finish should use ordinary selection styling: %q", got)
+	}
+	if strings.Contains(got, "\x1b[32mFinish") {
+		t.Fatalf("selected Finish retained its unselected color: %q", got)
+	}
+}
+
+func TestConfigDocumentMenuThemeUsesSelectedConfigAndEnvironmentOverride(t *testing.T) {
+	doc := &configDocument{raw: map[string]any{
+		"ui": map[string]any{"theme": "machtiani-dark"},
+	}}
+
+	theme, err := doc.menuTheme(&bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("menuTheme: %v", err)
+	}
+	if theme.Profile != presentation.ProfileMachtianiDark {
+		t.Fatalf("profile = %q, want %q", theme.Profile, presentation.ProfileMachtianiDark)
+	}
+
+	t.Setenv("MACHTIANI_THEME", "machtiani-light")
+	theme, err = doc.menuTheme(&bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("menuTheme with override: %v", err)
+	}
+	if theme.Profile != presentation.ProfileMachtianiLight {
+		t.Fatalf("overridden profile = %q, want %q", theme.Profile, presentation.ProfileMachtianiLight)
 	}
 }
 

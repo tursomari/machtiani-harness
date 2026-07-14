@@ -360,8 +360,9 @@ Other helpful overrides:
 
 ### Terminal Theme
 
-Human-facing `mct-agent run` output and Markdown rendered by the standalone
-`mct` command share a semantic theme. Configure it globally:
+Human-facing `mct-agent run` output, interactive setup/configuration menus, and
+Markdown rendered by the standalone `mct` command share a semantic theme.
+Configure it globally:
 
 ```toml
 [ui]
@@ -372,6 +373,10 @@ theme = "terminal"
 - `machtiani-dark` and `machtiani-light` use muted palettes designed for the corresponding background. Selection is explicit and reproducible; Machtiani does not query terminal background color or transparency.
 - `none` emits no ANSI styling. `TERM=dumb` and non-terminal output also disable ANSI automatically.
 - `NO_COLOR` removes color while retaining useful emphasis such as bold, italic, and underline on an interactive terminal.
+
+In interactive menus, the current selection uses the Truth color and bold
+emphasis. An unselected **Finish** action uses the Goodness color; when selected,
+it uses the same selection styling as every other action.
 
 The roles express the Machtiani aesthetic: Truth identifies structure and live
 state, Goodness marks successful continuation, Beauty marks final responses and

@@ -16,6 +16,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/spf13/pflag"
 	"github.com/tursomari/machtiani/agent/internal/llm"
+	"github.com/tursomari/machtiani/agent/internal/presentation"
 	"golang.org/x/term"
 )
 
@@ -129,6 +130,20 @@ func (d *configDocument) save() error {
 		return fmt.Errorf("write %s: %w", d.path, err)
 	}
 	return nil
+}
+
+func (d *configDocument) menuTheme(out io.Writer) (presentation.Theme, error) {
+	configured := string(presentation.ProfileTerminal)
+	if ui, ok := d.raw["ui"].(map[string]any); ok {
+		if value, ok := ui["theme"].(string); ok && strings.TrimSpace(value) != "" {
+			configured = value
+		}
+	}
+	theme, err := presentation.Resolve(configured, out)
+	if err != nil {
+		return presentation.Theme{}, fmt.Errorf("resolve interactive menu theme: %w", err)
+	}
+	return theme, nil
 }
 
 func configTable(raw map[string]any, key string) map[string]any {
@@ -460,12 +475,20 @@ func aliasIsReferenced(raw map[string]any, alias string) bool {
 	return false
 }
 
-func promptSelection(title string, values []string) (string, error) {
+func promptSelection(title string, values []string, themes ...presentation.Theme) (string, error) {
 	options := make([]initMenuOption, 0, len(values))
 	for _, value := range values {
 		options = append(options, initMenuOption{label: value, value: value})
 	}
-	return promptInitMenu(os.Stdin, os.Stdout, int(os.Stdin.Fd()), title, "Use Up/Down arrows and Enter.", options)
+	return promptInitMenu(os.Stdin, os.Stdout, int(os.Stdin.Fd()), title, "Use Up/Down arrows and Enter.", options, themes...)
+}
+
+func promptDocumentSelection(doc *configDocument, title string, values []string) (string, error) {
+	theme, err := doc.menuTheme(os.Stdout)
+	if err != nil {
+		return "", err
+	}
+	return promptSelection(title, values, theme)
 }
 
 func printStringMap(out io.Writer, value any, indent string) {

@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/pflag"
 	"github.com/tursomari/machtiani/agent/internal/configcatalog"
+	"github.com/tursomari/machtiani/agent/internal/presentation"
 )
 
 func handleConfigAddCommand(args []string) int {
@@ -66,12 +67,19 @@ func handleConfigAddCommand(args []string) int {
 	if err != nil {
 		return configError(err)
 	}
+	var menuTheme presentation.Theme
+	if !*noInteractive {
+		menuTheme, err = doc.menuTheme(os.Stdout)
+		if err != nil {
+			return configError(err)
+		}
+	}
 	providers := configTable(doc.raw, "providers")
 	models := configTable(doc.raw, "models")
 	reader := bufio.NewReader(os.Stdin)
 
 	if !*noInteractive && strings.TrimSpace(*providerName) == "" && preset == nil {
-		selection, selectErr := promptProviderChoice(providers, catalog)
+		selection, selectErr := promptProviderChoice(providers, catalog, menuTheme)
 		if selectErr != nil {
 			return configError(selectErr)
 		}
@@ -206,7 +214,7 @@ func handleConfigAddCommand(args []string) int {
 			if *noInteractive {
 				*modelID = modelCatalogProvider.DefaultModel
 			} else {
-				selected, selectErr := promptCatalogModel(reader, *modelCatalogProvider, discoveryCredential)
+				selected, selectErr := promptCatalogModel(reader, *modelCatalogProvider, discoveryCredential, menuTheme)
 				if selectErr != nil {
 					return configError(selectErr)
 				}
@@ -237,7 +245,7 @@ func handleConfigAddCommand(args []string) int {
 			}
 		}
 		if !fs.Changed("reasoning") {
-			*reasoning, err = promptReasoningChoice(reader, catalogModel)
+			*reasoning, err = promptReasoningChoice(reader, catalogModel, menuTheme)
 			if err != nil {
 				return configError(err)
 			}
@@ -322,7 +330,7 @@ func handleConfigAddCommand(args []string) int {
 	return 0
 }
 
-func promptProviderChoice(existing map[string]any, catalog configcatalog.Catalog) (string, error) {
+func promptProviderChoice(existing map[string]any, catalog configcatalog.Catalog, menuTheme presentation.Theme) (string, error) {
 	options := make([]initMenuOption, 0, len(existing)+len(catalog.Providers)+1)
 	for _, name := range sortedKeys(existing) {
 		options = append(options, initMenuOption{label: "Existing: " + name, value: "existing:" + name})
@@ -333,10 +341,10 @@ func promptProviderChoice(existing map[string]any, catalog configcatalog.Catalog
 		}
 	}
 	options = append(options, initMenuOption{label: "Other provider...", value: "other"})
-	return promptInitMenu(os.Stdin, os.Stdout, int(os.Stdin.Fd()), "Provider", "Choose a configured provider, a catalogue preset, or Other.", options)
+	return promptInitMenu(os.Stdin, os.Stdout, int(os.Stdin.Fd()), "Provider", "Choose a configured provider, a catalogue preset, or Other.", options, menuTheme)
 }
 
-func promptCatalogModel(reader *bufio.Reader, provider configcatalog.Provider, apiKey string) (string, error) {
+func promptCatalogModel(reader *bufio.Reader, provider configcatalog.Provider, apiKey string, menuTheme presentation.Theme) (string, error) {
 	options := make([]initMenuOption, 0, len(provider.Models)+2)
 	for _, model := range provider.Models {
 		label := model.Name
@@ -349,7 +357,7 @@ func promptCatalogModel(reader *bufio.Reader, provider configcatalog.Provider, a
 		options = append(options, initMenuOption{label: "Search current model catalogue...", value: "search"})
 	}
 	options = append(options, initMenuOption{label: "Other model...", value: "other"})
-	selected, err := promptInitMenu(os.Stdin, os.Stdout, int(os.Stdin.Fd()), "Model", "Choose a recommended model, search the provider, or enter another model ID.", options)
+	selected, err := promptInitMenu(os.Stdin, os.Stdout, int(os.Stdin.Fd()), "Model", "Choose a recommended model, search the provider, or enter another model ID.", options, menuTheme)
 	if err != nil || selected != "search" {
 		return selected, err
 	}
@@ -381,7 +389,7 @@ func promptCatalogModel(reader *bufio.Reader, provider configcatalog.Provider, a
 			initMenuOption{label: "Search again...", value: "search"},
 			initMenuOption{label: "Other model...", value: "other"},
 		)
-		selected, selectErr := promptInitMenu(os.Stdin, os.Stdout, int(os.Stdin.Fd()), "Search results", "Showing up to 25 matches. Choose a model or search again.", matchOptions)
+		selected, selectErr := promptInitMenu(os.Stdin, os.Stdout, int(os.Stdin.Fd()), "Search results", "Showing up to 25 matches. Choose a model or search again.", matchOptions, menuTheme)
 		if selectErr != nil {
 			return "", selectErr
 		}
@@ -435,7 +443,7 @@ func configuredProviderCredential(entry any) string {
 	return value
 }
 
-func promptReasoningChoice(reader *bufio.Reader, model *configcatalog.Model) (string, error) {
+func promptReasoningChoice(reader *bufio.Reader, model *configcatalog.Model, menuTheme presentation.Theme) (string, error) {
 	values := []string{"low", "medium", "high"}
 	if model != nil && len(model.Reasoning) > 0 {
 		values = model.Reasoning
@@ -445,7 +453,7 @@ func promptReasoningChoice(reader *bufio.Reader, model *configcatalog.Model) (st
 		options = append(options, initMenuOption{label: value, value: value})
 	}
 	options = append(options, initMenuOption{label: "Other...", value: "other"})
-	selected, err := promptInitMenu(os.Stdin, os.Stdout, int(os.Stdin.Fd()), "Reasoning", "Choose an effort or let the provider use its default.", options)
+	selected, err := promptInitMenu(os.Stdin, os.Stdout, int(os.Stdin.Fd()), "Reasoning", "Choose an effort or let the provider use its default.", options, menuTheme)
 	if err != nil || selected != "other" {
 		return selected, err
 	}
