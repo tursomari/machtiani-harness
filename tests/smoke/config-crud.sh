@@ -165,10 +165,25 @@ assert_file_contains 'Existing: deepseek' "$SCRATCH_DIR/manager-add-model-wizard
 [[ "$(checksum "$CONFIG_PATH")" == "$manager_checksum" ]] || fail "cancelled manager add-model wizard changed $CONFIG_PATH"
 
 echo "==> Verifying init protects an existing configuration..."
+runtime_sentinels=(
+  ".machtiani/sessions/init-safety-session/chat/agent-final-answer.md"
+  ".machtiani/artifacts/init-safety-artifact.txt"
+  ".machtiani/modes/init-safety-mode/instruction.md"
+  ".machtiani/templates/init-safety-template.txt"
+  ".machtiani/tmp/init-safety-state/session.lock"
+)
+for sentinel in "${runtime_sentinels[@]}"; do
+  mkdir -p "$(dirname "$sentinel")"
+  printf 'preserve-existing-machtiani-data\n' >"$sentinel"
+done
 initial_checksum=$(checksum "$CONFIG_PATH")
 expect_exit 1 mct-agent init
 assert_file_contains 'Run '\''mct-agent config'\'' to modify it' "$SCRATCH_DIR/expected-stderr"
 assert_unchanged "$initial_checksum"
+for sentinel in "${runtime_sentinels[@]}"; do
+  test -f "$sentinel" || fail "mct-agent init removed existing runtime file $sentinel"
+  assert_file_contains 'preserve-existing-machtiani-data' "$sentinel"
+done
 
 echo "==> Exercising provider list, show, add, set, rename, and remove..."
 mct-agent config provider list >"$SCRATCH_DIR/provider-list"
