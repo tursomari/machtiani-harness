@@ -23,6 +23,22 @@ func TestEmbeddedCatalogIsValid(t *testing.T) {
 	if _, ok := deepseek.Default(); !ok {
 		t.Fatal("deepseek default model missing")
 	}
+	openai, ok := catalog.Provider("openai")
+	if !ok {
+		t.Fatal("openai provider missing")
+	}
+	if openai.DefaultModel != "gpt-5.6-sol" {
+		t.Fatalf("openai default model = %q, want gpt-5.6-sol", openai.DefaultModel)
+	}
+	wantOpenAIModels := []string{"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"}
+	if len(openai.Models) != len(wantOpenAIModels) {
+		t.Fatalf("openai model count = %d, want %d", len(openai.Models), len(wantOpenAIModels))
+	}
+	for index, want := range wantOpenAIModels {
+		if got := openai.Models[index].ID; got != want {
+			t.Fatalf("openai model priority %d = %q, want %q", index+1, got, want)
+		}
+	}
 	openrouter, ok := catalog.Provider("openrouter")
 	if !ok || openrouter.ModelsURL != "https://openrouter.ai/api/v1/models" || openrouter.ModelsSearchParam != "q" {
 		t.Fatalf("openrouter model discovery = %#v", openrouter)

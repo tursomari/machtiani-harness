@@ -39,13 +39,37 @@
       "endpoint": "/chat/completions",
       "api_key_env": "OPENAI_API_KEY",
       "documentation_url": "https://developers.openai.com/api/docs/models",
-      "default_model": "gpt-5.5",
+      "default_model": "gpt-5.6-sol",
       "models": [
+        {
+          "id": "gpt-5.6-sol",
+          "name": "GPT-5.6 Sol",
+          "alias": "openai",
+          "description": "OpenAI's flagship model for complex professional work.",
+          "reasoning": ["none", "low", "medium", "high", "xhigh", "max"],
+          "cache_default": "inherit"
+        },
+        {
+          "id": "gpt-5.6-terra",
+          "name": "GPT-5.6 Terra",
+          "alias": "openai-terra",
+          "description": "Balances intelligence and cost.",
+          "reasoning": ["none", "low", "medium", "high", "xhigh", "max"],
+          "cache_default": "inherit"
+        },
+        {
+          "id": "gpt-5.6-luna",
+          "name": "GPT-5.6 Luna",
+          "alias": "openai-luna",
+          "description": "Optimized for cost-sensitive, high-volume workloads.",
+          "reasoning": ["none", "low", "medium", "high", "xhigh", "max"],
+          "cache_default": "inherit"
+        },
         {
           "id": "gpt-5.5",
           "name": "GPT-5.5",
-          "alias": "openai",
-          "description": "OpenAI's flagship model for complex reasoning and coding.",
+          "alias": "openai-5.5",
+          "description": "Previous-generation model for complex reasoning and coding.",
           "reasoning": ["none", "low", "medium", "high", "xhigh"],
           "cache_default": "inherit"
         },
