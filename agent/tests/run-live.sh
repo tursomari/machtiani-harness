@@ -4,6 +4,48 @@ unset MACHTIANI_SESSION_ID
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${REPO_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
+
+# The integration suite creates sessions and other project-scoped state. Keep
+# that state out of the developer's checkout by running the suite from a
+# detached worktree at committed HEAD with a disposable HOME. The inner run is
+# selected explicitly so invoking the copied script does not recurse.
+if [[ "${MCT_RUN_LIVE_INNER:-}" != "1" ]]; then
+  SOURCE_ROOT="$REPO_ROOT"
+  RUN_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/mct-run-live.XXXXXX")
+  WORKTREE="$RUN_ROOT/repo"
+  TEST_HOME="$RUN_ROOT/home"
+
+  cleanup_isolated_run() {
+    git -C "$SOURCE_ROOT" worktree remove --force "$WORKTREE" >/dev/null 2>&1 || true
+    rm -rf "$RUN_ROOT"
+  }
+  trap cleanup_isolated_run EXIT
+
+  mkdir -p "$TEST_HOME"
+  git -C "$SOURCE_ROOT" worktree add --detach "$WORKTREE" HEAD >/dev/null
+  mkdir -p "$WORKTREE/.machtiani"
+  if [[ -f "$SOURCE_ROOT/.machtiani/config.toml" ]]; then
+    install -m 0600 "$SOURCE_ROOT/.machtiani/config.toml" "$WORKTREE/.machtiani/config.toml"
+  fi
+  if [[ -d "$SOURCE_ROOT/.machtiani/templates" ]]; then
+    cp -R "$SOURCE_ROOT/.machtiani/templates" "$WORKTREE/.machtiani/templates"
+  fi
+
+  set +e
+  (
+    cd "$WORKTREE"
+    HOME="$TEST_HOME" \
+      REPO_ROOT="$WORKTREE" \
+      MCT_RUN_LIVE_INNER=1 \
+      bash "$WORKTREE/agent/tests/run-live.sh" "$@"
+  )
+  isolated_status=$?
+  set -e
+
+  find "$WORKTREE" -maxdepth 1 -type d -name 'test-out-*' -exec cp -R {} "$SOURCE_ROOT/" \;
+  exit "$isolated_status"
+fi
+
 hash -r 2>/dev/null || true
 
 PYTHON_BIN="${PYTHON_BIN:-python3}"
