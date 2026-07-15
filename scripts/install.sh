@@ -5,6 +5,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PREFIX="${PREFIX:-$HOME/.local}"
 BIN_DIR="${PREFIX}/bin"
+MANAGED_ROOT="$HOME/.machtiani/installations/mct-agent"
+MANAGED_SOURCE="$MANAGED_ROOT/source"
+BUILD_SUBMODULE_PATH="agent/internal/shell-agent"
 
 usage() {
   cat <<EOF
@@ -14,8 +17,8 @@ Installs the mct-agent binary by default. Pass --install-peripherals to also
 build and install mct, file-discovery, snippet-discovery, and shell-agent
 (for development and debugging only; most users should use mct-agent
 directly).
-Pass --managed when installing from the updater-owned source clone. This
-registers the clone's origin and installation target for automatic updates.
+Pass --managed from a clean Git clone to bootstrap an updater-owned clone from
+the same origin, then build and register that managed source for updates.
 Environment:
   PREFIX   Destination prefix for the install (default: \$HOME/.local)
 EOF
@@ -46,6 +49,108 @@ git_dirty_flag() {
   else
     echo "unknown"
   fi
+}
+
+origin_has_http_userinfo() {
+  local remote="$1"
+  local authority
+  case "$remote" in
+    http://*|https://*)
+      authority="${remote#*://}"
+      authority="${authority%%/*}"
+      [[ "$authority" == *"@"* ]]
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+prepare_build_submodule() {
+  local source="$1"
+  local entry
+  entry="$(git -C "$source" ls-tree HEAD -- "$BUILD_SUBMODULE_PATH")"
+  if [[ "$entry" != 160000\ * ]]; then
+    return 0
+  fi
+  git -C "$source" submodule sync -- "$BUILD_SUBMODULE_PATH"
+  git -C "$source" submodule update --init --recursive --depth 1 -- "$BUILD_SUBMODULE_PATH"
+}
+
+resolve_remote_head() {
+  local remote="$1"
+  local output first second
+  REMOTE_HEAD_BRANCH=""
+  REMOTE_HEAD_COMMIT=""
+  output="$(git ls-remote --symref "$remote" HEAD)" || return 1
+  while IFS=$'\t' read -r first second; do
+    if [[ "$first" == "ref: refs/heads/"* && "$second" == "HEAD" ]]; then
+      REMOTE_HEAD_BRANCH="${first#ref: refs/heads/}"
+    elif [[ "$second" == "HEAD" && "$first" =~ ^[0-9a-fA-F]{40,64}$ ]]; then
+      REMOTE_HEAD_COMMIT="$first"
+    fi
+  done <<<"$output"
+  if [[ -z "$REMOTE_HEAD_BRANCH" || -z "$REMOTE_HEAD_COMMIT" ]]; then
+    echo "Error: managed installation origin does not advertise a symbolic default branch." >&2
+    return 1
+  fi
+}
+
+sync_managed_source() {
+  local remote="$1"
+  local managed_remote fetched refspec
+  if ! git -C "$MANAGED_SOURCE" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "Error: managed source exists but is not a Git checkout: $MANAGED_SOURCE" >&2
+    return 1
+  fi
+  managed_remote="$(git -C "$MANAGED_SOURCE" remote get-url origin 2>/dev/null || true)"
+  if [[ -z "$managed_remote" ]]; then
+    echo "Error: managed source does not have an origin remote." >&2
+    return 1
+  fi
+  if origin_has_http_userinfo "$managed_remote"; then
+    echo "Error: managed source origin contains embedded credentials; use SSH or a Git credential helper." >&2
+    return 1
+  fi
+  if [[ "$managed_remote" != "$remote" ]]; then
+    echo "Error: managed source origin differs from the invoking checkout; refusing to repoint it." >&2
+    return 1
+  fi
+  if [[ -n "$(git -C "$MANAGED_SOURCE" status --porcelain --untracked-files=all)" ]]; then
+    echo "Error: managed source checkout contains local changes; preserve or remove them before installing." >&2
+    return 1
+  fi
+  resolve_remote_head "$remote"
+  refspec="+refs/heads/$REMOTE_HEAD_BRANCH:refs/remotes/origin/$REMOTE_HEAD_BRANCH"
+  git -C "$MANAGED_SOURCE" fetch --depth 1 origin "$refspec"
+  fetched="$(git -C "$MANAGED_SOURCE" rev-parse "refs/remotes/origin/$REMOTE_HEAD_BRANCH")"
+  if [[ "$fetched" != "$REMOTE_HEAD_COMMIT" ]]; then
+    echo "Error: managed installation origin moved while synchronizing; retry." >&2
+    return 1
+  fi
+  git -C "$MANAGED_SOURCE" checkout -B "$REMOTE_HEAD_BRANCH" "$REMOTE_HEAD_COMMIT"
+  prepare_build_submodule "$MANAGED_SOURCE"
+}
+
+bootstrap_managed_source() {
+  local remote="$1"
+  local staging_source=""
+  mkdir -p "$MANAGED_ROOT"
+  chmod 0700 "$MANAGED_ROOT"
+  if [[ -e "$MANAGED_SOURCE" ]]; then
+    sync_managed_source "$remote"
+    return
+  fi
+  staging_source="$(mktemp -d "$MANAGED_ROOT/.source.bootstrap.XXXXXX")"
+  cleanup_bootstrap_source() {
+    rm -rf "${staging_source:-}"
+  }
+  trap cleanup_bootstrap_source EXIT
+  git clone --depth 1 --single-branch "$remote" "$staging_source"
+  prepare_build_submodule "$staging_source"
+  mv "$staging_source" "$MANAGED_SOURCE"
+  staging_source=""
+  trap - EXIT
 }
 
 INSTALL_PERIPHERALS=false
@@ -91,13 +196,28 @@ check_prereq git "Git"
 check_prereq rg "ripgrep (rg)"
 
 if $MANAGED_INSTALL; then
-  if ! git -C "$REPO_ROOT" remote get-url origin >/dev/null 2>&1; then
+  MANAGED_ORIGIN="$(git -C "$REPO_ROOT" remote get-url origin 2>/dev/null || true)"
+  if [[ -z "$MANAGED_ORIGIN" ]]; then
     echo "Error: managed installation requires an origin remote." >&2
+    exit 1
+  fi
+  if origin_has_http_userinfo "$MANAGED_ORIGIN"; then
+    echo "Error: managed installation origin contains embedded credentials; use SSH or a Git credential helper." >&2
     exit 1
   fi
   if [[ -n "$(git -C "$REPO_ROOT" status --porcelain --untracked-files=all 2>/dev/null)" ]]; then
     echo "Error: managed installation requires a clean source checkout." >&2
     exit 1
+  fi
+  REPO_PHYSICAL="$(cd "$REPO_ROOT" && pwd -P)"
+  MANAGED_PHYSICAL="$MANAGED_SOURCE"
+  if [[ -d "$MANAGED_SOURCE" ]]; then
+    MANAGED_PHYSICAL="$(cd "$MANAGED_SOURCE" && pwd -P)"
+  fi
+  if [[ "$REPO_PHYSICAL" != "$MANAGED_PHYSICAL" ]]; then
+    log "Bootstrapping managed source from the invoking checkout's origin"
+    bootstrap_managed_source "$MANAGED_ORIGIN"
+    exec bash "$MANAGED_SOURCE/scripts/install.sh" --managed
   fi
 fi
 

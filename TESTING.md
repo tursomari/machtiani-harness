@@ -125,8 +125,11 @@ export TEST_MODEL=gpt-4o-mini
 ```
 
 The managed updater has a provider-independent container path that creates a
-local bare Git remote, builds successive commits from source, and proves both
-explicit update and automatic startup update/re-execution:
+local bare Git remote, clones it into a disposable path under `$HOME/src`, and
+bootstraps the canonical source under `$HOME/.machtiani`. It removes the
+original clone before proving explicit update and automatic startup
+update/re-execution. Before bootstrapping, it seeds legacy configuration and
+project artifacts and verifies that the migration script preserves them:
 
 ```bash
 ./tests/smoke/run.sh --update-only
@@ -208,8 +211,9 @@ export TEST_MODEL=gpt-4o-mini
 - `TEST_*` takes precedence over `OPENAI_*`. When neither complete set is available, the script generates stub credentials, writes a temporary `config.toml`, and forces `--dry-run`.
 - Artifacts land in `test-out-*` directories at the repo root; each case includes stdout, stderr, transcripts, and (for live runs) generated assets.
 - The provider-independent `managed_update_local_remote` case exercises the
-  managed installer and explicit updater against an isolated local bare Git
-  remote. It is included in the default suite and can be targeted directly.
+  origin-derived bootstrap, managed-source reuse and safety checks, and the
+  explicit updater against an isolated local bare Git remote. It is included
+  in the default suite and can be targeted directly.
 - Optional overrides:
   - `TEST_ORCH_MODEL`, `TEST_FILE_DISCOVERY_MODEL` — preferred per-component remote-model overrides; the corresponding `OPENAI_*` values are fallbacks.
   - `OPENAI_ORCH_MODEL_ALIAS`, `OPENAI_FILE_DISCOVERY_MODEL_ALIAS` — supply config aliases when reusing a shared `config.toml`.

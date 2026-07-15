@@ -120,19 +120,30 @@ Until a public remote is selected, substitute a local or otherwise configured
 Git remote for `<REMOTE>`:
 
 ```bash
-git clone --depth 1 --single-branch \
-  <REMOTE> \
-  ~/.machtiani/installations/mct-agent/source
-git -C ~/.machtiani/installations/mct-agent/source \
-  submodule update --init --depth 1 agent/internal/shell-agent
-HOME="$HOME" ~/.machtiani/installations/mct-agent/source/scripts/install.sh --managed
+git clone <REMOTE> ~/src/mct-install
+cd ~/src/mct-install
+./scripts/install.sh --managed
 ```
 
-The managed installer records the clone's sanitized `origin`, its default
-branch, and the exact installation target under
-`~/.machtiani/installations/mct-agent/`. It never stores remote credentials;
-use normal Git SSH or credential-helper configuration when authentication is
-needed.
+The managed installer uses the invoking checkout only to discover its
+`origin`. It clones that origin's default branch into
+`~/.machtiani/installations/mct-agent/source`, builds from that canonical
+source, and records the sanitized remote and exact installation target. The
+original checkout can then be moved or removed without affecting updates.
+Embedded HTTP credentials are rejected; use normal Git SSH or
+credential-helper configuration when authentication is needed. Re-running the
+command reuses a clean managed clone only when its origin matches exactly.
+
+For an existing Machtiani home, run the additive migration from the checkout
+whose `origin` should supply updates:
+
+```bash
+./scripts/migrate-managed-install.sh
+```
+
+The migration preserves existing configuration, UUID project stores, sessions,
+and artifacts. It only adds the managed source, updater receipt, and installed
+binary needed for automatic updates.
 
 Check or install the current default-branch tip explicitly:
 
