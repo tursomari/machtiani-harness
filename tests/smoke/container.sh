@@ -1,6 +1,33 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+run_sync_under_pty() {
+  local output_file="$1"
+  local sync_args="${2:-}"
+  local status
+  set +e
+  expect <<EOF >/dev/null
+set timeout -1
+log_user 1
+log_file -noappend "$output_file"
+spawn sh -c {stty cols 240; exec mct-agent sync $sync_args}
+expect eof
+set result [wait]
+exit [lindex \$result 3]
+EOF
+  status=$?
+  set -e
+  if (( status != 0 )); then
+    echo "PTY sync failed; captured output follows:" >&2
+    cat "$output_file" >&2
+  fi
+  return "$status"
+}
+
+strip_ansi() {
+  sed -E $'s/\033\\[[0-9;?]*[[:alpha:]]//g' "$1" | tr -d '\r'
+}
+
 bash /tests/smoke/update-container.sh
 
 # Step 1: Initialize a clean Git project
@@ -44,14 +71,36 @@ mct-agent config check --path "$overflow_config"
 mct-agent config model show --path "$overflow_config" overflow > /tmp/context-overflow-after.stdout
 grep -Fq 'context_length: 63999 (model)' /tmp/context-overflow-after.stdout
 
-# Step 5: Initialize the repository's internal README state
+# Step 5: Initialize the repository's internal README state and verify the
+# interactive footer on both a model-backed sync and a subsequent no-op.
 echo "==> Synchronizing repository state..."
-mct-agent sync --verbose > /tmp/sync.stdout 2> /tmp/sync.stderr
-grep -Fq 'llm.context_budget.resolved context_length=128000 source=model_default' /tmp/sync.stderr
+sync_output=$(mktemp)
+sync_clean=$(mktemp)
+run_sync_under_pty "$sync_output" --verbose
+strip_ansi "$sync_output" > "$sync_clean"
+grep -q 'Readme synced for commit ' "$sync_clean"
+grep -Eq 'tokens[[:space:]]+input hit [0-9,]+[[:space:]]+input miss [0-9,]+[[:space:]]+output [0-9,]+' "$sync_clean"
+grep -Eq 'sync [0-9a-f]{12}' "$sync_clean"
+grep -q 'discovery ' "$sync_clean"
+grep -q 'answer ' "$sync_clean"
+grep -Fq 'llm.context_budget.resolved context_length=128000 source=model_default' "$sync_clean"
+
 config_checksum=$(sha256sum "$HOME/.machtiani/config.toml" | cut -d ' ' -f 1)
 mct-agent sync --verbose --context-length 64000 > /tmp/sync-context.stdout 2> /tmp/sync-context.stderr
 grep -Fq 'llm.context_budget.resolved context_length=64000 source=session_flag' /tmp/sync-context.stderr
 test "$(sha256sum "$HOME/.machtiani/config.toml" | cut -d ' ' -f 1)" = "$config_checksum"
+
+sync_noop_output=$(mktemp)
+sync_noop_clean=$(mktemp)
+run_sync_under_pty "$sync_noop_output"
+strip_ansi "$sync_noop_output" > "$sync_noop_clean"
+grep -Eq 'tokens[[:space:]]+input hit 0[[:space:]]+input miss 0[[:space:]]+output 0' "$sync_noop_clean"
+grep -Eq 'sync [0-9a-f]{12}' "$sync_noop_clean"
+if grep -Eq '(discovery|answer)[[:space:]]' "$sync_noop_clean"; then
+  echo "No-op sync footer unexpectedly claimed an LLM model." >&2
+  exit 1
+fi
+rm -f "$sync_output" "$sync_clean" "$sync_noop_output" "$sync_noop_clean"
 
 # Step 6: Live execution
 echo "==> Running live smoke test..."

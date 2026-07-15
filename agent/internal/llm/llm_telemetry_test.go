@@ -94,6 +94,54 @@ func TestEmitCacheUsageEmitsPlainUsageWithoutCacheDetails(t *testing.T) {
 	}
 }
 
+func TestEmitCacheUsageNotifiesGeneralUsageObserver(t *testing.T) {
+	var gotModel ResolvedModel
+	var got UsageInfo
+	ctx := WithStage(context.Background(), "answer")
+	ctx = WithUsageObserver(ctx, func(model ResolvedModel, usage UsageInfo) {
+		gotModel = model
+		got = usage
+	})
+	discount := 0.5
+	emitCacheUsage(ctx, ResolvedModel{ProviderName: "example", Model: "answer-model"}, &responseUsage{
+		PromptTokens:     100,
+		CompletionTokens: 25,
+		CacheDiscount:    &discount,
+		PromptTokensDetails: &promptTokensDetails{
+			CachedTokens:     40,
+			CacheWriteTokens: 10,
+		},
+	})
+
+	if gotModel.Model != "answer-model" || gotModel.ProviderName != "example" {
+		t.Fatalf("observer model = %+v", gotModel)
+	}
+	if !got.UsageAvailable || got.Stage != "answer" || got.PromptTokens != 100 || got.CompletionTokens != 25 || got.CachedTokens != 40 || got.CacheWriteTokens != 10 {
+		t.Fatalf("observer usage = %+v", got)
+	}
+	if got.CacheDiscount == nil || *got.CacheDiscount != discount {
+		t.Fatalf("observer discount = %v", got.CacheDiscount)
+	}
+}
+
+func TestEmitCacheUsageNotifiesGeneralObserverWithoutProviderUsage(t *testing.T) {
+	called := false
+	ctx := WithStage(context.Background(), "file-discovery")
+	ctx = WithUsageObserver(ctx, func(model ResolvedModel, usage UsageInfo) {
+		called = true
+		if model.Model != "fallback-model" {
+			t.Fatalf("observer model = %+v", model)
+		}
+		if usage.UsageAvailable || usage.Stage != "file-discovery" {
+			t.Fatalf("observer usage = %+v", usage)
+		}
+	})
+	emitCacheUsage(ctx, ResolvedModel{Model: "fallback-model"}, nil)
+	if !called {
+		t.Fatal("usage observer was not called")
+	}
+}
+
 func bytesFields(data []byte) [][]byte {
 	rows := bytes.Split(bytes.TrimSpace(data), []byte("\n"))
 	out := make([][]byte, 0, len(rows))

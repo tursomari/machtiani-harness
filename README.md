@@ -214,6 +214,12 @@ mct-agent project show
 mct-agent project show --json
 ```
 
+Before starting an agent session at a new project commit, run `mct-agent sync`.
+On an interactive terminal, sync keeps its existing success message and shows
+the same two-line elapsed-time and token footer as `run`, with the actual
+`discovery` and `answer` models used by the operation. Redirected output remains
+script-safe and contains only the ordinary success or error message.
+
 Use the configuration manager for follow-up changes:
 
 ```

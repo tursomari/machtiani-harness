@@ -275,10 +275,10 @@ func TestFormatterFooterIncludesModeAndModelStatus(t *testing.T) {
 			Output:    7007,
 		},
 		Models: FooterModelMetadata{
-			OrchestratorLabel:     "deepseek-v4-flash",
-			OrchestratorReasoning: "medium",
-			ShellAgentLabel:       "deepseek-v4-flash",
-			ShellAgentReasoning:   "medium",
+			Models: []FooterModelDisplay{
+				{Role: "planner", Label: "deepseek-v4-flash", Reasoning: "medium"},
+				{Role: "shell", Label: "deepseek-v4-flash", Reasoning: "medium"},
+			},
 		},
 	})
 	time.Sleep(50 * time.Millisecond)
@@ -290,6 +290,52 @@ func TestFormatterFooterIncludesModeAndModelStatus(t *testing.T) {
 		t.Fatalf("expected mode metadata to stay out of normal output\nGot: %s", output)
 	}
 	_ = f
+}
+
+func TestFormatterFooterSupportsSyncIdentityAndDynamicRoles(t *testing.T) {
+	f, bus, _ := newTestFormatter()
+	defer bus.Close()
+	f.timerEnabled = true
+	f.width = 180
+
+	f.handleSessionStarted(SessionStartedEvent{
+		Identity: FooterIdentity{Label: "sync", Value: "abcdef123456"},
+	})
+	f.handleFooterModelsUpdated(FooterModelsUpdatedEvent{Models: FooterModelMetadata{
+		Models: []FooterModelDisplay{
+			{Role: "discovery", Label: "provider:discovery-model", Reasoning: "low"},
+			{Role: "answer", Label: "provider:answer-model", Reasoning: "high"},
+		},
+	}})
+	f.handleTokenUsageUpdated(TokenUsageUpdatedEvent{InputHit: 40, InputMiss: 60, Output: 25})
+
+	lines := f.finalFooterLinesLocked()
+	if len(lines) != 2 {
+		t.Fatalf("footer lines = %#v", lines)
+	}
+	requireContains(t, lines[0], "tokens  input hit 40  input miss 60  output 25")
+	requireContains(t, lines[1], "sync abcdef123456  discovery provider:discovery-model low  answer provider:answer-model high")
+}
+
+func TestFormatterFooterSyncNoOpStillHasTwoLinesAndSignalsDone(t *testing.T) {
+	f, bus, _ := newTestFormatter()
+	defer bus.Close()
+	f.timerEnabled = true
+	f.width = 120
+	f.handleSessionStarted(SessionStartedEvent{
+		Identity: FooterIdentity{Label: "sync", Value: "abcdef123456"},
+	})
+
+	lines := f.finalFooterLinesLocked()
+	if len(lines) != 2 || lines[1] != "sync abcdef123456" {
+		t.Fatalf("footer lines = %#v", lines)
+	}
+	f.handleSessionEnded(SessionEndedEvent{})
+	select {
+	case <-f.Done():
+	default:
+		t.Fatal("formatter completion was not signaled")
+	}
 }
 
 func TestFormatterFooterStylesModeAsBoldBeauty(t *testing.T) {
@@ -341,10 +387,10 @@ func TestFormatterSessionEndedPrintsFinalFooterAfterOutput(t *testing.T) {
 			Output:    1000,
 		},
 		Models: FooterModelMetadata{
-			OrchestratorLabel:     "openrouter:z-ai/glm-5.2",
-			OrchestratorReasoning: "high",
-			ShellAgentLabel:       "deepseek:deepseek-v4-pro",
-			ShellAgentReasoning:   "max",
+			Models: []FooterModelDisplay{
+				{Role: "planner", Label: "openrouter:z-ai/glm-5.2", Reasoning: "high"},
+				{Role: "shell", Label: "deepseek:deepseek-v4-pro", Reasoning: "max"},
+			},
 		},
 	})
 	bus.Emit(RawStringEvent{Text: "=== SESSION COMPLETE ==="})
@@ -394,10 +440,10 @@ func TestFormatterFooterDegradesForNarrowWidth(t *testing.T) {
 	}}
 	f.activeModeTask = 0
 	f.footerModels = FooterModelMetadata{
-		OrchestratorLabel:     "very-long-orchestrator-model-label",
-		OrchestratorReasoning: "medium",
-		ShellAgentLabel:       "very-long-shell-agent-model-label",
-		ShellAgentReasoning:   "high",
+		Models: []FooterModelDisplay{
+			{Role: "planner", Label: "very-long-orchestrator-model-label", Reasoning: "medium"},
+			{Role: "shell", Label: "very-long-shell-agent-model-label", Reasoning: "high"},
+		},
 	}
 
 	lines := f.formatFooterLinesLocked(42*time.Second, 2)
@@ -429,10 +475,10 @@ func TestFormatterFooterUsesAvailableWidthForModelLabels(t *testing.T) {
 	}}
 	f.activeModeTask = 0
 	f.footerModels = FooterModelMetadata{
-		OrchestratorLabel:     "very-long-orchestrator-model-label",
-		OrchestratorReasoning: "medium",
-		ShellAgentLabel:       "very-long-shell-agent-model-label",
-		ShellAgentReasoning:   "high",
+		Models: []FooterModelDisplay{
+			{Role: "planner", Label: "very-long-orchestrator-model-label", Reasoning: "medium"},
+			{Role: "shell", Label: "very-long-shell-agent-model-label", Reasoning: "high"},
+		},
 	}
 
 	lines := f.formatFooterLinesLocked(42*time.Second, 2)

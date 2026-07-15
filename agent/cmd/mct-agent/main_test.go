@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/tursomari/machtiani/agent/internal/llm"
+	"github.com/tursomari/machtiani/agent/internal/mct/readmesync"
 	"github.com/tursomari/machtiani/agent/internal/session"
 )
 
@@ -28,14 +29,53 @@ func TestSyncCommandUsesHeadCommit(t *testing.T) {
 	origWD := mustChdir(t, repoDir)
 	defer mustChdir(t, origWD)
 
-	exitCode := handleSyncCommand(nil)
+	var exitCode int
+	stdout := captureStdout(t, func() {
+		exitCode = handleSyncCommand(nil)
+	})
 	if exitCode != 0 {
 		t.Fatalf("expected exit code 0, got %d", exitCode)
+	}
+	if !strings.Contains(stdout, "Readme synced for commit ") {
+		t.Fatalf("expected sync success output, got %q", stdout)
+	}
+	if strings.Contains(stdout, "tokens") || strings.Contains(stdout, "sync ") {
+		t.Fatalf("redirected sync output should not include the terminal footer, got %q", stdout)
 	}
 
 	readmePath := filepath.Join(repoDir, ".machtiani", "artifacts", "readme", "internal-readme.md")
 	if _, err := os.Stat(readmePath); err != nil {
 		t.Fatalf("expected readme file at %s: %v", readmePath, err)
+	}
+}
+
+func TestSyncCommandPreservesErrorOutputWhenFooterIsNotTerminal(t *testing.T) {
+	originalRun := readmeSyncRunFn
+	t.Cleanup(func() { readmeSyncRunFn = originalRun })
+	readmeSyncRunFn = func(context.Context, readmesync.Options) error {
+		return errors.New("synthetic sync failure")
+	}
+
+	prepareTestConfig(t)
+	t.Setenv("OPENAI_API_KEY", "test-key")
+	t.Setenv("OPENAI_BASE_URL", "https://example.com/v1")
+	t.Setenv("OPENAI_MODEL", "test-model")
+	repoDir := initTestRepo(t)
+	origWD := mustChdir(t, repoDir)
+	defer mustChdir(t, origWD)
+
+	var exitCode int
+	stderr := captureStderr(t, func() {
+		exitCode = handleSyncCommand(nil)
+	})
+	if exitCode != 1 {
+		t.Fatalf("expected exit code 1, got %d", exitCode)
+	}
+	if !strings.Contains(stderr, "Readme sync failed: synthetic sync failure") {
+		t.Fatalf("unexpected stderr: %q", stderr)
+	}
+	if strings.Contains(stderr, "tokens") {
+		t.Fatalf("redirected error output should not include the terminal footer: %q", stderr)
 	}
 }
 

@@ -154,16 +154,19 @@ func TestFooterModelMetadataIncludesReasoningAndShellFallback(t *testing.T) {
 
 	meta := footerModelMetadata(models)
 
-	if got := meta.OrchestratorLabel; got != "provider:orch-model" {
+	if len(meta.Models) != 2 {
+		t.Fatalf("footer models = %+v", meta.Models)
+	}
+	if got := meta.Models[0].Label; got != "provider:orch-model" {
 		t.Fatalf("orchestrator label = %q", got)
 	}
-	if got := meta.OrchestratorReasoning; got != "medium" {
+	if got := meta.Models[0].Reasoning; got != "medium" {
 		t.Fatalf("orchestrator reasoning = %q", got)
 	}
-	if got := meta.ShellAgentLabel; got != meta.OrchestratorLabel {
-		t.Fatalf("expected shell label to fall back to orchestrator, got %q want %q", got, meta.OrchestratorLabel)
+	if got := meta.Models[1].Label; got != meta.Models[0].Label {
+		t.Fatalf("expected shell label to fall back to orchestrator, got %q want %q", got, meta.Models[0].Label)
 	}
-	if got := meta.ShellAgentReasoning; got != "medium" {
+	if got := meta.Models[1].Reasoning; got != "medium" {
 		t.Fatalf("shell reasoning = %q", got)
 	}
 }

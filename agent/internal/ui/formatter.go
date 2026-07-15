@@ -78,12 +78,14 @@ type Formatter struct {
 	lastFooter     []string
 	tokenUsage     TokenUsageUpdatedEvent
 	footerModels   FooterModelMetadata
+	footerIdentity FooterIdentity
 	sessionID      string
 	turnNumber     int
 	modeTasks      []ModeTaskDisplay
 	activeModeTask int
 	manager        *ProcessTimerManager
 	id             string
+	done           chan struct{}
 }
 
 type coordinatedWriter struct {
@@ -126,6 +128,7 @@ func NewFormatter(out io.Writer, bus *EventBus, theme Theme, manager *ProcessTim
 		activeModeTask: -1,
 		manager:        manager,
 		id:             strings.TrimSpace(id),
+		done:           make(chan struct{}),
 	}
 
 	sub := bus.Subscribe()
@@ -145,6 +148,11 @@ func (f *Formatter) CoordinateWriter(writer io.Writer) io.Writer {
 		writer = io.Discard
 	}
 	return coordinatedWriter{formatter: f, writer: writer}
+}
+
+// Done is closed after the final footer has been processed and printed.
+func (f *Formatter) Done() <-chan struct{} {
+	return f.done
 }
 
 // eventLoop processes DisplayEvent values from the subscription channel.
@@ -171,6 +179,8 @@ func (f *Formatter) eventLoop(ch <-chan DisplayEvent) {
 			f.handleNotification(e)
 		case TokenUsageUpdatedEvent:
 			f.handleTokenUsageUpdated(e)
+		case FooterModelsUpdatedEvent:
+			f.handleFooterModelsUpdated(e)
 		case TurnStatusUpdatedEvent:
 			f.handleTurnStatusUpdated(e)
 		case FinalAnswerEvent:
@@ -199,7 +209,11 @@ func (f *Formatter) handleSessionStarted(e SessionStartedEvent) {
 	}
 	f.tokenUsage = e.TokenUsage
 	f.footerModels = e.Models
+	f.footerIdentity = FooterIdentity{Label: sanitizeLine(e.Identity.Label), Value: sanitizeLine(e.Identity.Value)}
 	f.sessionID = sanitizeLine(e.SessionID)
+	if f.footerIdentity.Label == "" && f.sessionID != "" {
+		f.footerIdentity = FooterIdentity{Label: "session", Value: f.sessionID}
+	}
 	if e.Turn > 0 {
 		f.turnNumber = e.Turn
 	}
@@ -223,6 +237,7 @@ func (f *Formatter) handleSessionEnded(_ SessionEndedEvent) {
 		f.manager.UnregisterDisplay(f.id)
 	}
 	f.printFinalFooterLinesLocked(finalFooter)
+	close(f.done)
 }
 
 func (f *Formatter) handlePromptStarted(e PromptStartedEvent) {
@@ -374,6 +389,12 @@ func (f *Formatter) handleNotification(e NotificationEvent) {
 
 func (f *Formatter) handleTokenUsageUpdated(e TokenUsageUpdatedEvent) {
 	f.tokenUsage = e
+	f.ensureTimerLocked()
+	f.renderTimerLocked()
+}
+
+func (f *Formatter) handleFooterModelsUpdated(e FooterModelsUpdatedEvent) {
+	f.footerModels = cloneFooterModelMetadata(e.Models)
 	f.ensureTimerLocked()
 	f.renderTimerLocked()
 }
@@ -884,7 +905,11 @@ func (f *Formatter) formatFooterLinesLocked(elapsed time.Duration, lineCount int
 	if lineCount <= 1 {
 		return []string{tokenLine}
 	}
-	statusLine := formatStatusFooterLine(f.modeTasks, f.activeModeTask, f.turnNumber, f.sessionID, f.footerModels, width)
+	identity := f.footerIdentity
+	if identity.Label == "" && f.sessionID != "" {
+		identity = FooterIdentity{Label: "session", Value: f.sessionID}
+	}
+	statusLine := formatStatusFooterLine(f.modeTasks, f.activeModeTask, f.turnNumber, identity, f.footerModels, width)
 	if statusLine == "" {
 		return []string{tokenLine, ""}
 	}
@@ -946,12 +971,14 @@ func (f *Formatter) styleFooterLinesLocked(lines []string) []string {
 			if f.turnNumber > 0 {
 				highlights = append(highlights, footerHighlight{text: formatTurnFooterSegment(f.turnNumber), role: presentation.RoleTruth, bold: true})
 			}
-			if f.sessionID != "" {
+			if f.footerIdentity.Value != "" {
+				highlights = append(highlights, footerHighlight{text: f.footerIdentity.Value, role: presentation.RoleProvenance})
+			} else if f.sessionID != "" {
 				highlights = append(highlights, footerHighlight{text: f.sessionID, role: presentation.RoleProvenance})
 			}
-			for _, label := range []string{f.footerModels.OrchestratorLabel, f.footerModels.ShellAgentLabel} {
-				if label != "" {
-					highlights = append(highlights, footerHighlight{text: label, role: presentation.RoleProvenance})
+			for _, model := range f.footerModels.Models {
+				if model.Label != "" {
+					highlights = append(highlights, footerHighlight{text: model.Label, role: presentation.RoleProvenance})
 				}
 			}
 			if task := f.activeFooterTaskLocked(); task != nil {
@@ -1081,21 +1108,21 @@ func formatTokenFooterLine(elapsed time.Duration, usage TokenUsageUpdatedEvent, 
 	return truncate(candidates[len(candidates)-1], width)
 }
 
-func formatStatusFooterLine(tasks []ModeTaskDisplay, active int, turn int, sessionID string, models FooterModelMetadata, width int) string {
+func formatStatusFooterLine(tasks []ModeTaskDisplay, active int, turn int, identity FooterIdentity, models FooterModelMetadata, width int) string {
 	task := formatModeTaskFooterSegment(tasks, active, turn, width)
-	session := formatSessionFooterSegment(sessionID)
-	modelWidth := availableModelFooterWidth(width, task, session)
+	identitySegment := formatFooterIdentitySegment(identity)
+	modelWidth := availableModelFooterWidth(width, task, identitySegment)
 	modelsWithReasoning := formatModelFooterSegment(models, true, 0)
 	modelsWithoutReasoning := formatModelFooterSegment(models, false, 0)
 	modelsTruncated := fitModelFooterSegment(models, false, modelWidth)
-	candidates := compactFooterCandidates(task, session, modelsWithReasoning, modelsWithoutReasoning, modelsTruncated)
+	candidates := compactFooterCandidates(task, identitySegment, modelsWithReasoning, modelsWithoutReasoning, modelsTruncated)
 	for _, candidate := range candidates {
 		if fitsWidth(candidate, width) {
 			return candidate
 		}
 	}
-	if session != "" {
-		return truncate(session, width)
+	if identitySegment != "" {
+		return truncate(identitySegment, width)
 	}
 	if task != "" {
 		return truncate(task, width)
@@ -1146,8 +1173,8 @@ func fitModelFooterSegment(models FooterModelMetadata, includeReasoning bool, wi
 
 func maxFooterModelLabelWidth(models FooterModelMetadata) int {
 	maxWidth := 0
-	for _, label := range []string{models.OrchestratorLabel, models.ShellAgentLabel} {
-		if n := runeLen(sanitizeLine(label)); n > maxWidth {
+	for _, model := range models.Models {
+		if n := runeLen(sanitizeLine(model.Label)); n > maxWidth {
 			maxWidth = n
 		}
 	}
@@ -1186,12 +1213,13 @@ func compactFooterCandidates(task string, session string, modelSegments ...strin
 	return dedupeStrings(candidates)
 }
 
-func formatSessionFooterSegment(sessionID string) string {
-	sessionID = sanitizeLine(sessionID)
-	if sessionID == "" {
+func formatFooterIdentitySegment(identity FooterIdentity) string {
+	label := sanitizeLine(identity.Label)
+	value := sanitizeLine(identity.Value)
+	if label == "" || value == "" {
 		return ""
 	}
-	return "session " + sessionID
+	return label + " " + value
 }
 
 func formatModeTaskFooterSegment(tasks []ModeTaskDisplay, active int, turn int, width int) string {
@@ -1270,18 +1298,22 @@ func joinFooterSegments(segments ...string) string {
 
 func formatModelFooterSegment(models FooterModelMetadata, includeReasoning bool, labelWidth int) string {
 	var parts []string
-	if part := formatOneModelFooterSegment("planner", models.OrchestratorLabel, models.OrchestratorReasoning, includeReasoning, labelWidth); part != "" {
-		parts = append(parts, part)
-	}
-	if part := formatOneModelFooterSegment("shell", models.ShellAgentLabel, models.ShellAgentReasoning, includeReasoning, labelWidth); part != "" {
-		parts = append(parts, part)
+	for _, model := range models.Models {
+		if part := formatOneModelFooterSegment(model.Role, model.Label, model.Reasoning, includeReasoning, labelWidth); part != "" {
+			parts = append(parts, part)
+		}
 	}
 	return strings.Join(parts, "  ")
 }
 
+func cloneFooterModelMetadata(metadata FooterModelMetadata) FooterModelMetadata {
+	return FooterModelMetadata{Models: append([]FooterModelDisplay(nil), metadata.Models...)}
+}
+
 func formatOneModelFooterSegment(prefix, label, reasoning string, includeReasoning bool, labelWidth int) string {
+	prefix = sanitizeLine(prefix)
 	label = sanitizeLine(label)
-	if label == "" {
+	if prefix == "" || label == "" {
 		return ""
 	}
 	if labelWidth > 0 {

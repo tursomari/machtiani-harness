@@ -226,7 +226,7 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 	}
 
 	messages := []llm.Message{{Role: "user", Content: combined}}
-	chatCtx := llm.WithAPIKeyOverrides(ctx, answerRuntime.APIKeyOverrides)
+	chatCtx := llm.WithStage(llm.WithAPIKeyOverrides(ctx, answerRuntime.APIKeyOverrides), "answer")
 	assistant := ""
 	assistantFromShell := false
 	if shellAgentOutput != "" {

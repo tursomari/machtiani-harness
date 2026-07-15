@@ -79,6 +79,8 @@ type contextKeyLLMStage struct{}
 
 type contextKeyCacheUsageObserver struct{}
 
+type contextKeyUsageObserver struct{}
+
 type contextKeyVerbose struct{}
 
 type contextKeyTranscript struct{}
@@ -100,6 +102,21 @@ type CacheUsageInfo struct {
 }
 
 type CacheUsageObserver func(model ResolvedModel, usage CacheUsageInfo)
+
+// UsageInfo describes the usage reported for one successful LLM response.
+// UsageAvailable is false when the provider returned a response without a
+// usage object; Model and Stage are still reported in that case.
+type UsageInfo struct {
+	Stage            string
+	PromptTokens     int
+	CompletionTokens int
+	CachedTokens     int
+	CacheWriteTokens int
+	CacheDiscount    *float64
+	UsageAvailable   bool
+}
+
+type UsageObserver func(model ResolvedModel, usage UsageInfo)
 
 // WithStage annotates the context so LLM request logs can identify the caller stage.
 func WithStage(ctx context.Context, stage string) context.Context {
@@ -165,6 +182,19 @@ func WithCacheUsageObserver(ctx context.Context, observer CacheUsageObserver) co
 		return ctx
 	}
 	return context.WithValue(ctx, contextKeyCacheUsageObserver{}, observer)
+}
+
+// WithUsageObserver attaches an observer for successful LLM calls. Unlike the
+// cache-specific observer, this reports total prompt and completion usage and
+// is also invoked when a provider omits usage data.
+func WithUsageObserver(ctx context.Context, observer UsageObserver) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if observer == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, contextKeyUsageObserver{}, observer)
 }
 
 // WithInputLog configures full redacted LLM request logging for calls made
@@ -1139,6 +1169,21 @@ type promptTokensDetails struct {
 }
 
 func emitCacheUsage(ctx context.Context, model ResolvedModel, usage *responseUsage) {
+	if observer := usageObserverFromContext(ctx); observer != nil {
+		info := UsageInfo{Stage: stageFromContext(ctx), UsageAvailable: usage != nil}
+		if usage != nil {
+			info.PromptTokens = usage.PromptTokens
+			info.CompletionTokens = usage.CompletionTokens
+			if usage.PromptTokensDetails != nil {
+				info.CachedTokens = usage.PromptTokensDetails.CachedTokens
+				info.CacheWriteTokens = usage.PromptTokensDetails.CacheWriteTokens
+			}
+			if usage.CacheDiscount != nil {
+				info.CacheDiscount = usage.CacheDiscount
+			}
+		}
+		observer(model, info)
+	}
 	if usage == nil {
 		return
 	}
@@ -1179,6 +1224,18 @@ func cacheUsageObserverFromContext(ctx context.Context) CacheUsageObserver {
 	}
 	if raw := ctx.Value(contextKeyCacheUsageObserver{}); raw != nil {
 		if observer, ok := raw.(CacheUsageObserver); ok {
+			return observer
+		}
+	}
+	return nil
+}
+
+func usageObserverFromContext(ctx context.Context) UsageObserver {
+	if ctx == nil {
+		return nil
+	}
+	if raw := ctx.Value(contextKeyUsageObserver{}); raw != nil {
+		if observer, ok := raw.(UsageObserver); ok {
 			return observer
 		}
 	}

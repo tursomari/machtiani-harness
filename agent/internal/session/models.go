@@ -55,8 +55,14 @@ func (m modelRuntime) displayLabel() string {
 }
 
 func (m modelRuntime) footerLabel() string {
-	resolvedModel := strings.TrimSpace(m.resolved.Model)
-	provider := strings.TrimSpace(m.resolved.ProviderName)
+	return FooterModelLabel(m.resolved)
+}
+
+// FooterModelLabel returns the compact provider/model label shared by command
+// footers.
+func FooterModelLabel(resolved llm.ResolvedModel) string {
+	resolvedModel := strings.TrimSpace(resolved.Model)
+	provider := strings.TrimSpace(resolved.ProviderName)
 	switch {
 	case provider != "" && resolvedModel != "":
 		return fmt.Sprintf("%s:%s", provider, resolvedModel)
@@ -65,7 +71,7 @@ func (m modelRuntime) footerLabel() string {
 	case provider != "":
 		return provider
 	}
-	return strings.TrimSpace(m.resolved.BaseURL)
+	return strings.TrimSpace(resolved.BaseURL)
 }
 
 type componentModelRuntimes struct {
@@ -223,10 +229,10 @@ func footerModelMetadata(models componentModelRuntimes) ui.FooterModelMetadata {
 		shellAgent = models.orchestrator
 	}
 	return ui.FooterModelMetadata{
-		OrchestratorLabel:     models.orchestrator.footerLabel(),
-		OrchestratorReasoning: reasoningEffort(models.orchestrator),
-		ShellAgentLabel:       shellAgent.footerLabel(),
-		ShellAgentReasoning:   reasoningEffort(shellAgent),
+		Models: []ui.FooterModelDisplay{
+			{Role: "planner", Label: models.orchestrator.footerLabel(), Reasoning: reasoningEffort(models.orchestrator)},
+			{Role: "shell", Label: shellAgent.footerLabel(), Reasoning: reasoningEffort(shellAgent)},
+		},
 	}
 }
 
@@ -235,6 +241,19 @@ func reasoningEffort(runtime modelRuntime) string {
 		return effort
 	}
 	return reasoningEffortFromParams(runtime.resolved.Params)
+}
+
+// PromptRuntimeFooterReasoning returns the effective reasoning label for an
+// observed prompt runtime. Runtime overrides win, followed by the actual model
+// and the configured primary model.
+func PromptRuntimeFooterReasoning(runtime promptsvc.ModelRuntime, actual llm.ResolvedModel) string {
+	if effort := reasoningEffortFromParams(runtime.Extras); effort != "" {
+		return effort
+	}
+	if effort := reasoningEffortFromParams(actual.Params); effort != "" {
+		return effort
+	}
+	return reasoningEffortFromParams(runtime.Resolved.Params)
 }
 
 func reasoningEffortFromParams(params map[string]any) string {

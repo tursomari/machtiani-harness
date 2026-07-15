@@ -3226,6 +3226,68 @@ run_error_case() {
   echo "Passed (error triggered): $case_id (rc=$rc)" >&2
 }
 
+run_sync_footer_case() {
+  local case_id="sync-footer-tty-noop"
+  local out_dir="$TMP_ROOT/$case_id"
+  local output_file="$out_dir/output.txt"
+  mkdir -p "$out_dir"
+
+  set +e
+  "$PYTHON_BIN" - "$MCT_AGENT_BIN" "$REPO_ROOT" "$output_file" <<'PY'
+import errno
+import fcntl
+import os
+import pty
+import struct
+import sys
+import termios
+
+binary, repo_root, output_path = sys.argv[1:]
+pid, fd = pty.fork()
+if pid == 0:
+    os.chdir(repo_root)
+    os.execv(binary, [binary, "sync"])
+
+fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 240, 0, 0))
+chunks = []
+while True:
+    try:
+        chunk = os.read(fd, 65536)
+    except OSError as exc:
+        if exc.errno == errno.EIO:
+            break
+        raise
+    if not chunk:
+        break
+    chunks.append(chunk)
+os.close(fd)
+_, status = os.waitpid(pid, 0)
+with open(output_path, "wb") as fh:
+    fh.write(b"".join(chunks))
+sys.exit(os.waitstatus_to_exitcode(status))
+PY
+  local rc=$?
+  set -e
+  if [[ $rc -ne 0 ]]; then
+    echo "Sync footer PTY command failed: $case_id (rc=$rc)" >&2
+    return 1
+  fi
+
+  local commit
+  commit="$(git -C "$REPO_ROOT" rev-parse --short=12 HEAD)"
+  if ! contains_keywords "Readme synced for commit ${commit}" "$output_file" ||
+     ! contains_keywords "tokens\s+input hit 0\s+input miss 0\s+output 0" "$output_file" ||
+     ! contains_keywords "sync ${commit}" "$output_file"; then
+    echo "Sync footer output missing expected no-op fields: $case_id" >&2
+    return 1
+  fi
+  if contains_keywords "(discovery|answer)\s" "$output_file"; then
+    echo "No-op sync footer unexpectedly claimed an LLM model: $case_id" >&2
+    return 1
+  fi
+  echo "Passed: $case_id" >&2
+}
+
 rm -rf test-out-*
 
 if [[ "$LIVE_MODE" == true ]]; then
@@ -3396,6 +3458,7 @@ test_managed_update_local_remote() {
 
 declare -A TESTS=(
 	["managed_update_local_remote"]="test_managed_update_local_remote"
+	["sync-footer"]="run_sync_footer_case"
   ["test_local_tmp_root_unset_live"]="run_local_tmp_root_unset_live_case"
   ["test_code_no_forge"]="test_code_no_forge"
   ["test_code_forge_initial"]="test_code_forge_initial"
@@ -3459,6 +3522,7 @@ fi
 if [[ $# -eq 0 ]]; then
 # Per-component flag coverage.
 run_test_case "managed_update_local_remote" test_managed_update_local_remote
+run_test_case "sync_footer" run_sync_footer_case
 run_test_case "mode_prompt_layers" run_mode_prompt_layers_case
 
 # Resume without mode: verify shell-agent system prompt survives

@@ -16,6 +16,7 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
 	"github.com/tursomari/machtiani/agent/internal/mct/readmesync"
+	"github.com/tursomari/machtiani/agent/internal/presentation"
 	"github.com/tursomari/machtiani/agent/internal/session"
 	shellagent "github.com/tursomari/machtiani/agent/internal/shell-agent"
 	"github.com/tursomari/machtiani/agent/internal/ui"
@@ -29,6 +30,7 @@ var (
 
 	readmeHeadCommitFn       = readmesync.HeadCommit
 	readmeCommitForProjectFn = readmesync.READMECommitForProject
+	readmeSyncRunFn          = readmesync.Run
 	sessionRunFn             = session.Run
 )
 
@@ -573,7 +575,25 @@ func handleSyncCommand(args []string) int {
 	if globalCfg.Prompts != nil {
 		mctPrompts = globalCfg.Prompts.MCT
 	}
-	if err := readmesync.Run(context.Background(), readmesync.Options{
+	themeName := string(presentation.ProfileTerminal)
+	if globalCfg.UI != nil {
+		themeName = globalCfg.UI.Theme
+	}
+	presentationTheme, err := presentation.Resolve(themeName, os.Stdout)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Error resolving UI theme:", err)
+		return 2
+	}
+	eventBus := ui.NewEventBus(64)
+	formatter := ui.NewFormatter(os.Stdout, eventBus, ui.DefaultTheme(presentationTheme), ui.NewProcessTimerManager(), "sync-"+shortCommit(commit))
+	stdout := formatter.CoordinateWriter(os.Stdout)
+	stderr := formatter.CoordinateWriter(os.Stderr)
+	tracker := newSyncFooterTracker(eventBus, runtimes)
+	eventBus.Emit(ui.SessionStartedEvent{
+		Identity: ui.FooterIdentity{Label: "sync", Value: shortCommit(commit)},
+	})
+	ctx := llm.WithUsageObserver(context.Background(), tracker.Observe)
+	syncErr := readmeSyncRunFn(ctx, readmesync.Options{
 		Commit:               commit,
 		Verbose:              cfg.Verbose,
 		ContextLength:        cfg.ContextLength,
@@ -581,12 +601,18 @@ func handleSyncCommand(args []string) int {
 		AnswerRuntime:        runtimes.Answer,
 		FileDiscoveryRuntime: runtimes.FileDiscovery,
 		Prompts:              mctPrompts,
-	}); err != nil {
-		fmt.Fprintln(os.Stderr, "Readme sync failed:", err)
+	})
+	if syncErr != nil {
+		fmt.Fprintln(stderr, "Readme sync failed:", syncErr)
+	} else {
+		fmt.Fprintf(stdout, "Readme synced for commit %s\n", shortCommit(commit))
+	}
+	eventBus.Emit(ui.SessionEndedEvent{})
+	<-formatter.Done()
+	eventBus.Close()
+	if syncErr != nil {
 		return 1
 	}
-
-	fmt.Printf("Readme synced for commit %s\n", shortCommit(commit))
 	return 0
 }
 

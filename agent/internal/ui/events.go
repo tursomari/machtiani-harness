@@ -20,6 +20,7 @@ const (
 // SessionStartedEvent signals the beginning of an agent session.
 type SessionStartedEvent struct {
 	SessionID  string
+	Identity   FooterIdentity
 	Goal       string
 	Turn       int
 	Elapsed    time.Duration
@@ -96,6 +97,12 @@ type TokenUsageUpdatedEvent struct {
 
 func (e TokenUsageUpdatedEvent) Type() string { return "TokenUsageUpdated" }
 
+// FooterIdentity identifies the operation summarized by the footer.
+type FooterIdentity struct {
+	Label string
+	Value string
+}
+
 // TurnStatusUpdatedEvent carries the current agent turn for footer display.
 type TurnStatusUpdatedEvent struct {
 	Turn int
@@ -103,13 +110,24 @@ type TurnStatusUpdatedEvent struct {
 
 func (e TurnStatusUpdatedEvent) Type() string { return "TurnStatusUpdated" }
 
-// FooterModelMetadata carries model labels for compact footer display.
-type FooterModelMetadata struct {
-	OrchestratorLabel     string
-	OrchestratorReasoning string
-	ShellAgentLabel       string
-	ShellAgentReasoning   string
+// FooterModelDisplay describes one role/model pair in the compact footer.
+type FooterModelDisplay struct {
+	Role      string
+	Label     string
+	Reasoning string
 }
+
+// FooterModelMetadata carries ordered model labels for compact footer display.
+type FooterModelMetadata struct {
+	Models []FooterModelDisplay
+}
+
+// FooterModelsUpdatedEvent replaces the footer's current model-role list.
+type FooterModelsUpdatedEvent struct {
+	Models FooterModelMetadata
+}
+
+func (e FooterModelsUpdatedEvent) Type() string { return "FooterModelsUpdated" }
 
 // FinalAnswerEvent carries the final rendered answer text.
 type FinalAnswerEvent struct {
