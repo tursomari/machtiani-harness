@@ -56,13 +56,20 @@ export OPENAI_MODEL=gpt-4o-mini
 
 ### Debugging: log full LLM inputs
 
-To dump the full JSON request payload (including the full prompt/messages) for
-every LLM call the agent makes, set a log file path. The file will be appended
-to with timestamped entries.
+Full LLM request logging is disabled by default. To append the full redacted
+JSON request payload (including prompts, messages, and source context) for one
+run to the canonical session log, pass:
 
-WARNING: this writes prompts/context to disk.
+```
+mct-agent run --log-llm-inputs "Explain X and identify root cause"
+```
 
-Option 1: environment variable
+WARNING: this may write sensitive prompts and source material to disk, and the
+file can grow quickly. The log is diagnostic only and is not used for resume.
+
+For automation, an explicit environment path also enables logging and takes
+precedence over the flag's canonical destination:
+
 ```
 export MCT_LLM_INPUT_LOG=.machtiani/llm-input.log
 ```
@@ -70,15 +77,8 @@ export MCT_LLM_INPUT_LOG=.machtiani/llm-input.log
 Optional: set `MCT_LLM_STAGE` to tag log entries when a stage isn't explicitly
 set by the caller.
 
-Option 2: config file
-```toml
-[debug]
-llm_input_log_path = ".machtiani/llm-input.log"
-```
-Run the agent:
-```
-mct-agent run "Explain X and identify root cause" --verbose
-```
+There is deliberately no persistent configuration switch that silently enables
+full input logging for future runs.
 
 ## Usage
 ```

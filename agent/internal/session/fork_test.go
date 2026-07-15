@@ -106,6 +106,24 @@ func TestForkSessionSuccess(t *testing.T) {
 	if err := os.WriteFile(convPath, marshaled, 0o644); err != nil {
 		t.Fatalf("write conversation: %v", err)
 	}
+	srcDir, err := artifacts.SessionDirectory(sourceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for path, contents := range map[string]string{
+		filepath.Join(srcDir, "trajectory", "agent.jsonl"):           "agent\n",
+		filepath.Join(srcDir, "artifacts", "llm", "inputs.jsonl"):    "full input\n",
+		filepath.Join(srcDir, "shell-agent", "1", "trajectory.json"): "trajectory\n",
+		filepath.Join(srcDir, "shell-agent", "1", "state.json"):      "state\n",
+		filepath.Join(srcDir, "shell-agent", "2", "state.json"):      "state-only\n",
+	} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	newID, err := ForkSession(sourceID)
 	if err != nil {
@@ -140,6 +158,27 @@ func TestForkSessionSuccess(t *testing.T) {
 	}
 	if len(forkedConv.Messages) != 2 {
 		t.Fatalf("forked conversation messages: got %d want 2", len(forkedConv.Messages))
+	}
+	dstDir, err := artifacts.SessionDirectory(newID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, retained := range []string{
+		filepath.Join(dstDir, "trajectory", "agent.jsonl"),
+		filepath.Join(dstDir, "shell-agent", "1", "trajectory.json"),
+	} {
+		if _, err := os.Stat(retained); err != nil {
+			t.Fatalf("retained fork path missing %s: %v", retained, err)
+		}
+	}
+	for _, excluded := range []string{
+		filepath.Join(dstDir, "artifacts", "llm"),
+		filepath.Join(dstDir, "shell-agent", "1", "state.json"),
+		filepath.Join(dstDir, "shell-agent", "2"),
+	} {
+		if _, err := os.Lstat(excluded); !os.IsNotExist(err) {
+			t.Fatalf("disposable fork path exists %s: %v", excluded, err)
+		}
 	}
 
 	// Verify source conversation state from disk.
@@ -181,8 +220,6 @@ func TestForkSessionSuccess(t *testing.T) {
 	}
 
 	// Cleanup forked session directory.
-	srcDir, _ := artifacts.SessionDirectory(sourceID)
-	dstDir, _ := artifacts.SessionDirectory(newID)
 	t.Cleanup(func() {
 		_ = os.RemoveAll(srcDir)
 		_ = os.RemoveAll(dstDir)

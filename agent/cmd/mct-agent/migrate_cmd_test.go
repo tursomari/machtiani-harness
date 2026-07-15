@@ -109,6 +109,71 @@ func TestMigrateCanKeepVerifiedLegacyState(t *testing.T) {
 	assertFileContents(t, filepath.Join(project, ".machtiani", "sessions", "s1", "answer.md"), "answer\n")
 }
 
+func TestMigrateDryRunReportsDisposableSessionData(t *testing.T) {
+	home, project := setupMigrationTest(t)
+	writeMigrationFixture(t, project)
+	writeDisposableMigrationFixture(t, project)
+
+	stdout, stderr := captureOutput(func() {
+		if code := handleMigrateCommand([]string{"--dry-run", "--json", "--no-interactive"}); code != 0 {
+			t.Fatalf("migrate dry-run exit = %d", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("stderr = %q", stderr)
+	}
+	var report migrationReport
+	if err := json.Unmarshal([]byte(stdout), &report); err != nil {
+		t.Fatalf("decode report: %v\n%s", err, stdout)
+	}
+	if report.Files != 5 || report.SkippedLLMInputFiles != 1 || report.SkippedLLMInputBytes != int64(len("full input")) {
+		t.Fatalf("dry-run report = %#v", report)
+	}
+	if report.SkippedShellAgentStateFiles != 2 || report.SkippedShellAgentStateBytes != int64(2*len("state")) {
+		t.Fatalf("dry-run state stats = %#v", report)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".machtiani", report.UUID)); !os.IsNotExist(err) {
+		t.Fatalf("dry-run store stat = %v", err)
+	}
+}
+
+func TestMigrateExcludesDisposableSessionDataWithoutEmptyDirectories(t *testing.T) {
+	home, project := setupMigrationTest(t)
+	writeMigrationFixture(t, project)
+	writeDisposableMigrationFixture(t, project)
+	migrateNow = func() time.Time { return time.Date(2026, 7, 14, 20, 0, 0, 0, time.UTC) }
+	t.Cleanup(func() { migrateNow = time.Now })
+
+	stdout, stderr := captureOutput(func() {
+		if code := handleMigrateCommand([]string{"--no-interactive", "--yes", "--json"}); code != 0 {
+			t.Fatalf("migrate exit = %d", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("stderr = %q", stderr)
+	}
+	var report migrationReport
+	if err := json.Unmarshal([]byte(stdout), &report); err != nil {
+		t.Fatal(err)
+	}
+	store := filepath.Join(home, ".machtiani", report.UUID)
+	for _, excluded := range []string{
+		filepath.Join(store, "sessions", "s1", "artifacts", "llm", "inputs.jsonl"),
+		filepath.Join(store, "sessions", "s1", "shell-agent", "1", "state.json"),
+		filepath.Join(store, "sessions", "s1", "shell-agent", "2"),
+	} {
+		if _, err := os.Lstat(excluded); !os.IsNotExist(err) {
+			t.Fatalf("excluded path exists %s: %v", excluded, err)
+		}
+	}
+	assertFileContents(t, filepath.Join(store, "sessions", "s1", "trajectory", "agent.jsonl"), "agent\n")
+	assertFileContents(t, filepath.Join(store, "sessions", "s1", "shell-agent", "1", "trajectory.json"), "trajectory\n")
+
+	archive := filepath.Join(project, ".machtiani.legacy-20260714T200000Z")
+	assertFileContents(t, filepath.Join(archive, "sessions", "s1", "artifacts", "llm", "inputs.jsonl"), "full input")
+	assertFileContents(t, filepath.Join(archive, "sessions", "s1", "shell-agent", "2", "state.json"), "state")
+}
+
 func setupMigrationTest(t *testing.T) (home, project string) {
 	t.Helper()
 	home = t.TempDir()
@@ -136,6 +201,24 @@ func writeMigrationFixture(t *testing.T, project string) {
 		filepath.Join(project, ".machtiani", "config.toml"):                               "default_model = \"fixture\"\n",
 		filepath.Join(project, ".machtiani", "sessions", "s1", "answer.md"):               "answer\n",
 		filepath.Join(project, ".machtiani", "artifacts", "readme", "internal-readme.md"): "background\n",
+	} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func writeDisposableMigrationFixture(t *testing.T, project string) {
+	t.Helper()
+	for path, contents := range map[string]string{
+		filepath.Join(project, ".machtiani", "sessions", "s1", "artifacts", "llm", "inputs.jsonl"):    "full input",
+		filepath.Join(project, ".machtiani", "sessions", "s1", "trajectory", "agent.jsonl"):           "agent\n",
+		filepath.Join(project, ".machtiani", "sessions", "s1", "shell-agent", "1", "state.json"):      "state",
+		filepath.Join(project, ".machtiani", "sessions", "s1", "shell-agent", "1", "trajectory.json"): "trajectory\n",
+		filepath.Join(project, ".machtiani", "sessions", "s1", "shell-agent", "2", "state.json"):      "state",
 	} {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatal(err)

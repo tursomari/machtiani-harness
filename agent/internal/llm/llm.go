@@ -17,10 +17,10 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
-	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
 	"github.com/tursomari/machtiani/agent/internal/presentation"
 	"github.com/tursomari/machtiani/agent/internal/trajectory"
 )
@@ -82,6 +82,16 @@ type contextKeyCacheUsageObserver struct{}
 type contextKeyVerbose struct{}
 
 type contextKeyTranscript struct{}
+
+type contextKeyLLMInputRecorder struct{}
+
+type llmInputRecorder struct {
+	path     string
+	warnings io.Writer
+	mu       sync.Mutex
+	disabled bool
+	warned   bool
+}
 
 type CacheUsageInfo struct {
 	CachedTokens     int
@@ -157,38 +167,98 @@ func WithCacheUsageObserver(ctx context.Context, observer CacheUsageObserver) co
 	return context.WithValue(ctx, contextKeyCacheUsageObserver{}, observer)
 }
 
-func llmInputLogPath() string {
+// WithInputLog configures full redacted LLM request logging for calls made
+// with ctx. MCT_LLM_INPUT_LOG remains the highest-precedence explicit path.
+func WithInputLog(ctx context.Context, defaultPath string, warnings io.Writer) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	path := strings.TrimSpace(os.Getenv(llmInputLogEnv))
+	if path == "" {
+		path = strings.TrimSpace(defaultPath)
+	}
+	if path == "" {
+		return ctx
+	}
+	if warnings == nil {
+		warnings = os.Stderr
+	}
+	recorder := &llmInputRecorder{path: path, warnings: warnings}
+	return context.WithValue(ctx, contextKeyLLMInputRecorder{}, recorder)
+}
+
+func llmInputLogPath(ctx context.Context) string {
 	if env := strings.TrimSpace(os.Getenv(llmInputLogEnv)); env != "" {
 		return env
 	}
-	if sid := strings.TrimSpace(os.Getenv("MACHTIANI_SESSION_ID")); sid != "" {
-		if p, err := artifacts.SessionLLMInputsFile(sid); err == nil {
-			return p
-		}
+	if recorder, ok := llmInputRecorderFromContext(ctx); ok {
+		return recorder.path
 	}
 	return ""
 }
 
-func appendLLMInputLog(path string, payload any) {
-	trimmed := strings.TrimSpace(path)
-	if trimmed == "" {
+func llmInputRecorderFromContext(ctx context.Context) (*llmInputRecorder, bool) {
+	if ctx == nil {
+		return nil, false
+	}
+	recorder, ok := ctx.Value(contextKeyLLMInputRecorder{}).(*llmInputRecorder)
+	return recorder, ok && recorder != nil
+}
+
+func appendLLMInputLog(ctx context.Context, payload any) {
+	path := llmInputLogPath(ctx)
+	if path == "" {
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(trimmed), 0o755); err != nil {
+	if recorder, ok := llmInputRecorderFromContext(ctx); ok && recorder.path == path {
+		recorder.append(payload)
 		return
+	}
+	// Preserve MCT_LLM_INPUT_LOG for callers outside a managed session. The
+	// session path uses the recorder above so failures are warned once.
+	_ = appendLLMInputLogFile(path, payload)
+}
+
+func (r *llmInputRecorder) append(payload any) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.disabled {
+		return
+	}
+	if err := appendLLMInputLogFile(r.path, payload); err != nil {
+		r.disabled = true
+		if !r.warned {
+			r.warned = true
+			fmt.Fprintf(r.warnings, "Warning: disabling LLM input logging after write failure at %s: %v\n", r.path, err)
+		}
+	}
+}
+
+func appendLLMInputLogFile(path string, payload any) error {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(trimmed), 0o755); err != nil {
+		return err
 	}
 	redacted := redactLLMInput(payload)
 	b, err := json.Marshal(redacted)
 	if err != nil {
-		return
+		return err
 	}
 	f, err := os.OpenFile(trimmed, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
-		return
+		return err
 	}
-	defer f.Close()
-	_, _ = f.Write(b)
-	_, _ = f.WriteString("\n")
+	if _, err := f.Write(append(b, '\n')); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 func redactLLMInput(v any) any {
@@ -1273,7 +1343,7 @@ func chatWithResolvedFallback(ctx context.Context, primary ResolvedModel, fallba
 	if stage == "" {
 		stage = strings.TrimSpace(os.Getenv(llmStageEnv))
 	}
-	appendLLMInputLog(llmInputLogPath(), map[string]any{
+	appendLLMInputLog(ctx, map[string]any{
 		"stage":   stage,
 		"model":   modelSummary(primary),
 		"stream":  stream,

@@ -2164,6 +2164,7 @@ test_code_no_forge() {
   MACHTIANI_CONFIG="$stub_config" \
   timeout 120 "$MCT_AGENT" run \
     --max-turns 2 \
+    --log-llm-inputs \
     \
     --turn-timeout 300 \
     --mode code \
@@ -2420,6 +2421,7 @@ test_code_forge_initial() {
   MACHTIANI_CONFIG="$stub_config" \
   timeout 120 "$MCT_AGENT" run \
     --max-turns 2 \
+    --log-llm-inputs \
     \
     --turn-timeout 300 \
     --mode code-forge \
@@ -2510,6 +2512,7 @@ test_code_forge_resume_with_mode() {
   MACHTIANI_CONFIG="$stub_config" \
   timeout 120 "$MCT_AGENT" run \
     --max-turns 2 \
+    --log-llm-inputs \
     \
     --turn-timeout 300 \
     --mode code-forge \
@@ -2561,6 +2564,7 @@ test_code_forge_resume_with_mode() {
   MACHTIANI_CONFIG="$stub_config" \
   timeout 120 "$MCT_AGENT" run \
     --max-turns 2 \
+    --log-llm-inputs \
     \
     --turn-timeout 300 \
     --session-id "$agent_session" \
@@ -2637,6 +2641,7 @@ test_code_forge_resume_without_mode() {
   MACHTIANI_CONFIG="$stub_config" \
   timeout 120 "$MCT_AGENT" run \
     --max-turns 2 \
+    --log-llm-inputs \
     \
     --turn-timeout 300 \
     --mode code-forge \
@@ -2688,6 +2693,7 @@ test_code_forge_resume_without_mode() {
   MACHTIANI_CONFIG="$stub_config" \
   timeout 120 "$MCT_AGENT" run \
     --max-turns 2 \
+    --log-llm-inputs \
     \
     --turn-timeout 300 \
     --session-id "$agent_session" \
@@ -2763,6 +2769,7 @@ test_code_resume_without_mode_no_forge() {
   MACHTIANI_CONFIG="$stub_config" \
   timeout 120 "$MCT_AGENT" run \
     --max-turns 2 \
+    --log-llm-inputs \
     \
     --turn-timeout 300 \
     --mode code \
@@ -2814,6 +2821,7 @@ test_code_resume_without_mode_no_forge() {
   MACHTIANI_CONFIG="$stub_config" \
   timeout 120 "$MCT_AGENT" run \
     --max-turns 2 \
+    --log-llm-inputs \
     \
     --turn-timeout 300 \
     --session-id "$agent_session" \

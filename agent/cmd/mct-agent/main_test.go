@@ -701,6 +701,24 @@ func TestFileFlagRegisteredInHelp(t *testing.T) {
 	}
 }
 
+func TestLogLLMInputsFlagIsExplicitPerRun(t *testing.T) {
+	cfg := session.Config{}
+	r := newRunFlagSet(&cfg)
+	if cfg.LogLLMInputs {
+		t.Fatal("full LLM input logging must default to disabled")
+	}
+	if err := r.fs.Parse([]string{"--log-llm-inputs"}); err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.LogLLMInputs {
+		t.Fatal("--log-llm-inputs did not enable session input logging")
+	}
+	help := r.fs.Lookup("log-llm-inputs")
+	if help == nil || !strings.Contains(help.Usage, "source material") || !strings.Contains(help.Usage, "grow quickly") {
+		t.Fatalf("warning-oriented flag help missing: %#v", help)
+	}
+}
+
 func TestMarkExplicitModelOverrides(t *testing.T) {
 	cfg := session.Config{}
 	r := newRunFlagSet(&cfg)

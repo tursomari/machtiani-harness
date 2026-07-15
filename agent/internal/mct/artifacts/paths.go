@@ -295,13 +295,3 @@ func ShellAgentTrajectoryPath(sessionID string, turn int) (string, error) {
 	}
 	return filepath.Join(root, "shell-agent", fmt.Sprintf("%d", turn), "trajectory.json"), nil
 }
-
-// ShellAgentStatePath returns the canonical path for the shell-agent
-// state JSON file for a given session and turn number.
-func ShellAgentStatePath(sessionID string, turn int) (string, error) {
-	root, err := SessionDirectory(sessionID)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(root, "shell-agent", fmt.Sprintf("%d", turn), "state.json"), nil
-}

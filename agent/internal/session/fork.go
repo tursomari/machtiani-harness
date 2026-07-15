@@ -10,6 +10,7 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/conversation"
 	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
 	"github.com/tursomari/machtiani/agent/internal/runner"
+	"github.com/tursomari/machtiani/agent/internal/sessionfiles"
 )
 
 // ForkSession creates a copy of an existing session under a new session ID.
@@ -55,54 +56,7 @@ func ForkSession(sourceSessionID string) (string, error) {
 		return "", fmt.Errorf("session directory already exists: %s", dstDir)
 	}
 
-	if err := filepath.WalkDir(srcDir, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-
-		if strings.HasSuffix(d.Name(), ".lock") {
-			if d.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-
-		relPath, err := filepath.Rel(srcDir, path)
-		if err != nil {
-			return fmt.Errorf("resolve relative path: %w", err)
-		}
-
-		destPath := filepath.Join(dstDir, relPath)
-
-		if d.IsDir() {
-			if err := os.MkdirAll(destPath, 0o755); err != nil {
-				return fmt.Errorf("create directory %s: %w", destPath, err)
-			}
-			return nil
-		}
-
-		if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
-			return fmt.Errorf("create parent directory for %s: %w", destPath, err)
-		}
-
-		srcFile, err := os.Open(path)
-		if err != nil {
-			return fmt.Errorf("open source file %s: %w", path, err)
-		}
-		defer srcFile.Close()
-
-		dstFile, err := os.Create(destPath)
-		if err != nil {
-			return fmt.Errorf("create destination file %s: %w", destPath, err)
-		}
-		defer dstFile.Close()
-
-		if _, err := io.Copy(dstFile, srcFile); err != nil {
-			return fmt.Errorf("copy file %s: %w", path, err)
-		}
-
-		return nil
-	}); err != nil {
+	if _, err := copyForkSessionNode(srcDir, dstDir, ""); err != nil {
 		return "", fmt.Errorf("copy session directory: %w", err)
 	}
 
@@ -135,4 +89,77 @@ func ForkSession(sourceSessionID string) (string, error) {
 	}
 
 	return newSessionID, nil
+}
+
+func copyForkSessionNode(source, destination, relativePath string) (bool, error) {
+	info, err := os.Lstat(source)
+	if err != nil {
+		return false, err
+	}
+	if relativePath != "" {
+		if strings.HasSuffix(info.Name(), ".lock") || sessionfiles.Classify(relativePath) != sessionfiles.DisposableNone {
+			return false, nil
+		}
+	}
+
+	switch {
+	case info.IsDir():
+		children, err := os.ReadDir(source)
+		if err != nil {
+			return false, err
+		}
+		retained := false
+		for _, child := range children {
+			childRel := child.Name()
+			if relativePath != "" {
+				childRel = filepath.Join(relativePath, child.Name())
+			}
+			childRetained, err := copyForkSessionNode(filepath.Join(source, child.Name()), filepath.Join(destination, child.Name()), childRel)
+			if err != nil {
+				return false, err
+			}
+			retained = retained || childRetained
+		}
+		return retained, nil
+	case info.Mode().IsRegular():
+		if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
+			return false, err
+		}
+		srcFile, err := os.Open(source)
+		if err != nil {
+			return false, err
+		}
+		dstFile, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, info.Mode().Perm())
+		if err != nil {
+			_ = srcFile.Close()
+			return false, err
+		}
+		_, copyErr := io.Copy(dstFile, srcFile)
+		srcCloseErr := srcFile.Close()
+		dstCloseErr := dstFile.Close()
+		if copyErr != nil {
+			return false, copyErr
+		}
+		if srcCloseErr != nil {
+			return false, srcCloseErr
+		}
+		if dstCloseErr != nil {
+			return false, dstCloseErr
+		}
+		return true, nil
+	case info.Mode()&os.ModeSymlink != 0:
+		target, err := os.Readlink(source)
+		if err != nil {
+			return false, err
+		}
+		if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
+			return false, err
+		}
+		if err := os.Symlink(target, destination); err != nil {
+			return false, err
+		}
+		return true, nil
+	default:
+		return false, fmt.Errorf("unsupported file type: %s", source)
+	}
 }

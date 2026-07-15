@@ -611,6 +611,7 @@ func configureSessionFlags(fs *pflag.FlagSet, cfg *session.Config, paramFlags, p
 	fs.BoolVar(&cfg.TrajectoryStreamTokens, "trajectory-stream-tokens", cfg.TrajectoryStreamTokens, "record LLM token streaming events in the trajectory (disabled by default)")
 	fs.IntVar(&cfg.TrajectoryExcerpt, "trajectory-excerpt", cfg.TrajectoryExcerpt, "excerpt length (in characters) for prompts/responses captured in the trajectory")
 	fs.BoolVar(&cfg.TrajectoryOmitRepoRoot, "trajectory-omit-repo-root", cfg.TrajectoryOmitRepoRoot, "omit repo_root from trajectory events")
+	fs.BoolVar(&cfg.LogLLMInputs, "log-llm-inputs", cfg.LogLLMInputs, "write full redacted LLM prompts/context to the session log; may contain source material and grow quickly")
 	fs.StringVar(&cfg.OpenAIAPIKey, "openai-api-key", "", "OpenAI-compatible API key (overrides env, deprecated)")
 	fs.StringVar(&cfg.OpenAIBaseURL, "openai-base-url", "", "OpenAI-compatible base URL (overrides env, deprecated)")
 	fs.StringVar(&cfg.OpenAIModel, "openai-model", "", "Direct upstream model name (deprecated; prefer --model)")
@@ -715,6 +716,7 @@ func handleSessionCommand(args []string) int {
 		fmt.Fprintln(os.Stderr, "  list    List all sessions")
 		fmt.Fprintln(os.Stderr, "  show    Show details for a specific session")
 		fmt.Fprintln(os.Stderr, "  fork    Fork a session")
+		fmt.Fprintln(os.Stderr, "  prune   Remove disposable session diagnostics and deprecated state")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Use 'mct-agent session <subcommand> --help' for more information.")
 		return 2
@@ -726,6 +728,8 @@ func handleSessionCommand(args []string) int {
 		return handleSessionShowCommand(args[1:])
 	case "fork":
 		return handleSessionForkCommand(args[1:])
+	case "prune":
+		return handleSessionPruneCommand(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown session subcommand: %s\n", args[0])
 		fmt.Fprintln(os.Stderr, "")
@@ -735,6 +739,7 @@ func handleSessionCommand(args []string) int {
 		fmt.Fprintln(os.Stderr, "  list    List all sessions")
 		fmt.Fprintln(os.Stderr, "  show    Show details for a specific session")
 		fmt.Fprintln(os.Stderr, "  fork    Fork a session")
+		fmt.Fprintln(os.Stderr, "  prune   Remove disposable session diagnostics and deprecated state")
 		return 2
 	}
 }

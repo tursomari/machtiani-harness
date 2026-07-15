@@ -14,7 +14,7 @@ type Config struct {
 	AnswerModel             string
 	FileDiscoveryModel      string
 	AgentModel              string
-	TurnTimeout          int
+	TurnTimeout             int
 	DryRun                  bool
 	Verbose                 bool
 	PersistTmpData          bool
@@ -30,28 +30,29 @@ type Config struct {
 	TrajectoryStreamTokens  bool
 	TrajectoryExcerpt       int
 	TrajectoryOmitRepoRoot  bool
-	OpenAIAPIKey          string
-	OpenAIBaseURL         string
-	OpenAIModel           string
-	ShellAgent            bool
-	ShellAgentModel       string
+	LogLLMInputs            bool
+	OpenAIAPIKey            string
+	OpenAIBaseURL           string
+	OpenAIModel             string
+	ShellAgent              bool
+	ShellAgentModel         string
 	// AnswerTag overrides the final-answer tag name used by the
 	// shell-agent parser and the prompt templates. Empty input is
 	// normalised to "answer" downstream; validation of the tag name
 	// happens at the CLI boundary in agent/cmd/mct-agent.
-	AnswerTag             string
-	APIKeyOverrides       map[string]string
+	AnswerTag       string
+	APIKeyOverrides map[string]string
 	// CommandTag overrides the command tag name used by the
 	// shell-agent parser and prompt templates. Defaults to "command".
-	CommandTag string
-	SessionID             string
-	EnableTagFormat       bool
-	PromptText            string
-	Mode                  string
-	ModeInstructionDir    string
+	CommandTag              string
+	SessionID               string
+	EnableTagFormat         bool
+	PromptText              string
+	Mode                    string
+	ModeInstructionDir      string
 	ShellAgentInterruptStep int
-	ShellAgentStepLog      string `json:"shell_agent_step_log,omitempty"`
-	ModelOverrides ModelOverrideFlags
+	ShellAgentStepLog       string `json:"shell_agent_step_log,omitempty"`
+	ModelOverrides          ModelOverrideFlags
 }
 
 // ModelOverrideFlags records which model selectors were explicitly present on
@@ -74,24 +75,24 @@ type BuildInfo struct {
 
 // Options groups the inputs required to run an agent session.
 type Options struct {
-	Config              Config
-	Goal                string
-	OriginalPrompt      string
-	TaskDescription     string
-	PlannerOverlay      string
-	ParamPairs          []string
-	ParamJSON           []string
-	Build               BuildInfo
-	GlobalConfig        llm.Config
-	GlobalConfigPath    string
-	APIKeyOverrides     map[string]string
-	Context             context.Context
-	ProcessTimerManager *ui.ProcessTimerManager
-	Diagnostics         io.Writer
-	PlannerOverride     Planner
-	HasNewInput         bool // true when -t/-f provided on resume (shell-agent starts fresh, no resume attempt)
-	ShellAgentInterruptStep int  // > 0 triggers deterministic interrupt after this many shell-agent steps
-	ShellAgentStepLog      string // path for step-log JSONL file (empty disables)
+	Config                  Config
+	Goal                    string
+	OriginalPrompt          string
+	TaskDescription         string
+	PlannerOverlay          string
+	ParamPairs              []string
+	ParamJSON               []string
+	Build                   BuildInfo
+	GlobalConfig            llm.Config
+	GlobalConfigPath        string
+	APIKeyOverrides         map[string]string
+	Context                 context.Context
+	ProcessTimerManager     *ui.ProcessTimerManager
+	Diagnostics             io.Writer
+	PlannerOverride         Planner
+	HasNewInput             bool   // true when -t/-f provided on resume (shell-agent starts fresh, no resume attempt)
+	ShellAgentInterruptStep int    // > 0 triggers deterministic interrupt after this many shell-agent steps
+	ShellAgentStepLog       string // path for step-log JSONL file (empty disables)
 }
 
 type Result struct {
@@ -124,6 +125,7 @@ type legacyConfig struct {
 	trajectoryStreamTokens  bool
 	trajectoryExcerpt       int
 	trajectoryOmitRepoRoot  bool
+	logLLMInputs            bool
 	openAIAPIKey            string
 	openAIBaseURL           string
 	openAIModel             string
@@ -131,15 +133,15 @@ type legacyConfig struct {
 	shellAgentModel         string
 	// answerTag is propagated alongside ShellAgentModel. The legacy
 	// config struct mirrors Config.AnswerTag (see above).
-	answerTag               string
-	commandTag              string
-	apiKeyOverrides         map[string]string
-	enableTagFormat         bool
-	sessionID               string
-	promptText              string
-	mode                    string
-	modeInstructionDir      string
-	shellAgentStepLog       string
+	answerTag          string
+	commandTag         string
+	apiKeyOverrides    map[string]string
+	enableTagFormat    bool
+	sessionID          string
+	promptText         string
+	mode               string
+	modeInstructionDir string
+	shellAgentStepLog  string
 }
 
 func newLegacyConfig(cfg Config) legacyConfig {
@@ -163,6 +165,7 @@ func newLegacyConfig(cfg Config) legacyConfig {
 		trajectoryStreamTokens:  cfg.TrajectoryStreamTokens,
 		trajectoryExcerpt:       cfg.TrajectoryExcerpt,
 		trajectoryOmitRepoRoot:  cfg.TrajectoryOmitRepoRoot,
+		logLLMInputs:            cfg.LogLLMInputs,
 		openAIAPIKey:            cfg.OpenAIAPIKey,
 		openAIBaseURL:           cfg.OpenAIBaseURL,
 		openAIModel:             cfg.OpenAIModel,

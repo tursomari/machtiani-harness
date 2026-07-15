@@ -16,6 +16,7 @@ import (
 
 	"github.com/tursomari/machtiani/agent/internal/conversation"
 	"github.com/tursomari/machtiani/agent/internal/llm"
+	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
 	"github.com/tursomari/machtiani/agent/internal/mct/readmesync"
 	"github.com/tursomari/machtiani/agent/internal/planner"
 	"github.com/tursomari/machtiani/agent/internal/presentation"
@@ -450,6 +451,15 @@ func runSession(ctx context.Context, opts Options) Result {
 	// Inject verbose flag and transcript into context for cache warning diagnostics.
 	rootCtx = llm.WithVerbose(rootCtx, cfg.verbose)
 	rootCtx = llm.WithTranscript(rootCtx, tr)
+	inputLogPath := ""
+	if cfg.logLLMInputs {
+		inputLogPath, err = artifacts.SessionLLMInputsFile(sessionID)
+		if err != nil {
+			fmt.Fprintln(diagWriter, "Error resolving LLM input log path:", err)
+			return Result{ExitCode: 1, Err: err}
+		}
+	}
+	rootCtx = llm.WithInputLog(rootCtx, inputLogPath, diagWriter)
 	_ = transcriptSetup.recorder // recorder is accessed via runState.recorder
 	defer func() {
 		runState.checkpointTurn(diagWriter)

@@ -298,7 +298,9 @@ mct-agent migrate --no-interactive --yes
 
 Migration copies and checksum-verifies runtime state in the UUID home store
 before writing the marker and archiving migrated source entries beside the
-repository's `.machtiani/` directory. Pass `--keep-legacy` to retain the
+repository's `.machtiani/` directory. Disposable full LLM-input logs and old
+per-turn shell-agent state files are reported but not copied; their source
+copies remain available in the archive. Pass `--keep-legacy` to retain all
 verified source entries in place.
 
 Create one of these files before your first run. A minimal example that targets an OpenRouter alias and runs shell commands locally:
@@ -404,6 +406,7 @@ cache_reanchor_min_cached_tokens = 2048
 Other helpful overrides:
 - `MACHTIANI_CONFIG`: explicit path to the config file.
 - `MACHTIANI_SESSION_ID`: pre-set session ID to use for the current run; overridden by `--session-id` flag.
+- `MCT_LLM_INPUT_LOG`: explicit path for the full redacted LLM request log; this enables logging and overrides `--log-llm-inputs`' canonical session path.
 - `MACHTIANI_THEME`: override `[ui].theme` with `terminal`, `machtiani-dark`, `machtiani-light`, or `none`.
 - `FILE_DISCOVERY_BIN`: override the discovery binary that `mct` invokes.
 
@@ -518,6 +521,26 @@ Show details for a specific session:
 mct-agent session show <session-id>
 ```
 
+Fork a session without duplicating disposable full-input logs or deprecated
+shell-agent state files:
+
+```bash
+mct-agent session fork <session-id>
+```
+
+Inspect or remove disposable data from every inactive session, or from one
+specific session:
+
+```bash
+mct-agent session prune --dry-run
+mct-agent session prune --no-interactive --yes
+mct-agent session prune <session-id> --dry-run
+```
+
+Pruning removes full LLM input logs, deprecated shell-agent `state.json`
+files, and the empty directories they leave behind. It preserves conversations,
+outputs, `trajectory/agent.jsonl`, and shell-agent `trajectory.json` checkpoints.
+
 Both commands support `--json` for machine-readable output:
 ```bash
 mct-agent session list --json
@@ -542,10 +565,12 @@ No manual backup is needed. All context (transcript, goals, artifacts) is preser
 ### Session Artifacts & Trajectory Logs
 
 Every run stores artifacts under `$PROJECT_STORE/sessions/<session-id>/`, including:
-- **`session-state.json`** — persisted session metadata (goal, turn count, transcript path) used for resuming sessions
+- **`artifacts/conversation.json`** — canonical conversation and resumable session state
 - **`chat/agent-transcript.adoc`** — per-turn planning decisions and evidence
 - **`chat/agent-final-answer.md`** — final answer from the orchestrator
 - **`trajectory/agent.jsonl`** — unified trajectory stream with structured telemetry (see below)
+- **`shell-agent/<turn>/trajectory.json`** — shell-agent checkpoint state used to resume interrupted work
+- **`artifacts/llm/inputs.jsonl`** — optional full redacted input log, created only by `--log-llm-inputs` or `MCT_LLM_INPUT_LOG`
 
 The trajectory is enabled by default and can be controlled with the following flags (or their matching `MACHTIANI_TRAJECTORY_*` env vars):
 
