@@ -25,8 +25,12 @@ if [[ "${MCT_RUN_LIVE_INNER:-}" != "1" ]]; then
   mkdir -p "$TEST_HOME"
   git -C "$SOURCE_ROOT" worktree add --detach "$WORKTREE" HEAD >/dev/null
   mkdir -p "$WORKTREE/.machtiani" "$TEST_HOME/.machtiani"
-  if [[ -f "$SOURCE_ROOT/.machtiani/config.toml" ]]; then
-    install -m 0600 "$SOURCE_ROOT/.machtiani/config.toml" "$TEST_HOME/.machtiani/config.toml"
+  SOURCE_CONFIG="$SOURCE_ROOT/.machtiani/config.toml"
+  if [[ ! -f "$SOURCE_CONFIG" ]]; then
+    SOURCE_CONFIG="$SOURCE_ROOT/docs/examples/config.minimal.toml"
+  fi
+  if [[ -f "$SOURCE_CONFIG" ]]; then
+    install -m 0600 "$SOURCE_CONFIG" "$TEST_HOME/.machtiani/config.toml"
   fi
   if [[ -d "$SOURCE_ROOT/.machtiani/templates" ]]; then
     cp -R "$SOURCE_ROOT/.machtiani/templates" "$WORKTREE/.machtiani/templates"
