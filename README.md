@@ -113,6 +113,40 @@ Need the standalone CLIs for development or debugging? Append `--install-periphe
 
 This is primarily for development workflows. Most users should use `mct-agent` directly.
 
+### Managed source installation and updates
+
+Automatic updates use an inspectable Git clone rather than a prebuilt binary.
+Until a public remote is selected, substitute a local or otherwise configured
+Git remote for `<REMOTE>`:
+
+```bash
+git clone --depth 1 --single-branch \
+  <REMOTE> \
+  ~/.machtiani/installations/mct-agent/source
+git -C ~/.machtiani/installations/mct-agent/source \
+  submodule update --init --depth 1 agent/internal/shell-agent
+HOME="$HOME" ~/.machtiani/installations/mct-agent/source/scripts/install.sh --managed
+```
+
+The managed installer records the clone's sanitized `origin`, its default
+branch, and the exact installation target under
+`~/.machtiani/installations/mct-agent/`. It never stores remote credentials;
+use normal Git SSH or credential-helper configuration when authentication is
+needed.
+
+Check or install the current default-branch tip explicitly:
+
+```bash
+mct-agent update --check
+mct-agent update
+mct-agent update --yes --no-interactive
+```
+
+Interactive terminal commands check periodically. Configure the behavior in
+`~/.machtiani/installations/mct-agent/update.toml` with `policy = "prompt"`
+(the default), `"auto"`, `"notify"`, or `"off"`. Update notices use stderr;
+JSON, non-interactive, redirected, help, and version invocations never prompt.
+
 Prefer to see the full sequence? The commands below inline the default install (without metadata ldflags):
 
 ```bash
@@ -700,3 +734,7 @@ Remove the installed binaries (adjust paths to your environment):
 ```
 rm -f ~/.local/bin/mct-agent ~/.local/bin/mct ~/.local/bin/file-discovery ~/.local/bin/shell-agent
 ```
+
+Remove `~/.machtiani/installations/mct-agent/` as well to discard the managed
+source clone and updater state. Project UUID stores and model configuration are
+independent and are not removed by this step.

@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+bash /tests/smoke/update-container.sh
+
 # Step 1: Initialize a clean Git project
 echo "==> Initializing Git project..."
 git init --initial-branch=main

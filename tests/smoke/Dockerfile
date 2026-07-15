@@ -53,6 +53,12 @@ FROM alpine:3.20
 #   expect    – deterministic pseudo-terminal coverage for interactive menus
 RUN apk add --no-cache git ripgrep curl bash sed expect
 
+# Managed updates build from source inside the runtime environment.
+COPY --from=builder /usr/local/go /usr/local/go
+COPY --from=builder /go/pkg/mod /go/pkg/mod
+ENV PATH="/usr/local/go/bin:${PATH}" \
+    GOMODCACHE="/go/pkg/mod"
+
 # Pull built binaries from the builder stage.
 COPY --from=builder /out/bin /usr/local/bin/
 
@@ -60,6 +66,8 @@ COPY --from=builder /out/bin /usr/local/bin/
 # Dockerfile is self-documenting).
 COPY tests/smoke/container.sh /tests/smoke/container.sh
 COPY tests/smoke/config-crud.sh /tests/smoke/config-crud.sh
+COPY tests/smoke/update-container.sh /tests/smoke/update-container.sh
+COPY . /fixtures/mct-source
 
 WORKDIR /workspace
 

@@ -8,12 +8,14 @@ BIN_DIR="${PREFIX}/bin"
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") [--install-peripherals]
+Usage: $(basename "$0") [--managed | --install-peripherals]
 
 Installs the mct-agent binary by default. Pass --install-peripherals to also
 build and install mct, file-discovery, snippet-discovery, and shell-agent
 (for development and debugging only; most users should use mct-agent
 directly).
+Pass --managed when installing from the updater-owned source clone. This
+registers the clone's origin and installation target for automatic updates.
 Environment:
   PREFIX   Destination prefix for the install (default: \$HOME/.local)
 EOF
@@ -26,6 +28,11 @@ log() {
 git_short_commit() {
   local dir="$1"
   git -C "$dir" rev-parse --short=12 HEAD 2>/dev/null || echo "unknown"
+}
+
+git_full_commit() {
+  local dir="$1"
+  git -C "$dir" rev-parse HEAD 2>/dev/null || echo "unknown"
 }
 
 git_dirty_flag() {
@@ -42,11 +49,15 @@ git_dirty_flag() {
 }
 
 INSTALL_PERIPHERALS=false
+MANAGED_INSTALL=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --install-peripherals|--all-binaries)
       INSTALL_PERIPHERALS=true
+      ;;
+    --managed)
+      MANAGED_INSTALL=true
       ;;
     -h|--help)
       usage
@@ -61,6 +72,11 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
+if $MANAGED_INSTALL && $INSTALL_PERIPHERALS; then
+  echo "Error: --managed and --install-peripherals cannot be combined." >&2
+  exit 2
+fi
+
 check_prereq() {
   local cmd="$1"
   local name="$2"
@@ -74,6 +90,17 @@ check_prereq go "Go"
 check_prereq git "Git"
 check_prereq rg "ripgrep (rg)"
 
+if $MANAGED_INSTALL; then
+  if ! git -C "$REPO_ROOT" remote get-url origin >/dev/null 2>&1; then
+    echo "Error: managed installation requires an origin remote." >&2
+    exit 1
+  fi
+  if [[ -n "$(git -C "$REPO_ROOT" status --porcelain --untracked-files=all 2>/dev/null)" ]]; then
+    echo "Error: managed installation requires a clean source checkout." >&2
+    exit 1
+  fi
+fi
+
 mkdir -p "$BIN_DIR"
 log "Installing binaries into $BIN_DIR"
 
@@ -85,17 +112,47 @@ fi
 mkdir -p "$GOCACHE"
 
 log "Building mct-agent"
-AGENT_COMMIT="$(git_short_commit "$REPO_ROOT/agent")"
+AGENT_COMMIT="$(git_full_commit "$REPO_ROOT")"
+AGENT_SHORT_COMMIT="$(git_short_commit "$REPO_ROOT")"
 AGENT_DIRTY="$(git_dirty_flag "$REPO_ROOT/agent")"
-AGENT_VERSION="dev-${AGENT_COMMIT}"
+AGENT_VERSION="dev-${AGENT_SHORT_COMMIT}"
 if [ "$AGENT_DIRTY" = "dirty" ]; then
   AGENT_VERSION="${AGENT_VERSION}-dirty"
 fi
 AGENT_LDFLAGS="-X main.Version=${AGENT_VERSION} -X main.Commit=${AGENT_COMMIT} -X main.BuiltAt=${BUILD_AT} -X main.Dirty=${AGENT_DIRTY}"
+AGENT_TMP="$(mktemp "$BIN_DIR/.mct-agent.XXXXXX")"
+AGENT_BACKUP=""
+cleanup_agent_install() {
+  rm -f "${AGENT_TMP:-}" "${AGENT_BACKUP:-}"
+}
+trap cleanup_agent_install EXIT
 (
   cd "$REPO_ROOT/agent"
-  go build -buildvcs=false -ldflags "$AGENT_LDFLAGS" -o "$BIN_DIR/mct-agent" ./cmd/mct-agent
+  go build -buildvcs=false -ldflags "$AGENT_LDFLAGS" -o "$AGENT_TMP" ./cmd/mct-agent
 )
+chmod 0755 "$AGENT_TMP"
+"$AGENT_TMP" --version >/dev/null
+if [[ -f "$BIN_DIR/mct-agent" ]]; then
+  AGENT_BACKUP="$(mktemp "$BIN_DIR/.mct-agent.previous.XXXXXX")"
+  cp -p "$BIN_DIR/mct-agent" "$AGENT_BACKUP"
+fi
+mv -f "$AGENT_TMP" "$BIN_DIR/mct-agent"
+AGENT_TMP=""
+
+if $MANAGED_INSTALL; then
+  if ! "$BIN_DIR/mct-agent" update register --source "$REPO_ROOT" --prefix "$PREFIX"; then
+    if [[ -n "$AGENT_BACKUP" && -f "$AGENT_BACKUP" ]]; then
+      mv -f "$AGENT_BACKUP" "$BIN_DIR/mct-agent"
+      AGENT_BACKUP=""
+    else
+      rm -f "$BIN_DIR/mct-agent"
+    fi
+    echo "Error: managed installation registration failed; previous binary restored." >&2
+    exit 1
+  fi
+fi
+rm -f "${AGENT_BACKUP:-}"
+AGENT_BACKUP=""
 
 if $INSTALL_PERIPHERALS; then
   log "Building mct and file-discovery"

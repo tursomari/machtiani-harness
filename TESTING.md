@@ -124,6 +124,18 @@ export TEST_MODEL=gpt-4o-mini
 ./tests/smoke/run.sh
 ```
 
+The managed updater has a provider-independent container path that creates a
+local bare Git remote, builds successive commits from source, and proves both
+explicit update and automatic startup update/re-execution:
+
+```bash
+./tests/smoke/run.sh --update-only
+```
+
+This mode requires Docker and Git but no model-provider credentials. The full
+smoke run executes the same updater scenario before its configuration and live
+provider checks.
+
 Prerequisites:
 
 - Docker with a running daemon.
@@ -195,6 +207,9 @@ export TEST_MODEL=gpt-4o-mini
 - Assumes `mct-agent` is on PATH; `./scripts/install.sh` handles this in CI or a clean checkout.
 - `TEST_*` takes precedence over `OPENAI_*`. When neither complete set is available, the script generates stub credentials, writes a temporary `config.toml`, and forces `--dry-run`.
 - Artifacts land in `test-out-*` directories at the repo root; each case includes stdout, stderr, transcripts, and (for live runs) generated assets.
+- The provider-independent `managed_update_local_remote` case exercises the
+  managed installer and explicit updater against an isolated local bare Git
+  remote. It is included in the default suite and can be targeted directly.
 - Optional overrides:
   - `TEST_ORCH_MODEL`, `TEST_FILE_DISCOVERY_MODEL` — preferred per-component remote-model overrides; the corresponding `OPENAI_*` values are fallbacks.
   - `OPENAI_ORCH_MODEL_ALIAS`, `OPENAI_FILE_DISCOVERY_MODEL_ALIAS` — supply config aliases when reusing a shared `config.toml`.
@@ -209,6 +224,7 @@ Run every registered case with no arguments, or pass one or more case names:
 ```bash
 bash agent/tests/run-live.sh
 bash agent/tests/run-live.sh issue-a-1turn
+bash agent/tests/run-live.sh managed_update_local_remote
 bash agent/tests/run-live.sh issue-a-1turn empty-goal test_code_no_forge
 ```
 

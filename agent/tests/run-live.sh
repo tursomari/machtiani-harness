@@ -3390,7 +3390,12 @@ test_missing_config() {
     "Explain how the agent chooses its model runtime."
 }
 
+test_managed_update_local_remote() {
+  REPO_ROOT="$REPO_ROOT" bash "$REPO_ROOT/agent/tests/run-update-local.sh"
+}
+
 declare -A TESTS=(
+	["managed_update_local_remote"]="test_managed_update_local_remote"
   ["test_local_tmp_root_unset_live"]="run_local_tmp_root_unset_live_case"
   ["test_code_no_forge"]="test_code_no_forge"
   ["test_code_forge_initial"]="test_code_forge_initial"
@@ -3453,6 +3458,7 @@ fi
 
 if [[ $# -eq 0 ]]; then
 # Per-component flag coverage.
+run_test_case "managed_update_local_remote" test_managed_update_local_remote
 run_test_case "mode_prompt_layers" run_mode_prompt_layers_case
 
 # Resume without mode: verify shell-agent system prompt survives

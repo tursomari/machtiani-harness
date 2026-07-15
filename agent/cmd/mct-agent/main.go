@@ -99,6 +99,10 @@ func run() int {
 		return 0
 	}
 
+	if handled, code := maybeAutomaticUpdate(os.Args[1:]); handled {
+		return code
+	}
+
 	// If the first argument looks like a subcommand (no leading dash),
 	// dispatch directly without top-level flag parsing so that flags like
 	// --help are handled by the subcommand's own FlagSet.

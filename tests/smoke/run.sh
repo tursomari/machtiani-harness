@@ -21,6 +21,16 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WORKTREE="/tmp/mct-agent-smoke-context"
+UPDATE_ONLY=false
+
+if [[ "${1:-}" == "--update-only" ]]; then
+  UPDATE_ONLY=true
+  shift
+fi
+if [[ $# -ne 0 ]]; then
+  echo "Usage: $0 [--update-only]" >&2
+  exit 2
+fi
 
 cd "$ROOT"
 
@@ -110,6 +120,9 @@ trap cleanup EXIT
 missing=false
 
 for var in TEST_API_KEY TEST_BASE_URL TEST_MODEL; do
+  if $UPDATE_ONLY; then
+    break
+  fi
   if [[ -z "${!var:-}" ]]; then
     echo "ERROR: Required environment variable '${var}' is not set or empty." >&2
     missing=true
@@ -162,6 +175,10 @@ docker build -f "$WORKTREE/tests/smoke/Dockerfile" -t mct-agent-smoke "$WORKTREE
 # --- Run the smoke test ----------------------------------------------------
 echo "==> Running smoke-test container..."
 set +e
+container_script=/tests/smoke/container.sh
+if $UPDATE_ONLY; then
+  container_script=/tests/smoke/update-container.sh
+fi
 docker run --rm \
   -e TEST_API_KEY \
   -e TEST_BASE_URL \
@@ -172,7 +189,7 @@ docker run --rm \
   -e SMOKE_DEEPINFRA_API_KEY -e SMOKE_DEEPINFRA_BASE_URL -e SMOKE_DEEPINFRA_MODEL \
   -e SMOKE_DEEPSEEK_API_KEY -e SMOKE_DEEPSEEK_BASE_URL -e SMOKE_DEEPSEEK_MODEL \
   mct-agent-smoke \
-  bash /tests/smoke/container.sh
+  bash "$container_script"
 exit_code=$?
 set -e
 
