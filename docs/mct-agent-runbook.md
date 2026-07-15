@@ -150,6 +150,8 @@ mct-agent sync \
 
 - A successful sync prints `Readme synced for commit <hash>`.
 - If the new commits do not materially change the internal README, `sync` may report that there were no significant changes and simply move the sync marker forward to the current `HEAD`.
+- Each synced project commit has an immutable `oid-<project-commit>` tag in the internal README repository. New sessions inject the README blob directly from that tag, so a stale or concurrently materialized `artifacts/readme/internal-readme.md` worktree file cannot change the injected background.
+- The materialized `artifacts/readme/internal-readme.md` is a compatibility view shared by worktrees with the same project UUID. Treat the tagged object—and the copy persisted in a session's `conversation.json`—as authoritative when worktrees are on different commits.
 
 ## Follow-up workflow
 

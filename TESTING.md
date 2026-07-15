@@ -186,9 +186,13 @@ The container test must complete all of these checks before printing its success
 11. `mct-agent run` completes successfully against the primary live provider.
 12. Any additional discoverable provider targets are added with `config
     provider/model`, validated, and exercised with a low-reasoning live run.
-13. `<project-store>/sessions/*/artifacts/conversation.json` exists and the
+13. Two deterministic internal READMEs are synced at successive project
+    commits; after checking out the earlier commit while the mutable artifact
+    still contains the later README, a fresh dry-run session injects the exact
+    earlier tagged blob into `conversation.json`.
+14. `<project-store>/sessions/*/artifacts/conversation.json` exists and the
     repository contains `.machtiani/project.uuid` rather than session data.
-14. A separate synthetic legacy repository passes migration dry-run and actual
+15. A separate synthetic legacy repository passes migration dry-run and actual
     non-interactive migration, including verified home-store data and a legacy
     archive.
 

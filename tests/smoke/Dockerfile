@@ -48,10 +48,10 @@ FROM alpine:3.20
 # Runtime system dependencies.
 #   git       – workspace operations and repository introspection
 #   ripgrep   – file-discovery engine
-#   curl      – smoke-test harness helper
+#   curl/jq   – smoke-test harness helpers
 #   bash/sed  – shell scripting in the smoke-test entrypoint
 #   expect    – deterministic pseudo-terminal coverage for interactive menus
-RUN apk add --no-cache git ripgrep curl bash sed expect
+RUN apk add --no-cache git ripgrep curl jq bash sed expect
 
 # Managed updates build from source inside the runtime environment.
 COPY --from=builder /usr/local/go /usr/local/go

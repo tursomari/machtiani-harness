@@ -425,7 +425,17 @@ func GetBranch() (string, error) {
 
 // GetHeadCommitHash returns the current HEAD commit hash of the git repository.
 func GetHeadCommitHash() (string, error) {
+	return GetHeadCommitHashAt("")
+}
+
+// GetHeadCommitHashAt returns the current HEAD commit hash of the Git repository
+// containing repoRoot. An empty repoRoot preserves the historical behavior of
+// resolving the repository from the process working directory.
+func GetHeadCommitHashAt(repoRoot string) (string, error) {
 	cmd := exec.Command("git", "rev-parse", "HEAD")
+	if root := strings.TrimSpace(repoRoot); root != "" {
+		cmd.Dir = root
+	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

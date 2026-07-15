@@ -260,6 +260,20 @@ func TestReadmeDirectoryLocalRepo(t *testing.T) {
 	})
 }
 
+func TestReadmeDirectoryAtUsesExplicitRepository(t *testing.T) {
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+
+	dir, err := ReadmeDirectoryAt(repoDir)
+	if err != nil {
+		t.Fatalf("ReadmeDirectoryAt: %v", err)
+	}
+	expected := filepath.Join(repoDir, ".machtiani", "artifacts", "readme")
+	if dir != expected {
+		t.Fatalf("expected %s, got %s", expected, dir)
+	}
+}
+
 func TestReadmeDirectoryRequiresGit(t *testing.T) {
 	work := t.TempDir()
 	withWorkingDir(t, work, func() {

@@ -20,7 +20,6 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/mct/readmesync"
 	"github.com/tursomari/machtiani/agent/internal/planner"
 	"github.com/tursomari/machtiani/agent/internal/presentation"
-	"github.com/tursomari/machtiani/agent/internal/projectstore"
 	"github.com/tursomari/machtiani/agent/internal/runner"
 	shellagent "github.com/tursomari/machtiani/agent/internal/shell-agent"
 	"github.com/tursomari/machtiani/agent/internal/trajectory"
@@ -34,10 +33,9 @@ const (
 )
 
 var (
-	readmeHeadCommitFn       = readmesync.HeadCommit
-	readmeCommitForProjectFn = readmesync.READMECommitForProject
-	readmeCheckoutReadonlyFn = readmesync.CheckoutReadonlyREADME
-	tagFormatPattern         = regexp.MustCompile(`\[(?P<path>[^\[\]|]+?)\s*\|\s*(?P<start>[^:\]]+)\s*:\s*(?P<end>[^\]]+)\]`)
+	readmeHeadCommitAtFn   = readmesync.HeadCommitAt
+	readmeReadForProjectFn = readmesync.ReadREADMEForProjectAt
+	tagFormatPattern       = regexp.MustCompile(`\[(?P<path>[^\[\]|]+?)\s*\|\s*(?P<start>[^:\]]+)\s*:\s*(?P<end>[^\]]+)\]`)
 )
 
 type terminalTeeWriter struct {
@@ -1095,37 +1093,20 @@ func appendUserInputContext(transcript, prompt string) string {
 }
 
 func loadProjectBackground(repoRoot string) (string, error) {
-	commit, err := readmeHeadCommitFn()
-	if err != nil {
-		return "", fmt.Errorf("resolve HEAD commit: %w", err)
-	}
-	readmeCommit, err := readmeCommitForProjectFn(commit)
-	if err != nil {
-		return "", fmt.Errorf("locate README for commit %s: %w", commit, err)
-	}
-	if err := readmeCheckoutReadonlyFn(commit); err != nil {
-		return "", fmt.Errorf("checkout README for commit %s (readme commit %s): %w", commit, strings.TrimSpace(readmeCommit), err)
-	}
 	base := strings.TrimSpace(repoRoot)
 	if base == "" {
 		base = "."
 	}
-	readmeDir := filepath.Join(base, ".machtiani", "artifacts", "readme")
-	ctx, err := projectstore.Discover(base)
+	commit, err := readmeHeadCommitAtFn(base)
 	if err != nil {
-		return "", fmt.Errorf("resolve internal README path: %w", err)
+		return "", fmt.Errorf("resolve HEAD commit: %w", err)
 	}
-	if ctx.Status == projectstore.StatusInitialized {
-		readmeDir = filepath.Join(ctx.ArtifactsRoot(), "readme")
-	}
-	path := filepath.Join(readmeDir, "internal-readme.md")
-	data, err := os.ReadFile(path)
+	background, readmeCommit, err := readmeReadForProjectFn(base, commit)
 	if err != nil {
-		return "", fmt.Errorf("read README at %s: %w", path, err)
+		return "", fmt.Errorf("read README for commit %s: %w", commit, err)
 	}
-	background := string(data)
 	if strings.TrimSpace(background) == "" {
-		return "", fmt.Errorf("internal README at %s is empty", path)
+		return "", fmt.Errorf("internal README for commit %s (readme commit %s) is empty", commit, strings.TrimSpace(readmeCommit))
 	}
 	return background, nil
 }

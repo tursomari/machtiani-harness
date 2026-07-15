@@ -66,45 +66,37 @@ func TestTerminalTeeWriterWritesCaptureAndExposesTerminalFD(t *testing.T) {
 	}
 }
 
-func withReadmeFunctionStubs(t *testing.T, head func() (string, error), commit func(string) (string, error), checkout func(string) error) {
+func withReadmeFunctionStubs(t *testing.T, head func(string) (string, error), read func(string, string) (string, string, error)) {
 	t.Helper()
-	originalHead := readmeHeadCommitFn
-	originalCommit := readmeCommitForProjectFn
-	originalCheckout := readmeCheckoutReadonlyFn
-	readmeHeadCommitFn = head
-	readmeCommitForProjectFn = commit
-	readmeCheckoutReadonlyFn = checkout
+	originalHead := readmeHeadCommitAtFn
+	originalRead := readmeReadForProjectFn
+	readmeHeadCommitAtFn = head
+	readmeReadForProjectFn = read
 	t.Cleanup(func() {
-		readmeHeadCommitFn = originalHead
-		readmeCommitForProjectFn = originalCommit
-		readmeCheckoutReadonlyFn = originalCheckout
+		readmeHeadCommitAtFn = originalHead
+		readmeReadForProjectFn = originalRead
 	})
 }
 
 func TestLoadProjectBackgroundSuccess(t *testing.T) {
 	repoRoot := t.TempDir()
-	readmePath := filepath.Join(repoRoot, ".machtiani", "artifacts", "readme")
-	if err := os.MkdirAll(readmePath, 0o755); err != nil {
-		t.Fatalf("failed to create readme directory: %v", err)
-	}
 	content := "Project background content\nSecond line"
-	if err := os.WriteFile(filepath.Join(readmePath, "internal-readme.md"), []byte(content), 0o644); err != nil {
-		t.Fatalf("failed to write internal README: %v", err)
-	}
 
 	withReadmeFunctionStubs(t,
-		func() (string, error) { return "commit123", nil },
-		func(projectCommit string) (string, error) {
+		func(root string) (string, error) {
+			if root != repoRoot {
+				t.Fatalf("unexpected repository root: %s", root)
+			}
+			return "commit123", nil
+		},
+		func(root, projectCommit string) (string, string, error) {
+			if root != repoRoot {
+				t.Fatalf("unexpected README repository root: %s", root)
+			}
 			if projectCommit != "commit123" {
 				t.Fatalf("unexpected project commit: %s", projectCommit)
 			}
-			return "readme456", nil
-		},
-		func(commit string) error {
-			if commit != "commit123" {
-				t.Fatalf("unexpected checkout commit: %s", commit)
-			}
-			return nil
+			return content, "readme456", nil
 		},
 	)
 
@@ -120,11 +112,10 @@ func TestLoadProjectBackgroundSuccess(t *testing.T) {
 func TestLoadProjectBackgroundMissingReadme(t *testing.T) {
 	repoRoot := t.TempDir()
 	withReadmeFunctionStubs(t,
-		func() (string, error) { return "commitABC", nil },
-		func(projectCommit string) (string, error) {
-			return "", errors.New("no readme for commit")
+		func(string) (string, error) { return "commitABC", nil },
+		func(_, projectCommit string) (string, string, error) {
+			return "", "", errors.New("no readme for commit")
 		},
-		func(string) error { return nil },
 	)
 
 	_, err := loadProjectBackground(repoRoot)
@@ -138,20 +129,12 @@ func TestLoadProjectBackgroundMissingReadme(t *testing.T) {
 
 func TestLoadProjectBackgroundEmptyFile(t *testing.T) {
 	repoRoot := t.TempDir()
-	readmeDir := filepath.Join(repoRoot, ".machtiani", "artifacts", "readme")
-	if err := os.MkdirAll(readmeDir, 0o755); err != nil {
-		t.Fatalf("failed to create readme directory: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(readmeDir, "internal-readme.md"), []byte("   \n"), 0o644); err != nil {
-		t.Fatalf("failed to write empty README: %v", err)
-	}
 
 	withReadmeFunctionStubs(t,
-		func() (string, error) { return "commitXYZ", nil },
-		func(projectCommit string) (string, error) {
-			return "readme000", nil
+		func(string) (string, error) { return "commitXYZ", nil },
+		func(_, projectCommit string) (string, string, error) {
+			return "   \n", "readme000", nil
 		},
-		func(string) error { return nil },
 	)
 
 	_, err := loadProjectBackground(repoRoot)

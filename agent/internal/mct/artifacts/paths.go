@@ -230,7 +230,13 @@ func FileDiscoveryTrajectoryPath(sessionID string) (string, error) {
 
 // ReadmeDirectory returns the directory to use for README artifacts.
 func ReadmeDirectory() (string, error) {
-	ctx, err := projectstore.Discover("")
+	return ReadmeDirectoryAt("")
+}
+
+// ReadmeDirectoryAt returns the README artifact directory for the project
+// containing start, independent of the process working directory.
+func ReadmeDirectoryAt(start string) (string, error) {
+	ctx, err := projectstore.Discover(start)
 	if err != nil {
 		return "", err
 	}
@@ -240,14 +246,10 @@ func ReadmeDirectory() (string, error) {
 	if ctx.Status == projectstore.StatusUninitialized && git.IsGitRepo(ctx.ProjectRoot) {
 		return "", projectInitializationError(ctx.ProjectRoot)
 	}
-	root, local, err := projectRoot()
-	if err != nil {
-		return "", err
-	}
-	if !local {
+	if !git.IsGitRepo(ctx.ProjectRoot) {
 		return "", errors.New("readme artifacts require a git repository context")
 	}
-	return filepath.Join(root, machtianiRootDir, artifactDirName, readmeDirName), nil
+	return filepath.Join(ctx.ProjectRoot, machtianiRootDir, artifactDirName, readmeDirName), nil
 }
 
 func projectInitializationError(projectRoot string) error {

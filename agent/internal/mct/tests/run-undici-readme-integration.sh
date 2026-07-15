@@ -58,7 +58,8 @@ export MCT_LLM_TEST_STUB="stub-echo"
 export OPENAI_API_KEY="${OPENAI_API_KEY:-stub-key}"
 export OPENAI_BASE_URL="${OPENAI_BASE_URL:-https://example.com/api}"
 export OPENAI_MODEL="${OPENAI_MODEL:-stub-model}"
-export MACHTIANI_CONFIG="${MACHTIANI_CONFIG:-$REPO_ROOT/.machtiani/config.toml}"
+export MACHTIANI_CONFIG="${MACHTIANI_CONFIG:-$REPO_ROOT/docs/examples/config.minimal.toml}"
+CONFIG_SOURCE="$MACHTIANI_CONFIG"
 
 info "Preparing undici working copy"
 TEST_REPO="$WORK_ROOT/undici"
@@ -75,17 +76,27 @@ mkdir -p "$HOME_OVERRIDE"
 export HOME="$HOME_OVERRIDE"
 
 RESET_STATE() {
-  rm -rf "$TEST_REPO/.machtiani"
+  rm -rf "$TEST_REPO/.machtiani" "$HOME_OVERRIDE/.machtiani"
+  mkdir -p "$HOME_OVERRIDE/.machtiani"
+  cp "$CONFIG_SOURCE" "$HOME_OVERRIDE/.machtiani/config.toml"
+  (
+    cd "$TEST_REPO"
+    "$MCT_BIN" init --no-interactive --config-scope global >/dev/null
+  ) || fail "Failed to initialize test project state"
 }
 
 ensure_readme_repo_exists() {
-  if [[ ! -d "$TEST_REPO/.machtiani/artifacts/readme/.git" ]]; then
+  local repo
+  repo="$(get_readme_repo)"
+  if [[ ! -d "$repo/.git" ]]; then
     fail "Expected readme repo to exist after run"
   fi
 }
 
 get_readme_repo() {
-  echo "$TEST_REPO/.machtiani/artifacts/readme"
+  local project_uuid
+  project_uuid="$(tr -d '\n' < "$TEST_REPO/.machtiani/project.uuid")"
+  echo "$HOME_OVERRIDE/.machtiani/$project_uuid/artifacts/readme"
 }
 
 read_state_commit() {

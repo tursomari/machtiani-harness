@@ -28,6 +28,12 @@ func HeadCommit() (string, error) {
 	return git.GetHeadCommitHash()
 }
 
+// HeadCommitAt returns the current HEAD commit hash for the repository rooted
+// at repoRoot, independent of the process working directory.
+func HeadCommitAt(repoRoot string) (string, error) {
+	return git.GetHeadCommitHashAt(repoRoot)
+}
+
 // ResolveCommit resolves an arbitrary commit reference to a full commit hash.
 func ResolveCommit(ref string) (string, error) {
 	return git.ResolveCommitHash(ref)

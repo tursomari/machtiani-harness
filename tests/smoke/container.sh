@@ -78,7 +78,50 @@ logged_input=$(find "$project_store/sessions" -path '*/artifacts/llm/inputs.json
 test -s "$logged_input"
 logged_session=${logged_input%/artifacts/llm/inputs.jsonl}
 
-# Step 7: Best-effort additional provider matrix discovered from the host's
+# Step 7: Prove that a historical checkout injects the README mapped to that
+# exact project commit, even while the shared compatibility artifact contains
+# the README for a later commit.
+echo "==> Verifying historical internal README injection..."
+rollback_dir=$(mktemp -d)
+readme_repo="$project_store/artifacts/readme"
+
+printf 'package architecture\n\nconst Version = "early"\n' > architecture.go
+git add architecture.go
+git commit -m "smoke: early architecture"
+early_project_commit=$(git rev-parse HEAD)
+MCT_README_TEST_STUB=smoke-early mct-agent sync
+early_readme_commit=$(git -C "$readme_repo" rev-parse "oid-${early_project_commit}^{commit}")
+git -C "$readme_repo" show "${early_readme_commit}:internal-readme.md" > "$rollback_dir/early.md"
+
+printf 'package architecture\n\nconst Version = "late"\n' > architecture.go
+git add architecture.go
+git commit -m "smoke: late architecture"
+late_project_commit=$(git rev-parse HEAD)
+MCT_README_TEST_STUB=smoke-late mct-agent sync
+late_readme_commit=$(git -C "$readme_repo" rev-parse "oid-${late_project_commit}^{commit}")
+git -C "$readme_repo" show "${late_readme_commit}:internal-readme.md" > "$rollback_dir/late.md"
+
+cmp "$rollback_dir/late.md" "$readme_repo/internal-readme.md"
+if cmp -s "$rollback_dir/early.md" "$readme_repo/internal-readme.md"; then
+  echo "Historical and current README fixtures unexpectedly match." >&2
+  exit 1
+fi
+
+git checkout --detach "$early_project_commit"
+test "$(git rev-parse HEAD)" = "$early_project_commit"
+rollback_session_id="smoke-readme-rollback"
+MACHTIANI_SESSION_ID="$rollback_session_id" mct-agent run --dry-run \
+  --max-turns 1 \
+  -t "Verify historical internal README injection."
+rollback_conversation="$project_store/sessions/$rollback_session_id/artifacts/conversation.json"
+test -s "$rollback_conversation"
+jq -j 'first(.messages[] | select(.turn == 0 and .metadata.type == "work_result") | .content)' \
+  "$rollback_conversation" > "$rollback_dir/injected.md"
+cmp "$rollback_dir/early.md" "$rollback_dir/injected.md"
+cmp "$rollback_dir/late.md" "$readme_repo/internal-readme.md"
+git checkout main
+
+# Step 8: Best-effort additional provider matrix discovered from the host's
 # repository configuration. Each case is configured through the public CRUD
 # surface and uses low reasoning. Credentials remain environment references.
 IFS=',' read -r -a smoke_providers <<<"${SMOKE_MATRIX:-}"
@@ -113,7 +156,7 @@ for provider in "${smoke_providers[@]}"; do
     --max-turns 5
 done
 
-# Step 8: Verify session artifacts
+# Step 9: Verify session artifacts
 echo "==> Verifying session artifacts..."
 test -f .machtiani/project.uuid
 test -d "$project_store/sessions"
@@ -126,7 +169,7 @@ mct-agent session prune --no-interactive --yes
 test ! -e "$logged_session/artifacts/llm"
 find "$project_store"/sessions -path '*/trajectory/agent.jsonl' -type f -print -quit | grep -q .
 
-# Step 9: Exercise legacy migration in a separate disposable project.
+# Step 10: Exercise legacy migration in a separate disposable project.
 echo "==> Verifying legacy migration..."
 workspace=$PWD
 legacy_repo=$(mktemp -d)
@@ -155,9 +198,9 @@ printf 'trajectory\n' >"$legacy_repo/.machtiani/sessions/legacy-session/shell-ag
 )
 cd "$workspace"
 
-# Step 10: Cleanup
+# Step 11: Cleanup
 echo "==> Cleaning up..."
-rm -rf .machtiani/ "$project_store" "$legacy_repo" "$legacy_home"
+rm -rf .machtiani/ "$project_store" "$legacy_repo" "$legacy_home" "$rollback_dir"
 
-# Step 11: Print success message
+# Step 12: Print success message
 echo "SMOKE TEST PASSED: All checks completed successfully."

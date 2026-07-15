@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/tursomari/machtiani/agent/internal/git"
 	"github.com/tursomari/machtiani/agent/internal/llm"
@@ -23,6 +24,7 @@ const (
 	readmeFilename       = "internal-readme.md"
 	stateDirName         = ".state"
 	lastCommitFilename   = "last_project_commit"
+	syncLockFilename     = "sync.lock"
 	mockReadmeEnv        = "MCT_README_TEST_STUB"     // enables deterministic content for integration tests
 	SkipReadmeManagerEnv = "MCT_SKIP_INTERNAL_README" // disables recursive manager execution when invoking the CLI
 	verboseEnv           = "MCT_INTERNAL_README_VERBOSE"
@@ -107,6 +109,14 @@ func (m *Manager) Run(ctx context.Context, projectCommitHash string) error {
 	if stateCreated {
 		m.verbosef("created state directory %s", m.StateDirPath)
 	}
+	lockFile, err := m.acquireSyncLock()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
+		_ = lockFile.Close()
+	}()
 
 	if err := m.syncExistingReadme(projectCommitHash); err == nil {
 		m.verbosef("readme already tagged for project %s; syncing existing content", shortHash(projectCommitHash))
@@ -180,6 +190,19 @@ func (m *Manager) ensureStateDir() (bool, error) {
 		return created, fmt.Errorf("create state dir: %w", err)
 	}
 	return created, nil
+}
+
+func (m *Manager) acquireSyncLock() (*os.File, error) {
+	path := filepath.Join(m.StateDirPath, syncLockFilename)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("open internal README sync lock: %w", err)
+	}
+	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
+		_ = file.Close()
+		return nil, fmt.Errorf("lock internal README sync state: %w", err)
+	}
+	return file, nil
 }
 
 func (m *Manager) syncExistingReadme(projectCommitHash string) error {
@@ -501,19 +524,56 @@ func (m *Manager) runProjectGit(args ...string) (string, error) {
 	return m.gitOutput(m.ProjectRoot, args...)
 }
 
-// CheckoutReadonlyReadme exports the readme file for a tagged project commit into the working tree.
+// ReadREADMEForProject reads the README blob associated with a project commit
+// directly from the immutable Git object. It does not trust or mutate the
+// shared README worktree.
+func ReadREADMEForProject(projectCommitHash string) (string, string, error) {
+	repoPath, err := getReadmeRepoPath()
+	if err != nil {
+		return "", "", err
+	}
+	return readREADMEForProjectAt(repoPath, projectCommitHash)
+}
+
+// ReadREADMEForProjectAt reads the tagged README for the project containing
+// projectRoot, independent of the process working directory.
+func ReadREADMEForProjectAt(projectRoot, projectCommitHash string) (string, string, error) {
+	repoPath, err := artifacts.ReadmeDirectoryAt(projectRoot)
+	if err != nil {
+		return "", "", err
+	}
+	return readREADMEForProjectAt(repoPath, projectCommitHash)
+}
+
+func readREADMEForProjectAt(repoPath, projectCommitHash string) (string, string, error) {
+	readmeCommit, err := getREADMECommitForProjectAt(repoPath, projectCommitHash)
+	if err != nil {
+		return "", "", err
+	}
+	content, err := gitCommandOutput(repoPath, "show", fmt.Sprintf("%s:%s", readmeCommit, readmeFilename))
+	if err != nil {
+		return "", "", fmt.Errorf("read internal README at commit %s: %w", readmeCommit, err)
+	}
+	return content, readmeCommit, nil
+}
+
+// CheckoutReadonlyReadme exports the README for a tagged project commit into
+// the compatibility artifact path. Injection reads the immutable object via
+// ReadREADMEForProject and does not rely on this mutable materialization.
 func CheckoutReadonlyReadme(projectCommitHash string) error {
-	tag := fmt.Sprintf("oid-%s", projectCommitHash)
 	repoPath, err := getReadmeRepoPath()
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command("git", "checkout", tag, "--", readmeFilename)
-	cmd.Dir = repoPath
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("git checkout %s -- %s failed: %w: %s", tag, readmeFilename, err, strings.TrimSpace(string(output)))
+	return checkoutReadonlyReadmeAt(repoPath, projectCommitHash)
+}
+
+func checkoutReadonlyReadmeAt(repoPath, projectCommitHash string) error {
+	content, _, err := readREADMEForProjectAt(repoPath, projectCommitHash)
+	if err != nil {
+		return err
 	}
-	return nil
+	return writeFileAtomic(filepath.Join(repoPath, readmeFilename), []byte(content), 0o644)
 }
 
 // TagREADMEWithProjectCommit tags current README commit with project OID.
@@ -522,20 +582,22 @@ func TagREADMEWithProjectCommit(projectCommitHash string) error {
 	if err != nil {
 		return err
 	}
+	return tagREADMEWithProjectCommitAt(repoPath, projectCommitHash)
+}
+
+func tagREADMEWithProjectCommitAt(repoPath, projectCommitHash string) error {
 	tag := fmt.Sprintf("oid-%s", projectCommitHash)
 	message := fmt.Sprintf("README for project commit %s", projectCommitHash)
 	head, err := gitRevParse(repoPath, "HEAD")
 	if err != nil {
 		return err
 	}
-	existing, err := gitRevParse(repoPath, tag)
+	existing, err := gitRevParse(repoPath, tag+"^{commit}")
 	if err == nil {
 		if existing == head {
 			return nil
 		}
-		if err := runGitCommand(repoPath, "tag", "-d", tag); err != nil {
-			return err
-		}
+		return fmt.Errorf("internal README tag %s already maps to %s, refusing to move it to %s", tag, existing, head)
 	}
 	return runGitCommand(repoPath, "tag", "-a", tag, "-m", message)
 }
@@ -546,8 +608,12 @@ func GetREADMECommitForProject(projectCommitHash string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return getREADMECommitForProjectAt(repoPath, projectCommitHash)
+}
+
+func getREADMECommitForProjectAt(repoPath, projectCommitHash string) (string, error) {
 	tag := fmt.Sprintf("oid-%s", projectCommitHash)
-	return gitRevParse(repoPath, tag)
+	return gitRevParse(repoPath, tag+"^{commit}")
 }
 
 func getReadmeRepoPath() (string, error) {
@@ -555,16 +621,53 @@ func getReadmeRepoPath() (string, error) {
 }
 
 func gitRevParse(dir, rev string) (string, error) {
-	cmd := exec.Command("git", "rev-parse", rev)
+	stdout, err := gitCommandOutput(dir, "rev-parse", rev)
+	return strings.TrimSpace(stdout), err
+}
+
+func gitCommandOutput(dir string, args ...string) (string, error) {
+	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("git rev-parse %s failed: %w: %s", rev, err, strings.TrimSpace(stderr.String()))
+		return "", fmt.Errorf("git %s failed: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
 	}
-	return strings.TrimSpace(stdout.String()), nil
+	return stdout.String(), nil
+}
+
+func writeFileAtomic(path string, data []byte, mode os.FileMode) (retErr error) {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".internal-readme-*")
+	if err != nil {
+		return fmt.Errorf("create temporary internal README: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer func() {
+		if retErr != nil {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if err := tmp.Chmod(mode); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("set temporary internal README mode: %w", err)
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("write temporary internal README: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("sync temporary internal README: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temporary internal README: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("replace internal README: %w", err)
+	}
+	return nil
 }
 
 func runGitCommand(dir string, args ...string) error {
