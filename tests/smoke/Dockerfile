@@ -36,6 +36,10 @@ RUN mkdir -p /out/bin && \
     (PREFIX=/out bash scripts/install.sh 2>/dev/null || \
      (cd agent && go build -buildvcs=false -o /out/bin/mct-agent ./cmd/mct-agent))
 
+# Build the deterministic local ChatCompletion overflow fixture. It exercises
+# production request/retry/config-persistence code without remote credentials.
+RUN cd agent && go build -buildvcs=false -o /out/bin/context-overflow-smoke ./tests/context-overflow-smoke
+
 # ---------------------------------------------------------------------------
 # Runtime stage: lean production image with only the tools mct-agent needs
 # ---------------------------------------------------------------------------

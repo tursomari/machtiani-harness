@@ -164,13 +164,16 @@ The container test must complete all of these checks before printing its success
 8. Rejected mutations are checksum-verified as non-writing, scratch resources
    are removed, and the final primary configuration is validated with caching
    disabled.
-9. `mct-agent sync` initializes the repository's internal README state.
-10. `mct-agent run` completes successfully against the primary live provider.
-11. Any additional discoverable provider targets are added with `config
+9. A deterministic local ChatCompletion server rejects the first request with
+   a structured context-overflow error, accepts the reduced retry, and verifies
+   the warning plus automatic per-model `context_length` persistence.
+10. `mct-agent sync` initializes the repository's internal README state.
+11. `mct-agent run` completes successfully against the primary live provider.
+12. Any additional discoverable provider targets are added with `config
     provider/model`, validated, and exercised with a low-reasoning live run.
-12. `<project-store>/sessions/*/artifacts/conversation.json` exists and the
+13. `<project-store>/sessions/*/artifacts/conversation.json` exists and the
     repository contains `.machtiani/project.uuid` rather than session data.
-13. A separate synthetic legacy repository passes migration dry-run and actual
+14. A separate synthetic legacy repository passes migration dry-run and actual
     non-interactive migration, including verified home-store data and a legacy
     archive.
 

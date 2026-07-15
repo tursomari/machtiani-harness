@@ -89,6 +89,52 @@ func TestTryStreamThenFallbackEmitsSuffix(t *testing.T) {
 	}
 }
 
+func TestTryStreamThenFallbackReturnsContextOverflowWithoutNonStreamRetry(t *testing.T) {
+	originalStreamClient := streamingHTTPClient
+	originalTransport := http.DefaultClient.Transport
+	defer func() {
+		streamingHTTPClient = originalStreamClient
+		http.DefaultClient.Transport = originalTransport
+	}()
+
+	streamAttempts := 0
+	streamingHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		streamAttempts++
+		return &http.Response{
+			StatusCode: http.StatusBadRequest,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"error":{"code":"context_length_exceeded"}}`)),
+			Request:    req,
+		}, nil
+	})}
+	http.DefaultClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		t.Fatalf("unexpected non-stream retry: %s", req.URL.String())
+		return nil, nil
+	})
+
+	basePayload := map[string]any{
+		"model":    "test-model",
+		"messages": []Message{{Role: "user", Content: "hi"}},
+	}
+	streamBody, err := encodePayload(basePayload, true)
+	if err != nil {
+		t.Fatalf("encode stream payload: %v", err)
+	}
+	nonStreamBody, err := encodePayload(basePayload, false)
+	if err != nil {
+		t.Fatalf("encode non-stream payload: %v", err)
+	}
+
+	model := ResolvedModel{Alias: "primary", BaseURL: "http://example.com", Endpoint: "/chat/completions", APIKey: "test", Model: "test-model"}
+	_, err = tryStreamThenFallback(context.Background(), model, streamBody, nonStreamBody, func(string) {})
+	if !IsContextOverflow(err) {
+		t.Fatalf("error = %v, want structured context overflow", err)
+	}
+	if streamAttempts != 1 {
+		t.Fatalf("stream attempts = %d, want 1", streamAttempts)
+	}
+}
+
 func TestRetryDelayHonorsRetryAfter(t *testing.T) {
 	header := make(http.Header)
 	header.Set("Retry-After", "5")

@@ -17,7 +17,32 @@ mct-agent --version
 # live sync and run below.
 bash /tests/smoke/config-crud.sh
 
-# Step 4: Initialize the repository's internal README state
+# Step 4: Prove automatic context correction against a deterministic local
+# ChatCompletion endpoint. The first request receives a structured overflow;
+# the reduced retry succeeds and persists the learned per-model context.
+echo "==> Verifying automatic context overflow correction..."
+overflow_config=/tmp/context-overflow-config.toml
+mct-agent config add --path "$overflow_config" \
+  --provider overflow \
+  --url http://context-overflow/v1 \
+  --api-key smoke-key \
+  --model overflow-model \
+  --alias overflow \
+  --context-length 128000 \
+  --no-cache \
+  --no-interactive
+mct-agent config model show --path "$overflow_config" overflow > /tmp/context-overflow-before.stdout
+grep -Fq 'context_length: 128000 (model)' /tmp/context-overflow-before.stdout
+MACHTIANI_CONFIG="$overflow_config" context-overflow-smoke \
+  > /tmp/context-overflow.stdout \
+  2> /tmp/context-overflow.stderr
+grep -Fq 'CONTEXT OVERFLOW SMOKE PASSED: requests=2' /tmp/context-overflow.stdout
+grep -Fq 'Warning: provider rejected context length 128000; retry succeeded at 63999 tokens; configuration updated.' /tmp/context-overflow.stderr
+mct-agent config check --path "$overflow_config"
+mct-agent config model show --path "$overflow_config" overflow > /tmp/context-overflow-after.stdout
+grep -Fq 'context_length: 63999 (model)' /tmp/context-overflow-after.stdout
+
+# Step 5: Initialize the repository's internal README state
 echo "==> Synchronizing repository state..."
 mct-agent sync --verbose > /tmp/sync.stdout 2> /tmp/sync.stderr
 grep -Fq 'llm.context_budget.resolved context_length=128000 source=model_default' /tmp/sync.stderr
@@ -26,7 +51,7 @@ mct-agent sync --verbose --context-length 64000 > /tmp/sync-context.stdout 2> /t
 grep -Fq 'llm.context_budget.resolved context_length=64000 source=session_flag' /tmp/sync-context.stderr
 test "$(sha256sum "$HOME/.machtiani/config.toml" | cut -d ' ' -f 1)" = "$config_checksum"
 
-# Step 5: Live execution
+# Step 6: Live execution
 echo "==> Running live smoke test..."
 project_store=$(mct-agent project show --json | sed -n 's/^[[:space:]]*"store": "\([^"]*\)"[,]\{0,1\}$/\1/p')
 test -n "$project_store"
@@ -51,7 +76,7 @@ logged_input=$(find "$project_store/sessions" -path '*/artifacts/llm/inputs.json
 test -s "$logged_input"
 logged_session=${logged_input%/artifacts/llm/inputs.jsonl}
 
-# Step 6: Best-effort additional provider matrix discovered from the host's
+# Step 7: Best-effort additional provider matrix discovered from the host's
 # repository configuration. Each case is configured through the public CRUD
 # surface and uses low reasoning. Credentials remain environment references.
 IFS=',' read -r -a smoke_providers <<<"${SMOKE_MATRIX:-}"
@@ -86,7 +111,7 @@ for provider in "${smoke_providers[@]}"; do
     --max-turns 5
 done
 
-# Step 7: Verify session artifacts
+# Step 8: Verify session artifacts
 echo "==> Verifying session artifacts..."
 test -f .machtiani/project.uuid
 test -d "$project_store/sessions"
@@ -99,7 +124,7 @@ mct-agent session prune --no-interactive --yes
 test ! -e "$logged_session/artifacts/llm"
 find "$project_store"/sessions -path '*/trajectory/agent.jsonl' -type f -print -quit | grep -q .
 
-# Step 8: Exercise legacy migration in a separate disposable project.
+# Step 9: Exercise legacy migration in a separate disposable project.
 echo "==> Verifying legacy migration..."
 workspace=$PWD
 legacy_repo=$(mktemp -d)
@@ -128,9 +153,9 @@ printf 'trajectory\n' >"$legacy_repo/.machtiani/sessions/legacy-session/shell-ag
 )
 cd "$workspace"
 
-# Step 9: Cleanup
+# Step 10: Cleanup
 echo "==> Cleaning up..."
 rm -rf .machtiani/ "$project_store" "$legacy_repo" "$legacy_home"
 
-# Step 10: Print success message
+# Step 11: Print success message
 echo "SMOKE TEST PASSED: All checks completed successfully."

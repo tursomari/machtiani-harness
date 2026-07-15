@@ -1631,6 +1631,12 @@ func tryStreamThenFallback(ctx context.Context, model ResolvedModel, streamBody,
 		}
 		attemptErr = err
 		fallbackCtx = attemptCtx
+		// Retrying the identical payload in non-stream mode cannot repair a
+		// structured context overflow. Return it to the shared context-budget
+		// recovery path before any output is emitted.
+		if !emitted && IsContextOverflow(err) {
+			return "", err
+		}
 		if !emitted {
 			if retry, _ := reasoningShapeError(err, reasoningFormatEffort); retry {
 				return "", err
