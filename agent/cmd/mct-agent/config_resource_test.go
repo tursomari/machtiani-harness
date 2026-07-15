@@ -43,6 +43,32 @@ func TestConfigAddNonInteractiveCreatesResourceConfig(t *testing.T) {
 	}
 }
 
+func TestConfigContextLengthLifecycle(t *testing.T) {
+	_, cleanup := setupConfigTest(t)
+	defer cleanup()
+	if code := handleConfigAddCommand([]string{
+		"--provider", "custom", "--url", "https://api.example/v1", "--api-key-env", "TEST_KEY",
+		"--model", "demo", "--alias", "demo", "--context-length", "64000", "--no-interactive",
+	}); code != 0 {
+		t.Fatalf("config add exit = %d", code)
+	}
+	path := filepath.Join(".machtiani", "config.toml")
+	raw := readTOML(t, path)
+	if got := raw["model_defaults"].(map[string]any)["context_length"]; got != int64(llm.DefaultContextLength) {
+		t.Fatalf("default context_length = %#v", got)
+	}
+	if got := raw["models"].(map[string]any)["demo"].(map[string]any)["context_length"]; got != int64(64000) {
+		t.Fatalf("model context_length = %#v", got)
+	}
+	if code := handleConfigModelCommand([]string{"set", "demo", "--clear-context-length", "--no-interactive"}); code != 0 {
+		t.Fatalf("clear context exit = %d", code)
+	}
+	raw = readTOML(t, path)
+	if _, exists := raw["models"].(map[string]any)["demo"].(map[string]any)["context_length"]; exists {
+		t.Fatal("model context_length remained after clear")
+	}
+}
+
 func TestManagedConfigCheckUsesExplicitPath(t *testing.T) {
 	dir := t.TempDir()
 	explicitPath := filepath.Join(dir, "explicit.toml")

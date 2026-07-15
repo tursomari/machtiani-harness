@@ -39,12 +39,13 @@ type Provider struct {
 }
 
 type Model struct {
-	ID           string   `json:"id"`
-	Name         string   `json:"name"`
-	Alias        string   `json:"alias"`
-	Description  string   `json:"description"`
-	Reasoning    []string `json:"reasoning"`
-	CacheDefault string   `json:"cache_default"`
+	ID            string   `json:"id"`
+	Name          string   `json:"name"`
+	Alias         string   `json:"alias"`
+	Description   string   `json:"description"`
+	Reasoning     []string `json:"reasoning"`
+	CacheDefault  string   `json:"cache_default"`
+	ContextLength int      `json:"context_length,omitempty"`
 }
 
 func Load() (Catalog, error) {

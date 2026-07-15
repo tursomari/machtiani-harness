@@ -17,7 +17,7 @@ func TestRegisterPromptFlagsAllPresent(t *testing.T) {
 		"openai-model", "openai-api-key", "openai-base-url",
 		"param", "param-json", "agent-model",
 		"session", "match-strength", "mode",
-		"include-history", "max-input-tokens",
+		"include-history", "context-length",
 		"verbose", "shell-agent",
 	}
 	for _, name := range expectedFlags {

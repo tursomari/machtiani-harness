@@ -1,15 +1,17 @@
 package llm
 
+const DefaultContextLength = 128000
+
 // DefaultConfig returns a Config with safe defaults suitable as a base
 // configuration before file-based and flag-based overlays are applied.
 func DefaultConfig() Config {
 	return Config{
 		DefaultModel: "",
 		Planner: &PlannerConfig{
-			MaxTurns:       150,
-			TurnTimeout:    0,
-			MaxInputTokens: 180000,
+			MaxTurns:    150,
+			TurnTimeout: 0,
 		},
+		ModelDefaults: &ModelDefaultsConfig{ContextLength: DefaultContextLength},
 		ShellAgent: &ShellAgentConfig{
 			MaxSteps:               110,
 			FinalizeRemainingSteps: 10,
@@ -57,9 +59,8 @@ func DefaultMinimalConfigMap() map[string]any {
 	return map[string]any{
 		"default_model": "",
 		"planner": map[string]any{
-			"max_turns":        int64(150),
-			"turn_timeout":     int64(0),
-			"max_input_tokens": int64(180000),
+			"max_turns":    int64(150),
+			"turn_timeout": int64(0),
 		},
 		"shell-agent": map[string]any{
 			"max_steps":                int64(110),
@@ -73,6 +74,9 @@ func DefaultMinimalConfigMap() map[string]any {
 		},
 		"ui": map[string]any{
 			"theme": "terminal",
+		},
+		"model_defaults": map[string]any{
+			"context_length": int64(DefaultContextLength),
 		},
 		"providers": map[string]any{},
 		"models":    map[string]any{},
@@ -109,10 +113,6 @@ func overlayConfig(target *Config, source Config, srcSource FieldSource) {
 		if source.Planner.turnTimeoutSet || source.Planner.TurnTimeout != 0 {
 			target.Planner.TurnTimeout = source.Planner.TurnTimeout
 			target.Planner.TurnTimeoutSource = srcSource
-		}
-		if source.Planner.maxInputTokensSet || source.Planner.MaxInputTokens != 0 {
-			target.Planner.MaxInputTokens = source.Planner.MaxInputTokens
-			target.Planner.MaxInputTokensSource = srcSource
 		}
 	}
 
@@ -170,9 +170,16 @@ func overlayConfig(target *Config, source Config, srcSource FieldSource) {
 		if target.ModelDefaults == nil {
 			copyDefaults := *source.ModelDefaults
 			copyDefaults.CacheControl = deepCopyMap(source.ModelDefaults.CacheControl)
+			if source.ModelDefaults.contextLengthSet || source.ModelDefaults.ContextLength != 0 {
+				copyDefaults.ContextLengthSource = srcSource
+			}
 			target.ModelDefaults = &copyDefaults
 		} else {
 			dst, src := target.ModelDefaults, source.ModelDefaults
+			if src.contextLengthSet || src.ContextLength != 0 {
+				dst.ContextLength, dst.contextLengthSet = src.ContextLength, true
+				dst.ContextLengthSource = srcSource
+			}
 			if src.cacheEnabledSet || src.CacheEnabled {
 				dst.CacheEnabled, dst.cacheEnabledSet = src.CacheEnabled, true
 			}
@@ -277,6 +284,11 @@ func overlayConfig(target *Config, source Config, srcSource FieldSource) {
 					existing.Model = v.Model
 					existing.ModelSource = srcSource
 				}
+				if v.contextLengthSet || v.ContextLength != 0 {
+					existing.ContextLength = v.ContextLength
+					existing.contextLengthSet = true
+					existing.ContextLengthSource = srcSource
+				}
 				if v.cacheEnabledSet || v.CacheEnabled {
 					existing.CacheEnabled = v.CacheEnabled
 					existing.cacheEnabledSet = true
@@ -329,6 +341,7 @@ func overlayConfig(target *Config, source Config, srcSource FieldSource) {
 				copyModel := ModelDefinition{
 					Provider:                        v.Provider,
 					Model:                           v.Model,
+					ContextLength:                   v.ContextLength,
 					ParamsJSON:                      v.ParamsJSON,
 					CacheKeyName:                    v.CacheKeyName,
 					CacheControl:                    deepCopyMap(v.CacheControl),
@@ -339,6 +352,7 @@ func overlayConfig(target *Config, source Config, srcSource FieldSource) {
 					CacheReanchorMinCachedTokens:    v.CacheReanchorMinCachedTokens,
 					CacheEnabled:                    v.CacheEnabled,
 					cacheEnabledSet:                 v.cacheEnabledSet,
+					contextLengthSet:                v.contextLengthSet,
 					cacheKeyNameSet:                 v.cacheKeyNameSet,
 					cacheControlSet:                 v.cacheControlSet,
 					cacheTriggerThresholdSet:        v.cacheTriggerThresholdSet,
@@ -349,6 +363,7 @@ func overlayConfig(target *Config, source Config, srcSource FieldSource) {
 				}
 				copyModel.ProviderSource = srcSource
 				copyModel.ModelSource = srcSource
+				copyModel.ContextLengthSource = srcSource
 				copyModel.CacheKeyNameSource = srcSource
 				copyModel.CacheControlSource = srcSource
 				copyModel.CacheTriggerThresholdSource = srcSource

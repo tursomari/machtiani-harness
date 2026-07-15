@@ -311,7 +311,6 @@ default_model = "foo"
 [planner]
 max_turns = 150
 turn_timeout = 0
-max_input_tokens = 180000
 system_template = "You are the planning layer for the Machtiani shell agent."
 instance_template = "Task: {{.Task}}"
 
@@ -319,6 +318,9 @@ instance_template = "Task: {{.Task}}"
 max_steps = 110
 finalize_remaining_steps = 10
 format_error_template = "Your response did not include a properly formatted bash command. Please respond with exactly one fenced bash command."
+
+[model_defaults]
+context_length = 128000
 
 [environment]
 type = "local"
@@ -462,7 +464,7 @@ Useful flags (agent):
 - `--openai-base-url string`: Base URL for OpenAI‑compatible endpoint.
 - `--openai-model string`: Model name used by the planner and discovery pipeline (alias: `--model`).
 - `--shell-agent-model string`: Override the shell-agent model alias for the current run (default comes from `[model].model_name`).
-- `--max-input-tokens int`: cap the estimated prompt size that discovery may build from results; truncates file tails and inserts stamps when necessary.
+- `--context-length int`: enforce a total input-plus-output token window for this session; model configuration is used when omitted.
 - `--timeout-per-turn int`: seconds per turn for the agent loop.
 - `--version`: print build metadata for the agent and exit.
 - `--dry-run`: print intended calls without executing.
@@ -637,7 +639,7 @@ mct prompt "Summarize the project's README files."
 mct prompt --file prompt.md
 
 # Limit prompt size for models with strict budgets
-mct prompt "Summarize architecture" --max-input-tokens 6000
+mct prompt "Summarize architecture" --context-length 64000
 
 # Answer-only mode (no discovery/saving)
 mct prompt --mode=answer-only -f prompt.md

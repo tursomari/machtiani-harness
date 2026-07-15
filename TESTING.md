@@ -230,7 +230,7 @@ MACHTIANI_CONFIG=.machtiani/config.toml \
 mct-agent sync \
   --api-key "openrouter:$TEST_API_KEY" \
   --model glm-5-high \
-  --max-input-tokens 180000
+  --context-length 128000
 ```
 
 The harness pre-assigns session IDs and reads turn counts and final-answer assertions directly from session artifacts rather than scraping stderr.

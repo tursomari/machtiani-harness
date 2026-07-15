@@ -44,10 +44,11 @@ type initProvider struct {
 }
 
 type initModel struct {
-	alias     string
-	provider  string
-	model     string
-	reasoning string
+	alias         string
+	provider      string
+	model         string
+	reasoning     string
+	contextLength int
 }
 
 type initMenuOption struct {
@@ -231,6 +232,7 @@ func handleInitCommandWithDeps(args []string, deps initCommandDeps) int {
 	providerURL := fs.String("provider-url", "", "LLM provider base URL (required)")
 	apiKey := fs.String("api-key", "", "API key for the provider (required)")
 	model := fs.String("model", "", "Model name (required)")
+	contextLength := fs.Int("context-length", llm.DefaultContextLength, "total input-plus-output token context")
 	reasoning := fs.String("reasoning", "", "Reasoning effort level (omit for provider default)")
 	alias := fs.String("alias", "default", "Model alias name")
 	force := fs.Bool("force", false, "Overwrite existing configuration")
@@ -264,7 +266,7 @@ func handleInitCommandWithDeps(args []string, deps initCommandDeps) int {
 	}
 
 	interactive := true
-	for _, name := range []string{"provider-url", "api-key", "model", "reasoning", "alias"} {
+	for _, name := range []string{"provider-url", "api-key", "model", "context-length", "reasoning", "alias"} {
 		if fs.Changed(name) {
 			interactive = false
 			break
@@ -361,7 +363,11 @@ func handleInitCommandWithDeps(args []string, deps initCommandDeps) int {
 	}
 	if !interactive {
 		providersToWrite = []initProvider{{name: strings.TrimSpace(*alias), baseURL: strings.TrimSpace(*providerURL), apiKey: strings.TrimSpace(*apiKey)}}
-		modelsToWrite = []initModel{{alias: strings.TrimSpace(*alias), provider: strings.TrimSpace(*alias), model: strings.TrimSpace(*model), reasoning: strings.TrimSpace(*reasoning)}}
+		if *contextLength < 4096 {
+			fmt.Fprintln(deps.errOut, "Error: --context-length must be at least 4096")
+			return 1
+		}
+		modelsToWrite = []initModel{{alias: strings.TrimSpace(*alias), provider: strings.TrimSpace(*alias), model: strings.TrimSpace(*model), reasoning: strings.TrimSpace(*reasoning), contextLength: *contextLength}}
 	}
 
 	if err := os.MkdirAll(".machtiani", 0755); err != nil {
@@ -399,15 +405,16 @@ func handleInitCommandWithDeps(args []string, deps initCommandDeps) int {
 	}
 	for _, configuredModel := range modelsToWrite {
 		modelEntry := map[string]any{
-			"provider": configuredModel.provider,
-			"model":    configuredModel.model,
+			"provider":       configuredModel.provider,
+			"model":          configuredModel.model,
+			"context_length": configuredModel.contextLength,
 		}
 		if configuredModel.reasoning != "" {
 			setConfiguredReasoning(modelEntry, providers, configuredModel.reasoning)
 		}
 		models[configuredModel.alias] = modelEntry
 	}
-	modelDefaults := map[string]any{"cache_enabled": cacheEnabled}
+	modelDefaults := map[string]any{"cache_enabled": cacheEnabled, "context_length": llm.DefaultContextLength}
 	if cacheEnabled {
 		modelDefaults["cache_key_name"] = defaultCacheKeyName
 		modelDefaults["cache_control"] = map[string]any{"type": "ephemeral"}
@@ -503,7 +510,7 @@ func promptInitModel(reader *bufio.Reader, deps initCommandDeps, provider, defau
 	if err != nil {
 		return initModel{}, err
 	}
-	return initModel{alias: alias, provider: provider, model: modelName, reasoning: strings.TrimSpace(reasoning)}, nil
+	return initModel{alias: alias, provider: provider, model: modelName, reasoning: strings.TrimSpace(reasoning), contextLength: llm.DefaultContextLength}, nil
 }
 
 func promptUniqueDefault(reader *bufio.Reader, out io.Writer, heading, explanation, prompt, defaultValue string, exists func(string) bool) (string, error) {

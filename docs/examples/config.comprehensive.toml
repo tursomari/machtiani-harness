@@ -113,8 +113,11 @@ api_key = "${OPENROUTER_API_KEY}"
 provider = "openrouter"
 model    = "openai/gpt-5-nano"
 
+# Total input-plus-output context inherited by models without an override.
+[model_defaults]
+context_length = 128000
+
 # Prompt caching defaults inherited by every named model (optional):
-# [model_defaults]
 # cache_enabled = true
 # cache_key_name = "cache_control"
 # cache_control = { type = "ephemeral" }

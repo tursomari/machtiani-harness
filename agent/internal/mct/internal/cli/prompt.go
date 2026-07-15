@@ -46,7 +46,7 @@ type promptFlagValues struct {
 	matchStrengthFlag  *string
 	modeFlag           *string
 	includeHistoryFlag *bool
-	maxInputTokensFlag *int
+	contextLengthFlag  *int
 	verboseFlag        *bool
 	shellAgentFlag     *bool
 }
@@ -67,7 +67,7 @@ func registerPromptFlags(fs *pflag.FlagSet) *promptFlagValues {
 	f.matchStrengthFlag = fs.String("match-strength", defaultMatchStrength, "Match strength: high | mid | low")
 	f.modeFlag = fs.String("mode", defaultMode, "Mode: chat | pure-chat | answer-only | default")
 	f.includeHistoryFlag = fs.Bool("include-history", false, "Include conversation history in the LLM prompt (internal use)")
-	f.maxInputTokensFlag = fs.Int("max-input-tokens", 0, "Maximum number of tokens allowed in the constructed prompt (0 disables truncation)")
+	f.contextLengthFlag = fs.Int("context-length", 0, "Total input-plus-output token context for this session")
 	f.verboseFlag = fs.BoolP("verbose", "v", false, "Enable verbose output")
 	f.shellAgentFlag = fs.Bool("shell-agent", false, "Enable shell-agent mode: invoke shell-agent subprocess binary for task execution")
 
@@ -79,6 +79,11 @@ func registerPromptFlags(fs *pflag.FlagSet) *promptFlagValues {
 }
 
 func handlePrompt(args []string) {
+	for _, arg := range args {
+		if arg == "--max-input-tokens" || strings.HasPrefix(arg, "--max-input-tokens=") {
+			log.Fatal("--max-input-tokens was removed; use --context-length to set the total session context window")
+		}
+	}
 	fs := pflag.NewFlagSet("prompt", pflag.ContinueOnError)
 	f := registerPromptFlags(fs)
 
@@ -299,7 +304,7 @@ func handlePrompt(args []string) {
 		OnHeader:             streamHeader,
 		OnToken:              streamToken,
 		Verbose:              *f.verboseFlag,
-		MaxInputTokens:       *f.maxInputTokensFlag,
+		ContextLength:        *f.contextLengthFlag,
 		Readme:               readmeOpts,
 		ShellAgent:           shellAgent,
 	})

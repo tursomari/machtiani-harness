@@ -9,7 +9,6 @@ default_model = "default"
 [planner]
 max_turns = 150
 # turn_timeout = 120  # seconds per turn; 0 = unlimited (default: 120)
-# max_input_tokens = 180000  # max tokens per LLM call; 0 = disabled (default: 180000)
 
 # Uncomment to enable shell-agent by default
 # shell_agent_enabled = false
@@ -17,6 +16,9 @@ max_turns = 150
 [shell-agent]
 finalize_remaining_steps = 10
 max_steps = 110
+
+[model_defaults]
+context_length = 128000 # total input + output tokens; models may override
 
 [providers.default]
 base_url = "https://api.example.com/v1"

@@ -498,6 +498,12 @@ func runSession(ctx context.Context, opts Options) Result {
 		fmt.Fprintln(diagWriter, "Model resolution error:", err)
 		return Result{ExitCode: 1, Err: err}
 	}
+	orchBudget, err := llm.ResolveInputBudget(models.orchestrator.resolved, cfg.contextLength)
+	if err != nil {
+		fmt.Fprintln(diagWriter, "Context budget error:", err)
+		return Result{ExitCode: 1, Err: err}
+	}
+	cfg.maxInputTokens = orchBudget.MaxInputTokens
 	metaLines := []string{
 		describeModel("orchestrator", models.orchestrator),
 		describeModel("answer", models.answer),
@@ -546,6 +552,7 @@ func runSession(ctx context.Context, opts Options) Result {
 		Prompts:                 opts.GlobalConfig.Prompts,
 		UITheme:                 themeName,
 		Diagnostics:             diagWriter,
+		ContextLength:           cfg.contextLength,
 	}
 	if err := mctRunner.Resolve(); err != nil {
 		fmt.Fprintln(diagWriter, "mct resolution error:", err)

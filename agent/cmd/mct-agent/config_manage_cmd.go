@@ -196,6 +196,11 @@ func configTable(raw map[string]any, key string) map[string]any {
 }
 
 func validateConfigDocument(raw map[string]any) error {
+	if planner, ok := raw["planner"].(map[string]any); ok {
+		if _, legacy := planner["max_input_tokens"]; legacy {
+			return errors.New("planner.max_input_tokens was removed; delete it and configure models.<alias>.context_length instead")
+		}
+	}
 	var typed llm.Config
 	var encoded bytes.Buffer
 	if err := toml.NewEncoder(&encoded).Encode(raw); err != nil {
@@ -238,6 +243,12 @@ func validateConfigDocument(raw map[string]any) error {
 		if strings.TrimSpace(modelID) == "" {
 			return fmt.Errorf("models.%s.model is required", alias)
 		}
+		if value, exists := model["context_length"]; exists {
+			length, ok := configInt(value)
+			if !ok || length < 4096 {
+				return fmt.Errorf("models.%s.context_length must be an integer of at least 4096", alias)
+			}
+		}
 		if err := validateCacheNumbers("models."+alias, model); err != nil {
 			return err
 		}
@@ -267,6 +278,12 @@ func validateConfigDocument(raw map[string]any) error {
 		}
 	}
 	if defaults, ok := raw["model_defaults"].(map[string]any); ok {
+		if value, exists := defaults["context_length"]; exists {
+			length, valid := configInt(value)
+			if !valid || length < 4096 {
+				return errors.New("model_defaults.context_length must be an integer of at least 4096")
+			}
+		}
 		if err := validateCacheNumbers("model_defaults", defaults); err != nil {
 			return err
 		}
@@ -434,10 +451,15 @@ func printProvider(name string, provider map[string]any) {
 	}
 }
 
-func printModel(alias string, model map[string]any) {
+func printModel(alias string, model map[string]any, inheritedContextLength int) {
 	fmt.Printf("Model %s\n", alias)
 	fmt.Printf("  provider: %v\n", model["provider"])
 	fmt.Printf("  model: %v\n", model["model"])
+	if value, ok := model["context_length"]; ok {
+		fmt.Printf("  context_length: %v (model)\n", value)
+	} else {
+		fmt.Printf("  context_length: %d (inherited)\n", inheritedContextLength)
+	}
 	if params, ok := model["params"].(map[string]any); ok {
 		if effort, ok := params["reasoning_effort"]; ok {
 			fmt.Printf("  reasoning: %v\n", effort)

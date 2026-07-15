@@ -23,9 +23,9 @@ import (
 )
 
 var (
-	chatStreamWithRuntime  = llm.ChatStreamWithResolvedFallback
-	discoveryRunnerRun     = discoveryrunner.Run
-	shellAgentRun          = runShellAgentWithInterception
+	chatStreamWithRuntime = llm.ChatStreamWithResolvedFallback
+	discoveryRunnerRun    = discoveryrunner.Run
+	shellAgentRun         = runShellAgentWithInterception
 )
 
 const defaultShellAgentPromptNotice = "I understand that I don't have access to a shell directly. The `shell-agent` will carry out my request and report back with explanation of the results and not necessarily the full output of commands it executes."
@@ -41,6 +41,16 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 		mode = "default"
 	}
 	isAnswerOnly := mode == "answer-only"
+	answerRuntime := opts.AnswerRuntime
+	if runtimeIsZero(answerRuntime) {
+		answerRuntime = opts.Runtime
+	}
+	budget, err := llm.ResolveInputBudget(answerRuntime.Resolved, opts.ContextLength)
+	if err != nil {
+		return res, err
+	}
+	maxInputTokens := budget.MaxInputTokens
+	llm.EmitContextBudget(ctx, answerRuntime.Resolved, budget)
 
 	origSession := os.Getenv("MACHTIANI_SESSION_ID")
 	restoreSession := false
@@ -122,33 +132,34 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 		fileDiscoveryRan = true
 	}
 
-	switch {
-	case isAnswerOnly:
-		var buildErr error
-		combined, included, buildErr = contextbuilder.Build(opts.Prompt, nil, hist, contextbuilder.Options{IncludeHistory: includeHistory, MaxInputTokens: opts.MaxInputTokens, PreludeTemplate: historyTemplate})
-		if buildErr != nil {
-			return res, buildErr
-		}
-	case opts.ShellAgent:
-		// History is carried in pre-built messages; the combined
-		// string is only used for the header template.
-		combined = opts.Prompt
-	default:
-		options := contextbuilder.Options{IncludeHistory: includeHistory, MaxInputTokens: opts.MaxInputTokens, PreludeTemplate: historyTemplate}
-		var buildErr error
-		combined, included, buildErr = contextbuilder.Build(opts.Prompt, filtered, hist, options)
-		if buildErr != nil {
-			return res, buildErr
-		}
-	}
-
 	directiveBlock := formatResponseDirectives(opts.ResponseDirectives)
-	if directiveBlock != "" {
-		if strings.TrimSpace(combined) != "" {
-			combined = combined + "\n\n" + directiveBlock
-		} else {
-			combined = directiveBlock
+	buildCombined := func(inputLimit int) (string, []string, error) {
+		var value string
+		var files []string
+		var buildErr error
+		switch {
+		case isAnswerOnly:
+			value, files, buildErr = contextbuilder.Build(opts.Prompt, nil, hist, contextbuilder.Options{IncludeHistory: includeHistory, MaxInputTokens: inputLimit, PreludeTemplate: historyTemplate})
+		case opts.ShellAgent:
+			value = opts.Prompt
+		default:
+			value, files, buildErr = contextbuilder.Build(opts.Prompt, filtered, hist, contextbuilder.Options{IncludeHistory: includeHistory, MaxInputTokens: inputLimit, PreludeTemplate: historyTemplate})
 		}
+		if buildErr != nil {
+			return "", nil, buildErr
+		}
+		if directiveBlock != "" {
+			if strings.TrimSpace(value) != "" {
+				value += "\n\n" + directiveBlock
+			} else {
+				value = directiveBlock
+			}
+		}
+		return value, files, nil
+	}
+	combined, included, err = buildCombined(maxInputTokens)
+	if err != nil {
+		return res, err
 	}
 	res.DirectiveBlock = directiveBlock
 
@@ -215,10 +226,6 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 	}
 
 	messages := []llm.Message{{Role: "user", Content: combined}}
-	answerRuntime := opts.AnswerRuntime
-	if runtimeIsZero(answerRuntime) {
-		answerRuntime = opts.Runtime
-	}
 	chatCtx := llm.WithAPIKeyOverrides(ctx, answerRuntime.APIKeyOverrides)
 	assistant := ""
 	assistantFromShell := false
@@ -227,10 +234,48 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 		assistantFromShell = true
 	}
 	if assistant == "" {
-		var err error
-		assistant, err = chatStreamWithRuntime(chatCtx, answerRuntime.Resolved, answerRuntime.FallbackAliases, answerRuntime.FallbackResolved, copyExtrasMap(answerRuntime.Extras), messages, opts.OnToken)
-		if err != nil {
-			return res, err
+		currentBudget := budget
+		for reduction := 0; ; reduction++ {
+			emitted := false
+			onToken := func(token string) {
+				if token != "" {
+					emitted = true
+				}
+				if opts.OnToken != nil {
+					opts.OnToken(token)
+				}
+			}
+			assistant, err = chatStreamWithRuntime(chatCtx, answerRuntime.Resolved, answerRuntime.FallbackAliases, answerRuntime.FallbackResolved, copyExtrasMap(answerRuntime.Extras), messages, onToken)
+			if err == nil {
+				if reduction > 0 {
+					persisted, persistErr := llm.PersistLearnedContext(answerRuntime.Resolved, budget.ContextLength, currentBudget.ContextLength)
+					llm.EmitContextAdjustment(chatCtx, answerRuntime.Resolved, budget.ContextLength, currentBudget.ContextLength, persisted, persistErr)
+					fmt.Fprintf(os.Stderr, "Warning: provider rejected context length %d; retry succeeded at %d tokens", budget.ContextLength, currentBudget.ContextLength)
+					if persistErr != nil {
+						fmt.Fprintf(os.Stderr, "; configuration update failed: %v\n", persistErr)
+					} else if persisted {
+						fmt.Fprintln(os.Stderr, "; configuration updated.")
+					} else {
+						fmt.Fprintln(os.Stderr, "; configuration was not changed.")
+					}
+				}
+				break
+			}
+			if emitted || !llm.IsContextOverflow(err) || reduction >= 4 {
+				return res, err
+			}
+			nextInput := currentBudget.MaxInputTokens / 2
+			nextLength := llm.ContextLengthForInputCap(nextInput)
+			currentBudget, err = llm.BudgetForContextLength(nextLength, llm.ContextSourceRuntimeLearned)
+			if err != nil {
+				return res, err
+			}
+			combined, included, err = buildCombined(currentBudget.MaxInputTokens)
+			if err != nil {
+				return res, err
+			}
+			messages = []llm.Message{{Role: "user", Content: combined}}
+			llm.EmitContextBudget(chatCtx, answerRuntime.Resolved, currentBudget)
 		}
 	} else if opts.OnToken != nil && !assistantFromShell {
 		opts.OnToken(assistant)
@@ -279,12 +324,6 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 	return res, nil
 }
 
-
-
-
-
-
-
 func runReadmeManager(ctx context.Context, opts RunOptions, isAnswerOnly bool) error {
 	if opts.Readme == nil || !opts.Readme.Enabled {
 		return nil
@@ -320,7 +359,15 @@ func runReadmeManager(ctx context.Context, opts RunOptions, isAnswerOnly bool) e
 		return err
 	}
 	mgr.SetPrompts(opts.Prompts)
-	mgr.SetMaxInputTokens(opts.MaxInputTokens)
+	readmeRuntime := opts.AnswerRuntime
+	if runtimeIsZero(readmeRuntime) {
+		readmeRuntime = opts.Runtime
+	}
+	budget, err := llm.ResolveInputBudget(readmeRuntime.Resolved, opts.ContextLength)
+	if err != nil {
+		return err
+	}
+	mgr.SetMaxInputTokens(budget.MaxInputTokens)
 	mgr.SetPromptExecutor(func(execCtx context.Context, prompt string) (string, error) {
 		prev, hadPrev := os.LookupEnv(readme.SkipReadmeManagerEnv)
 		if err := os.Setenv(readme.SkipReadmeManagerEnv, "1"); err != nil {
@@ -345,7 +392,7 @@ func runReadmeManager(ctx context.Context, opts RunOptions, isAnswerOnly bool) e
 			AnswerRuntime:        opts.AnswerRuntime,
 			FileDiscoveryRuntime: opts.FileDiscoveryRuntime,
 			Verbose:              opts.Verbose,
-			MaxInputTokens:       opts.MaxInputTokens,
+			ContextLength:        opts.ContextLength,
 			GlobalConfigPath:     opts.GlobalConfigPath,
 			Prompts:              opts.Prompts,
 		}
@@ -800,7 +847,6 @@ func AppendShellAgentPromptNotice(prompt string, cfg *llm.MCTPromptsConfig) stri
 	}
 	return strings.TrimRight(prompt, "\n") + "\n\n" + notice
 }
-
 
 func runtimeIsZero(rt ModelRuntime) bool {
 	if strings.TrimSpace(rt.Resolved.Model) != "" {

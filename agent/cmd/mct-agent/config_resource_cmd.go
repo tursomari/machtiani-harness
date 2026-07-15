@@ -6,10 +6,25 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/pflag"
+	"github.com/tursomari/machtiani/agent/internal/llm"
 )
+
+func configInt(value any) (int, bool) {
+	switch number := value.(type) {
+	case int:
+		return number, true
+	case int64:
+		return int(number), true
+	case float64:
+		return int(number), true
+	default:
+		return 0, false
+	}
+}
 
 func handleConfigProviderCommand(args []string) int {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
@@ -480,7 +495,16 @@ func handleConfigModelRead(action string, args []string) int {
 	if !ok {
 		return configError(fmt.Errorf("model %q not found", fs.Arg(0)))
 	}
-	printModel(fs.Arg(0), model)
+	inheritedContextLength := llm.DefaultContextLength
+	if defaults, ok := doc.raw["model_defaults"].(map[string]any); ok {
+		switch value := defaults["context_length"].(type) {
+		case int64:
+			inheritedContextLength = int(value)
+		case int:
+			inheritedContextLength = value
+		}
+	}
+	printModel(fs.Arg(0), model, inheritedContextLength)
 	return 0
 }
 
@@ -492,6 +516,8 @@ func handleConfigModelWrite(action string, args []string) int {
 	noInteractive := fs.Bool("no-interactive", false, "never prompt; require complete arguments")
 	provider := fs.String("provider", "", "provider name")
 	modelID := fs.String("model", "", "provider model identifier")
+	contextLength := fs.Int("context-length", 0, "total input-plus-output token context")
+	clearContextLength := fs.Bool("clear-context-length", false, "inherit the default context length")
 	reasoning := fs.String("reasoning", "", "reasoning effort")
 	clearReasoning := fs.Bool("clear-reasoning", false, "remove reasoning override")
 	var params, removeParams multiString
@@ -572,6 +598,26 @@ func handleConfigModelWrite(action string, args []string) int {
 				_ = fs.Set("model", *modelID)
 			}
 		}
+		if !fs.Changed("context-length") && !*clearContextLength {
+			current, _ := configInt(entry["context_length"])
+			if current == 0 {
+				current = llm.DefaultContextLength
+			}
+			value, promptErr := promptLineDefault(reader, "Context length (total input + output; 'default' inherits)", strconv.Itoa(current), true)
+			if promptErr != nil {
+				return configError(promptErr)
+			}
+			if strings.EqualFold(strings.TrimSpace(value), "default") {
+				*clearContextLength = true
+			} else {
+				parsed, parseErr := strconv.Atoi(strings.TrimSpace(value))
+				if parseErr != nil {
+					return configUsageError("context length must be an integer or 'default'")
+				}
+				*contextLength = parsed
+				_ = fs.Set("context-length", value)
+			}
+		}
 		if !fs.Changed("reasoning") && !*clearReasoning {
 			current := modelReasoning(entry)
 			*reasoning, err = promptLineDefault(reader, "Reasoning ('default' clears the override)", current, false)
@@ -599,6 +645,12 @@ func handleConfigModelWrite(action string, args []string) int {
 	if fs.Changed("param-json") && *clearParamsJSON {
 		return configUsageError("--param-json and --clear-params-json are mutually exclusive")
 	}
+	if fs.Changed("context-length") && *clearContextLength {
+		return configUsageError("--context-length and --clear-context-length are mutually exclusive")
+	}
+	if fs.Changed("context-length") && *contextLength < 4096 {
+		return configUsageError("--context-length must be at least 4096")
+	}
 	if suggestion, likely := reasoningTypoSuggestion(*reasoning); likely {
 		return configUsageError(fmt.Sprintf("reasoning value %q looks misspelled; did you mean %q?", *reasoning, suggestion))
 	}
@@ -607,6 +659,15 @@ func handleConfigModelWrite(action string, args []string) int {
 	}
 	if fs.Changed("model") || action == "add" {
 		entry["model"] = strings.TrimSpace(*modelID)
+	}
+	if fs.Changed("context-length") {
+		entry["context_length"] = *contextLength
+		if *contextLength > 1000000 {
+			fmt.Fprintf(os.Stderr, "Warning: context length %d exceeds 1,000,000 tokens; verify provider support.\n", *contextLength)
+		}
+	}
+	if *clearContextLength {
+		delete(entry, "context_length")
 	}
 	paramTable, _ := entry["params"].(map[string]any)
 	if paramTable == nil {
@@ -700,7 +761,7 @@ func handleConfigModelWrite(action string, args []string) int {
 }
 
 func modelMutationChanged(fs *pflag.FlagSet) bool {
-	for _, name := range []string{"provider", "model", "reasoning", "clear-reasoning", "param", "param-json", "clear-params-json", "remove-param"} {
+	for _, name := range []string{"provider", "model", "context-length", "clear-context-length", "reasoning", "clear-reasoning", "param", "param-json", "clear-params-json", "remove-param"} {
 		if fs.Changed(name) {
 			return true
 		}

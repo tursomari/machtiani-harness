@@ -149,8 +149,7 @@ Your final answer must include:
 Do not claim success unless every requirement is implemented, the tests prove the requirement text rather than an implementation assumption, all relevant verification commands pass, and the final deliverable is fully committed with no unintended deliverable files.`
 
 const (
-	mctAgentSyncAttempts       = 10
-	mctAgentSyncMaxInputTokens = 850000
+	mctAgentSyncAttempts = 10
 )
 
 var protectedRuntimePaths = []string{
@@ -578,11 +577,7 @@ func syncMCTAgent(ctx context.Context, trajDir string, label string, model strin
 			return snapshotErr
 		}
 
-		syncArgs := []string{
-			"sync",
-			"--max-input-tokens",
-			fmt.Sprintf("%d", mctAgentSyncMaxInputTokens),
-		}
+		syncArgs := []string{"sync"}
 		if model != "" {
 			syncArgs = append(syncArgs, "--model", model)
 		}
@@ -615,16 +610,15 @@ func syncMCTAgent(ctx context.Context, trajDir string, label string, model strin
 		}
 
 		writeTrajectoryLine(trajDir, map[string]interface{}{
-			"type":             "mct_sync_attempt",
-			"label":            label,
-			"timestamp":        time.Now().UTC().Format(time.RFC3339),
-			"attempt":          attempt,
-			"max_attempts":     mctAgentSyncAttempts,
-			"max_input_tokens": mctAgentSyncMaxInputTokens,
-			"args":             syncArgs,
-			"exit_code":        exitCode,
-			"stdout":           stdoutBuf.String(),
-			"stderr":           stderrBuf.String(),
+			"type":         "mct_sync_attempt",
+			"label":        label,
+			"timestamp":    time.Now().UTC().Format(time.RFC3339),
+			"attempt":      attempt,
+			"max_attempts": mctAgentSyncAttempts,
+			"args":         syncArgs,
+			"exit_code":    exitCode,
+			"stdout":       stdoutBuf.String(),
+			"stderr":       stderrBuf.String(),
 		})
 
 		if err == nil {

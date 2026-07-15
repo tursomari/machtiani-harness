@@ -145,7 +145,7 @@ Repo-local sync command:
 mct-agent sync \
   --api-key "openrouter:$TEST_API_KEY" \
   --model glm-5-high \
-  --max-input-tokens 180000
+  --context-length 128000
 ```
 
 - A successful sync prints `Readme synced for commit <hash>`.

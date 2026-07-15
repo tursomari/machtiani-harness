@@ -159,12 +159,15 @@ func newRunFlagSet(cfg *session.Config) runFlagSetResult {
 }
 
 func handleRunCommand(args []string) int {
+	if containsRemovedMaxInputFlag(args) {
+		fmt.Fprintln(os.Stderr, "Error: --max-input-tokens was removed; use --context-length to set the total session context window")
+		return 2
+	}
 	cfg := session.Config{}
 	if globalCfg, _, err := llm.LoadGlobalConfig(); err == nil {
 		if globalCfg.Planner != nil {
 			cfg.MaxTurns = globalCfg.Planner.MaxTurns
 			cfg.TurnTimeout = globalCfg.Planner.TurnTimeout
-			cfg.MaxInputTokens = globalCfg.Planner.MaxInputTokens
 		}
 		if globalCfg.Environment != nil {
 			cfg.MaxCommandOutputBytes = globalCfg.Environment.MaxCommandOutputBytes
@@ -205,8 +208,8 @@ func handleRunCommand(args []string) int {
 		return 2
 	}
 	markExplicitModelOverrides(fs, &cfg)
-	if cfg.MaxInputTokens < 0 {
-		fmt.Fprintln(os.Stderr, "Error: --max-input-tokens must be zero or positive")
+	if cfg.ContextLength != 0 && cfg.ContextLength < llm.MinimumContextLength {
+		fmt.Fprintf(os.Stderr, "Error: --context-length must be at least %d\n", llm.MinimumContextLength)
 		return 2
 	}
 	// Validate --answer-tag at the CLI boundary. The value is normalised
@@ -468,6 +471,10 @@ func shortSHA(hash string, length int) string {
 }
 
 func handleSyncCommand(args []string) int {
+	if containsRemovedMaxInputFlag(args) {
+		fmt.Fprintln(os.Stderr, "Error: --max-input-tokens was removed; use --context-length to set the total session context window")
+		return 2
+	}
 	cfg := session.Config{}
 	if globalCfg, _, err := llm.LoadGlobalConfig(); err == nil && globalCfg.Planner != nil {
 		cfg.MaxTurns = globalCfg.Planner.MaxTurns
@@ -493,8 +500,8 @@ func handleSyncCommand(args []string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
-	if cfg.MaxInputTokens < 0 {
-		fmt.Fprintln(os.Stderr, "Error: --max-input-tokens must be zero or positive")
+	if cfg.ContextLength != 0 && cfg.ContextLength < llm.MinimumContextLength {
+		fmt.Fprintf(os.Stderr, "Error: --context-length must be at least %d\n", llm.MinimumContextLength)
 		return 2
 	}
 	apiOverrides, parseErr := llm.ParseAPIKeyOverrides(apiKeyFlags)
@@ -549,6 +556,14 @@ func handleSyncCommand(args []string) int {
 		fmt.Fprintln(os.Stderr, "Model resolution error:", err)
 		return 1
 	}
+	syncBudget, err := llm.ResolveInputBudget(runtimes.Answer.Resolved, cfg.ContextLength)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Context budget error:", err)
+		return 1
+	}
+	if cfg.Verbose {
+		fmt.Fprintf(os.Stderr, "llm.context_budget.resolved context_length=%d source=%s max_input_tokens=%d\n", syncBudget.ContextLength, syncBudget.Source, syncBudget.MaxInputTokens)
+	}
 
 	var mctPrompts *llm.MCTPromptsConfig
 	if globalCfg.Prompts != nil {
@@ -557,7 +572,7 @@ func handleSyncCommand(args []string) int {
 	if err := readmesync.Run(context.Background(), readmesync.Options{
 		Commit:               commit,
 		Verbose:              cfg.Verbose,
-		MaxInputTokens:       cfg.MaxInputTokens,
+		ContextLength:        cfg.ContextLength,
 		Runtime:              runtimes.Orchestrator,
 		AnswerRuntime:        runtimes.Answer,
 		FileDiscoveryRuntime: runtimes.FileDiscovery,
@@ -604,7 +619,7 @@ func configureSessionFlags(fs *pflag.FlagSet, cfg *session.Config, paramFlags, p
 	fs.StringVar(&cfg.TranscriptFile, "transcript-file", cfg.TranscriptFile, "path to write transcript file (default: project-store sessions/<sessionID>/chat/agent-transcript.adoc)")
 	fs.StringVar(&cfg.FileDiscoveryTrajectory, "file-discovery-trajectory", cfg.FileDiscoveryTrajectory, "path to write file-discovery trajectory JSONL (default: auto-named under session artifacts)")
 	fs.StringVar(&cfg.FileDiscoveryOutputDir, "file-discovery-output-dir", cfg.FileDiscoveryOutputDir, "directory for file-discovery artifacts (default: project-store sessions/<sessionID>/artifacts)")
-	fs.IntVar(&cfg.MaxInputTokens, "max-input-tokens", cfg.MaxInputTokens, "maximum number of tokens allowed in constructed prompts (0 disables truncation)")
+	fs.IntVar(&cfg.ContextLength, "context-length", cfg.ContextLength, "total input-plus-output token context for this session")
 	fs.StringVar(&cfg.TrajectoryFile, "trajectory-file", cfg.TrajectoryFile, "override path for unified trajectory JSONL (default: session-scoped path)")
 	fs.BoolVar(&cfg.NoTrajectory, "no-trajectory", cfg.NoTrajectory, "disable unified trajectory JSONL emission")
 	fs.BoolVar(&cfg.TrajectoryVerboseLLM, "trajectory-verbose-llm", cfg.TrajectoryVerboseLLM, "include expanded LLM details in the trajectory stream")
@@ -633,6 +648,15 @@ func configureSessionFlags(fs *pflag.FlagSet, cfg *session.Config, paramFlags, p
 	fs.MarkHidden("openai-api-key")
 	fs.MarkHidden("openai-base-url")
 	fs.MarkHidden("openai-model")
+}
+
+func containsRemovedMaxInputFlag(args []string) bool {
+	for _, arg := range args {
+		if arg == "--max-input-tokens" || strings.HasPrefix(arg, "--max-input-tokens=") {
+			return true
+		}
+	}
+	return false
 }
 func handleConfigCommand(args []string) int {
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {

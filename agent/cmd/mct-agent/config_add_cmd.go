@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/pflag"
 	"github.com/tursomari/machtiani/agent/internal/configcatalog"
+	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/presentation"
 )
 
@@ -27,6 +29,7 @@ func handleConfigAddCommand(args []string) int {
 	headers := fs.StringArray("header", nil, "provider header in key=value form (repeatable)")
 	queries := fs.StringArray("query", nil, "provider query parameter in key=value form (repeatable)")
 	modelID := fs.String("model", "", "provider model identifier")
+	contextLength := fs.Int("context-length", 0, "total input-plus-output token context")
 	alias := fs.String("alias", "", "model alias")
 	reasoning := fs.String("reasoning", "", "reasoning effort; omit for provider default")
 	makeDefault := fs.Bool("default", false, "make the added model the default")
@@ -212,6 +215,7 @@ func handleConfigAddCommand(args []string) int {
 		}
 	}
 	var catalogModel *configcatalog.Model
+	detectedContextLength := 0
 	if modelCatalogProvider != nil {
 		if strings.TrimSpace(*modelID) == "" {
 			if *noInteractive {
@@ -221,13 +225,17 @@ func handleConfigAddCommand(args []string) int {
 				if selectErr != nil {
 					return configError(selectErr)
 				}
-				if selected != "other" {
-					*modelID = selected
+				if selected.ID != "other" {
+					*modelID = selected.ID
+					detectedContextLength = selected.ContextLength
 				}
 			}
 		}
 		if value, ok := modelCatalogProvider.Model(strings.TrimSpace(*modelID)); ok {
 			catalogModel = &value
+			if detectedContextLength == 0 {
+				detectedContextLength = value.ContextLength
+			}
 			if strings.TrimSpace(*alias) == "" {
 				*alias = value.Alias
 			}
@@ -257,10 +265,37 @@ func handleConfigAddCommand(args []string) int {
 		if err != nil {
 			return configError(err)
 		}
+		if !fs.Changed("context-length") {
+			defaultLength := detectedContextLength
+			if defaultLength == 0 {
+				defaultLength = llm.DefaultContextLength
+				fmt.Printf("Context length is the total input-plus-output window. Using the safe fallback when provider metadata is unavailable.\n")
+			} else {
+				fmt.Printf("Context length is the total input-plus-output window detected for this model.\n")
+			}
+			value, promptErr := promptLineDefault(reader, "Context length", strconv.Itoa(defaultLength), true)
+			if promptErr != nil {
+				return configError(promptErr)
+			}
+			parsed, parseErr := strconv.Atoi(strings.TrimSpace(value))
+			if parseErr != nil {
+				return configError(fmt.Errorf("context length must be an integer"))
+			}
+			*contextLength = parsed
+		}
 	}
 	*modelID, *alias, *reasoning = strings.TrimSpace(*modelID), strings.TrimSpace(*alias), strings.TrimSpace(*reasoning)
 	if *modelID == "" || *alias == "" {
 		return configUsageError("--model and --alias are required (catalogue presets supply defaults)")
+	}
+	if *contextLength != 0 && *contextLength < 4096 {
+		return configUsageError("--context-length must be at least 4096")
+	}
+	if *contextLength > 1000000 {
+		fmt.Fprintf(os.Stderr, "Warning: context length %d exceeds 1,000,000 tokens; verify provider support.\n", *contextLength)
+	}
+	if detectedContextLength > 0 && *contextLength > detectedContextLength {
+		fmt.Fprintf(os.Stderr, "Warning: context length %d exceeds the discovered model limit of %d.\n", *contextLength, detectedContextLength)
 	}
 	if _, exists := models[*alias]; exists {
 		return configError(fmt.Errorf("model %q already exists", *alias))
@@ -269,6 +304,9 @@ func handleConfigAddCommand(args []string) int {
 		return configUsageError(fmt.Sprintf("reasoning value %q looks misspelled; did you mean %q?", *reasoning, suggestion))
 	}
 	entry := map[string]any{"provider": *providerName, "model": *modelID}
+	if *contextLength > 0 {
+		entry["context_length"] = *contextLength
+	}
 	if *reasoning != "" {
 		setConfiguredReasoning(entry, providers, *reasoning)
 	}
@@ -293,7 +331,7 @@ func handleConfigAddCommand(args []string) int {
 	}
 	if newConfig {
 		cacheEnabled := !*noCache
-		defaults := map[string]any{"cache_enabled": cacheEnabled}
+		defaults := map[string]any{"cache_enabled": cacheEnabled, "context_length": llm.DefaultContextLength}
 		if cacheEnabled {
 			defaults["cache_key_name"] = defaultCacheKeyName
 			defaults["cache_control"] = map[string]any{"type": "ephemeral"}
@@ -347,21 +385,25 @@ func promptProviderChoice(existing map[string]any, catalog configcatalog.Catalog
 	return promptInitMenu(os.Stdin, os.Stdout, int(os.Stdin.Fd()), "Provider", "Choose a configured provider, a catalogue preset, or Other.", options, menuTheme)
 }
 
-func promptCatalogModel(reader *bufio.Reader, provider configcatalog.Provider, apiKey string, menuTheme presentation.Theme) (string, error) {
+func promptCatalogModel(reader *bufio.Reader, provider configcatalog.Provider, apiKey string, menuTheme presentation.Theme) (discoveredModel, error) {
 	options := catalogModelMenuOptions(provider)
 	selected, err := promptInitMenu(os.Stdin, os.Stdout, int(os.Stdin.Fd()), "Model", "Choose a recommended model, search the provider, or enter another model ID.", options, menuTheme)
 	if err != nil || selected != "search" {
-		return selected, err
+		result := discoveredModel{ID: selected}
+		if model, ok := provider.Model(selected); ok {
+			result.ContextLength = model.ContextLength
+		}
+		return result, err
 	}
 	for {
 		search, promptErr := promptLineDefault(reader, "Search model names or IDs", "", true)
 		if promptErr != nil {
-			return "", promptErr
+			return discoveredModel{}, promptErr
 		}
 		matches, discoveryErr := discoverProviderModels(modelDiscoveryHTTPClient, provider, apiKey, search)
 		if discoveryErr != nil {
 			fmt.Fprintf(os.Stdout, "Could not load %s models: %v\nEnter the model ID manually instead.\n", provider.Name, discoveryErr)
-			return "other", nil
+			return discoveredModel{ID: "other"}, nil
 		}
 		if len(matches) == 0 {
 			fmt.Fprintf(os.Stdout, "No %s models matched %q. Try another search.\n", provider.Name, search)
@@ -383,10 +425,18 @@ func promptCatalogModel(reader *bufio.Reader, provider configcatalog.Provider, a
 		)
 		selected, selectErr := promptInitMenu(os.Stdin, os.Stdout, int(os.Stdin.Fd()), "Search results", "Showing up to 25 matches. Choose a model or search again.", matchOptions, menuTheme)
 		if selectErr != nil {
-			return "", selectErr
+			return discoveredModel{}, selectErr
 		}
 		if selected != "search" {
-			return selected, nil
+			if selected == "other" {
+				return discoveredModel{ID: selected}, nil
+			}
+			for _, match := range matches {
+				if match.ID == selected {
+					return match, nil
+				}
+			}
+			return discoveredModel{ID: selected}, nil
 		}
 	}
 }

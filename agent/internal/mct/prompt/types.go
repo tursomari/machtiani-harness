@@ -2,8 +2,8 @@ package prompt
 
 import (
 	"github.com/tursomari/machtiani/agent/internal/llm"
-	"github.com/tursomari/machtiani/agent/internal/shell-agent/pkg/minisweagent"
 	shellagent "github.com/tursomari/machtiani/agent/internal/shell-agent"
+	"github.com/tursomari/machtiani/agent/internal/shell-agent/pkg/minisweagent"
 )
 
 // ModelRuntime captures the resolved model configuration used for LLM calls
@@ -37,7 +37,7 @@ type RunOptions struct {
 	OnHeader                func(string)
 	OnToken                 func(string)
 	Verbose                 bool
-	MaxInputTokens          int
+	ContextLength           int
 	Readme                  *ReadmeOptions
 	ShellAgent              bool
 	ShellAgentModel         string
@@ -45,12 +45,12 @@ type RunOptions struct {
 
 	// ShellAgentRequest, when set alongside ShellAgent=true, carries a pre-built shellagent.Request
 	// constructed by the session layer. The prompt layer passes it directly to shellagent.Run.
-	ShellAgentRequest *shellagent.Request
-	GlobalConfigPath        string
-	PersistTmpData          bool
-	SessionTempRoot         string
-	ResponseDirectives      []string
-	Prompts                 *llm.MCTPromptsConfig
+	ShellAgentRequest  *shellagent.Request
+	GlobalConfigPath   string
+	PersistTmpData     bool
+	SessionTempRoot    string
+	ResponseDirectives []string
+	Prompts            *llm.MCTPromptsConfig
 }
 
 // ReadmeOptions configure optional internal README management hooks.
@@ -59,21 +59,20 @@ type ReadmeOptions struct {
 	ProjectCommitSHA string
 }
 
-
 // Result captures the outcome of a prompt execution.
 type Result struct {
-	Header           string
-	Assistant        string
-	FullText         string
-	DirectiveBlock   string
-	RetrievedFiles   []string
-	SavedPath        string
-	Filename         string
-	SaveError        error
-	TrajectoryPath   string
-	FileDiscoveryRan bool
-	ShellAgentUsed            bool
-	ShellAgentCancelled       bool   // ShellAgentCancelled indicates the shell-agent run was interrupted or did not complete normally.
-	ShellAgentTrajectoryPath    string             // ShellAgentTrajectoryPath is the filesystem path to the shell-agent session trajectory file (trajectory.json).
+	Header                       string
+	Assistant                    string
+	FullText                     string
+	DirectiveBlock               string
+	RetrievedFiles               []string
+	SavedPath                    string
+	Filename                     string
+	SaveError                    error
+	TrajectoryPath               string
+	FileDiscoveryRan             bool
+	ShellAgentUsed               bool
+	ShellAgentCancelled          bool                   // ShellAgentCancelled indicates the shell-agent run was interrupted or did not complete normally.
+	ShellAgentTrajectoryPath     string                 // ShellAgentTrajectoryPath is the filesystem path to the shell-agent session trajectory file (trajectory.json).
 	ShellAgentTrajectoryMessages []minisweagent.Message `json:"-,"`
 }

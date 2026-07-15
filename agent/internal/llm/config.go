@@ -81,16 +81,13 @@ type ShellAgentConfig struct {
 
 // PlannerConfig captures configuration intended for the orchestration planner.
 type PlannerConfig struct {
-	MaxTurns       int `toml:"max_turns"`
-	TurnTimeout    int `toml:"turn_timeout"`     // per-turn timeout in seconds, 0 = unlimited
-	MaxInputTokens int `toml:"max_input_tokens"` // max tokens per LLM call, 0 = disabled
+	MaxTurns    int `toml:"max_turns"`
+	TurnTimeout int `toml:"turn_timeout"` // per-turn timeout in seconds, 0 = unlimited
 
-	maxTurnsSet          bool        `toml:"-"`
-	turnTimeoutSet       bool        `toml:"-"`
-	maxInputTokensSet    bool        `toml:"-"`
-	MaxTurnsSource       FieldSource `toml:"-"`
-	TurnTimeoutSource    FieldSource `toml:"-"`
-	MaxInputTokensSource FieldSource `toml:"-"`
+	maxTurnsSet       bool        `toml:"-"`
+	turnTimeoutSet    bool        `toml:"-"`
+	MaxTurnsSource    FieldSource `toml:"-"`
+	TurnTimeoutSource FieldSource `toml:"-"`
 }
 
 // PromptsConfig captures the prompt templates referenced by planner and shell-agent.
@@ -265,10 +262,12 @@ type ProviderConfig struct {
 type ModelDefinition struct {
 	Provider                           string         `toml:"provider"`
 	Model                              string         `toml:"model"`
+	ContextLength                      int            `toml:"context_length"`
 	Params                             map[string]any `toml:"params"`
 	ParamsJSON                         string         `toml:"params_json"`
 	ProviderSource                     FieldSource    `toml:"-"`
 	ModelSource                        FieldSource    `toml:"-"`
+	ContextLengthSource                FieldSource    `toml:"-"`
 	ParamsSource                       FieldSource    `toml:"-"`
 	CacheKeyNameSource                 FieldSource    `toml:"-"`
 	CacheControlSource                 FieldSource    `toml:"-"`
@@ -288,6 +287,7 @@ type ModelDefinition struct {
 	CacheEnabled                 bool           `toml:"cache_enabled"`
 
 	cacheEnabledSet                 bool `toml:"-"`
+	contextLengthSet                bool `toml:"-"`
 	cacheKeyNameSet                 bool `toml:"-"`
 	cacheControlSet                 bool `toml:"-"`
 	cacheTriggerThresholdSet        bool `toml:"-"`
@@ -297,9 +297,11 @@ type ModelDefinition struct {
 	cacheReanchorMinCachedTokensSet bool `toml:"-"`
 }
 
-// ModelDefaultsConfig supplies cache settings inherited by named models.
+// ModelDefaultsConfig supplies context and cache settings inherited by named models.
 // Presence markers distinguish an omitted value from an explicit zero/false.
 type ModelDefaultsConfig struct {
+	ContextLength                int            `toml:"context_length"`
+	ContextLengthSource          FieldSource    `toml:"-"`
 	CacheEnabled                 bool           `toml:"cache_enabled"`
 	CacheKeyName                 string         `toml:"cache_key_name"`
 	CacheControl                 map[string]any `toml:"cache_control"`
@@ -310,6 +312,7 @@ type ModelDefaultsConfig struct {
 	CacheReanchorMinCachedTokens int            `toml:"cache_reanchor_min_cached_tokens"`
 
 	cacheEnabledSet                 bool `toml:"-"`
+	contextLengthSet                bool `toml:"-"`
 	cacheKeyNameSet                 bool `toml:"-"`
 	cacheControlSet                 bool `toml:"-"`
 	cacheTriggerThresholdSet        bool `toml:"-"`
@@ -320,16 +323,20 @@ type ModelDefaultsConfig struct {
 }
 
 type ResolvedModel struct {
-	Alias           string
-	ProviderName    string
-	BaseURL         string
-	APIKey          string
-	Headers         map[string]string
-	Query           map[string]string
-	Endpoint        string
-	Model           string
-	Params          map[string]any
-	ReasoningFormat string
+	Alias            string
+	ProviderName     string
+	BaseURL          string
+	APIKey           string
+	Headers          map[string]string
+	Query            map[string]string
+	Endpoint         string
+	Model            string
+	ContextLength    int
+	ContextSource    FieldSource
+	ContextInherited bool
+	ContextLearned   bool
+	Params           map[string]any
+	ReasoningFormat  string
 
 	CacheKeyName                 string
 	CacheControl                 map[string]any
@@ -437,6 +444,14 @@ func ResolveModelWithOverrides(alias string, overrides map[string]string) (Resol
 		CacheReanchorMessages:        cache.CacheReanchorMessages,
 		CacheReanchorMinCachedTokens: cache.CacheReanchorMinCachedTokens,
 	}
+	resolved.ContextLength = cfg.config.ModelDefaults.ContextLength
+	resolved.ContextSource = cfg.config.ModelDefaults.ContextLengthSource
+	resolved.ContextInherited = true
+	if modelDef.contextLengthSet || modelDef.ContextLength != 0 {
+		resolved.ContextLength = modelDef.ContextLength
+		resolved.ContextSource = modelDef.ContextLengthSource
+		resolved.ContextInherited = false
+	}
 
 	configKey := strings.TrimSpace(provider.APIKey)
 	envCandidates := []string{providerEnvVarName(providerName)}
@@ -468,6 +483,7 @@ func ResolveModelWithOverrides(alias string, overrides map[string]string) (Resol
 	}
 
 	resolved.APIKey = strings.TrimSpace(resolved.APIKey)
+	applyLearnedContext(&resolved)
 
 	if resolved.APIKey == "" {
 		envHint := envCandidates[0]
@@ -844,6 +860,13 @@ func parseConfig(path string) (Config, error) {
 						return Config{}, fmt.Errorf("parse %s [models.%s]: model must be string", path, name)
 					}
 					model.Model = str
+				case "context_length":
+					val, ok := toInt(v)
+					if !ok {
+						return Config{}, fmt.Errorf("parse %s [models.%s]: context_length must be number", path, name)
+					}
+					model.ContextLength = val
+					model.contextLengthSet = true
 				case "cache_key_name":
 					str, ok := v.(string)
 					if !ok {
@@ -939,6 +962,12 @@ func parseModelDefaultsSection(path string, data map[string]any) (*ModelDefaults
 	defaults := &ModelDefaultsConfig{}
 	for key, raw := range data {
 		switch key {
+		case "context_length":
+			value, ok := toInt(raw)
+			if !ok {
+				return nil, fmt.Errorf("parse %s [model_defaults]: context_length must be number", path)
+			}
+			defaults.ContextLength, defaults.contextLengthSet = value, true
 		case "cache_enabled":
 			value, ok := raw.(bool)
 			if !ok {
@@ -1247,10 +1276,6 @@ func parsePlannerSection(path, section string, data map[string]any) (*PlannerCon
 	if val, ok := toInt(data["turn_timeout"]); ok {
 		planner.TurnTimeout = val
 		planner.turnTimeoutSet = true
-	}
-	if val, ok := toInt(data["max_input_tokens"]); ok {
-		planner.MaxInputTokens = val
-		planner.maxInputTokensSet = true
 	}
 	return planner, prompts, nil
 }
@@ -1834,6 +1859,7 @@ func cloneConfig(in Config) Config {
 		copyModel := ModelDefinition{
 			Provider:                        model.Provider,
 			Model:                           model.Model,
+			ContextLength:                   model.ContextLength,
 			ParamsJSON:                      model.ParamsJSON,
 			CacheKeyName:                    model.CacheKeyName,
 			CacheControl:                    deepCopyMap(model.CacheControl),
@@ -1844,6 +1870,7 @@ func cloneConfig(in Config) Config {
 			CacheReanchorMinCachedTokens:    model.CacheReanchorMinCachedTokens,
 			CacheEnabled:                    model.CacheEnabled,
 			cacheEnabledSet:                 model.cacheEnabledSet,
+			contextLengthSet:                model.contextLengthSet,
 			cacheKeyNameSet:                 model.cacheKeyNameSet,
 			cacheControlSet:                 model.cacheControlSet,
 			cacheTriggerThresholdSet:        model.cacheTriggerThresholdSet,
@@ -1906,6 +1933,10 @@ func CloneResolvedModel(in ResolvedModel) ResolvedModel {
 		Query:                        copyStringMap(in.Query),
 		Endpoint:                     in.Endpoint,
 		Model:                        in.Model,
+		ContextLength:                in.ContextLength,
+		ContextSource:                in.ContextSource,
+		ContextInherited:             in.ContextInherited,
+		ContextLearned:               in.ContextLearned,
 		Params:                       deepCopyMap(in.Params),
 		ReasoningFormat:              in.ReasoningFormat,
 		CacheKeyName:                 in.CacheKeyName,
@@ -2196,9 +2227,10 @@ func toStringMap(v any) (map[string]any, bool) {
 
 func DefaultMinimalConfig() Config {
 	return Config{
-		DefaultModel: "",
-		Planner:      &PlannerConfig{MaxTurns: 150},
-		ShellAgent:   &ShellAgentConfig{FinalizeRemainingSteps: 10, MaxSteps: 110},
+		DefaultModel:  "",
+		Planner:       &PlannerConfig{MaxTurns: 150},
+		ShellAgent:    &ShellAgentConfig{FinalizeRemainingSteps: 10, MaxSteps: 110},
+		ModelDefaults: &ModelDefaultsConfig{ContextLength: DefaultContextLength},
 		Environment: &EnvironmentConfig{
 			Type:           "local",
 			CommandTimeout: 9999,
@@ -2219,10 +2251,12 @@ func NewDirectModel(baseURL, apiKey, model string) (ResolvedModel, error) {
 		return ResolvedModel{}, fmt.Errorf("baseURL, apiKey, and model must be provided for direct model")
 	}
 	return ResolvedModel{
-		BaseURL:  base,
-		APIKey:   key,
-		Model:    m,
-		Endpoint: "/chat/completions",
-		Params:   map[string]any{},
+		BaseURL:       base,
+		APIKey:        key,
+		Model:         m,
+		ContextLength: DefaultContextLength,
+		ContextSource: SourceDefault,
+		Endpoint:      "/chat/completions",
+		Params:        map[string]any{},
 	}, nil
 }

@@ -21,9 +21,10 @@ const (
 var modelDiscoveryHTTPClient = &http.Client{Timeout: 15 * time.Second}
 
 type discoveredModel struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	Description   string `json:"description"`
+	ContextLength int    `json:"context_length"`
 }
 
 func discoverProviderModels(client *http.Client, provider configcatalog.Provider, apiKey, search string) ([]discoveredModel, error) {

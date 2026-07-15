@@ -23,7 +23,7 @@ type Config struct {
 	TranscriptFile          string
 	FileDiscoveryTrajectory string
 	FileDiscoveryOutputDir  string
-	MaxInputTokens          int
+	ContextLength           int
 	TrajectoryFile          string
 	NoTrajectory            bool
 	TrajectoryVerboseLLM    bool
@@ -118,7 +118,8 @@ type legacyConfig struct {
 	transcriptFile          string
 	fileDiscoveryTrajectory string
 	fileDiscoveryOutputDir  string
-	maxInputTokens          int
+	contextLength           int
+	maxInputTokens          int // derived from the active model context
 	trajectoryFile          string
 	noTrajectory            bool
 	trajectoryVerboseLLM    bool
@@ -158,7 +159,7 @@ func newLegacyConfig(cfg Config) legacyConfig {
 		transcriptFile:          cfg.TranscriptFile,
 		fileDiscoveryTrajectory: cfg.FileDiscoveryTrajectory,
 		fileDiscoveryOutputDir:  cfg.FileDiscoveryOutputDir,
-		maxInputTokens:          cfg.MaxInputTokens,
+		contextLength:           cfg.ContextLength,
 		trajectoryFile:          cfg.TrajectoryFile,
 		noTrajectory:            cfg.NoTrajectory,
 		trajectoryVerboseLLM:    cfg.TrajectoryVerboseLLM,

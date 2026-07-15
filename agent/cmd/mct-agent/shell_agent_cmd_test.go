@@ -291,7 +291,7 @@ func TestShellAgentVerboseFlagPropagation(t *testing.T) {
 	}
 }
 
-func TestShellAgentMaxInputTokensPropagation(t *testing.T) {
+func TestShellAgentContextLengthPropagation(t *testing.T) {
 	prepareTestConfig(t)
 
 	origBuild := shellAgentBuildLibFn
@@ -311,27 +311,28 @@ func TestShellAgentMaxInputTokensPropagation(t *testing.T) {
 		return shellagent.Result{Answer: "ok", ExitStatus: "Submitted"}, nil
 	}
 
-	exitCode := handleShellAgentCommand([]string{"--max-input-tokens", "4096", "--text", "test"})
+	exitCode := handleShellAgentCommand([]string{"--context-length", "64000", "--text", "test"})
 	if exitCode != 0 {
 		t.Fatalf("expected exit code 0, got %d", exitCode)
 	}
-	if capturedReq.MaxInputTokens != 4096 {
-		t.Fatalf("expected MaxInputTokens 4096, got %d", capturedReq.MaxInputTokens)
+	want, _ := llm.BudgetForContextLength(64000, llm.ContextSourceSessionFlag)
+	if capturedReq.MaxInputTokens != want.MaxInputTokens {
+		t.Fatalf("expected MaxInputTokens %d, got %d", want.MaxInputTokens, capturedReq.MaxInputTokens)
 	}
 }
 
-func TestShellAgentMaxInputTokensNegative(t *testing.T) {
+func TestShellAgentRemovedMaxInputTokens(t *testing.T) {
 	prepareTestConfig(t)
 
 	var exitCode int
 	stderr := captureStderr(t, func() {
-		exitCode = handleShellAgentCommand([]string{"--max-input-tokens", "-1", "--text", "test"})
+		exitCode = handleShellAgentCommand([]string{"--max-input-tokens", "4096", "--text", "test"})
 	})
 	if exitCode != 2 {
 		t.Fatalf("expected exit code 2, got %d", exitCode)
 	}
-	if !strings.Contains(stderr, "--max-input-tokens must be zero or positive") {
-		t.Fatalf("expected '--max-input-tokens must be zero or positive' in stderr, got %q", stderr)
+	if !strings.Contains(stderr, "was removed; use --context-length") {
+		t.Fatalf("expected migration guidance in stderr, got %q", stderr)
 	}
 }
 
@@ -439,7 +440,7 @@ func TestShellAgentUsageLine(t *testing.T) {
 	fs := pflag.NewFlagSet("mct-agent shell-agent", pflag.ContinueOnError)
 	var apiKeyFlags multiString
 	fs.BoolP("verbose", "v", false, "verbose agent logging")
-	fs.Int("max-input-tokens", 0, "maximum number of tokens allowed in constructed prompts (0 disables truncation)")
+	fs.Int("context-length", 0, "total input-plus-output token context")
 	fs.String("model", "", "Model alias defined in .machtiani/config.toml")
 	fs.StringP("file", "f", "", "Read task from file (mutually exclusive with --text)")
 	var promptText string
@@ -456,7 +457,7 @@ func TestShellAgentUsageLine(t *testing.T) {
 	fs.Usage()
 
 	output := buf.String()
-	for _, flag := range []string{"--text", "--file", "--model", "--verbose", "--max-input-tokens"} {
+	for _, flag := range []string{"--text", "--file", "--model", "--verbose", "--context-length"} {
 		if !strings.Contains(output, flag) {
 			t.Errorf("expected %q in usage output, got %q", flag, output)
 		}

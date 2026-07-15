@@ -22,7 +22,7 @@ func TestDiscoverProviderModelsFiltersAndAuthenticates(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"data":[
 			{"id":"openai/gpt-5","name":"GPT 5","description":"OpenAI model"},
-			{"id":"deepseek/deepseek-v4-pro","name":"DeepSeek V4 Pro","description":"Reasoning model"},
+			{"id":"deepseek/deepseek-v4-pro","name":"DeepSeek V4 Pro","description":"Reasoning model","context_length":500000},
 			{"id":"deepseek/deepseek-v4-flash","name":"DeepSeek V4 Flash","description":"Fast model"},
 			{"id":"deepseek/deepseek-v4-flash","name":"Duplicate","description":"Ignored"}
 		]}`)
@@ -38,6 +38,9 @@ func TestDiscoverProviderModelsFiltersAndAuthenticates(t *testing.T) {
 	}
 	if models[0].ID != "deepseek/deepseek-v4-pro" || models[1].ID != "deepseek/deepseek-v4-flash" {
 		t.Fatalf("models = %#v", models)
+	}
+	if models[0].ContextLength != 500000 {
+		t.Fatalf("context length = %d", models[0].ContextLength)
 	}
 }
 

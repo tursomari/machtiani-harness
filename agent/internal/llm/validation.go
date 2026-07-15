@@ -83,7 +83,7 @@ func validateRawConfig(path string, raw map[string]any) error {
 	validateKnownMap(raw, "", top, &diagnostics)
 
 	plannerFields := map[string]string{
-		"max_turns": "integer", "turn_timeout": "integer", "max_input_tokens": "integer",
+		"max_turns": "integer", "turn_timeout": "integer",
 		"system_template": "template", "instance_template": "template", "timeout_template": "template",
 		"format_error_template": "template", "ask_prompt": "template", "plan_system_prompt": "template",
 		"plan_prompt": "template", "finalize_prompt": "template", "review_prompt": "template",
@@ -111,7 +111,9 @@ func validateRawConfig(path string, raw map[string]any) error {
 	validateModeRaw(raw, &diagnostics)
 	validatePromptsRaw(raw, plannerFields, shellFields, &diagnostics)
 	validateProvidersRaw(raw, &diagnostics)
-	validateSection(raw, "model_defaults", cacheFieldTypes(), &diagnostics)
+	modelDefaultFields := cacheFieldTypes()
+	modelDefaultFields["context_length"] = "integer"
+	validateSection(raw, "model_defaults", modelDefaultFields, &diagnostics)
 	validateModelsRaw(raw, &diagnostics)
 	return diagnosticsError(path, diagnostics)
 }
@@ -121,7 +123,11 @@ func validateKnownMap(data map[string]any, prefix string, fields map[string]stri
 		path := joinConfigPath(prefix, key)
 		want, ok := fields[key]
 		if !ok {
-			diagnostic := configError(path, "unknown_key", "unknown configuration key")
+			message := "unknown configuration key"
+			if path == "planner.max_input_tokens" {
+				message = "removed; delete this key and configure models.<alias>.context_length instead"
+			}
+			diagnostic := configError(path, "unknown_key", message)
 			if suggestion := nearestConfigKey(key, fields); suggestion != "" {
 				diagnostic.Suggestion = "did you mean " + suggestion + "?"
 			}
@@ -220,7 +226,6 @@ func validatePromptsRaw(raw map[string]any, plannerFields, shellFields map[strin
 		fields := copyFieldTypes(plannerFields)
 		delete(fields, "max_turns")
 		delete(fields, "turn_timeout")
-		delete(fields, "max_input_tokens")
 		validateKnownMap(section, "prompts.planner", fields, diagnostics)
 	}
 	if section, ok := toMap(prompts["shell-agent"]); ok {
@@ -277,6 +282,7 @@ func validateModelsRaw(raw map[string]any, diagnostics *[]Diagnostic) {
 	fields := cacheFieldTypes()
 	fields["provider"] = "string"
 	fields["model"] = "string"
+	fields["context_length"] = "integer"
 	fields["params"] = "table"
 	fields["params_json"] = "string"
 	// reasoning is the one supported legacy inline request parameter. New
@@ -388,6 +394,7 @@ func ValidateConfig(cfg Config, path string, options ValidationOptions) []Diagno
 	checkAlias("shell_agent_model", cfg.ShellAgentModel)
 	checkAlias("file_discovery_model", cfg.FileDiscoveryModel)
 	if cfg.ModelDefaults != nil {
+		validateContextLength("model_defaults.context_length", cfg.ModelDefaults.ContextLength, &diagnostics)
 		validateNonnegativeCacheFields("model_defaults", cfg.ModelDefaults.CacheTriggerThreshold, cfg.ModelDefaults.CacheLookbackOffset,
 			cfg.ModelDefaults.CacheReanchorTokens, cfg.ModelDefaults.CacheReanchorMessages, cfg.ModelDefaults.CacheReanchorMinCachedTokens, &diagnostics)
 	}
@@ -405,6 +412,9 @@ func ValidateConfig(cfg Config, path string, options ValidationOptions) []Diagno
 		}
 		if strings.TrimSpace(model.Model) == "" {
 			diagnostics = append(diagnostics, configError(modelPath+".model", "missing_field", "model is required"))
+		}
+		if model.contextLengthSet || model.ContextLength != 0 {
+			validateContextLength(modelPath+".context_length", model.ContextLength, &diagnostics)
 		}
 		validateNonnegativeModelFields(modelPath, model, &diagnostics)
 		if _, err := resolveEffectiveCache(cfg.ModelDefaults, model, name, path); err != nil {
@@ -455,7 +465,6 @@ func ValidateConfig(cfg Config, path string, options ValidationOptions) []Diagno
 			diagnostics = append(diagnostics, configError("planner.max_turns", "invalid_value", "must be positive"))
 		}
 		validateNonnegative("planner.turn_timeout", cfg.Planner.TurnTimeout, &diagnostics)
-		validateNonnegative("planner.max_input_tokens", cfg.Planner.MaxInputTokens, &diagnostics)
 	}
 	if cfg.ShellAgent != nil {
 		if cfg.ShellAgent.MaxSteps <= 0 {
@@ -552,6 +561,12 @@ func hasExistingPath(candidates []string, wantDirectory bool) bool {
 func validateNonnegative(path string, value int, diagnostics *[]Diagnostic) {
 	if value < 0 {
 		*diagnostics = append(*diagnostics, configError(path, "invalid_value", "must be zero or positive"))
+	}
+}
+
+func validateContextLength(path string, value int, diagnostics *[]Diagnostic) {
+	if value < 4096 {
+		*diagnostics = append(*diagnostics, configError(path, "invalid_value", "must be at least 4096 total tokens"))
 	}
 }
 

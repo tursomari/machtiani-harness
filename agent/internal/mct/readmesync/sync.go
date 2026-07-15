@@ -16,7 +16,7 @@ import (
 type Options struct {
 	Commit               string
 	Verbose              bool
-	MaxInputTokens       int
+	ContextLength        int
 	Runtime              promptsvc.ModelRuntime
 	AnswerRuntime        promptsvc.ModelRuntime
 	FileDiscoveryRuntime promptsvc.ModelRuntime
@@ -44,7 +44,11 @@ func Run(ctx context.Context, opts Options) error {
 	if err != nil {
 		return err
 	}
-	mgr.SetMaxInputTokens(opts.MaxInputTokens)
+	budget, err := llm.ResolveInputBudget(opts.AnswerRuntime.Resolved, opts.ContextLength)
+	if err != nil {
+		return err
+	}
+	mgr.SetMaxInputTokens(budget.MaxInputTokens)
 	mgr.SetPrompts(opts.Prompts)
 
 	mgr.SetPromptExecutor(func(execCtx context.Context, promptText string) (string, error) {
@@ -70,7 +74,7 @@ func Run(ctx context.Context, opts Options) error {
 			AnswerRuntime:        opts.AnswerRuntime,
 			FileDiscoveryRuntime: opts.FileDiscoveryRuntime,
 			Verbose:              opts.Verbose,
-			MaxInputTokens:       opts.MaxInputTokens,
+			ContextLength:        opts.ContextLength,
 			Prompts:              opts.Prompts,
 		}
 		res, err := promptsvc.Run(execCtx, innerOpts)

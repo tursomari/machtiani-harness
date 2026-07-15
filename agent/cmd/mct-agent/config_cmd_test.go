@@ -353,7 +353,7 @@ func TestConfigShowCommand_NoConfig(t *testing.T) {
 	if !strings.Contains(stdout, "(default)") {
 		t.Error("missing (default) source tag in no-config output")
 	}
-	if !strings.Contains(stdout, "Turn budget, timeout, and input token limit") {
+	if !strings.Contains(stdout, "Turn budget and timeout") {
 		t.Error("missing Planner description")
 	}
 	if !strings.Contains(stdout, "Step budget and finalize window") {

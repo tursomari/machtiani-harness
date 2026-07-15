@@ -269,7 +269,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 				AnswerRuntime:        env.mctRunner.AnswerRuntime,
 				FileDiscoveryRuntime: env.mctRunner.FileDiscoveryRuntime,
 				Verbose:              env.cfg.verbose,
-				MaxInputTokens:       env.cfg.maxInputTokens,
+				ContextLength:        env.cfg.contextLength,
 				ShellAgent:           true,
 				ShellAgentModel:      strings.TrimSpace(env.mctRunner.ShellAgentModel),
 				ShellAgentSessionID:  sasID,

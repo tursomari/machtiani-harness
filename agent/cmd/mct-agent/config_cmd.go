@@ -340,15 +340,6 @@ var fieldDocs = map[string]fieldDoc{
 			"Useful as a safety net to prevent runaway prompts in production.",
 		},
 	},
-	"planner.max_input_tokens": {
-		summary:     "Maximum input tokens for planner prompts",
-		explanation: "Caps the token count of the prompt sent to the planner model. 0 disables truncation.",
-		example:     "planner.max_input_tokens = 180000",
-		details: []string{
-			"Default: 180000",
-			"Helps avoid hitting model context limits.",
-		},
-	},
 	"shell-agent.max_steps": {
 		summary:     "Maximum shell-agent action steps",
 		explanation: "Caps the number of observe-think-act cycles the shell-agent can execute before finalizing.",
@@ -724,8 +715,6 @@ func getFieldValue(effective llm.Config, key string) (value string, source strin
 		return fmt.Sprintf("%d", effective.Planner.MaxTurns), sourceLabel(effective.Planner.MaxTurnsSource)
 	case "planner.turn_timeout":
 		return fmt.Sprintf("%d", effective.Planner.TurnTimeout), sourceLabel(effective.Planner.TurnTimeoutSource)
-	case "planner.max_input_tokens":
-		return fmt.Sprintf("%d", effective.Planner.MaxInputTokens), sourceLabel(effective.Planner.MaxInputTokensSource)
 	case "shell-agent.max_steps":
 		return fmt.Sprintf("%d", effective.ShellAgent.MaxSteps), sourceLabel(effective.ShellAgent.MaxStepsSource)
 	case "shell-agent.finalize_remaining_steps":
@@ -1082,6 +1071,13 @@ func printConfigWithSources(effective, defaults llm.Config, showFull bool) {
 			{key: "models." + name + ".provider", value: model.Provider},
 			{key: "models." + name + ".model", value: model.Model},
 		}
+		contextLength := model.ContextLength
+		contextSource := "model"
+		if contextLength == 0 && effective.ModelDefaults != nil {
+			contextLength = effective.ModelDefaults.ContextLength
+			contextSource = "inherited"
+		}
+		keys = append(keys, configEntry{key: "models." + name + ".context_length", value: fmt.Sprintf("%d (%s)", contextLength, contextSource)})
 		if model.CacheKeyName != "" {
 			keys = append(keys, configEntry{key: "models." + name + ".cache_key_name", value: model.CacheKeyName})
 		}
@@ -1123,16 +1119,14 @@ func printConfigWithSources(effective, defaults llm.Config, showFull bool) {
 		plannerEntries = []configEntry{
 			{key: "planner.max_turns", value: fmt.Sprintf("%d", effective.Planner.MaxTurns), source: sourceLabel(effective.Planner.MaxTurnsSource)},
 			{key: "planner.turn_timeout", value: fmt.Sprintf("%d", effective.Planner.TurnTimeout), source: sourceLabel(effective.Planner.TurnTimeoutSource)},
-			{key: "planner.max_input_tokens", value: fmt.Sprintf("%d", effective.Planner.MaxInputTokens), source: sourceLabel(effective.Planner.MaxInputTokensSource)},
 		}
 	} else {
 		plannerEntries = []configEntry{
 			{key: "planner.max_turns", value: "", source: "default"},
 			{key: "planner.turn_timeout", value: "", source: "default"},
-			{key: "planner.max_input_tokens", value: "", source: "default"},
 		}
 	}
-	renderScalarSection(&buf, "Planner", "Turn budget, timeout, and input token limit", plannerEntries)
+	renderScalarSection(&buf, "Planner", "Turn budget and timeout", plannerEntries)
 
 	// --- Shell Agent ---
 	var saEntries []configEntry
@@ -1228,6 +1222,9 @@ func printModelAliasDetail(model *llm.ModelDefinition, alias string) error {
 	keys := []configEntry{
 		{key: "models." + alias + ".provider", value: model.Provider},
 		{key: "models." + alias + ".model", value: model.Model},
+	}
+	if model.ContextLength != 0 {
+		keys = append(keys, configEntry{key: "models." + alias + ".context_length", value: fmt.Sprintf("%d", model.ContextLength)})
 	}
 	if model.CacheKeyName != "" {
 		keys = append(keys, configEntry{key: "models." + alias + ".cache_key_name", value: model.CacheKeyName})

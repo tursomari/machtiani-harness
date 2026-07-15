@@ -1,9 +1,46 @@
 package llm
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 )
+
+var contextOverflowCodes = map[string]struct{}{
+	"context_length_exceeded":         {},
+	"context_window_exceeded":         {},
+	"maximum_context_length_exceeded": {},
+}
+
+// IsContextOverflow reports only machine-readable ChatCompletion errors. It
+// deliberately ignores HTTP status and human-readable message text.
+func IsContextOverflow(err error) bool {
+	var httpErr *HTTPResponseError
+	if !errors.As(err, &httpErr) || httpErr == nil || httpErr.Body == "" {
+		return false
+	}
+	var payload struct {
+		Error struct {
+			Code     any `json:"code"`
+			Type     any `json:"type"`
+			Metadata struct {
+				ErrorType any `json:"error_type"`
+			} `json:"metadata"`
+		} `json:"error"`
+	}
+	if json.Unmarshal([]byte(httpErr.Body), &payload) != nil {
+		return false
+	}
+	for _, raw := range []any{payload.Error.Metadata.ErrorType, payload.Error.Code, payload.Error.Type} {
+		if value, ok := raw.(string); ok {
+			if _, matched := contextOverflowCodes[value]; matched {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 // UnreachableHostError wraps transport/network errors when the LLM endpoint cannot be reached.
 type UnreachableHostError struct {

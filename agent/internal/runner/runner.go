@@ -32,6 +32,7 @@ type Runner struct {
 	Prompts                 *llm.PromptsConfig
 	UITheme                 string
 	Diagnostics             io.Writer
+	ContextLength           int
 
 	// ShellAgentLibrary holds the pre-built model, environment, config,
 	// and prompts for the in-process shell-agent library path. When
@@ -184,7 +185,7 @@ func (r *Runner) RunPrompt(ctx context.Context, sessionID string, in PromptInput
 		OnToken:                 onToken,
 		Verbose:                 r.Verbose,
 		FileDiscoveryTrajectory: r.FileDiscoveryTrajectory,
-		MaxInputTokens:          in.MaxInputTokens,
+		ContextLength:           r.ContextLength,
 		Readme:                  readmeOpts,
 		ShellAgent:              r.ShellAgent,
 		ShellAgentModel:         strings.TrimSpace(r.ShellAgentModel),

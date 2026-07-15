@@ -18,10 +18,14 @@ var (
 )
 
 func handleShellAgentCommand(args []string) int {
+	if containsRemovedMaxInputFlag(args) {
+		fmt.Fprintln(os.Stderr, "Error: --max-input-tokens was removed; use --context-length to set the total session context window")
+		return 2
+	}
 	fs := pflag.NewFlagSet("mct-agent shell-agent", pflag.ContinueOnError)
 	var apiKeyFlags multiString
 	verbose := fs.BoolP("verbose", "v", false, "verbose agent logging")
-	maxInputTokens := fs.Int("max-input-tokens", 0, "maximum number of tokens allowed in constructed prompts (0 disables truncation)")
+	contextLength := fs.Int("context-length", 0, "total input-plus-output token context for this session")
 	maxCommandOutputBytes := fs.Int("max-command-output-bytes", 65536, "maximum bytes of shell command output captured per step (default 64KB)")
 	modelFlag := fs.String("model", "", "Model alias defined in the selected Machtiani config")
 	promptFile := fs.StringP("file", "f", "", "Read task from file (mutually exclusive with --text)")
@@ -78,8 +82,8 @@ func handleShellAgentCommand(args []string) int {
 		return 2
 	}
 
-	if *maxInputTokens < 0 {
-		fmt.Fprintln(os.Stderr, "Error: --max-input-tokens must be zero or positive")
+	if *contextLength != 0 && *contextLength < llm.MinimumContextLength {
+		fmt.Fprintf(os.Stderr, "Error: --context-length must be at least %d\n", llm.MinimumContextLength)
 		return 2
 	}
 
@@ -131,6 +135,15 @@ func handleShellAgentCommand(args []string) int {
 		fmt.Fprintf(os.Stderr, "Error building shell-agent library: %v\n", err)
 		return 1
 	}
+	resolved, err := llm.ResolveModelWithOverrides(*modelFlag, apiOverrides)
+	if err != nil {
+		resolved = llm.ResolvedModel{ContextLength: llm.DefaultContextLength}
+	}
+	budget, err := llm.ResolveInputBudget(resolved, *contextLength)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error resolving context budget: %v\n", err)
+		return 1
+	}
 
 	// Render prompts.
 	sysPrompt, err := shellagent.RenderSystemPrompt(lib.Prompts, nil, effectiveAnswerTag, effectiveCommandTag)
@@ -159,7 +172,7 @@ func handleShellAgentCommand(args []string) int {
 		Config:                 lib.Config,
 		Prompts:                lib.Prompts,
 		Verbose:                *verbose,
-		MaxInputTokens:         *maxInputTokens,
+		MaxInputTokens:         budget.MaxInputTokens,
 		AnswerTag:              effectiveAnswerTag,
 		CommandTag:             effectiveCommandTag,
 	}
