@@ -127,8 +127,18 @@ assert_file_contains '"config_scope": "global"' "$SCRATCH_DIR/project-show"
 assert_file_contains 'api_key = "${TEST_API_KEY}"' "$CONFIG_PATH"
 assert_file_contains 'default_model = "deepseek-primary"' "$CONFIG_PATH"
 assert_file_contains 'cache_enabled = false' "$CONFIG_PATH"
+assert_file_contains 'context_length = 128000' "$CONFIG_PATH"
 assert_file_contains 'endpoint = "/chat/completions"' "$CONFIG_PATH"
 mct-agent config check
+
+echo "==> Verifying removed context controls fail with migration guidance..."
+legacy_config="$SCRATCH_DIR/legacy-context.toml"
+cp "$CONFIG_PATH" "$legacy_config"
+sed -i '/\[planner\]/a max_input_tokens = 180000' "$legacy_config"
+expect_exit 1 mct-agent config check --path "$legacy_config"
+assert_file_contains 'configure models.<alias>.context_length instead' "$SCRATCH_DIR/expected-stderr"
+expect_exit 2 mct-agent run --max-input-tokens 4096 -t ignored
+assert_file_contains 'use --context-length' "$SCRATCH_DIR/expected-stderr"
 
 echo "==> Verifying Manage models adds through the provider-first wizard..."
 manager_checksum=$(checksum "$CONFIG_PATH")
@@ -248,16 +258,22 @@ mct-agent config model list >"$SCRATCH_DIR/model-list"
 assert_file_contains 'deepseek-primary' "$SCRATCH_DIR/model-list"
 mct-agent config model show deepseek-primary >"$SCRATCH_DIR/model-show"
 assert_file_contains "model: $TEST_MODEL" "$SCRATCH_DIR/model-show"
+assert_file_contains 'context_length: 128000 (inherited)' "$SCRATCH_DIR/model-show"
 
 mct-agent config model add deepseek-scratch \
   --provider deepseek \
   --model "$TEST_MODEL" \
+  --context-length 64000 \
   --reasoning low \
   --param smoke=one \
   --param-json '{"temperature":0.1,"reasoning":{"effort":"low","budget_tokens":null,"enabled":true}}' \
   --no-interactive
 assert_file_contains 'params_json = ' "$CONFIG_PATH"
 assert_file_contains 'budget_tokens' "$CONFIG_PATH"
+assert_file_contains 'context_length = 64000' "$CONFIG_PATH"
+mct-agent config model set deepseek-scratch --clear-context-length --no-interactive
+mct-agent config model show deepseek-scratch >"$SCRATCH_DIR/model-context-inherited"
+assert_file_contains 'context_length: 128000 (inherited)' "$SCRATCH_DIR/model-context-inherited"
 
 for reasoning in medium high xhigh max provider-special; do
   mct-agent config model set deepseek-scratch --reasoning "$reasoning" --no-interactive

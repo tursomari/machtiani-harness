@@ -19,7 +19,12 @@ bash /tests/smoke/config-crud.sh
 
 # Step 4: Initialize the repository's internal README state
 echo "==> Synchronizing repository state..."
-mct-agent sync
+mct-agent sync --verbose > /tmp/sync.stdout 2> /tmp/sync.stderr
+grep -Fq 'llm.context_budget.resolved context_length=128000 source=model_default' /tmp/sync.stderr
+config_checksum=$(sha256sum "$HOME/.machtiani/config.toml" | cut -d ' ' -f 1)
+mct-agent sync --verbose --context-length 64000 > /tmp/sync-context.stdout 2> /tmp/sync-context.stderr
+grep -Fq 'llm.context_budget.resolved context_length=64000 source=session_flag' /tmp/sync-context.stderr
+test "$(sha256sum "$HOME/.machtiani/config.toml" | cut -d ' ' -f 1)" = "$config_checksum"
 
 # Step 5: Live execution
 echo "==> Running live smoke test..."
@@ -30,6 +35,15 @@ default_conversation=$(find "$project_store/sessions" -path '*/artifacts/convers
 test -n "$default_conversation"
 default_session=${default_conversation%/artifacts/conversation.json}
 test ! -e "$default_session/artifacts/llm"
+grep -Fq '"kind":"llm.context_budget.resolved"' "$default_session/trajectory/agent.jsonl"
+grep -Fq '"context_length":128000' "$default_session/trajectory/agent.jsonl"
+grep -Fq '"source":"model_default"' "$default_session/trajectory/agent.jsonl"
+
+echo "==> Verifying run session context override..."
+mct-agent run --context-length 64000 -t "List the last commit message, then finish." --max-turns 5
+grep -R -Fq '"context_length":64000' "$project_store/sessions"/*/trajectory/agent.jsonl
+grep -R -Fq '"source":"session_flag"' "$project_store/sessions"/*/trajectory/agent.jsonl
+test "$(sha256sum "$HOME/.machtiani/config.toml" | cut -d ' ' -f 1)" = "$config_checksum"
 
 echo "==> Verifying explicit LLM input logging..."
 mct-agent run --log-llm-inputs -t "List the last commit message, then finish." --max-turns 5

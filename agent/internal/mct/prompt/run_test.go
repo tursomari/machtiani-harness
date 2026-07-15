@@ -182,6 +182,71 @@ func TestRunUsesAnswerRuntime(t *testing.T) {
 	}
 }
 
+func TestRunRetriesStructuredContextOverflowBeforeOutput(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MACHTIANI_SESSION_ID", "test-context-overflow-retry")
+
+	original := chatStreamWithRuntime
+	t.Cleanup(func() { chatStreamWithRuntime = original })
+
+	calls := 0
+	chatStreamWithRuntime = func(ctx context.Context, model llm.ResolvedModel, fallbackAliases []string, fallbackModels []llm.ResolvedModel, extra map[string]any, messages []llm.Message, onToken func(string)) (string, error) {
+		calls++
+		if calls == 1 {
+			return "", &llm.HTTPResponseError{Status: 400, Body: `{"error":{"code":"context_length_exceeded"}}`}
+		}
+		return "recovered", nil
+	}
+
+	res, err := Run(context.Background(), RunOptions{
+		Prompt: "Hello",
+		Mode:   "answer-only",
+		Runtime: ModelRuntime{Resolved: llm.ResolvedModel{
+			Model:         "answer-model",
+			ContextLength: llm.DefaultContextLength,
+			ContextSource: llm.SourceDefault,
+		}},
+		Prompts: testPromptsConfig(),
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("chat calls = %d, want 2", calls)
+	}
+	if res.Assistant != "recovered" {
+		t.Fatalf("assistant = %q", res.Assistant)
+	}
+}
+
+func TestRunDoesNotRetryContextOverflowAfterOutput(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MACHTIANI_SESSION_ID", "test-context-overflow-partial")
+
+	original := chatStreamWithRuntime
+	t.Cleanup(func() { chatStreamWithRuntime = original })
+
+	calls := 0
+	chatStreamWithRuntime = func(ctx context.Context, model llm.ResolvedModel, fallbackAliases []string, fallbackModels []llm.ResolvedModel, extra map[string]any, messages []llm.Message, onToken func(string)) (string, error) {
+		calls++
+		onToken("partial")
+		return "", &llm.HTTPResponseError{Status: 400, Body: `{"error":{"type":"context_window_exceeded"}}`}
+	}
+
+	_, err := Run(context.Background(), RunOptions{
+		Prompt:  "Hello",
+		Mode:    "answer-only",
+		Runtime: ModelRuntime{Resolved: llm.ResolvedModel{Model: "answer-model", ContextLength: llm.DefaultContextLength}},
+		Prompts: testPromptsConfig(),
+	})
+	if err == nil {
+		t.Fatal("Run() error = nil")
+	}
+	if calls != 1 {
+		t.Fatalf("chat calls = %d, want 1", calls)
+	}
+}
+
 func TestRunFallsBackToPrimaryRuntime(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("MACHTIANI_SESSION_ID", "test-primary-runtime")
