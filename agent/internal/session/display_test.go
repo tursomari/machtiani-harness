@@ -4,16 +4,28 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"path/filepath"
 	"testing"
 
+	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/ui"
 )
+
+func isolateSessionRunConfig(t *testing.T) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("MACHTIANI_CONFIG", filepath.Join(home, "missing-config.toml"))
+	llm.ResetConfigForTesting()
+	t.Cleanup(llm.ResetConfigForTesting)
+}
 
 // TestSessionRunWithNilDisplayDefaultsNoPanic verifies that session.Run does
 // not panic when Display and Diagnostics are nil.  The session may exit early
 // with ExitCode 1 when no LLM backend is configured, but the wiring itself
 // must remain panic-free.
 func TestSessionRunWithNilDisplayDefaultsNoPanic(t *testing.T) {
+	isolateSessionRunConfig(t)
 	defer func() {
 		if r := recover(); r != nil {
 			t.Fatalf("session.Run panicked with nil Display/Diagnostics: %v", r)
@@ -40,6 +52,7 @@ func TestSessionRunWithNilDisplayDefaultsNoPanic(t *testing.T) {
 // does not panic when a custom diagnostics writer and a terminal display are
 // provided.
 func TestSessionRunWithCustomDiagnosticsCapturesOutput(t *testing.T) {
+	isolateSessionRunConfig(t)
 	defer func() {
 		if r := recover(); r != nil {
 			t.Fatalf("session.Run panicked with custom diagnostics: %v", r)
@@ -82,6 +95,7 @@ func newMockEventCollector() *mockEventCollector {
 // events are made because the session may exit early before emitting any
 // events when no LLM backend is present.
 func TestSessionRunWithCustomDisplayNoPanic(t *testing.T) {
+	isolateSessionRunConfig(t)
 	defer func() {
 		if r := recover(); r != nil {
 			t.Fatalf("session.Run panicked with mock event collector: %v", r)
