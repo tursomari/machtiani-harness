@@ -244,7 +244,7 @@ cwd = "."
 func TestDocumentedConfigFixturesPassStructuralAndSemanticValidation(t *testing.T) {
 	for _, name := range []string{"config.minimal.toml", "config.comprehensive.toml"} {
 		t.Run(name, func(t *testing.T) {
-			path, err := filepath.Abs(filepath.Join("..", "..", "..", ".machtiani", name))
+			path, err := filepath.Abs(filepath.Join("..", "..", "..", "docs", "examples", name))
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -1,5 +1,7 @@
-# Machtiani Configuration Example
-# Copy to .machtiani/config.toml or set MACHTIANI_CONFIG to this file's path.
+# Comprehensive Machtiani configuration example.
+# Prefer `mct-agent init` and `mct-agent config` for normal setup.
+# To inspect this example directly, run:
+#   mct-agent config check --path docs/examples/config.comprehensive.toml
 # Every section and field is documented below. Omit sections you don't need.
 #
 # VALIDATION GAPS:
@@ -147,16 +149,10 @@ model    = "openai/gpt-5-nano"
 # ── [mode] ──────────────────────────────────────────────────────────────────────
 # Configuration for the mode system that supervises multi-step work.
 # REJECTED: [[tasks]] arrays are not supported. Use flat single-task TOML schema.
+# Modes are loaded only from ~/.machtiani/modes/<name>/. To customize one, copy
+# a canonical mode directory to a new name and edit the copy.
 
 [mode]
-# instruction_dir: override directory for custom instructions.
-# instruction_dir = ".machtiani/modes/custom-instructions"
-
-# Per-mode instruction file overrides:
-# [mode.modes.code]
-# instruction_file = "code/tasks.toml"
-# [mode.modes.research]
-# instruction_file = "research/tasks.toml"
 
 # ── [prompts] ───────────────────────────────────────────────────────────────────
 # Override prompt templates with inline string values. Uncomment and customize

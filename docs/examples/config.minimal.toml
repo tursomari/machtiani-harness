@@ -1,6 +1,8 @@
 # Minimal Machtiani configuration — enough to get started.
-# Copy to .machtiani/config.toml or generate with: mct-agent init ...
-# For full documentation of every section and field, see config.comprehensive.toml.
+# Prefer `mct-agent init` and `mct-agent config` for normal setup.
+# To use this example directly, pass `--path docs/examples/config.minimal.toml`
+# to a config inspection command or copy it to the selected global/UUID config.
+# For every section and field, see config.comprehensive.toml.
 
 default_model = "default"
 

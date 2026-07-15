@@ -27,10 +27,9 @@ tag-model-questions.md
 run-live-output.txt
 peripherals/
 tests/repositories/
-.machtiani/config.toml
 Plan.md
-.machtiani/sessions/
-.machtiani/artifacts/
-.machtiani/tmp/
 plans/
-.machtiani/
+# UUID-backed projects keep only their identity marker in the repository.
+.machtiani/*
+!.machtiani/project.uuid
+.machtiani.legacy-*/

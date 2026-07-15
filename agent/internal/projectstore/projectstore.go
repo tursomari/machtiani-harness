@@ -169,13 +169,10 @@ func HasLegacyState(projectRoot string) (bool, error) {
 		return false, fmt.Errorf("read legacy state %s: %w", dir, err)
 	}
 	for _, entry := range entries {
-		switch entry.Name() {
-		case MarkerFileName, "config.minimal.toml", "config.comprehensive.toml":
-			// These tracked examples are source material, not project runtime state.
+		if entry.Name() == MarkerFileName {
 			continue
-		default:
-			return true, nil
 		}
+		return true, nil
 	}
 	return false, nil
 }

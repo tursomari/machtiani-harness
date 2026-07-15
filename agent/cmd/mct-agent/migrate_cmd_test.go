@@ -94,7 +94,6 @@ func TestMigrateCopiesVerifiesMarksAndArchives(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(project, ".machtiani", "sessions")); !os.IsNotExist(err) {
 		t.Fatalf("legacy sessions stat = %v", err)
 	}
-	assertFileContents(t, filepath.Join(project, ".machtiani", "config.minimal.toml"), "# tracked example\n")
 	if report.Files != 3 || report.Bytes == 0 {
 		t.Fatalf("verification stats = %d files, %d bytes", report.Files, report.Bytes)
 	}
@@ -137,7 +136,6 @@ func writeMigrationFixture(t *testing.T, project string) {
 		filepath.Join(project, ".machtiani", "config.toml"):                               "default_model = \"fixture\"\n",
 		filepath.Join(project, ".machtiani", "sessions", "s1", "answer.md"):               "answer\n",
 		filepath.Join(project, ".machtiani", "artifacts", "readme", "internal-readme.md"): "background\n",
-		filepath.Join(project, ".machtiani", "config.minimal.toml"):                       "# tracked example\n",
 	} {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatal(err)

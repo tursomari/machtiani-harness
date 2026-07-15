@@ -8,7 +8,10 @@ Use this runbook when operating `mct-agent` from inside this repository.
 - This repository historically used repo-local state. Review `mct-agent migrate --dry-run`, then run `mct-agent migrate --no-interactive --yes` when ready to adopt the home store.
 - Set `PROJECT_STORE="$HOME/.machtiani/$(cat .machtiani/project.uuid)"` when using the artifact-path examples below.
 - In this repo, prefer the `glm-5-high` model alias from the selected global or UUID-project config.
-- See `.machtiani/config.minimal.toml` for a minimal getting-started config, or `.machtiani/config.comprehensive.toml` for a full reference of every section and field.
+- See [`examples/config.minimal.toml`](examples/config.minimal.toml) for a minimal
+  starting point, or
+  [`examples/config.comprehensive.toml`](examples/config.comprehensive.toml) for
+  a reference covering every section and field.
 - For OpenRouter-backed runs here, export `OPENROUTER_API_KEY` from the existing `TEST_API_KEY` environment variable.
 
 Preferred live invocation:

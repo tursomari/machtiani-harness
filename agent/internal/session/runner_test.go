@@ -269,6 +269,7 @@ func TestStartTranscriptIfNeededSkipsWhenResuming(t *testing.T) {
 
 func TestStartTranscriptIfNeededChildIncludesBackgroundWhenRequested(t *testing.T) {
 	sessionID := "child-with-bg"
+	repoRoot := t.TempDir()
 	path := filepath.Join(t.TempDir(), "agent-transcript.adoc")
 	tr, err := transcript.NewWithPath(path, sessionID)
 	if err != nil {
@@ -286,7 +287,7 @@ func TestStartTranscriptIfNeededChildIncludesBackgroundWhenRequested(t *testing.
 	if !started {
 		t.Fatalf("expected transcript to start")
 	}
-	if err := writeInitialBackgroundIfNeeded(tr, ".", cfg, started, nil, os.Stderr); err != nil {
+	if err := writeInitialBackgroundIfNeeded(tr, repoRoot, cfg, started, nil, os.Stderr); err != nil {
 		t.Fatalf("writeInitialBackgroundIfNeeded error: %v", err)
 	}
 	content := tr.Content()

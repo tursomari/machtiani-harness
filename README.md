@@ -5,7 +5,7 @@ This repository now houses the full Machtiani toolchain inside a single Go modul
 1) `agent/internal/file-discovery` — the helper binary that performs LLM-guided file discovery using a strict RG> protocol.
 2) `agent` — the orchestrator that drives the loop and links against the internal libraries directly.
 
-Most users only need the `mct-agent` binary. The install script builds `mct-agent` by default and exposes an opt-in flag when you want the standalone `mct`, `file-discovery`, and `shell-agent` binaries. Project state is keyed by a UUID in `~/.machtiani/<uuid>/`; the repository contains only `.machtiani/project.uuid` plus any tracked source examples.
+Most users only need the `mct-agent` binary. The install script builds `mct-agent` by default and exposes an opt-in flag when you want the standalone `mct`, `file-discovery`, and `shell-agent` binaries. Project state is keyed by a UUID in `~/.machtiani/<uuid>/`; the repository contains only the trackable `.machtiani/project.uuid` marker.
 
 ## Repo-local `mct-agent` workflow
 
@@ -333,7 +333,10 @@ provider = "openrouter"
 model    = "openai/gpt-5-nano"
 ```
 
-See `.machtiani/config.minimal.toml` for a minimal getting-started config, or `.machtiani/config.comprehensive.toml` for a full reference of every section and field.
+See [`docs/examples/config.minimal.toml`](docs/examples/config.minimal.toml) for
+a minimal starting point, or
+[`docs/examples/config.comprehensive.toml`](docs/examples/config.comprehensive.toml)
+for a reference covering every section and field.
 
 Keys inside `[planner]`, `[shell-agent]`, `[providers]`, `[models]`, and `[environment]` are shared across Machtiani binaries. Omit `providers.<name>.api_key` to use the provider-derived environment variable, or set it to an exact `${NAME}` placeholder. When you need an alternate model temporarily, pass `--shell-agent-model <alias>` to `mct-agent run --shell-agent` or to the standalone `shell-agent` binary.
 

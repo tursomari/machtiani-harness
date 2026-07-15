@@ -52,23 +52,6 @@ func TestDiscoverLegacyAndCleanProjects(t *testing.T) {
 	if ctx.Status != StatusUninitialized {
 		t.Fatalf("clean status = %q", ctx.Status)
 	}
-	examples := t.TempDir()
-	for _, name := range []string{"config.minimal.toml", "config.comprehensive.toml"} {
-		path := filepath.Join(examples, RootDirName, name)
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, []byte("# example\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	ctx, err = Discover(examples)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ctx.Status != StatusUninitialized {
-		t.Fatalf("tracked examples status = %q", ctx.Status)
-	}
 	legacy := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(legacy, RootDirName, SessionsDirName), 0o755); err != nil {
 		t.Fatal(err)

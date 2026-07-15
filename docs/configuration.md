@@ -5,7 +5,7 @@ by `mct-agent`, `mct`, and `shell-agent`. The configuration connects local model
 aliases to named providers and stores shared defaults such as prompt caching.
 
 For the complete TOML schema beyond providers and models, see
-[`../.machtiani/config.comprehensive.toml`](../.machtiani/config.comprehensive.toml).
+[`examples/config.comprehensive.toml`](examples/config.comprehensive.toml).
 
 ## Interactive and scripted operation
 

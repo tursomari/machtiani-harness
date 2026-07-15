@@ -80,13 +80,13 @@ mct/
 │   └── run_eval_head.sh           # HEAD-based evaluation pipeline
 ├── docs/
 │   ├── development-workflow.md    # This file
+│   ├── examples/                  # Minimal and comprehensive config references
 │   ├── mct-agent-runbook.md       # Repo-local agent operation guide
 │   ├── runtime-prerequisites.md   # Dependency and platform notes
 │   └── adr/                       # Architecture Decision Records
 ├── tests/                         # Integration harnesses (undici, etc.)
-├── .machtiani/                    # Configuration and session state
-│   ├── config.toml                # Main config (also config.minimal.toml, config.comprehensive.toml)
-│   └── sessions/                  # Per-session transcripts and artifacts
+├── .machtiani/
+│   └── project.uuid               # Project identity; runtime state lives under ~/.machtiani/<uuid>/
 └── README.md
 ```
 
