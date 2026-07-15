@@ -25,14 +25,13 @@ mct-agent sync
 echo "==> Running live smoke test..."
 project_store=$(mct-agent project show --json | sed -n 's/^[[:space:]]*"store": "\([^"]*\)"[,]\{0,1\}$/\1/p')
 test -n "$project_store"
-mct-agent run -t "List the last commit message, then finish." --max-turns 5
-default_session=$(find "$project_store/sessions" -path '*/artifacts/conversation.json' -printf '%T@ %h\n' | sort -n | tail -1 | xargs dirname)
-test -n "$default_session"
+default_session="$project_store/sessions/smoke-default"
+mct-agent run --session-id smoke-default -t "List the last commit message, then finish." --max-turns 5
 test ! -e "$default_session/artifacts/llm"
 
 echo "==> Verifying explicit LLM input logging..."
-mct-agent run --log-llm-inputs -t "List the last commit message, then finish." --max-turns 5
-logged_session=$(find "$project_store/sessions" -path '*/artifacts/conversation.json' -printf '%T@ %h\n' | sort -n | tail -1 | xargs dirname)
+logged_session="$project_store/sessions/smoke-logged"
+mct-agent run --session-id smoke-logged --log-llm-inputs -t "List the last commit message, then finish." --max-turns 5
 test -s "$logged_session/artifacts/llm/inputs.jsonl"
 
 # Step 6: Best-effort additional provider matrix discovered from the host's
