@@ -4,21 +4,20 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
-	"encoding/json"
-
 	cfgpkg "github.com/tursomari/machtiani/agent/internal/file-discovery/internal/config"
+	"github.com/tursomari/machtiani/agent/internal/file-discovery/internal/fileops"
 	"github.com/tursomari/machtiani/agent/internal/llm"
 )
 
@@ -41,7 +40,7 @@ func (rg *rgCommand) Execute(ctx context.Context) ([]byte, error) {
 	if rg.kind != "files_pattern" {
 		return nil, fmt.Errorf("unsupported rg kind: %s", rg.kind)
 	}
-	allPaths, _, err := runRGFilesFn(ctx)
+	allPaths, _, err := runRGFiles(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -543,47 +542,47 @@ func parseToolCall(text string, mode cfgpkg.ToolCallMode) (tool string, rg *rgCo
 	return parseJSONToolCall(s)
 }
 
-// run rg --files --hidden with timeout, collect lines
 type rgStats struct {
 	duration   time.Duration
 	totalLines int
+	native     fileops.Stats
 }
 
-// runRGFilesFn allows tests and special builds to override the RG runner.
-var runRGFilesFn = runRGFiles
+type nativeWorkspace interface {
+	ListFiles(context.Context) ([]string, fileops.Stats, error)
+	ReadLines(context.Context, string, fileops.Selector) ([]string, fileops.Stats, error)
+	ListDir(context.Context, string) ([]fileops.Entry, fileops.Stats, error)
+	Close() error
+}
+
+var openWorkspaceFn = func(root string) (nativeWorkspace, error) {
+	return fileops.Open(root)
+}
+
+// runRGFilesFn remains a test-only compatibility hook. Production runs use
+// the workspace opened for the discovery invocation.
+var runRGFilesFn func(context.Context) ([]string, rgStats, error)
 
 func runRGFiles(ctx context.Context) ([]string, rgStats, error) {
-	start := time.Now()
-	cmd := exec.CommandContext(ctx, "rg", "--files", "--hidden")
-	stdout, err := cmd.StdoutPipe()
+	root, err := os.Getwd()
 	if err != nil {
 		return nil, rgStats{}, err
 	}
-	cmd.Stderr = os.Stderr
-	if err := cmd.Start(); err != nil {
+	workspace, err := openWorkspaceFn(root)
+	if err != nil {
 		return nil, rgStats{}, err
 	}
-	var lines []string
-	scanner := bufio.NewScanner(stdout)
-	buf := make([]byte, 0, 1024*1024)
-	scanner.Buffer(buf, 1024*1024)
-	for scanner.Scan() {
-		lines = append(lines, scanner.Text())
+	defer workspace.Close()
+	paths, stats, err := workspace.ListFiles(ctx)
+	return paths, rgStats{duration: stats.Duration, totalLines: len(paths), native: stats}, err
+}
+
+func runWorkspaceFiles(ctx context.Context, workspace nativeWorkspace) ([]string, rgStats, error) {
+	if runRGFilesFn != nil {
+		return runRGFilesFn(ctx)
 	}
-	if err := scanner.Err(); err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return nil, rgStats{}, context.DeadlineExceeded
-		}
-		return nil, rgStats{}, err
-	}
-	if err := cmd.Wait(); err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return nil, rgStats{}, context.DeadlineExceeded
-		}
-		return nil, rgStats{}, err
-	}
-	st := rgStats{duration: time.Since(start), totalLines: len(lines)}
-	return lines, st, nil
+	paths, stats, err := workspace.ListFiles(ctx)
+	return paths, rgStats{duration: stats.Duration, totalLines: len(paths), native: stats}, err
 }
 
 func pathExcluded(p string) bool {
@@ -685,90 +684,92 @@ func validateRelPath(p string) error {
 
 type sedStats struct {
 	duration time.Duration
+	native   fileops.Stats
 }
 
 func runSed(ctx context.Context, program, path string) ([]string, sedStats, error) {
-	start := time.Now()
-	cmd := exec.CommandContext(ctx, "sed", "-n", program, "--", path)
-	stdout, err := cmd.StdoutPipe()
+	root, err := os.Getwd()
 	if err != nil {
 		return nil, sedStats{}, err
 	}
-	cmd.Stderr = os.Stderr
-	if err := cmd.Start(); err != nil {
+	workspace, err := openWorkspaceFn(root)
+	if err != nil {
 		return nil, sedStats{}, err
 	}
-	var lines []string
-	scanner := bufio.NewScanner(stdout)
-	buf := make([]byte, 0, 1024*1024)
-	scanner.Buffer(buf, 1024*1024)
-	for scanner.Scan() {
-		lines = append(lines, scanner.Text())
-		if len(lines) >= 200 { // hard cap
-			// Drain but stop capturing further lines
-			for scanner.Scan() {
-				// ignore
-			}
-			break
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return nil, sedStats{}, context.DeadlineExceeded
-		}
-		return nil, sedStats{}, err
-	}
-	if err := cmd.Wait(); err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return nil, sedStats{}, context.DeadlineExceeded
-		}
-		return nil, sedStats{}, err
-	}
-	st := sedStats{duration: time.Since(start)}
-	return lines, st, nil
+	defer workspace.Close()
+	return runWorkspaceRead(ctx, workspace, program, path)
 }
 
 type lsStats struct {
 	duration time.Duration
+	native   fileops.Stats
+}
+
+func nativeEvent(fields map[string]any, stats fileops.Stats) map[string]any {
+	fields["backend"] = "native"
+	fields["skipped"] = stats.Skipped
+	fields["diagnostics_count"] = len(stats.Diagnostics)
+	return fields
+}
+
+func selectorFromProgram(program string) (fileops.Selector, error) {
+	if match := reSEDRange.FindStringSubmatch(program); match != nil {
+		start, _ := strconv.Atoi(match[1])
+		end, _ := strconv.Atoi(match[2])
+		return fileops.Selector{StartLine: start, EndLine: end}, nil
+	}
+	if !reSEDPattern.MatchString(program) {
+		return fileops.Selector{}, errors.New("invalid read_file program")
+	}
+	body := program[1 : len(program)-2]
+	var decoded strings.Builder
+	for i := 0; i < len(body); i++ {
+		if body[i] == '\\' && i+1 < len(body) && body[i+1] == '/' {
+			decoded.WriteByte('/')
+			i++
+			continue
+		}
+		decoded.WriteByte(body[i])
+	}
+	pattern, err := regexp.Compile(decoded.String())
+	if err != nil {
+		return fileops.Selector{}, fmt.Errorf("invalid Go regular expression: %w", err)
+	}
+	return fileops.Selector{Pattern: pattern}, nil
+}
+
+func runWorkspaceRead(ctx context.Context, workspace nativeWorkspace, program, path string) ([]string, sedStats, error) {
+	selector, err := selectorFromProgram(program)
+	if err != nil {
+		return nil, sedStats{}, err
+	}
+	lines, stats, err := workspace.ReadLines(ctx, path, selector)
+	return lines, sedStats{duration: stats.Duration, native: stats}, err
 }
 
 func runLS(ctx context.Context, path string) ([]string, lsStats, error) {
-	start := time.Now()
-	cmd := exec.CommandContext(ctx, "ls", "-la", "--", path)
-	stdout, err := cmd.StdoutPipe()
+	root, err := os.Getwd()
 	if err != nil {
 		return nil, lsStats{}, err
 	}
-	cmd.Stderr = os.Stderr
-	if err := cmd.Start(); err != nil {
+	workspace, err := openWorkspaceFn(root)
+	if err != nil {
 		return nil, lsStats{}, err
 	}
-	var lines []string
-	scanner := bufio.NewScanner(stdout)
-	buf := make([]byte, 0, 1024*1024)
-	scanner.Buffer(buf, 1024*1024)
-	for scanner.Scan() {
-		lines = append(lines, scanner.Text())
-		if len(lines) >= 200 { // hard cap
-			for scanner.Scan() { /* drain */
-			}
-			break
-		}
+	defer workspace.Close()
+	return runWorkspaceList(ctx, workspace, path)
+}
+
+func runWorkspaceList(ctx context.Context, workspace nativeWorkspace, path string) ([]string, lsStats, error) {
+	entries, stats, err := workspace.ListDir(ctx, path)
+	if err != nil {
+		return nil, lsStats{duration: stats.Duration, native: stats}, err
 	}
-	if err := scanner.Err(); err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return nil, lsStats{}, context.DeadlineExceeded
-		}
-		return nil, lsStats{}, err
+	lines := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		lines = append(lines, entry.Line())
 	}
-	if err := cmd.Wait(); err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return nil, lsStats{}, context.DeadlineExceeded
-		}
-		return nil, lsStats{}, err
-	}
-	st := lsStats{duration: time.Since(start)}
-	return lines, st, nil
+	return lines, lsStats{duration: stats.Duration, native: stats}, nil
 }
 
 // collectPathsFromRGBlock parses an RG_OUT block and returns included paths.
@@ -1013,38 +1014,47 @@ func run(ctx context.Context, cfg cfgpkg.Config, llmCfg LLMSettings, initialProm
 		_ = tr.Start(cfg.TrajectoryPath)
 	}
 
-	// Startup checks
-	if _, err := exec.LookPath("rg"); err != nil {
-		lg.Error("ripgrep (rg) is required; install from https://github.com/BurntSushi/ripgrep")
-		log.Println("ripgrep (rg) is required; install from https://github.com/BurntSushi/ripgrep")
+	workspaceRoot := strings.TrimSpace(cfg.WorkspaceRoot)
+	if workspaceRoot == "" {
+		var err error
+		workspaceRoot, err = os.Getwd()
+		if err != nil {
+			lg.Error("resolve workspace root")
+			return 1
+		}
+	}
+	workspace, err := openWorkspaceFn(workspaceRoot)
+	if err != nil {
+		lg.Error("open workspace root")
+		log.Println("open workspace root:", err)
 		if tr.Enabled {
-			tr.Event("run_end", 0, map[string]any{"exit_code": 1, "reason": "rg_not_found"})
+			tr.Event("run_end", 0, map[string]any{"exit_code": 1, "reason": "workspace_open_error"})
 			tr.Close()
 		}
 		return 1
 	}
+	defer workspace.Close()
 
 	// Dry-run mode
 	if cfg.DryRunRG {
-		cwd, _ := os.Getwd()
-		lg.Log("dry_run_start", map[string]any{"cwd": cwd, "pattern": cfg.DryPattern})
+		lg.Log("dry_run_start", map[string]any{"cwd": workspaceRoot, "pattern": cfg.DryPattern})
 		if !cfg.NoTrajectory && tr.Enabled {
 			tr.Event("run_start", 0, map[string]any{
 				"cfg":      cfgpkg.RedactConfig(cfg),
 				"model":    cfg.Model,
 				"base_url": cfg.BaseURL,
-				"cwd":      cwd,
+				"cwd":      workspaceRoot,
 			})
 			tr.Event("round_start", 0, map[string]any{"round": 0, "transcript_bytes_before": 0, "messages_count_before": 0})
 		}
 		cctx, ccancel := context.WithTimeout(baseCtx, time.Duration(cfg.CmdTimeoutSec)*time.Second)
-		allPaths, stats, err := runRGFilesFn(cctx)
+		allPaths, stats, err := runWorkspaceFiles(cctx, workspace)
 		ccancel()
 		if err != nil {
 			if errors.Is(err, context.DeadlineExceeded) {
 				log.Printf("Command timed out after %ds", cfg.CmdTimeoutSec)
 				if tr.Enabled {
-					tr.Event("rg_exec", 0, map[string]any{"timeout_sec": cfg.CmdTimeoutSec, "duration_ms": stats.duration.Milliseconds(), "total_lines": 0, "excludes_applied": true, "pattern": cfg.DryPattern})
+					tr.Event("rg_exec", 0, nativeEvent(map[string]any{"timeout_sec": cfg.CmdTimeoutSec, "duration_ms": stats.duration.Milliseconds(), "total_lines": 0, "excludes_applied": true, "pattern": cfg.DryPattern}, stats.native))
 				}
 				if tr.Enabled {
 					tr.Event("run_end", 0, map[string]any{"exit_code": 1, "reason": "timeout"})
@@ -1052,7 +1062,7 @@ func run(ctx context.Context, cfg cfgpkg.Config, llmCfg LLMSettings, initialProm
 				}
 				return 1
 			}
-			log.Println("rg error:", err)
+			log.Println("native file enumeration error:", err)
 			if tr.Enabled {
 				tr.Event("run_end", 0, map[string]any{"exit_code": 1, "reason": "rg_error"})
 				tr.Close()
@@ -1069,7 +1079,7 @@ func run(ctx context.Context, cfg cfgpkg.Config, llmCfg LLMSettings, initialProm
 			filtered = f2
 		}
 		if tr.Enabled {
-			tr.Event("rg_exec", 0, map[string]any{"timeout_sec": cfg.CmdTimeoutSec, "duration_ms": stats.duration.Milliseconds(), "total_lines": stats.totalLines, "excludes_applied": true, "pattern": cfg.DryPattern})
+			tr.Event("rg_exec", 0, nativeEvent(map[string]any{"timeout_sec": cfg.CmdTimeoutSec, "duration_ms": stats.duration.Milliseconds(), "total_lines": stats.totalLines, "excludes_applied": true, "pattern": cfg.DryPattern}, stats.native))
 		}
 		block, bytesWritten, truncated, linesIncluded := formatRGOut(filtered, cfg.MaxStdoutBytes)
 		_, _ = os.Stderr.WriteString(block)
@@ -1283,7 +1293,7 @@ func run(ctx context.Context, cfg cfgpkg.Config, llmCfg LLMSettings, initialProm
 				lg.Warn("sed path not in seenPaths")
 			} else {
 				cctx, ccancel := context.WithTimeout(baseCtx, time.Duration(cfg.CmdTimeoutSec)*time.Second)
-				lines, stats, err := runSed(cctx, sedCmd.program, sedCmd.path)
+				lines, stats, err := runWorkspaceRead(cctx, workspace, sedCmd.program, sedCmd.path)
 				ccancel()
 				if err != nil {
 					if errors.Is(err, context.DeadlineExceeded) {
@@ -1291,7 +1301,7 @@ func run(ctx context.Context, cfg cfgpkg.Config, llmCfg LLMSettings, initialProm
 						transcriptBytes += len(messages[len(messages)-1].Content)
 						lg.Error("sed command timeout")
 						if tr.Enabled {
-							tr.Event("sed_exec", round, map[string]any{"timeout_sec": cfg.CmdTimeoutSec, "duration_ms": stats.duration.Milliseconds(), "program": sedCmd.program, "path": sedCmd.path})
+							tr.Event("sed_exec", round, nativeEvent(map[string]any{"timeout_sec": cfg.CmdTimeoutSec, "duration_ms": stats.duration.Milliseconds(), "program": sedCmd.program, "path": sedCmd.path}, stats.native))
 						}
 					} else {
 						messages = append(messages, chatMessage{Role: "user", Content: fmt.Sprintf("Command execution error: %v", err)})
@@ -1300,7 +1310,7 @@ func run(ctx context.Context, cfg cfgpkg.Config, llmCfg LLMSettings, initialProm
 					}
 				} else {
 					if tr.Enabled {
-						tr.Event("sed_exec", round, map[string]any{"timeout_sec": cfg.CmdTimeoutSec, "duration_ms": stats.duration.Milliseconds(), "program": sedCmd.program, "path": sedCmd.path})
+						tr.Event("sed_exec", round, nativeEvent(map[string]any{"timeout_sec": cfg.CmdTimeoutSec, "duration_ms": stats.duration.Milliseconds(), "program": sedCmd.program, "path": sedCmd.path}, stats.native))
 					}
 					block, linesEmitted, truncated := formatSEDOut(sedCmd.path, lines, 200)
 					responseBuf.WriteString(block)
@@ -1313,7 +1323,7 @@ func run(ctx context.Context, cfg cfgpkg.Config, llmCfg LLMSettings, initialProm
 		} else if lsCmd != nil {
 			// LS is allowed for any validated relative PATH; no prior RG_OUT requirement
 			cctx, ccancel := context.WithTimeout(baseCtx, time.Duration(cfg.CmdTimeoutSec)*time.Second)
-			lines, stats, err := runLS(cctx, lsCmd.path)
+			lines, stats, err := runWorkspaceList(cctx, workspace, lsCmd.path)
 			ccancel()
 			if err != nil {
 				if errors.Is(err, context.DeadlineExceeded) {
@@ -1321,7 +1331,7 @@ func run(ctx context.Context, cfg cfgpkg.Config, llmCfg LLMSettings, initialProm
 					transcriptBytes += len(messages[len(messages)-1].Content)
 					lg.Error("ls command timeout")
 					if tr.Enabled {
-						tr.Event("ls_exec", round, map[string]any{"timeout_sec": cfg.CmdTimeoutSec, "duration_ms": stats.duration.Milliseconds(), "path": lsCmd.path})
+						tr.Event("ls_exec", round, nativeEvent(map[string]any{"timeout_sec": cfg.CmdTimeoutSec, "duration_ms": stats.duration.Milliseconds(), "path": lsCmd.path}, stats.native))
 					}
 				} else {
 					messages = append(messages, chatMessage{Role: "user", Content: fmt.Sprintf("Command execution error: %v", err)})
@@ -1330,7 +1340,7 @@ func run(ctx context.Context, cfg cfgpkg.Config, llmCfg LLMSettings, initialProm
 				}
 			} else {
 				if tr.Enabled {
-					tr.Event("ls_exec", round, map[string]any{"timeout_sec": cfg.CmdTimeoutSec, "duration_ms": stats.duration.Milliseconds(), "path": lsCmd.path})
+					tr.Event("ls_exec", round, nativeEvent(map[string]any{"timeout_sec": cfg.CmdTimeoutSec, "duration_ms": stats.duration.Milliseconds(), "path": lsCmd.path}, stats.native))
 				}
 				block, linesEmitted, truncated := formatLSOut(lsCmd.path, lines, 200)
 				responseBuf.WriteString(block)
@@ -1353,7 +1363,7 @@ func run(ctx context.Context, cfg cfgpkg.Config, llmCfg LLMSettings, initialProm
 				responseBuf.Reset()
 			} else {
 				cctx, ccancel := context.WithTimeout(baseCtx, time.Duration(cfg.CmdTimeoutSec)*time.Second)
-				allPaths, stats, err := runRGFiles(cctx)
+				allPaths, stats, err := runWorkspaceFiles(cctx, workspace)
 				ccancel()
 				if err != nil {
 					if errors.Is(err, context.DeadlineExceeded) {
@@ -1362,7 +1372,7 @@ func run(ctx context.Context, cfg cfgpkg.Config, llmCfg LLMSettings, initialProm
 						lg.Error("rg command timeout")
 						responseBuf.Reset()
 						if tr.Enabled {
-							tr.Event("rg_exec", round, map[string]any{"timeout_sec": cfg.CmdTimeoutSec, "duration_ms": stats.duration.Milliseconds(), "total_lines": 0, "excludes_applied": true, "pattern": c.pattern})
+							tr.Event("rg_exec", round, nativeEvent(map[string]any{"timeout_sec": cfg.CmdTimeoutSec, "duration_ms": stats.duration.Milliseconds(), "total_lines": 0, "excludes_applied": true, "pattern": c.pattern}, stats.native))
 						}
 					} else {
 						messages = append(messages, chatMessage{Role: "user", Content: fmt.Sprintf("Command execution error: %v", err)})
@@ -1383,7 +1393,7 @@ func run(ctx context.Context, cfg cfgpkg.Config, llmCfg LLMSettings, initialProm
 						} else {
 							filtered = filtered2
 							if tr.Enabled {
-								tr.Event("rg_exec", round, map[string]any{"timeout_sec": cfg.CmdTimeoutSec, "duration_ms": stats.duration.Milliseconds(), "total_lines": len(allPaths), "excludes_applied": true, "pattern": c.pattern})
+								tr.Event("rg_exec", round, nativeEvent(map[string]any{"timeout_sec": cfg.CmdTimeoutSec, "duration_ms": stats.duration.Milliseconds(), "total_lines": len(allPaths), "excludes_applied": true, "pattern": c.pattern}, stats.native))
 							}
 							block, bodyBytes, truncated, linesCount := formatRGOut(filtered, cfg.MaxStdoutBytes)
 							responseBuf.WriteString(block)

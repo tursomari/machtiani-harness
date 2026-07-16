@@ -696,6 +696,7 @@ port_path = sys.argv[2]
 state = {
     "requests": 0,
     "discovery_requests": 0,
+    "discovery_token_counts": [],
     "max_discovery_tokens": 0,
     "summary_seen": False,
     "forced_finalization_seen": False,
@@ -745,6 +746,7 @@ class Handler(BaseHTTPRequestHandler):
         if is_discovery:
             state["discovery_requests"] += 1
             total = sum(4 + estimate(message.get("role", "")) + estimate(message.get("content", "")) for message in messages if isinstance(message, dict))
+            state["discovery_token_counts"].append(total)
             state["max_discovery_tokens"] = max(state["max_discovery_tokens"], total)
             state["summary_seen"] = state["summary_seen"] or "Discovery state summary (compacted older exchanges):" in content or "older discovery state omitted" in content
             forced = "Max rounds reached. Do NOT call any function." in content
@@ -3839,6 +3841,11 @@ EOF
   ) >"$stdout_file" 2>"$stderr_file" || {
     echo "ERROR: multi-round discovery budget sync failed" >&2
     cat "$stderr_file" >&2
+    if [[ -s "$state_file" ]]; then
+      echo "Server state:" >&2
+      cat "$state_file" >&2
+      echo >&2
+    fi
     stop_llm_stub_server
     return 1
   }

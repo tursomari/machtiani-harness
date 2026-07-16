@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -225,7 +224,7 @@ var toolCallTestCases = []toolCallTestCase{
 		validators: []validation{
 			validateRGCommand("files_pattern", "ResponseError|\\.d\\.ts"),
 		},
-		execValidate: execExpectRGPaths("test.d.ts", "errors/ResponseError.ts"),
+		execValidate: execExpectRGPaths("errors/ResponseError.ts", "test.d.ts"),
 	},
 	{
 		name:  "json_file_search_unicode",
@@ -704,13 +703,7 @@ func TestToolCallParsing_Comprehensive(t *testing.T) {
 	}
 }
 
-func TestToolCallExecution_RealCommands(t *testing.T) {
-	for _, bin := range []string{"rg", "sed", "ls"} {
-		if _, err := exec.LookPath(bin); err != nil {
-			t.Skipf("%s not available: %v", bin, err)
-		}
-	}
-
+func TestToolCallExecution_NativeOperations(t *testing.T) {
 	oldRG := runRGFilesFn
 	defer func() { runRGFilesFn = oldRG }()
 	runRGFilesFn = runRGFiles

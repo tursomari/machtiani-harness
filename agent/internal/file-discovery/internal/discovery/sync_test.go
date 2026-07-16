@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -99,12 +99,6 @@ func TestSync_StdinSeeding(t *testing.T) {
 		Model: llm.ResolvedModel{Model: "test-model", APIKey: "dummy", BaseURL: "dummy"},
 	}
 
-	// We need sed in PATH for this to work, or mock runSed.
-	// Assuming sed is available (linux environment).
-	if _, err := exec.LookPath("sed"); err != nil {
-		t.Skip("sed not found")
-	}
-
 	exitCode := Run(context.Background(), cfg, llmCfg)
 	if exitCode != 0 {
 		t.Fatalf("Run exited with code %d", exitCode)
@@ -163,6 +157,69 @@ func TestRunEmbeddedUsesExplicitPromptWithoutReadingStdin(t *testing.T) {
 		NoTrajectory: true,
 		ToolCallMode: cfgpkg.ToolCallModeJSON,
 	}, LLMSettings{Model: llm.ResolvedModel{APIKey: "key", BaseURL: "http://example", Model: "test"}}, "EXPLICIT EMBEDDED PROMPT")
+	if exit != 0 {
+		t.Fatalf("RunEmbedded exit = %d, want 0", exit)
+	}
+}
+
+func TestRunEmbeddedUsesWorkspaceRootWithoutChangingProcessCWD(t *testing.T) {
+	workspace := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workspace, "workspace-only.go"), []byte("package fixture\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	other := t.TempDir()
+	if err := os.WriteFile(filepath.Join(other, "cwd-only.go"), []byte("package decoy\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(other); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(originalWD) })
+
+	originalInvoker := chatInvoker
+	t.Cleanup(func() { chatInvoker = originalInvoker })
+	turn := 0
+	chatInvoker = func(_ context.Context, _ LLMSettings, messages []chatMessage) (string, error) {
+		turn++
+		if turn == 1 {
+			return `{"tool":"file_search","args":{"kind":"files_pattern","pattern":"\\.go$"}}`, nil
+		}
+		var transcript strings.Builder
+		for _, message := range messages {
+			transcript.WriteString(message.Content)
+		}
+		if !strings.Contains(transcript.String(), "workspace-only.go") {
+			t.Fatalf("workspace-root file missing from discovery output: %q", transcript.String())
+		}
+		if strings.Contains(transcript.String(), "cwd-only.go") {
+			t.Fatalf("process-cwd file leaked into discovery output: %q", transcript.String())
+		}
+		return "BEGIN_RELEVANT_FILES[file-discovery]\nworkspace-only.go\nEND_RELEVANT_FILES[file-discovery]\n", nil
+	}
+
+	devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalStdout := os.Stdout
+	os.Stdout = devNull
+	t.Cleanup(func() {
+		os.Stdout = originalStdout
+		_ = devNull.Close()
+	})
+
+	exit := RunEmbedded(context.Background(), cfgpkg.Config{
+		MaxRounds:      2,
+		CmdTimeoutSec:  5,
+		MaxStdoutBytes: 20 * 1024,
+		NoTrajectory:   true,
+		ToolCallMode:   cfgpkg.ToolCallModeJSON,
+		WorkspaceRoot:  workspace,
+	}, LLMSettings{Model: llm.ResolvedModel{APIKey: "key", BaseURL: "http://example", Model: "test"}}, "find Go files")
 	if exit != 0 {
 		t.Fatalf("RunEmbedded exit = %d, want 0", exit)
 	}

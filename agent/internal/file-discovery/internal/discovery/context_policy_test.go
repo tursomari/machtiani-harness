@@ -97,6 +97,53 @@ func TestFitDiscoveryMessagesTrimsToolOutputBeforeInitialCue(t *testing.T) {
 	}
 }
 
+func TestFitMessageContentOmitsDynamicOutputWhenMarkerCannotFit(t *testing.T) {
+	messages := []chatMessage{
+		{Role: "system", Content: "fixed system"},
+		{Role: "user", Content: "RG_OUT:\n" + strings.Repeat("path/to/file.go\n", 100)},
+	}
+	empty := cloneChatMessages(messages)
+	empty[1].Content = ""
+	maxTokens := estimateChatMessages(empty) + 1
+
+	trimmed, err := fitMessageContent(messages, 1, maxTokens, discoveryCompactionMarker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !trimmed || messages[1].Content != "" {
+		t.Fatalf("trimmed=%t content=%q, want omitted dynamic output", trimmed, messages[1].Content)
+	}
+	if estimateChatMessages(messages) > maxTokens {
+		t.Fatalf("fitted messages use %d tokens, want at most %d", estimateChatMessages(messages), maxTokens)
+	}
+}
+
+func TestFitDiscoveryMessagesOmitsCueWhenMarkerCannotFit(t *testing.T) {
+	core := "Protocol reminder:\ncore"
+	messages := []chatMessage{
+		{Role: "system", Content: "fixed system"},
+		{Role: "user", Content: core + "\n" + strings.Repeat("issue detail\n", 100)},
+		{Role: "assistant", Content: "file search"},
+		{Role: "user", Content: "RG_OUT:\n" + strings.Repeat("path/to/file.go\n", 100)},
+	}
+	minimum := cloneChatMessages(messages)
+	minimum[1].Content = core
+	minimum[2].Content = ""
+	minimum[3].Content = ""
+	maxTokens := estimateChatMessages(minimum) + 1
+
+	fitted, report, err := fitDiscoveryMessages(messages, core, discoveryState{}, maxTokens)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !report.InitialCueTrimmed {
+		t.Fatal("expected the issue cue to be omitted")
+	}
+	if estimateChatMessages(fitted) > maxTokens {
+		t.Fatalf("fitted messages use %d tokens, want at most %d", estimateChatMessages(fitted), maxTokens)
+	}
+}
+
 func TestFitDiscoveryMessagesFitsForcedFinalization(t *testing.T) {
 	core := "Protocol reminder:\ncore"
 	finalize := "Max rounds reached. Do NOT call any function. No other text."

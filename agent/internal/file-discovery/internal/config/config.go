@@ -36,6 +36,7 @@ type Config struct {
 	Verbose              bool
 	DryRunRG             bool
 	DryPattern           string
+	WorkspaceRoot        string
 	TrajectoryPath       string
 	NoTrajectory         bool
 	// SessionID optionally scopes BEGIN/END markers; first 5 chars are used
@@ -196,6 +197,7 @@ func RedactConfig(cfg Config) map[string]any {
 		"verbose":              cfg.Verbose,
 		"dryRunRG":             cfg.DryRunRG,
 		"dryPattern":           cfg.DryPattern,
+		"workspaceRoot":        cfg.WorkspaceRoot,
 		"trajectoryPath":       cfg.TrajectoryPath,
 		"noTrajectory":         cfg.NoTrajectory,
 		"toolCallMode":         cfg.ToolCallMode,

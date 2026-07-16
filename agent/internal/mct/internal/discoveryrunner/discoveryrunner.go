@@ -200,7 +200,10 @@ func Run(ctx context.Context, prompt string, model ModelSettings, sessionID stri
 		cfg.TrajectoryPath = trajectoryPath
 	}
 
-	var restoreWD func()
+	workspaceRoot, err := os.Getwd()
+	if err != nil {
+		return Result{}, fmt.Errorf("discovery workspace getwd: %w", err)
+	}
 	snapshotRoot := strings.TrimSpace(os.Getenv("MACHTIANI_TMP_ROOT"))
 	if snapshotRoot != "" {
 		snapshotPath := filepath.Join(snapshotRoot, "repo")
@@ -212,31 +215,17 @@ func Run(ctx context.Context, prompt string, model ModelSettings, sessionID stri
 			// directory keeps file discovery usable and lets the user see the original
 			// error elsewhere.
 			debugf(verbose, "mct: discovery snapshot missing at %s (%v); falling back to current working directory", snapshotPath, err)
-			restoreWD = func() {}
 		} else if !st.IsDir() {
 			debugf(verbose, "mct: discovery snapshot path is not a directory at %s; falling back to current working directory", snapshotPath)
-			restoreWD = func() {}
 		} else {
-			wd, err := os.Getwd()
-			if err != nil {
-				return Result{}, fmt.Errorf("discovery snapshot getwd: %w", err)
-			}
-			if err := os.Chdir(snapshotPath); err != nil {
-				return Result{}, fmt.Errorf("discovery snapshot chdir: %w", err)
-			}
+			workspaceRoot = snapshotPath
 			debugf(verbose, "mct: discovery snapshot enabled at %s", snapshotPath)
-			restoreWD = func() { _ = os.Chdir(wd) }
 		}
 	} else {
 		// No snapshot configured; operate on current working directory (e.g., sync command)
 		debugf(verbose, "mct: MACHTIANI_TMP_ROOT not set; file-discovery will use current working directory")
-		restoreWD = func() {}
 	}
-	defer func() {
-		if restoreWD != nil {
-			restoreWD()
-		}
-	}()
+	cfg.WorkspaceRoot = workspaceRoot
 
 	select {
 	case <-ctx.Done():

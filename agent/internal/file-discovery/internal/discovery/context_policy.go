@@ -198,7 +198,10 @@ func fitMessageContent(messages []chatMessage, index, maxTotal int, marker strin
 	}
 	fitted, truncated, err := llm.TruncateLinesKeepTail(original, available, marker)
 	if err != nil {
-		return false, err
+		// If even the truncation marker cannot fit, omit this dynamic message.
+		// Fixed protocol and compacted state remain in the request.
+		messages[index].Content = ""
+		return strings.TrimSpace(original) != "", nil
 	}
 	messages[index].Content = fitted
 	return truncated, nil
@@ -262,7 +265,10 @@ func fitDiscoveryMessages(messages []chatMessage, initialCore string, state disc
 		if available > 0 {
 			fittedCue, truncated, err = llm.TruncateLinesKeepTail(cue, available, discoveryCueMarker)
 			if err != nil {
-				return nil, report, err
+				// The protocol core is mandatory; the issue cue is dynamic. If the
+				// remaining budget cannot hold its marker, omit the cue entirely.
+				fittedCue = ""
+				truncated = strings.TrimSpace(cue) != ""
 			}
 		}
 		fitted[1].Content = initialCore + fittedCue

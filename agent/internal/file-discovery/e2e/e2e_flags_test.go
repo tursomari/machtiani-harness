@@ -107,17 +107,16 @@ func runBin(t *testing.T, bin, cwd string, args []string, env []string) runResul
 
 func baseEnv(t *testing.T) []string {
 	env := os.Environ()
-	// ensure isolation from user env
+	// Ensure isolation from user credentials and prove the discovery binary does
+	// not depend on rg, sed, ls, or any other executable at runtime.
 	for _, k := range []string{"OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL"} {
 		env = append(env, k+"=")
 	}
+	env = append(env, "PATH="+t.TempDir())
 	return env
 }
 
 func TestDryRun_RGOnly(t *testing.T) {
-	if _, err := exec.LookPath("rg"); err != nil {
-		t.Skip("rg not in PATH; skipping e2e")
-	}
 	bin := buildBinary(t)
 	repo := makeFixtureRepo(t)
 	env := append(baseEnv(t), "FILE_DISCOVERY_TRAJECTORY=")
@@ -140,9 +139,6 @@ func TestDryRun_RGOnly(t *testing.T) {
 }
 
 func TestDryRun_Pattern(t *testing.T) {
-	if _, err := exec.LookPath("rg"); err != nil {
-		t.Skip("rg not in PATH; skipping e2e")
-	}
 	bin := buildBinary(t)
 	repo := makeFixtureRepo(t)
 	env := append(baseEnv(t), "FILE_DISCOVERY_TRAJECTORY=")
@@ -163,10 +159,7 @@ func TestDryRun_Pattern(t *testing.T) {
 }
 
 func TestDryRun_CmdTimeout(t *testing.T) {
-	if _, err := exec.LookPath("rg"); err != nil {
-		t.Skip("rg not in PATH; skipping e2e")
-	}
-	// Build with tag that makes RG runner block until timeout
+	// Build with a tag that makes native enumeration block until timeout.
 	bin := buildBinary(t, "e2e_slow_rg")
 	repo := makeFixtureRepo(t)
 	env := append(baseEnv(t), "FILE_DISCOVERY_TRAJECTORY=")
@@ -177,9 +170,6 @@ func TestDryRun_CmdTimeout(t *testing.T) {
 }
 
 func TestDryRun_MaxStdout(t *testing.T) {
-	if _, err := exec.LookPath("rg"); err != nil {
-		t.Skip("rg not in PATH; skipping e2e")
-	}
 	bin := buildBinary(t)
 	repo := makeFixtureRepo(t)
 	env := append(baseEnv(t), "FILE_DISCOVERY_TRAJECTORY=")
@@ -193,9 +183,6 @@ func TestDryRun_MaxStdout(t *testing.T) {
 }
 
 func TestDryRun_TrajectoryFile(t *testing.T) {
-	if _, err := exec.LookPath("rg"); err != nil {
-		t.Skip("rg not in PATH; skipping e2e")
-	}
 	bin := buildBinary(t)
 	repo := makeFixtureRepo(t)
 	dir := t.TempDir()
@@ -229,9 +216,6 @@ func TestDryRun_TrajectoryFile(t *testing.T) {
 }
 
 func TestDryRun_NoTrajectoryOverridesEnv(t *testing.T) {
-	if _, err := exec.LookPath("rg"); err != nil {
-		t.Skip("rg not in PATH; skipping e2e")
-	}
 	bin := buildBinary(t)
 	repo := makeFixtureRepo(t)
 	dir := t.TempDir()
@@ -249,9 +233,6 @@ func TestDryRun_NoTrajectoryOverridesEnv(t *testing.T) {
 }
 
 func TestDryRun_NoJSONFlagSetsMode(t *testing.T) {
-	if _, err := exec.LookPath("rg"); err != nil {
-		t.Skip("rg not in PATH; skipping e2e")
-	}
 	bin := buildBinary(t)
 	repo := makeFixtureRepo(t)
 	dir := t.TempDir()
@@ -295,9 +276,6 @@ func TestDryRun_NoJSONFlagSetsMode(t *testing.T) {
 }
 
 func TestDryRun_LogJSON(t *testing.T) {
-	if _, err := exec.LookPath("rg"); err != nil {
-		t.Skip("rg not in PATH; skipping e2e")
-	}
 	bin := buildBinary(t)
 	repo := makeFixtureRepo(t)
 	env := append(baseEnv(t), "FILE_DISCOVERY_TRAJECTORY=")
@@ -324,9 +302,6 @@ func TestDryRun_LogJSON(t *testing.T) {
 }
 
 func TestDryRun_IrrelevantFlagsIgnored(t *testing.T) {
-	if _, err := exec.LookPath("rg"); err != nil {
-		t.Skip("rg not in PATH; skipping e2e")
-	}
 	bin := buildBinary(t)
 	repo := makeFixtureRepo(t)
 	env := append(baseEnv(t), "FILE_DISCOVERY_TRAJECTORY=")

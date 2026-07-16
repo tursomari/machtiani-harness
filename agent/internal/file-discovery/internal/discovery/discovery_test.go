@@ -3,13 +3,27 @@ package discovery
 import (
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	cfgpkg "github.com/tursomari/machtiani/agent/internal/file-discovery/internal/config"
+	"github.com/tursomari/machtiani/agent/internal/llm"
 )
+
+func TestSystemPromptTokenBudget(t *testing.T) {
+	for _, mode := range []cfgpkg.ToolCallMode{cfgpkg.ToolCallModeJSON, cfgpkg.ToolCallModeSimple} {
+		prompt := withNudgeRule(buildSystemPrompt(mode))
+		if tokens := llm.EstimateTokens(prompt); tokens > 800 {
+			t.Fatalf("mode %s prompt uses %d tokens, want at most 800", mode, tokens)
+		}
+		for _, shellForm := range []string{"rg --files", "sed -n", "ls -la"} {
+			if strings.Contains(prompt, shellForm) {
+				t.Fatalf("mode %s prompt advertises removed shell form %q", mode, shellForm)
+			}
+		}
+	}
+}
 
 func TestApplyExcludes(t *testing.T) {
 	in := []string{
@@ -228,9 +242,6 @@ func TestParseSEDCommand_Validation(t *testing.T) {
 }
 
 func TestSEDFlow_Smoke(t *testing.T) {
-	if _, err := exec.LookPath("sed"); err != nil {
-		t.Skip("sed not in PATH; skipping SED smoke test")
-	}
 	dir := t.TempDir()
 	oldCwd, _ := os.Getwd()
 	defer os.Chdir(oldCwd)
