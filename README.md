@@ -58,7 +58,8 @@ The integration suites fall back to deterministic stub or dry-run behavior when 
 export TEST_API_KEY=sk_...
 export TEST_BASE_URL=https://api.openai.com/v1
 export TEST_MODEL=gpt-4o-mini
-./scripts/install.sh && bash agent/tests/run-live.sh
+nix build .#mct-agent
+PATH="$PWD/result/bin:$PATH" bash agent/tests/run-live.sh
 ```
 
 - Installs `mct-agent` on PATH and exercises Issue A/B/C scenarios, a `--mode code` regression, and error paths.
@@ -68,110 +69,58 @@ export TEST_MODEL=gpt-4o-mini
 
 See `TESTING.md` for the complete testing guide, including prerequisites, commands, environment variables, artifacts, and debugging workflows for every harness.
 
-## Quick Install (mct-agent)
-Run the installer from the repo root to build **mct-agent** into `~/.local/bin`:
+## Install and update
 
-```
-./scripts/install.sh
-```
-
-Prefer a different prefix? Supply `PREFIX=...` and add the resulting `bin` directory to PATH.
-
-Need the standalone CLIs for development or debugging? Append `--install-peripherals` to also build **mct**, **file-discovery**, and **shell-agent**:
-
-```
-./scripts/install.sh --install-peripherals
-```
-
-This is primarily for development workflows. Most users should use `mct-agent` directly.
-
-### Managed source installation and updates
-
-Automatic updates use an inspectable Git clone rather than a prebuilt binary.
-Bootstrap the managed installation from a fresh clone of this repository:
+Nix 2.24 or newer with flakes enabled is required on NixOS, macOS, and other
+Linux distributions. Install from a clean clone whose `origin` identifies the
+update stream:
 
 ```bash
 git clone <repository-url> ~/src/mct-bootstrap
 cd ~/src/mct-bootstrap
-./scripts/install.sh --managed
+nix run .#install
 hash -r
 mct-agent --version
-mct-agent update --check
-```
-
-The bootstrap checkout must be clean, including having no untracked files.
-This prevents local work from being silently omitted when the installer builds
-the remote default-branch tip. If a development checkout is dirty, use a fresh
-clone or a temporary clean worktree instead of moving or stashing unrelated
-files. To install from another Git remote, clone that remote for the bootstrap;
-the installer follows the clone's `origin` and its symbolic default branch.
-
-An ordinary clone is sufficient; `--recurse-submodules` is not required.
-Managed mode installs `mct-agent`, not the optional standalone `shell-agent`
-executable, and cannot be combined with `--install-peripherals`.
-
-The managed installer uses the invoking checkout only to discover its
-`origin`. It clones that origin's default branch into
-`~/.machtiani/installations/mct-agent/source`, builds from that canonical
-source, and records the sanitized remote and exact installation target. The
-bootstrap checkout can then be moved or removed without affecting updates.
-Embedded HTTP credentials are rejected; use normal Git SSH or
-credential-helper configuration when authentication is needed. Re-running the
-command requires both the invoking checkout and updater-owned clone to be
-clean and reuses the managed clone only when its origin matches exactly.
-
-`hash -r` refreshes Bash's cached executable locations in the current shell;
-starting a new shell has the same effect. The version output should identify
-the commit currently checked out in the managed source directory.
-
-For an existing Machtiani home, run the additive migration from the checkout
-whose `origin` should supply updates:
-
-```bash
-./scripts/migrate-managed-install.sh
-```
-
-The migration preserves existing configuration, UUID project stores, sessions,
-and artifacts. It only adds the managed source, updater receipt, and installed
-binary needed for automatic updates.
-
-Check or install the current default-branch tip explicitly:
-
-```bash
-mct-agent update --check
 mct-agent update
-mct-agent update --yes --no-interactive
 ```
 
-Interactive terminal commands check periodically. Configure the behavior in
+The installer builds the exact remote default-branch commit through the locked
+flake, activates it in the dedicated profile at
+`~/.machtiani/installations/mct-agent/profile`, and exposes
+`~/.local/bin/mct-agent`. Use `--prefix` to choose another stable binary
+prefix. Existing configuration, update policy, projects, sessions, and
+artifacts are preserved by an explicit reinstall; installations from the
+earlier receipt format must be reinstalled once.
+
+Expanded commands:
+
+```bash
+nix build .#mct-agent
+./result/bin/mct-agent install --source "$PWD" --verbose
+mct-agent update --check
+mct-agent update --check --json
+mct-agent update --yes --no-interactive --verbose
+```
+
+Updates fetch, build, and validate an exact commit before switching the
+dedicated profile. A failed build restores the prior profile and source. The
+profile retains at most the current and previous generations; the updater never
+runs global garbage collection. Configure automatic behavior in
 `~/.machtiani/installations/mct-agent/update.toml` with `policy = "prompt"`
 (the default), `"auto"`, `"notify"`, or `"off"`. Update notices use stderr;
 JSON, non-interactive, redirected, help, and version invocations never prompt.
 
-Prefer to see the full sequence? The commands below inline the default install (without metadata ldflags):
+The runtime closure is approximately 184 MiB on verified `x86_64-linux` and
+contains pinned Git, ripgrep, Bash, coreutils, and GNU sed, but not Go or Nix.
+Those GNU tools are also placed first on agent-launched command PATH on macOS.
+The flake evaluates for `x86_64-linux`, `aarch64-linux`, `x86_64-darwin`, and
+`aarch64-darwin`; only `x86_64-linux` has been natively built and smoke-tested
+as of 2026-07-16.
 
-```bash
-PREFIX="${PREFIX:-$HOME/.local}"
-BIN_DIR="$PREFIX/bin"
-mkdir -p "$BIN_DIR"
-: "${GOCACHE:=$PWD/.gocache}"; export GOCACHE; mkdir -p "$GOCACHE"
-
-( cd agent && go build -o "$BIN_DIR/mct-agent" ./cmd/mct-agent )
-
-hash -r 2>/dev/null || true
-"$BIN_DIR/mct-agent" --version >/dev/null 2>&1 || true
-```
-
-To manually build the additional CLIs, run the block above and then:
-
-```bash
-( cd agent/internal/mct && ./build.sh )
-install -m 0755 agent/internal/mct/bin/mct "$BIN_DIR/mct"
-install -m 0755 agent/internal/mct/bin/file-discovery "$BIN_DIR/file-discovery"
-( cd agent/internal/shell-agent && go build -o "$BIN_DIR/shell-agent" ./cmd/shell-agent )
-```
-
-The manual snippets skip the ldflags metadata that the installer uses, so version commands will show `dev`/`unknown` fields—this is expected.
+Skyvern remains an optional source-checkout workflow. Use a separate clone,
+initialize `third_party/skyvern`, prepare its Python/browser environment, and
+run `scripts/skyvern-start.sh`. Do not use the updater-owned source clone as a
+Skyvern workspace because its environment, database, and logs make it dirty.
 
 ## Quick Start
 
@@ -673,7 +622,7 @@ When investigating failures, treat `$PROJECT_STORE/tmp/<session-id>/session.lock
 
 These tools are used internally by `mct-agent` and are exposed for development or debugging purposes. Most users should use `mct-agent` directly.
 
-If you installed the peripherals (`./scripts/install.sh --install-peripherals`), you can use the individual tools. Example `mct` flows:
+Developer peripherals are not part of the default Nix installation. If you build `mct` directly from the source tree, example flows are:
 
 ```
 # Inline question
@@ -699,7 +648,7 @@ cd agent/internal/shell-agent
 GOCACHE=$(pwd)/../../.gocache go build -o ~/.local/bin/shell-agent ./cmd/shell-agent
 ```
 
-If you installed with `--install-peripherals`, the installer already places `shell-agent` alongside the other binaries so you can invoke it directly (`shell-agent --help`).
+The standalone `shell-agent` is a developer peripheral and is not installed by the default package; build it directly from the source tree when needed.
 
 See `agent/internal/file-discovery/README.md` for direct `file-discovery` usage.
 
@@ -709,13 +658,13 @@ See `agent/internal/file-discovery/README.md` for direct `file-discovery` usage.
 
 ## Troubleshooting
 - Command not found
-  - Re-run `./scripts/install.sh` (append `--install-peripherals` if you need the optional CLIs) and ensure the chosen prefix (default `~/.local/bin`) is on PATH. Rehash your shell if needed (`hash -r`).
+  - Re-run `nix run .#install`, ensure the chosen prefix (default `~/.local/bin`) is on PATH, and rehash your shell (`hash -r`).
 - `managed installation requires a clean source checkout`
   - Managed mode rejects tracked changes and untracked files so local work is not silently excluded from the remote-backed build. Check with `git status --short`, or bootstrap from a fresh clone or temporary clean worktree. The bootstrap checkout can be deleted after installation.
 - Missing model configuration / auth errors
   - Set `OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_MODEL` (or pass `--openai-*` flags to the agent).
 - `file-discovery` not found
-  - Only applies if you installed the optional CLIs. Re-run the install with `--install-peripherals`, or point `FILE_DISCOVERY_BIN` at the desired binary.
+  - Only applies to manually built developer peripherals; build `file-discovery` from the source tree or point `FILE_DISCOVERY_BIN` at a compatible binary.
 - `rg` missing
   - Install ripgrep (`rg`) and ensure it’s on PATH.
 - Saved chat not found

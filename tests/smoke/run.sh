@@ -153,9 +153,9 @@ docker build -f "$WORKTREE/tests/smoke/Dockerfile" -t mct-agent-smoke "$WORKTREE
 # --- Run the smoke test ----------------------------------------------------
 echo "==> Running smoke-test container..."
 set +e
-container_script=/tests/smoke/container.sh
+container_args=()
 if $UPDATE_ONLY; then
-  container_script=/tests/smoke/update-container.sh
+  container_args=(nix develop path:/fixtures/mct-source#smoke -c bash /fixtures/mct-source/tests/smoke/update-container.sh)
 fi
 docker run --rm \
   -e TEST_API_KEY \
@@ -166,8 +166,7 @@ docker run --rm \
   -e SMOKE_OPENROUTER_API_KEY -e SMOKE_OPENROUTER_BASE_URL -e SMOKE_OPENROUTER_MODEL \
   -e SMOKE_DEEPINFRA_API_KEY -e SMOKE_DEEPINFRA_BASE_URL -e SMOKE_DEEPINFRA_MODEL \
   -e SMOKE_DEEPSEEK_API_KEY -e SMOKE_DEEPSEEK_BASE_URL -e SMOKE_DEEPSEEK_MODEL \
-  mct-agent-smoke \
-  bash "$container_script"
+  mct-agent-smoke "${container_args[@]}"
 exit_code=$?
 set -e
 

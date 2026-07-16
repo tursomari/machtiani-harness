@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -19,7 +20,7 @@ import (
 type updateCommandManager interface {
 	Check(context.Context) (updatepkg.Result, error)
 	Update(context.Context, updatepkg.Result) (updatepkg.Result, error)
-	Register(context.Context, string, string) (updatepkg.Receipt, error)
+	Install(context.Context, string, string) (updatepkg.Receipt, error)
 }
 
 var updateManagerFactory = func() updateCommandManager {
@@ -39,24 +40,26 @@ var updateManagerFactory = func() updateCommandManager {
 func init() {
 	cliCommands = append(cliCommands, cliCommand{
 		name:        "update",
-		description: "Check and install mct-agent source updates",
+		description: "Check and install Nix-managed mct-agent updates",
 		handler:     handleUpdateCommand,
+	})
+	cliCommands = append(cliCommands, cliCommand{
+		name:        "install",
+		description: "Install mct-agent through a dedicated Nix profile",
+		handler:     handleInstallCommand,
 	})
 }
 
 func handleUpdateCommand(args []string) int {
-	if len(args) > 0 && args[0] == "register" {
-		return handleUpdateRegisterCommand(args[1:])
-	}
 	fs := pflag.NewFlagSet("mct-agent update", pflag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	checkOnly := fs.Bool("check", false, "check for an update without installing it")
 	yes := fs.Bool("yes", false, "install an available update without prompting")
 	noInteractive := fs.Bool("no-interactive", false, "never prompt; check only unless combined with --yes")
 	jsonOutput := fs.Bool("json", false, "print one machine-readable JSON result")
+	_ = fs.Bool("verbose", false, "show detailed Nix and Git output")
 	fs.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage: mct-agent update [--check] [--yes] [--no-interactive] [--json]")
-		fmt.Fprintln(os.Stderr, "       mct-agent update register --source <dir> --prefix <dir>")
 	}
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, pflag.ErrHelp) {
@@ -103,13 +106,15 @@ func handleUpdateCommand(args []string) int {
 	return 0
 }
 
-func handleUpdateRegisterCommand(args []string) int {
-	fs := pflag.NewFlagSet("mct-agent update register", pflag.ContinueOnError)
+func handleInstallCommand(args []string) int {
+	fs := pflag.NewFlagSet("mct-agent install", pflag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	source := fs.String("source", "", "managed source checkout")
-	prefix := fs.String("prefix", "", "installation prefix")
+	source := fs.String("source", "", "clean source checkout")
+	home, _ := os.UserHomeDir()
+	prefix := fs.String("prefix", filepath.Join(home, ".local"), "installation prefix")
+	_ = fs.Bool("verbose", false, "show detailed Nix and Git output")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "Usage: mct-agent update register --source <dir> --prefix <dir>")
+		fmt.Fprintln(os.Stderr, "Usage: mct-agent install --source <checkout> [--prefix <dir>] [--verbose]")
 	}
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, pflag.ErrHelp) {
@@ -121,11 +126,11 @@ func handleUpdateRegisterCommand(args []string) int {
 		fs.Usage()
 		return 2
 	}
-	if _, err := updateManagerFactory().Register(context.Background(), *source, *prefix); err != nil {
+	if _, err := updateManagerFactory().Install(context.Background(), *source, *prefix); err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
 		return 1
 	}
-	fmt.Fprintln(os.Stderr, "Managed mct-agent installation registered.")
+	fmt.Fprintln(os.Stderr, "Managed mct-agent installation complete.")
 	return 0
 }
 

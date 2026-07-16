@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# nix develop supplies a private TMPDIR that daemon build users cannot
+# traverse. Nested update builds must use the container-wide /tmp instead.
+unset TMPDIR TEMPDIR TMP TEMP
+
 echo "==> Verifying managed source auto-update..."
 root=$(mktemp -d)
 seed="$root/seed"
 remote="$root/remote.git"
-update_home="$root/home"
-prefix="$root/prefix"
+update_home="$HOME"
+prefix="$HOME/.local"
 source_dir="$update_home/.machtiani/installations/mct-agent/source"
 user_clone="$update_home/src/mct-install"
 probe="$root/probe"
-legacy_config="$update_home/.machtiani/config.toml"
 legacy_artifact="$update_home/.machtiani/existing-project/artifacts/preserve-me.txt"
 
 cleanup_update_smoke() {
@@ -19,9 +22,8 @@ cleanup_update_smoke() {
 }
 trap cleanup_update_smoke EXIT
 
-mkdir -p "$seed" "$update_home" "$probe" "$(dirname "$user_clone")" \
+mkdir -p "$seed" "$probe" "$(dirname "$user_clone")" \
   "$(dirname "$legacy_artifact")"
-printf 'legacy-config-sentinel\n' >"$legacy_config"
 printf 'legacy-project-sentinel\n' >"$legacy_artifact"
 cp -a /fixtures/mct-source/. "$seed/"
 rm -rf "$seed/.git" "$seed/.gocache" "$seed/.machtiani"
@@ -39,13 +41,15 @@ git -C "$seed" push --quiet -u origin rolling
 git -C "$remote" symbolic-ref HEAD refs/heads/rolling
 
 git clone --quiet --depth 1 --single-branch "file://$remote" "$user_clone"
-HOME="$update_home" PREFIX="$prefix" bash "$user_clone/scripts/migrate-managed-install.sh"
-grep -Fxq 'legacy-config-sentinel' "$legacy_config"
+(cd "$user_clone" && HOME="$update_home" nix run .#install -- --prefix "$prefix")
 grep -Fxq 'legacy-project-sentinel' "$legacy_artifact"
 test "$(HOME="$update_home" "$prefix/bin/mct-agent" --version | sed -n 's/^commit: //p')" = "$commit_a"
 test -d "$source_dir/.git"
 test "$(git -C "$source_dir" remote get-url origin)" = "file://$remote"
-grep -Fq '"source_dir": "'"$source_dir"'"' "$update_home/.machtiani/installations/mct-agent/receipt.json"
+receipt="$update_home/.machtiani/installations/mct-agent/receipt.json"
+grep -Fq '"schema_version": 2' "$receipt"
+grep -Fq '"source_dir": "'"$source_dir"'"' "$receipt"
+grep -Fq '"profile": "'"$update_home/.machtiani/installations/mct-agent/profile"'"' "$receipt"
 
 rm -rf "$user_clone"
 
@@ -99,15 +103,20 @@ EOF
 test "$(HOME="$update_home" "$prefix/bin/mct-agent" --version | sed -n 's/^commit: //p')" = "$commit_d"
 test "$(git -C "$source_dir" rev-parse HEAD)" = "$commit_d"
 
-# A bad candidate never replaces the last working binary.
-sed -i '2i exit 42' "$seed/scripts/install.sh"
-git -C "$seed" add scripts/install.sh
-git -C "$seed" commit --quiet -m broken-installer
+# A bad flake candidate never replaces the last working profile or receipt.
+sed -i '1i this is not valid Nix' "$seed/flake.nix"
+git -C "$seed" add flake.nix
+git -C "$seed" commit --quiet -m broken-flake
 git -C "$seed" push --quiet origin rolling
+receipt_before=$(sha256sum "$receipt" | cut -d' ' -f1)
+profile_before=$(readlink "$update_home/.machtiani/installations/mct-agent/profile")
 if HOME="$update_home" "$prefix/bin/mct-agent" update --yes --no-interactive >/dev/null 2>&1; then
   echo "broken update candidate unexpectedly installed" >&2
   exit 1
 fi
 test "$(HOME="$update_home" "$prefix/bin/mct-agent" --version | sed -n 's/^commit: //p')" = "$commit_d"
+test "$(sha256sum "$receipt" | cut -d' ' -f1)" = "$receipt_before"
+test "$(readlink "$update_home/.machtiani/installations/mct-agent/profile")" = "$profile_before"
+test "$(find "$update_home/.machtiani/installations/mct-agent" -maxdepth 1 -name 'profile-*-link' | wc -l)" -le 2
 
 echo "UPDATE SMOKE PASSED"

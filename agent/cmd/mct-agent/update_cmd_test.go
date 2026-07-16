@@ -10,10 +10,10 @@ import (
 )
 
 type fakeUpdateManager struct {
-	result     updatepkg.Result
-	checkErr   error
-	updated    bool
-	registered bool
+	result    updatepkg.Result
+	checkErr  error
+	updated   bool
+	installed bool
 }
 
 func (f *fakeUpdateManager) Check(context.Context) (updatepkg.Result, error) {
@@ -26,8 +26,8 @@ func (f *fakeUpdateManager) Update(context.Context, updatepkg.Result) (updatepkg
 	return f.result, nil
 }
 
-func (f *fakeUpdateManager) Register(context.Context, string, string) (updatepkg.Receipt, error) {
-	f.registered = true
+func (f *fakeUpdateManager) Install(context.Context, string, string) (updatepkg.Receipt, error) {
+	f.installed = true
 	return updatepkg.Receipt{}, nil
 }
 
@@ -76,15 +76,15 @@ func TestUpdateNoInteractiveRequiresYesToMutate(t *testing.T) {
 	}
 }
 
-func TestUpdateRegisterDelegatesToManagedRegistration(t *testing.T) {
+func TestInstallDelegatesToManagedInstallation(t *testing.T) {
 	fake := &fakeUpdateManager{}
 	restore := replaceUpdateManagerForTest(fake)
 	defer restore()
-	if code := handleUpdateCommand([]string{"register", "--source", "/tmp/source", "--prefix", "/tmp/prefix"}); code != 0 {
+	if code := handleInstallCommand([]string{"--source", "/tmp/source", "--prefix", "/tmp/prefix"}); code != 0 {
 		t.Fatalf("exit code = %d", code)
 	}
-	if !fake.registered {
-		t.Fatal("registration was not invoked")
+	if !fake.installed {
+		t.Fatal("installation was not invoked")
 	}
 }
 

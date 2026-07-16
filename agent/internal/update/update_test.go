@@ -15,10 +15,11 @@ func TestReceiptRoundTripAndPermissions(t *testing.T) {
 	home := t.TempDir()
 	paths := PathsForHome(home)
 	want := Receipt{
-		SchemaVersion:    1,
+		SchemaVersion:    2,
 		Remote:           "file:///tmp/remote.git",
 		DefaultBranch:    "rolling",
 		SourceDir:        filepath.Join(home, "source"),
+		Profile:          filepath.Join(home, "profile"),
 		Prefix:           filepath.Join(home, "prefix"),
 		BinaryPath:       filepath.Join(home, "prefix", "bin", "mct-agent"),
 		InstalledCommit:  strings.Repeat("a", 40),
@@ -95,7 +96,7 @@ func TestCheckDetectsRewrittenDefaultBranch(t *testing.T) {
 
 	home := t.TempDir()
 	paths := PathsForHome(home)
-	receipt := Receipt{SchemaVersion: 1, Remote: remote, DefaultBranch: "rolling", SourceDir: work, Prefix: filepath.Join(home, "prefix"), BinaryPath: filepath.Join(home, "prefix", "bin", "mct-agent"), InstalledCommit: old}
+	receipt := Receipt{SchemaVersion: 2, Remote: remote, DefaultBranch: "rolling", SourceDir: work, Profile: filepath.Join(home, "profile"), Prefix: filepath.Join(home, "prefix"), BinaryPath: filepath.Join(home, "prefix", "bin", "mct-agent"), InstalledCommit: old}
 	if err := SaveReceipt(paths.Receipt, receipt); err != nil {
 		t.Fatal(err)
 	}

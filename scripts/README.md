@@ -7,8 +7,7 @@
 The `scripts/` directory contains the build, install, A/B testing harness, and
 evaluation infrastructure for the mct-agent monorepo. It provides the Docker
 tooling for reproducible A/B comparison of code changes (`ab-dev.sh` plus
-`Dockerfile.build`), a local binary installer (`install.sh`), the evaluation
-pipeline for comparing mct-agent against Forge (`run_eval.sh`,
+`Dockerfile.build`), the evaluation pipeline for comparing mct-agent against Forge (`run_eval.sh`,
 `run_eval_head.sh`), and supporting files for Skyvern web interaction and judge
 prompting.  Agent-side test runner documentation lives in
 `agent/tests/README.md` — this file focuses on the scripts that sit above the
@@ -67,13 +66,10 @@ build-arg is present (treatment build only), the stage decodes the base64
 patch, removes broken submodule metadata to avoid path resolution errors,
 reverts patched files to `HEAD~1` so the patch applies cleanly, applies the
 patch with `git apply`, and creates a git commit with message `"treatment
-patch"`.  This last commit step is non-obvious but required: `install.sh`
-embeds the short git commit hash and dirty flag into the binary via
-`-ldflags`, and `check_bin` at runtime compares the embedded commit against
-HEAD.  Without a post-patch commit, the binary metadata would mismatch the
-working tree state, causing a hard exit.  All binaries (`mct-agent`, `mct`,
+patch"`. The commit gives the A/B image a coherent Git state for runtime
+checks and diagnostics. All binaries (`mct-agent`, `mct`,
 `file-discovery`, `snippet-discovery`, `shell-agent`) are built into
-`/build/bin` via `PREFIX=/build ./scripts/install.sh --install-peripherals`.
+`/build/bin` via direct Go builds inside the internal image.
 
 **Stage 2 (runtime)** is based on `debian:bookworm-slim`.  It installs runtime
 dependencies (ripgrep, rsync, bash, python3, git), copies the built binaries
@@ -104,24 +100,6 @@ caching.  It does not embed the A/B infrastructure (no patch application
 logic, no multi-stage separation, no runtime stage), making it suitable as a
 lightweight base for evaluation containers that only need the Go toolchain and
 module dependencies rather than a full mct-agent runtime.
-
----
-
-## install.sh — Local binary installer
-
-`scripts/install.sh` builds and installs `mct-agent` (and optionally `mct`,
-`file-discovery`, `snippet-discovery`, and `shell-agent`) into `PREFIX/bin`,
-which defaults to `~/.local/bin`.  It embeds the short git commit hash and
-dirty flag into each binary via `-ldflags`, producing version strings like
-`dev-<12-char-commit>` (or `dev-<12-char-commit>-dirty` for uncommitted
-changes).  The script uses `-buildvcs=false` to prevent the Go toolchain from
-embedding its own VCS metadata, relying solely on the script's own commit and
-dirty-flag detection.  The `PREFIX` environment variable controls the install
-destination; `GOCACHE` defaults to `$REPO_ROOT/.gocache` when unset.  Pass
-`--install-peripherals` (or the older alias `--all-binaries`) to build and
-install the four non-mct-agent binaries: `mct`, `file-discovery`,
-`snippet-discovery`, and `shell-agent`.  The script lives at
-`scripts/install.sh:1`.
 
 ---
 

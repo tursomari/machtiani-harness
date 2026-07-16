@@ -16,8 +16,7 @@ The `prompt` command no longer relies on a remote URL or backend server. It runs
 - Optional: `git` for repository-aware features (system messages, discovery sandboxing)
 
 ## Build and Install (recommended)
-To install via the monorepo helper script, run `./scripts/install.sh --install-peripherals` from the repo root. The manual steps below build the CLI directly.
-This builds the CLI and the bundled `file-discovery` helper from the internal module, then installs both into your PATH.
+`mct` is a developer peripheral and is not part of the default Nix package. The manual steps below build the CLI and bundled `file-discovery` helper directly.
 
 ```
 mkdir -p ~/.local/bin \

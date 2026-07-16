@@ -21,13 +21,13 @@ RUN go mod download
 # Copy the full agent source tree
 COPY --link agent/ ./agent/
 
-# Copy the install script
+# Copy build and test scripts
 COPY --link scripts/ ./scripts/
 
 # Copy the .machtiani configuration
 COPY --link .machtiani/ ./.machtiani/
 
-# Copy .git so git apply and install.sh ldflag embedding (git_short_commit, git_dirty_flag) can run
+# Copy .git so treatment patches can be committed and runtime checks see a coherent revision
 COPY --link .git/ ./.git/
 
 # Optionally apply a change patch for version B builds
@@ -43,7 +43,7 @@ RUN if [ -n "${CHANGE_PATCH_B64}" ]; then \
       for f in $files; do git -C /build checkout "${CHANGE_PATCH_BASE:-HEAD~1}" -- "$f" 2>/dev/null || rm -f "/build/$f"; done && \
       git apply /tmp/change.patch && \
       # Commit the patched tree so the embedded commit hash matches HEAD.
-      # install.sh embeds $(git_short_commit) into the binary via -ldflags.
+      # The build embeds the committed tree state into the binary.
       # check_bin at runtime compares the embedded commit against HEAD, so
       # without this commit the embedded commit (old HEAD) would not match
       # the runtime repo HEAD (same old HEAD but with a dirty tree), and
@@ -53,8 +53,15 @@ RUN if [ -n "${CHANGE_PATCH_B64}" ]; then \
       git -c user.email=builder@local -c user.name=builder commit -am "treatment patch"; \
     fi
 
-# Build all binaries (mct-agent, mct, file-discovery, snippet-discovery, shell-agent) into /build/bin
-RUN PREFIX=/build ./scripts/install.sh --install-peripherals
+# Build internal benchmark/development binaries directly. User installation is
+# Nix-managed and does not use this image.
+RUN mkdir -p /build/bin && cd agent && \
+    go build -buildvcs=false -o /build/bin/mct-agent ./cmd/mct-agent && \
+    go build -buildvcs=false -o /build/bin/meta-orchestrator ./cmd/meta-orchestrator && \
+    go build -buildvcs=false -o /build/bin/mct ./internal/mct/cmd/mct && \
+    go build -buildvcs=false -o /build/bin/file-discovery ./internal/file-discovery/cmd/file-discovery && \
+    go build -buildvcs=false -o /build/bin/snippet-discovery ./internal/snippet-discovery/cmd/snippet-discovery && \
+    go build -buildvcs=false -o /build/bin/shell-agent ./internal/shell-agent/cmd/shell-agent
 
 # Stage 2: runtime
 FROM debian:bookworm-slim

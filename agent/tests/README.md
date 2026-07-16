@@ -286,7 +286,7 @@ image.
    - Applies the patch with `git apply`.
    - Creates a git commit with message `"treatment patch"` so that embedded
      commit metadata (from `-buildvcs=auto`) matches the patched state.
-5. Runs `PREFIX=/build ./scripts/install.sh --install-peripherals` to build
+5. Builds the required benchmark binaries directly into `/build/bin`
    `mct-agent`, `mct`, `file-discovery`, `snippet-discovery`, and `shell-agent`
    into `/build/bin`.
 

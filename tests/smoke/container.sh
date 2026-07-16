@@ -28,7 +28,10 @@ strip_ansi() {
   sed -E $'s/\033\\[[0-9;?]*[[:alpha:]]//g' "$1" | tr -d '\r'
 }
 
-bash /tests/smoke/update-container.sh
+export HOME=/tmp/mct-smoke-home
+export PATH="$HOME/.local/bin:$PATH"
+mkdir -p "$HOME"
+bash /fixtures/mct-source/tests/smoke/update-container.sh
 
 # Step 1: Initialize a clean Git project
 echo "==> Initializing Git project..."
@@ -44,7 +47,7 @@ mct-agent --version
 # Step 3: Exercise the complete script-safe configuration lifecycle. This
 # leaves one clean DeepSeek-compatible provider/model configuration for the
 # live sync and run below.
-bash /tests/smoke/config-crud.sh
+bash /fixtures/mct-source/tests/smoke/config-crud.sh
 
 # Step 4: Prove automatic context correction against a deterministic local
 # ChatCompletion endpoint. The first request receives a structured overflow;
@@ -62,7 +65,10 @@ mct-agent config add --path "$overflow_config" \
   --no-interactive
 mct-agent config model show --path "$overflow_config" overflow > /tmp/context-overflow-before.stdout
 grep -Fq 'context_length: 128000 (model)' /tmp/context-overflow-before.stdout
-MACHTIANI_CONFIG="$overflow_config" context-overflow-smoke \
+(
+  cd /fixtures/mct-source/agent
+  MACHTIANI_CONFIG="$overflow_config" go run ./tests/context-overflow-smoke
+) \
   > /tmp/context-overflow.stdout \
   2> /tmp/context-overflow.stderr
 grep -Fq 'CONTEXT OVERFLOW SMOKE PASSED: requests=2' /tmp/context-overflow.stdout

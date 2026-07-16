@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -20,7 +21,7 @@ import (
 )
 
 const (
-	receiptSchemaVersion = 1
+	receiptSchemaVersion = 2
 	defaultRootRelative  = ".machtiani/installations/mct-agent"
 )
 
@@ -45,6 +46,7 @@ const (
 type Paths struct {
 	Root    string
 	Source  string
+	Profile string
 	Receipt string
 	Config  string
 	State   string
@@ -56,6 +58,7 @@ func PathsForHome(home string) Paths {
 	return Paths{
 		Root:    root,
 		Source:  filepath.Join(root, "source"),
+		Profile: filepath.Join(root, "profile"),
 		Receipt: filepath.Join(root, "receipt.json"),
 		Config:  filepath.Join(root, "update.toml"),
 		State:   filepath.Join(root, "update-state.json"),
@@ -68,6 +71,7 @@ type Receipt struct {
 	Remote           string    `json:"remote"`
 	DefaultBranch    string    `json:"default_branch"`
 	SourceDir        string    `json:"source_dir"`
+	Profile          string    `json:"profile"`
 	Prefix           string    `json:"prefix"`
 	BinaryPath       string    `json:"binary_path"`
 	InstalledCommit  string    `json:"installed_commit"`
@@ -158,9 +162,9 @@ func LoadReceipt(path string) (Receipt, error) {
 		return Receipt{}, fmt.Errorf("decode update receipt %s: %w", path, err)
 	}
 	if receipt.SchemaVersion != receiptSchemaVersion {
-		return Receipt{}, fmt.Errorf("unsupported update receipt schema %d", receipt.SchemaVersion)
+		return Receipt{}, fmt.Errorf("unsupported update receipt schema %d; reinstall with nix run .#install", receipt.SchemaVersion)
 	}
-	if strings.TrimSpace(receipt.Remote) == "" || strings.TrimSpace(receipt.SourceDir) == "" || strings.TrimSpace(receipt.BinaryPath) == "" || strings.TrimSpace(receipt.InstalledCommit) == "" {
+	if strings.TrimSpace(receipt.Remote) == "" || strings.TrimSpace(receipt.SourceDir) == "" || strings.TrimSpace(receipt.Profile) == "" || strings.TrimSpace(receipt.BinaryPath) == "" || strings.TrimSpace(receipt.InstalledCommit) == "" {
 		return Receipt{}, errors.New("update receipt is incomplete")
 	}
 	return receipt, nil
@@ -281,7 +285,9 @@ func (m *Manager) Check(ctx context.Context) (Result, error) {
 	return result, nil
 }
 
-func (m *Manager) Register(ctx context.Context, source, prefix string) (Receipt, error) {
+// Install creates an updater-owned source clone, realizes the exact source
+// revision with Nix, and activates it through a dedicated profile.
+func (m *Manager) Install(ctx context.Context, source, prefix string) (receipt Receipt, retErr error) {
 	var err error
 	source, err = filepath.Abs(source)
 	if err != nil {
@@ -291,10 +297,10 @@ func (m *Manager) Register(ctx context.Context, source, prefix string) (Receipt,
 	if err != nil {
 		return Receipt{}, err
 	}
-	if dirty, err := gitOutput(ctx, source, "status", "--porcelain"); err != nil {
+	if dirty, err := gitOutput(ctx, source, "status", "--porcelain", "--untracked-files=all"); err != nil {
 		return Receipt{}, err
 	} else if strings.TrimSpace(dirty) != "" {
-		return Receipt{}, errors.New("managed source checkout is dirty")
+		return Receipt{}, errors.New("installation source checkout is dirty")
 	}
 	remoteRaw, err := gitOutput(ctx, source, "remote", "get-url", "origin")
 	if err != nil {
@@ -312,14 +318,63 @@ func (m *Manager) Register(ctx context.Context, source, prefix string) (Receipt,
 	if err != nil {
 		return Receipt{}, err
 	}
-	if strings.TrimSpace(m.opts.Commit) != "" && m.opts.Commit != "unknown" && m.opts.Commit != head {
-		return Receipt{}, fmt.Errorf("installed commit %s does not match source HEAD %s", m.opts.Commit, head)
+	_, remoteHead, err := ResolveRemoteHEAD(ctx, remote)
+	if err != nil {
+		return Receipt{}, err
+	}
+	if head != remoteHead {
+		return Receipt{}, fmt.Errorf("source HEAD %s is not the remote default-branch tip %s", head, remoteHead)
+	}
+	if err := os.MkdirAll(m.paths.Root, 0o700); err != nil {
+		return Receipt{}, err
+	}
+	staging, err := os.MkdirTemp(m.paths.Root, ".install-*")
+	if err != nil {
+		return Receipt{}, err
+	}
+	defer os.RemoveAll(staging)
+	stagedSource := filepath.Join(staging, "source")
+	clone := exec.CommandContext(ctx, "git", "clone", "--quiet", "--single-branch", "--branch", branch, remote, stagedSource)
+	clone.Stdout, clone.Stderr = m.opts.Stderr, m.opts.Stderr
+	if err := clone.Run(); err != nil {
+		return Receipt{}, fmt.Errorf("clone managed source: %w", err)
+	}
+	if _, err := gitOutput(ctx, stagedSource, "checkout", "--detach", head); err != nil {
+		return Receipt{}, err
+	}
+	storePath, version, err := m.buildExact(ctx, stagedSource, head)
+	if err != nil {
+		return Receipt{}, err
+	}
+
+	oldSource := m.paths.Source + ".previous"
+	_ = os.RemoveAll(oldSource)
+	if _, err := os.Stat(m.paths.Source); err == nil {
+		if err := os.Rename(m.paths.Source, oldSource); err != nil {
+			return Receipt{}, err
+		}
+	}
+	defer func() {
+		if retErr == nil {
+			_ = os.RemoveAll(oldSource)
+			return
+		}
+		_ = os.RemoveAll(m.paths.Source)
+		if _, err := os.Stat(oldSource); err == nil {
+			_ = os.Rename(oldSource, m.paths.Source)
+		}
+	}()
+	if err := os.Rename(stagedSource, m.paths.Source); err != nil {
+		return Receipt{}, err
+	}
+	if err := m.activateProfile(ctx, storePath); err != nil {
+		return Receipt{}, err
 	}
 	binaryPath := filepath.Join(prefix, "bin", "mct-agent")
-	if _, err := os.Stat(binaryPath); err != nil {
-		return Receipt{}, fmt.Errorf("inspect installed binary %s: %w", binaryPath, err)
+	if err := atomicSymlink(filepath.Join(m.paths.Profile, "bin", "mct-agent"), binaryPath); err != nil {
+		return Receipt{}, err
 	}
-	receipt := Receipt{SchemaVersion: receiptSchemaVersion, Remote: remote, DefaultBranch: branch, SourceDir: source, Prefix: prefix, BinaryPath: binaryPath, InstalledCommit: head, InstalledVersion: m.opts.Version, InstalledAt: m.opts.Now().UTC()}
+	receipt = Receipt{SchemaVersion: receiptSchemaVersion, Remote: remote, DefaultBranch: branch, SourceDir: m.paths.Source, Profile: m.paths.Profile, Prefix: prefix, BinaryPath: binaryPath, InstalledCommit: head, InstalledVersion: version, InstalledAt: m.opts.Now().UTC()}
 	if err := SaveReceipt(m.paths.Receipt, receipt); err != nil {
 		return Receipt{}, err
 	}
@@ -391,45 +446,26 @@ func (m *Manager) Update(ctx context.Context, result Result) (updated Result, re
 	}
 	defer os.RemoveAll(stageRoot)
 	worktree := filepath.Join(stageRoot, "source")
-	stagePrefix := filepath.Join(stageRoot, "prefix")
 	if _, err := gitOutput(ctx, receipt.SourceDir, "worktree", "add", "--detach", worktree, result.CandidateCommit); err != nil {
 		return Result{}, err
 	}
 	defer func() {
 		_, _ = gitOutput(context.Background(), receipt.SourceDir, "worktree", "remove", "--force", worktree)
 	}()
-	installer := exec.CommandContext(ctx, "bash", filepath.Join(worktree, "scripts", "install.sh"))
-	installer.Dir = worktree
-	installer.Env = append(os.Environ(), "PREFIX="+stagePrefix)
-	installer.Stdout = m.opts.Stderr
-	installer.Stderr = m.opts.Stderr
-	if err := installer.Run(); err != nil {
-		return Result{}, fmt.Errorf("build update candidate %s: %w", result.CandidateCommit, err)
-	}
-	candidate := filepath.Join(stagePrefix, "bin", "mct-agent")
-	versionOut, err := exec.CommandContext(ctx, candidate, "--version").CombinedOutput()
+	storePath, version, err := m.buildExact(ctx, worktree, result.CandidateCommit)
 	if err != nil {
-		return Result{}, fmt.Errorf("validate update candidate: %w: %s", err, strings.TrimSpace(string(versionOut)))
-	}
-	if !strings.Contains(string(versionOut), "commit: "+result.CandidateCommit) {
-		return Result{}, fmt.Errorf("candidate commit verification failed: expected %s, output %q", result.CandidateCommit, strings.TrimSpace(string(versionOut)))
-	}
-
-	backup := receipt.BinaryPath + ".previous"
-	if err := copyFile(receipt.BinaryPath, backup); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return Result{}, fmt.Errorf("back up installed binary: %w", err)
+		return Result{}, err
 	}
 	sourceAdvanced := false
-	activated := false
+	profileAdvanced := false
 	defer func() {
 		if retErr == nil {
 			return
 		}
-		if activated {
-			if _, err := os.Stat(backup); err == nil {
-				if err := copyFile(backup, receipt.BinaryPath); err != nil {
-					fmt.Fprintln(m.opts.Stderr, "Warning: unable to restore previous binary:", err)
-				}
+		if profileAdvanced {
+			cmd := exec.CommandContext(context.Background(), "nix", "profile", "rollback", "--profile", receipt.Profile)
+			if output, err := cmd.CombinedOutput(); err != nil {
+				fmt.Fprintln(m.opts.Stderr, "Warning: unable to restore previous Nix profile:", err, strings.TrimSpace(string(output)))
 			}
 		}
 		if sourceAdvanced {
@@ -438,26 +474,23 @@ func (m *Manager) Update(ctx context.Context, result Result) (updated Result, re
 			}
 		}
 	}()
+	if err := m.activateProfile(ctx, storePath); err != nil {
+		return Result{}, err
+	}
+	profileAdvanced = true
 	if _, err := gitOutput(ctx, receipt.SourceDir, "checkout", "-B", result.DefaultBranch, result.CandidateCommit); err != nil {
 		return Result{}, err
 	}
 	sourceAdvanced = true
-	if err := os.MkdirAll(filepath.Dir(receipt.BinaryPath), 0o755); err != nil {
-		return Result{}, err
-	}
-	if err := os.Rename(candidate, receipt.BinaryPath); err != nil {
-		return Result{}, fmt.Errorf("activate update: %w", err)
-	}
-	activated = true
 
 	receipt.DefaultBranch = result.DefaultBranch
 	receipt.InstalledCommit = result.CandidateCommit
-	receipt.InstalledVersion = versionFromOutput(string(versionOut))
+	receipt.InstalledVersion = version
 	receipt.InstalledAt = m.opts.Now().UTC()
 	if err := SaveReceipt(m.paths.Receipt, receipt); err != nil {
 		return Result{}, err
 	}
-	activated = false
+	profileAdvanced = false
 	sourceAdvanced = false
 	result.Status = StatusUpdated
 	result.CurrentCommit = result.CandidateCommit
@@ -497,34 +530,87 @@ func (m *Manager) ensureSource(ctx context.Context, receipt Receipt) error {
 	return nil
 }
 
-func copyFile(source, destination string) error {
-	in, err := os.Open(source)
+func (m *Manager) buildExact(ctx context.Context, source, commit string) (string, string, error) {
+	installable := fmt.Sprintf("git+file://%s?rev=%s#mct-agent", filepath.ToSlash(source), commit)
+	cmd := exec.CommandContext(ctx, "nix", "build", "--no-link", "--print-out-paths", installable)
+	cmd.Stdout = nil
+	cmd.Stderr = m.opts.Stderr
+	output, err := cmd.Output()
+	if err != nil {
+		return "", "", fmt.Errorf("build Nix candidate %s: %w", commit, err)
+	}
+	storePath := strings.TrimSpace(string(output))
+	if storePath == "" || strings.Contains(storePath, "\n") {
+		return "", "", fmt.Errorf("Nix returned invalid candidate output %q", storePath)
+	}
+	versionOut, err := exec.CommandContext(ctx, filepath.Join(storePath, "bin", "mct-agent"), "--version").CombinedOutput()
+	if err != nil {
+		return "", "", fmt.Errorf("validate Nix candidate: %w: %s", err, strings.TrimSpace(string(versionOut)))
+	}
+	if !strings.Contains(string(versionOut), "commit: "+commit) {
+		return "", "", fmt.Errorf("candidate commit verification failed: expected %s, output %q", commit, strings.TrimSpace(string(versionOut)))
+	}
+	return storePath, versionFromOutput(string(versionOut)), nil
+}
+
+func (m *Manager) activateProfile(ctx context.Context, storePath string) error {
+	if err := os.MkdirAll(filepath.Dir(m.paths.Profile), 0o700); err != nil {
+		return err
+	}
+	cmd := exec.CommandContext(ctx, "nix", "build", "--profile", m.paths.Profile, storePath)
+	cmd.Stdout, cmd.Stderr = m.opts.Stderr, m.opts.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("activate Nix profile: %w", err)
+	}
+	if err := pruneProfileHistory(m.paths.Profile, 2); err != nil {
+		return fmt.Errorf("prune Nix profile history: %w", err)
+	}
+	return nil
+}
+
+func pruneProfileHistory(profile string, keep int) error {
+	matches, err := filepath.Glob(profile + "-*-link")
 	if err != nil {
 		return err
 	}
-	defer in.Close()
-	info, err := in.Stat()
-	if err != nil {
+	type generation struct {
+		n int
+		p string
+	}
+	var generations []generation
+	for _, path := range matches {
+		name := strings.TrimSuffix(strings.TrimPrefix(path, profile+"-"), "-link")
+		n, err := strconv.Atoi(name)
+		if err == nil {
+			generations = append(generations, generation{n: n, p: path})
+		}
+	}
+	sort.Slice(generations, func(i, j int) bool { return generations[i].n > generations[j].n })
+	if len(generations) <= keep {
+		return nil
+	}
+	for _, generation := range generations[keep:] {
+		if err := os.Remove(generation.p); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
+}
+
+func atomicSymlink(target, destination string) error {
+	if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(destination), ".mct-agent-backup-*")
-	if err != nil {
+	tmp := destination + ".new"
+	_ = os.Remove(tmp)
+	if err := os.Symlink(target, tmp); err != nil {
 		return err
 	}
-	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
-	if err := tmp.Chmod(info.Mode().Perm()); err != nil {
-		tmp.Close()
+	if err := os.Rename(tmp, destination); err != nil {
+		_ = os.Remove(tmp)
 		return err
 	}
-	if _, err := io.Copy(tmp, in); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpPath, destination)
+	return nil
 }
 
 func versionFromOutput(output string) string {

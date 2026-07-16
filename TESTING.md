@@ -195,16 +195,13 @@ End-to-end regression suite for the installed `mct-agent` binary.
 export TEST_API_KEY=sk_...
 export TEST_BASE_URL=https://api.openai.com/v1
 export TEST_MODEL=gpt-4o-mini
-./scripts/install.sh && bash agent/tests/run-live.sh
+nix build .#mct-agent
+PATH="$PWD/result/bin:$PATH" bash agent/tests/run-live.sh
 ```
 
-- Assumes `mct-agent` is on PATH; `./scripts/install.sh` handles this in CI or a clean checkout.
+- Assumes the flake-built `mct-agent` is on PATH.
 - `TEST_*` takes precedence over `OPENAI_*`. When neither complete set is available, the script generates stub credentials, writes a temporary `config.toml`, and forces `--dry-run`.
 - Artifacts land in `test-out-*` directories at the repo root; each case includes stdout, stderr, transcripts, and (for live runs) generated assets.
-- The provider-independent `managed_update_local_remote` case exercises the
-  origin-derived bootstrap, managed-source reuse and safety checks, and the
-  explicit updater against an isolated local bare Git remote. It is included
-  in the default suite and can be targeted directly.
 - Optional overrides:
   - `TEST_ORCH_MODEL`, `TEST_FILE_DISCOVERY_MODEL` — preferred per-component remote-model overrides; the corresponding `OPENAI_*` values are fallbacks.
   - `OPENAI_ORCH_MODEL_ALIAS`, `OPENAI_FILE_DISCOVERY_MODEL_ALIAS` — supply config aliases when reusing a shared `config.toml`.
@@ -219,7 +216,6 @@ Run every registered case with no arguments, or pass one or more case names:
 ```bash
 bash agent/tests/run-live.sh
 bash agent/tests/run-live.sh issue-a-1turn
-bash agent/tests/run-live.sh managed_update_local_remote
 bash agent/tests/run-live.sh issue-a-1turn empty-goal test_code_no_forge
 ```
 
@@ -234,7 +230,8 @@ bash agent/tests/run-live.sh no-such-case 2>&1 | head -5
 The harness uses `mct-agent` from `PATH`; it does not build the binary or mutate `PATH`. Install it first:
 
 ```bash
-./scripts/install.sh
+nix build .#mct-agent
+export PATH="$PWD/result/bin:$PATH"
 ```
 
 If a run reports that `mct` is not synced at the current Git state, synchronize it and rerun the harness:
@@ -494,7 +491,7 @@ The original evaluation pipeline, documented in scripts/run_eval.sh itself. It c
 
 ## Troubleshooting
 - Unit tests should pass without extra setup; if they fail due to missing cache directories, ensure your shell honors the `GOCACHE` export above.
-- Integration runs that report missing binaries typically mean the PATH does not include the install prefix. Re-run `./scripts/install.sh` or inspect the temp PATH emitted by the harness.
+- Integration runs that report missing binaries typically mean the PATH does not include `result/bin`; rerun `nix build .#mct-agent` and export that path.
 - Stub mode is active when outputs mention `stub-echo`, `mock`, or `--dry-run`. Verify that the required `OPENAI_*`/`MACHTIANI_CONFIG` values are exported to switch to live mode.
 - The Docker smoke runner tests committed `HEAD`, not working-tree changes. A surprising old result usually means the intended change has not been committed.
 - A Docker smoke run must not be considered successful merely because configuration initialization passed; verify the live run and conversation artifact checks also completed.

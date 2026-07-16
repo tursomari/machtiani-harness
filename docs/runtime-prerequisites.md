@@ -7,19 +7,17 @@
 
 | # | Dependency | Min Version | Used By | Failure Mode | Install Check |
 |---|---|---|---|---|---|
-| 1 | Go | 1.23 | All binaries (build only) | Build fails. No runtime concern for pre-built binaries. | ✅ |
-| 2 | git | 2.x | `mct-agent run` (repo hydration), `mct-agent sync` (commit resolution) | Repo hydration fails; agent runs without repo context producing degraded results. `sync` fails entirely. | ✅ |
-| 3 | ripgrep (`rg`) | 13+ | `file-discovery` (regex file search backend) | File discovery errors out; agent operates without file-awareness, producing significantly degraded planning. No graceful fallback. | ✅ |
-| 4 | bash | 3.2+ | `shell-agent` (command execution), `scripts/install.sh` | Shell-agent commands fail immediately. Install script won't execute. | ❌ |
-| 5 | sed | POSIX sed | `mct-agent` (transcript processing, patch helpers) | Text transformations fail silently or produce malformed output. BSD sed `-i` requires an argument, causing silent failures on macOS. | ❌ |
+| 1 | Nix | 2.24+ | Installation, updates, development shells | Install/update cannot realize the locked flake. | ✅ |
+| 2 | git | Pinned by flake | Repository operations and sync | Commands cannot inspect or hydrate repositories. | ✅ |
+| 3 | ripgrep (`rg`) | Pinned by flake | File discovery | File discovery cannot search source. | ✅ |
+| 4 | bash | Pinned by flake | Shell-agent command execution | Shell commands fail immediately. | ✅ |
+| 5 | GNU sed | Pinned by flake | Transcript and helper transformations | Text transformations fail. | ✅ |
 
-## Install Script Gaps
-
-`scripts/install.sh` checks for Go, git, and ripgrep. It does **not** check for bash or sed. On minimal systems (Alpine, distroless), the user discovers these failures only at runtime.
-
-**Phase 1 recommendation:** Add `bash --version` and `sed --version` (or a functional test) to the install script. Fail with a clear message if either is missing.
+Go is a locked build dependency and is not retained in the installed runtime
+closure. Nix itself is a host prerequisite and is not bundled into mct-agent.
 
 ## Platform Notes
 
-- **macOS:** Ships bash 3.2 and BSD sed. The BSD sed `-i` flag requires an explicit empty-string argument (`-i ''`), while GNU sed does not. Any sed invocation using `-i` without the BSD-compatible form will silently produce wrong output on macOS.
-
+- **macOS:** Agent-launched commands see the flake's GNU Bash, coreutils, and
+  GNU sed before the platform tools. Scripts that intentionally need the Apple
+  tools should use absolute paths.

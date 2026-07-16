@@ -20,7 +20,7 @@ A Go CLI that helps an LLM discover relevant files in a repository using a stric
   - `OPENAI_MODEL` (required)
 
 ## Install
-From the monorepo root you can run `./scripts/install.sh --install-peripherals` to build and install `file-discovery` alongside the other CLIs. The commands below compile it directly from this directory.
+`file-discovery` is a developer peripheral and is not part of the default Nix package. The commands below compile it directly from this directory.
 ```bash
 # In some sandboxes, Go’s default cache is not writable; use a local cache:
 mkdir -p .gocache

@@ -5,31 +5,25 @@ Initialize the current project with `mct-agent init`. Where paths below use
 `PROJECT_STORE="$HOME/.machtiani/$(cat .machtiani/project.uuid)"`.
 
 ## Requirements
-- Go 1.22+ (when building from source)
+- Nix 2.24+ for installation and updates; Go is supplied by the development shell
 - OpenAI‑compatible model configuration (no implicit defaults):
   - `OPENAI_API_KEY` (required)
   - `OPENAI_BASE_URL` (required)
   - `OPENAI_MODEL` (required)
-- Optional standalone CLIs (`mct`, `file-discovery`, `shell-agent`) are only needed for direct use; install them with `./scripts/install.sh --install-peripherals`.
+- Optional standalone CLIs (`mct`, `file-discovery`, `shell-agent`) are developer peripherals and are not part of the default package.
 
 ## Install
 
-From the repo root, run the installer to build **mct-agent** into `~/.local/bin`:
+From a clean repo root, install **mct-agent** into the dedicated managed profile:
 
 ```
-./scripts/install.sh
+nix run .#install
 ```
 
-Need the standalone CLIs too? Append `--install-peripherals` to build **mct**, **file-discovery**, and **shell-agent** alongside `mct-agent`:
+Override the stable binary prefix if you prefer a different path:
 
 ```
-./scripts/install.sh --install-peripherals
-```
-
-Override the destination with `PREFIX` if you prefer a different path:
-
-```
-PREFIX="$PWD/.mct-bin" ./scripts/install.sh
+nix run .#install -- --prefix "$PWD/.mct-bin"
 export PATH="$PWD/.mct-bin/bin:$PATH"
 ```
 
@@ -139,7 +133,7 @@ mct-agent run "triage regression" \
 
 ## Troubleshooting
 - “mct-agent not found”
-  - Re-run `./scripts/install.sh` (append `--install-peripherals` if you also need the standalone CLIs) and ensure the chosen prefix is on PATH.
+  - Re-run `nix run .#install` and ensure the chosen prefix is on PATH.
 - “Missing model configuration”
   - Provide a valid `.machtiani/config.toml` (or set `MACHTIANI_CONFIG`) containing the model alias, or export `OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_MODEL` so the agent can generate one.
 - “Saved chat missing/unreadable”
@@ -169,7 +163,7 @@ GOCACHE=$(pwd)/.gocache go test ./...
 `agent/tests/run-live.sh` exercises the PATH-installed `mct-agent` binary end-to-end (see `TESTING.md` for full details). The default install is sufficient; optional CLIs are not required for this harness.
 
 Prerequisites:
-1. Run `./scripts/install.sh` (add `--install-peripherals` if you also want the standalone CLIs on PATH).
+1. Run `nix build .#mct-agent` and put `result/bin` on PATH.
 2. Optional for live mode: export `OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_MODEL`. When these variables are absent the script forces deterministic dry-run mode.
 
 What the script does:
@@ -182,9 +176,10 @@ What the script does:
 Run from the repo root:
 
 ```
-./scripts/install.sh && bash agent/tests/run-live.sh
+nix build .#mct-agent
+PATH="$PWD/result/bin:$PATH" bash agent/tests/run-live.sh
 ```
-If you prefer not to invoke the installer, run the manual block from the root `README.md` and ensure `mct-agent` is on PATH before executing `bash agent/tests/run-live.sh`.
+Ensure the flake-built `mct-agent` is on PATH before executing `bash agent/tests/run-live.sh`.
 
 The script no longer mutates PATH or accepts binary override flags; everything must resolve via PATH.
 - When `OPENAI_*` are not provided, the generated config points at stub credentials and the script forces `--dry-run`, so no network or `mct` subprocess calls occur; transcripts remain available for assertions while the final artifact is intentionally skipped.

@@ -191,7 +191,7 @@ context_length = 128000
 #   - git   (required for repo operations, README sync, and snapshots)
 #   - rg    (ripgrep; required for file-discovery)
 #   - sed   (used by shell-agent for inline edits)
-#   - bash  (required for install.sh and test harnesses)
-#   - go    (Go 1.23+; required for building from source)
+#   - bash  (required by shell-agent commands and test harnesses)
 #
-# install.sh checks: go, git, rg (bash and sed are NOT checked at install time)
+# The Nix package pins these runtime tools. Go is needed only in development
+# shells and direct source-building workflows.

@@ -76,7 +76,6 @@ mct/
 │   ├── Dockerfile.build           # Multi-stage Docker build (A/B images)
 │   ├── Dockerfile.base            # Single-stage base builder (mod download cache)
 │   ├── ab-dev.sh                  # A/B build-and-compare entrypoint
-│   ├── install.sh                 # Local binary install
 │   └── run_eval_head.sh           # HEAD-based evaluation pipeline
 ├── docs/
 │   ├── development-workflow.md    # This file
@@ -90,7 +89,7 @@ mct/
 └── README.md
 ```
 
-All binaries share a single Go module at `agent/`. The `scripts/install.sh` script builds `mct-agent` by default; pass `--install-peripherals` to also build `mct`, `file-discovery`, `snippet-discovery`, and `shell-agent`.
+All binaries share a single Go module at `agent/`. User installation is managed by the root Nix flake; internal container workflows build their required binaries directly.
 
 ## Docker-Based Development Loop
 
@@ -167,7 +166,7 @@ RUN if [ -n "${CHANGE_PATCH}" ]; then \
     fi
 
 # Build all binaries
-RUN PREFIX=/build ./scripts/install.sh --install-peripherals
+RUN cd agent && go build ./cmd/mct-agent
 ```
 
 **Stage 2 — `runtime`** (based on `debian:bookworm-slim`):
@@ -433,7 +432,7 @@ The builder stage contains all compilation tools (Go compiler, gcc, git). The ru
 
 Every `COPY` instruction uses `--link`, meaning each copy is an independent operation from the build context rather than a sequential layer dependency. The practical effect:
 
-- Changing `scripts/install.sh` does not invalidate the `agent/` source copy or the `go mod download` cache.
+- Changing installation code does not invalidate the `agent/` module-download cache.
 - Changing `.machtiani/config.toml` does not invalidate any source or dependency layers.
 - BuildKit can parallelise the independent copy operations.
 
