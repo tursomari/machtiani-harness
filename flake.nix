@@ -40,7 +40,7 @@
             version = "0.1.0-${shortRevision}";
             src = source + "/agent";
             subPackages = [ "cmd/mct-agent" ];
-            vendorHash = "sha256-mQwuTzeFhYllk5eHVTbyuZY8Zfu2ZEcktFiJopthinM=";
+            vendorHash = "sha256-BZL0+ldXx7WqMrcLGsxkX1KZ+9GO9AuVukmIJWiY7Zw=";
             env.CGO_ENABLED = 0;
             ldflags = [
               "-s"
