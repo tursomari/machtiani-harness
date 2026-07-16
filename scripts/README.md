@@ -64,7 +64,7 @@ dependencies (ripgrep, rsync, git, gcc), copies `agent/go.mod` and
 `agent/go.sum` first for layer caching, then copies the full `agent/` source
 tree, `scripts/`, `.machtiani/`, and `.git/`.  When the `CHANGE_PATCH_B64`
 build-arg is present (treatment build only), the stage decodes the base64
-patch, removes broken submodule gitlinks to avoid path resolution errors,
+patch, removes broken submodule metadata to avoid path resolution errors,
 reverts patched files to `HEAD~1` so the patch applies cleanly, applies the
 patch with `git apply`, and creates a git commit with message `"treatment
 patch"`.  This last commit step is non-obvious but required: `install.sh`

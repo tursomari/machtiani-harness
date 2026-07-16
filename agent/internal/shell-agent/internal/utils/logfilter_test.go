@@ -10,11 +10,11 @@ func TestLogFilterWriterFiltersExcludedPatterns(t *testing.T) {
 	filter := NewLogFilterWriter(&buf, "filtered workspace sync start", "filtered workspace sync complete")
 
 	// Write a line that should be filtered
-	n, err := filter.Write([]byte(`time="2025-11-04T20:00:45-05:00" level=info msg="filtered workspace sync start" repo_root=/home/david/projects/undici` + "\n"))
+	n, err := filter.Write([]byte(`time="2025-11-04T20:00:45-05:00" level=info msg="filtered workspace sync start" repo_root=/home/david/projects/example` + "\n"))
 	if err != nil {
 		t.Fatalf("Write failed: %v", err)
 	}
-	expectedLen := len(`time="2025-11-04T20:00:45-05:00" level=info msg="filtered workspace sync start" repo_root=/home/david/projects/undici` + "\n")
+	expectedLen := len(`time="2025-11-04T20:00:45-05:00" level=info msg="filtered workspace sync start" repo_root=/home/david/projects/example` + "\n")
 	if n != expectedLen {
 		t.Errorf("Expected to report %d bytes written, got %d", expectedLen, n)
 	}

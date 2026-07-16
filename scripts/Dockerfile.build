@@ -33,8 +33,6 @@ COPY --link .git/ ./.git/
 # Optionally apply a change patch for version B builds
 RUN if [ -n "${CHANGE_PATCH_B64}" ]; then \
       echo "${CHANGE_PATCH_B64}" | base64 -d > /tmp/change.patch && \
-      # Remove the undici submodule gitlink (whose .git/modules/... entry is \
-      # broken in the build context) to avoid breaking gits path resolution. \
       # Remove all submodule gitlinks (their .git/modules/... entries are \
       # broken in the build context because .git/modules/ is excluded by \
       # .dockerignore). This prevents gits path resolution from landing on \

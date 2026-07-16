@@ -149,12 +149,6 @@ build_agent() {
     # their gitlink. New commits already contain ordinary tracked source.
     hydrate_historical_shell_agent "${commit}" "${worktree_dir}"
 
-    # Retain the existing fixture workaround until the fixture-removal phase.
-    rm -rf "${worktree_dir}/agent/internal/file-discovery/tests/undici"
-    cp -a "${REPO_ROOT}/agent/internal/file-discovery/tests/undici" "${worktree_dir}/agent/internal/file-discovery/tests/undici"
-    # Remove any .git metadata to prevent Go module confusion
-    find "${worktree_dir}/agent/internal/file-discovery/tests/undici" -name ".git" -type f -delete 2>/dev/null || true
-
     if [[ ! -d "${worktree_dir}/agent/cmd/mct-agent" ]]; then
         echo "Error: agent/cmd/mct-agent not found at commit ${commit}." >&2
         exit 1

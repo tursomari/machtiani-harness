@@ -66,34 +66,6 @@ export TEST_MODEL=gpt-4o-mini
 - If the harness fails with `mct is not synced at current git state ... Run mct-agent sync before proceeding.`, run the repo-local sync command from `docs/mct-agent-runbook.md` and rerun the harness.
 - When `TEST_*` and `OPENAI_*` are both unset the script injects stub credentials and forces `--dry-run`.
 
-**Undici Harness** (`tests/run-agent-undici.sh`):
-
-```bash
-export OPENAI_API_KEY=sk_...
-export OPENAI_BASE_URL=https://api.openai.com/v1
-export OPENAI_MODEL=gpt-4o-mini
-MACHTIANI_CONFIG=$HOME/.machtiani/config.toml \
-MODEL_ALIAS=qwen3-coder-plus \
-./tests/run-agent-undici.sh
-```
-
-- Builds the toolchain into an isolated temp PATH and clones the undici fixture repository.
-- Defaults to offline stubs unless `DISABLE_MCT_STUBS=true` is exported; live runs require the `OPENAI_*` variables above.
-- Leaves artifacts under `tests/artifacts/agent-undici/` and preserves scratch work with `KEEP_AGENT_TMP=true`.
-
-**Internal Undici Regression Harness** (`agent/internal/mct/tests/run-undici-readme-integration.sh`):
-
-```bash
-export OPENAI_API_KEY=sk_...
-export OPENAI_BASE_URL=https://api.openai.com/v1
-export OPENAI_MODEL=gpt-4o-mini
-bash agent/internal/mct/tests/run-undici-readme-integration.sh
-```
-
-- Uses stub providers by default (`MCT_LLM_TEST_STUB`, `MCT_README_TEST_STUB`); set the `OPENAI_*` variables for live validation.
-- Accepts `KEEP_README_TEST_TMP=true` to retain the temporary workspace.
-- Produces artifacts under `agent/internal/mct/tests/artifacts/readme/`.
-
 See `TESTING.md` for the complete testing guide, including prerequisites, commands, environment variables, artifacts, and debugging workflows for every harness.
 
 ## Quick Install (mct-agent)
@@ -740,8 +712,6 @@ See `agent/internal/file-discovery/README.md` for direct `file-discovery` usage.
   - Re-run `./scripts/install.sh` (append `--install-peripherals` if you need the optional CLIs) and ensure the chosen prefix (default `~/.local/bin`) is on PATH. Rehash your shell if needed (`hash -r`).
 - `managed installation requires a clean source checkout`
   - Managed mode rejects tracked changes and untracked files so local work is not silently excluded from the remote-backed build. Check with `git status --short`, or bootstrap from a fresh clone or temporary clean worktree. The bootstrap checkout can be deleted after installation.
-- Managed installation cannot initialize `shell-agent`
-  - A normal root clone is sufficient because the installer initializes the submodule automatically. This error means the gitlink recorded by the root repository is not available from the submodule remote; publish that child commit before publishing the parent commit that references it.
 - Missing model configuration / auth errors
   - Set `OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_MODEL` (or pass `--openai-*` flags to the agent).
 - `file-discovery` not found
@@ -759,7 +729,7 @@ See `agent/internal/file-discovery/README.md` for direct `file-discovery` usage.
 - **Ask categorization** — The planner's `no-shell`/`shell` categories shape the question, not the execution path. [`docs/adr/0001`](docs/adr/0001-ask-categorization-as-cognitive-scaffold.md)
 
 ## Integration Tests (mct-agent)
-See the [Testing](#testing) section above or `TESTING.md` for up-to-date commands, environment requirements, and artifact locations for `agent/tests/run-live.sh` and the undici regression harnesses.
+See the [Testing](#testing) section above or `TESTING.md` for up-to-date commands, environment requirements, and artifact locations for `agent/tests/run-live.sh` and the smoke harness.
 
 ## HEAD-Based Evaluation
 

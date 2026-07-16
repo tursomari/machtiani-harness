@@ -9,7 +9,7 @@ This is the canonical, self-contained guide for every test harness in the `mct-a
 - `tests/smoke/` owns the clean-container smoke Dockerfile, host runner, and container assertions.
 - `tests/tui/` owns whole-terminal record/replay regression tooling.
 - `tests/python/` owns Python adapter tests.
-- Other root `tests/` subtrees hold cross-component fixtures and integration harnesses such as Undici.
+- Other root `tests/` subtrees hold cross-component integration and adapter harnesses.
 - `scripts/` retains installation, benchmark, treatment, and evaluation runners; those stable paths are intentionally separate from test harnesses.
 
 ## Prerequisites
@@ -53,27 +53,12 @@ docker run --rm -it --entrypoint /usr/local/bin/run-flags.sh file-discovery-test
 docker run --rm -it -e RUN_SLOW=1 --entrypoint /usr/local/bin/run-flags.sh file-discovery-tests
 ```
 
-For the live Undici scenarios, first install the peripheral binary, then run the component harness with live credentials:
-
-```bash
-./scripts/install.sh --install-peripherals
-cd agent/internal/file-discovery/tests/undici
-export OPENAI_API_KEY=...
-export OPENAI_BASE_URL=...
-export OPENAI_MODEL=...
-bash ../run-live.sh
-```
-
-The live harness writes per-scenario stdout, stderr, and trajectory JSONL artifacts. Exit code `2` means the API key is missing; exit code `127` usually means a mounted binary has the wrong OS or architecture.
-
 #### Internal README Manager
 
 ```bash
 cd agent/internal/mct
 GOCACHE=$(pwd)/.gocache go test ./...
 ```
-
-Its five-scenario offline Undici synchronization harness is documented under “Internal Undici Regression Harness” below.
 
 #### Shell Agent
 
@@ -139,7 +124,7 @@ This mode requires Docker and Git but no model-provider credentials. The full
 smoke run executes the same updater scenario before its configuration and live
 provider checks. The local updater harness also verifies rejection of dirty
 bootstrap and managed checkouts, origin mismatches, and embedded credentials;
-the Go updater tests verify initialization of the recorded build submodule.
+the Go updater tests verify managed-source and rollback behavior.
 
 Prerequisites:
 
@@ -157,7 +142,7 @@ A matrix entry matching the primary `TEST_*` base URL and model is not run
 twice. Secrets are passed as environment variables only; the config file is
 not copied into the image and literal keys are not placed in CLI arguments.
 
-The host runner creates a detached Git worktree at the current committed `HEAD`, copies populated submodules from the host checkout, builds `tests/smoke/Dockerfile`, and runs `tests/smoke/container.sh` inside the resulting image. Consequently, uncommitted changes are not included. Commit the changes you intend to test, or manually build the image from the current checkout when iterating on the smoke infrastructure itself.
+The host runner creates a detached Git worktree at the current committed `HEAD`, builds `tests/smoke/Dockerfile`, and runs `tests/smoke/container.sh` inside the resulting image. Optional source-only submodules are not copied into smoke. Consequently, uncommitted changes are not included. Commit the changes you intend to test, or manually build the image from the current checkout when iterating on the smoke infrastructure itself.
 
 The container test must complete all of these checks before printing its success message:
 
@@ -297,49 +282,6 @@ EXPECT_REPRO=false bash agent/tests/repro-concurrent-run-cleanup.sh
 ```
 
 Use `EXPECT_REPRO=true` only to confirm the historical buggy behavior. `KEEP_REPRO_ARTIFACTS=true` preserves logs, and `STUB_DELAY_SECONDS=...` adjusts the overlap window.
-
-### Undici Harness (`tests/run-agent-undici.sh`)
-Validates README regeneration against the undici fixture repository.
-
-```bash
-export OPENAI_API_KEY=sk_...
-export OPENAI_BASE_URL=https://api.openai.com/v1
-export OPENAI_MODEL=gpt-4o-mini
-MACHTIANI_CONFIG=$HOME/.machtiani/config.toml \
-MODEL_ALIAS=qwen3-coder-plus \
-./tests/run-agent-undici.sh
-```
-
-- Builds `mct`, `mct-agent`, and `file-discovery` into an isolated temp PATH; no prior install step required.
-- Defaults to offline stubs unless `DISABLE_MCT_STUBS=true` is exported. Live runs need the `OPENAI_*` variables above plus a valid `MACHTIANI_CONFIG` and `MODEL_ALIAS` that maps to credentials in that config file.
-- Emits artifacts under `tests/artifacts/agent-undici/<case>/`. Preserve the temp workspace by setting `KEEP_AGENT_TMP=true`.
-- Additional knobs mirror the script defaults: `MAX_STEPS`, `TIMEOUT_PER_TURN`, `MCT_LLM_TEST_STUB`, `MCT_README_TEST_STUB`.
-
-The five scenarios cover initial generation, a significant change, a repeated run, a docs-only change, and the latest state. The harness asserts README tags and commit behavior and exits non-zero on the first failed assertion.
-
-Set `KEEP_AGENT_TMP=true` to retain the scratch repository and its `.machtiani` state. Useful diagnostics include:
-
-```bash
-find tests/tmp -name agent.jsonl
-jq -r '.kind' <trajectory>/agent.jsonl | sort -u
-jq 'select(.level != "info") | {ts, level, kind, err: (.err.message // null)}' \
-  <trajectory>/agent.jsonl
-jq -r '.type' tests/artifacts/agent-undici/<case>/file-discovery/file-discovery.jsonl | sort -u
-```
-
-### Internal Undici Regression Harness (`agent/internal/mct/tests/run-undici-readme-integration.sh`)
-Maintains backward-compatibility checks for the internal README manager using the same undici fixture.
-
-```bash
-export OPENAI_API_KEY=sk_...
-export OPENAI_BASE_URL=https://api.openai.com/v1
-export OPENAI_MODEL=gpt-4o-mini
-bash agent/internal/mct/tests/run-undici-readme-integration.sh
-```
-
-- Uses stub providers by default (`MCT_LLM_TEST_STUB=stub-echo`, `MCT_README_TEST_STUB=mock`).
-- Supply the `OPENAI_*` variables to exercise live mode; the script falls back to stub credentials otherwise.
-- Produces artifacts in `agent/internal/mct/tests/artifacts/readme/` and cleans its temp workspace unless `KEEP_README_TEST_TMP=true` is set.
 
 ## TUI Record and Replay
 
@@ -546,11 +488,6 @@ The original evaluation pipeline, documented in scripts/run_eval.sh itself. It c
 ## Environment Variable Reference
 - `TEST_API_KEY`, `TEST_BASE_URL`, `TEST_MODEL` — preferred live credentials for repository test harnesses and required by the Docker smoke test.
 - `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL` — general runtime credentials and the fallback for live harnesses that prefer `TEST_*`; harnesses with stubs use stub/dry-run mode when neither set is available.
-- `MACHTIANI_CONFIG` — optional path to a pre-existing Machtiani config. Required when `tests/run-agent-undici.sh` runs live because it overrides `HOME`.
-- `MODEL_ALIAS` — maps to a section inside `MACHTIANI_CONFIG` for undici live runs.
-- `DISABLE_MCT_STUBS` — set to `true` to disable stubbed LLM providers in the undici harness and force real calls.
-- `KEEP_AGENT_TMP`, `KEEP_README_TEST_TMP` — keep the temporary workspaces for post-run inspection.
-- `MAX_STEPS`, `TIMEOUT_PER_TURN` — tuning knobs for the undici harness plan/execution loop.
 - `MACHTIANI_TUI_CAPTURE` — formatter-level TUI capture path. The record/replay harness sets this automatically for `live.tui.txt` and `replay.tui.txt`.
 - `MACHTIANI_THEME` — overrides `[ui].theme` with `terminal`, `machtiani-dark`, `machtiani-light`, or `none`. The record/replay harness also accepts `--theme`.
 - `LLM_RECORD_FIXTURES` — JSONL fixture output path for recorded LLM responses. The record/replay harness sets this automatically for `live.llm-fixtures.jsonl`.
