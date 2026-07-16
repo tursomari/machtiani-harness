@@ -8,7 +8,7 @@ A Go CLI that helps an LLM discover relevant files in a repository using a stric
   - `SED> sed -n "PROGRAM" PATH` (bounded content peek; 200 lines max)
   - `LS> ls -la PATH` (bounded directory/file listing; 200 lines max)
 - Executes ripgrep/sed locally (no shell), applies extra excludes, caps outputs (20 KB for RG, 200 lines for SED)
-- Enforces strict protocol, round/size limits, and final block validation
+- Enforces strict protocol, per-request token fitting, emergency initial-input limits, and final block validation
 - All logs to stderr; prints exactly one final block to stdout on success
 
 ## Requirements
@@ -45,7 +45,8 @@ Flags:
 - `-max-rounds` (default 20)
 - `-cmd-timeout` seconds (default 30)
 - `-max-stdout` bytes per RG_OUT (default 20480)
-- `-max-transcript` bytes global (default 300000)
+- `-max-initial-input` bytes for standalone stdin (default 300000)
+- `-max-transcript` is a deprecated compatibility alias for `-max-initial-input`
 - `-log-json` or `-v` for logging
 - `-no-json`: switch the assistant instructions to the bracket-based tool-call syntax (JSON envelopes remain accepted in this mode)
 - `-api-key`, `--openai-api-key` (overrides `OPENAI_API_KEY`; accept `provider:key` overrides)
@@ -60,6 +61,14 @@ Trajectory recording:
 - `-trajectory <path>`: write a JSONL trajectory to the given path.
 - `-no-trajectory`: disable trajectory recording entirely.
 - Env: `FILE_DISCOVERY_TRAJECTORY` is used if `-trajectory` is not set.
+
+When embedded in `mct-agent`, the initial byte setting is not the context
+contract. `mct-agent` derives a token budget from the resolved discovery model
+and any session `--context-length` override, fits every request (including
+accumulated tool history and forced finalization), and uses a secondary ceiling
+of 16 bytes per allowed token with a 1 MiB floor and 64 MiB maximum. Older
+completed exchanges compact into bounded path/pattern/command state; structured
+context overflow can reduce the active cap up to four times.
 
 Example dry-run:
 ```bash

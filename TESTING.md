@@ -166,9 +166,10 @@ The container test must complete all of these checks before printing its success
 8. Rejected mutations are checksum-verified as non-writing, scratch resources
    are removed, and the final primary configuration is validated with caching
    disabled.
-9. A deterministic local ChatCompletion server rejects the first request with
-   a structured context-overflow error, accepts the reduced retry, and verifies
-   the warning plus automatic per-model `context_length` persistence.
+9. A deterministic local ChatCompletion server gives discovery and answer
+   separate aliases, rejects discovery's first request with a structured
+   context-overflow error, accepts its reduced retry, and verifies that only
+   the unambiguous discovery alias learns the lower `context_length`.
 10. `mct-agent sync` initializes the repository's internal README state.
 11. `mct-agent run` completes successfully against the primary live provider.
 12. Any additional discoverable provider targets are added with `config
@@ -195,11 +196,17 @@ End-to-end regression suite for the installed `mct-agent` binary.
 export TEST_API_KEY=sk_...
 export TEST_BASE_URL=https://api.openai.com/v1
 export TEST_MODEL=gpt-4o-mini
-nix build .#mct-agent
-PATH="$PWD/result/bin:$PATH" bash agent/tests/run-live.sh
+rev="$(git rev-parse HEAD)"
+flake="git+file://$PWD?rev=$rev"
+agent_store="$(nix build --no-link --print-out-paths "$flake#mct-agent")"
+MCT_AGENT_BIN="$agent_store/bin/mct-agent" \
+MCT_REQUIRE_LIVE=true \
+bash agent/tests/run-live.sh
 ```
 
-- Assumes the flake-built `mct-agent` is on PATH.
+- Tests committed `HEAD`; commit intended changes before building the exact revision.
+- `MCT_AGENT_BIN` must resolve to an absolute executable file. The outer harness validates and canonicalizes it before creating its detached worktree, and every setup/test call uses that path.
+- `MCT_REQUIRE_LIVE=true` fails preflight unless complete `TEST_*` or supported fallback credentials are available. A stub or dry-run cannot satisfy this mode.
 - `TEST_*` takes precedence over `OPENAI_*`. When neither complete set is available, the script generates stub credentials, writes a temporary `config.toml`, and forces `--dry-run`.
 - Artifacts land in `test-out-*` directories at the repo root; each case includes stdout, stderr, transcripts, and (for live runs) generated assets.
 - Optional overrides:
@@ -227,21 +234,31 @@ bash agent/tests/run-live.sh no-such-case 2>&1 | head -5
 
 #### Repo Synchronization and Installed Binary
 
-The harness uses `mct-agent` from `PATH`; it does not build the binary or mutate `PATH`. Install it first:
+The harness does not install, profile-link, PATH-resolve, or invoke a host command named `mct-agent`. Build committed `HEAD` without creating a `result` symlink, then pass the immutable store binary explicitly:
 
 ```bash
-nix build .#mct-agent
-export PATH="$PWD/result/bin:$PATH"
+rev="$(git rev-parse HEAD)"
+flake="git+file://$PWD?rev=$rev"
+nix flake check "$flake"
+agent_store="$(nix build --no-link --print-out-paths "$flake#mct-agent")"
+MCT_AGENT_BIN="$agent_store/bin/mct-agent" bash agent/tests/run-live.sh discovery-multiround-budget
 ```
 
-If a run reports that `mct` is not synced at the current Git state, synchronize it and rerun the harness:
+This workflow leaves `~/.local/bin/mct-agent` and
+`~/.machtiani/installations/mct-agent/profile` untouched. Installation and
+update behavior belongs only in the disposable clean-container smoke test.
+
+The timeout and context-policy cases include a delayed local endpoint, a
+real-provider large committed README/diff, and a deterministic 21-request
+discovery flow that grows tool history through forced finalization. The latter
+asserts every request stays at or below its derived cap and observes compacted
+state. Target them directly with:
 
 ```bash
-MACHTIANI_CONFIG=.machtiani/config.toml \
-mct-agent sync \
-  --api-key "openrouter:$TEST_API_KEY" \
-  --model glm-5-high \
-  --context-length 128000
+MCT_AGENT_BIN="$agent_store/bin/mct-agent" bash agent/tests/run-live.sh \
+  discovery-turn-timeout \
+  discovery-multiround-budget \
+  discovery-context-budget-live
 ```
 
 The harness pre-assigns session IDs and reads turn counts and final-answer assertions directly from session artifacts rather than scraping stderr.
@@ -491,7 +508,7 @@ The original evaluation pipeline, documented in scripts/run_eval.sh itself. It c
 
 ## Troubleshooting
 - Unit tests should pass without extra setup; if they fail due to missing cache directories, ensure your shell honors the `GOCACHE` export above.
-- Integration runs that report missing binaries typically mean the PATH does not include `result/bin`; rerun `nix build .#mct-agent` and export that path.
+- Integration runs that report a missing binary require a valid absolute `MCT_AGENT_BIN`; rebuild committed `HEAD` with `nix build --no-link --print-out-paths` and pass its `/bin/mct-agent` path.
 - Stub mode is active when outputs mention `stub-echo`, `mock`, or `--dry-run`. Verify that the required `OPENAI_*`/`MACHTIANI_CONFIG` values are exported to switch to live mode.
 - The Docker smoke runner tests committed `HEAD`, not working-tree changes. A surprising old result usually means the intended change has not been committed.
 - A Docker smoke run must not be considered successful merely because configuration initialization passed; verify the live run and conversation artifact checks also completed.

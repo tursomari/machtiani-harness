@@ -64,11 +64,17 @@ The integration suites fall back to deterministic stub or dry-run behavior when 
 export TEST_API_KEY=sk_...
 export TEST_BASE_URL=https://api.openai.com/v1
 export TEST_MODEL=gpt-4o-mini
-nix build '.#mct-agent'
-PATH="$PWD/result/bin:$PATH" bash agent/tests/run-live.sh
+rev="$(git rev-parse HEAD)"
+flake="git+file://$PWD?rev=$rev"
+agent_store="$(nix build --no-link --print-out-paths "$flake#mct-agent")"
+MCT_AGENT_BIN="$agent_store/bin/mct-agent" \
+MCT_REQUIRE_LIVE=true \
+bash agent/tests/run-live.sh
 ```
 
-- Installs `mct-agent` on PATH and exercises Issue A/B/C scenarios, a `--mode code` regression, and error paths.
+- Builds committed `HEAD` without a result link or profile mutation, then exercises Issue A/B/C scenarios, discovery timeout/context policies, a `--mode code` regression, and error paths.
+- `MCT_AGENT_BIN` must be an absolute executable path. The harness carries it into its detached worktree and never resolves or invokes a host command named `mct-agent`.
+- `MCT_REQUIRE_LIVE=true` rejects stub/dry-run preflight; omit it only when intentionally exercising the non-live fallback mode.
 - Writes `test-out-*` directories containing logs, transcripts, and artifacts in the repo root.
 - If the harness fails with `mct is not synced at current git state ... Run mct-agent sync before proceeding.`, run the repo-local sync command from `docs/mct-agent-runbook.md` and rerun the harness.
 - When `TEST_*` and `OPENAI_*` are both unset the script injects stub credentials and forces `--dry-run`.
@@ -488,6 +494,18 @@ Other helpful overrides:
 - `MACHTIANI_THEME`: override `[ui].theme` with `terminal`, `machtiani-dark`, `machtiani-light`, or `none`.
 - `FILE_DISCOVERY_BIN`: override the discovery binary that `mct` invokes.
 
+### Shared discovery timeout and context policy
+
+Embedded file discovery uses the same controls as the rest of `mct-agent`:
+
+- `[planner].turn_timeout` and `--turn-timeout` apply independently to every discovery provider call, including forced finalization. A value of `0` preserves parent cancellation but adds no per-call deadline.
+- A model's `context_length`, inherited `[model_defaults].context_length`, or the session `--context-length` override determines both discovery and answer input budgets. When discovery has fallbacks, requests fit the smallest configured resolved budget in the chain.
+- Every discovery request is token-fitted before it is sent. Older completed exchanges compact into bounded state, retained tool-output tails are reduced before the initial cue, and the newest two assistant/tool exchanges plus protocol core remain available through finalization.
+- A structured provider context-overflow response may reduce the active input cap four times. A successful reduction is persisted only when the successful discovery identity is unambiguous; fallback ambiguity emits telemetry without rewriting configuration.
+- Bytes are not the embedded product budget. An emergency initial-input ceiling is derived from the token cap at 16 bytes per token, with a 1 MiB floor and 64 MiB maximum.
+
+Shell command timeouts remain controlled separately by `[environment].command_timeout`; discovery's standalone compatibility flags do not create new `mct-agent` controls.
+
 ### Terminal Theme
 
 Human-facing `mct-agent run` output, interactive setup/configuration menus, and
@@ -541,7 +559,7 @@ Useful flags (agent):
 - `--openai-model string`: Model name used by the planner and discovery pipeline (alias: `--model`).
 - `--shell-agent-model string`: Override the shell-agent model alias for the current run (default comes from `[model].model_name`).
 - `--context-length int`: enforce a total input-plus-output token window for this session; model configuration is used when omitted.
-- `--timeout-per-turn int`: seconds per turn for the agent loop.
+- `--turn-timeout int`: seconds per LLM turn; `0` removes the per-call deadline while preserving parent cancellation.
 - `--version`: print build metadata for the agent and exit.
 - `--dry-run`: print intended calls without executing.
 - `--verbose`: verbose logging.
