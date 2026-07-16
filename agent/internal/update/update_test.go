@@ -134,29 +134,6 @@ func TestJSONResultDoesNotExposeCredentialedRemote(t *testing.T) {
 	}
 }
 
-func TestPrepareBuildSubmodulesInitializesRequiredLocalSubmodule(t *testing.T) {
-	t.Setenv("GIT_ALLOW_PROTOCOL", "file")
-	subRemote, _ := makeRemote(t, "rolling")
-
-	root := t.TempDir()
-	source := filepath.Join(root, "source")
-	runGit(t, root, "init", "--initial-branch=rolling", source)
-	runGit(t, source, "config", "user.email", "tests@example.invalid")
-	runGit(t, source, "config", "user.name", "update tests")
-	runGit(t, source, "submodule", "add", "file://"+subRemote, buildSubmodulePath)
-	runGit(t, source, "commit", "-m", "add build submodule")
-	runGit(t, source, "submodule", "deinit", "-f", "--", buildSubmodulePath)
-
-	if err := prepareBuildSubmodules(context.Background(), source); err != nil {
-		t.Fatal(err)
-	}
-	want := testGitOutput(t, source, "rev-parse", "HEAD:"+buildSubmodulePath)
-	got := testGitOutput(t, filepath.Join(source, buildSubmodulePath), "rev-parse", "HEAD")
-	if got != want {
-		t.Fatalf("submodule HEAD = %s, want %s", got, want)
-	}
-}
-
 func makeRemote(t *testing.T, branch string) (remote, work string) {
 	t.Helper()
 	root := t.TempDir()

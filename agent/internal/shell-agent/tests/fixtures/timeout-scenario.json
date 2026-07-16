@@ -1,0 +1,5 @@
+{
+  "command": "sleep 2",
+  "timeoutSeconds": 1,
+  "expectedExitCode": -1
+}

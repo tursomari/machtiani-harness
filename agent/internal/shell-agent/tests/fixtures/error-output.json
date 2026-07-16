@@ -1,0 +1,6 @@
+{
+  "command": "ls no-such-file",
+  "stdout": "",
+  "stderr": "ls: cannot access 'no-such-file': No such file or directory\n",
+  "exitCode": 2
+}

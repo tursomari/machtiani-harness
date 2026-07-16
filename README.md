@@ -134,11 +134,9 @@ clone or a temporary clean worktree instead of moving or stashing unrelated
 files. To install from another Git remote, clone that remote for the bootstrap;
 the installer follows the clone's `origin` and its symbolic default branch.
 
-An ordinary clone is sufficient; `--recurse-submodules` is not required. The
-installer initializes the recorded `agent/internal/shell-agent` submodule in
-the managed source before building. Managed mode installs `mct-agent`, not the
-optional standalone `shell-agent` executable, and cannot be combined with
-`--install-peripherals`.
+An ordinary clone is sufficient; `--recurse-submodules` is not required.
+Managed mode installs `mct-agent`, not the optional standalone `shell-agent`
+executable, and cannot be combined with `--install-peripherals`.
 
 The managed installer uses the invoking checkout only to discover its
 `origin`. It clones that origin's default branch into

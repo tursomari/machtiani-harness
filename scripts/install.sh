@@ -7,7 +7,6 @@ PREFIX="${PREFIX:-$HOME/.local}"
 BIN_DIR="${PREFIX}/bin"
 MANAGED_ROOT="$HOME/.machtiani/installations/mct-agent"
 MANAGED_SOURCE="$MANAGED_ROOT/source"
-BUILD_SUBMODULE_PATH="agent/internal/shell-agent"
 
 usage() {
   cat <<EOF
@@ -19,8 +18,7 @@ build and install mct, file-discovery, snippet-discovery, and shell-agent
 directly).
 Pass --managed from a clean Git clone to bootstrap an updater-owned clone from
 the same origin, then build and register that managed source for updates. Clean
-means no tracked changes or untracked files. Required submodules are initialized
-in the managed source automatically. Managed mode installs only mct-agent and
+means no tracked changes or untracked files. Managed mode installs only mct-agent and
 the bootstrap clone may be removed after installation.
 Environment:
   PREFIX   Destination prefix for the install (default: \$HOME/.local)
@@ -67,17 +65,6 @@ origin_has_http_userinfo() {
       return 1
       ;;
   esac
-}
-
-prepare_build_submodule() {
-  local source="$1"
-  local entry
-  entry="$(git -C "$source" ls-tree HEAD -- "$BUILD_SUBMODULE_PATH")"
-  if [[ "$entry" != 160000\ * ]]; then
-    return 0
-  fi
-  git -C "$source" submodule sync -- "$BUILD_SUBMODULE_PATH"
-  git -C "$source" submodule update --init --recursive --depth 1 -- "$BUILD_SUBMODULE_PATH"
 }
 
 resolve_remote_head() {
@@ -132,7 +119,6 @@ sync_managed_source() {
     return 1
   fi
   git -C "$MANAGED_SOURCE" checkout -B "$REMOTE_HEAD_BRANCH" "$REMOTE_HEAD_COMMIT"
-  prepare_build_submodule "$MANAGED_SOURCE"
 }
 
 bootstrap_managed_source() {
@@ -150,7 +136,6 @@ bootstrap_managed_source() {
   }
   trap cleanup_bootstrap_source EXIT
   git clone --depth 1 --single-branch "$remote" "$staging_source"
-  prepare_build_submodule "$staging_source"
   mv "$staging_source" "$MANAGED_SOURCE"
   staging_source=""
   trap - EXIT

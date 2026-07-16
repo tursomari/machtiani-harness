@@ -4,9 +4,6 @@
 [submodule "agent/internal/file-discovery/tests/undici"]
 	path = agent/internal/file-discovery/tests/undici
 	url = https://github.com/nodejs/undici.git
-[submodule "agent/internal/shell-agent"]
-	path = agent/internal/shell-agent
-	url = https://codeberg.org/cacherevolter/shell-agent
 [submodule "third_party/skyvern"]
 	path = third_party/skyvern
 	url = https://github.com/Skyvern-AI/skyvern

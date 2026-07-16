@@ -31,10 +31,6 @@ fi
   git ls-files --others --exclude-standard -z -- agent scripts tests docs README.md TESTING.md |
     tar --null -T - -cf -
 ) | tar -C "$SEED" -xf -
-rm -rf "$SEED/agent/internal/shell-agent"
-cp -a "$ROOT/agent/internal/shell-agent" "$SEED/agent/internal/shell-agent"
-rm -rf "$SEED/agent/internal/shell-agent/.git"
-
 git -C "$SEED" init --quiet --initial-branch=rolling
 git -C "$SEED" config user.email update-test@example.invalid
 git -C "$SEED" config user.name "mct update test"

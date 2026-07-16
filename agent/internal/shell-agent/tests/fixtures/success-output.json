@@ -1,0 +1,6 @@
+{
+  "command": "echo 'integration success'",
+  "stdout": "integration success\n",
+  "stderr": "",
+  "exitCode": 0
+}

@@ -23,6 +23,8 @@ Options:
                               (default: mct_pier_adapter.mct_agent:MctAgent)
   --treatment-only           Skip control benchmark and comparison; only run
                               the treatment benchmark and persist results
+  --build-only              Build control and treatment binaries, then exit;
+                              does not require benchmark credentials or tools
   --agent-name <name>        Agent label for the results tree
                               (default: mct-orchestrator)
   --treatment-name <name>    Treatment label for the results tree
@@ -44,6 +46,7 @@ AGENT_IMPORT_PATH="mct_pier_adapter.mct_agent:MctAgent"
 AGENT_NAME="mct-orchestrator"
 TREATMENT_NAME="with-peer-review"
 TREATMENT_ONLY="false"
+BUILD_ONLY="false"
 DEEP_SWE_REPO="${HOME}/projects/deep-swe"
 
 while [[ $# -gt 0 ]]; do
@@ -55,6 +58,7 @@ while [[ $# -gt 0 ]]; do
         --agent-import-path)  AGENT_IMPORT_PATH="$2";  shift 2 ;;
         --agent-timeout-multiplier) TIMEOUT_MULTIPLIER="$2"; shift 2 ;;
         --treatment-only)     TREATMENT_ONLY="true";  shift ;;
+        --build-only)         BUILD_ONLY="true";      shift ;;
         --agent-name)         AGENT_NAME="$2";        shift 2 ;;
         --treatment-name)     TREATMENT_NAME="$2";    shift 2 ;;
         --help|-h)            usage ;;
@@ -65,12 +69,14 @@ done
 # ----------------------------------------------------------------------------
 # Validate environment variables
 # ----------------------------------------------------------------------------
-for var in TEST_API_KEY TEST_BASE_URL TEST_MODEL; do
-    if [[ -z "${!var:-}" ]]; then
-        echo "Error: ${var} must be set and non-empty." >&2
-        exit 1
-    fi
-done
+if [[ "${BUILD_ONLY}" != "true" ]]; then
+    for var in TEST_API_KEY TEST_BASE_URL TEST_MODEL; do
+        if [[ -z "${!var:-}" ]]; then
+            echo "Error: ${var} must be set and non-empty." >&2
+            exit 1
+        fi
+    done
+fi
 
 # ----------------------------------------------------------------------------
 # Resolve paths and setup output directories
@@ -81,13 +87,6 @@ OUTPUT_BASE="/tmp/mct-ab-deepswe"
 CONTROL_OUT="${OUTPUT_BASE}/control"
 TREATMENT_OUT="${OUTPUT_BASE}/treatment"
 SAFE_AGENT_MOUNTS_JSON='[{"type":"bind","source":"${HOST_AGENT_LOGS_PATH}","target":"${ENV_AGENT_LOGS_PATH}"},{"type":"bind","source":"${HOST_ARTIFACTS_PATH}","target":"${ENV_ARTIFACTS_PATH}"}]'
-
-# Per-task persistence tree under the repo for treatment results.
-BENCH_DIR="${REPO_ROOT}/.bench"
-BENCH_TIMESTAMP_FS="$(date -u +%Y-%m-%dT%H-%M-%SZ)"
-BENCH_TIMESTAMP_ISO="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-FULL_BENCH_DIR="${BENCH_DIR}/deep-swe/${AGENT_NAME}/${TREATMENT_NAME}/${BENCH_TIMESTAMP_FS}"
-mkdir -p "${BENCH_DIR}" "${FULL_BENCH_DIR}"
 
 echo "[setup] Preparing ${OUTPUT_BASE}"
 rm -rf "${OUTPUT_BASE}"
@@ -102,6 +101,30 @@ CONTROL_META_BIN="${CONTROL_OUT}/meta-orchestrator"
 TREATMENT_META_BIN="${TREATMENT_OUT}/meta-orchestrator"
 CONTROL_FORGE_BIN="${CONTROL_OUT}/forge"
 TREATMENT_FORGE_BIN="${TREATMENT_OUT}/forge"
+
+hydrate_historical_shell_agent() {
+    local commit="$1" worktree_dir="$2"
+    local entry shell_agent_commit module_git
+    entry="$(git -C "${REPO_ROOT}" ls-tree "${commit}" -- agent/internal/shell-agent)"
+    if [[ "${entry}" != 160000\ * ]]; then
+        return 0
+    fi
+    shell_agent_commit="$(awk '{print $3}' <<<"${entry}")"
+    rm -rf "${worktree_dir}/agent/internal/shell-agent"
+    module_git="$(git -C "${REPO_ROOT}" rev-parse --git-common-dir)/modules/agent/internal/shell-agent"
+    if git -C "${module_git}" cat-file -e "${shell_agent_commit}^{commit}" 2>/dev/null; then
+        git clone --quiet --no-hardlinks "${module_git}" \
+            "${worktree_dir}/agent/internal/shell-agent"
+        git -C "${worktree_dir}/agent/internal/shell-agent" checkout --quiet --detach \
+            "${shell_agent_commit}"
+    else
+        git -C "${worktree_dir}" submodule update --init --recursive -- \
+            agent/internal/shell-agent
+    fi
+    test "$(git -C "${worktree_dir}/agent/internal/shell-agent" rev-parse HEAD)" = \
+        "${shell_agent_commit}"
+    rm -rf "${worktree_dir}/agent/internal/shell-agent/.git"
+}
 
 # ----------------------------------------------------------------------------
 # Helper: build mct-agent from a given commit into a given output path
@@ -122,17 +145,14 @@ build_agent() {
 
     git -C "${REPO_ROOT}" worktree add --detach "${worktree_dir}" "${commit}"
 
-    # Remove submodule placeholder directories from worktree
-    rm -rf "${worktree_dir}/agent/internal/shell-agent"
+    # Historical controls retain the exact shell-agent revision recorded by
+    # their gitlink. New commits already contain ordinary tracked source.
+    hydrate_historical_shell_agent "${commit}" "${worktree_dir}"
+
+    # Retain the existing fixture workaround until the fixture-removal phase.
     rm -rf "${worktree_dir}/agent/internal/file-discovery/tests/undici"
-    # Copy submodule contents from main worktree
-    cp -a "${REPO_ROOT}/agent/internal/shell-agent" "${worktree_dir}/agent/internal/shell-agent"
     cp -a "${REPO_ROOT}/agent/internal/file-discovery/tests/undici" "${worktree_dir}/agent/internal/file-discovery/tests/undici"
-    # Copy mct-forge wrapper from repo root into the temporary worktree
-    mkdir -p $(dirname "${worktree_dir}/peripherals/mct-forge")
-    cp -a "${REPO_ROOT}/peripherals/mct-forge" "${worktree_dir}/peripherals/mct-forge"
     # Remove any .git metadata to prevent Go module confusion
-    find "${worktree_dir}/agent/internal/shell-agent" -name ".git" -type f -delete 2>/dev/null || true
     find "${worktree_dir}/agent/internal/file-discovery/tests/undici" -name ".git" -type f -delete 2>/dev/null || true
 
     if [[ ! -d "${worktree_dir}/agent/cmd/mct-agent" ]]; then
@@ -212,11 +232,26 @@ persist_results() {
 # Build both binaries
 # ----------------------------------------------------------------------------
 # Treatment binary is always built, even in --treatment-only mode.
-if [[ "${TREATMENT_ONLY}" != "true" ]]; then
+if [[ "${TREATMENT_ONLY}" != "true" || "${BUILD_ONLY}" == "true" ]]; then
     build_agent "${CONTROL_COMMIT}" "${CONTROL_BIN}" "control" "${CONTROL_META_BIN}"
-    "${REPO_ROOT}/scripts/download-forge-musl.sh" "${CONTROL_FORGE_BIN}"
 fi
 build_agent "${TREATMENT_COMMIT}" "${TREATMENT_BIN}" "treatment" "${TREATMENT_META_BIN}"
+
+if [[ "${BUILD_ONLY}" == "true" ]]; then
+    echo "[build-only] Control and treatment builds completed."
+    exit 0
+fi
+
+# Per-task persistence tree under the repo for treatment results.
+BENCH_DIR="${REPO_ROOT}/.bench"
+BENCH_TIMESTAMP_FS="$(date -u +%Y-%m-%dT%H-%M-%SZ)"
+BENCH_TIMESTAMP_ISO="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+FULL_BENCH_DIR="${BENCH_DIR}/deep-swe/${AGENT_NAME}/${TREATMENT_NAME}/${BENCH_TIMESTAMP_FS}"
+mkdir -p "${BENCH_DIR}" "${FULL_BENCH_DIR}"
+
+if [[ "${TREATMENT_ONLY}" != "true" ]]; then
+    "${REPO_ROOT}/scripts/download-forge-musl.sh" "${CONTROL_FORGE_BIN}"
+fi
 "${REPO_ROOT}/scripts/download-forge-musl.sh" "${TREATMENT_FORGE_BIN}"
 
 # ----------------------------------------------------------------------------

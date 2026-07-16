@@ -22,7 +22,6 @@ import (
 const (
 	receiptSchemaVersion = 1
 	defaultRootRelative  = ".machtiani/installations/mct-agent"
-	buildSubmodulePath   = "agent/internal/shell-agent"
 )
 
 type Policy string
@@ -399,10 +398,6 @@ func (m *Manager) Update(ctx context.Context, result Result) (updated Result, re
 	defer func() {
 		_, _ = gitOutput(context.Background(), receipt.SourceDir, "worktree", "remove", "--force", worktree)
 	}()
-	if err := prepareBuildSubmodules(ctx, worktree); err != nil {
-		return Result{}, fmt.Errorf("prepare update candidate submodules: %w", err)
-	}
-
 	installer := exec.CommandContext(ctx, "bash", filepath.Join(worktree, "scripts", "install.sh"))
 	installer.Dir = worktree
 	installer.Env = append(os.Environ(), "PREFIX="+stagePrefix)
@@ -447,9 +442,6 @@ func (m *Manager) Update(ctx context.Context, result Result) (updated Result, re
 		return Result{}, err
 	}
 	sourceAdvanced = true
-	if err := prepareBuildSubmodules(ctx, receipt.SourceDir); err != nil {
-		return Result{}, fmt.Errorf("prepare managed source submodules: %w", err)
-	}
 	if err := os.MkdirAll(filepath.Dir(receipt.BinaryPath), 0o755); err != nil {
 		return Result{}, err
 	}
@@ -474,27 +466,6 @@ func (m *Manager) Update(ctx context.Context, result Result) (updated Result, re
 	return result, nil
 }
 
-// prepareBuildSubmodules populates only the submodule needed to compile the
-// primary mct-agent binary. The repository also contains large fixture and
-// development submodules that managed updates should not download.
-func prepareBuildSubmodules(ctx context.Context, source string) error {
-	entry, err := gitOutput(ctx, source, "ls-tree", "HEAD", "--", buildSubmodulePath)
-	if err != nil {
-		return err
-	}
-	fields := strings.Fields(entry)
-	if len(fields) == 0 || fields[0] != "160000" {
-		return nil
-	}
-	if _, err := gitOutput(ctx, source, "submodule", "sync", "--", buildSubmodulePath); err != nil {
-		return err
-	}
-	if _, err := gitOutput(ctx, source, "submodule", "update", "--init", "--recursive", "--depth=1", "--", buildSubmodulePath); err != nil {
-		return err
-	}
-	return nil
-}
-
 func restoreSource(ctx context.Context, source, commit, branch string) error {
 	args := []string{"checkout", "--detach", commit}
 	if branch != "" {
@@ -503,7 +474,7 @@ func restoreSource(ctx context.Context, source, commit, branch string) error {
 	if _, err := gitOutput(ctx, source, args...); err != nil {
 		return err
 	}
-	return prepareBuildSubmodules(ctx, source)
+	return nil
 }
 
 func (m *Manager) ensureSource(ctx context.Context, receipt Receipt) error {

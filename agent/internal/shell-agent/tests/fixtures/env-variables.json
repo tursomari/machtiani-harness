@@ -1,0 +1,6 @@
+{
+  "env": {
+    "TEST_FOO": "bar",
+    "TEST_PATH_PREFIX": "/tmp/shell-agent"
+  }
+}
