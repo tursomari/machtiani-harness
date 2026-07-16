@@ -3708,12 +3708,12 @@ repo = pathlib.Path(sys.argv[1])
 readme = ["# Budget fixture", "", "Large committed README and diff material."]
 readme.extend(f"- README detail {idx:05d}: alpha beta gamma delta epsilon" for idx in range(12000))
 (repo / "README.md").write_text("\n".join(readme) + "\n", encoding="utf-8")
-(repo / "large-change.txt").write_text(
-    "\n".join(f"changed line {idx:05d}: one two three four five" for idx in range(12000)) + "\n",
+(repo / "large_change.go").write_text(
+    "package budgetfixture\n\n" + "\n".join(f"// changed line {idx:05d}: one two three four five" for idx in range(12000)) + "\n",
     encoding="utf-8",
 )
 PY
-  git -C "$repo" add README.md large-change.txt
+  git -C "$repo" add README.md large_change.go
   git -C "$repo" commit -m "large budget fixture" >/dev/null
   commit="$(git -C "$repo" rev-parse HEAD)"
 
