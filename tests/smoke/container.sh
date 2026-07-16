@@ -75,7 +75,9 @@ grep -Fq 'context_length: 128000 (model)' /tmp/context-overflow-discovery-before
 grep -Fq 'context_length: 128000 (model)' /tmp/context-overflow-answer-before.stdout
 (
   cd /fixtures/mct-source/agent
-  MACHTIANI_CONFIG="$overflow_config" go run ./tests/context-overflow-smoke
+  MACHTIANI_CONFIG="$overflow_config" \
+    nix develop path:/fixtures/mct-source#default -c \
+    go run ./tests/context-overflow-smoke
 ) \
   > /tmp/context-overflow.stdout \
   2> /tmp/context-overflow.stderr
