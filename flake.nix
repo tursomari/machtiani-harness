@@ -81,10 +81,21 @@
       });
 
       devShells = forAllSystems (system:
-        let pkgs = import nixpkgs { inherit system; };
+        let
+          pkgs = import nixpkgs { inherit system; };
+          lib = pkgs.lib;
+          portableGo = pkgs.go.overrideAttrs (old: {
+            patches = builtins.filter (patch:
+              let name = builtins.baseNameOf (toString patch);
+              in !(lib.hasInfix "iana-etc-" name)
+                && !(lib.hasInfix "mailcap-" name)
+                && !(lib.hasInfix "tzdata-" name)
+            ) old.patches;
+          });
         in {
           default = pkgs.mkShell {
             packages = [ pkgs.go pkgs.gitMinimal pkgs.ripgrep pkgs.bash pkgs.coreutils pkgs.gnused ];
+            shellHook = ''export PATH=${lib.makeBinPath [ pkgs.go pkgs.gitMinimal pkgs.ripgrep pkgs.bash pkgs.coreutils pkgs.gnused ]}:$PATH'';
           };
           smoke = pkgs.mkShell {
             packages = [
@@ -98,6 +109,17 @@
               pkgs.python3
               pkgs.go
             ];
+            shellHook = ''export PATH=${lib.makeBinPath [ pkgs.go pkgs.gitMinimal pkgs.jq pkgs.bash pkgs.coreutils pkgs.gnused pkgs.curl pkgs.expect pkgs.python3 ]}:$PATH'';
+          };
+          bench = pkgs.mkShell {
+            packages = [
+              portableGo
+              pkgs.gitMinimal
+              pkgs.bash
+              pkgs.coreutils
+              pkgs.file
+            ];
+            shellHook = ''export PATH=${lib.makeBinPath [ portableGo pkgs.gitMinimal pkgs.bash pkgs.coreutils pkgs.file ]}:$PATH'';
           };
         });
 

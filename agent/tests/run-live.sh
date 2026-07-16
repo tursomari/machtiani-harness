@@ -766,13 +766,17 @@ check_bin() {
     fi
   fi
 
-  local bin_mtime
-  bin_mtime="$(stat_mtime "$path")"
-  local last_change
-  last_change="$(git_last_change "$src_dir")"
-  if [ "$last_change" -gt 0 ] && [ "$bin_mtime" -lt "$last_change" ]; then
-    echo "ERROR: $name binary appears stale (mtime older than last source change)" >&2
-    exit 1
+  local canonical_path
+  canonical_path="$(realpath "$path" 2>/dev/null || printf '%s\n' "$path")"
+  if [[ "$canonical_path" != /nix/store/* ]]; then
+    local bin_mtime
+    bin_mtime="$(stat_mtime "$path")"
+    local last_change
+    last_change="$(git_last_change "$src_dir")"
+    if [ "$last_change" -gt 0 ] && [ "$bin_mtime" -lt "$last_change" ]; then
+      echo "ERROR: $name binary appears stale (mtime older than last source change)" >&2
+      exit 1
+    fi
   fi
 
   echo "--" >&2

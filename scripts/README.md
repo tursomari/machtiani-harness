@@ -1,10 +1,10 @@
-# scripts/ — Build, Install, A/B Testing, and Evaluation Infrastructure
+# scripts/ — Build, A/B Testing, and Evaluation Infrastructure
 
 ---
 
 ## Overview
 
-The `scripts/` directory contains the build, install, A/B testing harness, and
+The `scripts/` directory contains build helpers, A/B testing harnesses, and
 evaluation infrastructure for the mct-agent monorepo. It provides the Docker
 tooling for reproducible A/B comparison of code changes (`ab-dev.sh` plus
 `Dockerfile.build`), the evaluation pipeline for comparing mct-agent against Forge (`run_eval.sh`,
@@ -12,6 +12,11 @@ tooling for reproducible A/B comparison of code changes (`ab-dev.sh` plus
 prompting.  Agent-side test runner documentation lives in
 `agent/tests/README.md` — this file focuses on the scripts that sit above the
 agent layer.
+
+Deep-SWE launchers share `build-bench-binaries.sh`. It enters the flake's
+locked `bench` shell, disables CGO and automatic Go toolchain downloads, and
+emits standalone binaries suitable for Pier task containers; it does not pass
+Nix-store-wrapped installation outputs into those containers.
 
 ---
 

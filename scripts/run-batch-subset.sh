@@ -245,23 +245,10 @@ AGENT_BIN="${BIN_DIR}/mct-agent"
 META_BIN="${BIN_DIR}/meta-orchestrator"
 FORGE_BIN="${BIN_DIR}/forge"
 
-echo "[build] Building mct-agent from HEAD -> ${AGENT_BIN}"
-( cd "${REPO_ROOT}/agent" && go build -o "${AGENT_BIN}" ./cmd/mct-agent )
-
-if [[ ! -x "${AGENT_BIN}" ]]; then
-    echo "Error: mct-agent build did not produce an executable at ${AGENT_BIN}" >&2
-    exit 1
-fi
-echo "[build] mct-agent done."
-
-echo "[build] Building meta-orchestrator from HEAD -> ${META_BIN}"
-( cd "${REPO_ROOT}/agent" && go build -o "${META_BIN}" ./cmd/meta-orchestrator )
-
-if [[ ! -x "${META_BIN}" ]]; then
-    echo "Error: meta-orchestrator build did not produce an executable at ${META_BIN}" >&2
-    exit 1
-fi
-echo "[build] meta-orchestrator done."
+echo "[build] Building pinned benchmark binaries from HEAD"
+"${REPO_ROOT}/scripts/build-bench-binaries.sh" "${REPO_ROOT}" "${BIN_DIR}"
+test -x "${AGENT_BIN}"
+test -x "${META_BIN}"
 
 echo "[build] Downloading Forge musl binary -> ${FORGE_BIN}"
 "${REPO_ROOT}/scripts/download-forge-musl.sh" "${FORGE_BIN}"

@@ -6,12 +6,16 @@ This is the operator entrypoint for running and monitoring Deep-SWE benches from
 
 - `TEST_API_KEY` and `TEST_BASE_URL` exported in the host shell.
 - Deep-SWE tasks checked out at `~/projects/deep-swe/tasks`, unless `--tasks-path` is provided.
+- Nix 2.24 or newer with flakes enabled. The launchers enter the locked
+  `bench` shell automatically; a separately installed Go toolchain is ignored.
 - Docker running, `pier` installed, and `mct_pier_adapter` importable.
 - Run commands from the repo root.
 
 ## Run the 12-Task Treatment
 
-Use `scripts/run-batch-subset.sh` for the standard 12-task batch. It builds the treatment binaries from the current `HEAD`, downloads the musl Forge binary, launches Pier, and persists results.
+Use `scripts/run-batch-subset.sh` for the standard 12-task batch. It builds
+standalone treatment binaries from the current `HEAD` through the pinned Nix
+toolchain, downloads the musl Forge binary, launches Pier, and persists results.
 
 Treatment-only run with six workers:
 
@@ -43,7 +47,10 @@ The script prints the treatment job name, usually `treatment-batch-<pid>`, and t
 
 ## Run a Single Retest
 
-Use `scripts/run-single-treatment.sh` for one-off treatment retests. It rebuilds `mct-agent` and `meta-orchestrator` from `HEAD`, uses a fixed `/tmp/mct-single-treatment` workspace, and persists results under `.bench/deep-swe/`.
+Use `scripts/run-single-treatment.sh` for one-off treatment retests. It rebuilds
+standalone `mct-agent` and `meta-orchestrator` binaries from `HEAD` through the
+pinned Nix toolchain, uses a fixed `/tmp/mct-single-treatment` workspace, and
+persists results under `.bench/deep-swe/`.
 
 ```bash
 export TEST_API_KEY=sk-...
@@ -63,7 +70,7 @@ Use `--agent-name` and `--treatment-name` to control the persisted result path:
 
 The single-task runner:
 
-- builds `mct-agent` and `meta-orchestrator` from `HEAD`
+- builds static, container-portable `mct-agent` and `meta-orchestrator` from `HEAD`
 - downloads the musl Forge binary
 - sets `MCT_AGENT_BINARY`, `MCT_META_ORCHESTRATOR_BINARY`, and `MCT_FORGE_BINARY`
 - runs Pier with `--agent-import-path mct_pier_adapter.mct_agent:MctAgent`

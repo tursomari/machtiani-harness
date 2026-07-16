@@ -154,11 +154,10 @@ build_agent() {
         exit 1
     fi
 
-    ( cd "${worktree_dir}/agent" && go build -o "${output_path}" ./cmd/mct-agent )
+    "${REPO_ROOT}/scripts/build-bench-binaries.sh" \
+        "${worktree_dir}" "$(dirname "${output_path}")"
 
-    if [[ -d "${worktree_dir}/agent/cmd/meta-orchestrator" ]]; then
-        ( cd "${worktree_dir}/agent" && go build -o "${meta_output_path}" ./cmd/meta-orchestrator )
-    else
+    if [[ ! -x "${meta_output_path}" ]]; then
         echo "[build:${label}] Warning: meta-orchestrator not available at this commit; skipping"
     fi
 
