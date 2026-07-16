@@ -88,10 +88,10 @@ func TestSync_StdinSeeding(t *testing.T) {
 	}
 
 	cfg := cfgpkg.Config{
-		MaxRounds:     5,
-		ToolCallMode:  "json",
-		MaxTranscript: 1024 * 1024,
-		CmdTimeoutSec: 30,
+		MaxRounds:            5,
+		ToolCallMode:         "json",
+		MaxInitialInputBytes: 1024 * 1024,
+		CmdTimeoutSec:        30,
 		// We need a dummy model config to pass validation
 		Model: "test-model",
 	}

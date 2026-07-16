@@ -198,11 +198,13 @@ var excludeExts = map[string]struct{}{
 }
 
 type LLMSettings struct {
-	Model            llm.ResolvedModel
-	Extras           map[string]any
-	FallbackAliases  []string
-	FallbackResolved []llm.ResolvedModel
-	APIKeyOverrides  map[string]string
+	Model                      llm.ResolvedModel
+	Extras                     map[string]any
+	FallbackAliases            []string
+	FallbackResolved           []llm.ResolvedModel
+	APIKeyOverrides            map[string]string
+	InputBudget                llm.InputBudget
+	ContextIdentityUnambiguous bool
 }
 
 func readAllStdin(limit int) (string, bool, error) {
@@ -990,6 +992,9 @@ func run(ctx context.Context, cfg cfgpkg.Config, llmCfg LLMSettings, initialProm
 		ctx = context.Background()
 	}
 	baseCtx := ctx
+	if cfg.MaxInitialInputBytes <= 0 {
+		cfg.MaxInitialInputBytes = 300000
+	}
 	lg := cfgpkg.Logger{JSON: cfg.LogJSON, V: cfg.Verbose}
 	mode := normalizeToolCallMode(cfg.ToolCallMode)
 
@@ -1090,11 +1095,13 @@ func run(ctx context.Context, cfg cfgpkg.Config, llmCfg LLMSettings, initialProm
 	truncated := false
 	inputErr := error(nil)
 	if !explicitPrompt {
-		s, truncated, inputErr = readAllStdin(cfg.MaxTranscript)
+		s, truncated, inputErr = readAllStdin(cfg.MaxInitialInputBytes)
+	} else if len(s) > cfg.MaxInitialInputBytes {
+		inputErr = fmt.Errorf("embedded discovery initial input is %d bytes; emergency ceiling is %d bytes", len(s), cfg.MaxInitialInputBytes)
 	}
+	initialCore := "Protocol reminder:\n\n" + sys
 	if inputErr == nil {
-		header := "Protocol reminder:"
-		userContent := header + "\n\n" + sys
+		userContent := initialCore
 		if strings.TrimSpace(s) != "" {
 			if truncated {
 				s += "\n[TRUNCATED]"
@@ -1112,6 +1119,14 @@ func run(ctx context.Context, cfg cfgpkg.Config, llmCfg LLMSettings, initialProm
 			}
 		}
 		messages = append(messages, chatMessage{Role: "user", Content: userContent})
+	} else {
+		lg.Error(inputErr.Error())
+		log.Println(inputErr)
+		if tr.Enabled {
+			tr.Event("run_end", 0, map[string]any{"exit_code": 1, "reason": "initial_input_too_large", "error": inputErr.Error()})
+			tr.Close()
+		}
+		return 1
 	}
 
 	transcriptBytes := 0
@@ -1119,18 +1134,17 @@ func run(ctx context.Context, cfg cfgpkg.Config, llmCfg LLMSettings, initialProm
 	lastRG := lastRGState{outCount: -1}
 	// Track all previously empty RG patterns (not just the last one)
 	var failedPatterns failedRG
+	state := discoveryState{seenPaths: seenPaths}
+	requestPolicy := discoveryRequestPolicy{active: llmCfg.InputBudget}
 	finalBlockRetries := 0
 	waitingFinalBlock := false
 	round := 0
 	for round = 1; round <= cfg.MaxRounds; round++ {
 		if tr.Enabled {
 			tr.Event("round_start", round, map[string]any{"round": round, "transcript_bytes_before": transcriptBytes, "messages_count_before": len(messages)})
-			tr.Event("llm_request", round, map[string]any{"messages": messages})
 		}
 
-		llmCtx, cancel := llmCallContext(baseCtx, cfg.LLMTimeoutSec)
-		assistantContent, err := chatInvoker(llmCtx, llmCfg, messages)
-		cancel()
+		assistantContent, fittedMessages, err := requestPolicy.call(baseCtx, cfg, llmCfg, messages, initialCore, state, &tr, round, nil)
 		if err != nil {
 			lg.Error("chat API error")
 			log.Println("chat API error:", err)
@@ -1140,11 +1154,13 @@ func run(ctx context.Context, cfg cfgpkg.Config, llmCfg LLMSettings, initialProm
 			}
 			return 1
 		}
+		messages = fittedMessages
 		transcriptBytes += len(assistantContent)
 		lg.Log("round", map[string]any{"round": round, "sent_bytes": transcriptBytes, "assistant_bytes": len(assistantContent)})
 		if tr.Enabled {
 			tr.Event("llm_response", round, map[string]any{"content": assistantContent})
 		}
+		messages = append(messages, chatMessage{Role: "assistant", Content: assistantContent})
 
 		hasFinalBlock := reFinalBlock.MatchString(assistantContent)
 		if hasFinalBlock {
@@ -1210,6 +1226,13 @@ func run(ctx context.Context, cfg cfgpkg.Config, llmCfg LLMSettings, initialProm
 		}
 
 		tool, rgCmd, sedCmd, lsCmd, reject := parseToolCall(assistantContent, mode)
+		if rgCmd != nil {
+			state.recentCommands = append(state.recentCommands, fmt.Sprintf("file_search pattern=%q", rgCmd.pattern))
+		} else if sedCmd != nil {
+			state.recentCommands = append(state.recentCommands, fmt.Sprintf("read_file path=%q program=%q", sedCmd.path, sedCmd.program))
+		} else if lsCmd != nil {
+			state.recentCommands = append(state.recentCommands, fmt.Sprintf("list_directory path=%q", lsCmd.path))
+		}
 		if tr.Enabled {
 			payload := map[string]any{
 				"has_final_block": hasFinalBlock,
@@ -1377,6 +1400,7 @@ func run(ctx context.Context, cfg cfgpkg.Config, llmCfg LLMSettings, initialProm
 							// Track failed pattern if no results
 							if c.kind == "files_pattern" && linesCount == 0 {
 								failedPatterns.add(c.pattern)
+								state.failedPatterns = append(state.failedPatterns, c.pattern)
 							}
 						}
 					}
@@ -1407,12 +1431,9 @@ func run(ctx context.Context, cfg cfgpkg.Config, llmCfg LLMSettings, initialProm
 		forcedRound := cfg.MaxRounds + finalBlockRetries + 1
 		if tr.Enabled {
 			tr.Event("round_start", forcedRound, map[string]any{"round": forcedRound, "transcript_bytes_before": transcriptBytes, "messages_count_before": len(messages), "forced_finalization": true, "retry_count": finalBlockRetries})
-			tr.Event("llm_request", forcedRound, map[string]any{"messages": messages, "forced_finalization": true, "retry_count": finalBlockRetries})
 		}
 
-		llmCtx, cancel := llmCallContext(baseCtx, cfg.LLMTimeoutSec)
-		assistantContent, err := chatInvoker(llmCtx, llmCfg, messages)
-		cancel()
+		assistantContent, fittedMessages, err := requestPolicy.call(baseCtx, cfg, llmCfg, messages, initialCore, state, &tr, forcedRound, map[string]any{"forced_finalization": true, "retry_count": finalBlockRetries})
 		if err != nil {
 			lg.Error("chat API error on forced finalization")
 			log.Println("chat API error:", err)
@@ -1422,11 +1443,13 @@ func run(ctx context.Context, cfg cfgpkg.Config, llmCfg LLMSettings, initialProm
 			}
 			return 1
 		}
+		messages = fittedMessages
 		transcriptBytes += len(assistantContent)
 		lg.Log("round", map[string]any{"round": forcedRound, "sent_bytes": transcriptBytes, "assistant_bytes": len(assistantContent), "forced_finalization": true, "retry_count": finalBlockRetries})
 		if tr.Enabled {
 			tr.Event("llm_response", forcedRound, map[string]any{"content": assistantContent, "forced_finalization": true, "retry_count": finalBlockRetries})
 		}
+		messages = append(messages, chatMessage{Role: "assistant", Content: assistantContent})
 
 		// Enforce finalization-only: ignore any function calls in this extra round.
 		if tool, rgCmd, sedCmd, lsCmd, reject := parseToolCall(assistantContent, mode); tool != "" || rgCmd != nil || sedCmd != nil || lsCmd != nil || reject != "" {

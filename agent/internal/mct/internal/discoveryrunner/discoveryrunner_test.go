@@ -35,3 +35,22 @@ func TestInitialPromptTokenLimitRejectsFixedContentOnlyOverflow(t *testing.T) {
 		t.Fatalf("error = %v", err)
 	}
 }
+
+func TestEmergencyInitialInputBytes(t *testing.T) {
+	tests := []struct {
+		name   string
+		tokens int
+		want   int
+	}{
+		{name: "floor", tokens: 1, want: 1 << 20},
+		{name: "derived", tokens: 100000, want: 1600000},
+		{name: "ceiling", tokens: 10000000, want: 64 << 20},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := EmergencyInitialInputBytes(test.tokens); got != test.want {
+				t.Fatalf("EmergencyInitialInputBytes(%d) = %d, want %d", test.tokens, got, test.want)
+			}
+		})
+	}
+}

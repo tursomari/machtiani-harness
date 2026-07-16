@@ -41,6 +41,26 @@ type ModelSettings struct {
 	PromptTruncated    bool
 }
 
+const (
+	emergencyInputFloorBytes = 1 << 20
+	emergencyInputMaxBytes   = 64 << 20
+	emergencyBytesPerToken   = 16
+)
+
+// EmergencyInitialInputBytes is a secondary memory-safety ceiling. Token
+// fitting remains the product limit; this only rejects unexpectedly large
+// embedded inputs before they are copied into the discovery history.
+func EmergencyInitialInputBytes(maxInputTokens int) int {
+	derived := maxInputTokens * emergencyBytesPerToken
+	if derived < emergencyInputFloorBytes {
+		return emergencyInputFloorBytes
+	}
+	if derived > emergencyInputMaxBytes {
+		return emergencyInputMaxBytes
+	}
+	return derived
+}
+
 func InitialPromptTokenLimit(budget llm.InputBudget) (int, error) {
 	fixed := integration.FixedInputTokens(integration.ToolCallModeJSON)
 	limit := budget.MaxInputTokens - fixed
@@ -138,27 +158,29 @@ func Run(ctx context.Context, prompt string, model ModelSettings, sessionID stri
 
 	resolved := llm.CloneResolvedModel(model.Resolved)
 	cfg := integration.Config{
-		MaxRounds:      20,
-		CmdTimeoutSec:  30,
-		LLMTimeoutSec:  model.TurnTimeout,
-		MaxStdoutBytes: 20480,
-		MaxTranscript:  300000,
-		Verbose:        verbose,
-		SessionID:      effectiveSessionID,
-		ToolCallMode:   integration.ToolCallModeJSON,
-		APIKey:         strings.TrimSpace(resolved.APIKey),
-		BaseURL:        strings.TrimSpace(resolved.BaseURL),
-		Model:          strings.TrimSpace(resolved.Model),
+		MaxRounds:            20,
+		CmdTimeoutSec:        30,
+		LLMTimeoutSec:        model.TurnTimeout,
+		MaxStdoutBytes:       20480,
+		MaxInitialInputBytes: EmergencyInitialInputBytes(model.InputBudget.MaxInputTokens),
+		Verbose:              verbose,
+		SessionID:            effectiveSessionID,
+		ToolCallMode:         integration.ToolCallModeJSON,
+		APIKey:               strings.TrimSpace(resolved.APIKey),
+		BaseURL:              strings.TrimSpace(resolved.BaseURL),
+		Model:                strings.TrimSpace(resolved.Model),
 	}
 	if cfg.APIKey == "" || cfg.BaseURL == "" || cfg.Model == "" {
 		return Result{}, errors.New("file-discovery runtime missing API key, base URL, or model")
 	}
 	llmSettings := integration.LLMSettings{
-		Model:            resolved,
-		Extras:           mergedExtras,
-		FallbackAliases:  append([]string(nil), model.FallbackAliases...),
-		FallbackResolved: cloneResolvedModels(model.FallbackResolved),
-		APIKeyOverrides:  llm.CopyAPIKeyOverridesForRuntime(model.APIKeyOverrides),
+		Model:                      resolved,
+		Extras:                     mergedExtras,
+		FallbackAliases:            append([]string(nil), model.FallbackAliases...),
+		FallbackResolved:           cloneResolvedModels(model.FallbackResolved),
+		APIKeyOverrides:            llm.CopyAPIKeyOverridesForRuntime(model.APIKeyOverrides),
+		InputBudget:                model.InputBudget,
+		ContextIdentityUnambiguous: model.UsingAlias && strings.TrimSpace(resolved.Alias) != "" && len(model.FallbackAliases) == 0 && len(model.FallbackResolved) == 0,
 	}
 	debugf(verbose, "mct: using embedded file-discovery module")
 

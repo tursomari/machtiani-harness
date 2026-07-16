@@ -23,21 +23,21 @@ const (
 
 // Config holds CLI and environment configuration.
 type Config struct {
-	BaseURL         string
-	APIKey          string
-	APIKeyOverrides map[string]string
-	Model           string
-	MaxRounds       int
-	CmdTimeoutSec   int
-	LLMTimeoutSec   int
-	MaxStdoutBytes  int
-	MaxTranscript   int
-	LogJSON         bool
-	Verbose         bool
-	DryRunRG        bool
-	DryPattern      string
-	TrajectoryPath  string
-	NoTrajectory    bool
+	BaseURL              string
+	APIKey               string
+	APIKeyOverrides      map[string]string
+	Model                string
+	MaxRounds            int
+	CmdTimeoutSec        int
+	LLMTimeoutSec        int
+	MaxStdoutBytes       int
+	MaxInitialInputBytes int
+	LogJSON              bool
+	Verbose              bool
+	DryRunRG             bool
+	DryPattern           string
+	TrajectoryPath       string
+	NoTrajectory         bool
 	// SessionID optionally scopes BEGIN/END markers; first 5 chars are used
 	SessionID    string
 	ToolCallMode ToolCallMode
@@ -184,21 +184,21 @@ func (tr *TrajectoryRecorder) Event(typ string, round int, payload any) {
 
 func RedactConfig(cfg Config) map[string]any {
 	return map[string]any{
-		"baseURL":        cfg.BaseURL,
-		"apiKey":         "REDACTED",
-		"model":          cfg.Model,
-		"maxRounds":      cfg.MaxRounds,
-		"cmdTimeoutSec":  cfg.CmdTimeoutSec,
-		"llmTimeoutSec":  cfg.LLMTimeoutSec,
-		"maxStdoutBytes": cfg.MaxStdoutBytes,
-		"maxTranscript":  cfg.MaxTranscript,
-		"logJSON":        cfg.LogJSON,
-		"verbose":        cfg.Verbose,
-		"dryRunRG":       cfg.DryRunRG,
-		"dryPattern":     cfg.DryPattern,
-		"trajectoryPath": cfg.TrajectoryPath,
-		"noTrajectory":   cfg.NoTrajectory,
-		"toolCallMode":   cfg.ToolCallMode,
+		"baseURL":              cfg.BaseURL,
+		"apiKey":               "REDACTED",
+		"model":                cfg.Model,
+		"maxRounds":            cfg.MaxRounds,
+		"cmdTimeoutSec":        cfg.CmdTimeoutSec,
+		"llmTimeoutSec":        cfg.LLMTimeoutSec,
+		"maxStdoutBytes":       cfg.MaxStdoutBytes,
+		"maxInitialInputBytes": cfg.MaxInitialInputBytes,
+		"logJSON":              cfg.LogJSON,
+		"verbose":              cfg.Verbose,
+		"dryRunRG":             cfg.DryRunRG,
+		"dryPattern":           cfg.DryPattern,
+		"trajectoryPath":       cfg.TrajectoryPath,
+		"noTrajectory":         cfg.NoTrajectory,
+		"toolCallMode":         cfg.ToolCallMode,
 	}
 }
 
