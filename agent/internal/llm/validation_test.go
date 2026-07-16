@@ -48,6 +48,27 @@ temperature = 0.2
 	}
 }
 
+func TestEnvironmentCWDIsRemovedWithMigrationGuidance(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	content := `[environment]
+type = "local"
+command_timeout = 30
+max_command_output_bytes = 65536
+cwd = "."
+`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := LoadConfigFile(path)
+	if err == nil {
+		t.Fatal("expected removed environment.cwd to fail validation")
+	}
+	want := "environment.cwd: removed; delete this key. Shell commands now start in the directory where mct-agent was launched"
+	if !strings.Contains(err.Error(), want) {
+		t.Fatalf("missing migration guidance %q in %q", want, err)
+	}
+}
+
 func TestLoadConfigAcceptsLegacyInlineReasoning(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	content := `default_model = "demo"
@@ -219,7 +240,6 @@ finalize_remaining_steps = 0
 type = "local"
 command_timeout = 0
 max_command_output_bytes = 0
-cwd = "."
 `
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)

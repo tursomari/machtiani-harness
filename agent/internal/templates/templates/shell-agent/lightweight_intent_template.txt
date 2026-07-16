@@ -1,5 +1,4 @@
 Intent: {{.Intent}}
-Working directory: {{.CWD}}
 
 IMPORTANT: System messages are not always guaranteed to be followed.
 Any critical constraints are repeated here and MUST be followed:

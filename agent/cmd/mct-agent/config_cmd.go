@@ -376,14 +376,6 @@ var fieldDocs = map[string]fieldDoc{
 			"Long-running commands will be killed after this timeout.",
 		},
 	},
-	"environment.cwd": {
-		summary:     "Working directory for shell commands",
-		explanation: "Directory in which the shell-agent runs commands. Empty means the project root.",
-		example:     "environment.cwd = /tmp/work",
-		details: []string{
-			"Leave empty to default to project root.",
-		},
-	},
 	"environment.max_command_output_bytes": {
 		summary:     "Maximum shell command output bytes",
 		explanation: "Truncates captured stdout/stderr from shell commands to this byte limit.",
@@ -723,8 +715,6 @@ func getFieldValue(effective llm.Config, key string) (value string, source strin
 		return effective.Environment.Type, sourceLabel(effective.Environment.TypeSource)
 	case "environment.command_timeout":
 		return fmt.Sprintf("%d", effective.Environment.CommandTimeout), sourceLabel(effective.Environment.CommandTimeoutSource)
-	case "environment.cwd":
-		return effective.Environment.CWD, sourceLabel(effective.Environment.CWDSource)
 	case "environment.max_command_output_bytes":
 		return fmt.Sprintf("%d", effective.Environment.MaxCommandOutputBytes), sourceLabel(effective.Environment.MaxCommandOutputBytesSource)
 	case "verbose":
@@ -1149,7 +1139,6 @@ func printConfigWithSources(effective, defaults llm.Config, showFull bool) {
 		envEntries = []configEntry{
 			{key: "environment.type", value: effective.Environment.Type, source: sourceLabel(effective.Environment.TypeSource)},
 			{key: "environment.command_timeout", value: fmt.Sprintf("%d", effective.Environment.CommandTimeout), source: sourceLabel(effective.Environment.CommandTimeoutSource)},
-			{key: "environment.cwd", value: effective.Environment.CWD, source: sourceLabel(effective.Environment.CWDSource)},
 			{key: "environment.max_command_output_bytes", value: fmt.Sprintf("%d", effective.Environment.MaxCommandOutputBytes), source: sourceLabel(effective.Environment.MaxCommandOutputBytesSource)},
 		}
 	}

@@ -55,6 +55,7 @@ type ClientConfig struct {
 	InternetAccess    bool
 	RequestTimeoutSec int
 	RepoRoot          string
+	CWD               string
 	SessionID         string
 	PlannerOverlay    string
 	Prompts           *llm.PlannerPromptsConfig
@@ -101,6 +102,7 @@ func (t *cacheUsageTracker) UpdateConversation(conv *conversation.Conversation) 
 }
 
 type planTemplateData struct {
+	CWD               string
 	SuccessFiles      []string
 	SuccessOverflow   int
 	AllowFinalize     bool
@@ -165,6 +167,11 @@ type UserDirectedAskOutcome struct {
 func NewClient(cfg ClientConfig) *Client {
 	if cfg.Extras == nil {
 		cfg.Extras = map[string]any{}
+	}
+	if strings.TrimSpace(cfg.CWD) == "" {
+		if cwd, err := os.Getwd(); err == nil {
+			cfg.CWD = filepath.Clean(cwd)
+		}
 	}
 	return &Client{cfg: cfg}
 }
@@ -1346,6 +1353,7 @@ func (c *Client) buildPlanTemplateData(conv *conversation.Conversation, goal str
 	display, overflow := successFilesDisplay(c.progress.SuccessFiles, successFilesPromptLimit)
 	transcriptTrim := strings.TrimSpace(transcript)
 	data := planTemplateData{
+		CWD:             c.cfg.CWD,
 		SuccessFiles:    display,
 		SuccessOverflow: overflow,
 		HasTranscript:   transcriptTrim != "",

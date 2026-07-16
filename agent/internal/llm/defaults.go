@@ -19,7 +19,6 @@ func DefaultConfig() Config {
 		Environment: &EnvironmentConfig{
 			Type:                  "local",
 			CommandTimeout:        9999,
-			CWD:                   ".",
 			MaxCommandOutputBytes: 65536,
 		},
 		Trajectory: &TrajectoryConfig{
@@ -69,7 +68,6 @@ func DefaultMinimalConfigMap() map[string]any {
 		"environment": map[string]any{
 			"type":                     "local",
 			"command_timeout":          int64(9999),
-			"cwd":                      ".",
 			"max_command_output_bytes": int64(65536),
 		},
 		"ui": map[string]any{
@@ -139,10 +137,6 @@ func overlayConfig(target *Config, source Config, srcSource FieldSource) {
 		if source.Environment.typeSet || source.Environment.Type != "" {
 			target.Environment.Type = source.Environment.Type
 			target.Environment.TypeSource = srcSource
-		}
-		if source.Environment.cwdSet || source.Environment.CWD != "" {
-			target.Environment.CWD = source.Environment.CWD
-			target.Environment.CWDSource = srcSource
 		}
 		if source.Environment.commandTimeoutSet || source.Environment.CommandTimeout != 0 {
 			target.Environment.CommandTimeout = source.Environment.CommandTimeout

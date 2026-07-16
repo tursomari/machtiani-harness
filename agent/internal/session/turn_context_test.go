@@ -64,6 +64,7 @@ func TestTurnContext_buildShellAgentRequest_equivalence(t *testing.T) {
 		convMsgs := conv.ToLLMMessages()
 		prebuilt, err := shellagent.BuildShellAgentMessages(
 			convMsgs, lib.Prompts, extraInstr,
+			lib.CWD,
 			lib.AnswerTag, lib.CommandTag,
 		)
 		if err != nil {
@@ -156,6 +157,7 @@ func TestTurnContext_buildShellAgentRequest_equivalence(t *testing.T) {
 		convMsgs := conv.ToLLMMessages()
 		prebuilt, err := shellagent.BuildShellAgentMessages(
 			convMsgs, lib.Prompts, extraInstr,
+			lib.CWD,
 			lib.AnswerTag, lib.CommandTag,
 		)
 		if err != nil {

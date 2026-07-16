@@ -146,7 +146,8 @@ func handleShellAgentCommand(args []string) int {
 	}
 
 	// Render prompts.
-	sysPrompt, err := shellagent.RenderSystemPrompt(lib.Prompts, nil, effectiveAnswerTag, effectiveCommandTag)
+	systemVars := map[string]interface{}{"cwd": lib.CWD, "CWD": lib.CWD}
+	sysPrompt, err := shellagent.RenderSystemPrompt(lib.Prompts, systemVars, effectiveAnswerTag, effectiveCommandTag)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error rendering system prompt: %v\n", err)
 		return 1

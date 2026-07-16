@@ -591,8 +591,8 @@ func TestConfigShowCommand_EmptyValues(t *testing.T) {
 	if !strings.Contains(stdout, "environment.type") {
 		t.Error("missing environment.type (empty but should be present)")
 	}
-	if !strings.Contains(stdout, "environment.cwd") {
-		t.Error("missing environment.cwd (empty but should be present)")
+	if strings.Contains(stdout, "environment.cwd") {
+		t.Error("removed environment.cwd should not be present")
 	}
 }
 

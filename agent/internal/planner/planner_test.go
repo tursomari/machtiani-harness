@@ -798,6 +798,20 @@ func TestPlanSystemPromptOmitsFullFileTagGuidance(t *testing.T) {
 	}
 }
 
+func TestPlanSystemPromptIncludesAbsoluteCWD(t *testing.T) {
+	cwd := filepath.Join(t.TempDir(), "workspace with spaces")
+	client := NewClient(ClientConfig{CWD: cwd})
+	conv := conversation.New("sess-system-cwd", "Finish docs")
+	prompt := client.planSystemPrompt(conv, "Finish docs", 1, 3)
+	want := fmt.Sprintf("The current working directory is %q.", cwd)
+	if !strings.Contains(prompt, want) {
+		t.Fatalf("plan system prompt missing %q\n%s", want, prompt)
+	}
+	if !strings.Contains(prompt, "Interpret relative paths as relative to this directory.") {
+		t.Fatalf("plan system prompt missing relative-path contract\n%s", prompt)
+	}
+}
+
 func TestPlanSystemPromptDefinesAnswerTheUserContract(t *testing.T) {
 	client := NewClient(ClientConfig{})
 	conv := conversation.New("sess-answer-the-user", "Finish docs")

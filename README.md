@@ -396,7 +396,6 @@ context_length = 128000
 [environment]
 type = "local"
 command_timeout = 30
-cwd = "."
 max_command_output_bytes = 65536
 
 [providers.openrouter]
@@ -414,6 +413,10 @@ a minimal starting point, or
 for a reference covering every section and field.
 
 Keys inside `[planner]`, `[shell-agent]`, `[providers]`, `[models]`, and `[environment]` are shared across Machtiani binaries. Omit `providers.<name>.api_key` to use the provider-derived environment variable, or set it to an exact `${NAME}` placeholder. When you need an alternate model temporarily, pass `--shell-agent-model <alias>` to `mct-agent run --shell-agent` or to the standalone `shell-agent` binary.
+
+Shell commands start in the directory where `mct-agent` is launched. The old
+`environment.cwd` key has been removed; delete it from existing configuration
+files before running this version.
 
 Configuration is validated automatically before `mct-agent run` and `mct-agent sync`. Use `mct-agent config check` for an explicit preflight or CI check; it audits every configured model and requires credentials for every referenced provider to resolve from the current environment or configuration file. Unknown keys, wrong types, invalid references, and unknown inline model request parameters are rejected. Put ordinary request parameters under `[models.<alias>.params]`; use the inline `params_json` string when an exact JSON shape or `null` is required. Compatible reasoning shapes are negotiated only after a reasoning-specific HTTP 400 and remembered for the current process without rewriting configuration. See the [reasoning compatibility details](docs/configuration.md#reasoning-request-compatibility).
 

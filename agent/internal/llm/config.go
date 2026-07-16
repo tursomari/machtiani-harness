@@ -176,16 +176,13 @@ type EnvironmentConfig struct {
 	Type                        string      `toml:"type"`
 	CommandTimeout              int         `toml:"command_timeout"`
 	MaxCommandOutputBytes       int         `toml:"max_command_output_bytes"`
-	CWD                         string      `toml:"cwd"`
 	ComputedImageTag            string      `toml:"-"`
 	commandTimeoutSet           bool        `toml:"-"`
 	typeSet                     bool        `toml:"-"`
-	cwdSet                      bool        `toml:"-"`
 	maxCommandOutputBytesSet    bool        `toml:"-"`
 	TypeSource                  FieldSource `toml:"-"`
 	CommandTimeoutSource        FieldSource `toml:"-"`
 	MaxCommandOutputBytesSource FieldSource `toml:"-"`
-	CWDSource                   FieldSource `toml:"-"`
 }
 
 // TrajectoryConfig controls trajectory recording settings.
@@ -1522,10 +1519,6 @@ func parseEnvironmentSection(path string, data map[string]any) (*EnvironmentConf
 		env.MaxCommandOutputBytes = v
 		env.maxCommandOutputBytesSet = true
 	}
-	if v, ok := data["cwd"].(string); ok {
-		env.CWD = v
-		env.cwdSet = true
-	}
 	if _, ok := data["image"]; ok {
 		return nil, fmt.Errorf("%s [environment.image] is no longer supported; use dockerfile_path", path)
 	}
@@ -2234,7 +2227,6 @@ func DefaultMinimalConfig() Config {
 		Environment: &EnvironmentConfig{
 			Type:           "local",
 			CommandTimeout: 9999,
-			CWD:            ".",
 		},
 		Prompts:   nil,
 		Mode:      nil,

@@ -113,7 +113,6 @@ max_turns = 7
 [environment]
 type = "local"
 command_timeout = 45
-cwd = "."
 
 [ui]
 theme = "machtiani-light"
@@ -869,9 +868,6 @@ func TestDefaultMinimalConfig(t *testing.T) {
 		if cfg.Environment.CommandTimeout != 9999 {
 			t.Fatalf("expected Environment.CommandTimeout 9999, got %d", cfg.Environment.CommandTimeout)
 		}
-		if cfg.Environment.CWD != "." {
-			t.Fatalf("expected Environment.CWD \".\", got %q", cfg.Environment.CWD)
-		}
 		if cfg.Environment.MaxCommandOutputBytes != 0 {
 			t.Fatalf("expected Environment.MaxCommandOutputBytes 0, got %d", cfg.Environment.MaxCommandOutputBytes)
 		}
@@ -885,6 +881,16 @@ func TestDefaultMinimalConfig(t *testing.T) {
 	}
 	if cfg.Models != nil {
 		t.Fatalf("expected Models to be nil, got %+v", cfg.Models)
+	}
+}
+
+func TestDefaultMinimalConfigMapOmitsRemovedCWD(t *testing.T) {
+	environment, ok := DefaultMinimalConfigMap()["environment"].(map[string]any)
+	if !ok {
+		t.Fatal("default minimal config environment is not a table")
+	}
+	if _, exists := environment["cwd"]; exists {
+		t.Fatal("default minimal config must not generate removed environment.cwd")
 	}
 }
 

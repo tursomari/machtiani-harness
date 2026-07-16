@@ -101,7 +101,7 @@ func validateRawConfig(path string, raw map[string]any) error {
 	validateSection(raw, "shell-agent", shellFields, &diagnostics)
 	validateSection(raw, "agent", legacyAgentFields, &diagnostics)
 	validateSection(raw, "environment", map[string]string{
-		"type": "string", "command_timeout": "integer", "max_command_output_bytes": "integer", "cwd": "string",
+		"type": "string", "command_timeout": "integer", "max_command_output_bytes": "integer",
 	}, &diagnostics)
 	validateSection(raw, "trajectory", map[string]string{
 		"enabled": "bool", "file": "string", "verbose_llm": "bool", "stream_tokens": "bool",
@@ -126,6 +126,8 @@ func validateKnownMap(data map[string]any, prefix string, fields map[string]stri
 			message := "unknown configuration key"
 			if path == "planner.max_input_tokens" {
 				message = "removed; delete this key and configure models.<alias>.context_length instead"
+			} else if path == "environment.cwd" {
+				message = "removed; delete this key. Shell commands now start in the directory where mct-agent was launched"
 			}
 			diagnostic := configError(path, "unknown_key", message)
 			if suggestion := nearestConfigKey(key, fields); suggestion != "" {

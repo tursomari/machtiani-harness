@@ -298,6 +298,13 @@ func runSession(ctx context.Context, opts Options) Result {
 	_ = resumableShellAgentTrajectoryPath
 	runState := bootstrap.runState
 	plannerProgress := runState.plannerProgress
+	runCWD, err := os.Getwd()
+	if err != nil {
+		err = fmt.Errorf("resolve current working directory: %w", err)
+		fmt.Fprintln(diagWriter, "Session setup error:", err)
+		return Result{ExitCode: 1, Err: err}
+	}
+	runCWD = filepath.Clean(runCWD)
 	envBootstrap, err := prepareSessionEnvironment(sessionID, cfg, diagWriter)
 	if err != nil {
 		fmt.Fprintln(diagWriter, "Error preparing session environment:", err)
@@ -662,6 +669,7 @@ func runSession(ctx context.Context, opts Options) Result {
 			InternetAccess:    false,
 			RequestTimeoutSec: cfg.timeoutPerTurn,
 			RepoRoot:          repoRoot,
+			CWD:               runCWD,
 			SessionID:         sessionID,
 			PlannerOverlay:    plannerOverlay,
 			Prompts:           plannerPrompts,

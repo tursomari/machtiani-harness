@@ -628,6 +628,7 @@ func (tc *TurnContext) buildShellAgentRequest(task string, sessionID string, ver
 		conv.ToLLMMessages(),
 		tc.ShellAgentLib.Prompts,
 		extraInstr,
+		tc.ShellAgentLib.CWD,
 		tc.ShellAgentLib.AnswerTag,
 		tc.ShellAgentLib.CommandTag,
 	)

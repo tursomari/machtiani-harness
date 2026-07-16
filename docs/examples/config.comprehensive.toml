@@ -71,9 +71,6 @@ finalize_remaining_steps = 1  # Inject a "wrap up now" prompt once remaining LLM
 type = "local"
 # timeout: per-command timeout in seconds.
 command_timeout = 30
-# cwd: working directory for subprocesses (default: ".").
-cwd = "."
-
 # ── [ui] ────────────────────────────────────────────────────────────────────────
 # Human-facing terminal presentation. MACHTIANI_THEME overrides this value.
 [ui]

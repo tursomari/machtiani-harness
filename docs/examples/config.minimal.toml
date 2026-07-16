@@ -34,7 +34,6 @@ effort = "medium"
 [environment]
 type = "local"
 command_timeout = 9999
-cwd = "."
 
 [ui]
 # terminal | machtiani-dark | machtiani-light | none

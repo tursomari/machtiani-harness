@@ -122,6 +122,8 @@ mct-agent run "triage regression" \
 - A transcript is saved to `$PROJECT_STORE/sessions/<session-id>/chat/agent-transcript.adoc` with per-turn entries and the final conclusion.
 
 ## Environment Details
+- Shell commands start in the directory where `mct-agent` is launched. The
+  removed `environment.cwd` key is rejected with migration guidance.
 - Component model selection precedence:
   - Flags `--orch-model`, `--answer-model`, `--file-discovery-model`
   - Environment variables `MCT_ORCH_MODEL`, `MCT_ANSWER_MODEL`, `MCT_FILE_DISCOVERY_MODEL` (planner also honors `MCT_MODEL` as a legacy alias)
