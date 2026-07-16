@@ -17,7 +17,7 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/mct/prompt"
 )
 
-const successfulAnswer = "context overflow recovery succeeded"
+const successfulAnswer = "discovery overflow recovery succeeded"
 
 func main() {
 	socketPath := strings.TrimSpace(os.Getenv("CONTEXT_OVERFLOW_SMOKE_SOCKET"))
@@ -55,23 +55,49 @@ func main() {
 			http.Error(w, "invalid payload", http.StatusBadRequest)
 			return
 		}
-		if payload.Model != "overflow-model" || len(payload.Messages) == 0 || !payload.Stream {
-			reportHandlerError(fmt.Errorf("request %d: unexpected payload model=%q messages=%d stream=%t", requestNumber, payload.Model, len(payload.Messages), payload.Stream))
+		if len(payload.Messages) == 0 {
+			reportHandlerError(fmt.Errorf("request %d: empty messages", requestNumber))
 			http.Error(w, "unexpected payload", http.StatusBadRequest)
 			return
 		}
 
 		switch requestNumber {
 		case 1:
+			if payload.Model != "discovery-model" || payload.Stream {
+				reportHandlerError(fmt.Errorf("request %d: want non-stream discovery request, got model=%q stream=%t", requestNumber, payload.Model, payload.Stream))
+				http.Error(w, "unexpected discovery payload", http.StatusBadRequest)
+				return
+			}
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
 			_, _ = w.Write([]byte(`{"error":{"code":"context_length_exceeded","type":"invalid_request_error"}}`))
 		case 2:
+			if payload.Model != "discovery-model" || payload.Stream {
+				reportHandlerError(fmt.Errorf("request %d: want reduced non-stream discovery request, got model=%q stream=%t", requestNumber, payload.Model, payload.Stream))
+				http.Error(w, "unexpected discovery retry payload", http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, `{"choices":[{"message":{"content":"BEGIN_RELEVANT_FILES[file-discovery]\nREADME.md\nEND_RELEVANT_FILES[file-discovery]\n"}}]}`)
+		case 3:
+			if payload.Model != "answer-model" || !payload.Stream {
+				reportHandlerError(fmt.Errorf("request %d: want streaming answer request, got model=%q stream=%t", requestNumber, payload.Model, payload.Stream))
+				http.Error(w, "unexpected answer payload", http.StatusBadRequest)
+				return
+			}
 			w.Header().Set("Content-Type", "text/event-stream")
 			_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":%q}}]}\n\n", successfulAnswer)
 			_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+		case 4:
+			if payload.Model != "answer-model" || payload.Stream {
+				reportHandlerError(fmt.Errorf("request %d: want non-stream answer compatibility request, got model=%q stream=%t", requestNumber, payload.Model, payload.Stream))
+				http.Error(w, "unexpected answer compatibility payload", http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprintf(w, `{"choices":[{"message":{"content":%q}}]}`, successfulAnswer)
 		default:
-			reportHandlerError(fmt.Errorf("unexpected request count %d", requestNumber))
+			reportHandlerError(fmt.Errorf("unexpected request count %d: model=%q stream=%t", requestNumber, payload.Model, payload.Stream))
 			http.Error(w, "too many requests", http.StatusInternalServerError)
 		}
 	})
@@ -115,16 +141,30 @@ func main() {
 		}()
 	}
 
-	resolved, err := llm.ResolveModel("overflow")
+	discoveryModel, err := llm.ResolveModel("discovery-overflow")
 	if err != nil {
-		fatalf("resolve overflow model: %v", err)
+		fatalf("resolve discovery overflow model: %v", err)
+	}
+	answerModel, err := llm.ResolveModel("answer-stable")
+	if err != nil {
+		fatalf("resolve answer model: %v", err)
 	}
 	result, err := prompt.Run(context.Background(), prompt.RunOptions{
-		Prompt: "Return a deterministic smoke response.",
-		Mode:   "answer-only",
+		Prompt:                  "Find README.md, then return a deterministic smoke response.",
+		FileDiscoveryTrajectory: "/tmp/context-overflow-discovery.jsonl",
 		Runtime: prompt.ModelRuntime{
-			Resolved:   resolved,
-			Alias:      "overflow",
+			Resolved:   answerModel,
+			Alias:      "answer-stable",
+			UsingAlias: true,
+		},
+		AnswerRuntime: prompt.ModelRuntime{
+			Resolved:   answerModel,
+			Alias:      "answer-stable",
+			UsingAlias: true,
+		},
+		FileDiscoveryRuntime: prompt.ModelRuntime{
+			Resolved:   discoveryModel,
+			Alias:      "discovery-overflow",
 			UsingAlias: true,
 		},
 		Prompts: &llm.MCTPromptsConfig{},
@@ -137,13 +177,13 @@ func main() {
 		fatalf("server assertion: %v", handlerErr)
 	default:
 	}
-	if requests.Load() != 2 {
-		fatalf("requests = %d, want 2", requests.Load())
+	if requests.Load() != 4 {
+		fatalf("requests = %d, want 4", requests.Load())
 	}
 	if result.Assistant != successfulAnswer {
 		fatalf("assistant = %q, want %q", result.Assistant, successfulAnswer)
 	}
-	fmt.Printf("CONTEXT OVERFLOW SMOKE PASSED: requests=%d assistant=%q\n", requests.Load(), result.Assistant)
+	fmt.Printf("CONTEXT OVERFLOW SMOKE PASSED: discovery_requests=2 answer_requests=2 assistant=%q\n", result.Assistant)
 }
 
 type handlerRoundTripper func(*http.Request) (*http.Response, error)

@@ -50,32 +50,41 @@ mct-agent --version
 bash /fixtures/mct-source/tests/smoke/config-crud.sh
 
 # Step 4: Prove automatic context correction against a deterministic local
-# ChatCompletion endpoint. The first request receives a structured overflow;
-# the reduced retry succeeds and persists the learned per-model context.
+# ChatCompletion endpoint. Discovery and answer use separate aliases. The first
+# discovery request overflows, its reduced retry succeeds, and only the
+# discovery alias learns the smaller context.
 echo "==> Verifying automatic context overflow correction..."
 overflow_config=/tmp/context-overflow-config.toml
 mct-agent config add --path "$overflow_config" \
   --provider overflow \
   --url http://context-overflow/v1 \
   --api-key smoke-key \
-  --model overflow-model \
-  --alias overflow \
+  --model discovery-model \
+  --alias discovery-overflow \
   --context-length 128000 \
   --no-cache \
   --no-interactive
-mct-agent config model show --path "$overflow_config" overflow > /tmp/context-overflow-before.stdout
-grep -Fq 'context_length: 128000 (model)' /tmp/context-overflow-before.stdout
+mct-agent config model add --path "$overflow_config" answer-stable \
+  --provider overflow \
+  --model answer-model \
+  --context-length 128000 \
+  --no-interactive
+mct-agent config model show --path "$overflow_config" discovery-overflow > /tmp/context-overflow-discovery-before.stdout
+mct-agent config model show --path "$overflow_config" answer-stable > /tmp/context-overflow-answer-before.stdout
+grep -Fq 'context_length: 128000 (model)' /tmp/context-overflow-discovery-before.stdout
+grep -Fq 'context_length: 128000 (model)' /tmp/context-overflow-answer-before.stdout
 (
   cd /fixtures/mct-source/agent
   MACHTIANI_CONFIG="$overflow_config" go run ./tests/context-overflow-smoke
 ) \
   > /tmp/context-overflow.stdout \
   2> /tmp/context-overflow.stderr
-grep -Fq 'CONTEXT OVERFLOW SMOKE PASSED: requests=2' /tmp/context-overflow.stdout
-grep -Fq 'Warning: provider rejected context length 128000; retry succeeded at 63999 tokens; configuration updated.' /tmp/context-overflow.stderr
+grep -Fq 'CONTEXT OVERFLOW SMOKE PASSED: discovery_requests=2 answer_requests=2' /tmp/context-overflow.stdout
 mct-agent config check --path "$overflow_config"
-mct-agent config model show --path "$overflow_config" overflow > /tmp/context-overflow-after.stdout
-grep -Fq 'context_length: 63999 (model)' /tmp/context-overflow-after.stdout
+mct-agent config model show --path "$overflow_config" discovery-overflow > /tmp/context-overflow-discovery-after.stdout
+mct-agent config model show --path "$overflow_config" answer-stable > /tmp/context-overflow-answer-after.stdout
+grep -Fq 'context_length: 63999 (model)' /tmp/context-overflow-discovery-after.stdout
+grep -Fq 'context_length: 128000 (model)' /tmp/context-overflow-answer-after.stdout
 
 # Step 5: Initialize the repository's internal README state and verify the
 # interactive footer on both a model-backed sync and a subsequent no-op.

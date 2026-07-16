@@ -681,6 +681,124 @@ PY
   fi
 }
 
+start_multiround_discovery_server() {
+  local state_file="$1"
+  local port_file="$2"
+
+  "$PYTHON_BIN" - "$state_file" "$port_file" <<'PY' &
+import json
+import sys
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+state_path = sys.argv[1]
+port_path = sys.argv[2]
+state = {
+    "requests": 0,
+    "discovery_requests": 0,
+    "max_discovery_tokens": 0,
+    "summary_seen": False,
+    "forced_finalization_seen": False,
+}
+
+def estimate(text):
+    tokens = 0
+    in_word = False
+    in_punct = False
+    for char in str(text):
+        if char.isspace():
+            in_word = False
+            in_punct = False
+        elif char.isalpha() or char.isdigit():
+            if not in_word:
+                tokens += 1
+            in_word = True
+            in_punct = False
+        else:
+            if not in_punct:
+                tokens += 1
+            in_word = False
+            in_punct = True
+    return tokens
+
+def write_state():
+    with open(state_path, "w", encoding="utf-8") as fh:
+        json.dump(state, fh)
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, format, *args):
+        return
+
+    def do_POST(self):
+        length = int(self.headers.get("content-length", "0"))
+        try:
+            data = json.loads(self.rfile.read(length).decode("utf-8"))
+        except Exception:
+            self.send_response(400)
+            self.end_headers()
+            return
+
+        messages = data.get("messages", [])
+        content = "\n".join(str(message.get("content", "")) for message in messages if isinstance(message, dict))
+        is_discovery = "BEGIN_RELEVANT_FILES[file-discovery]" in content and "file_search" in content
+        state["requests"] += 1
+        if is_discovery:
+            state["discovery_requests"] += 1
+            total = sum(4 + estimate(message.get("role", "")) + estimate(message.get("content", "")) for message in messages if isinstance(message, dict))
+            state["max_discovery_tokens"] = max(state["max_discovery_tokens"], total)
+            state["summary_seen"] = state["summary_seen"] or "Discovery state summary (compacted older exchanges):" in content or "older discovery state omitted" in content
+            forced = "Max rounds reached. Do NOT call any function." in content
+            state["forced_finalization_seen"] = state["forced_finalization_seen"] or forced
+            if total > 5120:
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": {"code": "request_not_budgeted"}}).encode("utf-8"))
+                write_state()
+                return
+            if forced:
+                reply = "BEGIN_RELEVANT_FILES[file-discovery]\nREADME.md\nfixture_0000.go\nEND_RELEVANT_FILES[file-discovery]\n"
+            else:
+                reply = json.dumps({"tool": "file_search", "args": {"kind": "files_pattern", "pattern": "\\.go$"}})
+        else:
+            reply = "# Multi-round budget fixture\n\nDiscovery stayed within its active budget through forced finalization.\n"
+        write_state()
+
+        payload = {
+            "id": "multiround-discovery",
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": data.get("model", "multiround-model"),
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": reply}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+        }
+        encoded = json.dumps(payload).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(encoded)))
+        self.end_headers()
+        self.wfile.write(encoded)
+
+server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+with open(port_path, "w", encoding="utf-8") as fh:
+    fh.write(str(server.server_address[1]))
+    fh.flush()
+write_state()
+server.serve_forever()
+PY
+  STUB_SERVER_PID=$!
+
+  local waited=0
+  while [[ ! -s "$port_file" && $waited -lt 50 ]]; do
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  if [[ ! -s "$port_file" ]]; then
+    echo "ERROR: multi-round discovery server failed to write port file" >&2
+    return 1
+  fi
+}
+
 assert_stub_counts() {
   local state_file="$1"
   local min_plan="$2"
@@ -3668,6 +3786,92 @@ PY
   stop_llm_stub_server
 }
 
+test_discovery_multiround_budget() {
+  local case_root repo config_file state_file port_file stdout_file stderr_file port
+  case_root="$(mktemp -d "$TMP_ROOT/discovery-multiround.XXXXXX")"
+  repo="$case_root/repo"
+  config_file="$case_root/config.toml"
+  state_file="$case_root/server-state.json"
+  port_file="$case_root/server-port"
+  stdout_file="$case_root/sync.stdout"
+  stderr_file="$case_root/sync.stderr"
+
+  start_multiround_discovery_server "$state_file" "$port_file"
+  port="$(cat "$port_file")"
+  mkdir -p "$repo"
+  git -C "$repo" init --initial-branch=main >/dev/null
+  git -C "$repo" config user.name "run-live discovery multiround"
+  git -C "$repo" config user.email "run-live@example.invalid"
+  "$PYTHON_BIN" - "$repo" <<'PY'
+import pathlib
+import sys
+
+repo = pathlib.Path(sys.argv[1])
+(repo / "README.md").write_text("# Multi-round fixture\n", encoding="utf-8")
+for index in range(3000):
+    (repo / f"fixture_{index:04d}.go").write_text(
+        f"package fixture\n\n// fixture {index:04d} keeps RG output large.\n",
+        encoding="utf-8",
+    )
+PY
+  git -C "$repo" add README.md fixture_*.go
+  git -C "$repo" commit -m "multi-round budget fixture" >/dev/null
+
+  cat > "$config_file" <<EOF
+default_model = "multiround"
+answer_model = "multiround"
+file_discovery_model = "multiround"
+
+[providers.multiround]
+base_url = "http://127.0.0.1:$port/v1"
+api_key = "multiround-key"
+
+[models.multiround]
+provider = "multiround"
+model = "multiround-model"
+context_length = 8192
+EOF
+
+  (
+    cd "$repo"
+    MACHTIANI_CONFIG="$config_file" "$MCT_AGENT" init --no-interactive --config-scope global >/dev/null
+    MACHTIANI_CONFIG="$config_file" "$MCT_AGENT" sync --turn-timeout 30 --context-length 8192
+  ) >"$stdout_file" 2>"$stderr_file" || {
+    echo "ERROR: multi-round discovery budget sync failed" >&2
+    cat "$stderr_file" >&2
+    stop_llm_stub_server
+    return 1
+  }
+
+  if ! grep -Fq 'Readme synced for commit ' "$stdout_file"; then
+    echo "ERROR: multi-round discovery sync did not complete" >&2
+    cat "$stdout_file" >&2
+    stop_llm_stub_server
+    return 1
+  fi
+  if ! "$PYTHON_BIN" - "$state_file" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    state = json.load(fh)
+if int(state.get("discovery_requests", 0)) < 21:
+    raise SystemExit(f"expected at least 21 discovery requests, got {state}")
+if int(state.get("max_discovery_tokens", 0)) > 5120:
+    raise SystemExit(f"request exceeded 5120-token cap: {state}")
+if not state.get("summary_seen"):
+    raise SystemExit(f"compacted discovery summary was never observed: {state}")
+if not state.get("forced_finalization_seen"):
+    raise SystemExit(f"forced finalization request was not observed: {state}")
+print(f"validated {state['discovery_requests']} multi-round discovery requests; max={state['max_discovery_tokens']} tokens")
+PY
+  then
+    stop_llm_stub_server
+    return 1
+  fi
+  stop_llm_stub_server
+}
+
 test_discovery_context_budget_live() {
   if [[ "$LIVE_MODE" != true ]]; then
     echo "Skipping discovery context budget case outside live mode." >&2
@@ -3794,6 +3998,7 @@ PY
 declare -A TESTS=(
 	["sync-footer"]="run_sync_footer_case"
 	["discovery-turn-timeout"]="test_discovery_turn_timeout"
+	["discovery-multiround-budget"]="test_discovery_multiround_budget"
 	["discovery-context-budget-live"]="test_discovery_context_budget_live"
   ["test_local_tmp_root_unset_live"]="run_local_tmp_root_unset_live_case"
   ["test_code_no_forge"]="test_code_no_forge"
@@ -3859,6 +4064,7 @@ if [[ $# -eq 0 ]]; then
 # Per-component flag coverage.
 run_test_case "sync_footer" run_sync_footer_case
 run_test_case "discovery_turn_timeout" test_discovery_turn_timeout
+run_test_case "discovery_multiround_budget" test_discovery_multiround_budget
 run_test_case "mode_prompt_layers" run_mode_prompt_layers_case
 
 # Resume without mode: verify shell-agent system prompt survives
