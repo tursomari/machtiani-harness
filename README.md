@@ -5,7 +5,10 @@ This repository now houses the full Machtiani toolchain inside a single Go modul
 1) `agent/internal/file-discovery` — the helper binary that performs LLM-guided file discovery using a strict RG> protocol.
 2) `agent` — the orchestrator that drives the loop and links against the internal libraries directly.
 
-Most users only need the `mct-agent` binary. The install script builds `mct-agent` by default and exposes an opt-in flag when you want the standalone `mct`, `file-discovery`, and `shell-agent` binaries. Project state is keyed by a UUID in `~/.machtiani/<uuid>/`; the repository contains only the trackable `.machtiani/project.uuid` marker.
+Most users only need the `mct-agent` binary. The default Nix package contains
+only that executable; standalone internal tools remain development builds.
+Project state is keyed by a UUID in `~/.machtiani/<uuid>/`; the repository
+contains only the trackable `.machtiani/project.uuid` marker.
 
 ## Repo-local `mct-agent` workflow
 
@@ -29,8 +32,11 @@ The agent now ships with a mode system that supervises multi-step work. When you
 Sandboxing and environment isolation belong in an external scaffold layer, not inside mct-agent business logic. The agent itself supports only local process execution. For reproducible sandboxed runs, a separate scaffold such as the NixOS QEMU VM defined in the nixlab project or a Docker Compose setup provides the isolation boundary. The skyvern-docker branch preserves a Docker-based Skyvern experiment with VNC streaming as an example of external scaffolding. See shell.nix for a Nix-based Skyvern runtime environment.
 
 ## Prerequisites
-- Go: install Go 1.23+ (to satisfy all internal packages; `mct` builds with 1.22+, `file-discovery` with 1.23).
-- ripgrep: `rg` must be on PATH (used by `file-discovery`).
+- Nix 2.24 or newer with flakes enabled for installation, updates, and the
+  pinned development environments.
+- Go 1.23+ only for direct Go development outside the Nix shells.
+- The installed Nix package supplies pinned Git, ripgrep, Bash, coreutils, and
+  GNU sed for agent-launched commands; they do not need separate host installs.
 - OpenAI‑compatible API access:
   - API key and base URL for models used by `mct` and/or the agent.
 - A writable bin directory on PATH (e.g., `~/.local/bin`).
@@ -58,7 +64,7 @@ The integration suites fall back to deterministic stub or dry-run behavior when 
 export TEST_API_KEY=sk_...
 export TEST_BASE_URL=https://api.openai.com/v1
 export TEST_MODEL=gpt-4o-mini
-nix build .#mct-agent
+nix build '.#mct-agent'
 PATH="$PWD/result/bin:$PATH" bash agent/tests/run-live.sh
 ```
 
@@ -69,20 +75,35 @@ PATH="$PWD/result/bin:$PATH" bash agent/tests/run-live.sh
 
 See `TESTING.md` for the complete testing guide, including prerequisites, commands, environment variables, artifacts, and debugging workflows for every harness.
 
-## Install and update
+## Managed and development installations
+
+Use two distinct command names when testing development branches:
+
+- `mct-agent` is the managed installation. Its built-in updater follows the
+  remote default branch.
+- `mct-agent-dev` is a development build from a checkout you advance and
+  rebuild manually. It does not replace or update `mct-agent`.
+
+Both commands use the same Machtiani configuration and project data under
+`~/.machtiani`; only their executable installation and update paths differ.
+
+### Managed installation: `mct-agent`
 
 Nix 2.24 or newer with flakes enabled is required on NixOS, macOS, and other
 Linux distributions. Install from a clean clone whose `origin` identifies the
-update stream:
+update stream. The checkout must be at the tip of the remote default branch:
 
 ```bash
 git clone <repository-url> ~/src/mct-bootstrap
 cd ~/src/mct-bootstrap
-nix run .#install
+nix run '.#install'
 hash -r
 mct-agent --version
-mct-agent update
+mct-agent update --check
 ```
+
+In Zsh, `rehash` can be used instead of `hash -r`. Quoting `'.#install'`
+prevents Zsh from treating the flake selector as a glob.
 
 The installer builds the exact remote default-branch commit through the locked
 flake, activates it in the dedicated profile at
@@ -92,10 +113,72 @@ prefix. Existing configuration, update policy, projects, sessions, and
 artifacts are preserved by an explicit reinstall; installations from the
 earlier receipt format must be reinstalled once.
 
+When the remote default branch advances, check and install the exact new
+commit with:
+
+```bash
+mct-agent update --check
+mct-agent update
+mct-agent --version
+```
+
+Do not rebuild the managed profile manually. `mct-agent update` fetches,
+validates, activates, and records the new default-branch commit.
+
+### Development installation: `mct-agent-dev`
+
+Clone the branch to test. This example uses the `install` branch, but the same
+workflow works for any development branch:
+
+```bash
+git clone --branch install --single-branch <repository-url> ~/src/mct-bootstrap
+cd ~/src/mct-bootstrap
+
+dev_profile="$HOME/.machtiani/installations/mct-agent/dev-profile"
+nix build --profile "$dev_profile" '.#mct-agent'
+
+mkdir -p "$HOME/.local/bin"
+cat >"$HOME/.local/bin/mct-agent-dev" <<'EOF'
+#!/usr/bin/env sh
+export MCT_AGENT_UPDATE_REEXEC=1
+exec "$HOME/.machtiani/installations/mct-agent/dev-profile/bin/mct-agent" "$@"
+EOF
+chmod +x "$HOME/.local/bin/mct-agent-dev"
+
+hash -r
+mct-agent-dev --version
+```
+
+The wrapper disables automatic managed-update checks for development
+invocations. It does not change `mct-agent` or its managed profile. Ensure
+`~/.local/bin` is on `PATH`; Zsh users may run `rehash` after creating the
+wrapper.
+
+When the development branch advances, pull it and rebuild the same profile:
+
+```bash
+cd ~/src/mct-bootstrap
+git pull --ff-only origin install
+
+dev_profile="$HOME/.machtiani/installations/mct-agent/dev-profile"
+nix build --profile "$dev_profile" '.#mct-agent'
+mct-agent-dev --version
+```
+
+Use the commands independently:
+
+```bash
+mct-agent-dev run -t "Test the development build"
+mct-agent run -t "Use the managed build"
+```
+
+Do not run `mct-agent-dev update`; rebuild it with `nix build --profile`.
+Reserve `mct-agent update` for the managed installation.
+
 Expanded commands:
 
 ```bash
-nix build .#mct-agent
+nix build '.#mct-agent'
 ./result/bin/mct-agent install --source "$PWD" --verbose
 mct-agent update --check
 mct-agent update --check --json
@@ -658,7 +741,7 @@ See `agent/internal/file-discovery/README.md` for direct `file-discovery` usage.
 
 ## Troubleshooting
 - Command not found
-  - Re-run `nix run .#install`, ensure the chosen prefix (default `~/.local/bin`) is on PATH, and rehash your shell (`hash -r`).
+  - Re-run `nix run '.#install'`, ensure the chosen prefix (default `~/.local/bin`) is on PATH, and rehash your shell (`hash -r`).
 - `managed installation requires a clean source checkout`
   - Managed mode rejects tracked changes and untracked files so local work is not silently excluded from the remote-backed build. Check with `git status --short`, or bootstrap from a fresh clone or temporary clean worktree. The bootstrap checkout can be deleted after installation.
 - Missing model configuration / auth errors
