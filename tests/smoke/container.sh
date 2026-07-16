@@ -10,7 +10,7 @@ run_sync_under_pty() {
 set timeout -1
 log_user 1
 log_file -noappend "$output_file"
-spawn sh -c {stty cols 240; exec mct-agent sync $sync_args}
+spawn sh -c {stty cols 240; exec ${MCT_SMOKE_AGENT:-mct-agent} sync $sync_args}
 expect eof
 set result [wait]
 exit [lindex \$result 3]
@@ -76,7 +76,6 @@ grep -Fq 'context_length: 128000 (model)' /tmp/context-overflow-answer-before.st
 (
   cd /fixtures/mct-source/agent
   MACHTIANI_CONFIG="$overflow_config" \
-    nix develop path:/fixtures/mct-source#default -c \
     go run ./tests/context-overflow-smoke
 ) \
   > /tmp/context-overflow.stdout \
@@ -93,7 +92,15 @@ grep -Fq 'context_length: 128000 (model)' /tmp/context-overflow-answer-after.std
 echo "==> Synchronizing repository state..."
 sync_output=$(mktemp)
 sync_clean=$(mktemp)
-run_sync_under_pty "$sync_output" --verbose
+wrapper_agent=$(readlink -f "$(command -v mct-agent)")
+native_agent="$(dirname "$wrapper_agent")/.mct-agent-wrapped"
+test -x "$native_agent"
+shell_tool_trap=$(mktemp -d)
+for tool in rg sed ls; do
+  printf '#!/bin/sh\necho "unexpected sync file-tool invocation: %s" >&2\nexit 97\n' "$tool" > "$shell_tool_trap/$tool"
+  chmod +x "$shell_tool_trap/$tool"
+done
+MCT_SMOKE_AGENT="$native_agent" PATH="$shell_tool_trap:$PATH" run_sync_under_pty "$sync_output" --verbose
 strip_ansi "$sync_output" > "$sync_clean"
 grep -q 'Readme synced for commit ' "$sync_clean"
 grep -Eq 'tokens[[:space:]]+input hit [0-9,]+[[:space:]]+input miss [0-9,]+[[:space:]]+output [0-9,]+' "$sync_clean"
@@ -120,6 +127,7 @@ if grep -Eq '(discovery|answer)[[:space:]]' "$sync_noop_clean"; then
   exit 1
 fi
 rm -f "$sync_output" "$sync_clean" "$sync_noop_output" "$sync_noop_clean"
+rm -rf "$shell_tool_trap"
 
 # Step 6: Live execution
 echo "==> Running live smoke test..."

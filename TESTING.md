@@ -13,9 +13,10 @@ This is the canonical, self-contained guide for every test harness in the `mct-a
 - `scripts/` retains installation, benchmark, treatment, and evaluation runners; those stable paths are intentionally separate from test harnesses.
 
 ## Prerequisites
-- Go 1.23+ installed and on PATH.
+- Go 1.26.5, provided by `nix develop .#default`.
 - `git` for cloning fixture repositories during integration tests.
-- `rg` (ripgrep) recommended on PATH; the integration harnesses expect it when exercising the toolchain.
+- `rg`, `sed`, and `ls` are not prerequisites for sync file-discovery. Some
+  separate shell-agent tests intentionally exercise the host command toolchain.
 - Docker, for the clean-container smoke test.
 - For live LLM runs: valid `TEST_API_KEY`, `TEST_BASE_URL`, and `TEST_MODEL` values, or the `OPENAI_*` fallbacks supported by the selected harness.
 
@@ -40,11 +41,12 @@ The root sweep covers the standard Go suites below. Use these commands when focu
 cd agent/internal/file-discovery
 go test ./...
 go test ./e2e -v
-go test ./internal/discovery -run TestToolCallExecution_RealCommands -v
+go test ./internal/discovery -run TestToolCallExecution_NativeOperations -v
 go test -tags e2e_slow_rg ./e2e -run CmdTimeout -v
 ```
 
-The E2E and real-command suites require `rg`; tool-call execution also uses `sed` and `ls`. To exercise the flag suite in its component test image:
+The E2E suite clears runtime `PATH`, so it proves that file discovery does not
+invoke external commands. To exercise the flag suite in its component test image:
 
 ```bash
 cd agent/internal/file-discovery
@@ -197,9 +199,12 @@ export TEST_API_KEY=sk_...
 export TEST_BASE_URL=https://api.openai.com/v1
 export TEST_MODEL=gpt-4o-mini
 rev="$(git rev-parse HEAD)"
-flake="git+file://$PWD?rev=$rev"
-agent_store="$(nix build --no-link --print-out-paths "$flake#mct-agent")"
-MCT_AGENT_BIN="$agent_store/bin/mct-agent" \
+short="$(git rev-parse --short=12 HEAD)"
+built="$(git show -s --format=%ct HEAD)"
+test_agent="$(mktemp -d)/mct-rg-ls-sed-test-agent"
+nix develop .#default -c bash -c \
+  "cd agent && CGO_ENABLED=0 go build -trimpath -ldflags '-X main.Version=dev-$short -X main.Commit=$rev -X main.BuiltAt=$built -X main.Dirty=clean' -o '$test_agent' ./cmd/mct-agent"
+MCT_AGENT_BIN="$test_agent" \
 MCT_REQUIRE_LIVE=true \
 bash agent/tests/run-live.sh
 ```
@@ -234,14 +239,18 @@ bash agent/tests/run-live.sh no-such-case 2>&1 | head -5
 
 #### Repo Synchronization and Installed Binary
 
-The harness does not install, profile-link, PATH-resolve, or invoke a host command named `mct-agent`. Build committed `HEAD` without creating a `result` symlink, then pass the immutable store binary explicitly:
+The harness does not install, profile-link, PATH-resolve, or invoke a host
+command named `mct-agent`. Build committed `HEAD` under a collision-free test
+name, then pass that absolute path explicitly:
 
 ```bash
 rev="$(git rev-parse HEAD)"
-flake="git+file://$PWD?rev=$rev"
-nix flake check "$flake"
-agent_store="$(nix build --no-link --print-out-paths "$flake#mct-agent")"
-MCT_AGENT_BIN="$agent_store/bin/mct-agent" bash agent/tests/run-live.sh discovery-multiround-budget
+short="$(git rev-parse --short=12 HEAD)"
+built="$(git show -s --format=%ct HEAD)"
+test_agent="$(mktemp -d)/mct-rg-ls-sed-test-agent"
+nix develop .#default -c bash -c \
+  "cd agent && CGO_ENABLED=0 go build -trimpath -ldflags '-X main.Version=dev-$short -X main.Commit=$rev -X main.BuiltAt=$built -X main.Dirty=clean' -o '$test_agent' ./cmd/mct-agent"
+MCT_AGENT_BIN="$test_agent" bash agent/tests/run-live.sh discovery-multiround-budget
 ```
 
 This workflow leaves `~/.local/bin/mct-agent` and
@@ -508,7 +517,9 @@ The original evaluation pipeline, documented in scripts/run_eval.sh itself. It c
 
 ## Troubleshooting
 - Unit tests should pass without extra setup; if they fail due to missing cache directories, ensure your shell honors the `GOCACHE` export above.
-- Integration runs that report a missing binary require a valid absolute `MCT_AGENT_BIN`; rebuild committed `HEAD` with `nix build --no-link --print-out-paths` and pass its `/bin/mct-agent` path.
+- Integration runs that report a missing binary require a valid absolute
+  `MCT_AGENT_BIN`; rebuild committed `HEAD` under a collision-free test name as
+  shown above and pass that path.
 - Stub mode is active when outputs mention `stub-echo`, `mock`, or `--dry-run`. Verify that the required `OPENAI_*`/`MACHTIANI_CONFIG` values are exported to switch to live mode.
 - The Docker smoke runner tests committed `HEAD`, not working-tree changes. A surprising old result usually means the intended change has not been committed.
 - A Docker smoke run must not be considered successful merely because configuration initialization passed; verify the live run and conversation artifact checks also completed.

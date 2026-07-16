@@ -1,19 +1,23 @@
-# file-discovery — LLM-driven file discovery (RG/SED/LS protocol)
+# file-discovery — rooted native file discovery
 
-A Go CLI that helps an LLM discover relevant files in a repository using a strict tool protocol. The LLM decides; the agent runs a constrained set of commands, post-filters results, and returns compact outputs. When the model finalizes, the agent prints exactly one deterministic BEGIN/END block of relevant paths to stdout.
+A Go CLI that helps an LLM discover relevant repository files through three
+read-only operations implemented in this Go module. The historical
+`RG_OUT`/`SED_OUT`/`LS_OUT` marker names remain part of the model protocol, but
+sync does not launch `rg`, `sed`, `ls`, or a shell.
 
 ## Highlights
-- Model-driven, minimal tool surface: only three allowed commands
-  - `RG> rg --files --hidden | rg "pattern"`
-  - `SED> sed -n "PROGRAM" PATH` (bounded content peek; 200 lines max)
-  - `LS> ls -la PATH` (bounded directory/file listing; 200 lines max)
-- Executes ripgrep/sed locally (no shell), applies extra excludes, caps outputs (20 KB for RG, 200 lines for SED)
+- Model-driven, minimal tool surface: `file_search`, `read_file`, and `list_dir`
+- Opens one read-only `os.Root` for the sync workspace and performs all three
+  operations relative to it
+- Reconciles in-workspace symlinks to their targets while preserving logical
+  paths; broken, cyclic, and out-of-workspace links are skipped or rejected
+- Applies rooted ignore files and hard excludes, deterministic sorting, Go RE2
+  filtering, and bounded output
 - Enforces strict protocol, per-request token fitting, emergency initial-input limits, and final block validation
 - All logs to stderr; prints exactly one final block to stdout on success
 
 ## Requirements
-- Go 1.23 (Linux)
-- ripgrep (`rg`) in PATH
+- Go 1.26.5
 - For full loop: OpenAI-compatible Chat Completions endpoint
   - `OPENAI_API_KEY` (required)
   - `OPENAI_BASE_URL` (required)
@@ -54,8 +58,8 @@ Flags:
  - `-model`, `--openai-model` (overrides `OPENAI_MODEL`)
 - `-session-id`, `-s` (optional): if provided, the first 5 characters tag the BEGIN/END markers for correlation across concurrent runs
 - Dry-run (no network):
-  - `-dry-run-rg`: run ripgrep locally and print an `RG_OUT` block to stderr
-- `-pattern <regex>`: local regex to filter paths (mirrors `RG> rg --files --hidden | rg "pattern"`)
+  - `-dry-run-rg`: enumerate native workspace files and print an `RG_OUT` block to stderr; the flag name is retained for compatibility
+- `-pattern <regex>`: Go RE2 expression used to filter workspace-relative paths
 
 Trajectory recording:
 - `-trajectory <path>`: write a JSONL trajectory to the given path.
@@ -118,21 +122,22 @@ pattern: "<regex>"
 ```
 
 Both modes expose the same three logical tools:
-- `file_search`: runs `rg --files --hidden` in the repo root and filters with the provided regex pattern (`kind` must be `files_pattern`).
-- `read_file`: runs `sed -n PROGRAM -- PATH` to stream up to 200 lines from a relative path that already appeared in some `RG_OUT`.
-- `list_dir`: runs `ls -la -- PATH` for a validated relative directory path (no prior `RG_OUT` requirement).
+- `file_search`: enumerates deterministic workspace-relative source paths and filters them with a Go RE2 pattern (`kind` must be `files_pattern`).
+- `read_file`: reads either an inclusive range such as `1,120p` or lines matching a Go RE2 form such as `/pattern/p`, up to 200 results. The path must already have appeared in an `RG_OUT`.
+- `list_dir`: returns sorted, tab-delimited native metadata for a validated relative path (no prior `RG_OUT` requirement).
 
 Paths must be relative (no leading `/`), cannot contain `..` or trailing `/`, and may not include backslashes. For `read_file`, the path must have been listed in a previous `RG_OUT` block during the same run.
 
 Agent execution semantics:
-- Always runs `rg --files --hidden` in the repo root (cwd) and applies a regex when the tool call specifies a pattern.
+- Opens the selected workspace root once and keeps all resolution and reads rooted there without changing the process working directory.
+- Loads rooted `.gitignore`, `.ignore`, and `.rgignore` files. Later layers take precedence in that order, matching ripgrep-style precedence without consulting user-global ignore configuration.
 - Post-filters common junk directories and binary/asset extensions (case-insensitive):
   - Dirs: `.git`, `node_modules`, `dist`, `build`, `vendor`, `.venv`, `__pycache__`, `.next`, `target`
   - Exts: `.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.ico`, `.pdf`, `.zip`, `.jar`, `.exe`, `.dll`, `.so`, `.dylib`, `.bin`, `.wasm`, `.ttf`, `.otf`, `.woff`, `.woff2`, `.mp4`, `.mov`, `.mp3`, `.wav`, `.gz`, `.tar`, `.tgz`, `.7z`
 - When `file_search` includes a pattern, applies it locally to the filtered path list.
 - Returns a single `RG_OUT` block (truncated at 20 KB with a clear footer).
-- For `read_file`, runs `sed -n PROGRAM -- PATH`, captures up to 200 lines, and returns one `SED_OUT[PATH]:` block (with a truncation footer if the 200-line cap is hit).
-- For `list_dir`, runs `ls -la -- PATH`, captures up to 200 lines, and returns one `LS_OUT[PATH]:` block (with a truncation footer if the 200-line cap is hit).
+- For `read_file`, reads through the rooted handle and returns one `SED_OUT[PATH]:` compatibility block.
+- For `list_dir`, emits stable `kind`, mode, size, UTC timestamp, quoted name, and optional symlink-target fields in one `LS_OUT[PATH]:` compatibility block.
 
 Example `RG_OUT` (to the assistant, via user message):
 ```
@@ -154,11 +159,8 @@ END_SED_OUT
 Example `LS_OUT`:
 ```
 LS_OUT[path/to/dir]:
-total 24
-drwxr-xr-x  5 user user  160 Sep  1 12:00 .
-drwxr-xr-x 14 user user  448 Sep  1 12:00 ..
--rw-r--r--  1 user user  123 Sep  1 12:00 .hidden
--rw-r--r--  1 user user  456 Sep  1 12:00 file.txt
+file\t-rw-r--r--\t123\t2026-07-16T12:00:00Z\t".hidden"
+file\t-rw-r--r--\t456\t2026-07-16T12:00:00Z\t"file.txt"
 END_LS_OUT
 ```
 
@@ -189,21 +191,21 @@ All other logs (rounds, RG execution, warnings, errors) go to stderr.
 ## Limits
 - Max rounds: 20
 - Per-command timeout: 30s
-- Per-command captured stdout: 20 KB (truncates with a footer)
+- Per-operation `RG_OUT`: 20 KB (truncates with a footer)
 - Global transcript limit: 300 KB (sum of message contents)
 - SED per-command output: 200 lines (truncates with a footer)
 - LS per-command output: 200 lines (truncates with a footer)
 
 If the transcript limit is hit, the agent asks the model to produce the final block. If the model still doesn’t provide a valid block, the agent exits non-zero.
 
-When the round cap is reached without a valid final block, the agent performs one extra, finalization-only turn (round `max_rounds + 1`) by appending a strict user instruction: no `RG>`/`SED>` commands are allowed and the assistant must emit exactly one `BEGIN_RELEVANT_FILES[file-discovery]` … `END_RELEVANT_FILES[file-discovery]` block. If a valid block is returned, it is normalized (applying the session marker label when provided) and printed; otherwise the agent exits non-zero.
+When the round cap is reached without a valid final block, the agent performs one extra, finalization-only turn (round `max_rounds + 1`) by appending a strict user instruction: no more tool calls are allowed and the assistant must emit exactly one `BEGIN_RELEVANT_FILES[file-discovery]` … `END_RELEVANT_FILES[file-discovery]` block. If a valid block is returned, it is normalized (applying the session marker label when provided) and printed; otherwise the agent exits non-zero.
 
 ## Logging
 - Startup: base URL, model, limits, cwd
 - Per round: bytes sent/received (approx), token usage if provided
-- Per RG command: duration, path count, bytes (before/after truncation), truncated flag
-- Per SED command: duration, lines emitted, truncated flag
-- Per LS command: duration, lines emitted, truncated flag
+- Native enumeration: duration, path count, skip counts, diagnostics count, bytes, and truncation
+- Native read: duration, lines emitted, and truncation
+- Native listing: duration, entries emitted, and truncation
 - Final block detection/validation messages
 
 ## Exit Codes
@@ -212,28 +214,29 @@ When the round cap is reached without a valid final block, the agent performs on
 
 ## Common Errors (stderr)
 - `API key not provided (use -api-key or OPENAI_API_KEY)`
-- `ripgrep (rg) is required; install from https://github.com/BurntSushi/ripgrep`
 - `Command timed out after 30s` (configurable via `-cmd-timeout`)
-- `Command rejected: Allowed forms are 'RG> rg --files --hidden | rg "pattern"', 'SED> sed -n "PROGRAM" PATH', or 'LS> ls -la PATH'`
-- `SED path not allowed: <path> not found in any prior RG_OUT`
+- `read_file path not allowed: <path> not found in any prior RG_OUT`
 - `Transcript limit reached without final block`
 - `No relevant file block produced`
 
 ## Security & Scope
-- Runs inside an external sandbox; no shell execution
-- Only executes `rg --files --hidden`, `sed -n PROGRAM -- PATH`, and `ls -la -- PATH` with strict validation and no shell
-- Applies strict path validation and requires SED PATH to have been listed in a prior `RG_OUT`
-- Hard caps outputs: 20 KB for RG_OUT; 200 lines for SED_OUT
+- Performs no process execution in file-discovery production code
+- Uses `os.Root` plus component-wise symlink reconciliation; absolute and relative symlink targets must resolve inside the canonical workspace
+- Uses read-only filesystem calls and never mutates repository files
+- Applies strict protocol-path validation and requires `read_file` paths to have been listed in a prior `RG_OUT`
+- Hard caps outputs: 20 KB for `RG_OUT`; 200 lines for read/list output; 1 MiB per scanned line
 
 ## Development Notes
 - Project layout:
   - `cmd/file-discovery`: CLI entrypoint and flag parsing
-  - `internal/discovery`: core loop (RG protocol, excludes, API calls)
+  - `internal/discovery`: core loop, compatibility protocol, and API calls
+  - `internal/fileops`: rooted enumeration, reads, listings, ignores, and symlink policy
   - `internal/config`: config, logging, trajectory recorder, helpers
 - HTTP client calls OpenAI-compatible `/chat/completions` with `temperature=1` and `max_tokens≈2048`
-- Clean separation of: RG parsing, execution, excludes, formatting, validation
+- Compatibility marker/event names (`RG_*`, `SED_*`, and `LS_*`) are intentionally stable for existing trajectories and prompts.
 
-## Future Extensions
-- Additional safe rg forms: `-uu`, `--type`, `--glob`
-- Flags to override model/base URL; streaming responses
-- Hardening/sandbox policies (out of scope here)
+## Scope
+
+This native backend is used by file-discovery during `mct-agent sync`.
+Standalone shell-agent execution is separate, and snippet-discovery and
+deprecated mct-code behavior are unchanged.

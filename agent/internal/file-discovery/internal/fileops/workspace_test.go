@@ -2,6 +2,7 @@ package fileops
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -140,11 +141,31 @@ func TestReadLinesRangeRegexpAndSymlink(t *testing.T) {
 	}
 }
 
+func TestReadLinesRejectsOutsideSymlink(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "secret.txt")
+	if err := os.WriteFile(outside, []byte("secret\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "outside.txt")); err != nil {
+		t.Fatal(err)
+	}
+	w := openFixture(t, root)
+	_, _, err := w.ReadLines(context.Background(), "outside.txt", Selector{StartLine: 1, EndLine: 1})
+	var pathErr *PathError
+	if !errors.As(err, &pathErr) || pathErr.Reason != SkipOutside {
+		t.Fatalf("error = %v, want outside-workspace PathError", err)
+	}
+}
+
 func TestListDirStableFormatAndSymlinkKinds(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "dir/z.txt", "z\n")
 	writeFile(t, root, "dir/a.txt", "a\n")
 	if err := os.Symlink("a.txt", filepath.Join(root, "dir", "link.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("dir", filepath.Join(root, "dir-link")); err != nil {
 		t.Fatal(err)
 	}
 	w := openFixture(t, root)
@@ -161,6 +182,13 @@ func TestListDirStableFormatAndSymlinkKinds(t *testing.T) {
 	line := entries[1].Line()
 	if !strings.Contains(line, "symlink:file\t") || !strings.Contains(line, "\"link.txt\"\t->\t\"a.txt\"") {
 		t.Fatalf("line = %q", line)
+	}
+	linkedEntries, _, err := w.ListDir(context.Background(), "dir-link")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := []string{linkedEntries[0].Name, linkedEntries[1].Name, linkedEntries[2].Name}; !slices.Equal(got, []string{"a.txt", "link.txt", "z.txt"}) {
+		t.Fatalf("directory symlink listing order = %#v", got)
 	}
 }
 

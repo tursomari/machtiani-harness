@@ -767,7 +767,8 @@ See `agent/internal/file-discovery/README.md` for direct `file-discovery` usage.
 - `file-discovery` not found
   - Only applies to manually built developer peripherals; build `file-discovery` from the source tree or point `FILE_DISCOVERY_BIN` at a compatible binary.
 - `rg` missing
-  - Install ripgrep (`rg`) and ensure it’s on PATH.
+  - Sync file-discovery does not require `rg`. This error can only come from a
+    separate shell-agent workflow; install ripgrep if that workflow needs it.
 - Saved chat not found
   - If you are using the optional `mct` CLI, ensure it completed successfully and wrote `$PROJECT_STORE/sessions/<session-id>/chat/machtiani-response.md`.
 

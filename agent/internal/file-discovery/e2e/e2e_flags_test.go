@@ -5,6 +5,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"go/parser"
+	"go/token"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -135,6 +138,35 @@ func TestDryRun_RGOnly(t *testing.T) {
 	}
 	if strings.Contains(res.stderr, ".git/keep") || strings.Contains(res.stderr, "node_modules/") || strings.Contains(res.stderr, "logo.png") || strings.Contains(res.stderr, "spec.pdf") {
 		t.Fatalf("expected excludes applied; got:\n%s", res.stderr)
+	}
+}
+
+func TestProductionSourceDoesNotImportProcessExecution(t *testing.T) {
+	_, testFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve test source path")
+	}
+	componentRoot := filepath.Dir(filepath.Dir(testFile))
+	err := filepath.WalkDir(componentRoot, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		parsed, err := parser.ParseFile(token.NewFileSet(), path, nil, parser.ImportsOnly)
+		if err != nil {
+			return err
+		}
+		for _, spec := range parsed.Imports {
+			if spec.Path.Value == `"os/exec"` {
+				t.Errorf("production file-discovery source imports os/exec: %s", path)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 
