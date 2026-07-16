@@ -45,12 +45,11 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 	if runtimeIsZero(answerRuntime) {
 		answerRuntime = opts.Runtime
 	}
-	budget, err := llm.ResolveInputBudget(answerRuntime.Resolved, opts.ContextLength)
+	budget, err := llm.ResolveInputBudgetForChain(answerRuntime.Resolved, answerRuntime.FallbackResolved, opts.ContextLength)
 	if err != nil {
 		return res, err
 	}
 	maxInputTokens := budget.MaxInputTokens
-	llm.EmitContextBudget(ctx, answerRuntime.Resolved, budget)
 
 	origSession := os.Getenv("MACHTIANI_SESSION_ID")
 	restoreSession := false
@@ -87,7 +86,7 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 	}
 
 	// Transform raw prompt into decision-based instruction for session resumption
-	if opts.SessionID != "" {
+	if opts.PromptMaterial == nil && opts.SessionID != "" {
 		historyNote := ""
 		if len(hist) > 0 {
 			historyNote = "Review the session history above and "
@@ -95,6 +94,15 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 		opts.Prompt = fmt.Sprintf(
 			"Continue this session. %sAnalyze the conversation history and decide what action to take or how to respond: %s",
 			historyNote, opts.Prompt)
+	}
+	answerMaterialTruncated := false
+	if opts.PromptMaterial != nil {
+		fitted, fitErr := opts.PromptMaterial.Render(maxInputTokens)
+		if fitErr != nil {
+			return res, fmt.Errorf("answer context budget: %w", fitErr)
+		}
+		opts.Prompt = fitted.Text
+		answerMaterialTruncated = fitted.Truncated
 	}
 	combined := opts.Prompt
 	included := []string(nil)
@@ -111,6 +119,29 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 		if strings.TrimSpace(fdRuntime.Resolved.Model) == "" {
 			fdRuntime = opts.Runtime
 		}
+		discoveryBudget, err := llm.ResolveInputBudgetForChain(fdRuntime.Resolved, fdRuntime.FallbackResolved, opts.ContextLength)
+		if err != nil {
+			return res, fmt.Errorf("discovery context budget: %w", err)
+		}
+		discoveryCue := opts.Prompt
+		discoveryTruncated := false
+		if opts.PromptMaterial != nil {
+			cueLimit, limitErr := discoveryrunner.InitialPromptTokenLimit(discoveryBudget)
+			if limitErr != nil {
+				return res, limitErr
+			}
+			fitted, fitErr := opts.PromptMaterial.Render(cueLimit)
+			if fitErr != nil {
+				return res, fmt.Errorf("discovery context budget: %w", fitErr)
+			}
+			discoveryCue = fitted.Text
+			discoveryTruncated = fitted.Truncated
+		} else {
+			discoveryCue, discoveryTruncated, err = discoveryrunner.FitInitialPrompt(discoveryCue, discoveryBudget)
+			if err != nil {
+				return res, err
+			}
+		}
 		drModel := discoveryrunner.ModelSettings{
 			UsingAlias:         fdRuntime.UsingAlias,
 			Alias:              fdRuntime.Alias,
@@ -123,9 +154,18 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 			TrajectoryOverride: strings.TrimSpace(opts.FileDiscoveryTrajectory),
 			APIKeyOverrides:    llm.CopyAPIKeyOverridesForRuntime(fdRuntime.APIKeyOverrides),
 			TurnTimeout:        opts.TurnTimeout,
+			InputBudget:        discoveryBudget,
+			PromptTruncated:    discoveryTruncated,
 		}
 		discoCtx := llm.WithStage(llm.WithAPIKeyOverrides(ctx, fdRuntime.APIKeyOverrides), "file-discovery")
-		dr, err := discoveryRunnerRun(discoCtx, opts.Prompt, drModel, opts.SessionID, opts.Verbose)
+		llm.EmitContextBudgetDetails(discoCtx, fdRuntime.Resolved, discoveryBudget, map[string]any{
+			"applied_timeout_sec": opts.TurnTimeout,
+			"truncated":           discoveryTruncated,
+		})
+		if opts.Verbose {
+			fmt.Fprintf(os.Stderr, "llm.context_budget.resolved context_length=%d source=%s max_input_tokens=%d stage=file-discovery model_alias=%s applied_timeout_sec=%d truncated=%t\n", discoveryBudget.ContextLength, discoveryBudget.Source, discoveryBudget.MaxInputTokens, fdRuntime.Resolved.Alias, opts.TurnTimeout, discoveryTruncated)
+		}
+		dr, err := discoveryRunnerRun(discoCtx, discoveryCue, drModel, opts.SessionID, opts.Verbose)
 		if err != nil {
 			return res, fmt.Errorf("file discovery: %w", err)
 		}
@@ -135,16 +175,23 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 
 	directiveBlock := formatResponseDirectives(opts.ResponseDirectives)
 	buildCombined := func(inputLimit int) (string, []string, error) {
+		contentLimit := inputLimit
+		if !opts.ShellAgent && inputLimit > 0 && directiveBlock != "" {
+			contentLimit -= llm.EstimateTokens("\n\n" + directiveBlock)
+			if contentLimit <= 0 {
+				return "", nil, fmt.Errorf("answer context budget %d cannot fit required response directives", inputLimit)
+			}
+		}
 		var value string
 		var files []string
 		var buildErr error
 		switch {
 		case isAnswerOnly:
-			value, files, buildErr = contextbuilder.Build(opts.Prompt, nil, hist, contextbuilder.Options{IncludeHistory: includeHistory, MaxInputTokens: inputLimit, PreludeTemplate: historyTemplate})
+			value, files, buildErr = contextbuilder.Build(opts.Prompt, nil, hist, contextbuilder.Options{IncludeHistory: includeHistory, MaxInputTokens: contentLimit, PreludeTemplate: historyTemplate})
 		case opts.ShellAgent:
 			value = opts.Prompt
 		default:
-			value, files, buildErr = contextbuilder.Build(opts.Prompt, filtered, hist, contextbuilder.Options{IncludeHistory: includeHistory, MaxInputTokens: inputLimit, PreludeTemplate: historyTemplate})
+			value, files, buildErr = contextbuilder.Build(opts.Prompt, filtered, hist, contextbuilder.Options{IncludeHistory: includeHistory, MaxInputTokens: contentLimit, PreludeTemplate: historyTemplate})
 		}
 		if buildErr != nil {
 			return "", nil, buildErr
@@ -156,6 +203,11 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 				value = directiveBlock
 			}
 		}
+		if !opts.ShellAgent {
+			if err := llm.RequireWithinTokenBudget("answer request", value, inputLimit); err != nil {
+				return "", nil, err
+			}
+		}
 		return value, files, nil
 	}
 	combined, included, err = buildCombined(maxInputTokens)
@@ -163,6 +215,12 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 		return res, err
 	}
 	res.DirectiveBlock = directiveBlock
+	answerTruncated := answerMaterialTruncated || strings.Contains(combined, "TRUNCATED")
+	answerCtx := llm.WithStage(ctx, "answer")
+	llm.EmitContextBudgetDetails(answerCtx, answerRuntime.Resolved, budget, map[string]any{"truncated": answerTruncated})
+	if opts.Verbose {
+		fmt.Fprintf(os.Stderr, "llm.context_budget.resolved context_length=%d source=%s max_input_tokens=%d stage=answer model_alias=%s truncated=%t\n", budget.ContextLength, budget.Source, budget.MaxInputTokens, answerRuntime.Resolved.Alias, answerTruncated)
+	}
 
 	shellAgentUsed := false
 	shellAgentOutput := ""
@@ -360,16 +418,7 @@ func runReadmeManager(ctx context.Context, opts RunOptions, isAnswerOnly bool) e
 		return err
 	}
 	mgr.SetPrompts(opts.Prompts)
-	readmeRuntime := opts.AnswerRuntime
-	if runtimeIsZero(readmeRuntime) {
-		readmeRuntime = opts.Runtime
-	}
-	budget, err := llm.ResolveInputBudget(readmeRuntime.Resolved, opts.ContextLength)
-	if err != nil {
-		return err
-	}
-	mgr.SetMaxInputTokens(budget.MaxInputTokens)
-	mgr.SetPromptExecutor(func(execCtx context.Context, prompt string) (string, error) {
+	mgr.SetPromptExecutor(func(execCtx context.Context, material llm.PromptMaterial) (string, error) {
 		prev, hadPrev := os.LookupEnv(readme.SkipReadmeManagerEnv)
 		if err := os.Setenv(readme.SkipReadmeManagerEnv, "1"); err != nil {
 			return "", fmt.Errorf("set %s: %w", readme.SkipReadmeManagerEnv, err)
@@ -384,7 +433,6 @@ func runReadmeManager(ctx context.Context, opts RunOptions, isAnswerOnly bool) e
 
 		innerSessionID := deriveReadmeSessionID(commit)
 		innerOpts := RunOptions{
-			Prompt:               prompt,
 			Mode:                 "default",
 			IncludeHistory:       false,
 			SessionID:            innerSessionID,
@@ -397,6 +445,7 @@ func runReadmeManager(ctx context.Context, opts RunOptions, isAnswerOnly bool) e
 			TurnTimeout:          opts.TurnTimeout,
 			GlobalConfigPath:     opts.GlobalConfigPath,
 			Prompts:              opts.Prompts,
+			PromptMaterial:       &material,
 		}
 		res, err := Run(execCtx, innerOpts)
 		if err != nil {

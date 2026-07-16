@@ -37,6 +37,33 @@ func TestResolveInputBudgetRuntimeLearned(t *testing.T) {
 	}
 }
 
+func TestResolveInputBudgetForChainUsesSmallestConfiguredBudget(t *testing.T) {
+	budget, err := ResolveInputBudgetForChain(
+		ResolvedModel{ContextLength: 128000, ContextSource: SourceFile},
+		[]ResolvedModel{{ContextLength: 8192, ContextSource: SourceFile}},
+		0,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, _ := BudgetForContextLength(8192, ContextSourceModel)
+	if budget.MaxInputTokens != want.MaxInputTokens || budget.ContextLength != 8192 {
+		t.Fatalf("budget = %#v, want %#v", budget, want)
+	}
+
+	overridden, err := ResolveInputBudgetForChain(
+		ResolvedModel{ContextLength: 128000},
+		[]ResolvedModel{{ContextLength: 8192}},
+		64000,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if overridden.ContextLength != 64000 || overridden.Source != ContextSourceSessionFlag {
+		t.Fatalf("override budget = %#v", overridden)
+	}
+}
+
 func TestContextLengthForInputCap(t *testing.T) {
 	length := ContextLengthForInputCap(50000)
 	budget, err := BudgetForContextLength(length, ContextSourceRuntimeLearned)

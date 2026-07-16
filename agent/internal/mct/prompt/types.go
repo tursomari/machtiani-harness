@@ -39,6 +39,7 @@ type RunOptions struct {
 	Verbose                 bool
 	ContextLength           int
 	TurnTimeout             int
+	PromptMaterial          *llm.PromptMaterial
 	Readme                  *ReadmeOptions
 	ShellAgent              bool
 	ShellAgentModel         string

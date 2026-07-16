@@ -9,10 +9,18 @@ import (
 )
 
 // RunFileDiscovery executes file discovery and returns the discovered paths.
-func RunFileDiscovery(ctx context.Context, prompt string, runtime ModelRuntime, fallbackRuntime ModelRuntime, trajectoryOverride, sessionID string, verbose bool, turnTimeout int) ([]string, error) {
+func RunFileDiscovery(ctx context.Context, prompt string, runtime ModelRuntime, fallbackRuntime ModelRuntime, trajectoryOverride, sessionID string, verbose bool, turnTimeout, contextLength int) ([]string, error) {
 	fdRuntime := runtime
 	if strings.TrimSpace(fdRuntime.Resolved.Model) == "" {
 		fdRuntime = fallbackRuntime
+	}
+	budget, err := llm.ResolveInputBudgetForChain(fdRuntime.Resolved, fdRuntime.FallbackResolved, contextLength)
+	if err != nil {
+		return nil, err
+	}
+	fittedPrompt, truncated, err := discoveryrunner.FitInitialPrompt(prompt, budget)
+	if err != nil {
+		return nil, err
 	}
 	drModel := discoveryrunner.ModelSettings{
 		UsingAlias:         fdRuntime.UsingAlias,
@@ -26,9 +34,12 @@ func RunFileDiscovery(ctx context.Context, prompt string, runtime ModelRuntime, 
 		TrajectoryOverride: strings.TrimSpace(trajectoryOverride),
 		APIKeyOverrides:    llm.CopyAPIKeyOverridesForRuntime(fdRuntime.APIKeyOverrides),
 		TurnTimeout:        turnTimeout,
+		InputBudget:        budget,
+		PromptTruncated:    truncated,
 	}
 	discoveryCtx := llm.WithStage(llm.WithAPIKeyOverrides(ctx, fdRuntime.APIKeyOverrides), "file-discovery")
-	result, err := discoveryrunner.Run(discoveryCtx, prompt, drModel, sessionID, verbose)
+	llm.EmitContextBudgetDetails(discoveryCtx, fdRuntime.Resolved, budget, map[string]any{"applied_timeout_sec": turnTimeout, "truncated": truncated})
+	result, err := discoveryrunner.Run(discoveryCtx, fittedPrompt, drModel, sessionID, verbose)
 	if err != nil {
 		return nil, err
 	}

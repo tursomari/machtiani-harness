@@ -563,13 +563,19 @@ func handleSyncCommand(args []string) int {
 		fmt.Fprintln(os.Stderr, "Model resolution error:", err)
 		return 1
 	}
-	syncBudget, err := llm.ResolveInputBudget(runtimes.Answer.Resolved, cfg.ContextLength)
+	syncBudget, err := llm.ResolveInputBudgetForChain(runtimes.Answer.Resolved, runtimes.Answer.FallbackResolved, cfg.ContextLength)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Context budget error:", err)
 		return 1
 	}
+	discoveryBudget, err := llm.ResolveInputBudgetForChain(runtimes.FileDiscovery.Resolved, runtimes.FileDiscovery.FallbackResolved, cfg.ContextLength)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Discovery context budget error:", err)
+		return 1
+	}
 	if cfg.Verbose {
-		fmt.Fprintf(os.Stderr, "llm.context_budget.resolved context_length=%d source=%s max_input_tokens=%d\n", syncBudget.ContextLength, syncBudget.Source, syncBudget.MaxInputTokens)
+		fmt.Fprintf(os.Stderr, "llm.context_budget.resolved context_length=%d source=%s max_input_tokens=%d stage=file-discovery model_alias=%s applied_timeout_sec=%d truncated=false\n", discoveryBudget.ContextLength, discoveryBudget.Source, discoveryBudget.MaxInputTokens, runtimes.FileDiscovery.Resolved.Alias, cfg.TurnTimeout)
+		fmt.Fprintf(os.Stderr, "llm.context_budget.resolved context_length=%d source=%s max_input_tokens=%d stage=answer model_alias=%s truncated=false\n", syncBudget.ContextLength, syncBudget.Source, syncBudget.MaxInputTokens, runtimes.Answer.Resolved.Alias)
 	}
 
 	var mctPrompts *llm.MCTPromptsConfig

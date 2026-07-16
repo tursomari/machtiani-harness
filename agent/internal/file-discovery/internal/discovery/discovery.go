@@ -963,8 +963,29 @@ func failNoRelevantBlockProduced(lg cfgpkg.Logger, tr *cfgpkg.TrajectoryRecorder
 	return exitCodeNoRelevantFiles
 }
 
-// Run executes the discovery loop and returns an exit code.
+// FixedInputTokens estimates the non-negotiable system/protocol content added
+// around an embedded initial prompt.
+func FixedInputTokens(mode cfgpkg.ToolCallMode) int {
+	sys := withNudgeRule(buildSystemPrompt(normalizeToolCallMode(mode)))
+	reminder := "Protocol reminder:\n\n" + sys
+	return llm.EstimateMessagesTokens([]llm.Message{
+		{Role: "system", Content: sys},
+		{Role: "user", Content: reminder},
+	})
+}
+
+// Run executes the standalone discovery loop, retaining stdin compatibility.
 func Run(ctx context.Context, cfg cfgpkg.Config, llmCfg LLMSettings) int {
+	return run(ctx, cfg, llmCfg, "", false)
+}
+
+// RunEmbedded executes discovery with an explicit, already-budgeted initial
+// prompt and never reads process stdin.
+func RunEmbedded(ctx context.Context, cfg cfgpkg.Config, llmCfg LLMSettings, initialPrompt string) int {
+	return run(ctx, cfg, llmCfg, initialPrompt, true)
+}
+
+func run(ctx context.Context, cfg cfgpkg.Config, llmCfg LLMSettings, initialPrompt string, explicitPrompt bool) int {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -1063,8 +1084,15 @@ func Run(ctx context.Context, cfg cfgpkg.Config, llmCfg LLMSettings) int {
 	sys := withNudgeRule(prompt)
 	messages = append(messages, chatMessage{Role: "system", Content: sys})
 	seenPaths := map[string]struct{}{}
-	// Seed with stdin prompt (if any), but always prepend the system prompt
-	if s, truncated, err := readAllStdin(cfg.MaxTranscript); err == nil {
+	// Seed with the explicit embedded prompt or standalone stdin, but always
+	// prepend the system protocol reminder.
+	s := initialPrompt
+	truncated := false
+	inputErr := error(nil)
+	if !explicitPrompt {
+		s, truncated, inputErr = readAllStdin(cfg.MaxTranscript)
+	}
+	if inputErr == nil {
 		header := "Protocol reminder:"
 		userContent := header + "\n\n" + sys
 		if strings.TrimSpace(s) != "" {

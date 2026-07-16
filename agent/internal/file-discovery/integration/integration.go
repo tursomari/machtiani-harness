@@ -21,3 +21,11 @@ const (
 func Run(ctx context.Context, cfg Config, llmCfg LLMSettings) int {
 	return discoverypkg.Run(ctx, cfg, llmCfg)
 }
+
+func RunEmbedded(ctx context.Context, cfg Config, llmCfg LLMSettings, initialPrompt string) int {
+	return discoverypkg.RunEmbedded(ctx, cfg, llmCfg, initialPrompt)
+}
+
+func FixedInputTokens(mode ToolCallMode) int {
+	return discoverypkg.FixedInputTokens(mode)
+}

@@ -114,3 +114,56 @@ func TestSync_StdinSeeding(t *testing.T) {
 		t.Fatalf("Did not see SED_OUT in chat history; read_file failed or wasn't executed")
 	}
 }
+
+func TestRunEmbeddedUsesExplicitPromptWithoutReadingStdin(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.WriteString("STDIN MUST NOT APPEAR"); err != nil {
+		t.Fatal(err)
+	}
+	_ = w.Close()
+	originalStdin := os.Stdin
+	os.Stdin = r
+	t.Cleanup(func() {
+		os.Stdin = originalStdin
+		_ = r.Close()
+	})
+
+	originalInvoker := chatInvoker
+	t.Cleanup(func() { chatInvoker = originalInvoker })
+	chatInvoker = func(_ context.Context, _ LLMSettings, messages []chatMessage) (string, error) {
+		var combined strings.Builder
+		for _, message := range messages {
+			combined.WriteString(message.Content)
+		}
+		if !strings.Contains(combined.String(), "EXPLICIT EMBEDDED PROMPT") {
+			t.Fatalf("explicit prompt missing: %q", combined.String())
+		}
+		if strings.Contains(combined.String(), "STDIN MUST NOT APPEAR") {
+			t.Fatalf("embedded entrypoint read stdin: %q", combined.String())
+		}
+		return "BEGIN_RELEVANT_FILES[file-discovery]\nREADME.md\nEND_RELEVANT_FILES[file-discovery]\n", nil
+	}
+
+	devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalStdout := os.Stdout
+	os.Stdout = devNull
+	t.Cleanup(func() {
+		os.Stdout = originalStdout
+		_ = devNull.Close()
+	})
+
+	exit := RunEmbedded(context.Background(), cfgpkg.Config{
+		MaxRounds:    1,
+		NoTrajectory: true,
+		ToolCallMode: cfgpkg.ToolCallModeJSON,
+	}, LLMSettings{Model: llm.ResolvedModel{APIKey: "key", BaseURL: "http://example", Model: "test"}}, "EXPLICIT EMBEDDED PROMPT")
+	if exit != 0 {
+		t.Fatalf("RunEmbedded exit = %d, want 0", exit)
+	}
+}

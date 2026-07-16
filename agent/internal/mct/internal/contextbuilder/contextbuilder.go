@@ -106,6 +106,12 @@ func Build(userPrompt string, relPaths []string, conversationHistory []Message, 
 	if err != nil {
 		return "", nil, err
 	}
+	if opts.MaxInputTokens > 0 && llm.EstimateTokens(prelude) > opts.MaxInputTokens {
+		prelude, _, err = llm.TruncateLinesKeepTail(prelude, opts.MaxInputTokens, "[TRUNCATED: older conversation context omitted]")
+		if err != nil {
+			return "", nil, err
+		}
+	}
 	totalTokens := llm.EstimateTokens(prelude)
 	filePreludeTokens := llm.EstimateTokens(fileSectionPrelude)
 	addedFilePrelude := false
@@ -183,21 +189,20 @@ func Build(userPrompt string, relPaths []string, conversationHistory []Message, 
 	}
 
 	if opts.MaxInputTokens > 0 && totalTokens > opts.MaxInputTokens {
-		totalTokens = applyTokenLimit(sections, totalTokens, opts.MaxInputTokens)
+		applyTokenLimit(prelude, sections, opts.MaxInputTokens)
 	}
 
-	var builder strings.Builder
-	builder.WriteString(prelude)
-	if len(sections) > 0 {
-		builder.WriteString(fileSectionPrelude)
-	}
+	combined := renderCombined(prelude, sections)
+	included = included[:0]
 	for _, section := range sections {
-		builder.WriteString(section.Header)
-		builder.WriteString(section.RenderContent())
-		builder.WriteString(section.Footer)
+		if !section.Omitted {
+			included = append(included, section.RelPath)
+		}
 	}
-
-	return builder.String(), included, nil
+	if err := llm.RequireWithinTokenBudget("answer prompt", combined, opts.MaxInputTokens); err != nil {
+		return "", nil, err
+	}
+	return combined, included, nil
 }
 
 type conversationTemplateEntry struct {
@@ -328,6 +333,7 @@ type fileSection struct {
 	TailTokens             int
 	ErrorContent           string
 	ErrorTokens            int
+	Omitted                bool
 }
 
 func newFileSection(relPath string) *fileSection {
@@ -512,15 +518,15 @@ func splitSegments(content string) []string {
 	return parts
 }
 
-func applyTokenLimit(sections []*fileSection, totalTokens, maxTokens int) int {
-	for totalTokens > maxTokens {
-		excess := totalTokens - maxTokens
+func applyTokenLimit(prelude string, sections []*fileSection, maxTokens int) {
+	for llm.EstimateTokens(renderCombined(prelude, sections)) > maxTokens {
+		excess := llm.EstimateTokens(renderCombined(prelude, sections)) - maxTokens
 
 		var candidate *fileSection
 		var candidatePercent float64
 
 		for _, section := range sections {
-			if section == nil {
+			if section == nil || section.Omitted {
 				continue
 			}
 			if section.RemainingContentTokens <= 0 || section.RemovedSegments >= len(section.Segments) {
@@ -534,19 +540,49 @@ func applyTokenLimit(sections []*fileSection, totalTokens, maxTokens int) int {
 		}
 
 		if candidate == nil {
-			break
+			for i := len(sections) - 1; i >= 0; i-- {
+				if sections[i] != nil && !sections[i].Omitted {
+					sections[i].Omitted = true
+					candidate = sections[i]
+					break
+				}
+			}
+			if candidate == nil {
+				break
+			}
+			continue
 		}
 
-		removed, stampDelta, headerDelta := candidate.trimFromBottom(excess)
+		removed, stampDelta, _ := candidate.trimFromBottom(excess)
 		if removed == 0 && stampDelta == 0 {
 			candidate.RemainingContentTokens = 0
 			continue
 		}
-
-		totalTokens = totalTokens - removed + stampDelta + headerDelta
 	}
+}
 
-	return totalTokens
+func renderCombined(prelude string, sections []*fileSection) string {
+	var builder strings.Builder
+	builder.WriteString(prelude)
+	active := false
+	for _, section := range sections {
+		if section != nil && !section.Omitted {
+			active = true
+			break
+		}
+	}
+	if active {
+		builder.WriteString(fileSectionPrelude)
+	}
+	for _, section := range sections {
+		if section == nil || section.Omitted {
+			continue
+		}
+		builder.WriteString(section.Header)
+		builder.WriteString(section.RenderContent())
+		builder.WriteString(section.Footer)
+	}
+	return builder.String()
 }
 
 func detectFenceLanguage(relPath string) string {

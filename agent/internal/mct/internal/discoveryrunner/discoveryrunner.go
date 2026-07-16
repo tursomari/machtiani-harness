@@ -37,6 +37,32 @@ type ModelSettings struct {
 	TrajectoryOverride string
 	APIKeyOverrides    map[string]string
 	TurnTimeout        int
+	InputBudget        llm.InputBudget
+	PromptTruncated    bool
+}
+
+func InitialPromptTokenLimit(budget llm.InputBudget) (int, error) {
+	fixed := integration.FixedInputTokens(integration.ToolCallModeJSON)
+	limit := budget.MaxInputTokens - fixed
+	if limit <= 0 {
+		return 0, fmt.Errorf("discovery context budget %d cannot fit fixed system/protocol content (%d estimated tokens)", budget.MaxInputTokens, fixed)
+	}
+	return limit, nil
+}
+
+func FitInitialPrompt(prompt string, budget llm.InputBudget) (string, bool, error) {
+	limit, err := InitialPromptTokenLimit(budget)
+	if err != nil {
+		return "", false, err
+	}
+	fitted, truncated, err := llm.TruncateLinesKeepTail(prompt, limit, "[TRUNCATED: older discovery cue material omitted]")
+	if err != nil {
+		return "", truncated, err
+	}
+	if err := llm.RequireWithinTokenBudget("discovery initial prompt", fitted, limit); err != nil {
+		return "", truncated, err
+	}
+	return fitted, truncated, nil
 }
 
 // Matches blocks like:
@@ -102,6 +128,13 @@ func Run(ctx context.Context, prompt string, model ModelSettings, sessionID stri
 		return Result{}, fmt.Errorf("parse llm parameter overrides: %w", err)
 	}
 	mergedExtras := mergeExtras(model.Extras, extraParams)
+	initialLimit, err := InitialPromptTokenLimit(model.InputBudget)
+	if err != nil {
+		return Result{}, err
+	}
+	if err := llm.RequireWithinTokenBudget("discovery initial prompt", prompt, initialLimit); err != nil {
+		return Result{}, err
+	}
 
 	resolved := llm.CloneResolvedModel(model.Resolved)
 	cfg := integration.Config{
@@ -199,21 +232,10 @@ func Run(ctx context.Context, prompt string, model ModelSettings, sessionID stri
 		stdoutW.Close()
 		return Result{}, fmt.Errorf("pipe stderr: %w", err)
 	}
-	stdinR, stdinW, err := os.Pipe()
-	if err != nil {
-		stdoutR.Close()
-		stdoutW.Close()
-		stderrR.Close()
-		stderrW.Close()
-		return Result{}, fmt.Errorf("pipe stdin: %w", err)
-	}
-
 	originalStdout := os.Stdout
 	originalStderr := os.Stderr
-	originalStdin := os.Stdin
 	os.Stdout = stdoutW
 	os.Stderr = stderrW
-	os.Stdin = stdinR
 
 	originalLogWriter := log.Writer()
 	originalLogFlags := log.Flags()
@@ -225,7 +247,6 @@ func Run(ctx context.Context, prompt string, model ModelSettings, sessionID stri
 	defer func() {
 		os.Stdout = originalStdout
 		os.Stderr = originalStderr
-		os.Stdin = originalStdin
 		log.SetOutput(originalLogWriter)
 		log.SetFlags(originalLogFlags)
 		log.SetPrefix(originalLogPrefix)
@@ -233,8 +254,6 @@ func Run(ctx context.Context, prompt string, model ModelSettings, sessionID stri
 		_ = stdoutW.Close()
 		_ = stderrR.Close()
 		_ = stderrW.Close()
-		_ = stdinR.Close()
-		_ = stdinW.Close()
 	}()
 
 	var stdoutBuf, stderrBuf bytes.Buffer
@@ -249,12 +268,7 @@ func Run(ctx context.Context, prompt string, model ModelSettings, sessionID stri
 		_, _ = io.Copy(&stderrBuf, stderrR)
 	}()
 
-	go func() {
-		_, _ = io.WriteString(stdinW, prompt)
-		_ = stdinW.Close()
-	}()
-
-	exitCode := integration.Run(ctx, cfg, llmSettings)
+	exitCode := integration.RunEmbedded(ctx, cfg, llmSettings, prompt)
 
 	_ = stdoutW.Close()
 	_ = stderrW.Close()

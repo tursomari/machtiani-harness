@@ -3668,9 +3668,133 @@ PY
   stop_llm_stub_server
 }
 
+test_discovery_context_budget_live() {
+  if [[ "$LIVE_MODE" != true ]]; then
+    echo "Skipping discovery context budget case outside live mode." >&2
+    return 0
+  fi
+
+  local case_root repo baseline_stdout baseline_stderr sync_stdout sync_stderr commit project_json project_store trajectory
+  case_root="$(mktemp -d "$TMP_ROOT/discovery-budget.XXXXXX")"
+  repo="$case_root/repo"
+  baseline_stdout="$case_root/baseline.stdout"
+  baseline_stderr="$case_root/baseline.stderr"
+  sync_stdout="$case_root/sync.stdout"
+  sync_stderr="$case_root/sync.stderr"
+
+  mkdir -p "$repo"
+  git -C "$repo" init --initial-branch=main >/dev/null
+  git -C "$repo" config user.name "run-live discovery budget"
+  git -C "$repo" config user.email "run-live@example.invalid"
+  printf '# Budget fixture\n\nBaseline.\n' > "$repo/README.md"
+  git -C "$repo" add README.md
+  git -C "$repo" commit -m "budget baseline" >/dev/null
+
+  (
+    cd "$repo"
+    MACHTIANI_CONFIG="$TEST_CONFIG_FILE" "$MCT_AGENT" init --no-interactive --config-scope global >/dev/null
+    MACHTIANI_CONFIG="$TEST_CONFIG_FILE" MCT_README_TEST_STUB=basic \
+      "$MCT_AGENT" sync \
+      --model "$TEST_MODEL_ALIAS" \
+      --answer-model "$TEST_MODEL_ALIAS" \
+      --file-discovery-model "$TEST_MODEL_ALIAS"
+  ) >"$baseline_stdout" 2>"$baseline_stderr"
+
+  "$PYTHON_BIN" - "$repo" <<'PY'
+import pathlib
+import sys
+
+repo = pathlib.Path(sys.argv[1])
+readme = ["# Budget fixture", "", "Large committed README and diff material."]
+readme.extend(f"- README detail {idx:05d}: alpha beta gamma delta epsilon" for idx in range(12000))
+(repo / "README.md").write_text("\n".join(readme) + "\n", encoding="utf-8")
+(repo / "large-change.txt").write_text(
+    "\n".join(f"changed line {idx:05d}: one two three four five" for idx in range(12000)) + "\n",
+    encoding="utf-8",
+)
+PY
+  git -C "$repo" add README.md large-change.txt
+  git -C "$repo" commit -m "large budget fixture" >/dev/null
+  commit="$(git -C "$repo" rev-parse HEAD)"
+
+  if ! (
+    cd "$repo"
+    MACHTIANI_CONFIG="$TEST_CONFIG_FILE" "$MCT_AGENT" sync --verbose \
+      --context-length 8192 \
+      --turn-timeout 300 \
+      --model "$TEST_MODEL_ALIAS" \
+      --answer-model "$TEST_MODEL_ALIAS" \
+      --file-discovery-model "$TEST_MODEL_ALIAS"
+  ) >"$sync_stdout" 2>"$sync_stderr"; then
+    echo "ERROR: large discovery budget live sync failed" >&2
+    cat "$sync_stderr" >&2
+    return 1
+  fi
+  if ! grep -Eq 'context_length=8192 .*stage=file-discovery .*truncated=true' "$sync_stderr"; then
+    echo "ERROR: discovery budget telemetry did not report the truncated 8192 context" >&2
+    cat "$sync_stderr" >&2
+    return 1
+  fi
+
+  project_json="$(cd "$repo" && MACHTIANI_CONFIG="$TEST_CONFIG_FILE" "$MCT_AGENT" project show --json)"
+  project_store="$(printf '%s' "$project_json" | "$PYTHON_BIN" -c 'import json, sys; print(json.load(sys.stdin)["store"])')"
+  trajectory="$project_store/sessions/readme-${commit:0:12}/artifacts/file-discovery.jsonl"
+  if [[ ! -s "$trajectory" ]]; then
+    echo "ERROR: discovery trajectory missing: $trajectory" >&2
+    return 1
+  fi
+
+  "$PYTHON_BIN" - "$trajectory" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+max_input = 8192 - min(16384, 8192 // 8) - max(2048, (8192 + 19) // 20)
+
+def estimate(text):
+    tokens = 0
+    in_word = False
+    in_punct = False
+    for char in str(text):
+        if char.isspace():
+            in_word = False
+            in_punct = False
+        elif char.isalpha() or char.isdigit():
+            if not in_word:
+                tokens += 1
+            in_word = True
+            in_punct = False
+        else:
+            if not in_punct:
+                tokens += 1
+            in_word = False
+            in_punct = True
+    return tokens
+
+requests = 0
+with open(path, "r", encoding="utf-8") as fh:
+    for line in fh:
+        try:
+            event = json.loads(line)
+        except Exception:
+            continue
+        if event.get("type") != "llm_request":
+            continue
+        requests += 1
+        messages = event.get("messages") or []
+        total = sum(4 + estimate(message.get("role", "")) + estimate(message.get("content", "")) for message in messages)
+        if total > max_input:
+            raise SystemExit(f"discovery request estimate {total} exceeds cap {max_input}")
+if requests == 0:
+    raise SystemExit("no discovery requests found in trajectory")
+print(f"validated {requests} discovery request(s) at or below {max_input} tokens")
+PY
+}
+
 declare -A TESTS=(
 	["sync-footer"]="run_sync_footer_case"
 	["discovery-turn-timeout"]="test_discovery_turn_timeout"
+	["discovery-context-budget-live"]="test_discovery_context_budget_live"
   ["test_local_tmp_root_unset_live"]="run_local_tmp_root_unset_live_case"
   ["test_code_no_forge"]="test_code_no_forge"
   ["test_code_forge_initial"]="test_code_forge_initial"
@@ -3742,6 +3866,7 @@ run_test_case "mode_prompt_layers" run_mode_prompt_layers_case
 run_test_case "resume_without_mode" run_resume_without_mode_case
 
 if [[ "$LIVE_MODE" == true ]]; then
+  run_test_case "discovery_context_budget_live" test_discovery_context_budget_live
   run_test_case "code_no_forge" test_code_no_forge
   run_test_case "code_forge_initial" test_code_forge_initial
   run_test_case "code_forge_resume_with_mode" test_code_forge_resume_with_mode

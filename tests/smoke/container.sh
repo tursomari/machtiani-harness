@@ -94,6 +94,8 @@ grep -Fq 'llm.context_budget.resolved context_length=128000 source=model_default
 config_checksum=$(sha256sum "$HOME/.machtiani/config.toml" | cut -d ' ' -f 1)
 mct-agent sync --verbose --context-length 64000 > /tmp/sync-context.stdout 2> /tmp/sync-context.stderr
 grep -Fq 'llm.context_budget.resolved context_length=64000 source=session_flag' /tmp/sync-context.stderr
+grep -Eq 'llm.context_budget.resolved context_length=64000 .*stage=file-discovery' /tmp/sync-context.stderr
+grep -Eq 'llm.context_budget.resolved context_length=64000 .*stage=answer' /tmp/sync-context.stderr
 test "$(sha256sum "$HOME/.machtiani/config.toml" | cut -d ' ' -f 1)" = "$config_checksum"
 
 sync_noop_output=$(mktemp)

@@ -221,3 +221,46 @@ func TestBuildAppliesTokenLimit(t *testing.T) {
 		t.Fatalf("expected last line to be truncated, got\n%s", limitedPrompt)
 	}
 }
+
+func TestBuildHardCapOmitsFileWhoseFramingCannotFit(t *testing.T) {
+	tmpDir := t.TempDir()
+	previous, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(previous) })
+	if err := os.WriteFile("tiny.go", []byte("package tiny\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	prompt, included, err := Build("request", []string{"tiny.go"}, nil, withPrelude(Options{MaxInputTokens: 3}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if llm.EstimateTokens(prompt) > 3 {
+		t.Fatalf("prompt estimate = %d, want <= 3: %q", llm.EstimateTokens(prompt), prompt)
+	}
+	if len(included) != 0 || strings.Contains(prompt, "tiny.go") {
+		t.Fatalf("file with non-fitting framing was retained: included=%v prompt=%q", included, prompt)
+	}
+}
+
+func TestBuildHardCapTrimsOlderHistoryAndPreservesCurrentTail(t *testing.T) {
+	history := []Message{{Role: "user", Content: strings.Repeat("old history material ", 100)}}
+	prompt, _, err := Build("CURRENT REQUEST MUST SURVIVE", nil, history, withPrelude(Options{IncludeHistory: true, MaxInputTokens: 14}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if llm.EstimateTokens(prompt) > 14 {
+		t.Fatalf("prompt estimate = %d, want <= 14", llm.EstimateTokens(prompt))
+	}
+	if !strings.Contains(prompt, "CURRENT REQUEST MUST SURVIVE") {
+		t.Fatalf("current request tail was lost: %q", prompt)
+	}
+	if !strings.Contains(prompt, "TRUNCATED") {
+		t.Fatalf("missing explicit truncation marker: %q", prompt)
+	}
+}

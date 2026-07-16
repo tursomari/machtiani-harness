@@ -486,6 +486,9 @@ func TestFileDiscoveryRunsWhenShellAgentDisabled(t *testing.T) {
 		if model.TurnTimeout != 37 {
 			t.Fatalf("discovery TurnTimeout = %d, want 37", model.TurnTimeout)
 		}
+		if model.InputBudget.ContextLength != 8192 {
+			t.Fatalf("discovery context length = %d, want 8192", model.InputBudget.ContextLength)
+		}
 		return discoveryrunner.Result{Paths: []string{"src/main.go", "README.md"}}, nil
 	}
 	t.Cleanup(func() { discoveryRunnerRun = origDiscovery })
@@ -502,10 +505,16 @@ func TestFileDiscoveryRunsWhenShellAgentDisabled(t *testing.T) {
 	t.Cleanup(func() { chatStreamWithRuntime = origChat })
 
 	opts := RunOptions{
-		Prompt:       "Summarize the project state",
-		Mode:         "default",
-		SessionID:    sessionID,
-		Runtime:      ModelRuntime{Resolved: llm.ResolvedModel{Model: "test-model"}},
+		Prompt:    "Summarize the project state",
+		Mode:      "default",
+		SessionID: sessionID,
+		Runtime:   ModelRuntime{Resolved: llm.ResolvedModel{Model: "test-model", ContextLength: 128000}},
+		AnswerRuntime: ModelRuntime{Resolved: llm.ResolvedModel{
+			Model: "answer-model", ContextLength: 128000,
+		}},
+		FileDiscoveryRuntime: ModelRuntime{Resolved: llm.ResolvedModel{
+			Model: "discovery-model", ContextLength: 8192,
+		}},
 		ShellAgent:   false,
 		ExplicitName: "integration-default",
 		Prompts:      testPromptsConfig(),

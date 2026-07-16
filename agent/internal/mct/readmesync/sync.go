@@ -51,14 +51,9 @@ func Run(ctx context.Context, opts Options) error {
 	if err != nil {
 		return err
 	}
-	budget, err := llm.ResolveInputBudget(opts.AnswerRuntime.Resolved, opts.ContextLength)
-	if err != nil {
-		return err
-	}
-	mgr.SetMaxInputTokens(budget.MaxInputTokens)
 	mgr.SetPrompts(opts.Prompts)
 
-	mgr.SetPromptExecutor(func(execCtx context.Context, promptText string) (string, error) {
+	mgr.SetPromptExecutor(func(execCtx context.Context, material llm.PromptMaterial) (string, error) {
 		prev, hadPrev := os.LookupEnv(readme.SkipReadmeManagerEnv)
 		if err := os.Setenv(readme.SkipReadmeManagerEnv, "1"); err != nil {
 			return "", fmt.Errorf("set %s: %w", readme.SkipReadmeManagerEnv, err)
@@ -72,7 +67,6 @@ func Run(ctx context.Context, opts Options) error {
 		}()
 
 		innerOpts := promptsvc.RunOptions{
-			Prompt:               promptText,
 			Mode:                 "default",
 			IncludeHistory:       false,
 			SessionID:            sessionIDForCommit(commit),
@@ -84,6 +78,7 @@ func Run(ctx context.Context, opts Options) error {
 			ContextLength:        opts.ContextLength,
 			TurnTimeout:          opts.TurnTimeout,
 			Prompts:              opts.Prompts,
+			PromptMaterial:       &material,
 		}
 		res, err := promptsvc.Run(execCtx, innerOpts)
 		if err != nil {

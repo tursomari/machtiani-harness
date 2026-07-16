@@ -50,6 +50,25 @@ func ResolveInputBudget(model ResolvedModel, sessionContextLength int) (InputBud
 	return BudgetForContextLength(length, source)
 }
 
+// ResolveInputBudgetForChain returns the smallest input budget in a configured
+// primary/fallback chain. A session override applies uniformly to every model.
+func ResolveInputBudgetForChain(primary ResolvedModel, fallbacks []ResolvedModel, sessionContextLength int) (InputBudget, error) {
+	models := make([]ResolvedModel, 0, 1+len(fallbacks))
+	models = append(models, primary)
+	models = append(models, fallbacks...)
+	var smallest InputBudget
+	for i, model := range models {
+		budget, err := ResolveInputBudget(model, sessionContextLength)
+		if err != nil {
+			return InputBudget{}, err
+		}
+		if i == 0 || budget.MaxInputTokens < smallest.MaxInputTokens {
+			smallest = budget
+		}
+	}
+	return smallest, nil
+}
+
 func BudgetForContextLength(length int, source ContextSource) (InputBudget, error) {
 	if length < MinimumContextLength {
 		return InputBudget{}, fmt.Errorf("context length must be at least %d total tokens", MinimumContextLength)
@@ -90,12 +109,16 @@ func ContextLengthForInputCap(input int) int {
 }
 
 func EmitContextBudget(ctx context.Context, model ResolvedModel, budget InputBudget) {
+	EmitContextBudgetDetails(ctx, model, budget, nil)
+}
+
+func EmitContextBudgetDetails(ctx context.Context, model ResolvedModel, budget InputBudget, details map[string]any) {
 	writer, ok := trajectory.FromContext(ctx)
 	if !ok || writer == nil {
 		return
 	}
 	parent, _ := trajectory.ParentSpanID(ctx)
-	_ = writer.Emit(ctx, trajectory.Event{Kind: "llm.context_budget.resolved", ParentSpanID: parent, Payload: map[string]any{
+	payload := map[string]any{
 		"event_version":      1,
 		"model_alias":        model.Alias,
 		"provider":           model.ProviderName,
@@ -104,7 +127,11 @@ func EmitContextBudget(ctx context.Context, model ResolvedModel, budget InputBud
 		"completion_reserve": budget.CompletionReserve,
 		"safety_margin":      budget.SafetyMargin,
 		"max_input_tokens":   budget.MaxInputTokens,
-	}})
+	}
+	for key, value := range details {
+		payload[key] = value
+	}
+	_ = writer.Emit(ctx, trajectory.Event{Kind: "llm.context_budget.resolved", ParentSpanID: parent, Payload: payload})
 }
 
 func EmitContextAdjustment(ctx context.Context, model ResolvedModel, previous, learned int, persisted bool, persistErr error) {

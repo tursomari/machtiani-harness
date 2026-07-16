@@ -30,7 +30,7 @@ const (
 	verboseEnv           = "MCT_INTERNAL_README_VERBOSE"
 )
 
-type PromptExecutor func(ctx context.Context, prompt string) (string, error)
+type PromptExecutor func(ctx context.Context, material llm.PromptMaterial) (string, error)
 
 // Manager coordinates readme repository state against the project repository.
 type Manager struct {
@@ -42,7 +42,6 @@ type Manager struct {
 	IsAnswerOnlyMode bool
 	Verbose          bool
 	PromptExecutor   PromptExecutor
-	maxInputTokens   int
 	Prompts          *llm.MCTPromptsConfig
 }
 
@@ -82,11 +81,6 @@ func (m *Manager) SetPromptExecutor(exec PromptExecutor) {
 // SetPrompts configures template-driven system prompts for the readme manager.
 func (m *Manager) SetPrompts(cfg *llm.MCTPromptsConfig) {
 	m.Prompts = cfg
-}
-
-// SetMaxInputTokens propagates the maximum prompt size constraint from the agent runtime.
-func (m *Manager) SetMaxInputTokens(tokens int) {
-	m.maxInputTokens = tokens
 }
 
 // Run executes the management workflow using the supplied project commit hash.
@@ -330,70 +324,55 @@ func (m *Manager) buildReadmeContent(ctx context.Context, projectCommitHash, las
 	}
 
 	hasExistingReadme := strings.TrimSpace(prevContent) != "" && strings.TrimSpace(lastProcessed) != ""
-	var dynamicContext string
+	material := llm.PromptMaterial{Fixed: systemPrompt}
 	if hasExistingReadme {
-		builder := &strings.Builder{}
-		builder.WriteString("Update the internal README so it reads as comprehensive documentation of the current system. Use the following cues only to understand what materially changed; do not refer to commits, hashes, diffs, or change logs in the README output.\n\n")
+		material.Fixed += "\n\nUpdate the internal README so it reads as comprehensive documentation of the current system. Use the following cues only to understand what materially changed; do not refer to commits, hashes, diffs, or change logs in the README output."
+		metadata := &strings.Builder{}
 		if strings.TrimSpace(projectCommitHash) != "" {
-			builder.WriteString("Current commit (context only): ")
-			builder.WriteString(projectCommitHash)
-			builder.WriteString("\n")
+			metadata.WriteString("Current commit (context only): ")
+			metadata.WriteString(projectCommitHash)
+			metadata.WriteString("\n")
 		}
 		if strings.TrimSpace(lastProcessed) != "" {
-			builder.WriteString("Last processed commit (context only): ")
-			builder.WriteString(lastProcessed)
-			builder.WriteString("\n")
+			metadata.WriteString("Last processed commit (context only): ")
+			metadata.WriteString(lastProcessed)
+			metadata.WriteString("\n")
 		}
-		builder.WriteString("\nPrevious internal README:\n````markdown\n")
-		builder.WriteString(prevContent)
-		builder.WriteString("\n````\n\n")
+		material.Sections = append(material.Sections, llm.PromptSection{Name: "commit metadata", Body: metadata.String(), TrimPriority: 1, OmitFirst: true})
+		material.Sections = append(material.Sections, llm.PromptSection{Name: "previous README", Prefix: "Previous internal README:\n````markdown\n", Body: prevContent, Suffix: "\n````", TrimPriority: 4})
+
+		summaries := &strings.Builder{}
 		if len(significantFiles) > 0 {
-			builder.WriteString("Files with significant changes (use as guidance only; do not enumerate these files verbatim in the README):\n")
+			summaries.WriteString("Files with significant changes (use as guidance only; do not enumerate these files verbatim in the README):\n")
 			for _, f := range significantFiles {
-				builder.WriteString("- ")
-				builder.WriteString(f)
-				builder.WriteString("\n")
+				summaries.WriteString("- ")
+				summaries.WriteString(f)
+				summaries.WriteString("\n")
 			}
-			builder.WriteString("\n")
+			summaries.WriteString("\n")
 		}
 		if strings.TrimSpace(diffStat) != "" {
-			builder.WriteString("Diff summary (context only, do not restate in README):\n````\n")
-			builder.WriteString(diffStat)
-			builder.WriteString("\n````\n\n")
+			summaries.WriteString("Diff summary (context only, do not restate in README):\n````\n")
+			summaries.WriteString(diffStat)
+			summaries.WriteString("\n````\n\n")
 		}
 		if strings.TrimSpace(summary) != "" {
-			builder.WriteString("Commit log highlights (context only, translate into timeless documentation):\n````\n")
-			builder.WriteString(summary)
-			builder.WriteString("\n````\n\n")
+			summaries.WriteString("Commit log highlights (context only, translate into timeless documentation):\n````\n")
+			summaries.WriteString(summary)
+			summaries.WriteString("\n````")
 		}
+		material.Sections = append(material.Sections, llm.PromptSection{Name: "summaries and significant-file hints", Body: summaries.String(), TrimPriority: 3})
 
 		detail := strings.TrimSpace(diffDetail)
 		if detail != "" {
-			builder.WriteString("Relevant diff excerpt (context only; extract concepts rather than quoting diffs):\n````diff\n")
-			builder.WriteString(detail)
-			builder.WriteString("\n````\n")
-		}
-		dynamicContext = builder.String()
-	}
-
-	fullPrompt := composeMCTPrompt(systemPrompt, dynamicContext, lastProcessed)
-	if m.maxInputTokens > 0 {
-		estimated := llm.EstimateTokens(fullPrompt)
-		if estimated > m.maxInputTokens {
-			isFirstCreation := strings.TrimSpace(lastProcessed) == "" && len(significantFiles) == 0
-			if isFirstCreation {
-				m.verbosef("prompt exceeds max tokens even in first-creation mode (%d > %d); proceeding with minimal context", estimated, m.maxInputTokens)
-			} else {
-				m.infof("prompt exceeded max input tokens (%d > %d); regenerating internal README with minimal context", estimated, m.maxInputTokens)
-				return m.buildReadmeContent(ctx, projectCommitHash, "", nil)
-			}
+			material.Sections = append(material.Sections, llm.PromptSection{Name: "detailed diff", Prefix: "Relevant diff excerpt (context only; extract concepts rather than quoting diffs):\n````diff\n", Body: detail, Suffix: "\n````", TrimPriority: 2})
 		}
 	}
 
 	if m.PromptExecutor == nil {
 		return "", errors.New("readme prompt executor is not configured")
 	}
-	content, err := m.PromptExecutor(ctx, fullPrompt)
+	content, err := m.PromptExecutor(ctx, material)
 	if err != nil {
 		return "", fmt.Errorf("generate readme content: %w", err)
 	}
