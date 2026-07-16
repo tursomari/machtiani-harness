@@ -558,6 +558,7 @@ func runSession(ctx context.Context, opts Options) Result {
 		UITheme:                 themeName,
 		Diagnostics:             diagWriter,
 		ContextLength:           cfg.contextLength,
+		TurnTimeout:             cfg.timeoutPerTurn,
 	}
 	if err := mctRunner.Resolve(); err != nil {
 		fmt.Fprintln(diagWriter, "mct resolution error:", err)

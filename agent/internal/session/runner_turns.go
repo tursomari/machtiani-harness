@@ -270,6 +270,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 				FileDiscoveryRuntime: env.mctRunner.FileDiscoveryRuntime,
 				Verbose:              env.cfg.verbose,
 				ContextLength:        env.cfg.contextLength,
+				TurnTimeout:          env.cfg.timeoutPerTurn,
 				ShellAgent:           true,
 				ShellAgentModel:      strings.TrimSpace(env.mctRunner.ShellAgentModel),
 				ShellAgentSessionID:  sasID,

@@ -38,6 +38,7 @@ type RunOptions struct {
 	OnToken                 func(string)
 	Verbose                 bool
 	ContextLength           int
+	TurnTimeout             int
 	Readme                  *ReadmeOptions
 	ShellAgent              bool
 	ShellAgentModel         string

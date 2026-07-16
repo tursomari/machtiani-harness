@@ -33,6 +33,7 @@ type Runner struct {
 	UITheme                 string
 	Diagnostics             io.Writer
 	ContextLength           int
+	TurnTimeout             int
 
 	// ShellAgentLibrary holds the pre-built model, environment, config,
 	// and prompts for the in-process shell-agent library path. When
@@ -186,6 +187,7 @@ func (r *Runner) RunPrompt(ctx context.Context, sessionID string, in PromptInput
 		Verbose:                 r.Verbose,
 		FileDiscoveryTrajectory: r.FileDiscoveryTrajectory,
 		ContextLength:           r.ContextLength,
+		TurnTimeout:             r.TurnTimeout,
 		Readme:                  readmeOpts,
 		ShellAgent:              r.ShellAgent,
 		ShellAgentModel:         strings.TrimSpace(r.ShellAgentModel),

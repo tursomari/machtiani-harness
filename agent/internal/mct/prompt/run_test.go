@@ -483,6 +483,9 @@ func TestFileDiscoveryRunsWhenShellAgentDisabled(t *testing.T) {
 	var discoveryCalls int
 	discoveryRunnerRun = func(ctx context.Context, prompt string, model discoveryrunner.ModelSettings, sid string, verbose bool) (discoveryrunner.Result, error) {
 		discoveryCalls++
+		if model.TurnTimeout != 37 {
+			t.Fatalf("discovery TurnTimeout = %d, want 37", model.TurnTimeout)
+		}
 		return discoveryrunner.Result{Paths: []string{"src/main.go", "README.md"}}, nil
 	}
 	t.Cleanup(func() { discoveryRunnerRun = origDiscovery })
@@ -506,6 +509,7 @@ func TestFileDiscoveryRunsWhenShellAgentDisabled(t *testing.T) {
 		ShellAgent:   false,
 		ExplicitName: "integration-default",
 		Prompts:      testPromptsConfig(),
+		TurnTimeout:  37,
 	}
 
 	res, err := Run(context.Background(), opts)

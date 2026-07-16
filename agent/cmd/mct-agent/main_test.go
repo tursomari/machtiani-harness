@@ -79,6 +79,47 @@ func TestSyncCommandPreservesErrorOutputWhenFooterIsNotTerminal(t *testing.T) {
 	}
 }
 
+func TestSyncCommandTurnTimeoutGlobalAndCLIOverride(t *testing.T) {
+	originalRun := readmeSyncRunFn
+	t.Cleanup(func() { readmeSyncRunFn = originalRun })
+	var captured []readmesync.Options
+	readmeSyncRunFn = func(_ context.Context, opts readmesync.Options) error {
+		captured = append(captured, opts)
+		return nil
+	}
+
+	prepareTestConfig(t)
+	configPath := os.Getenv("MACHTIANI_CONFIG")
+	if err := os.WriteFile(configPath, []byte("[planner]\nturn_timeout = 17\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	llm.ResetConfigForTesting()
+	t.Setenv("OPENAI_API_KEY", "test-key")
+	t.Setenv("OPENAI_BASE_URL", "https://example.com/v1")
+	t.Setenv("OPENAI_MODEL", "test-model")
+	repoDir := initTestRepo(t)
+	origWD := mustChdir(t, repoDir)
+	defer mustChdir(t, origWD)
+
+	captureStdout(t, func() {
+		if code := handleSyncCommand(nil); code != 0 {
+			t.Fatalf("global timeout sync exit = %d", code)
+		}
+		if code := handleSyncCommand([]string{"--turn-timeout", "0"}); code != 0 {
+			t.Fatalf("CLI timeout sync exit = %d", code)
+		}
+	})
+	if len(captured) != 2 {
+		t.Fatalf("sync calls = %d, want 2", len(captured))
+	}
+	if captured[0].TurnTimeout != 17 {
+		t.Fatalf("global TurnTimeout = %d, want 17", captured[0].TurnTimeout)
+	}
+	if captured[1].TurnTimeout != 0 {
+		t.Fatalf("CLI TurnTimeout = %d, want 0", captured[1].TurnTimeout)
+	}
+}
+
 func TestSyncCommandInvalidCommit(t *testing.T) {
 	prepareTestConfig(t)
 	t.Setenv("OPENAI_API_KEY", "test-key")

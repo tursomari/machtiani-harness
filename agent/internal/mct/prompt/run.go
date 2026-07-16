@@ -122,6 +122,7 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 			FallbackResolved:   cloneResolvedModels(fdRuntime.FallbackResolved),
 			TrajectoryOverride: strings.TrimSpace(opts.FileDiscoveryTrajectory),
 			APIKeyOverrides:    llm.CopyAPIKeyOverridesForRuntime(fdRuntime.APIKeyOverrides),
+			TurnTimeout:        opts.TurnTimeout,
 		}
 		discoCtx := llm.WithStage(llm.WithAPIKeyOverrides(ctx, fdRuntime.APIKeyOverrides), "file-discovery")
 		dr, err := discoveryRunnerRun(discoCtx, opts.Prompt, drModel, opts.SessionID, opts.Verbose)
@@ -393,6 +394,7 @@ func runReadmeManager(ctx context.Context, opts RunOptions, isAnswerOnly bool) e
 			FileDiscoveryRuntime: opts.FileDiscoveryRuntime,
 			Verbose:              opts.Verbose,
 			ContextLength:        opts.ContextLength,
+			TurnTimeout:          opts.TurnTimeout,
 			GlobalConfigPath:     opts.GlobalConfigPath,
 			Prompts:              opts.Prompts,
 		}

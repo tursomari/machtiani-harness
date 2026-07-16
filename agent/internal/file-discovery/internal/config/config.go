@@ -29,6 +29,7 @@ type Config struct {
 	Model           string
 	MaxRounds       int
 	CmdTimeoutSec   int
+	LLMTimeoutSec   int
 	MaxStdoutBytes  int
 	MaxTranscript   int
 	LogJSON         bool
@@ -188,6 +189,7 @@ func RedactConfig(cfg Config) map[string]any {
 		"model":          cfg.Model,
 		"maxRounds":      cfg.MaxRounds,
 		"cmdTimeoutSec":  cfg.CmdTimeoutSec,
+		"llmTimeoutSec":  cfg.LLMTimeoutSec,
 		"maxStdoutBytes": cfg.MaxStdoutBytes,
 		"maxTranscript":  cfg.MaxTranscript,
 		"logJSON":        cfg.LogJSON,

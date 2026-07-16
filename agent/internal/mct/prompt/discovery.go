@@ -9,7 +9,7 @@ import (
 )
 
 // RunFileDiscovery executes file discovery and returns the discovered paths.
-func RunFileDiscovery(ctx context.Context, prompt string, runtime ModelRuntime, fallbackRuntime ModelRuntime, trajectoryOverride, sessionID string, verbose bool) ([]string, error) {
+func RunFileDiscovery(ctx context.Context, prompt string, runtime ModelRuntime, fallbackRuntime ModelRuntime, trajectoryOverride, sessionID string, verbose bool, turnTimeout int) ([]string, error) {
 	fdRuntime := runtime
 	if strings.TrimSpace(fdRuntime.Resolved.Model) == "" {
 		fdRuntime = fallbackRuntime
@@ -25,6 +25,7 @@ func RunFileDiscovery(ctx context.Context, prompt string, runtime ModelRuntime, 
 		FallbackResolved:   cloneResolvedModels(fdRuntime.FallbackResolved),
 		TrajectoryOverride: strings.TrimSpace(trajectoryOverride),
 		APIKeyOverrides:    llm.CopyAPIKeyOverridesForRuntime(fdRuntime.APIKeyOverrides),
+		TurnTimeout:        turnTimeout,
 	}
 	discoveryCtx := llm.WithStage(llm.WithAPIKeyOverrides(ctx, fdRuntime.APIKeyOverrides), "file-discovery")
 	result, err := discoveryrunner.Run(discoveryCtx, prompt, drModel, sessionID, verbose)

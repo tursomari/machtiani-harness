@@ -94,6 +94,7 @@ func main() {
 	log.SetFlags(0)
 
 	var cfg cfgpkg.Config
+	cfg.LLMTimeoutSec = 60
 	var showVersion bool
 	var noJSON bool
 

@@ -36,6 +36,7 @@ type ModelSettings struct {
 	FallbackResolved   []llm.ResolvedModel
 	TrajectoryOverride string
 	APIKeyOverrides    map[string]string
+	TurnTimeout        int
 }
 
 // Matches blocks like:
@@ -106,6 +107,7 @@ func Run(ctx context.Context, prompt string, model ModelSettings, sessionID stri
 	cfg := integration.Config{
 		MaxRounds:      20,
 		CmdTimeoutSec:  30,
+		LLMTimeoutSec:  model.TurnTimeout,
 		MaxStdoutBytes: 20480,
 		MaxTranscript:  300000,
 		Verbose:        verbose,

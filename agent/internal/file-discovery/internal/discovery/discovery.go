@@ -912,6 +912,13 @@ func callChat(ctx context.Context, llmCfg LLMSettings, msgs []chatMessage) (stri
 
 var chatInvoker = callChat
 
+func llmCallContext(parent context.Context, timeoutSec int) (context.Context, context.CancelFunc) {
+	if timeoutSec == 0 {
+		return parent, func() {}
+	}
+	return context.WithTimeout(parent, time.Duration(timeoutSec)*time.Second)
+}
+
 const exitCodeNoRelevantFiles = 2
 
 func cloneExtras(src map[string]any) map[string]any {
@@ -1093,7 +1100,7 @@ func Run(ctx context.Context, cfg cfgpkg.Config, llmCfg LLMSettings) int {
 			tr.Event("llm_request", round, map[string]any{"messages": messages})
 		}
 
-		llmCtx, cancel := context.WithTimeout(baseCtx, 60*time.Second)
+		llmCtx, cancel := llmCallContext(baseCtx, cfg.LLMTimeoutSec)
 		assistantContent, err := chatInvoker(llmCtx, llmCfg, messages)
 		cancel()
 		if err != nil {
@@ -1375,7 +1382,7 @@ func Run(ctx context.Context, cfg cfgpkg.Config, llmCfg LLMSettings) int {
 			tr.Event("llm_request", forcedRound, map[string]any{"messages": messages, "forced_finalization": true, "retry_count": finalBlockRetries})
 		}
 
-		llmCtx, cancel := context.WithTimeout(baseCtx, 60*time.Second)
+		llmCtx, cancel := llmCallContext(baseCtx, cfg.LLMTimeoutSec)
 		assistantContent, err := chatInvoker(llmCtx, llmCfg, messages)
 		cancel()
 		if err != nil {

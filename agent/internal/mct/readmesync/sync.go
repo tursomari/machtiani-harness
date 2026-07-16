@@ -17,6 +17,7 @@ type Options struct {
 	Commit               string
 	Verbose              bool
 	ContextLength        int
+	TurnTimeout          int
 	Runtime              promptsvc.ModelRuntime
 	AnswerRuntime        promptsvc.ModelRuntime
 	FileDiscoveryRuntime promptsvc.ModelRuntime
@@ -81,6 +82,7 @@ func Run(ctx context.Context, opts Options) error {
 			FileDiscoveryRuntime: opts.FileDiscoveryRuntime,
 			Verbose:              opts.Verbose,
 			ContextLength:        opts.ContextLength,
+			TurnTimeout:          opts.TurnTimeout,
 			Prompts:              opts.Prompts,
 		}
 		res, err := promptsvc.Run(execCtx, innerOpts)

@@ -484,6 +484,7 @@ func handleSyncCommand(args []string) int {
 	cfg := session.Config{}
 	if globalCfg, _, err := llm.LoadGlobalConfig(); err == nil && globalCfg.Planner != nil {
 		cfg.MaxTurns = globalCfg.Planner.MaxTurns
+		cfg.TurnTimeout = globalCfg.Planner.TurnTimeout
 	}
 	if cfg.MaxTurns <= 0 {
 		cfg.MaxTurns = 150
@@ -597,6 +598,7 @@ func handleSyncCommand(args []string) int {
 		Commit:               commit,
 		Verbose:              cfg.Verbose,
 		ContextLength:        cfg.ContextLength,
+		TurnTimeout:          cfg.TurnTimeout,
 		Runtime:              runtimes.Orchestrator,
 		AnswerRuntime:        runtimes.Answer,
 		FileDiscoveryRuntime: runtimes.FileDiscovery,

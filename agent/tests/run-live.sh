@@ -5,6 +5,27 @@ unset MACHTIANI_SESSION_ID
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${REPO_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 
+if [[ -n "${MCT_AGENT_BIN:-}" ]]; then
+  if [[ "$MCT_AGENT_BIN" != /* ]]; then
+    MCT_AGENT_BIN="$(cd "$(dirname "$MCT_AGENT_BIN")" && pwd)/$(basename "$MCT_AGENT_BIN")"
+  fi
+  if [[ ! -x "$MCT_AGENT_BIN" ]]; then
+    echo "ERROR: MCT_AGENT_BIN is not executable: $MCT_AGENT_BIN" >&2
+    exit 1
+  fi
+  MCT_AGENT_BIN="$(realpath "$MCT_AGENT_BIN" 2>/dev/null || printf '%s\n' "$MCT_AGENT_BIN")"
+  export MCT_AGENT_BIN
+fi
+
+if [[ "${MCT_REQUIRE_LIVE:-false}" == "true" ]] && ! {
+  [[ -n "${TEST_API_KEY:-${OPENAI_API_KEY:-}}" ]] &&
+    [[ -n "${TEST_BASE_URL:-${OPENAI_BASE_URL:-}}" ]] &&
+    [[ -n "${TEST_MODEL:-${OPENAI_MODEL:-}}" ]]
+}; then
+  echo "ERROR: MCT_REQUIRE_LIVE=true requires complete TEST_* or supported fallback credentials" >&2
+  exit 1
+fi
+
 # The integration suite creates sessions and other project-scoped state. Keep
 # that state out of the developer's checkout by running the suite from a
 # detached worktree at committed HEAD with a disposable HOME. The inner run is
@@ -37,21 +58,22 @@ if [[ "${MCT_RUN_LIVE_INNER:-}" != "1" ]]; then
   fi
 
   if [[ -f "$TEST_HOME/.machtiani/config.toml" ]]; then
+    outer_agent="${MCT_AGENT_BIN:-mct-agent}"
     (
       cd "$WORKTREE"
       HOME="$TEST_HOME" \
-        mct-agent init --no-interactive >/dev/null
+        "$outer_agent" init --no-interactive >/dev/null
       HOME="$TEST_HOME" \
         MACHTIANI_CONFIG="$TEST_HOME/.machtiani/config.toml" \
         MCT_LLM_TEST_STUB=stub-echo \
         MCT_README_TEST_STUB=basic \
-        mct-agent sync >/dev/null
+        "$outer_agent" sync >/dev/null
     )
   fi
 
   PROJECT_STORE=$(
     cd "$WORKTREE"
-    HOME="$TEST_HOME" mct-agent project show --json |
+    HOME="$TEST_HOME" "${MCT_AGENT_BIN:-mct-agent}" project show --json |
       python3 -c 'import json, sys; print(json.load(sys.stdin)["store"])'
   )
 
@@ -573,6 +595,92 @@ stop_llm_stub_server() {
   fi
 }
 
+start_delayed_discovery_server() {
+  local state_file="$1"
+  local port_file="$2"
+
+  "$PYTHON_BIN" - "$state_file" "$port_file" <<'PY' &
+import json
+import sys
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+state_path = sys.argv[1]
+port_path = sys.argv[2]
+state = {"requests": 0, "discovery_requests": 0}
+
+def write_state():
+    with open(state_path, "w", encoding="utf-8") as fh:
+        json.dump(state, fh)
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, format, *args):
+        return
+
+    def do_POST(self):
+        length = int(self.headers.get("content-length", "0"))
+        raw = self.rfile.read(length)
+        try:
+            data = json.loads(raw.decode("utf-8"))
+        except Exception:
+            self.send_response(400)
+            self.end_headers()
+            return
+
+        content = "\n".join(
+            str(message.get("content", ""))
+            for message in data.get("messages", [])
+            if isinstance(message, dict)
+        )
+        is_discovery = "BEGIN_RELEVANT_FILES[file-discovery]" in content and "file_search" in content
+        state["requests"] += 1
+        if is_discovery:
+            state["discovery_requests"] += 1
+            write_state()
+            time.sleep(1.5)
+            reply = "BEGIN_RELEVANT_FILES[file-discovery]\nREADME.md\nEND_RELEVANT_FILES[file-discovery]\n"
+        else:
+            write_state()
+            reply = "# Internal README\n\nThis fixture verifies discovery timeout policy.\n"
+
+        payload = {
+            "id": "delayed-discovery",
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": data.get("model", "delayed-model"),
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": reply}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+        }
+        encoded = json.dumps(payload).encode("utf-8")
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+with open(port_path, "w", encoding="utf-8") as fh:
+    fh.write(str(server.server_address[1]))
+    fh.flush()
+write_state()
+server.serve_forever()
+PY
+  STUB_SERVER_PID=$!
+
+  local waited=0
+  while [[ ! -s "$port_file" && $waited -lt 50 ]]; do
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  if [[ ! -s "$port_file" ]]; then
+    echo "ERROR: delayed discovery server failed to write port file" >&2
+    return 1
+  fi
+}
+
 assert_stub_counts() {
   local state_file="$1"
   local min_plan="$2"
@@ -665,10 +773,17 @@ check_bin() {
   local name="$2"
   local src_dir="$3"
   local version_flag="${4:-}"
+  local explicit_path="${5:-}"
 
   local path
-  if ! path="$(command -v "$name" 2>/dev/null)"; then
+  if [[ -n "$explicit_path" ]]; then
+    path="$explicit_path"
+  elif ! path="$(command -v "$name" 2>/dev/null)"; then
     echo "ERROR: $name not found in PATH" >&2
+    exit 1
+  fi
+  if [[ ! -x "$path" ]]; then
+    echo "ERROR: $name is not executable: $path" >&2
     exit 1
   fi
   printf -v "$out_var" '%s' "$path"
@@ -785,6 +900,7 @@ check_bin() {
 echo "== Preflight: verifying mct-agent binary ==" >&2
 if [ -n "${MCT_AGENT_BIN:-}" ]; then
   echo "Using MCT_AGENT_BIN from environment: $MCT_AGENT_BIN" >&2
+  check_bin MCT_AGENT_BIN mct-agent "$REPO_ROOT/agent" "--version" "$MCT_AGENT_BIN"
 else
   check_bin MCT_AGENT_BIN mct-agent "$REPO_ROOT/agent" "--version"
 fi
@@ -1115,6 +1231,7 @@ PY
 }
 
 cleanup_config() {
+  stop_llm_stub_server
   if [[ "${KEEP_TEST_CONFIG:-}" == "true" ]]; then
     return
   fi
@@ -3456,8 +3573,104 @@ test_missing_config() {
     "Explain how the agent chooses its model runtime."
 }
 
+test_discovery_turn_timeout() {
+  local case_root repo config_file state_file port_file short_stdout short_stderr unlimited_stdout unlimited_stderr port
+  case_root="$(mktemp -d "$TMP_ROOT/discovery-timeout.XXXXXX")"
+  repo="$case_root/repo"
+  config_file="$case_root/config.toml"
+  state_file="$case_root/server-state.json"
+  port_file="$case_root/server-port"
+  short_stdout="$case_root/short.stdout"
+  short_stderr="$case_root/short.stderr"
+  unlimited_stdout="$case_root/unlimited.stdout"
+  unlimited_stderr="$case_root/unlimited.stderr"
+
+  start_delayed_discovery_server "$state_file" "$port_file"
+  port="$(cat "$port_file")"
+  mkdir -p "$repo"
+  git -C "$repo" init --initial-branch=main >/dev/null
+  git -C "$repo" config user.name "run-live discovery timeout"
+  git -C "$repo" config user.email "run-live@example.invalid"
+  printf '# Timeout fixture\n' > "$repo/README.md"
+  git -C "$repo" add README.md
+  git -C "$repo" commit -m "timeout fixture" >/dev/null
+
+  cat > "$config_file" <<EOF
+default_model = "delayed"
+answer_model = "delayed"
+file_discovery_model = "delayed"
+
+[model_defaults]
+context_length = 128000
+
+[providers.delayed]
+base_url = "http://127.0.0.1:$port/v1"
+api_key = "delay-key"
+
+[models.delayed]
+provider = "delayed"
+model = "delayed-model"
+EOF
+
+  (
+    cd "$repo"
+    MACHTIANI_CONFIG="$config_file" "$MCT_AGENT" init --no-interactive --config-scope global >/dev/null
+  )
+
+  set +e
+  (
+    cd "$repo"
+    MACHTIANI_CONFIG="$config_file" "$MCT_AGENT" sync --turn-timeout 1
+  ) >"$short_stdout" 2>"$short_stderr"
+  local short_status=$?
+  set -e
+  if (( short_status == 0 )); then
+    echo "ERROR: discovery sync unexpectedly succeeded with a one-second timeout" >&2
+    stop_llm_stub_server
+    return 1
+  fi
+  if ! grep -Eq 'context deadline exceeded|Client\.Timeout exceeded' "$short_stderr"; then
+    echo "ERROR: short discovery timeout did not report a deadline" >&2
+    cat "$short_stderr" >&2
+    stop_llm_stub_server
+    return 1
+  fi
+
+  if ! (
+    cd "$repo"
+    MACHTIANI_CONFIG="$config_file" "$MCT_AGENT" sync --turn-timeout 0
+  ) >"$unlimited_stdout" 2>"$unlimited_stderr"; then
+    echo "ERROR: unlimited discovery sync failed" >&2
+    cat "$unlimited_stderr" >&2
+    stop_llm_stub_server
+    return 1
+  fi
+  if ! grep -Fq 'Readme synced for commit ' "$unlimited_stdout"; then
+    echo "ERROR: unlimited discovery sync did not complete" >&2
+    cat "$unlimited_stdout" >&2
+    stop_llm_stub_server
+    return 1
+  fi
+
+  if ! "$PYTHON_BIN" - "$state_file" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    state = json.load(fh)
+if int(state.get("discovery_requests", 0)) < 2:
+    raise SystemExit("expected at least two delayed discovery requests")
+PY
+  then
+    stop_llm_stub_server
+    return 1
+  fi
+  stop_llm_stub_server
+}
+
 declare -A TESTS=(
 	["sync-footer"]="run_sync_footer_case"
+	["discovery-turn-timeout"]="test_discovery_turn_timeout"
   ["test_local_tmp_root_unset_live"]="run_local_tmp_root_unset_live_case"
   ["test_code_no_forge"]="test_code_no_forge"
   ["test_code_forge_initial"]="test_code_forge_initial"
@@ -3521,6 +3734,7 @@ fi
 if [[ $# -eq 0 ]]; then
 # Per-component flag coverage.
 run_test_case "sync_footer" run_sync_footer_case
+run_test_case "discovery_turn_timeout" test_discovery_turn_timeout
 run_test_case "mode_prompt_layers" run_mode_prompt_layers_case
 
 # Resume without mode: verify shell-agent system prompt survives
