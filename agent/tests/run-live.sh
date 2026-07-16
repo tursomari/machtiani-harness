@@ -24,6 +24,18 @@ if [[ "${MCT_RUN_LIVE_INNER:-}" != "1" ]]; then
 
   mkdir -p "$TEST_HOME"
   git -C "$SOURCE_ROOT" worktree add --detach "$WORKTREE" HEAD >/dev/null
+  shell_agent_commit=$(
+    git -C "$SOURCE_ROOT" ls-tree HEAD agent/internal/shell-agent |
+      awk '$1 == "160000" { print $3 }'
+  )
+  if [[ -n "$shell_agent_commit" ]] &&
+    git -C "$SOURCE_ROOT/agent/internal/shell-agent" cat-file -e "${shell_agent_commit}^{commit}" 2>/dev/null; then
+    rm -rf "$WORKTREE/agent/internal/shell-agent"
+    git clone --quiet --no-hardlinks \
+      "$SOURCE_ROOT/agent/internal/shell-agent" \
+      "$WORKTREE/agent/internal/shell-agent"
+    git -C "$WORKTREE/agent/internal/shell-agent" checkout --quiet --detach "$shell_agent_commit"
+  fi
   mkdir -p "$WORKTREE/.machtiani" "$TEST_HOME/.machtiani"
   SOURCE_CONFIG="$SOURCE_ROOT/.machtiani/config.toml"
   if [[ ! -f "$SOURCE_CONFIG" ]]; then
