@@ -2,6 +2,8 @@ package ui
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -459,6 +461,137 @@ func TestFormatterFooterDegradesForNarrowWidth(t *testing.T) {
 	requireContains(t, lines[1], "session agent-20260709T125317-5182")
 	if strings.Contains(lines[1], "medium") || strings.Contains(lines[1], "high") {
 		t.Fatalf("expected narrow status line to drop reasoning before task status: %q", lines[1])
+	}
+}
+
+func TestFormatTokenFooterLineCompactionCandidates(t *testing.T) {
+	usage := TokenUsageUpdatedEvent{InputHit: 1234, InputMiss: 56789, Output: 1000}
+	tests := []struct {
+		name string
+		want string
+	}{
+		{
+			name: "widest",
+			want: "1:05  ~/projects/mct  active token context 25,000/120,000  tokens  input hit 1,234  input miss 56,789  output 1,000",
+		},
+		{
+			name: "compact labels",
+			want: "1:05  ~/projects/mct  act 25,000/120,000  tokens  hit 1,234  miss 56,789  out 1,000",
+		},
+		{
+			name: "short cwd",
+			want: "1:05  ~/p/m  act 25,000/120,000  hit 1,234  miss 56,789  out 1,000",
+		},
+		{
+			name: "without cwd",
+			want: "1:05  act 25,000/120,000  hit 1,234  miss 56,789  out 1,000",
+		},
+		{
+			name: "compact totals",
+			want: "1:05  act 25,000/120,000  in 1,234/56,789  out 1,000",
+		},
+		{
+			name: "fallback",
+			want: "1:05  in 1,234/56,789  out 1,000",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := formatTokenFooterLine(65*time.Second, "~/projects/mct", 25000, 120000, usage, runeLen(tt.want))
+			if got != tt.want {
+				t.Fatalf("footer = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFormatTokenFooterLineOmitsUnavailableOptionalSegments(t *testing.T) {
+	usage := TokenUsageUpdatedEvent{InputHit: 40, InputMiss: 60, Output: 25}
+	tests := []struct {
+		name               string
+		cwd                string
+		activePromptTokens int
+		maxInputTokens     int
+		want               string
+	}{
+		{
+			name: "no optional values",
+			want: "42s  tokens  input hit 40  input miss 60  output 25",
+		},
+		{
+			name:               "active prompt without budget",
+			activePromptTokens: 25000,
+			want:               "42s  tokens  input hit 40  input miss 60  output 25",
+		},
+		{
+			name:           "budget without active prompt",
+			maxInputTokens: 120000,
+			want:           "42s  tokens  input hit 40  input miss 60  output 25",
+		},
+		{
+			name: "cwd only",
+			cwd:  "~/projects/mct",
+			want: "42s  ~/projects/mct  tokens  input hit 40  input miss 60  output 25",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := formatTokenFooterLine(42*time.Second, tt.cwd, tt.activePromptTokens, tt.maxInputTokens, usage, 200)
+			if got != tt.want {
+				t.Fatalf("footer = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFormatFooterCWDAndShortening(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("os.UserHomeDir: %v", err)
+	}
+	underHome := filepath.Join(home, "projects", "machtiani")
+	if got, want := formatFooterCWD(underHome), "~/projects/machtiani"; got != want {
+		t.Fatalf("formatFooterCWD(%q) = %q, want %q", underHome, got, want)
+	}
+	if got := formatFooterCWD(home); got != "~" {
+		t.Fatalf("formatFooterCWD(home) = %q, want ~", got)
+	}
+	sibling := filepath.Join(home+"-other", "project")
+	if got := formatFooterCWD(sibling); got != sibling {
+		t.Fatalf("formatFooterCWD(%q) = %q, want unchanged path", sibling, got)
+	}
+	if got, want := shortenFooterPath("~/projects/to/name"), "~/p/t/n"; got != want {
+		t.Fatalf("shortenFooterPath = %q, want %q", got, want)
+	}
+}
+
+func TestFormatterFinalFooterKeepsCWDAndClearsActiveContext(t *testing.T) {
+	f, bus, buf := newTestFormatter()
+	defer bus.Close()
+	f.timerEnabled = true
+	f.width = 180
+	f.handleSessionStarted(SessionStartedEvent{
+		CWD:            "~/projects/mct",
+		MaxInputTokens: 120000,
+	})
+	f.handleTokenUsageUpdated(TokenUsageUpdatedEvent{
+		InputHit:           1234,
+		InputMiss:          56789,
+		Output:             1000,
+		ActivePromptTokens: 25000,
+	})
+	buf.Reset()
+
+	f.handleSessionEnded(SessionEndedEvent{})
+	output := stripANSI(buf.String())
+	requireContains(t, output, "~/projects/mct")
+	if strings.Contains(output, "active token context") || strings.Contains(output, "act 25,000/120,000") {
+		t.Fatalf("final footer retained active context: %q", output)
+	}
+	if f.activePromptTokens != 0 || f.maxInputTokens != 0 {
+		t.Fatalf("active context was not cleared: active=%d max=%d", f.activePromptTokens, f.maxInputTokens)
 	}
 }
 

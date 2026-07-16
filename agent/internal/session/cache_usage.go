@@ -36,10 +36,15 @@ func startLLMCacheUsageLogger(bus *ui.EventBus, path string, diagWriter io.Write
 		defer close(done)
 		err := sub.Subscribe(ctx, opts, func(ctx context.Context, evt listener.Event) error {
 			if totals.addEvent(evt) {
+				activePromptTokens, _ := intFromAny(evt.Payload["prompt_tokens"])
+				if activePromptTokens < 0 {
+					activePromptTokens = 0
+				}
 				update := ui.TokenUsageUpdatedEvent{
-					InputHit:  totals.InputHit,
-					InputMiss: totals.InputMiss,
-					Output:    totals.Output,
+					InputHit:           totals.InputHit,
+					InputMiss:          totals.InputMiss,
+					Output:             totals.Output,
+					ActivePromptTokens: activePromptTokens,
 				}
 				if onUpdate != nil {
 					onUpdate(update)

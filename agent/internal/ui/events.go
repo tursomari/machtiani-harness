@@ -19,13 +19,15 @@ const (
 
 // SessionStartedEvent signals the beginning of an agent session.
 type SessionStartedEvent struct {
-	SessionID  string
-	Identity   FooterIdentity
-	Goal       string
-	Turn       int
-	Elapsed    time.Duration
-	TokenUsage TokenUsageUpdatedEvent
-	Models     FooterModelMetadata
+	SessionID      string
+	Identity       FooterIdentity
+	Goal           string
+	CWD            string
+	Turn           int
+	Elapsed        time.Duration
+	TokenUsage     TokenUsageUpdatedEvent
+	MaxInputTokens int
+	Models         FooterModelMetadata
 }
 
 func (e SessionStartedEvent) Type() string { return "SessionStarted" }
@@ -88,11 +90,13 @@ type NotificationEvent struct {
 
 func (e NotificationEvent) Type() string { return "Notification" }
 
-// TokenUsageUpdatedEvent carries cumulative LLM token usage for the session.
+// TokenUsageUpdatedEvent carries cumulative LLM token usage for the session
+// plus the active prompt size from the latest LLM call.
 type TokenUsageUpdatedEvent struct {
-	InputHit  int
-	InputMiss int
-	Output    int
+	InputHit           int
+	InputMiss          int
+	Output             int
+	ActivePromptTokens int
 }
 
 func (e TokenUsageUpdatedEvent) Type() string { return "TokenUsageUpdated" }

@@ -166,7 +166,7 @@ func TestStartLLMCacheUsageLoggerEmitsTokenUsageNotNotifications(t *testing.T) {
 					t.Fatalf("unexpected cache notification: %s", e.Message)
 				}
 			case ui.TokenUsageUpdatedEvent:
-				want := ui.TokenUsageUpdatedEvent{InputHit: 1030, InputMiss: 2070, Output: 3020}
+				want := ui.TokenUsageUpdatedEvent{InputHit: 1030, InputMiss: 2070, Output: 3020, ActivePromptTokens: 100}
 				if e != want {
 					t.Fatalf("token usage update = %+v, want %+v", e, want)
 				}

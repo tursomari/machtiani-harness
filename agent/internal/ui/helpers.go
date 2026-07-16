@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -258,4 +259,40 @@ func formatTokenCount(n int) string {
 		b.WriteString(s[i : i+3])
 	}
 	return b.String()
+}
+
+func formatFooterCWD(cwd string) string {
+	if cwd == "" {
+		return ""
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return cwd
+	}
+	home = filepath.Clean(home)
+	cleanCWD := filepath.Clean(cwd)
+	if cleanCWD == home {
+		return "~"
+	}
+	homePrefix := home + string(os.PathSeparator)
+	if home == string(os.PathSeparator) {
+		homePrefix = home
+	}
+	if strings.HasPrefix(cleanCWD, homePrefix) {
+		return "~" + strings.TrimPrefix(cleanCWD, home)
+	}
+	return cwd
+}
+
+func shortenFooterPath(path string) string {
+	if !strings.HasPrefix(path, "~/") {
+		return path
+	}
+	parts := strings.Split(strings.TrimPrefix(path, "~/"), "/")
+	for i, part := range parts {
+		if runes := []rune(part); len(runes) > 0 {
+			parts[i] = string(runes[0])
+		}
+	}
+	return "~/" + strings.Join(parts, "/")
 }

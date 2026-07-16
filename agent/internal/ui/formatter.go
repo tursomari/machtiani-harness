@@ -68,24 +68,27 @@ type Formatter struct {
 	streams         map[string]*promptStreamState
 	streamCounter   atomic.Int64
 
-	timerEnabled   bool
-	timerStart     time.Time
-	elapsedOffset  time.Duration
-	timerTicker    *time.Ticker
-	timerStop      chan struct{}
-	timerVisible   bool
-	footerOffset   int
-	lastFooter     []string
-	tokenUsage     TokenUsageUpdatedEvent
-	footerModels   FooterModelMetadata
-	footerIdentity FooterIdentity
-	sessionID      string
-	turnNumber     int
-	modeTasks      []ModeTaskDisplay
-	activeModeTask int
-	manager        *ProcessTimerManager
-	id             string
-	done           chan struct{}
+	timerEnabled       bool
+	timerStart         time.Time
+	elapsedOffset      time.Duration
+	timerTicker        *time.Ticker
+	timerStop          chan struct{}
+	timerVisible       bool
+	footerOffset       int
+	lastFooter         []string
+	tokenUsage         TokenUsageUpdatedEvent
+	cwd                string
+	activePromptTokens int
+	maxInputTokens     int
+	footerModels       FooterModelMetadata
+	footerIdentity     FooterIdentity
+	sessionID          string
+	turnNumber         int
+	modeTasks          []ModeTaskDisplay
+	activeModeTask     int
+	manager            *ProcessTimerManager
+	id                 string
+	done               chan struct{}
 }
 
 type coordinatedWriter struct {
@@ -208,6 +211,9 @@ func (f *Formatter) handleSessionStarted(e SessionStartedEvent) {
 		f.elapsedOffset = e.Elapsed
 	}
 	f.tokenUsage = e.TokenUsage
+	f.cwd = e.CWD
+	f.activePromptTokens = e.TokenUsage.ActivePromptTokens
+	f.maxInputTokens = e.MaxInputTokens
 	f.footerModels = e.Models
 	f.footerIdentity = FooterIdentity{Label: sanitizeLine(e.Identity.Label), Value: sanitizeLine(e.Identity.Value)}
 	f.sessionID = sanitizeLine(e.SessionID)
@@ -229,6 +235,8 @@ func (f *Formatter) handleSessionEnded(_ SessionEndedEvent) {
 	if f.closed {
 		return
 	}
+	f.activePromptTokens = 0
+	f.maxInputTokens = 0
 	finalFooter := f.finalFooterLinesLocked()
 	f.closed = true
 	f.stopTimerLocked()
@@ -389,6 +397,7 @@ func (f *Formatter) handleNotification(e NotificationEvent) {
 
 func (f *Formatter) handleTokenUsageUpdated(e TokenUsageUpdatedEvent) {
 	f.tokenUsage = e
+	f.activePromptTokens = e.ActivePromptTokens
 	f.ensureTimerLocked()
 	f.renderTimerLocked()
 }
@@ -901,7 +910,7 @@ func (f *Formatter) formatFooterLinesLocked(elapsed time.Duration, lineCount int
 	if width <= 0 {
 		width = defaultWidth
 	}
-	tokenLine := formatTokenFooterLine(elapsed, f.tokenUsage, width)
+	tokenLine := formatTokenFooterLine(elapsed, f.cwd, f.activePromptTokens, f.maxInputTokens, f.tokenUsage, width)
 	if lineCount <= 1 {
 		return []string{tokenLine}
 	}
@@ -1089,16 +1098,28 @@ func styleLabelValue(text string, valueRole presentation.Role, bold bool) presen
 	return append(line, presentation.Text(text))
 }
 
-func formatTokenFooterLine(elapsed time.Duration, usage TokenUsageUpdatedEvent, width int) string {
+func formatTokenFooterLine(elapsed time.Duration, cwd string, activePromptTokens, maxInputTokens int, usage TokenUsageUpdatedEvent, width int) string {
 	elapsedText := formatElapsed(elapsed)
+	cwd = formatFooterCWD(cwd)
+	shortCWD := shortenFooterPath(cwd)
+	activeContext := ""
+	activeContextShort := ""
+	if activePromptTokens > 0 && maxInputTokens > 0 {
+		active := formatTokenCount(activePromptTokens)
+		budget := formatTokenCount(maxInputTokens)
+		activeContext = fmt.Sprintf("active token context %s/%s", active, budget)
+		activeContextShort = fmt.Sprintf("act %s/%s", active, budget)
+	}
 	hit := formatTokenCount(usage.InputHit)
 	miss := formatTokenCount(usage.InputMiss)
 	out := formatTokenCount(usage.Output)
 	candidates := []string{
-		fmt.Sprintf("%s  tokens  input hit %s  input miss %s  output %s", elapsedText, hit, miss, out),
-		fmt.Sprintf("%s  tokens  hit %s  miss %s  out %s", elapsedText, hit, miss, out),
-		fmt.Sprintf("%s  hit %s  miss %s  out %s", elapsedText, hit, miss, out),
-		fmt.Sprintf("%s  in %s/%s  out %s", elapsedText, hit, miss, out),
+		joinTokenFooterSegments(elapsedText, cwd, activeContext, fmt.Sprintf("tokens  input hit %s  input miss %s  output %s", hit, miss, out)),
+		joinTokenFooterSegments(elapsedText, cwd, activeContextShort, fmt.Sprintf("tokens  hit %s  miss %s  out %s", hit, miss, out)),
+		joinTokenFooterSegments(elapsedText, shortCWD, activeContextShort, fmt.Sprintf("hit %s  miss %s  out %s", hit, miss, out)),
+		joinTokenFooterSegments(elapsedText, activeContextShort, fmt.Sprintf("hit %s  miss %s  out %s", hit, miss, out)),
+		joinTokenFooterSegments(elapsedText, activeContextShort, fmt.Sprintf("in %s/%s  out %s", hit, miss, out)),
+		joinTokenFooterSegments(elapsedText, fmt.Sprintf("in %s/%s  out %s", hit, miss, out)),
 	}
 	for _, candidate := range candidates {
 		if fitsWidth(candidate, width) {
@@ -1106,6 +1127,16 @@ func formatTokenFooterLine(elapsed time.Duration, usage TokenUsageUpdatedEvent, 
 		}
 	}
 	return truncate(candidates[len(candidates)-1], width)
+}
+
+func joinTokenFooterSegments(segments ...string) string {
+	nonEmpty := make([]string, 0, len(segments))
+	for _, segment := range segments {
+		if segment != "" {
+			nonEmpty = append(nonEmpty, segment)
+		}
+	}
+	return strings.Join(nonEmpty, "  ")
 }
 
 func formatStatusFooterLine(tasks []ModeTaskDisplay, active int, turn int, identity FooterIdentity, models FooterModelMetadata, width int) string {

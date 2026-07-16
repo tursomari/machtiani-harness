@@ -680,12 +680,14 @@ func runSession(ctx context.Context, opts Options) Result {
 
 	runState.startRuntimeClock()
 	eventBus.Emit(ui.SessionStartedEvent{
-		SessionID:  sessionID,
-		Goal:       goal,
-		Turn:       runState.turnsCompleted + 1,
-		Elapsed:    runState.runtimeElapsedSnapshot(),
-		TokenUsage: runState.runtimeTokenUsageSnapshot(),
-		Models:     footerModelMetadata(models),
+		SessionID:      sessionID,
+		Goal:           goal,
+		CWD:            runCWD,
+		Turn:           runState.turnsCompleted + 1,
+		Elapsed:        runState.runtimeElapsedSnapshot(),
+		TokenUsage:     runState.runtimeTokenUsageSnapshot(),
+		MaxInputTokens: orchBudget.MaxInputTokens,
+		Models:         footerModelMetadata(models),
 	})
 	if resumeMode {
 		eventBus.Emit(ui.RawStringEvent{Text: "Resuming session " + sessionID + " ..."})
