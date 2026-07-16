@@ -116,23 +116,43 @@ This is primarily for development workflows. Most users should use `mct-agent` d
 ### Managed source installation and updates
 
 Automatic updates use an inspectable Git clone rather than a prebuilt binary.
-Until a public remote is selected, substitute a local or otherwise configured
-Git remote for `<REMOTE>`:
+Bootstrap the managed installation from a fresh clone of this repository:
 
 ```bash
-git clone <REMOTE> ~/src/mct-install
-cd ~/src/mct-install
+git clone <repository-url> ~/src/mct-bootstrap
+cd ~/src/mct-bootstrap
 ./scripts/install.sh --managed
+hash -r
+mct-agent --version
+mct-agent update --check
 ```
+
+The bootstrap checkout must be clean, including having no untracked files.
+This prevents local work from being silently omitted when the installer builds
+the remote default-branch tip. If a development checkout is dirty, use a fresh
+clone or a temporary clean worktree instead of moving or stashing unrelated
+files. To install from another Git remote, clone that remote for the bootstrap;
+the installer follows the clone's `origin` and its symbolic default branch.
+
+An ordinary clone is sufficient; `--recurse-submodules` is not required. The
+installer initializes the recorded `agent/internal/shell-agent` submodule in
+the managed source before building. Managed mode installs `mct-agent`, not the
+optional standalone `shell-agent` executable, and cannot be combined with
+`--install-peripherals`.
 
 The managed installer uses the invoking checkout only to discover its
 `origin`. It clones that origin's default branch into
 `~/.machtiani/installations/mct-agent/source`, builds from that canonical
 source, and records the sanitized remote and exact installation target. The
-original checkout can then be moved or removed without affecting updates.
+bootstrap checkout can then be moved or removed without affecting updates.
 Embedded HTTP credentials are rejected; use normal Git SSH or
 credential-helper configuration when authentication is needed. Re-running the
-command reuses a clean managed clone only when its origin matches exactly.
+command requires both the invoking checkout and updater-owned clone to be
+clean and reuses the managed clone only when its origin matches exactly.
+
+`hash -r` refreshes Bash's cached executable locations in the current shell;
+starting a new shell has the same effect. The version output should identify
+the commit currently checked out in the managed source directory.
 
 For an existing Machtiani home, run the additive migration from the checkout
 whose `origin` should supply updates:
@@ -717,6 +737,10 @@ See `agent/internal/file-discovery/README.md` for direct `file-discovery` usage.
 ## Troubleshooting
 - Command not found
   - Re-run `./scripts/install.sh` (append `--install-peripherals` if you need the optional CLIs) and ensure the chosen prefix (default `~/.local/bin`) is on PATH. Rehash your shell if needed (`hash -r`).
+- `managed installation requires a clean source checkout`
+  - Managed mode rejects tracked changes and untracked files so local work is not silently excluded from the remote-backed build. Check with `git status --short`, or bootstrap from a fresh clone or temporary clean worktree. The bootstrap checkout can be deleted after installation.
+- Managed installation cannot initialize `shell-agent`
+  - A normal root clone is sufficient because the installer initializes the submodule automatically. This error means the gitlink recorded by the root repository is not available from the submodule remote; publish that child commit before publishing the parent commit that references it.
 - Missing model configuration / auth errors
   - Set `OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_MODEL` (or pass `--openai-*` flags to the agent).
 - `file-discovery` not found

@@ -18,7 +18,10 @@ build and install mct, file-discovery, snippet-discovery, and shell-agent
 (for development and debugging only; most users should use mct-agent
 directly).
 Pass --managed from a clean Git clone to bootstrap an updater-owned clone from
-the same origin, then build and register that managed source for updates.
+the same origin, then build and register that managed source for updates. Clean
+means no tracked changes or untracked files. Required submodules are initialized
+in the managed source automatically. Managed mode installs only mct-agent and
+the bootstrap clone may be removed after installation.
 Environment:
   PREFIX   Destination prefix for the install (default: \$HOME/.local)
 EOF

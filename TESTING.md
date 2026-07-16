@@ -137,7 +137,9 @@ project artifacts and verifies that the migration script preserves them:
 
 This mode requires Docker and Git but no model-provider credentials. The full
 smoke run executes the same updater scenario before its configuration and live
-provider checks.
+provider checks. The local updater harness also verifies rejection of dirty
+bootstrap and managed checkouts, origin mismatches, and embedded credentials;
+the Go updater tests verify initialization of the recorded build submodule.
 
 Prerequisites:
 

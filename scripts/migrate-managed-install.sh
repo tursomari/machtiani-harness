@@ -14,8 +14,10 @@ Usage: $(basename "$0")
 
 Adds the managed mct-agent source installation to an existing Machtiani home.
 Run this script from a clean Git clone with the origin that should supply
-updates. Existing configuration, project stores, sessions, and artifacts under
-\$HOME/.machtiani are left in place.
+updates. Clean means no tracked changes or untracked files. Required submodules
+are initialized in the managed source automatically. Existing configuration,
+project stores, sessions, and artifacts under \$HOME/.machtiani are left in
+place; the bootstrap clone may be removed after migration.
 
 Environment:
   PREFIX   Destination prefix for mct-agent (default: \$HOME/.local)
