@@ -1,12 +1,11 @@
 module github.com/tursomari/machtiani/agent
 
-go 1.23
-
-toolchain go1.23.0
+go 1.26.5
 
 require (
 	github.com/BurntSushi/toml v1.3.2
 	github.com/charmbracelet/glamour v0.8.0
+	github.com/git-pkgs/gitignore v1.2.0
 	github.com/google/uuid v1.6.0
 	github.com/sirupsen/logrus v1.9.3
 	github.com/spf13/pflag v1.0.5

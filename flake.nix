@@ -17,6 +17,13 @@
         let
           pkgs = import nixpkgs { inherit system; };
           lib = pkgs.lib;
+          patchedGo = pkgs.go.overrideAttrs (_: {
+            version = "1.26.5";
+            src = pkgs.fetchurl {
+              url = "https://go.dev/dl/go1.26.5.src.tar.gz";
+              hash = "sha256-SVvkvIcXasVnOS5bQRar2YRm0z17SdQedkzMaXay3EI=";
+            };
+          });
           revision = self.rev or "unknown";
           shortRevision = if revision == "unknown" then revision else builtins.substring 0 12 revision;
           source = lib.cleanSourceWith {
@@ -28,12 +35,12 @@
                 && !(lib.hasPrefix ".gocache" rel)
                 && rel != "result";
           };
-          mct-agent = pkgs.buildGoModule {
+          mct-agent = (pkgs.buildGoModule.override { go = patchedGo; }) {
             pname = "mct-agent";
             version = "0.1.0-${shortRevision}";
             src = source + "/agent";
             subPackages = [ "cmd/mct-agent" ];
-            vendorHash = "sha256-yLAYUCr/2YU45qTd74K+C11dLBcxsbouNn+PWYJYuFw=";
+            vendorHash = "sha256-mQwuTzeFhYllk5eHVTbyuZY8Zfu2ZEcktFiJopthinM=";
             env.CGO_ENABLED = 0;
             ldflags = [
               "-s"
@@ -84,7 +91,14 @@
         let
           pkgs = import nixpkgs { inherit system; };
           lib = pkgs.lib;
-          portableGo = pkgs.go.overrideAttrs (old: {
+          patchedGo = pkgs.go.overrideAttrs (_: {
+            version = "1.26.5";
+            src = pkgs.fetchurl {
+              url = "https://go.dev/dl/go1.26.5.src.tar.gz";
+              hash = "sha256-SVvkvIcXasVnOS5bQRar2YRm0z17SdQedkzMaXay3EI=";
+            };
+          });
+          portableGo = patchedGo.overrideAttrs (old: {
             patches = builtins.filter (patch:
               let name = builtins.baseNameOf (toString patch);
               in !(lib.hasInfix "iana-etc-" name)
@@ -94,8 +108,8 @@
           });
         in {
           default = pkgs.mkShell {
-            packages = [ pkgs.go pkgs.gitMinimal pkgs.ripgrep pkgs.bash pkgs.coreutils pkgs.gnused ];
-            shellHook = ''export PATH=${lib.makeBinPath [ pkgs.go pkgs.gitMinimal pkgs.ripgrep pkgs.bash pkgs.coreutils pkgs.gnused ]}:$PATH'';
+            packages = [ patchedGo pkgs.gitMinimal pkgs.ripgrep pkgs.bash pkgs.coreutils pkgs.gnused ];
+            shellHook = ''export PATH=${lib.makeBinPath [ patchedGo pkgs.gitMinimal pkgs.ripgrep pkgs.bash pkgs.coreutils pkgs.gnused ]}:$PATH'';
           };
           smoke = pkgs.mkShell {
             packages = [
@@ -107,9 +121,9 @@
               pkgs.curl
               pkgs.expect
               pkgs.python3
-              pkgs.go
+              patchedGo
             ];
-            shellHook = ''export PATH=${lib.makeBinPath [ pkgs.go pkgs.gitMinimal pkgs.jq pkgs.bash pkgs.coreutils pkgs.gnused pkgs.curl pkgs.expect pkgs.python3 ]}:$PATH'';
+            shellHook = ''export PATH=${lib.makeBinPath [ patchedGo pkgs.gitMinimal pkgs.jq pkgs.bash pkgs.coreutils pkgs.gnused pkgs.curl pkgs.expect pkgs.python3 ]}:$PATH'';
           };
           bench = pkgs.mkShell {
             packages = [
