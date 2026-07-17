@@ -968,6 +968,12 @@ func (f *Formatter) styleFooterLinesLocked(lines []string) []string {
 				styled = append(styled, f.theme.render(presentation.StyledLine{presentation.Bold(presentation.RoleTruth, line)}))
 				continue
 			}
+			if f.activePromptTokens > 0 && f.maxInputTokens > 0 {
+				highlights = append(highlights,
+					footerHighlight{text: formatTokenCount(f.activePromptTokens), role: presentation.RoleProvenance},
+					footerHighlight{text: formatTokenCount(f.maxInputTokens), role: presentation.RoleProvenance},
+				)
+			}
 			for _, value := range []int{f.tokenUsage.InputHit, f.tokenUsage.InputMiss, f.tokenUsage.Output} {
 				highlights = append(highlights, footerHighlight{text: formatTokenCount(value), role: presentation.RoleProvenance})
 			}
@@ -1107,8 +1113,8 @@ func formatTokenFooterLine(elapsed time.Duration, cwd string, activePromptTokens
 	if activePromptTokens > 0 && maxInputTokens > 0 {
 		active := formatTokenCount(activePromptTokens)
 		budget := formatTokenCount(maxInputTokens)
-		activeContext = fmt.Sprintf("active token context %s/%s", active, budget)
-		activeContextShort = fmt.Sprintf("act %s/%s", active, budget)
+		activeContext = fmt.Sprintf("active context window %s/%s", active, budget)
+		activeContextShort = activeContext
 	}
 	hit := formatTokenCount(usage.InputHit)
 	miss := formatTokenCount(usage.InputMiss)

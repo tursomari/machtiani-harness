@@ -366,6 +366,27 @@ func TestFormatterFooterStylesModeAsBoldBeauty(t *testing.T) {
 	}
 }
 
+func TestFormatterFooterStylesActiveContextLikeTokenValues(t *testing.T) {
+	f, bus, _ := newTestFormatter()
+	defer bus.Close()
+	f.theme.Presentation = presentation.NewForTest(presentation.ProfileTerminal, true, false)
+	f.width = 180
+	f.activePromptTokens = 25000
+	f.maxInputTokens = 120000
+	f.tokenUsage = TokenUsageUpdatedEvent{InputHit: 1234, InputMiss: 56789, Output: 1000}
+
+	lines := f.formatFooterLinesLocked(65*time.Second, 2)
+	styled := f.styleFooterLinesLocked(lines)
+	if len(styled) != 2 {
+		t.Fatalf("expected two styled footer lines, got %d", len(styled))
+	}
+	for _, value := range []string{"25,000", "120,000", "1,234", "56,789", "1,000"} {
+		if !strings.Contains(styled[0], "\x1b[33m"+value+"\x1b[0m") {
+			t.Fatalf("expected %q to use Provenance/yellow styling, got %q", value, styled[0])
+		}
+	}
+}
+
 func TestFormatterSessionEndedPrintsFinalFooterAfterOutput(t *testing.T) {
 	f, bus, buf := newTestFormatter()
 	defer bus.Close()
@@ -472,23 +493,23 @@ func TestFormatTokenFooterLineCompactionCandidates(t *testing.T) {
 	}{
 		{
 			name: "widest",
-			want: "1:05  ~/projects/mct  active token context 25,000/120,000  tokens  input hit 1,234  input miss 56,789  output 1,000",
+			want: "1:05  ~/projects/mct  active context window 25,000/120,000  tokens  input hit 1,234  input miss 56,789  output 1,000",
 		},
 		{
 			name: "compact labels",
-			want: "1:05  ~/projects/mct  act 25,000/120,000  tokens  hit 1,234  miss 56,789  out 1,000",
+			want: "1:05  ~/projects/mct  active context window 25,000/120,000  tokens  hit 1,234  miss 56,789  out 1,000",
 		},
 		{
 			name: "short cwd",
-			want: "1:05  ~/p/m  act 25,000/120,000  hit 1,234  miss 56,789  out 1,000",
+			want: "1:05  ~/p/m  active context window 25,000/120,000  hit 1,234  miss 56,789  out 1,000",
 		},
 		{
 			name: "without cwd",
-			want: "1:05  act 25,000/120,000  hit 1,234  miss 56,789  out 1,000",
+			want: "1:05  active context window 25,000/120,000  hit 1,234  miss 56,789  out 1,000",
 		},
 		{
 			name: "compact totals",
-			want: "1:05  act 25,000/120,000  in 1,234/56,789  out 1,000",
+			want: "1:05  active context window 25,000/120,000  in 1,234/56,789  out 1,000",
 		},
 		{
 			name: "fallback",
@@ -587,7 +608,7 @@ func TestFormatterFinalFooterKeepsCWDAndClearsActiveContext(t *testing.T) {
 	f.handleSessionEnded(SessionEndedEvent{})
 	output := stripANSI(buf.String())
 	requireContains(t, output, "~/projects/mct")
-	if strings.Contains(output, "active token context") || strings.Contains(output, "act 25,000/120,000") {
+	if strings.Contains(output, "active context window") {
 		t.Fatalf("final footer retained active context: %q", output)
 	}
 	if f.activePromptTokens != 0 || f.maxInputTokens != 0 {

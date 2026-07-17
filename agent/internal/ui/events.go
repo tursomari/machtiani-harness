@@ -91,7 +91,7 @@ type NotificationEvent struct {
 func (e NotificationEvent) Type() string { return "Notification" }
 
 // TokenUsageUpdatedEvent carries cumulative LLM token usage for the session
-// plus the active prompt size from the latest LLM call.
+// plus the active prompt size from the latest planner call.
 type TokenUsageUpdatedEvent struct {
 	InputHit           int
 	InputMiss          int

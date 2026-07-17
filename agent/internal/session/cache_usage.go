@@ -1,11 +1,13 @@
 package session
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strconv"
 	"strings"
 
@@ -14,6 +16,16 @@ import (
 )
 
 func startLLMCacheUsageLogger(bus *ui.EventBus, path string, diagWriter io.Writer, initial ui.TokenUsageUpdatedEvent, onUpdate func(ui.TokenUsageUpdatedEvent)) (context.CancelFunc, <-chan struct{}, error) {
+	seed := initial
+	if historical, err := readLatestPlannerPromptFromTrajectory(path); err != nil {
+		fmt.Fprintf(diagWriter, "[trajectory] planner usage backfill error: %v\n", err)
+	} else if historical.Found {
+		seed.ActivePromptTokens = historical.ActivePromptTokens
+	}
+	if seed != initial && onUpdate != nil {
+		onUpdate(seed)
+	}
+
 	sub, err := listener.New(path)
 	if err != nil {
 		return nil, nil, err
@@ -27,25 +39,11 @@ func startLLMCacheUsageLogger(bus *ui.EventBus, path string, diagWriter io.Write
 			fmt.Fprintf(diagWriter, "[trajectory] cache usage listener error: %v\n", err)
 		},
 	}
-	totals := tokenUsageTotals{
-		InputHit:  initial.InputHit,
-		InputMiss: initial.InputMiss,
-		Output:    initial.Output,
-	}
+	tracker := newTokenUsageTracker(seed)
 	go func() {
 		defer close(done)
 		err := sub.Subscribe(ctx, opts, func(ctx context.Context, evt listener.Event) error {
-			if totals.addEvent(evt) {
-				activePromptTokens, _ := intFromAny(evt.Payload["prompt_tokens"])
-				if activePromptTokens < 0 {
-					activePromptTokens = 0
-				}
-				update := ui.TokenUsageUpdatedEvent{
-					InputHit:           totals.InputHit,
-					InputMiss:          totals.InputMiss,
-					Output:             totals.Output,
-					ActivePromptTokens: activePromptTokens,
-				}
+			if update, ok := tracker.addEvent(evt); ok {
 				if onUpdate != nil {
 					onUpdate(update)
 				}
@@ -60,6 +58,98 @@ func startLLMCacheUsageLogger(bus *ui.EventBus, path string, diagWriter io.Write
 		}
 	}()
 	return cancel, done, nil
+}
+
+type tokenUsageTracker struct {
+	totals             tokenUsageTotals
+	activePromptTokens int
+}
+
+func newTokenUsageTracker(initial ui.TokenUsageUpdatedEvent) *tokenUsageTracker {
+	return &tokenUsageTracker{
+		totals: tokenUsageTotals{
+			InputHit:  initial.InputHit,
+			InputMiss: initial.InputMiss,
+			Output:    initial.Output,
+		},
+		activePromptTokens: initial.ActivePromptTokens,
+	}
+}
+
+func (t *tokenUsageTracker) addEvent(evt listener.Event) (ui.TokenUsageUpdatedEvent, bool) {
+	if t == nil || !t.totals.addEvent(evt) {
+		return ui.TokenUsageUpdatedEvent{}, false
+	}
+	if isPlannerUsageEvent(evt) {
+		if promptTokens, ok := promptTokensFromPayload(evt.Payload); ok {
+			t.activePromptTokens = promptTokens
+		}
+	}
+	return ui.TokenUsageUpdatedEvent{
+		InputHit:           t.totals.InputHit,
+		InputMiss:          t.totals.InputMiss,
+		Output:             t.totals.Output,
+		ActivePromptTokens: t.activePromptTokens,
+	}, true
+}
+
+type plannerPromptUsage struct {
+	ActivePromptTokens int
+	Found              bool
+}
+
+func readLatestPlannerPromptFromTrajectory(path string) (plannerPromptUsage, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return plannerPromptUsage{}, nil
+		}
+		return plannerPromptUsage{}, err
+	}
+	defer file.Close()
+
+	var usage plannerPromptUsage
+	reader := bufio.NewReader(file)
+	for {
+		line, readErr := reader.ReadBytes('\n')
+		var record struct {
+			Component string         `json:"component"`
+			Kind      string         `json:"kind"`
+			Payload   map[string]any `json:"payload"`
+		}
+		if len(line) > 0 && json.Unmarshal(line, &record) == nil && record.Kind == "llm.cache.usage" && strings.EqualFold(strings.TrimSpace(record.Component), "planner") {
+			if promptTokens, ok := promptTokensFromPayload(record.Payload); ok {
+				usage.ActivePromptTokens = promptTokens
+				usage.Found = true
+			}
+		}
+		if readErr != nil {
+			if errors.Is(readErr, io.EOF) {
+				break
+			}
+			return usage, readErr
+		}
+	}
+	return usage, nil
+}
+
+func isPlannerUsageEvent(evt listener.Event) bool {
+	component := strings.TrimSpace(evt.Component)
+	if component == "" {
+		component = strings.TrimSpace(evt.Event.Component)
+	}
+	return strings.EqualFold(component, "planner")
+}
+
+func promptTokensFromPayload(payload map[string]any) (int, bool) {
+	promptTokens, ok := intFromAny(payload["prompt_tokens"])
+	if !ok {
+		return 0, false
+	}
+	if promptTokens < 0 {
+		promptTokens = 0
+	}
+	return promptTokens, true
 }
 
 type tokenUsageTotals struct {

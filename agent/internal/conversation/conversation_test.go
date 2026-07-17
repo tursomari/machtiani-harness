@@ -437,6 +437,8 @@ func TestConversationRoundTripWithResumabilityFields(t *testing.T) {
 	conv.TaskDescription = "A task"
 	conv.Status = "running"
 	conv.RuntimeStats = NewRuntimeStatsState(12345, 1234, 56789, 1000)
+	conv.RuntimeStats.PlannerActivePromptTokens = 25000
+	conv.RuntimeStats.Normalize()
 
 	data, err := conv.Marshal()
 	if err != nil {
@@ -462,6 +464,9 @@ func TestConversationRoundTripWithResumabilityFields(t *testing.T) {
 	}
 	if loaded.OriginalGoal != conv.OriginalGoal {
 		t.Fatalf("OriginalGoal mismatch: got %q want %q", loaded.OriginalGoal, conv.OriginalGoal)
+	}
+	if loaded.RuntimeStats.PlannerActivePromptTokens != 25000 {
+		t.Fatalf("planner runtime stats = %+v", loaded.RuntimeStats)
 	}
 	if loaded.ShellAgentResumable != conv.ShellAgentResumable {
 		t.Fatalf("ShellAgentResumable mismatch: got %v want %v", loaded.ShellAgentResumable, conv.ShellAgentResumable)

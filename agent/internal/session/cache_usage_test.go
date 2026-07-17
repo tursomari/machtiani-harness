@@ -3,6 +3,7 @@ package session
 import (
 	"bytes"
 	"context"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -110,6 +111,123 @@ func TestTokenUsageTotalsAddEventAccumulates(t *testing.T) {
 	}
 }
 
+func TestTokenUsageTrackerKeepsPlannerContextStableDuringChildCalls(t *testing.T) {
+	tracker := newTokenUsageTracker(ui.TokenUsageUpdatedEvent{
+		InputHit:           1000,
+		InputMiss:          2000,
+		Output:             3000,
+		ActivePromptTokens: 80,
+	})
+
+	shellUpdate, ok := tracker.addEvent(listener.Event{
+		Component: "shell-agent",
+		Event: trajectory.Event{Payload: map[string]any{
+			"prompt_tokens":     100,
+			"cached_tokens":     30,
+			"completion_tokens": 20,
+		}},
+	})
+	if !ok {
+		t.Fatal("shell-agent usage was not aggregated")
+	}
+	wantShell := ui.TokenUsageUpdatedEvent{
+		InputHit:           1030,
+		InputMiss:          2070,
+		Output:             3020,
+		ActivePromptTokens: 80,
+	}
+	if shellUpdate != wantShell {
+		t.Fatalf("shell-agent update = %+v, want %+v", shellUpdate, wantShell)
+	}
+
+	plannerUpdate, ok := tracker.addEvent(listener.Event{
+		Component: "planner",
+		Event: trajectory.Event{Payload: map[string]any{
+			"prompt_tokens":     60,
+			"cached_tokens":     20,
+			"completion_tokens": 10,
+		}},
+	})
+	if !ok {
+		t.Fatal("planner usage was not aggregated")
+	}
+	wantPlanner := ui.TokenUsageUpdatedEvent{
+		InputHit:           1050,
+		InputMiss:          2110,
+		Output:             3030,
+		ActivePromptTokens: 60,
+	}
+	if plannerUpdate != wantPlanner {
+		t.Fatalf("planner update = %+v, want %+v", plannerUpdate, wantPlanner)
+	}
+}
+
+func TestReadLatestPlannerPromptFromTrajectoryBackfillsPlannerOnly(t *testing.T) {
+	path := t.TempDir() + "/trajectory.jsonl"
+	writer, err := trajectory.New(trajectory.Config{SessionID: "sess", Path: path, Component: "agent"})
+	if err != nil {
+		t.Fatalf("trajectory.New: %v", err)
+	}
+	for _, evt := range []trajectory.Event{
+		{Component: "planner", Kind: "llm.cache.usage", Payload: map[string]any{"prompt_tokens": 100, "cached_tokens": 40}},
+		{Component: "shell-agent", Kind: "llm.cache.usage", Payload: map[string]any{"prompt_tokens": 500}},
+		{Component: "planner", Kind: "llm.cache.usage", Payload: map[string]any{"prompt_tokens": 60}},
+		{Component: "planner", Kind: "planner.response", Payload: map[string]any{"prompt_tokens": 999}},
+	} {
+		if err := writer.Emit(context.Background(), evt); err != nil {
+			t.Fatalf("emit trajectory event: %v", err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close trajectory writer: %v", err)
+	}
+
+	got, err := readLatestPlannerPromptFromTrajectory(path)
+	if err != nil {
+		t.Fatalf("readLatestPlannerPromptFromTrajectory: %v", err)
+	}
+	want := plannerPromptUsage{ActivePromptTokens: 60, Found: true}
+	if got != want {
+		t.Fatalf("planner usage = %+v, want %+v", got, want)
+	}
+}
+
+func TestStartLLMCacheUsageLoggerSeedsLegacyPlannerStats(t *testing.T) {
+	path := t.TempDir() + "/trajectory.jsonl"
+	writer, err := trajectory.New(trajectory.Config{SessionID: "sess", Path: path, Component: "agent"})
+	if err != nil {
+		t.Fatalf("trajectory.New: %v", err)
+	}
+	for _, evt := range []trajectory.Event{
+		{Component: "planner", Kind: "llm.cache.usage", Payload: map[string]any{"prompt_tokens": 100}},
+		{Component: "shell-agent", Kind: "llm.cache.usage", Payload: map[string]any{"prompt_tokens": 500}},
+	} {
+		if err := writer.Emit(context.Background(), evt); err != nil {
+			t.Fatalf("emit trajectory event: %v", err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close trajectory writer: %v", err)
+	}
+
+	initial := ui.TokenUsageUpdatedEvent{InputHit: 10, InputMiss: 20, Output: 5}
+	var seeded ui.TokenUsageUpdatedEvent
+	cancel, done, err := startLLMCacheUsageLogger(nil, path, io.Discard, initial, func(update ui.TokenUsageUpdatedEvent) {
+		seeded = update
+	})
+	if err != nil {
+		t.Fatalf("startLLMCacheUsageLogger: %v", err)
+	}
+	cancel()
+	<-done
+
+	want := initial
+	want.ActivePromptTokens = 100
+	if seeded != want {
+		t.Fatalf("seeded usage = %+v, want %+v", seeded, want)
+	}
+}
+
 func TestStartLLMCacheUsageLoggerEmitsTokenUsageNotNotifications(t *testing.T) {
 	path := t.TempDir() + "/trajectory.jsonl"
 	writer, err := trajectory.New(trajectory.Config{SessionID: "sess", Path: path, Component: "llm"})
@@ -123,7 +241,7 @@ func TestStartLLMCacheUsageLoggerEmitsTokenUsageNotNotifications(t *testing.T) {
 	sub := bus.Subscribe()
 
 	var diag bytes.Buffer
-	initial := ui.TokenUsageUpdatedEvent{InputHit: 1000, InputMiss: 2000, Output: 3000}
+	initial := ui.TokenUsageUpdatedEvent{InputHit: 1000, InputMiss: 2000, Output: 3000, ActivePromptTokens: 80}
 	updates := make(chan ui.TokenUsageUpdatedEvent, 1)
 	cancel, done, err := startLLMCacheUsageLogger(bus, path, &diag, initial, func(update ui.TokenUsageUpdatedEvent) {
 		select {
@@ -146,7 +264,8 @@ func TestStartLLMCacheUsageLoggerEmitsTokenUsageNotNotifications(t *testing.T) {
 		select {
 		case <-ticker.C:
 			_ = writer.Emit(context.Background(), trajectory.Event{
-				Kind: "llm.cache.usage",
+				Component: "planner",
+				Kind:      "llm.cache.usage",
 				Payload: map[string]any{
 					"prompt_tokens":     100,
 					"completion_tokens": 20,

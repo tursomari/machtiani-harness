@@ -542,9 +542,10 @@ func newRunLifecycleState(rootCtx context.Context, cfg legacyConfig, sessionID, 
 		stats := loadedState.RuntimeStats.Clone()
 		runtimeBaseElapsed = time.Duration(stats.ActiveElapsedMS) * time.Millisecond
 		runtimeTokenUsage = ui.TokenUsageUpdatedEvent{
-			InputHit:  stats.InputHitTokens,
-			InputMiss: stats.InputMissTokens,
-			Output:    stats.OutputTokens,
+			InputHit:           stats.InputHitTokens,
+			InputMiss:          stats.InputMissTokens,
+			Output:             stats.OutputTokens,
+			ActivePromptTokens: stats.PlannerActivePromptTokens,
 		}
 	}
 	originalGoalVal := originalPrompt
@@ -1097,6 +1098,9 @@ func (r *runLifecycleState) updateRuntimeTokenUsage(usage ui.TokenUsageUpdatedEv
 	if usage.Output < 0 {
 		usage.Output = 0
 	}
+	if usage.ActivePromptTokens < 0 {
+		usage.ActivePromptTokens = 0
+	}
 	r.runtimeTokenUsage = usage
 }
 
@@ -1107,12 +1111,15 @@ func (r *runLifecycleState) runtimeStatsSnapshot() *conversation.RuntimeStatsSta
 	r.runtimeMu.Lock()
 	defer r.runtimeMu.Unlock()
 	elapsed := r.runtimeElapsedLocked(time.Now())
-	return conversation.NewRuntimeStatsState(
+	stats := conversation.NewRuntimeStatsState(
 		elapsed.Milliseconds(),
 		r.runtimeTokenUsage.InputHit,
 		r.runtimeTokenUsage.InputMiss,
 		r.runtimeTokenUsage.Output,
 	)
+	stats.PlannerActivePromptTokens = r.runtimeTokenUsage.ActivePromptTokens
+	stats.Normalize()
+	return stats
 }
 
 func (r *runLifecycleState) interruptedResult(err error) Result {

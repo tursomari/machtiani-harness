@@ -99,13 +99,14 @@ func (p *PlannerProgressState) Clone() *PlannerProgressState {
 // totals. Numeric fields are kept for resumability; display fields keep the
 // persisted JSON readable without affecting parsing.
 type RuntimeStatsState struct {
-	ActiveElapsedMS        int64  `json:"active_elapsed_ms,omitempty"`
-	InputHitTokens         int    `json:"input_hit_tokens,omitempty"`
-	InputHitTokensDisplay  string `json:"input_hit_tokens_display,omitempty"`
-	InputMissTokens        int    `json:"input_miss_tokens,omitempty"`
-	InputMissTokensDisplay string `json:"input_miss_tokens_display,omitempty"`
-	OutputTokens           int    `json:"output_tokens,omitempty"`
-	OutputTokensDisplay    string `json:"output_tokens_display,omitempty"`
+	ActiveElapsedMS           int64  `json:"active_elapsed_ms,omitempty"`
+	InputHitTokens            int    `json:"input_hit_tokens,omitempty"`
+	InputHitTokensDisplay     string `json:"input_hit_tokens_display,omitempty"`
+	InputMissTokens           int    `json:"input_miss_tokens,omitempty"`
+	InputMissTokensDisplay    string `json:"input_miss_tokens_display,omitempty"`
+	OutputTokens              int    `json:"output_tokens,omitempty"`
+	OutputTokensDisplay       string `json:"output_tokens_display,omitempty"`
+	PlannerActivePromptTokens int    `json:"planner_active_prompt_tokens,omitempty"`
 }
 
 func NewRuntimeStatsState(activeElapsedMS int64, inputHit, inputMiss, output int) *RuntimeStatsState {
@@ -155,6 +156,9 @@ func (s *RuntimeStatsState) Normalize() {
 	}
 	if s.OutputTokens < 0 {
 		s.OutputTokens = 0
+	}
+	if s.PlannerActivePromptTokens < 0 {
+		s.PlannerActivePromptTokens = 0
 	}
 	s.InputHitTokensDisplay = formatTokenCount(s.InputHitTokens)
 	s.InputMissTokensDisplay = formatTokenCount(s.InputMissTokens)

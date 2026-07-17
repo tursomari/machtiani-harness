@@ -245,14 +245,20 @@ func TestRuntimeStatsSeedAndHydrateConversation(t *testing.T) {
 			1_000,
 		),
 	}
+	loaded.RuntimeStats.PlannerActivePromptTokens = 24000
+	loaded.RuntimeStats.Normalize()
 	runState := newRunLifecycleState(context.Background(), legacyConfig{}, loaded.SessionID, loaded.Goal, loaded.Goal, "", "", "", 0, "", loaded)
+	if got := runState.runtimeTokenUsageSnapshot(); got.ActivePromptTokens != 24000 {
+		t.Fatalf("seeded planner token usage = %+v", got)
+	}
 	runState.recorder = &conversationRecorder{
 		conversation: conversation.New(loaded.SessionID, loaded.Goal),
 	}
 	runState.updateRuntimeTokenUsage(ui.TokenUsageUpdatedEvent{
-		InputHit:  2_000,
-		InputMiss: 60_000,
-		Output:    1_500,
+		InputHit:           2_000,
+		InputMiss:          60_000,
+		Output:             1_500,
+		ActivePromptTokens: 26000,
 	})
 
 	state := runState.baseSessionState()
@@ -269,6 +275,9 @@ func TestRuntimeStatsSeedAndHydrateConversation(t *testing.T) {
 	}
 	if got := state.RuntimeStats.InputMissTokensDisplay; got != "60,000" {
 		t.Fatalf("InputMissTokensDisplay = %q, want 60,000", got)
+	}
+	if state.RuntimeStats.PlannerActivePromptTokens != 26000 {
+		t.Fatalf("persisted planner runtime stats = %+v", state.RuntimeStats)
 	}
 	if runState.recorder.conversation.RuntimeStats == nil {
 		t.Fatal("expected runtime stats to hydrate conversation")
