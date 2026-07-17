@@ -103,7 +103,7 @@ done
 MCT_SMOKE_AGENT="$native_agent" PATH="$shell_tool_trap:$PATH" run_sync_under_pty "$sync_output" --verbose
 strip_ansi "$sync_output" > "$sync_clean"
 grep -q 'Readme synced for commit ' "$sync_clean"
-grep -Eq 'tokens[[:space:]]+input hit [0-9,]+[[:space:]]+input miss [0-9,]+[[:space:]]+output [0-9,]+' "$sync_clean"
+grep -Eq 'session token input [0-9,]+[[:space:]]+\(cache [0-9]+%\)[[:space:]]+output [0-9,]+' "$sync_clean"
 grep -Eq 'sync [0-9a-f]{12}' "$sync_clean"
 grep -q 'discovery ' "$sync_clean"
 grep -q 'answer ' "$sync_clean"
@@ -120,7 +120,7 @@ sync_noop_output=$(mktemp)
 sync_noop_clean=$(mktemp)
 run_sync_under_pty "$sync_noop_output"
 strip_ansi "$sync_noop_output" > "$sync_noop_clean"
-grep -Eq 'tokens[[:space:]]+input hit 0[[:space:]]+input miss 0[[:space:]]+output 0' "$sync_noop_clean"
+grep -Eq 'session token input 0[[:space:]]+\(cache 0%\)[[:space:]]+output 0' "$sync_noop_clean"
 grep -Eq 'sync [0-9a-f]{12}' "$sync_noop_clean"
 if grep -Eq '(discovery|answer)[[:space:]]' "$sync_noop_clean"; then
   echo "No-op sync footer unexpectedly claimed an LLM model." >&2

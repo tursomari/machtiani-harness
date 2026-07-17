@@ -220,7 +220,7 @@ func TestFormatterFooterIncludesTokenUsage(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	output := stripANSI(buf.String())
-	requireContains(t, output, "1:05  tokens  input hit 1,234  input miss 56,789  output 1,000")
+	requireContains(t, output, "1:05  session token input 58,023 (cache 2%)  output 1,000")
 	_ = f
 }
 
@@ -286,7 +286,7 @@ func TestFormatterFooterIncludesModeAndModelStatus(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	output := stripANSI(buf.String())
-	requireContains(t, output, "42s  tokens  input hit 491,392  input miss 61,688  output 7,007")
+	requireContains(t, output, "42s  session token input 553,080 (cache 89%)  output 7,007")
 	requireContains(t, output, "code-forge-skyvern turn 1 running  planner deepseek-v4-flash medium  shell deepseek-v4-flash medium")
 	if strings.Contains(output, "[meta] planned tasks") || strings.Contains(output, "[meta] task") {
 		t.Fatalf("expected mode metadata to stay out of normal output\nGot: %s", output)
@@ -315,7 +315,7 @@ func TestFormatterFooterSupportsSyncIdentityAndDynamicRoles(t *testing.T) {
 	if len(lines) != 2 {
 		t.Fatalf("footer lines = %#v", lines)
 	}
-	requireContains(t, lines[0], "tokens  input hit 40  input miss 60  output 25")
+	requireContains(t, lines[0], "session token input 100 (cache 40%)  output 25")
 	requireContains(t, lines[1], "sync abcdef123456  discovery provider:discovery-model low  answer provider:answer-model high")
 }
 
@@ -366,7 +366,7 @@ func TestFormatterFooterStylesModeAsBoldBeauty(t *testing.T) {
 	}
 }
 
-func TestFormatterFooterStylesActiveContextLikeTokenValues(t *testing.T) {
+func TestFormatterFooterStylesContextAndSessionTokenValues(t *testing.T) {
 	f, bus, _ := newTestFormatter()
 	defer bus.Close()
 	f.theme.Presentation = presentation.NewForTest(presentation.ProfileTerminal, true, false)
@@ -380,7 +380,7 @@ func TestFormatterFooterStylesActiveContextLikeTokenValues(t *testing.T) {
 	if len(styled) != 2 {
 		t.Fatalf("expected two styled footer lines, got %d", len(styled))
 	}
-	for _, value := range []string{"25,000", "120,000", "1,234", "56,789", "1,000"} {
+	for _, value := range []string{"79%", "2%", "58,023", "1,000"} {
 		if !strings.Contains(styled[0], "\x1b[33m"+value+"\x1b[0m") {
 			t.Fatalf("expected %q to use Provenance/yellow styling, got %q", value, styled[0])
 		}
@@ -422,7 +422,7 @@ func TestFormatterSessionEndedPrintsFinalFooterAfterOutput(t *testing.T) {
 
 	output := stripANSI(buf.String())
 	complete := strings.LastIndex(output, "=== SESSION COMPLETE ===")
-	tokenFooter := strings.LastIndex(output, "tokens  input hit 1,234  input miss 56,789  output 1,000")
+	tokenFooter := strings.LastIndex(output, "session token input 58,023 (cache 2%)  output 1,000")
 	statusFooter := strings.LastIndex(output, "code-forge-skyvern turn 2 running  session agent-20260709T125317-5182  planner openrouter:z-ai/glm-5.2 high  shell deepseek:deepseek-v4-pro max")
 	if complete < 0 || tokenFooter < 0 || statusFooter < 0 {
 		t.Fatalf("expected session output and final footer\nGot: %s", output)
@@ -478,7 +478,7 @@ func TestFormatterFooterDegradesForNarrowWidth(t *testing.T) {
 			t.Fatalf("footer line exceeds width %d: %q", f.width, line)
 		}
 	}
-	requireContains(t, lines[0], "tokens")
+	requireContains(t, lines[0], "553,080")
 	requireContains(t, lines[1], "session agent-20260709T125317-5182")
 	if strings.Contains(lines[1], "medium") || strings.Contains(lines[1], "high") {
 		t.Fatalf("expected narrow status line to drop reasoning before task status: %q", lines[1])
@@ -493,27 +493,31 @@ func TestFormatTokenFooterLineCompactionCandidates(t *testing.T) {
 	}{
 		{
 			name: "widest",
-			want: "1:05  ~/projects/mct  active context window 25,000/120,000  tokens  input hit 1,234  input miss 56,789  output 1,000",
+			want: "1:05  ~/projects/mct  context remain 79%  session token input 58,023 (cache 2%)  output 1,000",
 		},
 		{
 			name: "compact labels",
-			want: "1:05  ~/projects/mct  active context window 25,000/120,000  tokens  hit 1,234  miss 56,789  out 1,000",
+			want: "1:05  ~/projects/mct  context remain 79%  input 58,023 (cache 2%)  output 1,000",
 		},
 		{
 			name: "short cwd",
-			want: "1:05  ~/p/m  active context window 25,000/120,000  hit 1,234  miss 56,789  out 1,000",
+			want: "1:05  ~/p/m  context remain 79%  input 58,023 (cache 2%)  out 1,000",
 		},
 		{
 			name: "without cwd",
-			want: "1:05  active context window 25,000/120,000  hit 1,234  miss 56,789  out 1,000",
+			want: "1:05  context remain 79%  input 58,023 (cache 2%)  out 1,000",
 		},
 		{
 			name: "compact totals",
-			want: "1:05  active context window 25,000/120,000  in 1,234/56,789  out 1,000",
+			want: "1:05  context remain 79%  in 58,023 (cache 2%)  out 1,000",
 		},
 		{
-			name: "fallback",
-			want: "1:05  in 1,234/56,789  out 1,000",
+			name: "without context",
+			want: "1:05  in 58,023 (cache 2%)  out 1,000",
+		},
+		{
+			name: "fallback without cache",
+			want: "1:05  in 58,023  out 1,000",
 		},
 	}
 
@@ -522,6 +526,44 @@ func TestFormatTokenFooterLineCompactionCandidates(t *testing.T) {
 			got := formatTokenFooterLine(65*time.Second, "~/projects/mct", 25000, 120000, usage, runeLen(tt.want))
 			if got != tt.want {
 				t.Fatalf("footer = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSessionInputTokensAndFooterPercent(t *testing.T) {
+	if got := sessionInputTokens(TokenUsageUpdatedEvent{InputHit: 1997696, InputMiss: 420838}); got != 2418534 {
+		t.Fatalf("sessionInputTokens = %d, want 2418534", got)
+	}
+	if got := sessionInputTokens(TokenUsageUpdatedEvent{InputHit: -10, InputMiss: 20}); got != 20 {
+		t.Fatalf("sessionInputTokens with negative hit = %d, want 20", got)
+	}
+	for _, tt := range []struct {
+		name         string
+		value, total int
+		want         string
+	}{
+		{name: "cache", value: 1997696, total: 2418534, want: "83%"},
+		{name: "zero total", value: 0, total: 0, want: "0%"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := formatFooterPercent(tt.value, tt.total); got != tt.want {
+				t.Fatalf("formatFooterPercent(%d, %d) = %q, want %q", tt.value, tt.total, got, tt.want)
+			}
+		})
+	}
+	for _, tt := range []struct {
+		name          string
+		active, total int
+		want          string
+	}{
+		{name: "remaining", active: 25000, total: 120000, want: "79%"},
+		{name: "exhausted", active: 120000, total: 120000, want: "0%"},
+		{name: "over budget", active: 130000, total: 120000, want: "0%"},
+	} {
+		t.Run("context "+tt.name, func(t *testing.T) {
+			if got := formatContextRemainingPercent(tt.active, tt.total); got != tt.want {
+				t.Fatalf("formatContextRemainingPercent(%d, %d) = %q, want %q", tt.active, tt.total, got, tt.want)
 			}
 		})
 	}
@@ -538,22 +580,22 @@ func TestFormatTokenFooterLineOmitsUnavailableOptionalSegments(t *testing.T) {
 	}{
 		{
 			name: "no optional values",
-			want: "42s  tokens  input hit 40  input miss 60  output 25",
+			want: "42s  session token input 100 (cache 40%)  output 25",
 		},
 		{
 			name:               "active prompt without budget",
 			activePromptTokens: 25000,
-			want:               "42s  tokens  input hit 40  input miss 60  output 25",
+			want:               "42s  session token input 100 (cache 40%)  output 25",
 		},
 		{
 			name:           "budget without active prompt",
 			maxInputTokens: 120000,
-			want:           "42s  tokens  input hit 40  input miss 60  output 25",
+			want:           "42s  session token input 100 (cache 40%)  output 25",
 		},
 		{
 			name: "cwd only",
 			cwd:  "~/projects/mct",
-			want: "42s  ~/projects/mct  tokens  input hit 40  input miss 60  output 25",
+			want: "42s  ~/projects/mct  session token input 100 (cache 40%)  output 25",
 		},
 	}
 
@@ -608,7 +650,7 @@ func TestFormatterFinalFooterKeepsCWDAndClearsActiveContext(t *testing.T) {
 	f.handleSessionEnded(SessionEndedEvent{})
 	output := stripANSI(buf.String())
 	requireContains(t, output, "~/projects/mct")
-	if strings.Contains(output, "active context window") {
+	if strings.Contains(output, "context remain") {
 		t.Fatalf("final footer retained active context: %q", output)
 	}
 	if f.activePromptTokens != 0 || f.maxInputTokens != 0 {

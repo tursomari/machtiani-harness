@@ -969,12 +969,11 @@ func (f *Formatter) styleFooterLinesLocked(lines []string) []string {
 				continue
 			}
 			if f.activePromptTokens > 0 && f.maxInputTokens > 0 {
-				highlights = append(highlights,
-					footerHighlight{text: formatTokenCount(f.activePromptTokens), role: presentation.RoleProvenance},
-					footerHighlight{text: formatTokenCount(f.maxInputTokens), role: presentation.RoleProvenance},
-				)
+				highlights = append(highlights, footerHighlight{text: formatContextRemainingPercent(f.activePromptTokens, f.maxInputTokens), role: presentation.RoleProvenance})
 			}
-			for _, value := range []int{f.tokenUsage.InputHit, f.tokenUsage.InputMiss, f.tokenUsage.Output} {
+			inputTokens := sessionInputTokens(f.tokenUsage)
+			highlights = append(highlights, footerHighlight{text: formatFooterPercent(f.tokenUsage.InputHit, inputTokens), role: presentation.RoleProvenance})
+			for _, value := range []int{inputTokens, f.tokenUsage.Output} {
 				highlights = append(highlights, footerHighlight{text: formatTokenCount(value), role: presentation.RoleProvenance})
 			}
 			tokenLine := highlightFooterText(line[separator:], highlights)
@@ -1111,21 +1110,21 @@ func formatTokenFooterLine(elapsed time.Duration, cwd string, activePromptTokens
 	activeContext := ""
 	activeContextShort := ""
 	if activePromptTokens > 0 && maxInputTokens > 0 {
-		active := formatTokenCount(activePromptTokens)
-		budget := formatTokenCount(maxInputTokens)
-		activeContext = fmt.Sprintf("active context window %s/%s", active, budget)
+		activeContext = fmt.Sprintf("context remain %s", formatContextRemainingPercent(activePromptTokens, maxInputTokens))
 		activeContextShort = activeContext
 	}
-	hit := formatTokenCount(usage.InputHit)
-	miss := formatTokenCount(usage.InputMiss)
+	inputTokens := sessionInputTokens(usage)
+	input := formatTokenCount(inputTokens)
+	cache := formatFooterPercent(usage.InputHit, inputTokens)
 	out := formatTokenCount(usage.Output)
 	candidates := []string{
-		joinTokenFooterSegments(elapsedText, cwd, activeContext, fmt.Sprintf("tokens  input hit %s  input miss %s  output %s", hit, miss, out)),
-		joinTokenFooterSegments(elapsedText, cwd, activeContextShort, fmt.Sprintf("tokens  hit %s  miss %s  out %s", hit, miss, out)),
-		joinTokenFooterSegments(elapsedText, shortCWD, activeContextShort, fmt.Sprintf("hit %s  miss %s  out %s", hit, miss, out)),
-		joinTokenFooterSegments(elapsedText, activeContextShort, fmt.Sprintf("hit %s  miss %s  out %s", hit, miss, out)),
-		joinTokenFooterSegments(elapsedText, activeContextShort, fmt.Sprintf("in %s/%s  out %s", hit, miss, out)),
-		joinTokenFooterSegments(elapsedText, fmt.Sprintf("in %s/%s  out %s", hit, miss, out)),
+		joinTokenFooterSegments(elapsedText, cwd, activeContext, fmt.Sprintf("session token input %s (cache %s)  output %s", input, cache, out)),
+		joinTokenFooterSegments(elapsedText, cwd, activeContextShort, fmt.Sprintf("input %s (cache %s)  output %s", input, cache, out)),
+		joinTokenFooterSegments(elapsedText, shortCWD, activeContextShort, fmt.Sprintf("input %s (cache %s)  out %s", input, cache, out)),
+		joinTokenFooterSegments(elapsedText, activeContextShort, fmt.Sprintf("input %s (cache %s)  out %s", input, cache, out)),
+		joinTokenFooterSegments(elapsedText, activeContextShort, fmt.Sprintf("in %s (cache %s)  out %s", input, cache, out)),
+		joinTokenFooterSegments(elapsedText, fmt.Sprintf("in %s (cache %s)  out %s", input, cache, out)),
+		joinTokenFooterSegments(elapsedText, fmt.Sprintf("in %s  out %s", input, out)),
 	}
 	for _, candidate := range candidates {
 		if fitsWidth(candidate, width) {
@@ -1133,6 +1132,39 @@ func formatTokenFooterLine(elapsed time.Duration, cwd string, activePromptTokens
 		}
 	}
 	return truncate(candidates[len(candidates)-1], width)
+}
+
+func sessionInputTokens(usage TokenUsageUpdatedEvent) int {
+	hit := usage.InputHit
+	if hit < 0 {
+		hit = 0
+	}
+	miss := usage.InputMiss
+	if miss < 0 {
+		miss = 0
+	}
+	return hit + miss
+}
+
+func formatFooterPercent(value, total int) string {
+	if value < 0 {
+		value = 0
+	}
+	if total <= 0 {
+		return "0%"
+	}
+	return fmt.Sprintf("%.0f%%", float64(value)*100/float64(total))
+}
+
+func formatContextRemainingPercent(active, total int) string {
+	if active < 0 {
+		active = 0
+	}
+	remaining := total - active
+	if remaining < 0 {
+		remaining = 0
+	}
+	return formatFooterPercent(remaining, total)
 }
 
 func joinTokenFooterSegments(segments ...string) string {

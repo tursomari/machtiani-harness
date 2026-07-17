@@ -3517,7 +3517,7 @@ PY
   local commit
   commit="$(git -C "$REPO_ROOT" rev-parse --short=12 HEAD)"
   if ! contains_keywords "Readme synced for commit ${commit}" "$output_file" ||
-     ! contains_keywords "tokens\s+input hit 0\s+input miss 0\s+output 0" "$output_file" ||
+     ! contains_keywords "session token input 0\s+\(cache 0%\)\s+output 0" "$output_file" ||
      ! contains_keywords "sync ${commit}" "$output_file"; then
     echo "Sync footer output missing expected no-op fields: $case_id" >&2
     return 1
