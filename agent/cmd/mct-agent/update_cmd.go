@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -112,9 +114,10 @@ func handleInstallCommand(args []string) int {
 	source := fs.String("source", "", "clean source checkout")
 	home, _ := os.UserHomeDir()
 	prefix := fs.String("prefix", filepath.Join(home, ".local"), "installation prefix")
+	noInteractive := fs.Bool("no-interactive", false, "never prompt; use --prefix or the default prefix")
 	_ = fs.Bool("verbose", false, "show detailed Nix and Git output")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "Usage: mct-agent install --source <checkout> [--prefix <dir>] [--verbose]")
+		fmt.Fprintln(os.Stderr, "Usage: mct-agent install --source <checkout> [--prefix <dir>] [--no-interactive] [--verbose]")
 	}
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, pflag.ErrHelp) {
@@ -126,12 +129,135 @@ func handleInstallCommand(args []string) int {
 		fs.Usage()
 		return 2
 	}
-	if _, err := updateManagerFactory().Install(context.Background(), *source, *prefix); err != nil {
+	selectedPrefix, err := resolveInstallPrefix(
+		*prefix,
+		home,
+		fs.Changed("prefix"),
+		*noInteractive,
+		term.IsTerminal(int(os.Stdin.Fd())),
+		bufio.NewReader(os.Stdin),
+		os.Stderr,
+		directoryExists,
+	)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Error: choose installation location:", err)
+		return 1
+	}
+	if _, err := updateManagerFactory().Install(context.Background(), *source, selectedPrefix); err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
 		return 1
 	}
 	fmt.Fprintln(os.Stderr, "Managed mct-agent installation complete.")
 	return 0
+}
+
+func resolveInstallPrefix(prefix, home string, prefixExplicit, noInteractive, interactive bool, reader *bufio.Reader, out io.Writer, isDir func(string) bool) (string, error) {
+	if prefixExplicit || noInteractive || !interactive {
+		return prefix, nil
+	}
+	return promptInstallPrefix(reader, out, availableInstallPrefixes(prefix, home, isDir), home)
+}
+
+// availableInstallPrefixes returns the default followed by at most two common
+// prefixes whose bin directories already exist. The installer can create a
+// missing bin directory for the selected prefix, but existing locations make
+// more useful alternatives in the prompt.
+func availableInstallPrefixes(defaultPrefix, home string, isDir func(string) bool) []string {
+	prefixes := []string{defaultPrefix}
+	candidates := []struct {
+		prefix string
+		probe  string
+	}{
+		{prefix: home, probe: filepath.Join(home, "bin")},
+		{prefix: "/opt/homebrew", probe: filepath.Join("/opt/homebrew", "bin")},
+		{prefix: "/usr/local", probe: filepath.Join("/usr/local", "bin")},
+	}
+	for _, candidate := range candidates {
+		if len(prefixes) == 3 {
+			break
+		}
+		if candidate.prefix == "" || filepath.Clean(candidate.prefix) == filepath.Clean(defaultPrefix) || !isDir(candidate.probe) {
+			continue
+		}
+		prefixes = append(prefixes, candidate.prefix)
+	}
+	return prefixes
+}
+
+func promptInstallPrefix(reader *bufio.Reader, out io.Writer, prefixes []string, home string) (string, error) {
+	if len(prefixes) == 0 {
+		return "", errors.New("no installation prefixes available")
+	}
+	fmt.Fprintln(out, "Choose where to install mct-agent:")
+	for index, prefix := range prefixes {
+		destination := displayInstallPath(filepath.Join(prefix, "bin", "mct-agent"), home)
+		suffix := ""
+		if index == 0 {
+			suffix = " (recommended)"
+		}
+		fmt.Fprintf(out, "  %d) %s%s\n", index+1, destination, suffix)
+	}
+	customIndex := len(prefixes) + 1
+	fmt.Fprintf(out, "  %d) Custom prefix\n", customIndex)
+
+	for {
+		fmt.Fprint(out, "Selection [1]: ")
+		value, err := readInitLine(reader)
+		if err != nil {
+			return "", err
+		}
+		if value == "" {
+			return prefixes[0], nil
+		}
+		selection, err := strconv.Atoi(value)
+		if err != nil || selection < 1 || selection > customIndex {
+			fmt.Fprintf(out, "Enter a number from 1 to %d.\n", customIndex)
+			continue
+		}
+		if selection <= len(prefixes) {
+			return prefixes[selection-1], nil
+		}
+		for {
+			fmt.Fprint(out, "Custom installation prefix (binary goes in <prefix>/bin): ")
+			custom, err := readInitLine(reader)
+			if err != nil {
+				return "", err
+			}
+			if custom == "" {
+				fmt.Fprintln(out, "Installation prefix cannot be empty.")
+				continue
+			}
+			return cleanInstallPrefix(custom, home), nil
+		}
+	}
+}
+
+func cleanInstallPrefix(prefix, home string) string {
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "~" {
+		return home
+	}
+	if strings.HasPrefix(prefix, "~/") {
+		return filepath.Join(home, strings.TrimPrefix(prefix, "~/"))
+	}
+	return filepath.Clean(prefix)
+}
+
+func displayInstallPath(path, home string) string {
+	cleanHome := filepath.Clean(home)
+	cleanPath := filepath.Clean(path)
+	if cleanPath == cleanHome {
+		return "~"
+	}
+	if home != "" && strings.HasPrefix(cleanPath, cleanHome+string(filepath.Separator)) {
+		return "~" + strings.TrimPrefix(cleanPath, cleanHome)
+	}
+	return cleanPath
+}
+
+func directoryExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 func printUpdateSummary(out *os.File, result updatepkg.Result) {

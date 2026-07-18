@@ -169,6 +169,22 @@ func TestJSONResultDoesNotExposeCredentialedRemote(t *testing.T) {
 	}
 }
 
+func TestAtomicSymlinkCreatesDestinationDirectory(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "profile", "bin", "mct-agent")
+	destination := filepath.Join(root, "prefix", "bin", "mct-agent")
+	if err := atomicSymlink(target, destination); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.Readlink(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != target {
+		t.Fatalf("symlink target = %q, want %q", got, target)
+	}
+}
+
 func makeRemote(t *testing.T, branch string) (remote, work string) {
 	t.Helper()
 	root := t.TempDir()

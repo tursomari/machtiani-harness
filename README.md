@@ -111,6 +111,12 @@ mct-agent update --check
 In Zsh, `rehash` can be used instead of `hash -r`. Quoting `'.#install'`
 prevents Zsh from treating the flake selector as a glob.
 
+In a terminal, the installer offers the default `~/.local/bin/mct-agent`, up
+to two common existing binary locations, and a custom prefix. Press Enter to
+accept the default. Passing `--prefix <dir>` skips the prompt and installs the
+binary at `<dir>/bin/mct-agent`; automation can pass `--no-interactive` to use
+the default without prompting.
+
 The installer builds the exact remote default-branch commit through the locked
 flake, activates it in the dedicated profile at
 `~/.machtiani/installations/mct-agent/profile`, and exposes

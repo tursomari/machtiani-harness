@@ -20,6 +20,10 @@ From a clean repo root, install **mct-agent** into the dedicated managed profile
 nix run .#install
 ```
 
+When run from a terminal, the installer prompts for the destination and
+defaults to `~/.local/bin/mct-agent`. Press Enter to accept it. For automation,
+pass `--no-interactive` to keep that default without prompting.
+
 Override the stable binary prefix if you prefer a different path:
 
 ```
