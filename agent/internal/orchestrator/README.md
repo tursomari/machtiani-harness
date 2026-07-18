@@ -32,7 +32,7 @@ The meta-orchestrator runs a loop with the following steps:
    - `PERMISSION_ASK` — a permission ask, status report, design discussion, proposal, or anything short of actual implementation.
    - `HARD_BLOCKER` — an unrecoverable condition such as missing API credits or a critical environment failure.
 
-3. **Re-invoke** if the classification is `PERMISSION_ASK`. The meta-orchestrator calls `mct-agent run --session-id <id> -t "<continuation prompt>"` to start a fresh turn with an authoritative instruction to continue working and implement the solution without asking for permission.
+3. **Re-invoke** if the classification is `PERMISSION_ASK`. The meta-orchestrator calls `mct-agent run --session-id <id> -t "<your follow-up prompt>"` to start a fresh turn with an authoritative instruction to continue working and implement the solution without asking for permission.
 
 4. **Repeat** steps 2–3 until the classifier returns `SOLUTION` (the task is complete) or `HARD_BLOCKER` (further continuation is impossible).
 

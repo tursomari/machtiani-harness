@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/tursomari/machtiani/agent/internal/presentation"
 	"github.com/tursomari/machtiani/agent/internal/shell-agent/pkg/minisweagent"
 )
 
@@ -110,7 +111,11 @@ func RenderCleanTranscript(traj FileTrajectory) string {
 
 // RenderSimpleTranscript renders a simplified transcript showing natural language intents
 // and execution results in a clean format suitable for end users.
-func RenderSimpleTranscript(traj FileTrajectory) string {
+func RenderSimpleTranscript(traj FileTrajectory, configuredGlyphs ...presentation.GlyphSet) string {
+	glyphs := presentation.GlyphsForMode(presentation.GlyphUnicode)
+	if len(configuredGlyphs) > 0 {
+		glyphs = configuredGlyphs[0]
+	}
 	if result := strings.TrimSpace(traj.Result); result != "" && !strings.EqualFold(traj.ExitStatus, "Error") {
 		return result
 	}
@@ -138,7 +143,7 @@ func RenderSimpleTranscript(traj FileTrajectory) string {
 		b.WriteString("\n")
 
 		if step.Success != nil && *step.Success {
-			b.WriteString("✓ Success")
+			b.WriteString(glyphs.Success + " Success")
 		} else {
 			errorMsg := strings.TrimSpace(step.Error)
 			if step.Success != nil && !*step.Success {
@@ -157,7 +162,7 @@ func RenderSimpleTranscript(traj FileTrajectory) string {
 					errorMsg = "Error: " + errorMsg
 				}
 			}
-			b.WriteString("✗ " + errorMsg)
+			b.WriteString(glyphs.Failure + " " + errorMsg)
 		}
 		b.WriteString("\n")
 

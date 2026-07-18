@@ -372,21 +372,23 @@ func handleConfigAddCommand(args []string) int {
 }
 
 func promptProviderChoice(existing map[string]any, catalog configcatalog.Catalog, menuTheme presentation.Theme) (string, error) {
+	glyphs := menuTheme.Glyphs()
 	options := make([]initMenuOption, 0, len(existing)+len(catalog.Providers)+1)
 	for _, name := range sortedKeys(existing) {
 		options = append(options, initMenuOption{label: "Existing: " + name, value: "existing:" + name})
 	}
 	for _, provider := range catalog.Providers {
 		if _, exists := existing[provider.ID]; !exists {
-			options = append(options, initMenuOption{label: provider.Name + " — " + provider.Description, value: "catalog:" + provider.ID})
+			options = append(options, initMenuOption{label: provider.Name + " " + glyphs.Separator + " " + provider.Description, value: "catalog:" + provider.ID})
 		}
 	}
-	options = append(options, initMenuOption{label: "Other provider...", value: "other"})
+	options = append(options, initMenuOption{label: "Other provider" + glyphs.Ellipsis, value: "other"})
 	return promptInitMenu(os.Stdin, os.Stdout, int(os.Stdin.Fd()), "Provider", "Choose a configured provider, a catalogue preset, or Other.", options, menuTheme)
 }
 
 func promptCatalogModel(reader *bufio.Reader, provider configcatalog.Provider, apiKey string, menuTheme presentation.Theme) (discoveredModel, error) {
-	options := catalogModelMenuOptions(provider)
+	glyphs := menuTheme.Glyphs()
+	options := catalogModelMenuOptions(provider, menuTheme)
 	selected, err := promptInitMenu(os.Stdin, os.Stdout, int(os.Stdin.Fd()), "Model", "Choose a recommended model, search the provider, or enter another model ID.", options, menuTheme)
 	if err != nil || selected != "search" {
 		result := discoveredModel{ID: selected}
@@ -400,7 +402,7 @@ func promptCatalogModel(reader *bufio.Reader, provider configcatalog.Provider, a
 		if promptErr != nil {
 			return discoveredModel{}, promptErr
 		}
-		matches, discoveryErr := discoverProviderModels(modelDiscoveryHTTPClient, provider, apiKey, search)
+		matches, discoveryErr := discoverProviderModels(modelDiscoveryHTTPClient, provider, apiKey, search, glyphs.Ellipsis)
 		if discoveryErr != nil {
 			fmt.Fprintf(os.Stdout, "Could not load %s models: %v\nEnter the model ID manually instead.\n", provider.Name, discoveryErr)
 			return discoveredModel{ID: "other"}, nil
@@ -415,13 +417,13 @@ func promptCatalogModel(reader *bufio.Reader, provider configcatalog.Provider, a
 			if label == "" {
 				label = match.ID
 			} else {
-				label += " — " + match.ID
+				label += " " + glyphs.Separator + " " + match.ID
 			}
 			matchOptions = append(matchOptions, initMenuOption{label: label, value: match.ID})
 		}
 		matchOptions = append(matchOptions,
-			initMenuOption{label: "Search again...", value: "search"},
-			initMenuOption{label: "Other model...", value: "other"},
+			initMenuOption{label: "Search again" + glyphs.Ellipsis, value: "search"},
+			initMenuOption{label: "Other model" + glyphs.Ellipsis, value: "other"},
 		)
 		selected, selectErr := promptInitMenu(os.Stdin, os.Stdout, int(os.Stdin.Fd()), "Search results", "Showing up to 25 matches. Choose a model or search again.", matchOptions, menuTheme)
 		if selectErr != nil {
@@ -441,21 +443,25 @@ func promptCatalogModel(reader *bufio.Reader, provider configcatalog.Provider, a
 	}
 }
 
-func catalogModelMenuOptions(provider configcatalog.Provider) []initMenuOption {
+func catalogModelMenuOptions(provider configcatalog.Provider, themes ...presentation.Theme) []initMenuOption {
+	glyphs := presentation.GlyphsForMode(presentation.GlyphUnicode)
+	if len(themes) > 0 {
+		glyphs = themes[0].Glyphs()
+	}
 	options := make([]initMenuOption, 0, len(provider.Models)+2)
 	// Searchable catalogues change frequently, so discovery is the safest
 	// interactive default. Stable noninteractive setup still uses DefaultModel.
 	if provider.ModelsURL != "" {
-		options = append(options, initMenuOption{label: "Search current model catalogue...", value: "search"})
+		options = append(options, initMenuOption{label: "Search current model catalogue" + glyphs.Ellipsis, value: "search"})
 	}
 	for _, model := range provider.Models {
 		label := model.Name
 		if model.ID == provider.DefaultModel {
 			label += " (default)"
 		}
-		options = append(options, initMenuOption{label: label + " — " + model.Description, value: model.ID})
+		options = append(options, initMenuOption{label: label + " " + glyphs.Separator + " " + model.Description, value: model.ID})
 	}
-	options = append(options, initMenuOption{label: "Other model...", value: "other"})
+	options = append(options, initMenuOption{label: "Other model" + glyphs.Ellipsis, value: "other"})
 	return options
 }
 
@@ -510,6 +516,7 @@ func configuredProviderCredential(entry any) string {
 }
 
 func promptReasoningChoice(reader *bufio.Reader, model *configcatalog.Model, menuTheme presentation.Theme) (string, error) {
+	glyphs := menuTheme.Glyphs()
 	values := []string{"low", "medium", "high"}
 	if model != nil && len(model.Reasoning) > 0 {
 		values = model.Reasoning
@@ -518,7 +525,7 @@ func promptReasoningChoice(reader *bufio.Reader, model *configcatalog.Model, men
 	for _, value := range values {
 		options = append(options, initMenuOption{label: value, value: value})
 	}
-	options = append(options, initMenuOption{label: "Other...", value: "other"})
+	options = append(options, initMenuOption{label: "Other" + glyphs.Ellipsis, value: "other"})
 	selected, err := promptInitMenu(os.Stdin, os.Stdout, int(os.Stdin.Fd()), "Reasoning", "Choose an effort or let the provider use its default.", options, menuTheme)
 	if err != nil || selected != "other" {
 		return selected, err

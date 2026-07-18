@@ -13,7 +13,6 @@ type Theme struct {
 	Presentation          presentation.Theme
 	PromptFirstLinePrefix string
 	PromptSpacerPrefix    string
-	FinalAnswerHeader     string
 	ModePlanHeader        string
 	ModeTaskPrefix        string
 	NotificationPrefix    string
@@ -37,7 +36,6 @@ func DefaultTheme(styles ...presentation.Theme) Theme {
 		Presentation:          resolved,
 		PromptFirstLinePrefix: "`-- ",
 		PromptSpacerPrefix:    "    ",
-		FinalAnswerHeader:     "===> FINAL RESPONSE <===",
 		ModePlanHeader:        "[meta] planned tasks:",
 		ModeTaskPrefix:        "[meta]",
 		NotificationPrefix:    "|   ",

@@ -103,7 +103,7 @@ EXPECT_EOF
 unset SEARCHABLE_CONFIG
 assert_file_contains 'Existing: openrouter' "$SCRATCH_DIR/searchable-provider-wizard"
 assert_file_contains 'Search current model catalogue' "$SCRATCH_DIR/searchable-provider-wizard"
-assert_file_contains '> Search current model catalogue' "$SCRATCH_DIR/searchable-provider-wizard"
+assert_file_contains '→ Search current model catalogue' "$SCRATCH_DIR/searchable-provider-wizard"
 [[ "$(checksum "$searchable_config")" == "$searchable_checksum" ]] || fail "cancelled searchable-provider wizard changed $searchable_config"
 
 echo "==> Exercising preset config add and initial validation..."

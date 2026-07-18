@@ -3659,9 +3659,9 @@ import sys
 output = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
 path = sys.argv[2]
 expected = (
-    "This answer is also available at:\n"
-    f"  {path}\n\n"
-    "Continue with your next instruction:\n"
+    "  Answer saved to:\n"
+    f"    {path}\n\n"
+    "  Continue this session:\n"
 )
 if expected not in output:
     print(f"ERROR: missing final-answer continuation block {expected!r} in {output!r}", file=sys.stderr)
@@ -3702,13 +3702,13 @@ PY
   if [[ "$verbose_display" == "$HOME"/* ]]; then
     verbose_display="~${verbose_display#$HOME}"
   fi
-  if ! grep -Fq "Final answer saved: $verbose_display" "$verbose_stderr"; then
-    echo "Verbose save diagnostic missing expected path: $verbose_display" >&2
+  if ! grep -Fq "    $verbose_display" "$verbose_stdout"; then
+    echo "Verbose conclusion missing expected path: $verbose_display" >&2
     stop_llm_stub_server
     return 1
   fi
-  if grep -Fq "This answer is also available at:" "$verbose_stdout" "$verbose_stderr"; then
-    echo "Verbose output duplicated the non-verbose final-answer path block" >&2
+  if [[ $(grep -Fc "Answer saved to:" "$verbose_stdout") -ne 1 ]] || grep -Fq "Final answer saved:" "$verbose_stderr"; then
+    echo "Verbose output did not render exactly one saved-answer path block" >&2
     stop_llm_stub_server
     return 1
   fi
@@ -3741,7 +3741,7 @@ test_models_catch_all() {
 test_issue_a_1turn() {
   run_happy_case "issue-a-1turn" 1 \
     "What is the main purpose of the mct-agent binary?" \
-    "===> FINAL RESPONSE <===" \
+    "Answer saved to:" \
     1 \
     "${DEFAULT_MODEL_ARGS[@]}"
 }
@@ -3749,7 +3749,7 @@ test_issue_a_1turn() {
 test_issue_a_3turn() {
   run_happy_case "issue-a-3turn" 3 \
     "What is the main purpose of the mct-agent binary?" \
-    "===> FINAL RESPONSE <===" \
+    "Answer saved to:" \
     "${DEFAULT_MODEL_ARGS[@]}"
 }
 
@@ -4226,13 +4226,13 @@ run_test_case "models-catch-all" run_happy_case "models-catch-all" 1 \
 
 run_test_case "issue-a-1turn" run_happy_case "issue-a-1turn" 1 \
   "What is the main purpose of the mct-agent binary?" \
-  "===> FINAL RESPONSE <===" \
+  "Answer saved to:" \
   1 \
   "${DEFAULT_MODEL_ARGS[@]}"
 
 run_test_case "issue-a-3turn" run_happy_case "issue-a-3turn" 3 \
   "What is the main purpose of the mct-agent binary?" \
-  "===> FINAL RESPONSE <===" \
+  "Answer saved to:" \
   "${DEFAULT_MODEL_ARGS[@]}"
 
 run_test_case "issue-b-1turn" run_happy_case "issue-b-1turn" 1 \

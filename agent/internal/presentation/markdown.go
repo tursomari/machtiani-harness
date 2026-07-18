@@ -3,6 +3,7 @@ package presentation
 import (
 	"os"
 	"regexp"
+	"strings"
 
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/glamour/ansi"
@@ -80,9 +81,10 @@ func normalizeGlowWordWrapWidth(width int) int {
 }
 
 func markdownStyle(theme Theme) ansi.StyleConfig {
+	glyphs := theme.Glyphs()
 	margin := uint(2)
 	indent := uint(1)
-	indentToken := "│ "
+	indentToken := glyphs.BlockQuote
 	style := ansi.StyleConfig{
 		Document: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{BlockPrefix: "\n", BlockSuffix: "\n"},
@@ -97,13 +99,13 @@ func markdownStyle(theme Theme) ansi.StyleConfig {
 		H4:                    ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Prefix: "#### "}},
 		H5:                    ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Prefix: "##### "}},
 		H6:                    ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Prefix: "###### "}},
-		HorizontalRule:        ansi.StylePrimitive{Format: "\n--------\n"},
-		Item:                  ansi.StylePrimitive{BlockPrefix: "• "},
+		HorizontalRule:        ansi.StylePrimitive{Format: "\n" + strings.Repeat(glyphs.CommandRule, 8) + "\n"},
+		Item:                  ansi.StylePrimitive{BlockPrefix: glyphs.Bullet},
 		Enumeration:           ansi.StylePrimitive{BlockPrefix: ". "},
-		Task:                  ansi.StyleTask{Ticked: "[✓] ", Unticked: "[ ] "},
-		ImageText:             ansi.StylePrimitive{Format: "Image: {{.text}} →"},
+		Task:                  ansi.StyleTask{Ticked: "[" + glyphs.TaskTick + "] ", Unticked: "[ ] "},
+		ImageText:             ansi.StylePrimitive{Format: "Image: {{.text}} " + glyphs.Arrow},
 		CodeBlock:             ansi.StyleCodeBlock{StyleBlock: ansi.StyleBlock{Margin: &margin}},
-		DefinitionDescription: ansi.StylePrimitive{BlockPrefix: "\n• "},
+		DefinitionDescription: ansi.StylePrimitive{BlockPrefix: "\n" + glyphs.Bullet},
 	}
 	style.Heading.Bold = boolPointer(true)
 	style.Heading.Color = colorPointer(theme.Color(RoleTruth))

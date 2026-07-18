@@ -76,7 +76,7 @@ full input logging for future runs.
 
 ## Usage
 ```
-mct-agent run "<issue or question>" [flags]
+mct-agent run -t "<your prompt>" [flags]
 ```
 Flags:
 - `--max-steps int`: maximum turns before finalizing (default: 4)

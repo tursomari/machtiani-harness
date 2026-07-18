@@ -63,8 +63,10 @@ type Config struct {
 }
 
 type UIConfig struct {
-	Theme       string      `toml:"theme"`
-	ThemeSource FieldSource `toml:"-"`
+	Theme        string      `toml:"theme"`
+	ThemeSource  FieldSource `toml:"-"`
+	Glyphs       string      `toml:"glyphs"`
+	GlyphsSource FieldSource `toml:"-"`
 }
 
 // ShellAgentConfig mirrors the shell-agent configuration section and is loaded
@@ -764,6 +766,17 @@ func parseConfig(path string) (Config, error) {
 				return Config{}, fmt.Errorf("parse %s [ui.theme]: %w", path, err)
 			}
 			uiCfg.Theme = string(profile)
+		}
+		if rawGlyphs, exists := uiRaw["glyphs"]; exists {
+			v, ok := rawGlyphs.(string)
+			if !ok {
+				return Config{}, fmt.Errorf("parse %s [ui.glyphs]: expected a string", path)
+			}
+			mode, err := presentation.NormalizeGlyphMode(v)
+			if err != nil {
+				return Config{}, fmt.Errorf("parse %s [ui.glyphs]: %w", path, err)
+			}
+			uiCfg.Glyphs = string(mode)
 		}
 		cfg.UI = uiCfg
 	}

@@ -186,12 +186,8 @@ func (f *Formatter) eventLoop(ch <-chan DisplayEvent) {
 			f.handleFooterModelsUpdated(e)
 		case TurnStatusUpdatedEvent:
 			f.handleTurnStatusUpdated(e)
-		case FinalAnswerEvent:
-			f.handleFinalAnswer(e)
-		case ContinuationHintEvent:
-			f.handleContinuationHint(e)
-		case UserInputHintEvent:
-			f.handleUserInputHint(e)
+		case SessionConclusionEvent:
+			f.handleSessionConclusion(e)
 		case ModeTaskPlanDisplayEvent:
 			f.handleModeTaskPlanDisplay(e)
 		case ModeTaskStatusUpdateEvent:
@@ -416,119 +412,15 @@ func (f *Formatter) handleTurnStatusUpdated(e TurnStatusUpdatedEvent) {
 	f.renderTimerLocked()
 }
 
-func (f *Formatter) handleFinalAnswer(e FinalAnswerEvent) {
-	f.ensureTimerLocked()
-	final := strings.Trim(e.RenderedText, "\n")
-	if strings.TrimSpace(final) == "" {
-		return
-	}
-
+func (f *Formatter) handleSessionConclusion(e SessionConclusionEvent) {
 	if f.currentStreamID != "" {
 		if st := f.streams[f.currentStreamID]; st != nil {
 			f.flushLineLocked(st)
 		}
 	}
-
 	f.clearLiveFooterLocked()
-	fmt.Fprintln(f.out)
-	fmt.Fprintln(f.out, f.theme.render(presentation.StyledLine{presentation.Bold(presentation.RoleBeauty, f.theme.FinalAnswerHeader)}))
-	fmt.Fprintln(f.out, final)
-	f.renderTimerLocked()
-}
-
-func (f *Formatter) handleContinuationHint(e ContinuationHintEvent) {
-	f.clearLiveFooterLocked()
-	fmt.Fprintln(f.out)
-	if strings.TrimSpace(e.Header) != "" {
-		role := presentation.RoleTruth
-		if strings.Contains(strings.ToUpper(e.Header), "COMPLETE") {
-			role = presentation.RoleGoodness
-		} else if strings.Contains(strings.ToUpper(e.Header), "INTERRUPT") {
-			role = presentation.RoleRupture
-		}
-		fmt.Fprintln(f.out, f.theme.render(presentation.StyledLine{
-			presentation.Bold(role, strings.TrimSpace(e.Header)),
-		}))
-		for _, detail := range e.DetailLines {
-			fmt.Fprintln(f.out, f.theme.render(styleCompletionDetail(detail)))
-		}
-		fmt.Fprintln(f.out)
-	}
-	if finalAnswerPath := strings.TrimSpace(e.FinalAnswerPath); finalAnswerPath != "" {
-		fmt.Fprintln(f.out, f.theme.render(presentation.StyledLine{
-			presentation.RoleText(presentation.RoleProvenance, "This answer is also available at:"),
-		}))
-		fmt.Fprintln(f.out, "  "+FormatHomePath(finalAnswerPath))
-		fmt.Fprintln(f.out)
-	}
-	instruction := strings.TrimSpace(e.Instruction)
-	if instruction == "" {
-		instruction = "Continue with your next instruction:"
-	}
-	fmt.Fprintln(f.out, f.theme.render(presentation.StyledLine{
-		presentation.Bold(presentation.RoleGoodness, instruction),
-	}))
-	f.printCommandBlockLocked(e.Command)
-}
-
-func (f *Formatter) handleUserInputHint(e UserInputHintEvent) {
-	f.clearLiveFooterLocked()
-	fmt.Fprintln(f.out, f.theme.render(presentation.StyledLine{
-		presentation.Bold(presentation.RoleProvenance, "=== USER INPUT NEEDED ==="),
-	}))
-	fmt.Fprintln(f.out, f.theme.render(presentation.StyledLine{
-		presentation.RoleText(presentation.RoleTruth, "Session ID:"),
-		presentation.Text(" "),
-		presentation.RoleText(presentation.RoleProvenance, strings.TrimSpace(e.SessionID)),
-	}))
-	if context := strings.TrimSpace(e.Context); context != "" {
-		fmt.Fprintln(f.out, context)
-		fmt.Fprintln(f.out)
-	}
-	fmt.Fprintln(f.out, strings.TrimSpace(e.Question))
-	fmt.Fprintln(f.out)
-	fmt.Fprintln(f.out, f.theme.render(presentation.StyledLine{
-		presentation.Bold(presentation.RoleGoodness, "To continue, answer with:"),
-	}))
-	f.printCommandBlockLocked(e.Command)
-}
-
-func (f *Formatter) printCommandBlockLocked(command string) {
-	fmt.Fprintln(f.out, f.theme.render(commandBlockRuleLine(command)))
-	fmt.Fprintln(f.out, f.theme.render(styleCommandLine(command)))
-	fmt.Fprintln(f.out, f.theme.render(commandBlockRuleLine(command)))
-}
-
-func commandBlockRuleLine(command string) presentation.StyledLine {
-	width := runeLen("  $ " + strings.TrimSpace(command))
-	if width < 36 {
-		width = 36
-	}
-	if width > 96 {
-		width = 96
-	}
-	return presentation.StyledLine{
-		presentation.Text("  "),
-		presentation.Bold(presentation.RoleTruth, strings.Repeat("-", width)),
-	}
-}
-
-func styleCommandLine(command string) presentation.StyledLine {
-	command = strings.TrimSpace(command)
-	const executable = "mct-agent run"
-	if strings.HasPrefix(command, executable) {
-		return presentation.StyledLine{
-			presentation.Text("  "),
-			presentation.Bold(presentation.RoleGoodness, "$ "),
-			presentation.Bold(presentation.RoleProvenance, executable),
-			presentation.Text(strings.TrimPrefix(command, executable)),
-		}
-	}
-	return presentation.StyledLine{
-		presentation.Text("  "),
-		presentation.Bold(presentation.RoleGoodness, "$ "),
-		presentation.RoleText(presentation.RoleProvenance, command),
-	}
+	f.refreshTerminalSizeLocked()
+	fmt.Fprint(f.out, RenderSessionConclusion(e, f.theme, f.width))
 }
 
 func (f *Formatter) handleModeTaskPlanDisplay(e ModeTaskPlanDisplayEvent) {
@@ -1081,19 +973,6 @@ func styleMetadataLine(text string) presentation.StyledLine {
 		valueRole = presentation.RoleProvenance
 	}
 	return append(presentation.StyledLine{presentation.Text("|   ")}, styleLabelValue(text, valueRole, false)...)
-}
-
-func styleCompletionDetail(text string) presentation.StyledLine {
-	role := presentation.RoleNormal
-	bold := false
-	switch {
-	case strings.HasPrefix(text, "Session ID:"):
-		role = presentation.RoleProvenance
-	case strings.HasPrefix(text, "Turns completed:"):
-		role = presentation.RoleTruth
-		bold = true
-	}
-	return styleLabelValue(text, role, bold)
 }
 
 func styleLabelValue(text string, valueRole presentation.Role, bold bool) presentation.StyledLine {

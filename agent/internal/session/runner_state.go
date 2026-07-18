@@ -1163,86 +1163,28 @@ func (r *runLifecycleState) isContextCancelled(err error) bool {
 	return false
 }
 
-func (r *runLifecycleState) printResumeHint(bus *ui.EventBus, diagWriter io.Writer, header string, turns int, finalAnswerPath string) {
-	command := fmt.Sprintf("mct-agent run -t \"<next instruction>\" --session-id %s", r.sessionID)
-	continueHint := "Continue with your next instruction:\n" + formatCommandBlock(command)
-	if !r.cfg.verbose {
-		if bus != nil {
-			bus.Emit(ui.ContinuationHintEvent{FinalAnswerPath: finalAnswerPath, Command: command})
-		} else {
-			fmt.Fprintln(diagWriter)
-			if finalAnswerPath = strings.TrimSpace(finalAnswerPath); finalAnswerPath != "" {
-				fmt.Fprintln(diagWriter, "This answer is also available at:")
-				fmt.Fprintln(diagWriter, "  "+ui.FormatHomePath(finalAnswerPath))
-				fmt.Fprintln(diagWriter)
-			}
-			fmt.Fprintln(diagWriter, continueHint)
-		}
+func (r *runLifecycleState) printSessionConclusion(bus *ui.EventBus, diagWriter io.Writer, event ui.SessionConclusionEvent) {
+	if bus != nil {
+		bus.Emit(event)
 		return
 	}
-
-	if bus != nil {
-		bus.Emit(ui.ContinuationHintEvent{
-			Header: header,
-			DetailLines: []string{
-				fmt.Sprintf("Session ID: %s", r.sessionID),
-				fmt.Sprintf("Turns completed: %d", turns),
-				fmt.Sprintf("Goal so far: %q", r.goal),
-			},
-			Command: command,
-		})
-	} else {
-		fmt.Fprintln(diagWriter)
-		fmt.Fprintf(diagWriter, "%s\nSession ID: %s\nTurns completed: %d\nGoal so far: %q\n\n", header, r.sessionID, turns, r.goal)
-		fmt.Fprintln(diagWriter, continueHint)
-		fmt.Fprintln(diagWriter)
-	}
+	fmt.Fprint(diagWriter, ui.RenderSessionConclusion(event, ui.DefaultTheme(r.presentation), 0))
 }
 
 func (r *runLifecycleState) printShellAgentResumeHint(bus *ui.EventBus, diagWriter io.Writer) {
-	command := fmt.Sprintf("mct-agent run --session-id %s", r.sessionID)
-	if bus != nil {
-		bus.Emit(ui.ContinuationHintEvent{
-			Header:      "=== SHELL-AGENT INTERRUPTED ===",
-			DetailLines: []string{"Shell-agent work is resumable."},
-			Instruction: "Resume the interrupted shell-agent work:",
-			Command:     command,
-		})
-		return
-	}
-	fmt.Fprintln(diagWriter)
-	fmt.Fprintln(diagWriter, "=== SHELL-AGENT INTERRUPTED ===")
-	fmt.Fprintln(diagWriter, "Shell-agent work is resumable.")
-	fmt.Fprintln(diagWriter)
-	fmt.Fprintln(diagWriter, "Resume the interrupted shell-agent work:")
-	fmt.Fprintln(diagWriter, formatCommandBlock(command))
-	fmt.Fprintln(diagWriter)
-}
-
-func formatCommandBlock(command string) string {
-	command = strings.TrimSpace(command)
-	rule := strings.Repeat("-", len("  $ "+command))
-	return "  " + rule + "\n  $ " + command + "\n  " + rule
+	r.printSessionConclusion(bus, diagWriter, ui.SessionConclusionEvent{
+		Outcome:   ui.SessionConclusionShellInterrupted,
+		SessionID: r.sessionID,
+	})
 }
 
 func (r *runLifecycleState) printUserInputHint(bus *ui.EventBus, diagWriter io.Writer, question, context string) {
-	if bus != nil {
-		bus.Emit(ui.UserInputHintEvent{
-			SessionID: r.sessionID,
-			Context:   strings.TrimSpace(context),
-			Question:  strings.TrimSpace(question),
-			Command:   fmt.Sprintf("mct-agent run -t \"<your answer>\" --session-id %s", r.sessionID),
-		})
-	} else {
-		fmt.Fprintln(diagWriter, "=== USER INPUT NEEDED ===")
-		fmt.Fprintf(diagWriter, "Session ID: %s\n", r.sessionID)
-		if strings.TrimSpace(context) != "" {
-			fmt.Fprintf(diagWriter, "%s\n\n", strings.TrimSpace(context))
-		}
-		fmt.Fprintf(diagWriter, "%s\n\n", strings.TrimSpace(question))
-		fmt.Fprintf(diagWriter, "To continue, answer with:\n  mct-agent run -t \"<your answer>\" --session-id %s\n", r.sessionID)
-		fmt.Fprintln(diagWriter)
-	}
+	r.printSessionConclusion(bus, diagWriter, ui.SessionConclusionEvent{
+		Outcome:     ui.SessionConclusionUserInputNeeded,
+		SessionID:   r.sessionID,
+		Explanation: strings.TrimSpace(context),
+		Question:    strings.TrimSpace(question),
+	})
 }
 
 func (r *runLifecycleState) applyPlannerProgress(state *SessionState, diagWriter io.Writer) {

@@ -39,6 +39,7 @@ const (
 
 type Theme struct {
 	Profile      ProfileName
+	glyphMode    GlyphMode
 	ansiEnabled  bool
 	colorEnabled bool
 	trueColor    bool
@@ -70,11 +71,19 @@ func ResolveProfile(configured string) (ProfileName, error) {
 }
 
 func Resolve(configured string, out io.Writer) (Theme, error) {
-	profile, err := ResolveProfile(configured)
+	return ResolveWithGlyphs(configured, "", out)
+}
+
+func ResolveWithGlyphs(configuredTheme, configuredGlyphs string, out io.Writer) (Theme, error) {
+	profile, err := ResolveProfile(configuredTheme)
 	if err != nil {
 		return Theme{}, err
 	}
-	theme := Theme{Profile: profile}
+	glyphMode, err := ResolveGlyphMode(configuredGlyphs)
+	if err != nil {
+		return Theme{}, err
+	}
+	theme := Theme{Profile: profile, glyphMode: glyphMode}
 	if profile == ProfileNone || strings.EqualFold(strings.TrimSpace(os.Getenv("TERM")), "dumb") {
 		return theme, nil
 	}
@@ -91,11 +100,25 @@ func Resolve(configured string, out io.Writer) (Theme, error) {
 }
 
 func NewForTest(profile ProfileName, colorEnabled, trueColor bool) Theme {
-	return Theme{Profile: profile, ansiEnabled: true, colorEnabled: colorEnabled, trueColor: trueColor}
+	return NewForTestWithGlyphs(profile, GlyphUnicode, colorEnabled, trueColor)
+}
+
+func NewForTestWithGlyphs(profile ProfileName, glyphMode GlyphMode, colorEnabled, trueColor bool) Theme {
+	if glyphMode == "" {
+		glyphMode = GlyphUnicode
+	}
+	return Theme{Profile: profile, glyphMode: glyphMode, ansiEnabled: true, colorEnabled: colorEnabled, trueColor: trueColor}
 }
 
 func (t Theme) ANSIEnabled() bool  { return t.ansiEnabled }
 func (t Theme) ColorEnabled() bool { return t.colorEnabled }
+func (t Theme) GlyphMode() GlyphMode {
+	if t.glyphMode == "" {
+		return GlyphUnicode
+	}
+	return t.glyphMode
+}
+func (t Theme) Glyphs() GlyphSet { return glyphSet(t.GlyphMode()) }
 
 // Color returns a Glamour-compatible foreground color for a semantic role.
 // It intentionally returns no value when hue has been disabled.

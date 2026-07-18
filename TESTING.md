@@ -364,7 +364,7 @@ For TUI-specific checks, inspect targeted substrings instead of line-by-line pla
 Useful checks:
 
 ```bash
-rg -- 'Continue with your next instruction:|--session-id|tokens|session agent-|turn [0-9]+' "$RUN_DIR/replay.terminal.log"
+rg -- 'Continue this session:|--session-id|tokens|session agent-|turn [0-9]+' "$RUN_DIR/replay.terminal.log"
 rg '^\[trajectory\] unified stream:|^Session: ' "$RUN_DIR/replay.terminal.log" || true
 rg 'achtiani|\x1b\[6n|\x1b\]11;\?' "$RUN_DIR/replay.terminal.log" || true
 ```
@@ -515,6 +515,7 @@ The original evaluation pipeline, documented in scripts/run_eval.sh itself. It c
 - `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL` — general runtime credentials and the fallback for live harnesses that prefer `TEST_*`; harnesses with stubs use stub/dry-run mode when neither set is available.
 - `MACHTIANI_TUI_CAPTURE` — formatter-level TUI capture path. The record/replay harness sets this automatically for `live.tui.txt` and `replay.tui.txt`.
 - `MACHTIANI_THEME` — overrides `[ui].theme` with `terminal`, `machtiani-dark`, `machtiani-light`, or `none`. The record/replay harness also accepts `--theme`.
+- `MACHTIANI_GLYPHS` — overrides `[ui].glyphs` with `unicode` or `ascii`.
 - `LLM_RECORD_FIXTURES` — JSONL fixture output path for recorded LLM responses. The record/replay harness sets this automatically for `live.llm-fixtures.jsonl`.
 
 ## Troubleshooting

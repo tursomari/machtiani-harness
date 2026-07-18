@@ -20,7 +20,7 @@ If you are using `mct-agent` inside this repository, start with `docs/mct-agent-
 ## Mode System
 The agent now ships with a mode system that supervises multi-step work. When you enable it, a top-level session applies the mode's PlannerOverlay and task guidance, runs the agent loop with the configured mode presets, and finally emits a summary artifact that records the result.
 
-- **Enable it per run** with `mct-agent run --mode <mode> "<goal>"`. Modes are loaded only from `~/.machtiani/modes/<mode>/`. `mct-agent init` installs or refreshes the canonical modes shipped by this binary.
+- **Enable it per run** with `mct-agent run --mode <mode> -t "<your prompt>"`. Modes are loaded only from `~/.machtiani/modes/<mode>/`. `mct-agent init` installs or refreshes the canonical modes shipped by this binary.
 - **What happens during a run:** the terminal prints `[mode]` updates as the mode system works through the plan. For every task the session applies the task's PlannerOverlay and records progress under the UUID project store returned by `mct-agent project show`.
 - **Outputs:** the session transcript collects all turns, and every task contributes its own artifacts under the session directory. The final summary lists the tasks, their status, and where to find the detailed artifacts.
 - **Resume support:** progress is stored in `<project-store>/sessions/<session-id>/mode-plan.json`, so resuming the session continues with the remaining tasks instead of replaying everything from scratch.
@@ -492,6 +492,7 @@ Other helpful overrides:
 - `MACHTIANI_SESSION_ID`: pre-set session ID to use for the current run; overridden by `--session-id` flag.
 - `MCT_LLM_INPUT_LOG`: explicit path for the full redacted LLM request log; this enables logging and overrides `--log-llm-inputs`' canonical session path.
 - `MACHTIANI_THEME`: override `[ui].theme` with `terminal`, `machtiani-dark`, `machtiani-light`, or `none`.
+- `MACHTIANI_GLYPHS`: override `[ui].glyphs` with `unicode` or `ascii`.
 - `FILE_DISCOVERY_BIN`: override the discovery binary that `mct` invokes.
 
 ### Shared discovery timeout and context policy
@@ -515,12 +516,14 @@ Configure it globally:
 ```toml
 [ui]
 theme = "terminal"
+glyphs = "unicode"
 ```
 
 - `terminal` uses the terminal's standard cyan, green, magenta, yellow, and red foregrounds, so the terminal controls their light/dark appearance.
 - `machtiani-dark` and `machtiani-light` use muted palettes designed for the corresponding background. Selection is explicit and reproducible; Machtiani does not query terminal background color or transparency.
 - `none` emits no ANSI styling. `TERM=dumb` and non-terminal output also disable ANSI automatically.
 - `NO_COLOR` removes color while retaining useful emphasis such as bold, italic, and underline on an interactive terminal.
+- `glyphs = "unicode"` uses balanced box-drawing rules and semantic marks. Use `glyphs = "ascii"` for terminals or fonts that do not reliably display them. Glyph selection is independent from color and never rewrites user or model content.
 
 In interactive menus, the current selection uses the Truth color and bold
 emphasis. An unselected **Finish** action uses the Goodness color; when selected,
@@ -591,7 +594,7 @@ mct-agent run --t "Fix all lint issues" --verbose
 # Output includes: Session ID: <session-id>
 
 # Later, continue the same session with new instructions
-mct-agent run --t "Also ensure comments are updated" --session-id <session-id>
+mct-agent run -t "<your follow-up prompt>" --session-id <session-id>
 ```
 
 Normal completion output shows the saved final-answer path followed by the
@@ -655,7 +658,7 @@ When `mct-agent` receives `SIGINT` (Ctrl+C) or `SIGTERM`, it:
   === SESSION INTERRUPTED ===
   Session ID: <session-id>
   Turns completed: 2
-  To resume: mct-agent run "<continue question>" --session-id <session-id>
+  To resume: mct-agent run -t "<your follow-up prompt>" --session-id <session-id>
   ```
 
 No manual backup is needed. All context (transcript, goals, artifacts) is preserved and ready for resumption. This is especially useful when working on large codebases where discovery or planning may take time—you can interrupt safely and continue later without re-running earlier steps.

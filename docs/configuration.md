@@ -50,12 +50,13 @@ Interactive menus refresh the visible terminal after each selection. A submenu
 replaces its parent, and an action result is shown above only the current menu;
 the refresh does not erase existing terminal scrollback.
 
-Menus honor `[ui].theme` from the selected configuration and the
-`MACHTIANI_THEME` override. The current selection is emphasized using the
+Menus honor `[ui].theme` and `[ui].glyphs` from the selected configuration and
+the `MACHTIANI_THEME` and `MACHTIANI_GLYPHS` overrides. The current selection is emphasized using the
 theme's semantic selection color. **Finish** has a distinct success color while
 unselected and ordinary selection styling while selected. `NO_COLOR`,
 `theme = "none"`, dumb terminals, and non-terminal output retain readable plain
-text markers without color.
+text markers without color. Glyph mode remains independent: `unicode` is the
+default, while `ascii` avoids box-drawing and symbol glyphs.
 
 Mutating commands are interactive by default. Supplied flags prefill answers;
 the command prompts for missing information and confirms before writing.

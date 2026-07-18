@@ -602,25 +602,25 @@ func TestInitMenuSemanticColors(t *testing.T) {
 		{
 			name:         "terminal palette",
 			theme:        presentation.NewForTest(presentation.ProfileTerminal, true, false),
-			wantSelected: "\x1b[1;36m> Manage models\x1b[0m",
+			wantSelected: "\x1b[1;36m→ Manage models\x1b[0m",
 			wantFinish:   "  \x1b[32mFinish\x1b[0m",
 		},
 		{
 			name:         "dark palette",
 			theme:        presentation.NewForTest(presentation.ProfileMachtianiDark, true, true),
-			wantSelected: "\x1b[1;38;2;88;199;217m> Manage models\x1b[0m",
+			wantSelected: "\x1b[1;38;2;88;199;217m→ Manage models\x1b[0m",
 			wantFinish:   "  \x1b[38;2;116;201;145mFinish\x1b[0m",
 		},
 		{
 			name:         "light palette",
 			theme:        presentation.NewForTest(presentation.ProfileMachtianiLight, true, true),
-			wantSelected: "\x1b[1;38;2;0;107;120m> Manage models\x1b[0m",
+			wantSelected: "\x1b[1;38;2;0;107;120m→ Manage models\x1b[0m",
 			wantFinish:   "  \x1b[38;2;34;107;58mFinish\x1b[0m",
 		},
 		{
 			name:         "color disabled",
 			theme:        presentation.NewForTest(presentation.ProfileTerminal, false, false),
-			wantSelected: "\x1b[1m> Manage models\x1b[0m",
+			wantSelected: "\x1b[1m→ Manage models\x1b[0m",
 			wantFinish:   "  Finish",
 		},
 	}
@@ -653,11 +653,20 @@ func TestSelectedFinishUsesOrdinarySelectionColor(t *testing.T) {
 	}, 0, false, theme)
 
 	got := out.String()
-	if !strings.Contains(got, "\x1b[1;36m> Finish\x1b[0m") {
+	if !strings.Contains(got, "\x1b[1;36m→ Finish\x1b[0m") {
 		t.Fatalf("selected Finish should use ordinary selection styling: %q", got)
 	}
 	if strings.Contains(got, "\x1b[32mFinish") {
 		t.Fatalf("selected Finish retained its unselected color: %q", got)
+	}
+}
+
+func TestMenuSelectionUsesASCIIGlyphMode(t *testing.T) {
+	theme := presentation.NewForTestWithGlyphs(presentation.ProfileTerminal, presentation.GlyphASCII, false, false)
+	var out bytes.Buffer
+	renderInitMenuOptions(&out, []initMenuOption{{label: "Manage models", value: "model"}}, 0, false, theme)
+	if got := out.String(); !strings.Contains(got, "-> Manage models") || strings.Contains(got, "→") {
+		t.Fatalf("ASCII selection marker mismatch: %q", got)
 	}
 }
 

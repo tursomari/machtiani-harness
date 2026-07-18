@@ -9,10 +9,9 @@ import (
 
 	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
 	"github.com/tursomari/machtiani/agent/internal/presentation"
-	"github.com/tursomari/machtiani/agent/internal/ui"
 )
 
-func writeFinalAnswer(sessionID, answer, finalFileFlag string, verbose bool, dryRun bool, diagWriter io.Writer) (string, error) {
+func writeFinalAnswer(sessionID, answer, finalFileFlag string, dryRun bool) (string, error) {
 	if dryRun {
 		return "", nil
 	}
@@ -34,13 +33,10 @@ func writeFinalAnswer(sessionID, answer, finalFileFlag string, verbose bool, dry
 	if err := os.WriteFile(path, []byte(answer+"\n"), 0o644); err != nil {
 		return "", err
 	}
-	if verbose {
-		fmt.Fprintln(diagWriter, "Final answer saved:", ui.FormatHomePath(path))
-	}
 	return path, nil
 }
 
-func presentFinalAnswer(bus *ui.EventBus, answer string, diagWriter io.Writer, theme ...presentation.Theme) {
+func renderFinalAnswer(answer string, diagWriter io.Writer, theme ...presentation.Theme) string {
 	var resolved presentation.Theme
 	if len(theme) > 0 {
 		resolved = theme[0]
@@ -56,9 +52,7 @@ func presentFinalAnswer(bus *ui.EventBus, answer string, diagWriter io.Writer, t
 	if strings.TrimSpace(rendered) == "" {
 		rendered = strings.TrimSpace(answer)
 	}
-	if bus != nil {
-		bus.Emit(ui.FinalAnswerEvent{RenderedText: rendered})
-	}
+	return rendered
 }
 
 func renderWithGlow(content string, themes ...presentation.Theme) (string, bool, error) {

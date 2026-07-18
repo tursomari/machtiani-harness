@@ -27,7 +27,7 @@ type discoveredModel struct {
 	ContextLength int    `json:"context_length"`
 }
 
-func discoverProviderModels(client *http.Client, provider configcatalog.Provider, apiKey, search string) ([]discoveredModel, error) {
+func discoverProviderModels(client *http.Client, provider configcatalog.Provider, apiKey, search string, ellipsis ...string) ([]discoveredModel, error) {
 	if strings.TrimSpace(provider.ModelsURL) == "" {
 		return nil, fmt.Errorf("%s does not define model discovery", provider.Name)
 	}
@@ -68,8 +68,8 @@ func discoverProviderModels(client *http.Client, provider configcatalog.Provider
 	matches := make([]discoveredModel, 0, min(len(payload.Data), modelDiscoveryLimit))
 	for _, model := range payload.Data {
 		model.ID = strings.TrimSpace(model.ID)
-		model.Name = compactDiscoveryText(model.Name, 80)
-		model.Description = compactDiscoveryText(model.Description, 120)
+		model.Name = compactDiscoveryText(model.Name, 80, ellipsis...)
+		model.Description = compactDiscoveryText(model.Description, 120, ellipsis...)
 		if model.ID == "" || strings.IndexFunc(model.ID, unicode.IsControl) >= 0 {
 			continue
 		}
@@ -88,7 +88,7 @@ func discoverProviderModels(client *http.Client, provider configcatalog.Provider
 	return matches, nil
 }
 
-func compactDiscoveryText(value string, maxRunes int) string {
+func compactDiscoveryText(value string, maxRunes int, ellipsis ...string) string {
 	value = strings.Map(func(character rune) rune {
 		if unicode.IsControl(character) {
 			return -1
@@ -100,7 +100,15 @@ func compactDiscoveryText(value string, maxRunes int) string {
 	if len(characters) <= maxRunes {
 		return value
 	}
-	return string(characters[:maxRunes-1]) + "…"
+	marker := "…"
+	if len(ellipsis) > 0 && ellipsis[0] != "" {
+		marker = ellipsis[0]
+	}
+	keep := maxRunes - len([]rune(marker))
+	if keep < 0 {
+		keep = 0
+	}
+	return string(characters[:keep]) + marker
 }
 
 func suggestedModelAlias(modelID string) string {

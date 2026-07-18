@@ -157,7 +157,7 @@ func newRunFlagSet(cfg *session.Config) runFlagSetResult {
 	configureSessionFlags(fs, cfg, &paramFlags, &paramJSON, &apiKeyFlags)
 	promptFile := fs.StringP("file", "f", "", "Read goal from file (mutually exclusive with --text)")
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: mct-agent run -t \"<goal>\" | --file <path> [flags]\n\n")
+		fmt.Fprintf(os.Stderr, "Usage: mct-agent run -t \"<your prompt>\" | --file <path> [flags]\n\n")
 		fmt.Fprintln(os.Stderr, "Flags:")
 		fs.PrintDefaults()
 	}
@@ -583,10 +583,12 @@ func handleSyncCommand(args []string) int {
 		mctPrompts = globalCfg.Prompts.MCT
 	}
 	themeName := string(presentation.ProfileTerminal)
+	glyphMode := string(presentation.GlyphUnicode)
 	if globalCfg.UI != nil {
 		themeName = globalCfg.UI.Theme
+		glyphMode = globalCfg.UI.Glyphs
 	}
-	presentationTheme, err := presentation.Resolve(themeName, os.Stdout)
+	presentationTheme, err := presentation.ResolveWithGlyphs(themeName, glyphMode, os.Stdout)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Error resolving UI theme:", err)
 		return 2

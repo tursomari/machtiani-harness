@@ -58,7 +58,6 @@ func newTestFormatter() (f *Formatter, bus *EventBus, buf *lockedBuffer) {
 	theme := Theme{
 		PromptFirstLinePrefix: "`-- ",
 		PromptSpacerPrefix:    "    ",
-		FinalAnswerHeader:     "FINAL:",
 		NotificationPrefix:    "|   ",
 		ErrorPrefix:           "error: ",
 		EmptyPlaceholder:      "...",
@@ -80,18 +79,22 @@ func stripANSI(s string) string {
 
 var ansiEscapePattern = regexp.MustCompile(`\x1b(?:\[[0-9;?]*[ -/]*[@-~]|[A-Za-z])`)
 
-func TestFormatterContinuationHintSemanticRoles(t *testing.T) {
+func TestFormatterSessionConclusionSemanticRoles(t *testing.T) {
 	f, bus, buf := newTestFormatter()
 	defer bus.Close()
 	f.theme.Presentation = presentation.NewForTest(presentation.ProfileTerminal, true, false)
 
-	bus.Emit(ContinuationHintEvent{Command: `mct-agent run -t "<next instruction>" --session-id agent-test`})
+	bus.Emit(SessionConclusionEvent{
+		Outcome:        SessionConclusionCompleted,
+		RenderedAnswer: "answer text here",
+		SessionID:      "agent-test",
+	})
 	time.Sleep(20 * time.Millisecond)
 
 	output := buf.String()
 	for _, want := range []string{
-		"\x1b[1;32mContinue with your next instruction:\x1b[0m",
-		"\x1b[1;36m--------------------------------",
+		"\x1b[1;32mContinue this session:\x1b[0m",
+		"\x1b[32m────────────────",
 		"\x1b[1;32m$ \x1b[0m",
 		"\x1b[1;33mmct-agent run\x1b[0m",
 	} {
@@ -100,65 +103,66 @@ func TestFormatterContinuationHintSemanticRoles(t *testing.T) {
 		}
 	}
 	plain := stripANSI(output)
-	if strings.Contains(plain, "Session ID:") || strings.Contains(plain, "Turns completed:") {
-		t.Fatalf("quiet continuation leaked verbose detail: %q", plain)
+	if strings.Contains(plain, "Session ID:") || strings.Contains(plain, "Turns completed:") || strings.Contains(plain, "FINAL:") {
+		t.Fatalf("quiet conclusion leaked legacy or verbose detail: %q", plain)
 	}
 }
 
-func TestFormatterContinuationHasOneBlankLineAfterFinalOutput(t *testing.T) {
+func TestFormatterSessionConclusionUsesOneUnifiedBlock(t *testing.T) {
 	f, bus, buf := newTestFormatter()
 	defer bus.Close()
 
 	f.mu.Lock()
-	f.handleFinalAnswer(FinalAnswerEvent{RenderedText: "last stdout line"})
-	f.handleContinuationHint(ContinuationHintEvent{Command: `mct-agent run -t "<next instruction>" --session-id agent-test`})
+	f.handleSessionConclusion(SessionConclusionEvent{
+		Outcome:        SessionConclusionCompleted,
+		RenderedAnswer: "last stdout line",
+		SessionID:      "agent-test",
+	})
 	f.mu.Unlock()
 
 	output := stripANSI(buf.String())
-	if !strings.Contains(output, "last stdout line\n\nContinue with your next instruction:") {
-		t.Fatalf("expected exactly one blank line before completion output, got %q", output)
+	if !strings.Contains(output, "last stdout line\n\n  Continue this session:") {
+		t.Fatalf("expected answer and continuation in one block, got %q", output)
 	}
-	if !strings.Contains(output, "  $ mct-agent run -t \"<next instruction>\" --session-id agent-test") {
+	if !strings.Contains(output, "    $ mct-agent run -t \"<your follow-up prompt>\" --session-id agent-test") {
 		t.Fatalf("expected shell-style continuation command, got %q", output)
 	}
-	if strings.Count(output, "  --------------------------------") != 2 {
-		t.Fatalf("expected continuation command block rules, got %q", output)
-	}
-	if strings.Contains(output, "last stdout line\n\n\nContinue with your next instruction:") {
-		t.Fatalf("found more than one blank line before completion output: %q", output)
+	if strings.Contains(output, "FINAL RESPONSE") || strings.Contains(output, "<next instruction>") {
+		t.Fatalf("legacy presentation remains: %q", output)
 	}
 }
 
-func TestFormatterContinuationShowsFinalAnswerPathBeforeInstruction(t *testing.T) {
+func TestFormatterSessionConclusionShowsFinalAnswerPathBeforeInstruction(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	f, bus, buf := newTestFormatter()
 	defer bus.Close()
 
 	f.mu.Lock()
-	f.handleContinuationHint(ContinuationHintEvent{
+	f.handleSessionConclusion(SessionConclusionEvent{
+		Outcome:         SessionConclusionCompleted,
 		FinalAnswerPath: filepath.Join(home, ".machtiani", "project", "sessions", "agent-test", "chat", "agent-final-answer.md"),
-		Command:         `mct-agent run -t "<next instruction>" --session-id agent-test`,
+		SessionID:       "agent-test",
 	})
 	f.mu.Unlock()
 
 	output := stripANSI(buf.String())
-	want := "\nThis answer is also available at:\n" +
-		"  ~/.machtiani/project/sessions/agent-test/chat/agent-final-answer.md\n\n" +
-		"Continue with your next instruction:\n"
+	want := "  Answer saved to:\n" +
+		"    ~/.machtiani/project/sessions/agent-test/chat/agent-final-answer.md\n\n" +
+		"  Continue this session:\n"
 	if !strings.Contains(output, want) {
 		t.Fatalf("final-answer continuation layout mismatch\nwant substring: %q\noutput: %q", want, output)
 	}
 }
 
-func TestFormatterContinuationHintCustomInstruction(t *testing.T) {
+func TestFormatterSessionConclusionInterrupted(t *testing.T) {
 	f, bus, buf := newTestFormatter()
 	defer bus.Close()
 
 	f.mu.Lock()
-	f.handleContinuationHint(ContinuationHintEvent{
-		Instruction: "Resume the interrupted shell-agent work:",
-		Command:     `mct-agent run --session-id agent-test`,
+	f.handleSessionConclusion(SessionConclusionEvent{
+		Outcome:   SessionConclusionShellInterrupted,
+		SessionID: "agent-test",
 	})
 	f.mu.Unlock()
 
@@ -166,10 +170,10 @@ func TestFormatterContinuationHintCustomInstruction(t *testing.T) {
 	if !strings.Contains(output, "Resume the interrupted shell-agent work:") {
 		t.Fatalf("expected custom instruction, got %q", output)
 	}
-	if strings.Contains(output, "Continue with your next instruction:") {
-		t.Fatalf("unexpected default instruction in custom continuation: %q", output)
+	if strings.Contains(output, "Continue this session:") || strings.Contains(output, " -t ") {
+		t.Fatalf("interrupted conclusion used completed command: %q", output)
 	}
-	if !strings.Contains(output, "  $ mct-agent run --session-id agent-test") {
+	if !strings.Contains(output, "    $ mct-agent run --session-id agent-test") {
 		t.Fatalf("expected shell-agent resume command block, got %q", output)
 	}
 }
@@ -820,17 +824,17 @@ func TestFormatterNotificationAllLevels(t *testing.T) {
 	_ = f
 }
 
-func TestFormatterFinalAnswer(t *testing.T) {
+func TestFormatterSessionConclusionDispatch(t *testing.T) {
 	f, bus, buf := newTestFormatter()
 	defer bus.Close()
 
-	bus.Emit(FinalAnswerEvent{RenderedText: "answer text here"})
+	bus.Emit(SessionConclusionEvent{Outcome: SessionConclusionCompleted, RenderedAnswer: "answer text here", SessionID: "agent-test"})
 	time.Sleep(50 * time.Millisecond)
 
 	output := stripANSI(buf.String())
 
-	requireContains(t, output, "FINAL:")
 	requireContains(t, output, "answer text here")
+	requireContains(t, output, "Continue this session:")
 	_ = f
 }
 

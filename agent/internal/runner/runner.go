@@ -31,6 +31,7 @@ type Runner struct {
 	SessionTempRoot         string
 	Prompts                 *llm.PromptsConfig
 	UITheme                 string
+	UIGlyphs                string
 	Diagnostics             io.Writer
 	ContextLength           int
 	TurnTimeout             int
@@ -75,6 +76,11 @@ func (r *Runner) diagnosticsWriter() io.Writer {
 }
 
 func (r *Runner) RunPrompt(ctx context.Context, sessionID string, in PromptInput) (promptsvc.Result, error) {
+	glyphMode, err := presentation.ResolveGlyphMode(r.UIGlyphs)
+	if err != nil {
+		return promptsvc.Result{}, fmt.Errorf("resolve UI glyphs: %w", err)
+	}
+	glyphs := presentation.GlyphsForMode(glyphMode)
 	safeMode := strings.TrimSpace(in.Mode)
 	if safeMode == "" {
 		safeMode = "default"
@@ -82,7 +88,7 @@ func (r *Runner) RunPrompt(ctx context.Context, sessionID string, in PromptInput
 	if r.Verbose {
 		snippet := strings.TrimSpace(in.Prompt)
 		if len(snippet) > 120 {
-			snippet = snippet[:120] + "…"
+			snippet = snippet[:120] + glyphs.Ellipsis
 		}
 		fmt.Fprintf(r.diagnosticsWriter(), "[mct] prompt mode=%s include-history=%t prompt=%q\n", safeMode, in.IncludeHistory, snippet)
 	}
@@ -105,7 +111,7 @@ func (r *Runner) RunPrompt(ctx context.Context, sessionID string, in PromptInput
 	}
 
 	if onHeader == nil || onToken == nil {
-		theme, themeErr := presentation.Resolve(r.UITheme, os.Stdout)
+		theme, themeErr := presentation.ResolveWithGlyphs(r.UITheme, r.UIGlyphs, os.Stdout)
 		if themeErr != nil {
 			return promptsvc.Result{}, fmt.Errorf("resolve UI theme: %w", themeErr)
 		}

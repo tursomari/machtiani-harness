@@ -356,10 +356,12 @@ func runSession(ctx context.Context, opts Options) Result {
 		}
 	}
 	themeName := string(presentation.ProfileTerminal)
+	glyphMode := string(presentation.GlyphUnicode)
 	if opts.GlobalConfig.UI != nil {
 		themeName = opts.GlobalConfig.UI.Theme
+		glyphMode = opts.GlobalConfig.UI.Glyphs
 	}
-	presentationTheme, themeErr := presentation.Resolve(themeName, captureWriter)
+	presentationTheme, themeErr := presentation.ResolveWithGlyphs(themeName, glyphMode, captureWriter)
 	if themeErr != nil {
 		fmt.Fprintln(diagWriter, "Error resolving UI theme:", themeErr)
 		return Result{ExitCode: 2, Err: themeErr}
@@ -556,6 +558,7 @@ func runSession(ctx context.Context, opts Options) Result {
 		SessionTempRoot:         sessionTempRoot,
 		Prompts:                 opts.GlobalConfig.Prompts,
 		UITheme:                 themeName,
+		UIGlyphs:                glyphMode,
 		Diagnostics:             diagWriter,
 		ContextLength:           cfg.contextLength,
 		TurnTimeout:             cfg.timeoutPerTurn,
@@ -975,6 +978,7 @@ func runSession(ctx context.Context, opts Options) Result {
 			orchPromptOpts:                    &orchPromptOpts,
 			baseOrchMetadata:                  baseOrchMetadata,
 			mctResponseDirectives:             mctResponseDirectives,
+			glyphs:                            runState.presentation.Glyphs(),
 		}
 
 		switch decision {

@@ -727,6 +727,14 @@ func getFieldValue(effective llm.Config, key string) (value string, source strin
 			return effective.UI.Theme, sourceLabel(effective.UI.ThemeSource)
 		}
 		return "terminal", "default"
+	case "ui.glyphs":
+		if override := strings.TrimSpace(os.Getenv("MACHTIANI_GLYPHS")); override != "" {
+			return override, "env"
+		}
+		if effective.UI != nil && strings.TrimSpace(effective.UI.Glyphs) != "" {
+			return effective.UI.Glyphs, sourceLabel(effective.UI.GlyphsSource)
+		}
+		return "unicode", "default"
 	case "persist_tmp_data":
 		return fmt.Sprintf("%v", effective.PersistTmpData), sourceLabel(effective.PersistTmpDataSource)
 	case "dry_run":
@@ -1147,15 +1155,26 @@ func printConfigWithSources(effective, defaults llm.Config, showFull bool) {
 	// --- User Interface ---
 	uiTheme := "terminal"
 	uiSource := "default"
+	uiGlyphs := "unicode"
+	uiGlyphsSource := "default"
 	if effective.UI != nil {
 		uiTheme = effective.UI.Theme
 		uiSource = sourceLabel(effective.UI.ThemeSource)
+		uiGlyphs = effective.UI.Glyphs
+		uiGlyphsSource = sourceLabel(effective.UI.GlyphsSource)
 	}
 	if override := strings.TrimSpace(os.Getenv("MACHTIANI_THEME")); override != "" {
 		uiTheme = override
 		uiSource = "env"
 	}
-	renderScalarSection(&buf, "User Interface", "Semantic terminal presentation", []configEntry{{key: "ui.theme", value: uiTheme, source: uiSource}})
+	if override := strings.TrimSpace(os.Getenv("MACHTIANI_GLYPHS")); override != "" {
+		uiGlyphs = override
+		uiGlyphsSource = "env"
+	}
+	renderScalarSection(&buf, "User Interface", "Semantic terminal presentation", []configEntry{
+		{key: "ui.theme", value: uiTheme, source: uiSource},
+		{key: "ui.glyphs", value: uiGlyphs, source: uiGlyphsSource},
+	})
 
 	// --- General ---
 	generalEntries := []configEntry{

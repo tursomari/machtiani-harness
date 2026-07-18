@@ -29,7 +29,7 @@ func DefaultConfig() Config {
 			Excerpt:      512,
 			OmitRepoRoot: false,
 		},
-		UI:                      &UIConfig{Theme: "terminal"},
+		UI:                      &UIConfig{Theme: "terminal", Glyphs: "unicode"},
 		Verbose:                 false,
 		PersistTmpData:          false,
 		DryRun:                  false,
@@ -71,7 +71,8 @@ func DefaultMinimalConfigMap() map[string]any {
 			"max_command_output_bytes": int64(65536),
 		},
 		"ui": map[string]any{
-			"theme": "terminal",
+			"theme":  "terminal",
+			"glyphs": "unicode",
 		},
 		"model_defaults": map[string]any{
 			"context_length": int64(DefaultContextLength),
@@ -156,6 +157,10 @@ func overlayConfig(target *Config, source Config, srcSource FieldSource) {
 		if source.UI.Theme != "" {
 			target.UI.Theme = source.UI.Theme
 			target.UI.ThemeSource = srcSource
+		}
+		if source.UI.Glyphs != "" {
+			target.UI.Glyphs = source.UI.Glyphs
+			target.UI.GlyphsSource = srcSource
 		}
 	}
 

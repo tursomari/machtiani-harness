@@ -18,6 +18,7 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
 	promptsvc "github.com/tursomari/machtiani/agent/internal/mct/prompt"
+	"github.com/tursomari/machtiani/agent/internal/presentation"
 	"github.com/tursomari/machtiani/agent/internal/runner"
 	shellagent "github.com/tursomari/machtiani/agent/internal/shell-agent"
 	"github.com/tursomari/machtiani/agent/internal/shell-agent/pkg/minisweagent"
@@ -76,6 +77,7 @@ type runTurnEnv struct {
 	orchPromptOpts                    **ui.PromptOptions
 	baseOrchMetadata                  []string
 	mctResponseDirectives             []string
+	glyphs                            presentation.GlyphSet
 }
 
 // loadTrajectoryForResume loads the shell-agent trajectory messages
@@ -101,6 +103,10 @@ func loadTrajectoryForResume(sessionID string, step int) ([]minisweagent.Message
 func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 	if env == nil {
 		return turnExecutionResult{}
+	}
+	glyphs := env.glyphs
+	if glyphs.Separator == "" {
+		glyphs = presentation.GlyphsForMode(presentation.GlyphUnicode)
 	}
 	if question == "" {
 		errEmpty := errors.New("planner returned empty question")
@@ -129,12 +135,12 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 	if hasSplitAsk {
 		useShellAgent = false
 		if env.cfg.shellAgent {
-			preflightNote = "routing: both (config override — running split ask)"
+			preflightNote = "routing: both (config override " + glyphs.Separator + " running split ask)"
 		} else {
-			preflightNote = "routing: both (split ask — run no-shell + shell agent)"
+			preflightNote = "routing: both (split ask " + glyphs.Separator + " run no-shell + shell agent)"
 		}
 	} else if env.cfg.shellAgent {
-		preflightNote = "routing: shell (config override — run commands via shell agent)"
+		preflightNote = "routing: shell (config override " + glyphs.Separator + " run commands via shell agent)"
 	} else {
 		ctxPre, cancelPre := makeTurnContext(env.rootCtx, env.cfg.timeoutPerTurn)
 		ctxPre = attachTrajectory(ctxPre, env.trajectoryWriter, env.parentSpanID)
@@ -144,18 +150,18 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 			fmt.Fprintln(env.diagWriter, "Preflight routing error:", preflightErr)
 		}
 		routeLabel := "shell"
-		routeExplanation := "shell reply — run commands in the shell"
+		routeExplanation := "shell reply " + glyphs.Separator + " run commands in the shell"
 		if !useShellAgent {
 			routeLabel = "file"
 			routeExplanation = "retrieving relevant files and context"
 		}
 		switch {
 		case strings.TrimSpace(preflightReply) != "":
-			preflightNote = fmt.Sprintf("preflight routing: %s (reply: %s) — %s", routeLabel, trimTo(preflightReply, 120), routeExplanation)
+			preflightNote = fmt.Sprintf("preflight routing: %s (reply: %s) %s %s", routeLabel, trimTo(preflightReply, 120), glyphs.Separator, routeExplanation)
 		case preflightErr != nil:
-			preflightNote = fmt.Sprintf("preflight routing: %s (error fallback: %s) — %s", routeLabel, trimTo(preflightErr.Error(), 120), routeExplanation)
+			preflightNote = fmt.Sprintf("preflight routing: %s (error fallback: %s) %s %s", routeLabel, trimTo(preflightErr.Error(), 120), glyphs.Separator, routeExplanation)
 		default:
-			preflightNote = fmt.Sprintf("preflight routing: %s (empty reply) — %s", routeLabel, routeExplanation)
+			preflightNote = fmt.Sprintf("preflight routing: %s (empty reply) %s %s", routeLabel, glyphs.Separator, routeExplanation)
 		}
 	}
 	useShellAgent, forcedSingleShellRoute := applySingleAskRoutingPolicy(hasSplitAsk, useShellAgent)

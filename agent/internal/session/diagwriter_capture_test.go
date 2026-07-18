@@ -3,7 +3,6 @@ package session
 import (
 	"bytes"
 	"context"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -63,8 +62,9 @@ func TestSuspendForUserInputDiagWriterCapturesUserInputHint(t *testing.T) {
 
 	output := diagBuf.String()
 	for _, want := range []string{
-		"=== USER INPUT NEEDED ===",
-		"Session ID: suspend-diag-test",
+		"USER INPUT NEEDED",
+		"Why this needs your input:",
+		"Your decision:",
 		"The safer fix preserves existing behavior.",
 		"Do you want the safer fix?",
 		`mct-agent run -t "<your answer>" --session-id suspend-diag-test`,
@@ -212,7 +212,7 @@ func TestWriteFinalAnswerDiagWriterCapturesWriteError(t *testing.T) {
 	badPath := filepath.Join(blocker, "agent-final-answer.md")
 
 	var diagBuf bytes.Buffer
-	_, err := writeFinalAnswer("test-write-fail", "answer content", badPath, false, false, &diagBuf)
+	_, err := writeFinalAnswer("test-write-fail", "answer content", badPath, false)
 	if err == nil {
 		t.Fatalf("expected writeFinalAnswer to fail, but got nil error")
 	}
@@ -224,18 +224,15 @@ func TestWriteFinalAnswerDiagWriterCapturesWriteError(t *testing.T) {
 	// completeSession routes it. So we verify the error is returned.
 	_ = diagBuf.String() // no assertion on content for this path
 
-	// Now test the verbose success path to confirm diagWriter captures "Final answer saved".
+	// The saved path is rendered once by the session conclusion, not by this
+	// persistence helper.
 	goodPath := filepath.Join(tmpDir, "output", "agent-final-answer.md")
-	var diagBuf2 bytes.Buffer
-	writtenPath, err2 := writeFinalAnswer("test-write-ok", "answer content", goodPath, true, false, &diagBuf2)
+	writtenPath, err2 := writeFinalAnswer("test-write-ok", "answer content", goodPath, false)
 	if err2 != nil {
 		t.Fatalf("unexpected error on successful write: %v", err2)
 	}
 	if writtenPath != goodPath {
 		t.Fatalf("written path = %q, want %q", writtenPath, goodPath)
-	}
-	if !strings.Contains(diagBuf2.String(), "Final answer saved:") {
-		t.Fatalf("expected 'Final answer saved:' in diagWriter, got: %s", diagBuf2.String())
 	}
 }
 
@@ -244,8 +241,7 @@ func TestWriteFinalAnswerResolvesRelativePathAndSkipsDryRun(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Chdir(home)
 
-	var diagBuf bytes.Buffer
-	writtenPath, err := writeFinalAnswer("relative-final", "answer content", "output/answer.md", true, false, &diagBuf)
+	writtenPath, err := writeFinalAnswer("relative-final", "answer content", "output/answer.md", false)
 	if err != nil {
 		t.Fatalf("writeFinalAnswer: %v", err)
 	}
@@ -253,15 +249,12 @@ func TestWriteFinalAnswerResolvesRelativePathAndSkipsDryRun(t *testing.T) {
 	if writtenPath != wantPath {
 		t.Fatalf("written path = %q, want absolute path %q", writtenPath, wantPath)
 	}
-	if got := diagBuf.String(); got != "Final answer saved: ~/output/answer.md\n" {
-		t.Fatalf("verbose path output = %q", got)
-	}
 	if _, err := os.Stat(wantPath); err != nil {
 		t.Fatalf("written answer missing: %v", err)
 	}
 
 	dryPath := filepath.Join(home, "dry", "answer.md")
-	dryWrittenPath, err := writeFinalAnswer("dry-final", "answer content", dryPath, false, true, io.Discard)
+	dryWrittenPath, err := writeFinalAnswer("dry-final", "answer content", dryPath, true)
 	if err != nil {
 		t.Fatalf("dry-run writeFinalAnswer: %v", err)
 	}

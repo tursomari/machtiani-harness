@@ -20,7 +20,7 @@ Preferred live invocation:
 OPENROUTER_API_KEY="$TEST_API_KEY" \
 mct-agent run --mode code --model glm-5-high \
   --max-steps 100 --timeout-per-turn 0 --verbose \
-  -t "<goal>"
+  -t "<your prompt>"
 ```
 
 - Use `--max-steps 100` as the practical default ceiling in this repo.
@@ -170,7 +170,7 @@ To resume or continue the parent session:
 OPENROUTER_API_KEY="$TEST_API_KEY" \
 mct-agent run --model glm-5-high \
   --max-steps 100 --timeout-per-turn 0 \
-  --session-id <parent-session-id> -t "<next instruction or original goal>"
+  --session-id <parent-session-id> -t "<your follow-up prompt>"
 ```
 
 - A follow-up run with `--session-id <child-session-id>` rewrites that child session's `chat/agent-final-answer.md`.

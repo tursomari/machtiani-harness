@@ -239,6 +239,35 @@ func TestLoadGlobalConfigRejectsUnknownUITheme(t *testing.T) {
 	}
 }
 
+func TestLoadGlobalConfigParsesUIGlyphs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	mustWriteFile(t, path, "[ui]\ntheme = \"machtiani-dark\"\nglyphs = \"ascii\"\n")
+	t.Setenv("MACHTIANI_CONFIG", path)
+	ResetConfigForTesting()
+	t.Cleanup(ResetConfigForTesting)
+
+	cfg, _, err := LoadGlobalConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.UI == nil || cfg.UI.Theme != "machtiani-dark" || cfg.UI.Glyphs != "ascii" {
+		t.Fatalf("unexpected UI config: %+v", cfg.UI)
+	}
+}
+
+func TestLoadGlobalConfigRejectsUnknownUIGlyphs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	mustWriteFile(t, path, "[ui]\nglyphs = \"heavy\"\n")
+	t.Setenv("MACHTIANI_CONFIG", path)
+	ResetConfigForTesting()
+	t.Cleanup(ResetConfigForTesting)
+
+	_, _, err := LoadGlobalConfig()
+	if err == nil || !strings.Contains(err.Error(), "unknown UI glyph mode") {
+		t.Fatalf("expected unknown glyph mode error, got %v", err)
+	}
+}
+
 func TestLoadGlobalConfigSupportsLegacyAgentSection(t *testing.T) {
 	content := `
 

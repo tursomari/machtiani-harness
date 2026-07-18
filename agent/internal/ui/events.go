@@ -133,35 +133,29 @@ type FooterModelsUpdatedEvent struct {
 
 func (e FooterModelsUpdatedEvent) Type() string { return "FooterModelsUpdated" }
 
-// FinalAnswerEvent carries the final rendered answer text.
-type FinalAnswerEvent struct {
-	RenderedText string
-}
+type SessionConclusionOutcome string
 
-func (e FinalAnswerEvent) Type() string { return "FinalAnswer" }
+const (
+	SessionConclusionCompleted        SessionConclusionOutcome = "completed"
+	SessionConclusionShellInterrupted SessionConclusionOutcome = "shell_interrupted"
+	SessionConclusionUserInputNeeded  SessionConclusionOutcome = "user_input_needed"
+)
 
-// ContinuationHintEvent renders the concise instruction used to resume a
-// session. DetailLines are populated only for verbose output.
-type ContinuationHintEvent struct {
-	Header          string
-	DetailLines     []string
+// SessionConclusionEvent carries the semantic data for the user-facing block
+// printed between ordinary session output and the final footer.
+type SessionConclusionEvent struct {
+	Outcome         SessionConclusionOutcome
+	RenderedAnswer  string
 	FinalAnswerPath string
-	Instruction     string
-	Command         string
+	SessionID       string
+	Verbose         bool
+	TurnsCompleted  int
+	Goal            string
+	Explanation     string
+	Question        string
 }
 
-func (e ContinuationHintEvent) Type() string { return "ContinuationHint" }
-
-// UserInputHintEvent renders a suspended-session question and its resume
-// command without requiring callers to embed terminal styling in raw strings.
-type UserInputHintEvent struct {
-	SessionID string
-	Context   string
-	Question  string
-	Command   string
-}
-
-func (e UserInputHintEvent) Type() string { return "UserInputHint" }
+func (e SessionConclusionEvent) Type() string { return "SessionConclusion" }
 
 // ModeTaskPlanDisplayEvent renders an initial set of mode tasks.
 type ModeTaskPlanDisplayEvent struct {

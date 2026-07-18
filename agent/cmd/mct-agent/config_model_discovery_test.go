@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/tursomari/machtiani/agent/internal/configcatalog"
+	"github.com/tursomari/machtiani/agent/internal/presentation"
 )
 
 func TestDiscoverProviderModelsFiltersAndAuthenticates(t *testing.T) {
@@ -112,6 +113,25 @@ func TestSearchableCatalogDefaultsModelMenuToSearch(t *testing.T) {
 	}
 	if options[1].value != openrouter.DefaultModel {
 		t.Fatalf("second OpenRouter model option = %q, want flagship %q", options[1].value, openrouter.DefaultModel)
+	}
+}
+
+func TestCatalogModelMenuUsesConfiguredGlyphs(t *testing.T) {
+	provider := configcatalog.Provider{
+		ModelsURL: "https://example.test/models",
+		Models:    []configcatalog.Model{{ID: "model", Name: "Model", Description: "Useful"}},
+	}
+	theme := presentation.NewForTestWithGlyphs(presentation.ProfileTerminal, presentation.GlyphASCII, false, false)
+	options := catalogModelMenuOptions(provider, theme)
+	joined := ""
+	for _, option := range options {
+		joined += option.label + "\n"
+	}
+	if !strings.Contains(joined, "Model - Useful") || !strings.Contains(joined, "Other model...") {
+		t.Fatalf("ASCII menu decorations mismatch:\n%s", joined)
+	}
+	if strings.ContainsAny(joined, "—…") {
+		t.Fatalf("ASCII menu contains Unicode decorations:\n%s", joined)
 	}
 }
 

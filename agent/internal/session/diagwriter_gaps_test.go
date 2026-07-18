@@ -82,8 +82,8 @@ func TestCompleteSessionDiagWriterCapturesModePlanTaskFailure(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Test 2: completeSession verbose success path captures "Final answer saved:"
-// and presentFinalAnswer renders to the injected display
+// Test 2: completeSession emits one semantic conclusion event containing the
+// rendered answer, saved path, and verbose details.
 // ---------------------------------------------------------------------------
 
 func TestCompleteSessionVerboseSuccessCapturesDiagAndDisplay(t *testing.T) {
@@ -132,29 +132,31 @@ func TestCompleteSessionVerboseSuccessCapturesDiagAndDisplay(t *testing.T) {
 		t.Fatalf("completeSession returned unexpected error: %v", err)
 	}
 
-	// diagWriter should contain "Final answer saved:" because verbose=true.
-	diagOutput := diagBuf.String()
-	if !strings.Contains(diagOutput, "Final answer saved:") {
-		t.Fatalf("expected 'Final answer saved:' in diagWriter, got:\n%s", diagOutput)
-	}
-
-	// presentFinalAnswer should emit a FinalAnswerEvent with the rendered answer.
-	finalSeen := false
+	var conclusion ui.SessionConclusionEvent
+	conclusionSeen := false
 	for {
 		select {
 		case e := <-events:
-			if e.Type() == "FinalAnswer" {
-				if fa, ok := e.(ui.FinalAnswerEvent); ok && strings.TrimSpace(fa.RenderedText) != "" {
-					finalSeen = true
-				}
+			if value, ok := e.(ui.SessionConclusionEvent); ok {
+				conclusion = value
+				conclusionSeen = true
 			}
 		default:
 			goto doneLoop
 		}
 	}
 doneLoop:
-	if !finalSeen {
-		t.Fatal("expected FinalAnswerEvent emitted by presentFinalAnswer")
+	if !conclusionSeen {
+		t.Fatal("expected SessionConclusionEvent")
+	}
+	if conclusion.Outcome != ui.SessionConclusionCompleted || strings.TrimSpace(conclusion.RenderedAnswer) == "" {
+		t.Fatalf("unexpected conclusion: %#v", conclusion)
+	}
+	if conclusion.FinalAnswerPath != finalPath || !conclusion.Verbose || conclusion.TurnsCompleted != 1 || conclusion.Goal != "Goal" {
+		t.Fatalf("conclusion metadata mismatch: %#v", conclusion)
+	}
+	if strings.Contains(diagBuf.String(), "Final answer saved:") {
+		t.Fatalf("saved path was duplicated outside the conclusion event: %s", diagBuf.String())
 	}
 
 	// The final answer file should exist on disk.
@@ -164,10 +166,10 @@ doneLoop:
 }
 
 // ---------------------------------------------------------------------------
-// Test 3: printResumeHint diagWriter output (nil display → diagWriter fallback)
+// Test 3: session conclusion diagWriter output (nil display fallback)
 // ---------------------------------------------------------------------------
 
-func TestPrintResumeHintDiagWriterFallback(t *testing.T) {
+func TestSessionConclusionDiagWriterFallback(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	runState := newRunLifecycleState(
@@ -184,29 +186,37 @@ func TestPrintResumeHintDiagWriterFallback(t *testing.T) {
 	)
 
 	var diagBuf bytes.Buffer
-	runState.printResumeHint(nil, &diagBuf, "=== SESSION COMPLETE ===", 3, filepath.Join(home, "answer.md"))
+	runState.printSessionConclusion(nil, &diagBuf, ui.SessionConclusionEvent{
+		Outcome:         ui.SessionConclusionCompleted,
+		RenderedAnswer:  "  Final answer",
+		FinalAnswerPath: filepath.Join(home, "answer.md"),
+		SessionID:       runState.sessionID,
+		Verbose:         true,
+		TurnsCompleted:  3,
+		Goal:            runState.goal,
+	})
 
 	output := diagBuf.String()
-	if !strings.HasPrefix(output, "\n=== SESSION COMPLETE ===\n") {
-		t.Fatalf("expected one blank line before verbose completion output, got:\n%q", output)
-	}
 	for _, want := range []string{
-		"=== SESSION COMPLETE ===",
+		"Final answer",
+		"Answer saved to:",
 		"Session ID: resume-hint-test",
 		"Turns completed: 3",
 		"Test goal for resume hint",
-		"mct-agent run",
+		"mct-agent run \\",
+		`-t "<your follow-up prompt>" \`,
+		"--session-id resume-hint-test",
 	} {
 		if !strings.Contains(output, want) {
 			t.Errorf("expected %q in diagWriter output, got:\n%s", want, output)
 		}
 	}
-	if strings.Contains(output, "This answer is also available at:") {
-		t.Fatalf("verbose completion duplicated final-answer path block:\n%s", output)
+	if strings.Contains(output, "SESSION COMPLETE") || strings.Contains(output, "<next instruction>") {
+		t.Fatalf("legacy conclusion copy remains:\n%s", output)
 	}
 }
 
-func TestPrintResumeHintDisplayPath(t *testing.T) {
+func TestSessionConclusionDisplayPath(t *testing.T) {
 	runState := newRunLifecycleState(
 		context.Background(),
 		legacyConfig{verbose: true},
@@ -222,15 +232,23 @@ func TestPrintResumeHintDisplayPath(t *testing.T) {
 
 	bus := ui.NewEventBus(0)
 	events := bus.Subscribe()
-	runState.printResumeHint(bus, io.Discard, "=== SESSION INTERRUPTED ===", 5, "/tmp/answer.md")
+	runState.printSessionConclusion(bus, io.Discard, ui.SessionConclusionEvent{
+		Outcome:         ui.SessionConclusionCompleted,
+		RenderedAnswer:  "answer",
+		FinalAnswerPath: "/tmp/answer.md",
+		SessionID:       runState.sessionID,
+		Verbose:         true,
+		TurnsCompleted:  5,
+		Goal:            runState.goal,
+	})
 
-	var hint ui.ContinuationHintEvent
+	var conclusion ui.SessionConclusionEvent
 	seen := false
 	for {
 		select {
 		case e := <-events:
-			if value, ok := e.(ui.ContinuationHintEvent); ok {
-				hint = value
+			if value, ok := e.(ui.SessionConclusionEvent); ok {
+				conclusion = value
 				seen = true
 			}
 		default:
@@ -239,27 +257,17 @@ func TestPrintResumeHintDisplayPath(t *testing.T) {
 	}
 donePrintResume:
 	if !seen {
-		t.Fatal("expected ContinuationHintEvent to be emitted")
+		t.Fatal("expected SessionConclusionEvent to be emitted")
 	}
-	if hint.Header != "=== SESSION INTERRUPTED ===" {
-		t.Fatalf("unexpected continuation header %q", hint.Header)
+	if conclusion.Outcome != ui.SessionConclusionCompleted {
+		t.Fatalf("unexpected conclusion outcome %q", conclusion.Outcome)
 	}
-
-	joined := hint.Header + "\n" + strings.Join(hint.DetailLines, "\n") + "\n" + hint.Command
-	for _, want := range []string{
-		"=== SESSION INTERRUPTED ===",
-		"Session ID: resume-hint-display",
-		"Turns completed: 5",
-		"Test goal for display path",
-		"mct-agent run",
-	} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("expected %q in display output, got:\n%s", want, joined)
-		}
+	if conclusion.SessionID != "resume-hint-display" || conclusion.TurnsCompleted != 5 || conclusion.Goal != "Test goal for display path" {
+		t.Fatalf("conclusion metadata mismatch: %#v", conclusion)
 	}
 }
 
-func TestPrintResumeHintNonVerboseOnlyPrintsContinuation(t *testing.T) {
+func TestSessionConclusionNonVerboseOmitsDetails(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	runState := newRunLifecycleState(
@@ -275,37 +283,37 @@ func TestPrintResumeHintNonVerboseOnlyPrintsContinuation(t *testing.T) {
 		nil,
 	)
 
-	command := `mct-agent run -t "<next instruction>" --session-id resume-hint-quiet`
-	rule := strings.Repeat("-", len("  $ "+command))
 	finalPath := filepath.Join(home, ".machtiani", "project", "sessions", "resume-hint-quiet", "chat", "agent-final-answer.md")
-	want := "This answer is also available at:\n" +
-		"  ~/.machtiani/project/sessions/resume-hint-quiet/chat/agent-final-answer.md\n\n" +
-		"Continue with your next instruction:\n  " + rule + "\n  $ " + command + "\n  " + rule
+	event := ui.SessionConclusionEvent{
+		Outcome:         ui.SessionConclusionCompleted,
+		RenderedAnswer:  "answer",
+		FinalAnswerPath: finalPath,
+		SessionID:       runState.sessionID,
+	}
 
 	var diagBuf bytes.Buffer
-	runState.printResumeHint(nil, &diagBuf, "=== SESSION COMPLETE ===", 4, finalPath)
-	if got := diagBuf.String(); got != "\n"+want+"\n" {
-		t.Fatalf("quiet diag output mismatch\nwant: %q\n got: %q", "\n"+want+"\n", got)
+	runState.printSessionConclusion(nil, &diagBuf, event)
+	if got := diagBuf.String(); !strings.Contains(got, "Answer saved to:") || !strings.Contains(got, "Continue this session:") {
+		t.Fatalf("quiet conclusion missing essential information:\n%s", got)
+	} else if strings.Contains(got, "Turns completed:") || strings.Contains(got, "Goal so far:") {
+		t.Fatalf("quiet conclusion leaked verbose details:\n%s", got)
 	}
 
 	bus := ui.NewEventBus(0)
 	events := bus.Subscribe()
-	runState.printResumeHint(bus, io.Discard, "=== SESSION COMPLETE ===", 4, finalPath)
+	runState.printSessionConclusion(bus, io.Discard, event)
 
 	select {
 	case event := <-events:
-		hint, ok := event.(ui.ContinuationHintEvent)
+		conclusion, ok := event.(ui.SessionConclusionEvent)
 		if !ok {
-			t.Fatalf("event type = %T, want ui.ContinuationHintEvent", event)
+			t.Fatalf("event type = %T, want ui.SessionConclusionEvent", event)
 		}
-		if hint.Header != "" || len(hint.DetailLines) != 0 {
-			t.Fatalf("quiet continuation leaked verbose detail: %#v", hint)
+		if conclusion.Verbose {
+			t.Fatalf("quiet conclusion marked verbose: %#v", conclusion)
 		}
-		if hint.FinalAnswerPath != finalPath {
-			t.Fatalf("quiet final-answer path = %q, want %q", hint.FinalAnswerPath, finalPath)
-		}
-		if hint.Command != `mct-agent run -t "<next instruction>" --session-id resume-hint-quiet` {
-			t.Fatalf("quiet display command mismatch: %q", hint.Command)
+		if conclusion.FinalAnswerPath != finalPath || conclusion.SessionID != "resume-hint-quiet" {
+			t.Fatalf("quiet conclusion metadata mismatch: %#v", conclusion)
 		}
 	default:
 		t.Fatal("expected quiet continuation event")
@@ -338,21 +346,12 @@ func TestShellAgentResumeHintDisplayPath(t *testing.T) {
 
 	select {
 	case event := <-events:
-		hint, ok := event.(ui.ContinuationHintEvent)
+		hint, ok := event.(ui.SessionConclusionEvent)
 		if !ok {
-			t.Fatalf("event type = %T, want ui.ContinuationHintEvent", event)
+			t.Fatalf("event type = %T, want ui.SessionConclusionEvent", event)
 		}
-		if hint.Header != "=== SHELL-AGENT INTERRUPTED ===" {
-			t.Fatalf("header = %q", hint.Header)
-		}
-		if hint.Instruction != "Resume the interrupted shell-agent work:" {
-			t.Fatalf("instruction = %q", hint.Instruction)
-		}
-		if hint.Command != "mct-agent run --session-id shell-resume-display" {
-			t.Fatalf("command = %q", hint.Command)
-		}
-		if got := strings.Join(hint.DetailLines, "\n"); !strings.Contains(got, "Shell-agent work is resumable.") {
-			t.Fatalf("detail lines missing resumable note: %#v", hint.DetailLines)
+		if hint.Outcome != ui.SessionConclusionShellInterrupted || hint.SessionID != "shell-resume-display" {
+			t.Fatalf("interrupted conclusion mismatch: %#v", hint)
 		}
 	default:
 		t.Fatal("expected shell-agent resume hint event")
@@ -386,10 +385,10 @@ func TestInterruptedResultWithHintEmitsShellAgentResumeInstruction(t *testing.T)
 		select {
 		case event := <-events:
 			switch e := event.(type) {
-			case ui.ContinuationHintEvent:
+			case ui.SessionConclusionEvent:
 				sawHint = true
-				if e.Command != "mct-agent run --session-id shell-resume-interrupted" {
-					t.Fatalf("command = %q", e.Command)
+				if e.Outcome != ui.SessionConclusionShellInterrupted || e.SessionID != "shell-resume-interrupted" {
+					t.Fatalf("interrupted conclusion mismatch: %#v", e)
 				}
 			case ui.SessionEndedEvent:
 				sawEnded = true
@@ -478,8 +477,9 @@ func TestSuspendForUserInputResumeContextCapturesDiag(t *testing.T) {
 
 	output := diagBuf.String()
 	for _, want := range []string{
-		"=== USER INPUT NEEDED ===",
-		"Session ID: resume-suspend-diag",
+		"USER INPUT NEEDED",
+		"Why this needs your input:",
+		"Your decision:",
 		"Which approach do you prefer?",
 		"Option A is safer but slower.",
 	} {

@@ -213,10 +213,12 @@ func handlePrompt(args []string) {
 		os.Exit(2)
 	}
 	themeName := string(presentation.ProfileTerminal)
+	glyphMode := string(presentation.GlyphUnicode)
 	if globalConfig.UI != nil {
 		themeName = globalConfig.UI.Theme
+		glyphMode = globalConfig.UI.Glyphs
 	}
-	uiTheme, themeErr := presentation.Resolve(themeName, os.Stdout)
+	uiTheme, themeErr := presentation.ResolveWithGlyphs(themeName, glyphMode, os.Stdout)
 	if themeErr != nil {
 		fmt.Fprintf(os.Stderr, "Error resolving UI theme: %v\n", themeErr)
 		os.Exit(2)

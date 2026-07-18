@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/tursomari/machtiani/agent/internal/llm"
+	"github.com/tursomari/machtiani/agent/internal/presentation"
 	shellagent "github.com/tursomari/machtiani/agent/internal/shell-agent"
 	runpkg "github.com/tursomari/machtiani/agent/internal/shell-agent/internal/run"
 )
@@ -72,7 +73,7 @@ func main() {
 	}
 	args := flag.Args()
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "Usage: shell-agent \"<prompt>\"")
+		fmt.Fprintln(os.Stderr, "Usage: shell-agent \"<your prompt>\"")
 		os.Exit(1)
 	}
 
@@ -187,7 +188,17 @@ func main() {
 
 	switch strings.ToLower(*outputFormat) {
 	case "simple":
-		transcript := runpkg.RenderSimpleTranscript(traj)
+		themeName := string(presentation.ProfileTerminal)
+		glyphMode := string(presentation.GlyphUnicode)
+		if globalCfg.UI != nil {
+			themeName = globalCfg.UI.Theme
+			glyphMode = globalCfg.UI.Glyphs
+		}
+		uiTheme, themeErr := presentation.ResolveWithGlyphs(themeName, glyphMode, os.Stdout)
+		if themeErr != nil {
+			log.Printf("warning: failed to resolve UI presentation: %v", themeErr)
+		}
+		transcript := runpkg.RenderSimpleTranscript(traj, uiTheme.Glyphs())
 		fmt.Println()
 		fmt.Println(transcript)
 	case "markdown", "md":

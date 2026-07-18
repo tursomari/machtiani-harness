@@ -638,7 +638,7 @@ func renderInitMenuOptions(out io.Writer, options []initMenuOption, selected int
 	for i, option := range options {
 		marker := "  "
 		if i == selected {
-			marker = "> "
+			marker = theme.Glyphs().Arrow + " "
 		}
 		line := marker + option.label
 		switch {

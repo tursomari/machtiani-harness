@@ -174,12 +174,16 @@ func (d *configDocument) save() error {
 
 func (d *configDocument) menuTheme(out io.Writer) (presentation.Theme, error) {
 	configured := string(presentation.ProfileTerminal)
+	glyphs := string(presentation.GlyphUnicode)
 	if ui, ok := d.raw["ui"].(map[string]any); ok {
 		if value, ok := ui["theme"].(string); ok && strings.TrimSpace(value) != "" {
 			configured = value
 		}
+		if value, ok := ui["glyphs"].(string); ok && strings.TrimSpace(value) != "" {
+			glyphs = value
+		}
 	}
-	theme, err := presentation.Resolve(configured, out)
+	theme, err := presentation.ResolveWithGlyphs(configured, glyphs, out)
 	if err != nil {
 		return presentation.Theme{}, fmt.Errorf("resolve interactive menu theme: %w", err)
 	}

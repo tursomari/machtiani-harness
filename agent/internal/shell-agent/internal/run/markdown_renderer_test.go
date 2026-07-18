@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tursomari/machtiani/agent/internal/presentation"
 	"github.com/tursomari/machtiani/agent/internal/shell-agent/pkg/minisweagent"
 )
 
@@ -156,6 +157,25 @@ func TestRenderSimpleTranscriptFallsBackOnErrorExit(t *testing.T) {
 	}
 	if !strings.Contains(got, "[BEGIN EXECUTION]") {
 		t.Fatalf("RenderSimpleTranscript should include execution steps on error; got %q", got)
+	}
+}
+
+func TestRenderSimpleTranscriptUsesConfiguredStatusGlyphs(t *testing.T) {
+	success := newSimpleTestTrajectory("Submitted", "", runRecord{
+		Intent: "List files", Status: "success",
+		Attempts: []attemptRecord{{Command: "ls", ReturnCode: 0}},
+	})
+	ascii := presentation.GlyphsForMode(presentation.GlyphASCII)
+	if got := RenderSimpleTranscript(success, ascii); !strings.Contains(got, "[OK] Success") || strings.Contains(got, "✓") {
+		t.Fatalf("ASCII success status mismatch: %q", got)
+	}
+
+	failure := newSimpleTestTrajectory("Error", "", runRecord{
+		Intent: "Build", Status: "error",
+		Attempts: []attemptRecord{{Command: "make", ReturnCode: 1, Error: "build failed"}},
+	})
+	if got := RenderSimpleTranscript(failure, ascii); !strings.Contains(got, "[ERROR] build failed") || strings.Contains(got, "✗") {
+		t.Fatalf("ASCII failure status mismatch: %q", got)
 	}
 }
 

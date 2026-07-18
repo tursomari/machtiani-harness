@@ -153,9 +153,9 @@ import sys
 output = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
 path = sys.argv[2]
 expected = (
-    "This answer is also available at:\n"
-    f"  {path}\n\n"
-    "Continue with your next instruction:\n"
+    "  Answer saved to:\n"
+    f"    {path}\n\n"
+    "  Continue this session:\n"
 )
 if expected not in output:
     raise SystemExit(f"missing final-answer continuation block {expected!r} in {output!r}")
