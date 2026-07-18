@@ -74,22 +74,25 @@ func TestRenderActivityLineHonorsMotionAndGlyphModes(t *testing.T) {
 	}
 }
 
-func TestFormatterActivityOccupiesThirdFooterRow(t *testing.T) {
+func TestFormatterActivityLeavesBlankLineBeforeFooter(t *testing.T) {
 	f, bus, _ := newTestFormatter()
 	defer bus.Close()
 	f.timerEnabled = true
-	f.height = minFooterHeight + 2
+	f.height = minFooterHeight + 3
 	f.width = 120
 	f.activities = []Activity{{ID: "planner", Kind: ActivityPlanning}}
 
-	if got := f.footerLineCountLocked(); got != 3 {
-		t.Fatalf("footer line count = %d, want 3", got)
+	if got := f.footerLineCountLocked(); got != 4 {
+		t.Fatalf("footer line count = %d, want 4", got)
 	}
-	lines := f.formatFooterLinesLocked(125*time.Millisecond, 3)
-	if len(lines) != 3 || !strings.Contains(lines[0], "reasoning") {
+	lines := f.formatFooterLinesLocked(125*time.Millisecond, 4)
+	if len(lines) != 4 || !strings.Contains(lines[0], "reasoning") {
 		t.Fatalf("footer lines = %#v", lines)
 	}
-	if !strings.Contains(lines[1], "session token input") {
+	if lines[1] != "" {
+		t.Fatalf("activity spacer = %q, want blank: %#v", lines[1], lines)
+	}
+	if !strings.Contains(lines[2], "session token input") {
 		t.Fatalf("token line moved incorrectly: %#v", lines)
 	}
 }
@@ -99,7 +102,7 @@ func TestFormatterActivityHidesHardwareCursorUntilActivityEnds(t *testing.T) {
 	defer bus.Close()
 	f.timerEnabled = true
 	f.timerStart = time.Now()
-	f.height = minFooterHeight + 2
+	f.height = minFooterHeight + 3
 	f.width = 120
 
 	f.handleActivitySnapshot(ActivitySnapshotEvent{Activities: []Activity{{ID: "planner", Kind: ActivityPlanning}}})
@@ -122,7 +125,7 @@ func TestFormatterSessionEndRestoresHardwareCursor(t *testing.T) {
 	defer bus.Close()
 	f.timerEnabled = true
 	f.timerStart = time.Now()
-	f.height = minFooterHeight + 2
+	f.height = minFooterHeight + 3
 	f.width = 120
 	f.started = true
 	f.activities = []Activity{{ID: "shell", Kind: ActivityShell}}

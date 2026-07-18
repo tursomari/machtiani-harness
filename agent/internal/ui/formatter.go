@@ -783,12 +783,12 @@ func (f *Formatter) footerLineCountLocked() int {
 	}
 	if f.height == 0 {
 		if f.hasVisibleActivityLocked() {
-			return 3
+			return 4
 		}
 		return 2
 	}
-	if f.height >= minFooterHeight+2 && f.hasVisibleActivityLocked() {
-		return 3
+	if f.height >= minFooterHeight+3 && f.hasVisibleActivityLocked() {
+		return 4
 	}
 	if f.height >= minFooterHeight+1 {
 		return 2
@@ -809,7 +809,7 @@ func (f *Formatter) renderTimerLocked() {
 		return
 	}
 	lineCount := f.footerLineCountLocked()
-	f.setActivityCursorHiddenLocked(lineCount >= 3 && f.hasVisibleActivityLocked())
+	f.setActivityCursorHiddenLocked(lineCount >= 4 && f.hasVisibleActivityLocked())
 	if lineCount == 0 {
 		f.clearLiveFooterLocked()
 		return
@@ -862,9 +862,9 @@ func (f *Formatter) formatFooterLinesLocked(elapsed time.Duration, lineCount int
 	}
 	statusLine := formatStatusFooterLine(f.modeTasks, f.activeModeTask, f.turnNumber, identity, f.footerModels, width)
 	lines := []string{tokenLine, statusLine}
-	if lineCount >= 3 && f.hasVisibleActivityLocked() {
+	if lineCount >= 4 && f.hasVisibleActivityLocked() {
 		activityLine := renderActivityLine(selectActivityPresentation(f.activities), f.theme.Presentation, elapsed)
-		lines = append([]string{activityLine}, lines...)
+		lines = append([]string{activityLine, ""}, lines...)
 	}
 	return lines
 }
@@ -910,7 +910,7 @@ func (f *Formatter) styleFooterLinesLocked(lines []string) []string {
 	styled := make([]string, 0, len(lines))
 	for i, line := range lines {
 		var highlights []footerHighlight
-		if len(lines) == 3 && i == 0 {
+		if len(lines) == 4 && i == 0 {
 			mark, label, _ := strings.Cut(line, "  ")
 			styled = append(styled, f.theme.render(presentation.StyledLine{
 				presentation.Bold(presentation.RoleTruth, mark),
@@ -920,8 +920,8 @@ func (f *Formatter) styleFooterLinesLocked(lines []string) []string {
 			continue
 		}
 		tokenIndex := 0
-		if len(lines) == 3 {
-			tokenIndex = 1
+		if len(lines) == 4 {
+			tokenIndex = 2
 		}
 		if i == tokenIndex {
 			separator := strings.Index(line, "  ")
