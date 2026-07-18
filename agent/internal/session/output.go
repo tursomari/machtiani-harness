@@ -12,28 +12,32 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/ui"
 )
 
-func writeFinalAnswer(sessionID, answer, finalFileFlag string, verbose bool, dryRun bool, diagWriter io.Writer) error {
+func writeFinalAnswer(sessionID, answer, finalFileFlag string, verbose bool, dryRun bool, diagWriter io.Writer) (string, error) {
 	if dryRun {
-		return nil
+		return "", nil
 	}
 	path := strings.TrimSpace(finalFileFlag)
 	if path == "" {
 		dir, err := artifacts.SessionChatDirectory(sessionID)
 		if err != nil {
-			return err
+			return "", err
 		}
 		path = filepath.Join(dir, "agent-final-answer.md")
 	}
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
+		return "", err
 	}
 	if err := os.WriteFile(path, []byte(answer+"\n"), 0o644); err != nil {
-		return err
+		return "", err
 	}
 	if verbose {
-		fmt.Fprintln(diagWriter, "Final answer saved:", path)
+		fmt.Fprintln(diagWriter, "Final answer saved:", ui.FormatHomePath(path))
 	}
-	return nil
+	return path, nil
 }
 
 func presentFinalAnswer(bus *ui.EventBus, answer string, diagWriter io.Writer, theme ...presentation.Theme) {

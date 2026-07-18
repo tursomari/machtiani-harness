@@ -133,10 +133,33 @@ rm -rf "$shell_tool_trap"
 echo "==> Running live smoke test..."
 project_store=$(mct-agent project show --json | sed -n 's/^[[:space:]]*"store": "\([^"]*\)"[,]\{0,1\}$/\1/p')
 test -n "$project_store"
-mct-agent run -t "List the last commit message, then finish." --max-turns 5
-default_conversation=$(find "$project_store/sessions" -path '*/artifacts/conversation.json' -type f -print -quit)
-test -n "$default_conversation"
-default_session=${default_conversation%/artifacts/conversation.json}
+default_run_output=$(mktemp)
+mct-agent run -t "List the last commit message, then finish." --max-turns 5 | tee "$default_run_output"
+default_session_id=$(sed -n 's/.*--session-id \([^[:space:]]*\).*/\1/p' "$default_run_output" | tail -n 1)
+test -n "$default_session_id"
+default_session="$project_store/sessions/$default_session_id"
+default_conversation="$default_session/artifacts/conversation.json"
+test -s "$default_conversation"
+default_final="$default_session/chat/agent-final-answer.md"
+test -s "$default_final"
+default_display="$default_final"
+if [[ "$default_display" == "$HOME"/* ]]; then
+  default_display="~${default_display#$HOME}"
+fi
+python3 - "$default_run_output" "$default_display" <<'PY'
+import pathlib
+import sys
+
+output = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+path = sys.argv[2]
+expected = (
+    "This answer is also available at:\n"
+    f"  {path}\n\n"
+    "Continue with your next instruction:\n"
+)
+if expected not in output:
+    raise SystemExit(f"missing final-answer continuation block {expected!r} in {output!r}")
+PY
 test ! -e "$default_session/artifacts/llm"
 grep -Fq '"kind":"llm.context_budget.resolved"' "$default_session/trajectory/agent.jsonl"
 grep -Fq '"context_length":128000' "$default_session/trajectory/agent.jsonl"

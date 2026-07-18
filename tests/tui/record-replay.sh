@@ -21,7 +21,8 @@ Options:
 Artifacts are written under:
   <base-dir>/<name>/runs/<timestamp>/
 
-The harness always uses mct-agent from PATH. It records a PTY transcript
+Set MCT_AGENT_BIN to an explicit executable path to avoid PATH lookup. When it
+is unset, the harness uses mct-agent from PATH. It records a PTY transcript
 (*.terminal.log) as the whole terminal output, plus formatter capture
 (*.tui.txt), process logs where applicable, LLM fixtures, replay config,
 session ids, and a manifest.
@@ -117,14 +118,22 @@ if ! command -v script >/dev/null 2>&1; then
 fi
 
 BIN_DIR="$ROOT/.data/bin"
-MCT_AGENT_BIN="$(command -v mct-agent || true)"
+MCT_AGENT_BIN="${MCT_AGENT_BIN:-}"
+if [[ -n "$MCT_AGENT_BIN" ]]; then
+  if [[ "$MCT_AGENT_BIN" != /* ]]; then
+    MCT_AGENT_BIN="$(cd "$(dirname "$MCT_AGENT_BIN")" && pwd)/$(basename "$MCT_AGENT_BIN")"
+  fi
+  MCT_AGENT_BIN="$(realpath "$MCT_AGENT_BIN" 2>/dev/null || printf '%s\n' "$MCT_AGENT_BIN")"
+else
+  MCT_AGENT_BIN="$(command -v mct-agent || true)"
+fi
 REPLAY_SERVER_BIN="$(command -v replay-server || true)"
 if [[ -z "$REPLAY_SERVER_BIN" ]]; then
   REPLAY_SERVER_BIN="$BIN_DIR/replay-server"
 fi
 
 if [[ -z "$MCT_AGENT_BIN" || ! -x "$MCT_AGENT_BIN" ]]; then
-  echo "error: mct-agent must be available on PATH" >&2
+  echo "error: set MCT_AGENT_BIN to an executable or make mct-agent available on PATH" >&2
   exit 2
 fi
 

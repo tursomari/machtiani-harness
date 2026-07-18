@@ -312,15 +312,17 @@ Use the record/replay harness when changing terminal output, footer rendering, s
 
 ### Record a Fresh Session
 
-Build the binaries you want to test, then make sure the repo-built `mct-agent` is first on `PATH`:
+Build the binaries you want to test under collision-free names and pass the
+agent path explicitly:
 
 ```bash
 cd agent
-GOCACHE=$(pwd)/.gocache go build -o ../.data/bin/mct-agent ./cmd/mct-agent
+GOCACHE=$(pwd)/.gocache go build -o ../.data/bin/mct-tui-test-agent ./cmd/mct-agent
 GOCACHE=$(pwd)/.gocache go build -o ../.data/bin/replay-server ./cmd/replay-server
 cd ..
 
-PATH="$PWD/.data/bin:$PATH" ./tests/tui/record-replay.sh \
+MCT_AGENT_BIN="$PWD/.data/bin/mct-tui-test-agent" \
+  ./tests/tui/record-replay.sh \
   --name planner-shell-agent-cache \
   --prompt-file .data/tui-replay/planner-shell-agent-cache/prompt.txt
 ```
@@ -371,7 +373,7 @@ Expected normal-output behavior:
 
 - no startup `[trajectory] unified stream: ...`
 - no startup `Session: <id>`
-- normal completion output contains only the concise `--session-id <id>` continuation command; the detailed completion summary is reserved for `--verbose`
+- normal completion output contains the saved final-answer path and concise `--session-id <id>` continuation command; the detailed completion summary is reserved for `--verbose`
 - final footer includes elapsed time, token totals, turn, and `session <id>`
 - fresh-session logo appears once when that feature is enabled
 - no unexpected terminal cursor/background queries such as `ESC[6n` or `OSC 11`; theme selection never probes the background
@@ -380,11 +382,11 @@ Expected normal-output behavior:
 
 Use the full harness when you need new live fixtures, then iterate quickly with fixture replay:
 
-1. Build the local binary into `.data/bin/mct-agent`.
+1. Build the local binary under a collision-free name such as `.data/bin/mct-tui-test-agent`.
 2. Run `tests/tui/record-replay.sh` once to create a fresh run directory.
 3. Inspect `live.terminal.log`, `replay.terminal.log`, and `manifest.txt`.
 4. Make a focused code change.
-5. Rebuild `.data/bin/mct-agent`.
+5. Rebuild `.data/bin/mct-tui-test-agent`.
 6. Replay from the existing `live.llm-fixtures.jsonl` instead of spending another live LLM run.
 
 Manual replay from an existing fixture:
@@ -405,7 +407,7 @@ server_pid=$!
 
 PROMPT="$(cat "$SRC/prompt.txt")"
 MACHTIANI_CONFIG="$PWD/$RUN_DIR/replay.config.toml" \
-  script -q -f -e -c "env MACHTIANI_CONFIG='$PWD/$RUN_DIR/replay.config.toml' MACHTIANI_TUI_CAPTURE='$PWD/$RUN_DIR/replay.tui.txt' '$PWD/.data/bin/mct-agent' run --text '$PROMPT' --turn-timeout 0" \
+  script -q -f -e -c "env MACHTIANI_CONFIG='$PWD/$RUN_DIR/replay.config.toml' MACHTIANI_TUI_CAPTURE='$PWD/$RUN_DIR/replay.tui.txt' '$PWD/.data/bin/mct-tui-test-agent' run --text '$PROMPT' --turn-timeout 0" \
   "$RUN_DIR/replay.terminal.log"
 
 kill "$server_pid"

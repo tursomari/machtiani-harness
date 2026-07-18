@@ -168,6 +168,8 @@ doneLoop:
 // ---------------------------------------------------------------------------
 
 func TestPrintResumeHintDiagWriterFallback(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
 	runState := newRunLifecycleState(
 		context.Background(),
 		legacyConfig{verbose: true},
@@ -182,7 +184,7 @@ func TestPrintResumeHintDiagWriterFallback(t *testing.T) {
 	)
 
 	var diagBuf bytes.Buffer
-	runState.printResumeHint(nil, &diagBuf, "=== SESSION COMPLETE ===", 3)
+	runState.printResumeHint(nil, &diagBuf, "=== SESSION COMPLETE ===", 3, filepath.Join(home, "answer.md"))
 
 	output := diagBuf.String()
 	if !strings.HasPrefix(output, "\n=== SESSION COMPLETE ===\n") {
@@ -198,6 +200,9 @@ func TestPrintResumeHintDiagWriterFallback(t *testing.T) {
 		if !strings.Contains(output, want) {
 			t.Errorf("expected %q in diagWriter output, got:\n%s", want, output)
 		}
+	}
+	if strings.Contains(output, "This answer is also available at:") {
+		t.Fatalf("verbose completion duplicated final-answer path block:\n%s", output)
 	}
 }
 
@@ -217,7 +222,7 @@ func TestPrintResumeHintDisplayPath(t *testing.T) {
 
 	bus := ui.NewEventBus(0)
 	events := bus.Subscribe()
-	runState.printResumeHint(bus, io.Discard, "=== SESSION INTERRUPTED ===", 5)
+	runState.printResumeHint(bus, io.Discard, "=== SESSION INTERRUPTED ===", 5, "/tmp/answer.md")
 
 	var hint ui.ContinuationHintEvent
 	seen := false
@@ -255,6 +260,8 @@ donePrintResume:
 }
 
 func TestPrintResumeHintNonVerboseOnlyPrintsContinuation(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
 	runState := newRunLifecycleState(
 		context.Background(),
 		legacyConfig{verbose: false},
@@ -270,17 +277,20 @@ func TestPrintResumeHintNonVerboseOnlyPrintsContinuation(t *testing.T) {
 
 	command := `mct-agent run -t "<next instruction>" --session-id resume-hint-quiet`
 	rule := strings.Repeat("-", len("  $ "+command))
-	want := "Continue with your next instruction:\n  " + rule + "\n  $ " + command + "\n  " + rule
+	finalPath := filepath.Join(home, ".machtiani", "project", "sessions", "resume-hint-quiet", "chat", "agent-final-answer.md")
+	want := "This answer is also available at:\n" +
+		"  ~/.machtiani/project/sessions/resume-hint-quiet/chat/agent-final-answer.md\n\n" +
+		"Continue with your next instruction:\n  " + rule + "\n  $ " + command + "\n  " + rule
 
 	var diagBuf bytes.Buffer
-	runState.printResumeHint(nil, &diagBuf, "=== SESSION COMPLETE ===", 4)
+	runState.printResumeHint(nil, &diagBuf, "=== SESSION COMPLETE ===", 4, finalPath)
 	if got := diagBuf.String(); got != "\n"+want+"\n" {
 		t.Fatalf("quiet diag output mismatch\nwant: %q\n got: %q", "\n"+want+"\n", got)
 	}
 
 	bus := ui.NewEventBus(0)
 	events := bus.Subscribe()
-	runState.printResumeHint(bus, io.Discard, "=== SESSION COMPLETE ===", 4)
+	runState.printResumeHint(bus, io.Discard, "=== SESSION COMPLETE ===", 4, finalPath)
 
 	select {
 	case event := <-events:
@@ -290,6 +300,9 @@ func TestPrintResumeHintNonVerboseOnlyPrintsContinuation(t *testing.T) {
 		}
 		if hint.Header != "" || len(hint.DetailLines) != 0 {
 			t.Fatalf("quiet continuation leaked verbose detail: %#v", hint)
+		}
+		if hint.FinalAnswerPath != finalPath {
+			t.Fatalf("quiet final-answer path = %q, want %q", hint.FinalAnswerPath, finalPath)
 		}
 		if hint.Command != `mct-agent run -t "<next instruction>" --session-id resume-hint-quiet` {
 			t.Fatalf("quiet display command mismatch: %q", hint.Command)

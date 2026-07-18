@@ -261,27 +261,28 @@ func formatTokenCount(n int) string {
 	return b.String()
 }
 
-func formatFooterCWD(cwd string) string {
-	if cwd == "" {
+// FormatHomePath replaces the current user's home-directory prefix with ~.
+func FormatHomePath(path string) string {
+	if path == "" {
 		return ""
 	}
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
-		return cwd
+		return path
 	}
 	home = filepath.Clean(home)
-	cleanCWD := filepath.Clean(cwd)
-	if cleanCWD == home {
+	cleanPath := filepath.Clean(path)
+	if cleanPath == home {
 		return "~"
 	}
 	homePrefix := home + string(os.PathSeparator)
 	if home == string(os.PathSeparator) {
 		homePrefix = home
 	}
-	if strings.HasPrefix(cleanCWD, homePrefix) {
-		return "~" + strings.TrimPrefix(cleanCWD, home)
+	if strings.HasPrefix(cleanPath, homePrefix) {
+		return "~" + strings.TrimPrefix(cleanPath, home)
 	}
-	return cwd
+	return path
 }
 
 func shortenFooterPath(path string) string {

@@ -3,6 +3,7 @@ package session
 import (
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -211,7 +212,7 @@ func TestWriteFinalAnswerDiagWriterCapturesWriteError(t *testing.T) {
 	badPath := filepath.Join(blocker, "agent-final-answer.md")
 
 	var diagBuf bytes.Buffer
-	err := writeFinalAnswer("test-write-fail", "answer content", badPath, false, false, &diagBuf)
+	_, err := writeFinalAnswer("test-write-fail", "answer content", badPath, false, false, &diagBuf)
 	if err == nil {
 		t.Fatalf("expected writeFinalAnswer to fail, but got nil error")
 	}
@@ -226,12 +227,49 @@ func TestWriteFinalAnswerDiagWriterCapturesWriteError(t *testing.T) {
 	// Now test the verbose success path to confirm diagWriter captures "Final answer saved".
 	goodPath := filepath.Join(tmpDir, "output", "agent-final-answer.md")
 	var diagBuf2 bytes.Buffer
-	err2 := writeFinalAnswer("test-write-ok", "answer content", goodPath, true, false, &diagBuf2)
+	writtenPath, err2 := writeFinalAnswer("test-write-ok", "answer content", goodPath, true, false, &diagBuf2)
 	if err2 != nil {
 		t.Fatalf("unexpected error on successful write: %v", err2)
 	}
+	if writtenPath != goodPath {
+		t.Fatalf("written path = %q, want %q", writtenPath, goodPath)
+	}
 	if !strings.Contains(diagBuf2.String(), "Final answer saved:") {
 		t.Fatalf("expected 'Final answer saved:' in diagWriter, got: %s", diagBuf2.String())
+	}
+}
+
+func TestWriteFinalAnswerResolvesRelativePathAndSkipsDryRun(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Chdir(home)
+
+	var diagBuf bytes.Buffer
+	writtenPath, err := writeFinalAnswer("relative-final", "answer content", "output/answer.md", true, false, &diagBuf)
+	if err != nil {
+		t.Fatalf("writeFinalAnswer: %v", err)
+	}
+	wantPath := filepath.Join(home, "output", "answer.md")
+	if writtenPath != wantPath {
+		t.Fatalf("written path = %q, want absolute path %q", writtenPath, wantPath)
+	}
+	if got := diagBuf.String(); got != "Final answer saved: ~/output/answer.md\n" {
+		t.Fatalf("verbose path output = %q", got)
+	}
+	if _, err := os.Stat(wantPath); err != nil {
+		t.Fatalf("written answer missing: %v", err)
+	}
+
+	dryPath := filepath.Join(home, "dry", "answer.md")
+	dryWrittenPath, err := writeFinalAnswer("dry-final", "answer content", dryPath, false, true, io.Discard)
+	if err != nil {
+		t.Fatalf("dry-run writeFinalAnswer: %v", err)
+	}
+	if dryWrittenPath != "" {
+		t.Fatalf("dry-run written path = %q, want empty", dryWrittenPath)
+	}
+	if _, err := os.Stat(dryPath); !os.IsNotExist(err) {
+		t.Fatalf("dry-run unexpectedly created %s: %v", dryPath, err)
 	}
 }
 

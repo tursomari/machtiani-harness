@@ -3600,6 +3600,127 @@ fi  # $# -eq 0 guard
 # run only the requested tests in order.  Each name must map to a registered
 # function in the TESTS array.
 
+run_final_answer_path_case() {
+  local case_id="final-answer-path"
+  local stub_dir="$TMP_ROOT/stub-${case_id}-$(date +%s)"
+  mkdir -p "$stub_dir"
+  local state_file="$stub_dir/state.json"
+  local port_file="$stub_dir/port.txt"
+  start_llm_stub_server "$state_file" "$port_file"
+  local stub_port
+  stub_port="$(cat "$port_file")"
+  local stub_alias="stub-model"
+  local stub_config
+  stub_config="$(generate_stub_config "http://127.0.0.1:${stub_port}/v1" "$stub_alias")"
+
+  local sessions_root="${MACHTIANI_TEST_SESSIONS_ROOT:-$REPO_ROOT/.machtiani/sessions}"
+  local session_id="test-${case_id}-$(date +%s)"
+  local out_dir="$(pwd)/test-out-${session_id}"
+  mkdir -p "$out_dir"
+  local stdout_file="$out_dir/stdout-${session_id}.txt"
+  local stderr_file="$out_dir/stderr-${session_id}.txt"
+
+  pushd "$REPO_ROOT" >/dev/null
+  set +e
+  MACHTIANI_CONFIG="$stub_config" \
+  MACHTIANI_SESSION_ID="$session_id" \
+    timeout 120 "$MCT_AGENT" run \
+      --max-turns 1 \
+      --turn-timeout 300 \
+      --model "$stub_alias" \
+      --orch-model "$stub_alias" \
+      --file-discovery-model "$stub_alias" \
+      --text "Summarize the purpose of README.md." \
+      >"$stdout_file" 2>"$stderr_file"
+  local rc=$?
+  set -e
+  popd >/dev/null
+  if [[ $rc -ne 0 ]]; then
+    echo "Final-answer path run failed (rc=$rc)" >&2
+    cat "$stderr_file" >&2 || true
+    stop_llm_stub_server
+    return 1
+  fi
+
+  local final_path="$sessions_root/$session_id/chat/agent-final-answer.md"
+  if [[ ! -s "$final_path" ]]; then
+    echo "Final-answer artifact missing: $final_path" >&2
+    stop_llm_stub_server
+    return 1
+  fi
+  local display_path="$final_path"
+  if [[ "$display_path" == "$HOME"/* ]]; then
+    display_path="~${display_path#$HOME}"
+  fi
+  if ! "$PYTHON_BIN" - "$stdout_file" "$display_path" <<'PY'
+import pathlib
+import sys
+
+output = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+path = sys.argv[2]
+expected = (
+    "This answer is also available at:\n"
+    f"  {path}\n\n"
+    "Continue with your next instruction:\n"
+)
+if expected not in output:
+    print(f"ERROR: missing final-answer continuation block {expected!r} in {output!r}", file=sys.stderr)
+    sys.exit(1)
+PY
+  then
+    stop_llm_stub_server
+    return 1
+  fi
+
+  local verbose_session="${session_id}-verbose"
+  local verbose_stdout="$out_dir/stdout-${verbose_session}.txt"
+  local verbose_stderr="$out_dir/stderr-${verbose_session}.txt"
+  pushd "$REPO_ROOT" >/dev/null
+  set +e
+  MACHTIANI_CONFIG="$stub_config" \
+  MACHTIANI_SESSION_ID="$verbose_session" \
+    timeout 120 "$MCT_AGENT" run \
+      --verbose \
+      --max-turns 1 \
+      --turn-timeout 300 \
+      --model "$stub_alias" \
+      --orch-model "$stub_alias" \
+      --file-discovery-model "$stub_alias" \
+      --text "Summarize the purpose of README.md." \
+      >"$verbose_stdout" 2>"$verbose_stderr"
+  rc=$?
+  set -e
+  popd >/dev/null
+  if [[ $rc -ne 0 ]]; then
+    echo "Verbose final-answer path run failed (rc=$rc)" >&2
+    cat "$verbose_stderr" >&2 || true
+    stop_llm_stub_server
+    return 1
+  fi
+  local verbose_final="$sessions_root/$verbose_session/chat/agent-final-answer.md"
+  local verbose_display="$verbose_final"
+  if [[ "$verbose_display" == "$HOME"/* ]]; then
+    verbose_display="~${verbose_display#$HOME}"
+  fi
+  if ! grep -Fq "Final answer saved: $verbose_display" "$verbose_stderr"; then
+    echo "Verbose save diagnostic missing expected path: $verbose_display" >&2
+    stop_llm_stub_server
+    return 1
+  fi
+  if grep -Fq "This answer is also available at:" "$verbose_stdout" "$verbose_stderr"; then
+    echo "Verbose output duplicated the non-verbose final-answer path block" >&2
+    stop_llm_stub_server
+    return 1
+  fi
+
+  stop_llm_stub_server
+  if [[ "${KEEP_TEST_CONFIG:-}" != "true" ]]; then
+    rm -rf "$stub_dir"
+    rm -rf "$(dirname "$stub_config")"
+  fi
+  echo "Passed: $case_id" >&2
+}
+
 test_models_mixed_fallback() {
   run_happy_case "models-mixed-fallback" 3 \
     "Summarize how shell-agent falls back to the orchestrator model when unspecified." \
@@ -4003,6 +4124,7 @@ PY
 }
 
 declare -A TESTS=(
+	["final-answer-path"]="run_final_answer_path_case"
 	["sync-footer"]="run_sync_footer_case"
 	["discovery-turn-timeout"]="test_discovery_turn_timeout"
 	["discovery-multiround-budget"]="test_discovery_multiround_budget"
@@ -4069,6 +4191,7 @@ fi
 
 if [[ $# -eq 0 ]]; then
 # Per-component flag coverage.
+run_test_case "final_answer_path" run_final_answer_path_case
 run_test_case "sync_footer" run_sync_footer_case
 run_test_case "discovery_turn_timeout" test_discovery_turn_timeout
 run_test_case "discovery_multiround_budget" test_discovery_multiround_budget

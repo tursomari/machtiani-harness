@@ -143,10 +143,11 @@ func (e FinalAnswerEvent) Type() string { return "FinalAnswer" }
 // ContinuationHintEvent renders the concise instruction used to resume a
 // session. DetailLines are populated only for verbose output.
 type ContinuationHintEvent struct {
-	Header      string
-	DetailLines []string
-	Instruction string
-	Command     string
+	Header          string
+	DetailLines     []string
+	FinalAnswerPath string
+	Instruction     string
+	Command         string
 }
 
 func (e ContinuationHintEvent) Type() string { return "ContinuationHint" }

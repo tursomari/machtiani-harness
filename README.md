@@ -594,8 +594,10 @@ mct-agent run --t "Fix all lint issues" --verbose
 mct-agent run --t "Also ensure comments are updated" --session-id <session-id>
 ```
 
-Normal completion output shows only the continuation command. Add `--verbose`
-when you also want the detailed session ID, turn count, and goal summary.
+Normal completion output shows the saved final-answer path followed by the
+continuation command. Paths under the current home directory use `~/`. Add
+`--verbose` when you also want the detailed session ID, turn count, and goal
+summary; verbose output reports the saved path once in its diagnostic output.
 
 When resuming, the agent:
 - Loads the prior goal and transcript from disk

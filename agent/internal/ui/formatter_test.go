@@ -129,6 +129,28 @@ func TestFormatterContinuationHasOneBlankLineAfterFinalOutput(t *testing.T) {
 	}
 }
 
+func TestFormatterContinuationShowsFinalAnswerPathBeforeInstruction(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	f, bus, buf := newTestFormatter()
+	defer bus.Close()
+
+	f.mu.Lock()
+	f.handleContinuationHint(ContinuationHintEvent{
+		FinalAnswerPath: filepath.Join(home, ".machtiani", "project", "sessions", "agent-test", "chat", "agent-final-answer.md"),
+		Command:         `mct-agent run -t "<next instruction>" --session-id agent-test`,
+	})
+	f.mu.Unlock()
+
+	output := stripANSI(buf.String())
+	want := "\nThis answer is also available at:\n" +
+		"  ~/.machtiani/project/sessions/agent-test/chat/agent-final-answer.md\n\n" +
+		"Continue with your next instruction:\n"
+	if !strings.Contains(output, want) {
+		t.Fatalf("final-answer continuation layout mismatch\nwant substring: %q\noutput: %q", want, output)
+	}
+}
+
 func TestFormatterContinuationHintCustomInstruction(t *testing.T) {
 	f, bus, buf := newTestFormatter()
 	defer bus.Close()
@@ -609,21 +631,21 @@ func TestFormatTokenFooterLineOmitsUnavailableOptionalSegments(t *testing.T) {
 	}
 }
 
-func TestFormatFooterCWDAndShortening(t *testing.T) {
+func TestFormatHomePathAndFooterShortening(t *testing.T) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		t.Fatalf("os.UserHomeDir: %v", err)
 	}
 	underHome := filepath.Join(home, "projects", "machtiani")
-	if got, want := formatFooterCWD(underHome), "~/projects/machtiani"; got != want {
-		t.Fatalf("formatFooterCWD(%q) = %q, want %q", underHome, got, want)
+	if got, want := FormatHomePath(underHome), "~/projects/machtiani"; got != want {
+		t.Fatalf("FormatHomePath(%q) = %q, want %q", underHome, got, want)
 	}
-	if got := formatFooterCWD(home); got != "~" {
-		t.Fatalf("formatFooterCWD(home) = %q, want ~", got)
+	if got := FormatHomePath(home); got != "~" {
+		t.Fatalf("FormatHomePath(home) = %q, want ~", got)
 	}
 	sibling := filepath.Join(home+"-other", "project")
-	if got := formatFooterCWD(sibling); got != sibling {
-		t.Fatalf("formatFooterCWD(%q) = %q, want unchanged path", sibling, got)
+	if got := FormatHomePath(sibling); got != sibling {
+		t.Fatalf("FormatHomePath(%q) = %q, want unchanged path", sibling, got)
 	}
 	if got, want := shortenFooterPath("~/projects/to/name"), "~/p/t/n"; got != want {
 		t.Fatalf("shortenFooterPath = %q, want %q", got, want)

@@ -1163,14 +1163,19 @@ func (r *runLifecycleState) isContextCancelled(err error) bool {
 	return false
 }
 
-func (r *runLifecycleState) printResumeHint(bus *ui.EventBus, diagWriter io.Writer, header string, turns int) {
+func (r *runLifecycleState) printResumeHint(bus *ui.EventBus, diagWriter io.Writer, header string, turns int, finalAnswerPath string) {
 	command := fmt.Sprintf("mct-agent run -t \"<next instruction>\" --session-id %s", r.sessionID)
 	continueHint := "Continue with your next instruction:\n" + formatCommandBlock(command)
 	if !r.cfg.verbose {
 		if bus != nil {
-			bus.Emit(ui.ContinuationHintEvent{Command: command})
+			bus.Emit(ui.ContinuationHintEvent{FinalAnswerPath: finalAnswerPath, Command: command})
 		} else {
 			fmt.Fprintln(diagWriter)
+			if finalAnswerPath = strings.TrimSpace(finalAnswerPath); finalAnswerPath != "" {
+				fmt.Fprintln(diagWriter, "This answer is also available at:")
+				fmt.Fprintln(diagWriter, "  "+ui.FormatHomePath(finalAnswerPath))
+				fmt.Fprintln(diagWriter)
+			}
 			fmt.Fprintln(diagWriter, continueHint)
 		}
 		return

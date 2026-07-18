@@ -454,6 +454,13 @@ func (f *Formatter) handleContinuationHint(e ContinuationHintEvent) {
 		}
 		fmt.Fprintln(f.out)
 	}
+	if finalAnswerPath := strings.TrimSpace(e.FinalAnswerPath); finalAnswerPath != "" {
+		fmt.Fprintln(f.out, f.theme.render(presentation.StyledLine{
+			presentation.RoleText(presentation.RoleProvenance, "This answer is also available at:"),
+		}))
+		fmt.Fprintln(f.out, "  "+FormatHomePath(finalAnswerPath))
+		fmt.Fprintln(f.out)
+	}
 	instruction := strings.TrimSpace(e.Instruction)
 	if instruction == "" {
 		instruction = "Continue with your next instruction:"
@@ -1105,7 +1112,7 @@ func styleLabelValue(text string, valueRole presentation.Role, bold bool) presen
 
 func formatTokenFooterLine(elapsed time.Duration, cwd string, activePromptTokens, maxInputTokens int, usage TokenUsageUpdatedEvent, width int) string {
 	elapsedText := formatElapsed(elapsed)
-	cwd = formatFooterCWD(cwd)
+	cwd = FormatHomePath(cwd)
 	shortCWD := shortenFooterPath(cwd)
 	activeContext := ""
 	activeContextShort := ""
