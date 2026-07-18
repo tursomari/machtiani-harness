@@ -75,6 +75,17 @@ func TestResetTerminalPreservesCurrentCursor(t *testing.T) {
 	}
 }
 
+func TestHardwareCursorVisibilityControls(t *testing.T) {
+	var buf countingWriter
+
+	HideCursor(&buf)
+	ShowCursor(&buf)
+
+	if got, want := buf.String(), ansiHideCursor+ansiShowCursor; got != want {
+		t.Fatalf("cursor visibility controls = %q, want %q", got, want)
+	}
+}
+
 func TestRenderFooterLinesBelowAllocatesRelativeBlock(t *testing.T) {
 	var buf countingWriter
 

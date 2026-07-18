@@ -23,6 +23,17 @@ func RestoreCursor(w io.Writer) {
 	fmt.Fprint(w, ansiRestoreCursor)
 }
 
+// HideCursor hides the terminal's hardware cursor while a program-owned
+// activity cursor is visible.
+func HideCursor(w io.Writer) {
+	fmt.Fprint(w, ansiHideCursor)
+}
+
+// ShowCursor restores the terminal's hardware cursor.
+func ShowCursor(w io.Writer) {
+	fmt.Fprint(w, ansiShowCursor)
+}
+
 // ClearCurrentLine writes a carriage return followed by the ANSI clear-line
 // escape sequence to w.
 func ClearCurrentLine(w io.Writer) {

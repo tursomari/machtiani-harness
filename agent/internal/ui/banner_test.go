@@ -70,6 +70,16 @@ func TestRenderSessionHeaderUsesSemanticThemeAndItalicQuote(t *testing.T) {
 
 	got := RenderSessionHeader(event, theme, 88)
 	plain := stripBannerANSI(got)
+	lines := strings.Split(plain, "\n")
+	if len(lines) < 9 {
+		t.Fatalf("header has too few lines: %#v", lines)
+	}
+	if lines[0] != "" || !strings.HasPrefix(lines[1], "machtiani (mct)") || lines[2] != "" {
+		t.Errorf("header must begin with a blank line and leave a blank line after the quote: %#v", lines[:3])
+	}
+	if lines[6] != "" || strings.TrimSpace(lines[7]) != "PROMPT" {
+		t.Errorf("header must leave a blank line before the prompt block: %#v", lines[5:8])
+	}
 	for _, want := range []string{
 		"machtiani (mct)",
 		"v1.2.3",

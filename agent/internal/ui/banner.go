@@ -92,6 +92,7 @@ func RenderSessionHeader(event SessionStartedEvent, theme Theme, width int) stri
 		b.WriteByte('\n')
 	}
 
+	b.WriteByte('\n')
 	glyphs := theme.Presentation.Glyphs()
 	title := "machtiani (mct)"
 	prefix := title + " " + glyphs.Separator + " "
@@ -110,6 +111,7 @@ func RenderSessionHeader(event SessionStartedEvent, theme Theme, width int) stri
 			quoteSpan,
 		})
 	}
+	b.WriteByte('\n')
 
 	version := strings.TrimSpace(event.BuildVersion)
 	if version == "" {

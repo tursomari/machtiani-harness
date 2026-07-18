@@ -68,28 +68,29 @@ type Formatter struct {
 	streams         map[string]*promptStreamState
 	streamCounter   atomic.Int64
 
-	timerEnabled       bool
-	timerStart         time.Time
-	elapsedOffset      time.Duration
-	timerTicker        *time.Ticker
-	timerStop          chan struct{}
-	timerVisible       bool
-	footerOffset       int
-	lastFooter         []string
-	tokenUsage         TokenUsageUpdatedEvent
-	cwd                string
-	activePromptTokens int
-	maxInputTokens     int
-	footerModels       FooterModelMetadata
-	footerIdentity     FooterIdentity
-	sessionID          string
-	turnNumber         int
-	activities         []Activity
-	modeTasks          []ModeTaskDisplay
-	activeModeTask     int
-	manager            *ProcessTimerManager
-	id                 string
-	done               chan struct{}
+	timerEnabled         bool
+	timerStart           time.Time
+	elapsedOffset        time.Duration
+	timerTicker          *time.Ticker
+	timerStop            chan struct{}
+	timerVisible         bool
+	footerOffset         int
+	lastFooter           []string
+	tokenUsage           TokenUsageUpdatedEvent
+	cwd                  string
+	activePromptTokens   int
+	maxInputTokens       int
+	footerModels         FooterModelMetadata
+	footerIdentity       FooterIdentity
+	sessionID            string
+	turnNumber           int
+	activities           []Activity
+	activityCursorHidden bool
+	modeTasks            []ModeTaskDisplay
+	activeModeTask       int
+	manager              *ProcessTimerManager
+	id                   string
+	done                 chan struct{}
 }
 
 type coordinatedWriter struct {
@@ -797,10 +798,18 @@ func (f *Formatter) footerLineCountLocked() int {
 
 func (f *Formatter) renderTimerLocked() {
 	if !f.timerEnabled || f.timerStart.IsZero() || f.closed {
+		if f.activityCursorHidden && (!f.timerEnabled || f.closed) {
+			f.setActivityCursorHiddenLocked(false)
+		}
 		return
 	}
 	f.refreshTerminalSizeLocked()
+	if !f.timerEnabled {
+		f.setActivityCursorHiddenLocked(false)
+		return
+	}
 	lineCount := f.footerLineCountLocked()
+	f.setActivityCursorHiddenLocked(lineCount >= 3 && f.hasVisibleActivityLocked())
 	if lineCount == 0 {
 		f.clearLiveFooterLocked()
 		return
@@ -824,6 +833,18 @@ func (f *Formatter) renderTimerLocked() {
 	f.lastFooter = append(f.lastFooter[:0], lines...)
 	f.footerOffset = offset
 	f.timerVisible = true
+}
+
+func (f *Formatter) setActivityCursorHiddenLocked(hidden bool) {
+	if f.activityCursorHidden == hidden {
+		return
+	}
+	f.activityCursorHidden = hidden
+	if hidden {
+		HideCursor(f.out)
+		return
+	}
+	ShowCursor(f.out)
 }
 
 func (f *Formatter) formatFooterLinesLocked(elapsed time.Duration, lineCount int) []string {
@@ -1396,6 +1417,7 @@ func dedupeStrings(in []string) []string {
 
 func (f *Formatter) stopTimerLocked() {
 	f.clearLiveFooterLocked()
+	f.setActivityCursorHiddenLocked(false)
 	if f.timerTicker != nil {
 		f.timerTicker.Stop()
 	}
@@ -1435,6 +1457,7 @@ func (f *Formatter) PromptSelection(prompt string, options []string) (string, er
 
 	f.refreshTerminalSizeLocked()
 	f.clearLiveFooterLocked()
+	f.setActivityCursorHiddenLocked(false)
 	prompt = strings.TrimSpace(prompt)
 	if prompt != "" {
 		fmt.Fprintln(f.out, prompt)
@@ -1464,6 +1487,7 @@ func (f *Formatter) PromptUser(prompt string) bool {
 
 	f.refreshTerminalSizeLocked()
 	f.clearLiveFooterLocked()
+	f.setActivityCursorHiddenLocked(false)
 	fmt.Fprintf(f.out, "%s%s", prompt, f.theme.ConfirmPromptSuffix)
 	reader := bufio.NewReader(os.Stdin)
 	input, err := reader.ReadString('\n')
@@ -1483,6 +1507,7 @@ func (f *Formatter) PromptInput(prompt string) (string, error) {
 
 	f.refreshTerminalSizeLocked()
 	f.clearLiveFooterLocked()
+	f.setActivityCursorHiddenLocked(false)
 	fmt.Fprintf(f.out, "%s%s", prompt, f.theme.InputPromptSuffix)
 	reader := bufio.NewReader(os.Stdin)
 	input, err := reader.ReadString('\n')

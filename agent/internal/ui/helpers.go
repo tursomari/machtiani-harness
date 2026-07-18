@@ -23,6 +23,8 @@ const (
 	ansiRestoreCursor     = "\033[u"
 	ansiClearLine         = "\033[2K"
 	ansiResetScrollRegion = "\033[r"
+	ansiHideCursor        = "\033[?25l"
+	ansiShowCursor        = "\033[?25h"
 
 	promptWindowLines  = 9
 	promptContentLines = promptWindowLines - 1

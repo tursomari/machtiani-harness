@@ -93,3 +93,43 @@ func TestFormatterActivityOccupiesThirdFooterRow(t *testing.T) {
 		t.Fatalf("token line moved incorrectly: %#v", lines)
 	}
 }
+
+func TestFormatterActivityHidesHardwareCursorUntilActivityEnds(t *testing.T) {
+	f, bus, buf := newTestFormatter()
+	defer bus.Close()
+	f.timerEnabled = true
+	f.timerStart = time.Now()
+	f.height = minFooterHeight + 2
+	f.width = 120
+
+	f.handleActivitySnapshot(ActivitySnapshotEvent{Activities: []Activity{{ID: "planner", Kind: ActivityPlanning}}})
+	f.handleActivitySnapshot(ActivitySnapshotEvent{Activities: []Activity{{ID: "planner", Kind: ActivityPlanning}}})
+	if got := strings.Count(buf.String(), ansiHideCursor); got != 1 {
+		t.Fatalf("hide cursor count = %d, want 1: %q", got, buf.String())
+	}
+	if strings.Contains(buf.String(), ansiShowCursor) {
+		t.Fatalf("cursor restored while activity remained visible: %q", buf.String())
+	}
+
+	f.handleActivitySnapshot(ActivitySnapshotEvent{})
+	if got := strings.Count(buf.String(), ansiShowCursor); got != 1 {
+		t.Fatalf("show cursor count = %d, want 1: %q", got, buf.String())
+	}
+}
+
+func TestFormatterSessionEndRestoresHardwareCursor(t *testing.T) {
+	f, bus, buf := newTestFormatter()
+	defer bus.Close()
+	f.timerEnabled = true
+	f.timerStart = time.Now()
+	f.height = minFooterHeight + 2
+	f.width = 120
+	f.started = true
+	f.activities = []Activity{{ID: "shell", Kind: ActivityShell}}
+	f.activityCursorHidden = true
+
+	f.handleSessionEnded(SessionEndedEvent{})
+	if !strings.Contains(buf.String(), ansiShowCursor) {
+		t.Fatalf("session end did not restore hardware cursor: %q", buf.String())
+	}
+}
