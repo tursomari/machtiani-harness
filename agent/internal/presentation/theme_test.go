@@ -44,6 +44,29 @@ func TestResolveDisablesANSIForNonTerminalOutput(t *testing.T) {
 	}
 }
 
+func TestResolveDisablesMotionForDumbTerminal(t *testing.T) {
+	t.Setenv("TERM", "dumb")
+	theme, err := ResolveWithGlyphsAndMotion("terminal", "unicode", "full", &bytes.Buffer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if theme.MotionMode() != MotionNone {
+		t.Fatalf("dumb-terminal motion = %q, want none", theme.MotionMode())
+	}
+}
+
+func TestResolveMotionEnvironmentOverride(t *testing.T) {
+	t.Setenv("TERM", "xterm-256color")
+	t.Setenv("MACHTIANI_MOTION", "reduced")
+	theme, err := ResolveWithGlyphsAndMotion("none", "unicode", "full", &bytes.Buffer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if theme.MotionMode() != MotionReduced {
+		t.Fatalf("motion = %q, want reduced", theme.MotionMode())
+	}
+}
+
 func TestRenderSpanSemanticPalettes(t *testing.T) {
 	tests := []struct {
 		name  string

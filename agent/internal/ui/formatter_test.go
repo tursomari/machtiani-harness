@@ -227,6 +227,40 @@ func TestFormatterSessionStarted(t *testing.T) {
 	_ = f
 }
 
+func TestFormatterSessionStartedRendersBannerOnceWhenEnabled(t *testing.T) {
+	f, bus, buf := newTestFormatter()
+	defer bus.Close()
+	f.timerEnabled = true
+	f.closed = true // Exercise banner rendering without launching the timer goroutine.
+	f.width = 88
+	event := SessionStartedEvent{
+		SessionID:     "banner-once",
+		Goal:          "Make it true, good, and beautiful.",
+		BuildVersion:  "v1.2.3",
+		BuildCommit:   "0123456789abcdef",
+		ContextLength: 200000,
+		ShowBanner:    true,
+	}
+
+	f.handleSessionStarted(event)
+	f.handleSessionStarted(event)
+	got := stripANSI(buf.String())
+	if count := strings.Count(got, "machtiani (mct)"); count != 1 {
+		t.Fatalf("banner count = %d, want 1:\n%s", count, got)
+	}
+}
+
+func TestFormatterSessionStartedDoesNotRenderBannerForNonTTY(t *testing.T) {
+	f, bus, buf := newTestFormatter()
+	defer bus.Close()
+	f.timerEnabled = false
+
+	f.handleSessionStarted(SessionStartedEvent{ShowBanner: true, Goal: "quiet"})
+	if got := buf.String(); got != "" {
+		t.Fatalf("non-TTY banner output = %q, want empty", got)
+	}
+}
+
 func TestFormatterFooterIncludesTokenUsage(t *testing.T) {
 	f, bus, buf := newTestFormatter()
 	defer bus.Close()

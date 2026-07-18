@@ -343,6 +343,7 @@ func runSession(ctx context.Context, opts Options) Result {
 	}
 
 	var eventBus *ui.EventBus = ui.NewEventBus(256)
+	activityTracker := ui.NewActivityTracker(eventBus)
 	var captureWriter io.Writer = os.Stdout
 	var captureFile *os.File
 	if capturePath := os.Getenv("MACHTIANI_TUI_CAPTURE"); strings.TrimSpace(capturePath) != "" {
@@ -357,11 +358,18 @@ func runSession(ctx context.Context, opts Options) Result {
 	}
 	themeName := string(presentation.ProfileTerminal)
 	glyphMode := string(presentation.GlyphUnicode)
+	motionMode := string(presentation.MotionFull)
+	showBanner := true
 	if opts.GlobalConfig.UI != nil {
 		themeName = opts.GlobalConfig.UI.Theme
 		glyphMode = opts.GlobalConfig.UI.Glyphs
+		motionMode = opts.GlobalConfig.UI.Motion
+		showBanner = opts.GlobalConfig.UI.Banner
 	}
-	presentationTheme, themeErr := presentation.ResolveWithGlyphs(themeName, glyphMode, captureWriter)
+	if opts.Config.NoCursor {
+		motionMode = string(presentation.MotionNone)
+	}
+	presentationTheme, themeErr := presentation.ResolveWithGlyphsAndMotion(themeName, glyphMode, motionMode, captureWriter)
 	if themeErr != nil {
 		fmt.Fprintln(diagWriter, "Error resolving UI theme:", themeErr)
 		return Result{ExitCode: 2, Err: themeErr}
@@ -685,6 +693,10 @@ func runSession(ctx context.Context, opts Options) Result {
 	eventBus.Emit(ui.SessionStartedEvent{
 		SessionID:      sessionID,
 		Goal:           goal,
+		BuildVersion:   opts.Build.Version,
+		BuildCommit:    opts.Build.Commit,
+		ContextLength:  orchBudget.ContextLength,
+		ShowBanner:     showBanner && !opts.Config.NoBanner,
 		CWD:            runCWD,
 		Turn:           runState.turnsCompleted + 1,
 		Elapsed:        runState.runtimeElapsedSnapshot(),
@@ -777,10 +789,14 @@ func runSession(ctx context.Context, opts Options) Result {
 			}
 		}
 		planCtx = attachTrajectory(planCtx, trajectoryWriter, parentSpanID)
-		decision, question, perr = pl.Plan(planCtx, conv, goal, trFull, step, cfg.maxTurns)
-		if isResumePrompt && decision == planner.DecisionAnswerUser {
-			decision = planner.DecisionAskWorker
-			question = resumePrompt
+		{
+			finishPlanningActivity := activityTracker.Begin(fmt.Sprintf("planner/%d", step), ui.ActivityPlanning)
+			decision, question, perr = pl.Plan(planCtx, conv, goal, trFull, step, cfg.maxTurns)
+			finishPlanningActivity()
+			if isResumePrompt && decision == planner.DecisionAnswerUser {
+				decision = planner.DecisionAskWorker
+				question = resumePrompt
+			}
 		}
 	PostPlan:
 		if trimmedResumePrompt != "" {
@@ -818,7 +834,9 @@ func runSession(ctx context.Context, opts Options) Result {
 				fmt.Fprintln(diagWriter, "Falling back to finalizing with current transcript.")
 				ctxF, cancelF := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
 				ctxF = attachTrajectory(ctxF, trajectoryWriter, parentSpanID)
+				finishFinalizingActivity := activityTracker.Begin(fmt.Sprintf("finalizer/%d", step), ui.ActivityFinalizing)
 				answer, ferr := pl.Finalize(ctxF, conv, goal)
+				finishFinalizingActivity()
 				var ctxFErr error
 				if ctxF != nil {
 					ctxFErr = ctxF.Err()
@@ -909,7 +927,9 @@ func runSession(ctx context.Context, opts Options) Result {
 		if decision == planner.DecisionAnswerUser {
 			ctx, cancelF := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
 			ctx = attachTrajectory(ctx, trajectoryWriter, parentSpanID)
+			finishFinalizingActivity := activityTracker.Begin(fmt.Sprintf("finalizer/%d", step), ui.ActivityFinalizing)
 			answer, ferr := pl.Finalize(ctx, conv, goal)
+			finishFinalizingActivity()
 			var finalizeCtxErr error
 			if ctx != nil {
 				finalizeCtxErr = ctx.Err()
@@ -956,6 +976,7 @@ func runSession(ctx context.Context, opts Options) Result {
 
 			plannerProgress:                   plannerProgress,
 			bus:                               eventBus,
+			activities:                        activityTracker,
 			diagWriter:                        diagWriter,
 			hasNewInput:                       bootstrap.hasNewInput,
 			resumableShellAgentTrajectoryPath: bootstrap.resumableShellAgentTrajectoryPath,
@@ -1049,7 +1070,9 @@ Finalize:
 	}
 	ctx, cancelF := makeTurnContext(rootCtx, cfg.timeoutPerTurn)
 	ctx = attachTrajectory(ctx, trajectoryWriter, parentSpanID)
+	finishFinalizingActivity := activityTracker.Begin("finalizer/session", ui.ActivityFinalizing)
 	answer, ferr := pl.Finalize(ctx, conv, goal)
+	finishFinalizingActivity()
 	var finalCtxErr error
 	if ctx != nil {
 		finalCtxErr = ctx.Err()

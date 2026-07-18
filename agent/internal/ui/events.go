@@ -22,6 +22,10 @@ type SessionStartedEvent struct {
 	SessionID      string
 	Identity       FooterIdentity
 	Goal           string
+	BuildVersion   string
+	BuildCommit    string
+	ContextLength  int
+	ShowBanner     bool
 	CWD            string
 	Turn           int
 	Elapsed        time.Duration
@@ -113,6 +117,32 @@ type TurnStatusUpdatedEvent struct {
 }
 
 func (e TurnStatusUpdatedEvent) Type() string { return "TurnStatusUpdated" }
+
+// ActivityKind identifies truthful, producer-owned work shown in the live
+// footer. Multiple activities may coexist during split orchestration.
+type ActivityKind string
+
+const (
+	ActivityPlanning   ActivityKind = "planning"
+	ActivityContext    ActivityKind = "context"
+	ActivityWaiting    ActivityKind = "waiting"
+	ActivityShell      ActivityKind = "shell"
+	ActivityFinalizing ActivityKind = "finalizing"
+	ActivitySync       ActivityKind = "sync"
+)
+
+type Activity struct {
+	ID   string
+	Kind ActivityKind
+}
+
+// ActivitySnapshotEvent replaces the formatter's complete active-work set.
+// Snapshots avoid impossible phase combinations when concurrent work ends.
+type ActivitySnapshotEvent struct {
+	Activities []Activity
+}
+
+func (e ActivitySnapshotEvent) Type() string { return "ActivitySnapshot" }
 
 // FooterModelDisplay describes one role/model pair in the compact footer.
 type FooterModelDisplay struct {

@@ -584,11 +584,13 @@ func handleSyncCommand(args []string) int {
 	}
 	themeName := string(presentation.ProfileTerminal)
 	glyphMode := string(presentation.GlyphUnicode)
+	motionMode := string(presentation.MotionFull)
 	if globalCfg.UI != nil {
 		themeName = globalCfg.UI.Theme
 		glyphMode = globalCfg.UI.Glyphs
+		motionMode = globalCfg.UI.Motion
 	}
-	presentationTheme, err := presentation.ResolveWithGlyphs(themeName, glyphMode, os.Stdout)
+	presentationTheme, err := presentation.ResolveWithGlyphsAndMotion(themeName, glyphMode, motionMode, os.Stdout)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Error resolving UI theme:", err)
 		return 2
@@ -598,10 +600,12 @@ func handleSyncCommand(args []string) int {
 	stdout := formatter.CoordinateWriter(os.Stdout)
 	stderr := formatter.CoordinateWriter(os.Stderr)
 	tracker := newSyncFooterTracker(eventBus, runtimes)
+	activityTracker := ui.NewActivityTracker(eventBus)
 	eventBus.Emit(ui.SessionStartedEvent{
 		Identity: ui.FooterIdentity{Label: "sync", Value: shortCommit(commit)},
 	})
 	ctx := llm.WithUsageObserver(context.Background(), tracker.Observe)
+	finishSyncActivity := activityTracker.Begin("sync", ui.ActivitySync)
 	syncErr := readmeSyncRunFn(ctx, readmesync.Options{
 		Commit:               commit,
 		Verbose:              cfg.Verbose,
@@ -612,6 +616,7 @@ func handleSyncCommand(args []string) int {
 		FileDiscoveryRuntime: runtimes.FileDiscovery,
 		Prompts:              mctPrompts,
 	})
+	finishSyncActivity()
 	if syncErr != nil {
 		fmt.Fprintln(stderr, "Readme sync failed:", syncErr)
 	} else {
@@ -662,6 +667,8 @@ func configureSessionFlags(fs *pflag.FlagSet, cfg *session.Config, paramFlags, p
 	fs.IntVar(&cfg.ContextLength, "context-length", cfg.ContextLength, "total input-plus-output token context for this session")
 	fs.StringVar(&cfg.TrajectoryFile, "trajectory-file", cfg.TrajectoryFile, "override path for unified trajectory JSONL (default: session-scoped path)")
 	fs.BoolVar(&cfg.NoTrajectory, "no-trajectory", cfg.NoTrajectory, "disable unified trajectory JSONL emission")
+	fs.BoolVar(&cfg.NoBanner, "no-banner", cfg.NoBanner, "disable the interactive session banner")
+	fs.BoolVar(&cfg.NoCursor, "no-cursor", cfg.NoCursor, "disable the animated activity cursor")
 	fs.BoolVar(&cfg.TrajectoryVerboseLLM, "trajectory-verbose-llm", cfg.TrajectoryVerboseLLM, "include expanded LLM details in the trajectory stream")
 	fs.BoolVar(&cfg.TrajectoryStreamTokens, "trajectory-stream-tokens", cfg.TrajectoryStreamTokens, "record LLM token streaming events in the trajectory (disabled by default)")
 	fs.IntVar(&cfg.TrajectoryExcerpt, "trajectory-excerpt", cfg.TrajectoryExcerpt, "excerpt length (in characters) for prompts/responses captured in the trajectory")

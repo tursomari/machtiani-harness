@@ -67,6 +67,11 @@ type UIConfig struct {
 	ThemeSource  FieldSource `toml:"-"`
 	Glyphs       string      `toml:"glyphs"`
 	GlyphsSource FieldSource `toml:"-"`
+	Banner       bool        `toml:"banner"`
+	BannerSource FieldSource `toml:"-"`
+	Motion       string      `toml:"motion"`
+	MotionSource FieldSource `toml:"-"`
+	bannerSet    bool        `toml:"-"`
 }
 
 // ShellAgentConfig mirrors the shell-agent configuration section and is loaded
@@ -777,6 +782,25 @@ func parseConfig(path string) (Config, error) {
 				return Config{}, fmt.Errorf("parse %s [ui.glyphs]: %w", path, err)
 			}
 			uiCfg.Glyphs = string(mode)
+		}
+		if rawBanner, exists := uiRaw["banner"]; exists {
+			v, ok := rawBanner.(bool)
+			if !ok {
+				return Config{}, fmt.Errorf("parse %s [ui.banner]: expected a bool", path)
+			}
+			uiCfg.Banner = v
+			uiCfg.bannerSet = true
+		}
+		if rawMotion, exists := uiRaw["motion"]; exists {
+			v, ok := rawMotion.(string)
+			if !ok {
+				return Config{}, fmt.Errorf("parse %s [ui.motion]: expected a string", path)
+			}
+			mode, err := presentation.NormalizeMotionMode(v)
+			if err != nil {
+				return Config{}, fmt.Errorf("parse %s [ui.motion]: %w", path, err)
+			}
+			uiCfg.Motion = string(mode)
 		}
 		cfg.UI = uiCfg
 	}

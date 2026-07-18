@@ -467,6 +467,33 @@ var fieldDocs = map[string]fieldDoc{
 			"MACHTIANI_THEME overrides this value. Default: terminal.",
 		},
 	},
+	"ui.glyphs": {
+		summary:     "Terminal glyph vocabulary",
+		explanation: "Selects Unicode or ASCII decoration for program-owned terminal presentation.",
+		example:     `ui.glyphs = "unicode"`,
+		details: []string{
+			"Valid values: unicode, ascii.",
+			"MACHTIANI_GLYPHS overrides this value. Default: unicode.",
+		},
+	},
+	"ui.banner": {
+		summary:     "Interactive session banner",
+		explanation: "Shows the themed build, context, quote, and prompt banner when an interactive session starts.",
+		example:     "ui.banner = true",
+		details: []string{
+			"The banner is never written to redirected non-terminal output.",
+			"Default: true.",
+		},
+	},
+	"ui.motion": {
+		summary:     "Terminal motion",
+		explanation: "Controls the semantic activity cursor in the live session footer.",
+		example:     `ui.motion = "full"`,
+		details: []string{
+			"Valid values: full, reduced, none.",
+			"MACHTIANI_MOTION overrides this value. Default: full.",
+		},
+	},
 	"persist_tmp_data": {
 		summary:     "Persist temporary data",
 		explanation: "If true, temporary files generated during the session are kept after completion.",
@@ -735,6 +762,19 @@ func getFieldValue(effective llm.Config, key string) (value string, source strin
 			return effective.UI.Glyphs, sourceLabel(effective.UI.GlyphsSource)
 		}
 		return "unicode", "default"
+	case "ui.banner":
+		if effective.UI != nil {
+			return fmt.Sprintf("%v", effective.UI.Banner), sourceLabel(effective.UI.BannerSource)
+		}
+		return "true", "default"
+	case "ui.motion":
+		if override := strings.TrimSpace(os.Getenv("MACHTIANI_MOTION")); override != "" {
+			return override, "env"
+		}
+		if effective.UI != nil && strings.TrimSpace(effective.UI.Motion) != "" {
+			return effective.UI.Motion, sourceLabel(effective.UI.MotionSource)
+		}
+		return "full", "default"
 	case "persist_tmp_data":
 		return fmt.Sprintf("%v", effective.PersistTmpData), sourceLabel(effective.PersistTmpDataSource)
 	case "dry_run":
@@ -1157,11 +1197,19 @@ func printConfigWithSources(effective, defaults llm.Config, showFull bool) {
 	uiSource := "default"
 	uiGlyphs := "unicode"
 	uiGlyphsSource := "default"
+	uiBanner := true
+	uiBannerSource := "default"
+	uiMotion := "full"
+	uiMotionSource := "default"
 	if effective.UI != nil {
 		uiTheme = effective.UI.Theme
 		uiSource = sourceLabel(effective.UI.ThemeSource)
 		uiGlyphs = effective.UI.Glyphs
 		uiGlyphsSource = sourceLabel(effective.UI.GlyphsSource)
+		uiBanner = effective.UI.Banner
+		uiBannerSource = sourceLabel(effective.UI.BannerSource)
+		uiMotion = effective.UI.Motion
+		uiMotionSource = sourceLabel(effective.UI.MotionSource)
 	}
 	if override := strings.TrimSpace(os.Getenv("MACHTIANI_THEME")); override != "" {
 		uiTheme = override
@@ -1171,9 +1219,15 @@ func printConfigWithSources(effective, defaults llm.Config, showFull bool) {
 		uiGlyphs = override
 		uiGlyphsSource = "env"
 	}
+	if override := strings.TrimSpace(os.Getenv("MACHTIANI_MOTION")); override != "" {
+		uiMotion = override
+		uiMotionSource = "env"
+	}
 	renderScalarSection(&buf, "User Interface", "Semantic terminal presentation", []configEntry{
 		{key: "ui.theme", value: uiTheme, source: uiSource},
 		{key: "ui.glyphs", value: uiGlyphs, source: uiGlyphsSource},
+		{key: "ui.banner", value: fmt.Sprintf("%t", uiBanner), source: uiBannerSource},
+		{key: "ui.motion", value: uiMotion, source: uiMotionSource},
 	})
 
 	// --- General ---

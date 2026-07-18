@@ -29,7 +29,7 @@ func DefaultConfig() Config {
 			Excerpt:      512,
 			OmitRepoRoot: false,
 		},
-		UI:                      &UIConfig{Theme: "terminal", Glyphs: "unicode"},
+		UI:                      &UIConfig{Theme: "terminal", Glyphs: "unicode", Banner: true, Motion: "full"},
 		Verbose:                 false,
 		PersistTmpData:          false,
 		DryRun:                  false,
@@ -73,6 +73,8 @@ func DefaultMinimalConfigMap() map[string]any {
 		"ui": map[string]any{
 			"theme":  "terminal",
 			"glyphs": "unicode",
+			"banner": true,
+			"motion": "full",
 		},
 		"model_defaults": map[string]any{
 			"context_length": int64(DefaultContextLength),
@@ -161,6 +163,15 @@ func overlayConfig(target *Config, source Config, srcSource FieldSource) {
 		if source.UI.Glyphs != "" {
 			target.UI.Glyphs = source.UI.Glyphs
 			target.UI.GlyphsSource = srcSource
+		}
+		if source.UI.bannerSet || source.UI.Banner {
+			target.UI.Banner = source.UI.Banner
+			target.UI.BannerSource = srcSource
+			target.UI.bannerSet = true
+		}
+		if source.UI.Motion != "" {
+			target.UI.Motion = source.UI.Motion
+			target.UI.MotionSource = srcSource
 		}
 	}
 

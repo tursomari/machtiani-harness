@@ -255,6 +255,51 @@ func TestLoadGlobalConfigParsesUIGlyphs(t *testing.T) {
 	}
 }
 
+func TestLoadGlobalConfigParsesBannerAndMotion(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	mustWriteFile(t, path, "[ui]\nbanner = false\nmotion = \"reduced\"\n")
+	t.Setenv("MACHTIANI_CONFIG", path)
+	ResetConfigForTesting()
+	t.Cleanup(ResetConfigForTesting)
+
+	cfg, _, err := LoadGlobalConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.UI == nil || cfg.UI.Banner || cfg.UI.Motion != "reduced" {
+		t.Fatalf("unexpected UI config: %+v", cfg.UI)
+	}
+}
+
+func TestLoadGlobalConfigDefaultsBannerAndMotion(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	mustWriteFile(t, path, "")
+	t.Setenv("MACHTIANI_CONFIG", path)
+	ResetConfigForTesting()
+	t.Cleanup(ResetConfigForTesting)
+
+	cfg, _, err := LoadGlobalConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.UI == nil || !cfg.UI.Banner || cfg.UI.Motion != "full" {
+		t.Fatalf("unexpected UI defaults: %+v", cfg.UI)
+	}
+}
+
+func TestLoadGlobalConfigRejectsUnknownUIMotion(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	mustWriteFile(t, path, "[ui]\nmotion = \"cinematic\"\n")
+	t.Setenv("MACHTIANI_CONFIG", path)
+	ResetConfigForTesting()
+	t.Cleanup(ResetConfigForTesting)
+
+	_, _, err := LoadGlobalConfig()
+	if err == nil || !strings.Contains(err.Error(), "unknown UI motion mode") {
+		t.Fatalf("expected unknown motion mode error, got %v", err)
+	}
+}
+
 func TestLoadGlobalConfigRejectsUnknownUIGlyphs(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	mustWriteFile(t, path, "[ui]\nglyphs = \"heavy\"\n")

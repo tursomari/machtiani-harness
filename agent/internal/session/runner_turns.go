@@ -55,6 +55,7 @@ type runTurnEnv struct {
 	turnsCompleted                    *int
 	plannerProgress                   *plannerProgressTracker
 	bus                               *ui.EventBus
+	activities                        *ui.ActivityTracker
 	diagWriter                        io.Writer
 	hasNewInput                       bool // from Options; propagated to TurnContext for ResumeAttempt
 	isResumingTurn                    bool // set when resumableShellAgent is true; triggers TUI replay
@@ -266,6 +267,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 			ctxShell = attachTrajectory(ctxShell, env.trajectoryWriter, env.parentSpanID)
 			shellCancel = cancelShell
 			sasID := fmt.Sprintf("%s/shell-agent/%d", env.sessionID, env.step)
+			finishShellActivity := env.activities.Begin(sasID, ui.ActivityWaiting)
 			shellOpts := promptsvc.RunOptions{
 				Prompt:               shellAskTrimmed,
 				Mode:                 "answer-only",
@@ -302,6 +304,8 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 			}
 			go func() {
 				defer close(shellDone)
+				defer finishShellActivity()
+				env.activities.Update(sasID, ui.ActivityShell)
 				if shellCancel != nil {
 					defer shellCancel()
 				}
@@ -315,6 +319,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 			ctx2Err error
 		)
 		if runNoShell {
+			finishContextActivity := env.activities.Begin(fmt.Sprintf("%s/context/%d", env.sessionID, env.step), ui.ActivityContext)
 			input := runner.PromptInput{
 				Prompt:             question,
 				Mode:               "default",
@@ -327,6 +332,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 			ctx2, cancel2 := makeTurnContext(env.rootCtx, env.cfg.timeoutPerTurn)
 			ctx2 = attachTrajectory(ctx2, env.trajectoryWriter, env.parentSpanID)
 			result, merr = env.mctRunner.RunPrompt(ctx2, env.sessionID, input)
+			finishContextActivity()
 			if ctx2 != nil {
 				ctx2Err = ctx2.Err()
 			}
@@ -490,7 +496,16 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 	}
 	ctx2, cancel2 := makeTurnContext(env.rootCtx, env.cfg.timeoutPerTurn)
 	ctx2 = attachTrajectory(ctx2, env.trajectoryWriter, env.parentSpanID)
+	activityKind := ui.ActivityContext
+	if useShellAgent {
+		activityKind = ui.ActivityWaiting
+	}
+	finishWorkerActivity := env.activities.Begin(sasID, activityKind)
+	if useShellAgent {
+		env.activities.Update(sasID, ui.ActivityShell)
+	}
 	result, merr := env.mctRunner.RunPrompt(ctx2, env.sessionID, input)
+	finishWorkerActivity()
 	var ctx2Err error
 	if ctx2 != nil {
 		ctx2Err = ctx2.Err()

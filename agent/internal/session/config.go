@@ -26,6 +26,8 @@ type Config struct {
 	ContextLength           int
 	TrajectoryFile          string
 	NoTrajectory            bool
+	NoBanner                bool
+	NoCursor                bool
 	TrajectoryVerboseLLM    bool
 	TrajectoryStreamTokens  bool
 	TrajectoryExcerpt       int

@@ -7,6 +7,7 @@ require (
 	github.com/charmbracelet/glamour v0.8.0
 	github.com/git-pkgs/gitignore v1.2.0
 	github.com/google/uuid v1.6.0
+	github.com/mattn/go-runewidth v0.0.15
 	github.com/sirupsen/logrus v1.9.3
 	github.com/spf13/pflag v1.0.5
 	golang.org/x/term v0.23.0
@@ -23,7 +24,6 @@ require (
 	github.com/gorilla/css v1.0.1 // indirect
 	github.com/lucasb-eyer/go-colorful v1.2.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
-	github.com/mattn/go-runewidth v0.0.15 // indirect
 	github.com/microcosm-cc/bluemonday v1.0.27 // indirect
 	github.com/muesli/reflow v0.3.0 // indirect
 	github.com/muesli/termenv v0.15.3-0.20240618155329-98d742f6907a // indirect

@@ -40,6 +40,7 @@ const (
 type Theme struct {
 	Profile      ProfileName
 	glyphMode    GlyphMode
+	motionMode   MotionMode
 	ansiEnabled  bool
 	colorEnabled bool
 	trueColor    bool
@@ -75,6 +76,10 @@ func Resolve(configured string, out io.Writer) (Theme, error) {
 }
 
 func ResolveWithGlyphs(configuredTheme, configuredGlyphs string, out io.Writer) (Theme, error) {
+	return ResolveWithGlyphsAndMotion(configuredTheme, configuredGlyphs, "", out)
+}
+
+func ResolveWithGlyphsAndMotion(configuredTheme, configuredGlyphs, configuredMotion string, out io.Writer) (Theme, error) {
 	profile, err := ResolveProfile(configuredTheme)
 	if err != nil {
 		return Theme{}, err
@@ -83,8 +88,16 @@ func ResolveWithGlyphs(configuredTheme, configuredGlyphs string, out io.Writer) 
 	if err != nil {
 		return Theme{}, err
 	}
-	theme := Theme{Profile: profile, glyphMode: glyphMode}
-	if profile == ProfileNone || strings.EqualFold(strings.TrimSpace(os.Getenv("TERM")), "dumb") {
+	motionMode, err := ResolveMotionMode(configuredMotion)
+	if err != nil {
+		return Theme{}, err
+	}
+	theme := Theme{Profile: profile, glyphMode: glyphMode, motionMode: motionMode}
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("TERM")), "dumb") {
+		theme.motionMode = MotionNone
+		return theme, nil
+	}
+	if profile == ProfileNone {
 		return theme, nil
 	}
 	fdw, ok := out.(fdWriter)
@@ -107,7 +120,7 @@ func NewForTestWithGlyphs(profile ProfileName, glyphMode GlyphMode, colorEnabled
 	if glyphMode == "" {
 		glyphMode = GlyphUnicode
 	}
-	return Theme{Profile: profile, glyphMode: glyphMode, ansiEnabled: true, colorEnabled: colorEnabled, trueColor: trueColor}
+	return Theme{Profile: profile, glyphMode: glyphMode, motionMode: MotionFull, ansiEnabled: true, colorEnabled: colorEnabled, trueColor: trueColor}
 }
 
 func (t Theme) ANSIEnabled() bool  { return t.ansiEnabled }
@@ -117,6 +130,12 @@ func (t Theme) GlyphMode() GlyphMode {
 		return GlyphUnicode
 	}
 	return t.glyphMode
+}
+func (t Theme) MotionMode() MotionMode {
+	if t.motionMode == "" {
+		return MotionFull
+	}
+	return t.motionMode
 }
 func (t Theme) Glyphs() GlyphSet { return glyphSet(t.GlyphMode()) }
 

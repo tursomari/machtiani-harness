@@ -84,6 +84,7 @@ type Formatter struct {
 	footerIdentity     FooterIdentity
 	sessionID          string
 	turnNumber         int
+	activities         []Activity
 	modeTasks          []ModeTaskDisplay
 	activeModeTask     int
 	manager            *ProcessTimerManager
@@ -186,6 +187,8 @@ func (f *Formatter) eventLoop(ch <-chan DisplayEvent) {
 			f.handleFooterModelsUpdated(e)
 		case TurnStatusUpdatedEvent:
 			f.handleTurnStatusUpdated(e)
+		case ActivitySnapshotEvent:
+			f.handleActivitySnapshot(e)
 		case SessionConclusionEvent:
 			f.handleSessionConclusion(e)
 		case ModeTaskPlanDisplayEvent:
@@ -202,6 +205,9 @@ func (f *Formatter) eventLoop(ch <-chan DisplayEvent) {
 // --- handler methods (mu is held by caller) ---------------------------------
 
 func (f *Formatter) handleSessionStarted(e SessionStartedEvent) {
+	if !f.started && e.ShowBanner && f.timerEnabled {
+		fmt.Fprint(f.out, RenderSessionHeader(e, f.theme, f.width))
+	}
 	f.started = true
 	if e.Elapsed > 0 {
 		f.elapsedOffset = e.Elapsed
@@ -233,6 +239,7 @@ func (f *Formatter) handleSessionEnded(_ SessionEndedEvent) {
 	}
 	f.activePromptTokens = 0
 	f.maxInputTokens = 0
+	f.activities = nil
 	finalFooter := f.finalFooterLinesLocked()
 	f.closed = true
 	f.stopTimerLocked()
@@ -242,6 +249,11 @@ func (f *Formatter) handleSessionEnded(_ SessionEndedEvent) {
 	}
 	f.printFinalFooterLinesLocked(finalFooter)
 	close(f.done)
+}
+
+func (f *Formatter) handleActivitySnapshot(e ActivitySnapshotEvent) {
+	f.activities = append(f.activities[:0], e.Activities...)
+	f.renderTimerLocked()
 }
 
 func (f *Formatter) handlePromptStarted(e PromptStartedEvent) {
@@ -706,7 +718,11 @@ func (f *Formatter) ensureTimerLocked() {
 	f.lastFooter = nil
 	stop := make(chan struct{})
 	f.timerStop = stop
-	f.timerTicker = time.NewTicker(time.Second)
+	interval := time.Second
+	if f.theme.Presentation.MotionMode() == presentation.MotionFull {
+		interval = 125 * time.Millisecond
+	}
+	f.timerTicker = time.NewTicker(interval)
 	go f.timerLoop(f.timerTicker, stop)
 }
 
@@ -765,7 +781,13 @@ func (f *Formatter) footerLineCountLocked() int {
 		return 0
 	}
 	if f.height == 0 {
+		if f.hasVisibleActivityLocked() {
+			return 3
+		}
 		return 2
+	}
+	if f.height >= minFooterHeight+2 && f.hasVisibleActivityLocked() {
+		return 3
 	}
 	if f.height >= minFooterHeight+1 {
 		return 2
@@ -818,10 +840,16 @@ func (f *Formatter) formatFooterLinesLocked(elapsed time.Duration, lineCount int
 		identity = FooterIdentity{Label: "session", Value: f.sessionID}
 	}
 	statusLine := formatStatusFooterLine(f.modeTasks, f.activeModeTask, f.turnNumber, identity, f.footerModels, width)
-	if statusLine == "" {
-		return []string{tokenLine, ""}
+	lines := []string{tokenLine, statusLine}
+	if lineCount >= 3 && f.hasVisibleActivityLocked() {
+		activityLine := renderActivityLine(selectActivityPresentation(f.activities), f.theme.Presentation, elapsed)
+		lines = append([]string{activityLine}, lines...)
 	}
-	return []string{tokenLine, statusLine}
+	return lines
+}
+
+func (f *Formatter) hasVisibleActivityLocked() bool {
+	return len(f.activities) > 0 && f.theme.Presentation.MotionMode() != presentation.MotionNone
 }
 
 func (f *Formatter) finalFooterLinesLocked() []string {
@@ -861,7 +889,20 @@ func (f *Formatter) styleFooterLinesLocked(lines []string) []string {
 	styled := make([]string, 0, len(lines))
 	for i, line := range lines {
 		var highlights []footerHighlight
-		if i == 0 {
+		if len(lines) == 3 && i == 0 {
+			mark, label, _ := strings.Cut(line, "  ")
+			styled = append(styled, f.theme.render(presentation.StyledLine{
+				presentation.Bold(presentation.RoleTruth, mark),
+				presentation.Text("  "),
+				presentation.RoleText(presentation.RoleBeauty, label),
+			}))
+			continue
+		}
+		tokenIndex := 0
+		if len(lines) == 3 {
+			tokenIndex = 1
+		}
+		if i == tokenIndex {
 			separator := strings.Index(line, "  ")
 			if separator < 0 {
 				styled = append(styled, f.theme.render(presentation.StyledLine{presentation.Bold(presentation.RoleTruth, line)}))

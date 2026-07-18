@@ -107,7 +107,7 @@ func validateRawConfig(path string, raw map[string]any) error {
 		"enabled": "bool", "file": "string", "verbose_llm": "bool", "stream_tokens": "bool",
 		"excerpt": "integer", "omit_repo_root": "bool",
 	}, &diagnostics)
-	validateSection(raw, "ui", map[string]string{"theme": "string", "glyphs": "string"}, &diagnostics)
+	validateSection(raw, "ui", map[string]string{"theme": "string", "glyphs": "string", "banner": "bool", "motion": "string"}, &diagnostics)
 	validateModeRaw(raw, &diagnostics)
 	validatePromptsRaw(raw, plannerFields, shellFields, &diagnostics)
 	validateProvidersRaw(raw, &diagnostics)
