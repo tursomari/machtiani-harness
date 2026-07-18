@@ -426,7 +426,7 @@ func (m *Manager) Update(ctx context.Context, result Result) (updated Result, re
 	sourceBranch, _ := gitOutput(ctx, receipt.SourceDir, "symbolic-ref", "--quiet", "--short", "HEAD")
 
 	refspec := fmt.Sprintf("+refs/heads/%s:refs/remotes/origin/%s", result.DefaultBranch, result.DefaultBranch)
-	if _, err := gitOutput(ctx, receipt.SourceDir, "fetch", "--depth=1", "origin", refspec); err != nil {
+	if err := fetchFullHistory(ctx, receipt.SourceDir, refspec); err != nil {
 		return Result{}, err
 	}
 	fetched, err := gitOutput(ctx, receipt.SourceDir, "rev-parse", "refs/remotes/origin/"+result.DefaultBranch)
@@ -522,12 +522,26 @@ func (m *Manager) ensureSource(ctx context.Context, receipt Receipt) error {
 	if err := os.MkdirAll(filepath.Dir(receipt.SourceDir), 0o700); err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, "git", "clone", "--depth=1", "--single-branch", receipt.Remote, receipt.SourceDir)
+	cmd := exec.CommandContext(ctx, "git", "clone", "--single-branch", receipt.Remote, receipt.SourceDir)
 	cmd.Stdout, cmd.Stderr = m.opts.Stderr, m.opts.Stderr
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("re-create managed source: %w", err)
 	}
 	return nil
+}
+
+func fetchFullHistory(ctx context.Context, source, refspec string) error {
+	shallow, err := gitOutput(ctx, source, "rev-parse", "--is-shallow-repository")
+	if err != nil {
+		return err
+	}
+	args := []string{"fetch"}
+	if shallow == "true" {
+		args = append(args, "--unshallow")
+	}
+	args = append(args, "origin", refspec)
+	_, err = gitOutput(ctx, source, args...)
+	return err
 }
 
 func (m *Manager) buildExact(ctx context.Context, source, commit string) (string, string, error) {

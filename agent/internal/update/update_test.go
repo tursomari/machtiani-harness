@@ -124,6 +124,40 @@ func TestCheckDetectsRewrittenDefaultBranch(t *testing.T) {
 	}
 }
 
+func TestFetchFullHistoryRepairsShallowCloneAfterRewrite(t *testing.T) {
+	remote, work := makeRemote(t, "rolling")
+	runGit(t, work, "commit", "--allow-empty", "-m", "old second")
+	runGit(t, work, "commit", "--allow-empty", "-m", "old tip")
+	runGit(t, work, "push", "origin", "rolling")
+
+	managed := filepath.Join(t.TempDir(), "managed")
+	runGit(t, "", "clone", "--quiet", "--depth=1", "--single-branch", "file://"+remote, managed)
+	if got := testGitOutput(t, managed, "rev-parse", "--is-shallow-repository"); got != "true" {
+		t.Fatalf("managed clone shallow = %q, want true", got)
+	}
+
+	runGit(t, work, "reset", "--hard", "HEAD~2")
+	runGit(t, work, "commit", "--allow-empty", "-m", "rewritten parent")
+	parent := testGitOutput(t, work, "rev-parse", "HEAD")
+	runGit(t, work, "commit", "--allow-empty", "-m", "rewritten tip")
+	candidate := testGitOutput(t, work, "rev-parse", "HEAD")
+	runGit(t, work, "push", "--force", "origin", "rolling")
+
+	refspec := "+refs/heads/rolling:refs/remotes/origin/rolling"
+	if err := fetchFullHistory(context.Background(), managed, refspec); err != nil {
+		t.Fatal(err)
+	}
+	if got := testGitOutput(t, managed, "rev-parse", "--is-shallow-repository"); got != "false" {
+		t.Fatalf("managed clone shallow = %q, want false", got)
+	}
+	if got := testGitOutput(t, managed, "rev-parse", "refs/remotes/origin/rolling"); got != candidate {
+		t.Fatalf("fetched candidate = %q, want %q", got, candidate)
+	}
+	if got := testGitOutput(t, managed, "rev-parse", candidate+"^"); got != parent {
+		t.Fatalf("candidate parent = %q, want %q", got, parent)
+	}
+}
+
 func TestJSONResultDoesNotExposeCredentialedRemote(t *testing.T) {
 	result := Result{Status: StatusAvailable, Remote: "https://example.test/repo.git"}
 	data, err := json.Marshal(result)
@@ -153,7 +187,11 @@ func makeRemote(t *testing.T, branch string) (remote, work string) {
 
 func runGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	gitArgs := args
+	if dir != "" {
+		gitArgs = append([]string{"-C", dir}, args...)
+	}
+	cmd := exec.Command("git", gitArgs...)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, output)
 	}

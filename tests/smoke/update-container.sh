@@ -86,9 +86,15 @@ test "$(HOME="$update_home" "$prefix/bin/mct-agent" --version | sed -n 's/^commi
 
 # The default branch is authoritative even after a forced history rewrite.
 git -C "$seed" reset --quiet --hard "$commit_a"
+git -C "$seed" commit --quiet --allow-empty -m rewritten-parent
+commit_d_parent=$(git -C "$seed" rev-parse HEAD)
 git -C "$seed" commit --quiet --allow-empty -m rewritten-default
 commit_d=$(git -C "$seed" rev-parse HEAD)
 git -C "$seed" push --quiet --force origin rolling
+if git -C "$source_dir" cat-file -e "$commit_d_parent^{commit}" 2>/dev/null; then
+  echo "rewritten parent unexpectedly exists before update" >&2
+  exit 1
+fi
 (
   cd "$probe"
   expect <<EOF
