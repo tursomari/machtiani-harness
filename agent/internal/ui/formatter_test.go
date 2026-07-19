@@ -121,7 +121,9 @@ func TestFormatterSessionConclusionUsesOneUnifiedBlock(t *testing.T) {
 	f.mu.Unlock()
 
 	output := stripANSI(buf.String())
-	if !strings.Contains(output, "last stdout line\n\n  Continue this session:") {
+	outerRule := "  " + strings.Repeat(f.theme.Presentation.Glyphs().OuterRule, conclusionOuterRuleWidth(f.width))
+	want := "last stdout line\n\n" + outerRule + "\n\n  Continue this session:"
+	if !strings.Contains(output, want) {
 		t.Fatalf("expected answer and continuation in one block, got %q", output)
 	}
 	if !strings.Contains(output, "    $ mct-agent run -t \"<your follow-up prompt>\" --session-id agent-test") {
@@ -506,6 +508,37 @@ func TestPrintFinalFooterLinesClearsRows(t *testing.T) {
 	want := "\r\n\r\033[2Kshort footer\n\r\033[2Kstatus footer\n"
 	if got != want {
 		t.Fatalf("final footer should start on cleared rows\nwant: %q\n got: %q", want, got)
+	}
+}
+
+func TestCompletedConclusionLeavesOneBlankLineBeforeFinalFooter(t *testing.T) {
+	f, bus, buf := newTestFormatter()
+	defer bus.Close()
+	f.timerEnabled = true
+	f.started = true
+	f.width = 180
+	f.height = 24
+	f.sessionID = "agent-test"
+
+	f.mu.Lock()
+	f.handleSessionConclusion(SessionConclusionEvent{
+		Outcome:        SessionConclusionCompleted,
+		RenderedAnswer: "last answer line",
+		SessionID:      "agent-test",
+	})
+	f.handleSessionEnded(SessionEndedEvent{})
+	f.mu.Unlock()
+
+	output := stripANSI(buf.String())
+	footerIndex := strings.Index(output, "0s  session token input")
+	if footerIndex < 0 {
+		t.Fatalf("missing final footer:\n%s", output)
+	}
+	prefix := output[:footerIndex]
+	lastText := strings.TrimRight(prefix, "\n")
+	separator := prefix[len(lastText):]
+	if separator != "\n\n" {
+		t.Fatalf("conclusion/footer separator = %q, want exactly one blank line\n%s", separator, output)
 	}
 }
 

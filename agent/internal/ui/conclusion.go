@@ -28,15 +28,22 @@ func RenderSessionConclusion(event SessionConclusionEvent, theme Theme, width in
 
 	glyphs := theme.Presentation.Glyphs()
 	outerWidth := conclusionOuterRuleWidth(width)
-	b.WriteByte('\n')
-	if outerWidth > 0 {
+	writeOuterRule := func() {
+		if outerWidth == 0 {
+			return
+		}
 		write(presentation.StyledLine{
 			presentation.Text("  "),
 			presentation.Bold(presentation.RoleBeauty, strings.Repeat(glyphs.OuterRule, outerWidth)),
 		})
+	}
+	b.WriteByte('\n')
+	writeOuterRule()
+	if outerWidth > 0 {
 		blank()
 	}
 
+	closeAfterActions := true
 	switch event.Outcome {
 	case SessionConclusionShellInterrupted:
 		write(presentation.StyledLine{
@@ -76,8 +83,13 @@ func RenderSessionConclusion(event SessionConclusionEvent, theme Theme, width in
 		blank()
 		writeConclusionAction(&b, theme, width, event, "Continue with your answer:", "<your answer>")
 	default:
+		closeAfterActions = false
 		if answer := strings.Trim(event.RenderedAnswer, "\n"); strings.TrimSpace(answer) != "" {
 			plain(answer)
+			blank()
+		}
+		writeOuterRule()
+		if outerWidth > 0 {
 			blank()
 		}
 		if finalPath := strings.TrimSpace(event.FinalAnswerPath); finalPath != "" {
@@ -99,12 +111,9 @@ func RenderSessionConclusion(event SessionConclusionEvent, theme Theme, width in
 		writeConclusionAction(&b, theme, width, event, "Continue this session:", "<your follow-up prompt>")
 	}
 
-	blank()
-	if outerWidth > 0 {
-		write(presentation.StyledLine{
-			presentation.Text("  "),
-			presentation.Bold(presentation.RoleBeauty, strings.Repeat(glyphs.OuterRule, outerWidth)),
-		})
+	if closeAfterActions {
+		blank()
+		writeOuterRule()
 	}
 	return b.String()
 }

@@ -44,6 +44,29 @@ func TestRenderCompletedSessionConclusion(t *testing.T) {
 	}
 }
 
+func TestRenderCompletedConclusionClosesAnswerBeforeProvenance(t *testing.T) {
+	event := SessionConclusionEvent{
+		Outcome:         SessionConclusionCompleted,
+		RenderedAnswer:  "  Completed the requested work.",
+		FinalAnswerPath: "/home/test/.machtiani/project/sessions/agent-test/chat/agent-final-answer.md",
+		SessionID:       "agent-test",
+	}
+	t.Setenv("HOME", "/home/test")
+	output := stripANSI(RenderSessionConclusion(event, conclusionTestTheme(presentation.GlyphUnicode), 120))
+	outerRule := "  " + strings.Repeat("━", conclusionOuterRuleWidth(120))
+	want := "  Completed the requested work.\n\n" + outerRule + "\n\n" +
+		"  Answer saved to:\n"
+	if !strings.Contains(output, want) {
+		t.Fatalf("completed-answer boundary mismatch\nwant substring: %q\noutput:\n%s", want, output)
+	}
+	if got := strings.Count(output, outerRule); got != 2 {
+		t.Fatalf("outer rule count = %d, want 2\n%s", got, output)
+	}
+	if strings.LastIndex(output, outerRule) > strings.Index(output, "  Answer saved to:") {
+		t.Fatalf("completed-answer rule enclosed provenance and actions:\n%s", output)
+	}
+}
+
 func TestRenderInterruptedSessionConclusion(t *testing.T) {
 	output := stripANSI(RenderSessionConclusion(SessionConclusionEvent{
 		Outcome:   SessionConclusionShellInterrupted,
