@@ -1,3 +1,3 @@
-title = "Agent-managed code"
-system_prompt = "code.txt"
+title = "Complete user request"
+system_prompt = "planner-overlay.txt"
 shell_prompt = "shell-agent-system-prompt.txt"

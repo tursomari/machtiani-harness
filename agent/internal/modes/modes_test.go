@@ -62,13 +62,15 @@ func TestNamesIncludesCode(t *testing.T) {
 	t.Fatal("code mode missing")
 }
 
-func TestAgentManagedModeKeepsTicketDetailsOutOfPlanner(t *testing.T) {
-	planner, err := fs.ReadFile(canonical, "canonical/agent-managed/code.txt")
+func TestAgentManagedModeKeepsExecutionTopologyOutOfPlanner(t *testing.T) {
+	planner, err := fs.ReadFile(canonical, "canonical/agent-managed/planner-overlay.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(strings.ToLower(string(planner)), "ticket") || strings.Contains(string(planner), "AGENT_MANAGER_PATH") {
-		t.Fatalf("planner contains agent-manager protocol details: %s", planner)
+	for _, forbidden := range []string{"shell-agent", "managed agent", "worker", "coordinator", "agent-manager", "ticket", "AGENT_MANAGER_PATH"} {
+		if strings.Contains(strings.ToLower(string(planner)), strings.ToLower(forbidden)) {
+			t.Fatalf("planner contains execution-topology detail %q: %s", forbidden, planner)
+		}
 	}
 	shellPrompt, err := fs.ReadFile(canonical, "canonical/agent-managed/shell-agent-system-prompt.txt")
 	if err != nil {
