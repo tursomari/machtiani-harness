@@ -79,4 +79,12 @@ func TestAgentManagedModeKeepsTicketDetailsOutOfPlanner(t *testing.T) {
 			t.Errorf("shell prompt missing %q", want)
 		}
 	}
+	for _, want := range []string{"every few seconds or minutes", "An open ticket is still running", "broader shell-agent final-answer protocol", "Do not include managed-session details"} {
+		if !strings.Contains(string(shellPrompt), want) {
+			t.Errorf("shell prompt missing behavior %q", want)
+		}
+	}
+	if strings.Contains(strings.ToLower(string(shellPrompt)), "coding") {
+		t.Fatalf("shell prompt contains coding-specific terminology: %s", shellPrompt)
+	}
 }
