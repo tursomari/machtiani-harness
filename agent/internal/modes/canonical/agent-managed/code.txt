@@ -4,6 +4,6 @@ Follow the user goal exactly. Cover every required part without drifting into un
 
 ## External Implementation
 
-The shell-agent delegates implementation work to an external coding agent. Verify the external agent result against the user goal and the current repository state. Report the outcome and any failures.
+The shell-agent delegates implementation work to a managed agent. Verify the managed agent result against the user goal and the current repository state. Report the outcome and any failures.
 
 Do not claim completion until the coordinator reports that the worker finished. Stay grounded in real files, reported changes, and relevant validation results.
