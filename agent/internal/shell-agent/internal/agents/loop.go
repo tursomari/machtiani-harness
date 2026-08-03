@@ -119,8 +119,8 @@ func (a *DefaultAgent) loopTemplateVars(markerPath string) map[string]interface{
 		"FinalMarkerPath":   markerPath,
 		"answer_tag":        a.RunConfig.AnswerTag,
 		"AnswerTag":         a.RunConfig.AnswerTag,
-		"command_tag":        a.RunConfig.CommandTag,
-		"CommandTag":         a.RunConfig.CommandTag,
+		"command_tag":       a.RunConfig.CommandTag,
+		"CommandTag":        a.RunConfig.CommandTag,
 	}
 
 	task := strings.TrimSpace(a.RunConfig.Task)
@@ -233,8 +233,8 @@ func (a *DefaultAgent) Run(ctx context.Context, task string, opts ...minisweagen
 		"FinalMarkerPath":   markerPath,
 		"answer_tag":        a.RunConfig.AnswerTag,
 		"AnswerTag":         a.RunConfig.AnswerTag,
-		"command_tag":        a.RunConfig.CommandTag,
-		"CommandTag":         a.RunConfig.CommandTag,
+		"command_tag":       a.RunConfig.CommandTag,
+		"CommandTag":        a.RunConfig.CommandTag,
 	}
 
 	var (
@@ -328,7 +328,6 @@ func (a *DefaultAgent) Run(ctx context.Context, task string, opts ...minisweagen
 			}
 		}
 	}
-	return "Ongoing", "", nil
 }
 
 // Step performs a single model → environment iteration.
@@ -676,7 +675,7 @@ func (a *DefaultAgent) TrajectoryExtras() map[string]interface{} {
 		remaining = 0
 	}
 	return map[string]interface{}{
-		"max_steps":        a.RunConfig.MaxSteps,
+		"max_steps":         a.RunConfig.MaxSteps,
 		"model_calls_used":  a.RunConfig.Model.NCalls(),
 		"remaining_steps":   remaining,
 		"commands_executed": a.State.commandsExecuted,

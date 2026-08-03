@@ -1,8 +1,10 @@
 package modes
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/tursomari/machtiani/agent/internal/projectstore"
@@ -58,4 +60,23 @@ func TestNamesIncludesCode(t *testing.T) {
 		}
 	}
 	t.Fatal("code mode missing")
+}
+
+func TestAgentManagedModeKeepsTicketDetailsOutOfPlanner(t *testing.T) {
+	planner, err := fs.ReadFile(canonical, "canonical/agent-managed/code.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.ToLower(string(planner)), "ticket") || strings.Contains(string(planner), "AGENT_MANAGER_PATH") {
+		t.Fatalf("planner contains agent-manager protocol details: %s", planner)
+	}
+	shellPrompt, err := fs.ReadFile(canonical, "canonical/agent-managed/shell-agent-system-prompt.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"AGENT_MANAGER_PATH", "DEARMACHINE_BACKEND", "ticket send", "ticket status", "ticket view", "ticket cancel"} {
+		if !strings.Contains(string(shellPrompt), want) {
+			t.Errorf("shell prompt missing %q", want)
+		}
+	}
 }
