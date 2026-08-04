@@ -76,7 +76,7 @@ func TestAgentManagedModeKeepsExecutionTopologyOutOfPlanner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"AGENT_MANAGER_PATH", "DEARMACHINE_BACKEND", "ticket send", "ticket status", "ticket view", "ticket cancel"} {
+	for _, want := range []string{"AGENT_MANAGER_PATH", "backend list", "backend health", "ticket send --backend", "ticket status", "ticket view", "ticket cancel"} {
 		if !strings.Contains(string(shellPrompt), want) {
 			t.Errorf("shell prompt missing %q", want)
 		}
@@ -85,6 +85,17 @@ func TestAgentManagedModeKeepsExecutionTopologyOutOfPlanner(t *testing.T) {
 		if !strings.Contains(string(shellPrompt), want) {
 			t.Errorf("shell prompt missing behavior %q", want)
 		}
+	}
+	for _, want := range []string{"priority order", "first worker that completes the probe successfully", "do not implement the request yourself", "ask the user for direction"} {
+		if !strings.Contains(string(shellPrompt), want) {
+			t.Errorf("shell prompt missing backend workflow %q", want)
+		}
+	}
+	if strings.Contains(string(shellPrompt), "DEARMACHINE_BACKEND") {
+		t.Fatalf("shell prompt contains retired singular backend environment variable: %s", shellPrompt)
+	}
+	if strings.Contains(strings.ToLower(string(shellPrompt)), "implement the request yourself unless") {
+		t.Fatalf("shell prompt permits direct implementation fallback: %s", shellPrompt)
 	}
 	if strings.Contains(strings.ToLower(string(shellPrompt)), "coding") {
 		t.Fatalf("shell prompt contains coding-specific terminology: %s", shellPrompt)
