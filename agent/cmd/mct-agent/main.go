@@ -494,6 +494,7 @@ func handleSyncCommand(args []string) int {
 	var paramJSON multiString
 	var apiKeyFlags multiString
 	commitRef := fs.String("commit", "", "project commit hash to sync")
+	includeDocs := fs.Bool("include-docs", false, "include documentation/markdown changes when deciding whether to regenerate the internal README")
 	configureSessionFlags(fs, &cfg, &paramFlags, &paramJSON, &apiKeyFlags)
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: mct-agent sync [--commit <hash>] [flags]\n\n")
@@ -611,6 +612,7 @@ func handleSyncCommand(args []string) int {
 		Verbose:              cfg.Verbose,
 		ContextLength:        cfg.ContextLength,
 		TurnTimeout:          cfg.TurnTimeout,
+		IncludeDocs:          *includeDocs,
 		Runtime:              runtimes.Orchestrator,
 		AnswerRuntime:        runtimes.Answer,
 		FileDiscoveryRuntime: runtimes.FileDiscovery,
@@ -787,6 +789,7 @@ func handleSessionCommand(args []string) int {
 		fmt.Fprintln(os.Stderr, "  list    List all sessions")
 		fmt.Fprintln(os.Stderr, "  show    Show details for a specific session")
 		fmt.Fprintln(os.Stderr, "  fork    Fork a session")
+		fmt.Fprintln(os.Stderr, "  delete  Delete a session")
 		fmt.Fprintln(os.Stderr, "  prune   Remove disposable session diagnostics and deprecated state")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Use 'mct-agent session <subcommand> --help' for more information.")
@@ -799,6 +802,8 @@ func handleSessionCommand(args []string) int {
 		return handleSessionShowCommand(args[1:])
 	case "fork":
 		return handleSessionForkCommand(args[1:])
+	case "delete":
+		return handleSessionDeleteCommand(args[1:])
 	case "prune":
 		return handleSessionPruneCommand(args[1:])
 	default:
@@ -810,6 +815,7 @@ func handleSessionCommand(args []string) int {
 		fmt.Fprintln(os.Stderr, "  list    List all sessions")
 		fmt.Fprintln(os.Stderr, "  show    Show details for a specific session")
 		fmt.Fprintln(os.Stderr, "  fork    Fork a session")
+		fmt.Fprintln(os.Stderr, "  delete  Delete a session")
 		fmt.Fprintln(os.Stderr, "  prune   Remove disposable session diagnostics and deprecated state")
 		return 2
 	}
@@ -984,6 +990,37 @@ func handleSessionForkCommand(args []string) int {
 	}
 
 	fmt.Println(newSessionID)
+	return 0
+}
+
+func handleSessionDeleteCommand(args []string) int {
+	fs := pflag.NewFlagSet("mct-agent session delete", pflag.ContinueOnError)
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: mct-agent session delete <session-id>\n\n")
+		fmt.Fprintln(os.Stderr, "Flags:")
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, pflag.ErrHelp) {
+			return 0
+		}
+		fmt.Fprintln(os.Stderr, err)
+		return 2
+	}
+
+	if fs.NArg() < 1 {
+		fmt.Fprintln(os.Stderr, "Error: session-id is required")
+		fs.Usage()
+		return 2
+	}
+
+	sessionID := fs.Arg(0)
+	if err := session.DeleteSession(sessionID); err != nil {
+		fmt.Fprintf(os.Stderr, "Error deleting session %s: %v\n", sessionID, err)
+		return 1
+	}
+
+	fmt.Printf("Deleted session %s\n", sessionID)
 	return 0
 }
 
