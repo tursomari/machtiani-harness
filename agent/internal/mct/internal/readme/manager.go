@@ -41,6 +41,7 @@ type Manager struct {
 	LastCommitPath   string
 	IsAnswerOnlyMode bool
 	Verbose          bool
+	IncludeDocs      bool
 	PromptExecutor   PromptExecutor
 	Prompts          *llm.MCTPromptsConfig
 }
@@ -81,6 +82,12 @@ func (m *Manager) SetPromptExecutor(exec PromptExecutor) {
 // SetPrompts configures template-driven system prompts for the readme manager.
 func (m *Manager) SetPrompts(cfg *llm.MCTPromptsConfig) {
 	m.Prompts = cfg
+}
+
+// SetIncludeDocs controls whether documentation file changes participate in
+// sync significance detection.
+func (m *Manager) SetIncludeDocs(v bool) {
+	m.IncludeDocs = v
 }
 
 // Run executes the management workflow using the supplied project commit hash.
@@ -235,7 +242,7 @@ func (m *Manager) detectChanges(oldCommit, newCommit string) (bool, []string, er
 	}
 	sig := make([]string, 0, len(lines))
 	for _, file := range lines {
-		if isSignificantFile(file) {
+		if m.IncludeDocs || isSignificantFile(file) {
 			sig = append(sig, file)
 		}
 	}

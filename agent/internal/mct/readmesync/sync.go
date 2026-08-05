@@ -18,6 +18,7 @@ type Options struct {
 	Verbose              bool
 	ContextLength        int
 	TurnTimeout          int
+	IncludeDocs          bool
 	Runtime              promptsvc.ModelRuntime
 	AnswerRuntime        promptsvc.ModelRuntime
 	FileDiscoveryRuntime promptsvc.ModelRuntime
@@ -52,6 +53,7 @@ func Run(ctx context.Context, opts Options) error {
 		return err
 	}
 	mgr.SetPrompts(opts.Prompts)
+	mgr.SetIncludeDocs(opts.IncludeDocs)
 
 	mgr.SetPromptExecutor(func(execCtx context.Context, material llm.PromptMaterial) (string, error) {
 		prev, hadPrev := os.LookupEnv(readme.SkipReadmeManagerEnv)

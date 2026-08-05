@@ -40,6 +40,79 @@ func TestComposeMCTPromptIncrementalWithoutContext(t *testing.T) {
 	}
 }
 
+func TestDetectChangesIncludeDocs(t *testing.T) {
+	repo := t.TempDir()
+	runReadmeTestGit(t, repo, "init")
+	runReadmeTestGit(t, repo, "config", "user.name", "Test")
+	runReadmeTestGit(t, repo, "config", "user.email", "test@example.com")
+
+	docFile := filepath.Join(repo, "notes.md")
+	if err := os.WriteFile(docFile, []byte("initial docs\n"), 0o644); err != nil {
+		t.Fatalf("write doc file: %v", err)
+	}
+	runReadmeTestGit(t, repo, "add", "notes.md")
+	runReadmeTestGit(t, repo, "commit", "-m", "base")
+	base := strings.TrimSpace(runReadmeTestGit(t, repo, "rev-parse", "HEAD"))
+
+	if err := os.WriteFile(docFile, []byte("updated docs\n"), 0o644); err != nil {
+		t.Fatalf("write doc file: %v", err)
+	}
+	runReadmeTestGit(t, repo, "add", "notes.md")
+	runReadmeTestGit(t, repo, "commit", "-m", "change")
+	head := strings.TrimSpace(runReadmeTestGit(t, repo, "rev-parse", "HEAD"))
+
+	manager := &Manager{
+		ProjectRoot: repo,
+		IncludeDocs: true,
+	}
+	needsUpdate, sig, err := manager.detectChanges(base, head)
+	if err != nil {
+		t.Fatalf("detectChanges: %v", err)
+	}
+	if !needsUpdate {
+		t.Fatalf("expected docs change to be detected when include-docs is enabled")
+	}
+	if len(sig) != 1 || sig[0] != "notes.md" {
+		t.Fatalf("expected notes.md to be included, got %#v", sig)
+	}
+}
+
+func TestDetectChangesExcludesDocsWithoutFlag(t *testing.T) {
+	repo := t.TempDir()
+	runReadmeTestGit(t, repo, "init")
+	runReadmeTestGit(t, repo, "config", "user.name", "Test")
+	runReadmeTestGit(t, repo, "config", "user.email", "test@example.com")
+
+	docFile := filepath.Join(repo, "notes.md")
+	if err := os.WriteFile(docFile, []byte("initial docs\n"), 0o644); err != nil {
+		t.Fatalf("write doc file: %v", err)
+	}
+	runReadmeTestGit(t, repo, "add", "notes.md")
+	runReadmeTestGit(t, repo, "commit", "-m", "base")
+	base := strings.TrimSpace(runReadmeTestGit(t, repo, "rev-parse", "HEAD"))
+
+	if err := os.WriteFile(docFile, []byte("updated docs\n"), 0o644); err != nil {
+		t.Fatalf("write doc file: %v", err)
+	}
+	runReadmeTestGit(t, repo, "add", "notes.md")
+	runReadmeTestGit(t, repo, "commit", "-m", "change")
+	head := strings.TrimSpace(runReadmeTestGit(t, repo, "rev-parse", "HEAD"))
+
+	manager := &Manager{
+		ProjectRoot: repo,
+	}
+	needsUpdate, sig, err := manager.detectChanges(base, head)
+	if err != nil {
+		t.Fatalf("detectChanges: %v", err)
+	}
+	if needsUpdate {
+		t.Fatalf("expected docs change to be ignored when include-docs is disabled, got sig=%v", sig)
+	}
+	if len(sig) != 0 {
+		t.Fatalf("expected no significant files, got %#v", sig)
+	}
+}
+
 func TestBuildReadmeContentReturnsStructuredPrioritizedMaterial(t *testing.T) {
 	repo := t.TempDir()
 	runReadmeTestGit(t, repo, "init")
