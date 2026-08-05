@@ -188,6 +188,51 @@ func TestBuildReadmeContentReturnsStructuredPrioritizedMaterial(t *testing.T) {
 	}
 }
 
+func TestBuildReadmeContentInitialGenerationIncludesRepositorySnapshot(t *testing.T) {
+	repo := t.TempDir()
+	runReadmeTestGit(t, repo, "init")
+	runReadmeTestGit(t, repo, "config", "user.name", "Test")
+	runReadmeTestGit(t, repo, "config", "user.email", "test@example.com")
+	readme := filepath.Join(repo, "README.md")
+	if err := os.WriteFile(readme, []byte("# Machine Entry Point\n\nDurable cross-project guidance.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runReadmeTestGit(t, repo, "add", "README.md")
+	runReadmeTestGit(t, repo, "commit", "-m", "initial scaffold")
+	head := strings.TrimSpace(runReadmeTestGit(t, repo, "rev-parse", "HEAD"))
+
+	var captured llm.PromptMaterial
+	manager := &Manager{
+		ProjectRoot:    repo,
+		ReadmeFilePath: filepath.Join(t.TempDir(), readmeFilename),
+		PromptExecutor: func(_ context.Context, material llm.PromptMaterial) (string, error) {
+			captured = material
+			return "# Internal README", nil
+		},
+	}
+	if _, err := manager.buildReadmeContent(context.Background(), head, "", nil); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(captured.Fixed, "Create the initial internal README from the repository snapshot") {
+		t.Fatalf("initial-generation instructions missing: %q", captured.Fixed)
+	}
+	if len(captured.Sections) != 2 {
+		t.Fatalf("initial sections = %#v, want summary and snapshot", captured.Sections)
+	}
+	if captured.Sections[0].Name != "initial repository summary" ||
+		captured.Sections[1].Name != "initial repository snapshot" {
+		t.Fatalf("initial section names = %q, %q", captured.Sections[0].Name, captured.Sections[1].Name)
+	}
+	rendered, err := captured.Render(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rendered.Text, "Machine Entry Point") ||
+		!strings.Contains(rendered.Text, "Durable cross-project guidance") {
+		t.Fatalf("initial repository content missing from prompt: %s", rendered.Text)
+	}
+}
+
 func TestReadREADMEForProjectIgnoresMutableWorktree(t *testing.T) {
 	repo := initReadmeTestRepo(t)
 	projectCommit := strings.Repeat("a", 40)

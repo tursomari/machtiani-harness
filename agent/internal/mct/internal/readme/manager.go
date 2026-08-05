@@ -374,6 +374,38 @@ func (m *Manager) buildReadmeContent(ctx context.Context, projectCommitHash, las
 		if detail != "" {
 			material.Sections = append(material.Sections, llm.PromptSection{Name: "detailed diff", Prefix: "Relevant diff excerpt (context only; extract concepts rather than quoting diffs):\n````diff\n", Body: detail, Suffix: "\n````", TrimPriority: 2})
 		}
+	} else {
+		material.Fixed += "\n\nCreate the initial internal README from the repository snapshot below. Describe the current system without referring to commits, hashes, diffs, or change logs."
+
+		summaryContext := &strings.Builder{}
+		if strings.TrimSpace(diffStat) != "" {
+			summaryContext.WriteString("Initial repository file summary (context only):\n````\n")
+			summaryContext.WriteString(diffStat)
+			summaryContext.WriteString("\n````\n\n")
+		}
+		if strings.TrimSpace(summary) != "" {
+			summaryContext.WriteString("Initial repository description (context only):\n````\n")
+			summaryContext.WriteString(summary)
+			summaryContext.WriteString("\n````")
+		}
+		if summaryContext.Len() > 0 {
+			material.Sections = append(material.Sections, llm.PromptSection{
+				Name:         "initial repository summary",
+				Body:         summaryContext.String(),
+				TrimPriority: 2,
+			})
+		}
+
+		detail := strings.TrimSpace(diffDetail)
+		if detail != "" {
+			material.Sections = append(material.Sections, llm.PromptSection{
+				Name:         "initial repository snapshot",
+				Prefix:       "Initial tracked content (context only; extract durable concepts rather than quoting repository history):\n````diff\n",
+				Body:         detail,
+				Suffix:       "\n````",
+				TrimPriority: 3,
+			})
+		}
 	}
 
 	if m.PromptExecutor == nil {
