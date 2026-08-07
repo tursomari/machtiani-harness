@@ -515,14 +515,17 @@ func (a *DefaultAgent) translateAndExecute(ctx context.Context, resp minisweagen
 	})
 
 	timeout := a.execTimeout()
-	execCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	result, execErr := a.RunConfig.Env.Execute(execCtx, command, a.workingDirectory())
+	result, execErr := a.executeCommand(ctx, command, timeout)
 
 	outcome := executionOutcome{Command: command, Result: result}
 
-	if execCtx.Err() == context.DeadlineExceeded {
+	var agentErr minisweagent.AgentError
+	if errors.As(execErr, &agentErr) {
+		feedback := formatCommandFeedback(command, result, agentErr.Error())
+		a.addMessage("user", feedback, nil)
+		return outcome, agentErr
+	}
+	if errors.Is(execErr, context.DeadlineExceeded) {
 		feedback := formatCommandFeedback(command, result, fmt.Sprintf("Command timed out after %s", timeout))
 		a.addMessage("user", feedback, nil)
 		return outcome, &minisweagent.ExecutionTimeoutError{Message: fmt.Sprintf("command timed out after %s", timeout)}
@@ -548,6 +551,28 @@ func (a *DefaultAgent) translateAndExecute(ctx context.Context, resp minisweagen
 	}
 
 	return outcome, nil
+}
+
+func (a *DefaultAgent) executeCommand(ctx context.Context, command string, timeout time.Duration) (minisweagent.ExecuteResult, error) {
+	if async, ok := a.RunConfig.Env.(minisweagent.AsyncEnvironment); ok {
+		execCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		running, err := async.Start(execCtx, command, a.workingDirectory())
+		if err == nil {
+			return a.waitForRunningCommand(ctx, command, a.State.commandsExecuted, running, timeout)
+		}
+		if !errors.Is(err, minisweagent.ErrAsyncExecutionUnsupported) {
+			return minisweagent.ExecuteResult{}, err
+		}
+	}
+
+	execCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	result, err := a.RunConfig.Env.Execute(execCtx, command, a.workingDirectory())
+	if execCtx.Err() == context.DeadlineExceeded {
+		return result, context.DeadlineExceeded
+	}
+	return result, err
 }
 
 type executionOutcome struct {

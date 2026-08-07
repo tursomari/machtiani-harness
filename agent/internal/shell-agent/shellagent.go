@@ -179,6 +179,10 @@ func Run(ctx context.Context, req Request) (Result, error) {
 		trajFilePath = trajPath
 		opts = append(opts, agents.WithCheckpointDir(trajDirPath))
 	}
+	if req.Config != nil && req.Config.CommandSupervisorAfter > 0 {
+		reviewer := newAgentCommandReviewer(req, trajDirPath)
+		opts = append(opts, agents.WithCommandReviewer(reviewer.Review))
+	}
 	agent := agents.NewDefaultAgent(req.Model, req.Env, req.Config, req.Prompts, opts...)
 
 	// Set the interrupt step for deterministic checkpointing.

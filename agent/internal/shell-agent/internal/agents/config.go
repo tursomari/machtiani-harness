@@ -1,7 +1,9 @@
 package agents
 
 import (
+	"context"
 	"strings"
+	"time"
 
 	"github.com/tursomari/machtiani/agent/internal/shell-agent/internal/run"
 	"github.com/tursomari/machtiani/agent/internal/shell-agent/pkg/minisweagent"
@@ -9,39 +11,46 @@ import (
 
 // AgentRunConfig holds immutable configuration for an agent run.
 type AgentRunConfig struct {
-	Model                minisweagent.Model
-	Env                  minisweagent.Environment
-	Task                 string
-	SessionID            string
-	MaxInputTokens       int
-	PlannerTurn          int
-	EnforceEarlyCommands bool
-	MaxSteps              int
-	FinalizeRemainingSteps int
-	AnswerTag            string
-	CommandTag           string
-	Verbose              bool
-	SystemPrompt         string
-	SystemPromptCached   bool
-	NewModel             func() (minisweagent.Model, error)
+	Model                           minisweagent.Model
+	Env                             minisweagent.Environment
+	Task                            string
+	SessionID                       string
+	MaxInputTokens                  int
+	PlannerTurn                     int
+	EnforceEarlyCommands            bool
+	MaxSteps                        int
+	FinalizeRemainingSteps          int
+	CommandSupervisorAfter          int
+	CommandSupervisorTimeout        int
+	CommandSupervisorFailureLimit   int
+	CommandSupervisorMaxSteps       int
+	CommandSupervisorDeadlineBuffer int
+	CommandReviewer                 CommandReviewer
+	Clock                           CommandClock
+	AnswerTag                       string
+	CommandTag                      string
+	Verbose                         bool
+	SystemPrompt                    string
+	SystemPromptCached              bool
+	NewModel                        func() (minisweagent.Model, error)
 	// CheckpointDir is the directory where per-step trajectory checkpoints are written.
 	// When empty, no checkpointing occurs.
 	CheckpointDir string
-	State                *AgentRunState
+	State         *AgentRunState
 }
 
 // AgentRunState holds mutable runtime state for an agent run.
 type AgentRunState struct {
-	Messages                 []minisweagent.Message
-	Prompts                  *minisweagent.PromptsConfig
-	ExtraVars                map[string]interface{}
-	stepCounter              int
-	commandsExecuted         int
-	lastNonEmptyOutput       string
-	finalizeRequested        bool
-	consecutiveFormatErrors  int
+	Messages                     []minisweagent.Message
+	Prompts                      *minisweagent.PromptsConfig
+	ExtraVars                    map[string]interface{}
+	stepCounter                  int
+	commandsExecuted             int
+	lastNonEmptyOutput           string
+	finalizeRequested            bool
+	consecutiveFormatErrors      int
 	consecutiveFinalizeReminders int
-	InterruptStep            int
+	InterruptStep                int
 }
 
 const maxFinalizeReminders = 3
@@ -140,8 +149,13 @@ func (a *DefaultAgent) RestoreResumeState(rs *run.ResumeState) {
 // ShellAgentConfig builds a minisweagent.ShellAgentConfig from the AgentRunConfig fields.
 func (rc *AgentRunConfig) ShellAgentConfig() *minisweagent.ShellAgentConfig {
 	return &minisweagent.ShellAgentConfig{
-		MaxSteps:              rc.MaxSteps,
-		FinalizeRemainingSteps: rc.FinalizeRemainingSteps,
+		MaxSteps:                        rc.MaxSteps,
+		FinalizeRemainingSteps:          rc.FinalizeRemainingSteps,
+		CommandSupervisorAfter:          rc.CommandSupervisorAfter,
+		CommandSupervisorTimeout:        rc.CommandSupervisorTimeout,
+		CommandSupervisorFailureLimit:   rc.CommandSupervisorFailureLimit,
+		CommandSupervisorMaxSteps:       rc.CommandSupervisorMaxSteps,
+		CommandSupervisorDeadlineBuffer: rc.CommandSupervisorDeadlineBuffer,
 	}
 }
 
@@ -194,7 +208,7 @@ func NewAgentRunConfig(model minisweagent.Model, env minisweagent.Environment, t
 	}
 
 	cfg.State = &AgentRunState{
-		Messages:  make([]minisweagent.Message, 0),
+		Messages: make([]minisweagent.Message, 0),
 		ExtraVars: map[string]interface{}{
 			"answer_tag":  cfg.AnswerTag,
 			"AnswerTag":   cfg.AnswerTag,
@@ -287,6 +301,64 @@ func WithNewModel(fn func() (minisweagent.Model, error)) DefaultAgentOption {
 		}
 		a.RunConfig.NewModel = fn
 	}
+}
+
+// WithCommandReviewer installs the callback used for each running-command
+// review. A nil callback leaves supervision inactive while preserving the hard
+// command deadline.
+func WithCommandReviewer(reviewer CommandReviewer) DefaultAgentOption {
+	return func(a *DefaultAgent) {
+		a.RunConfig.CommandReviewer = reviewer
+	}
+}
+
+// WithCommandClock overrides command scheduling for deterministic tests.
+func WithCommandClock(clock CommandClock) DefaultAgentOption {
+	return func(a *DefaultAgent) {
+		if clock != nil {
+			a.RunConfig.Clock = clock
+		}
+	}
+}
+
+// CommandReviewer investigates a command that is still running and returns an
+// explicit disposition when it remains active.
+type CommandReviewer func(context.Context, CommandReviewRequest) (CommandReviewResult, error)
+
+type CommandReviewReason string
+
+const (
+	CommandReviewRegular  CommandReviewReason = "regular"
+	CommandReviewDeadline CommandReviewReason = "deadline"
+)
+
+type CommandDisposition string
+
+const (
+	CommandDispositionContinue CommandDisposition = "continue"
+	CommandDispositionCancel   CommandDisposition = "cancel"
+)
+
+// CommandReviewRequest contains the live process and deadline state supplied
+// to one supervisor review.
+type CommandReviewRequest struct {
+	Command             string
+	CommandNumber       int
+	ReviewNumber        int
+	Reason              CommandReviewReason
+	ConsecutiveFailures int
+	PID                 int
+	ProcessGroupID      int
+	StartedAt           time.Time
+	Deadline            time.Time
+	Remaining           time.Duration
+	Output              minisweagent.CommandOutputSnapshot
+}
+
+// CommandReviewResult is the supervisor's structured final decision.
+type CommandReviewResult struct {
+	Disposition CommandDisposition `json:"disposition"`
+	Summary     string             `json:"summary"`
 }
 
 // WithSessionID sets the session identifier. When sessionID is empty the option is a no-op.

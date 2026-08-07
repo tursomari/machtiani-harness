@@ -74,28 +74,34 @@ func NewDefaultAgent(model minisweagent.Model, env minisweagent.Environment, cfg
 	agent := &DefaultAgent{}
 
 	agent.RunConfig = &AgentRunConfig{
-		Model:                model,
-		Env:                  env,
-		Task:                 "",
-		SessionID:            sessionID,
-		MaxInputTokens:       0,
-		PlannerTurn:          0,
-		EnforceEarlyCommands: false,
-		MaxSteps:              cfg.MaxSteps,
-		FinalizeRemainingSteps: cfg.FinalizeRemainingSteps,
-		AnswerTag:            "answer",
-		CommandTag:           "command",
-		Verbose:              false,
-		SystemPrompt:         "",
-		SystemPromptCached:   false,
+		Model:                           model,
+		Env:                             env,
+		Task:                            "",
+		SessionID:                       sessionID,
+		MaxInputTokens:                  0,
+		PlannerTurn:                     0,
+		EnforceEarlyCommands:            false,
+		MaxSteps:                        cfg.MaxSteps,
+		FinalizeRemainingSteps:          cfg.FinalizeRemainingSteps,
+		CommandSupervisorAfter:          cfg.CommandSupervisorAfter,
+		CommandSupervisorTimeout:        cfg.CommandSupervisorTimeout,
+		CommandSupervisorFailureLimit:   cfg.CommandSupervisorFailureLimit,
+		CommandSupervisorMaxSteps:       cfg.CommandSupervisorMaxSteps,
+		CommandSupervisorDeadlineBuffer: cfg.CommandSupervisorDeadlineBuffer,
+		Clock:                           realCommandClock{},
+		AnswerTag:                       "answer",
+		CommandTag:                      "command",
+		Verbose:                         false,
+		SystemPrompt:                    "",
+		SystemPromptCached:              false,
 		NewModel: func() (minisweagent.Model, error) {
 			return model, nil
 		},
 	}
 
 	agent.State = &AgentRunState{
-		Messages:  make([]minisweagent.Message, 0),
-		Prompts:   effectivePrompts,
+		Messages: make([]minisweagent.Message, 0),
+		Prompts:  effectivePrompts,
 		ExtraVars: map[string]interface{}{
 			"answer_tag":  "answer",
 			"AnswerTag":   "answer",
@@ -139,4 +145,3 @@ func (a *DefaultAgent) Config() interface{} {
 	}
 	return a.RunConfig.ShellAgentConfig()
 }
-

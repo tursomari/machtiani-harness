@@ -24,6 +24,15 @@ type ExecutionTimeoutError struct {
 func (e *ExecutionTimeoutError) Error() string       { return e.Message }
 func (e *ExecutionTimeoutError) IsTerminating() bool { return false }
 
+// ExecutionStoppedError indicates a command was stopped by its supervisor.
+// The parent agent may inspect the feedback and choose another approach.
+type ExecutionStoppedError struct {
+	Message string
+}
+
+func (e *ExecutionStoppedError) Error() string       { return e.Message }
+func (e *ExecutionStoppedError) IsTerminating() bool { return false }
+
 // Submitted terminates the loop with a success result provided by the model or environment output.
 type Submitted struct {
 	Result string
