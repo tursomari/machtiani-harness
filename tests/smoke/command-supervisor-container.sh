@@ -6,7 +6,7 @@ export PATH="$HOME/.local/bin:$PATH"
 mkdir -p "$HOME" /workspace
 
 echo "==> Installing committed mct-agent for command-supervisor smoke..."
-(cd /fixtures/mct-source && nix run .#install -- --prefix "$HOME/.local")
+(cd /fixtures/mct-source && nix run path:.#install -- --prefix "$HOME/.local")
 
 cd /workspace
 git init --quiet --initial-branch=main
