@@ -10,6 +10,9 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	internalgit "github.com/tursomari/machtiani/agent/internal/git"
 	"github.com/tursomari/machtiani/agent/internal/shell-agent/pkg/minisweagent"
@@ -69,6 +72,19 @@ func (e *LocalEnvironment) Close() error {
 
 // Execute runs a provided command with a context that may enforce a timeout.
 func (e *LocalEnvironment) Execute(ctx context.Context, command, cwd string) (minisweagent.ExecuteResult, error) {
+	running, err := e.Start(ctx, command, cwd)
+	if err != nil {
+		return minisweagent.ExecuteResult{}, err
+	}
+	return running.Wait()
+}
+
+// Start launches a command in its own process group and returns its observable
+// lifecycle without waiting for completion.
+func (e *LocalEnvironment) Start(ctx context.Context, command, cwd string) (minisweagent.RunningCommand, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	workingDir := cwd
 	if workingDir == "" {
 		workingDir = e.cwd
@@ -76,22 +92,22 @@ func (e *LocalEnvironment) Execute(ctx context.Context, command, cwd string) (mi
 
 	absWorkDir, err := filepath.Abs(workingDir)
 	if err != nil {
-		return minisweagent.ExecuteResult{}, fmt.Errorf("resolve working directory: %w", err)
+		return nil, fmt.Errorf("resolve working directory: %w", err)
 	}
 
 	if _, err := internalgit.RepoRoot(absWorkDir); err != nil {
-		return minisweagent.ExecuteResult{}, fmt.Errorf("local environment requires a git repository; %q is not a git repository: %w", absWorkDir, err)
+		return nil, fmt.Errorf("local environment requires a git repository; %q is not a git repository: %w", absWorkDir, err)
 	}
 
 	tmpFile, err := os.CreateTemp("", "mini-swe-cmd-*.sh")
 	if err != nil {
-		return minisweagent.ExecuteResult{}, fmt.Errorf("create temp script: %w", err)
+		return nil, fmt.Errorf("create temp script: %w", err)
 	}
 	scriptPath := tmpFile.Name()
-	defer os.Remove(scriptPath)
 	if err := tmpFile.Chmod(0o700); err != nil {
 		tmpFile.Close()
-		return minisweagent.ExecuteResult{}, fmt.Errorf("chmod temp script: %w", err)
+		_ = os.Remove(scriptPath)
+		return nil, fmt.Errorf("chmod temp script: %w", err)
 	}
 
 	scriptBuilder := &strings.Builder{}
@@ -105,13 +121,16 @@ func (e *LocalEnvironment) Execute(ctx context.Context, command, cwd string) (mi
 	scriptContent := scriptBuilder.String()
 	if _, err := tmpFile.WriteString(scriptContent); err != nil {
 		tmpFile.Close()
-		return minisweagent.ExecuteResult{}, fmt.Errorf("write temp script: %w", err)
+		_ = os.Remove(scriptPath)
+		return nil, fmt.Errorf("write temp script: %w", err)
 	}
 	if err := tmpFile.Close(); err != nil {
-		return minisweagent.ExecuteResult{}, fmt.Errorf("close temp script: %w", err)
+		_ = os.Remove(scriptPath)
+		return nil, fmt.Errorf("close temp script: %w", err)
 	}
 
-	cmd := exec.CommandContext(ctx, "bash", scriptPath)
+	cmd := exec.Command("bash", scriptPath)
+	configureProcessGroup(cmd)
 	if absWorkDir != "" {
 		cmd.Dir = absWorkDir
 	}
@@ -119,67 +138,54 @@ func (e *LocalEnvironment) Execute(ctx context.Context, command, cwd string) (mi
 	env := os.Environ()
 	cmd.Env = env
 
-	maxBytes := 65536
+	maxBytes := e.config.MaxCommandOutputBytes
+	if maxBytes <= 0 {
+		maxBytes = 65536
+	}
 
-	var buf bytes.Buffer
-	cw := &combinedWriter{buf: &buf, limit: maxBytes}
+	cw := &combinedWriter{limit: maxBytes}
 	cmd.Stdout = cw
 	cmd.Stderr = cw
-	err = cmd.Run()
-
-	output := buf.String()
-	exitCode := 0
-	if status := cmd.ProcessState; status != nil {
-		exitCode = status.ExitCode()
+	if err := cmd.Start(); err != nil {
+		_ = os.Remove(scriptPath)
+		return nil, fmt.Errorf("start command: %w", err)
 	}
 
-	if cw.overflow > 0 {
-		output += fmt.Sprintf("\n[... output truncated to %d bytes]", maxBytes)
+	running := &localRunningCommand{
+		cmd:           cmd,
+		ctx:           ctx,
+		pid:           cmd.Process.Pid,
+		pgid:          processGroupID(cmd),
+		startedAt:     time.Now(),
+		output:        cw,
+		scriptPath:    scriptPath,
+		scriptContent: scriptContent,
+		maxBytes:      maxBytes,
+		done:          make(chan struct{}),
 	}
-
-	result := minisweagent.ExecuteResult{
-		Output:     output,
-		ReturnCode: exitCode,
-	}
-
-	metaBuilder := &strings.Builder{}
-	metaBuilder.WriteString("[mini-swe] script path: ")
-	metaBuilder.WriteString(scriptPath)
-	metaBuilder.WriteString("\n[mini-swe] script contents:\n")
-	metaBuilder.WriteString(scriptContent)
-	if !strings.HasSuffix(scriptContent, "\n") {
-		metaBuilder.WriteString("\n")
-	}
-	if cw.overflow > 0 {
-		metaBuilder.WriteString(fmt.Sprintf("\n[mini-swe] output truncated: %d bytes captured, %d bytes overflowed (limit %d bytes)", maxBytes, cw.overflow, maxBytes))
-	}
-	result.Metadata = metaBuilder.String()
-
-	if ctx.Err() == context.DeadlineExceeded {
-		result.ReturnCode = -1
-		return result, nil
-	}
-
-	if err != nil {
-		if _, ok := err.(*exec.ExitError); ok {
-			err = nil
-		}
-	}
-
-	return result, err
+	go running.reap()
+	go running.killOnContextDone()
+	return running, nil
 }
 
 // combinedWriter is an io.Writer that writes to a buffer up to a limit,
 // then silently counts overflow bytes without storing them.
 type combinedWriter struct {
-	buf      *bytes.Buffer
+	mu       sync.Mutex
+	buf      bytes.Buffer
 	limit    int
 	overflow int64
+	total    int64
+	updated  time.Time
 }
 
 // Write implements io.Writer. Bytes beyond the configured limit are counted
 // but discarded so that the underlying command does not block.
 func (w *combinedWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.total += int64(len(p))
+	w.updated = time.Now()
 	if w.buf.Len() >= w.limit {
 		n := len(p)
 		w.overflow += int64(n)
@@ -192,6 +198,104 @@ func (w *combinedWriter) Write(p []byte) (int, error) {
 	n, err := w.buf.Write(p[:remaining])
 	w.overflow += int64(len(p) - n)
 	return len(p), err
+}
+
+func (w *combinedWriter) snapshot() minisweagent.CommandOutputSnapshot {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return minisweagent.CommandOutputSnapshot{
+		Output:        w.buf.String(),
+		CapturedBytes: int64(w.buf.Len()),
+		TotalBytes:    w.total,
+		OverflowBytes: w.overflow,
+		UpdatedAt:     w.updated,
+	}
+}
+
+type localRunningCommand struct {
+	cmd           *exec.Cmd
+	ctx           context.Context
+	pid           int
+	pgid          int
+	startedAt     time.Time
+	output        *combinedWriter
+	scriptPath    string
+	scriptContent string
+	maxBytes      int
+	done          chan struct{}
+	killed        atomic.Bool
+	mu            sync.Mutex
+	result        minisweagent.ExecuteResult
+	err           error
+}
+
+func (c *localRunningCommand) PID() int              { return c.pid }
+func (c *localRunningCommand) ProcessGroupID() int   { return c.pgid }
+func (c *localRunningCommand) StartedAt() time.Time  { return c.startedAt }
+func (c *localRunningCommand) Done() <-chan struct{} { return c.done }
+func (c *localRunningCommand) Snapshot() minisweagent.CommandOutputSnapshot {
+	return c.output.snapshot()
+}
+
+func (c *localRunningCommand) Wait() (minisweagent.ExecuteResult, error) {
+	<-c.done
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.result, c.err
+}
+
+func (c *localRunningCommand) Kill() error {
+	c.killed.Store(true)
+	return killProcessGroup(c.cmd, c.pgid)
+}
+
+func (c *localRunningCommand) killOnContextDone() {
+	select {
+	case <-c.ctx.Done():
+		_ = c.Kill()
+	case <-c.done:
+	}
+}
+
+func (c *localRunningCommand) reap() {
+	err := c.cmd.Wait()
+	snapshot := c.output.snapshot()
+	result := minisweagent.ExecuteResult{Output: snapshot.Output, ReturnCode: 0}
+	if status := c.cmd.ProcessState; status != nil {
+		result.ReturnCode = status.ExitCode()
+	}
+	if c.killed.Load() || c.ctx.Err() != nil {
+		result.ReturnCode = -1
+	}
+	if snapshot.OverflowBytes > 0 {
+		result.Output += fmt.Sprintf("\n[... output truncated to %d bytes]", c.maxBytes)
+	}
+	result.Metadata = commandMetadata(c.scriptPath, c.scriptContent, snapshot, c.maxBytes)
+	if _, ok := err.(*exec.ExitError); ok {
+		err = nil
+	}
+	_ = os.Remove(c.scriptPath)
+
+	c.mu.Lock()
+	c.result = result
+	c.err = err
+	c.mu.Unlock()
+	close(c.done)
+}
+
+func commandMetadata(scriptPath, scriptContent string, snapshot minisweagent.CommandOutputSnapshot, maxBytes int) string {
+	metaBuilder := &strings.Builder{}
+	metaBuilder.WriteString("[mini-swe] script path: ")
+	metaBuilder.WriteString(scriptPath)
+	metaBuilder.WriteString("\n[mini-swe] script contents:\n")
+	metaBuilder.WriteString(scriptContent)
+	if !strings.HasSuffix(scriptContent, "\n") {
+		metaBuilder.WriteString("\n")
+	}
+	if snapshot.OverflowBytes > 0 {
+		metaBuilder.WriteString(fmt.Sprintf("\n[mini-swe] output truncated: %d bytes captured, %d bytes overflowed (limit %d bytes)", snapshot.CapturedBytes, snapshot.OverflowBytes, maxBytes))
+	}
+	return metaBuilder.String()
 }
 
 // compile-time check: combinedWriter implements io.Writer

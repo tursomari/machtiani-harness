@@ -3,14 +3,139 @@ package environments
 import (
 	"context"
 	"errors"
-	"os/exec"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/tursomari/machtiani/agent/internal/shell-agent/pkg/minisweagent"
 )
+
+func TestStartExposesRunningCommandLifecycle(t *testing.T) {
+	repo := initTestRepo(t)
+	env, err := NewLocalEnvironment(&minisweagent.EnvironmentConfig{CommandTimeout: 5})
+	if err != nil {
+		t.Fatalf("NewLocalEnvironment: %v", err)
+	}
+
+	running, err := env.Start(context.Background(), "printf 'ready\\n'; sleep 30", repo)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if running.PID() <= 0 {
+		t.Fatalf("PID = %d, want positive", running.PID())
+	}
+	if running.ProcessGroupID() <= 0 {
+		t.Fatalf("PGID = %d, want positive", running.ProcessGroupID())
+	}
+	if running.StartedAt().IsZero() {
+		t.Fatal("StartedAt is zero")
+	}
+
+	waitForOutput(t, running, "ready")
+	snapshot := running.Snapshot()
+	if snapshot.CapturedBytes == 0 || snapshot.TotalBytes < snapshot.CapturedBytes {
+		t.Fatalf("unexpected output progress: %+v", snapshot)
+	}
+	if snapshot.UpdatedAt.IsZero() {
+		t.Fatal("output UpdatedAt is zero after output")
+	}
+
+	if err := running.Kill(); err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+	result, err := running.Wait()
+	if err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+	if result.ReturnCode != -1 {
+		t.Fatalf("ReturnCode = %d, want -1 after kill", result.ReturnCode)
+	}
+	select {
+	case <-running.Done():
+	default:
+		t.Fatal("Done channel is not closed after Wait")
+	}
+}
+
+func TestRunningCommandKillStopsEntireProcessGroup(t *testing.T) {
+	repo := initTestRepo(t)
+	env, err := NewLocalEnvironment(&minisweagent.EnvironmentConfig{CommandTimeout: 5})
+	if err != nil {
+		t.Fatalf("NewLocalEnvironment: %v", err)
+	}
+
+	running, err := env.Start(context.Background(), "sleep 30 & child=$!; printf '%s\\n' \"$child\"; wait", repo)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	output := waitForOutput(t, running, "\n")
+	childPID, err := strconv.Atoi(strings.TrimSpace(output))
+	if err != nil {
+		t.Fatalf("parse child PID from %q: %v", output, err)
+	}
+	if childPGID, err := syscall.Getpgid(childPID); err != nil || childPGID != running.ProcessGroupID() {
+		t.Fatalf("child PGID = %d, %v; want %d", childPGID, err, running.ProcessGroupID())
+	}
+
+	if err := running.Kill(); err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+	if _, err := running.Wait(); err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for processRunning(childPID) && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if processRunning(childPID) {
+		t.Fatalf("child process %d still running after process-group kill", childPID)
+	}
+}
+
+func initTestRepo(t *testing.T) string {
+	t.Helper()
+	repo := t.TempDir()
+	cmd := exec.Command("git", "init", "--quiet")
+	cmd.Dir = repo
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init failed: %v (%s)", err, output)
+	}
+	return repo
+}
+
+func waitForOutput(t *testing.T, running minisweagent.RunningCommand, needle string) string {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		output := running.Snapshot().Output
+		if strings.Contains(output, needle) {
+			return output
+		}
+		select {
+		case <-running.Done():
+			t.Fatalf("command finished before producing %q; output %q", needle, output)
+		default:
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for output %q; got %q", needle, running.Snapshot().Output)
+	return ""
+}
+
+func processRunning(pid int) bool {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return false
+	}
+	fields := strings.Fields(string(data))
+	return len(fields) > 2 && fields[2] != "Z"
+}
 
 func TestExecuteCreatesScriptAndHandlesQuotes(t *testing.T) {
 	tempRepo := t.TempDir()

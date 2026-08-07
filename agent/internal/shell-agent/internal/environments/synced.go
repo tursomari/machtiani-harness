@@ -12,10 +12,10 @@ import (
 // It implements the Environment interface while delegating to the underlying
 // environment and maintaining sync progress metrics.
 type SyncedEnvironment struct {
-	underlying    minisweagent.Environment
-	syncProgress  atomic.Value // *float64
-	syncStatus    atomic.Value // string
-	syncMutex     sync.Mutex
+	underlying   minisweagent.Environment
+	syncProgress atomic.Value // *float64
+	syncStatus   atomic.Value // string
+	syncMutex    sync.Mutex
 }
 
 // NewSyncedEnvironment wraps an environment to track sync progress.
@@ -35,6 +35,16 @@ func (e *SyncedEnvironment) Config() interface{} {
 // Execute delegates to the underlying environment.
 func (e *SyncedEnvironment) Execute(ctx context.Context, command, cwd string) (minisweagent.ExecuteResult, error) {
 	return e.underlying.Execute(ctx, command, cwd)
+}
+
+// Start delegates observable command execution when the underlying
+// environment supports it.
+func (e *SyncedEnvironment) Start(ctx context.Context, command, cwd string) (minisweagent.RunningCommand, error) {
+	async, ok := e.underlying.(minisweagent.AsyncEnvironment)
+	if !ok {
+		return nil, minisweagent.ErrAsyncExecutionUnsupported
+	}
+	return async.Start(ctx, command, cwd)
 }
 
 // GetTemplateVars delegates to the underlying environment.

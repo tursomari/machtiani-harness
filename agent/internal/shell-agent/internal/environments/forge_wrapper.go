@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/tursomari/machtiani/agent/internal/shell-agent/pkg/minisweagent"
@@ -70,6 +71,60 @@ func (w *ForgeWrapper) Execute(ctx context.Context, command, cwd string) (minisw
 	}
 
 	return result, err
+}
+
+// Start preserves the inner environment's observable command lifecycle. Forge
+// commands retain their metadata and cancellation-resistant launch context;
+// malformed forge pipelines fall back to Execute for the existing diagnostic.
+func (w *ForgeWrapper) Start(ctx context.Context, command, cwd string) (minisweagent.RunningCommand, error) {
+	trimmed := strings.TrimSpace(command)
+	if !strings.HasPrefix(trimmed, forgePrefix) && regexp.MustCompile("(\\|\\s*|;\\s*|&&\\s*|\\|\\|\\s*|xargs\\s+)"+forgePrefix+"(\\s|$)").MatchString(trimmed) {
+		return nil, minisweagent.ErrAsyncExecutionUnsupported
+	}
+	async, ok := w.inner.(minisweagent.AsyncEnvironment)
+	if !ok {
+		return nil, minisweagent.ErrAsyncExecutionUnsupported
+	}
+	if !strings.HasPrefix(trimmed, forgePrefix) {
+		return async.Start(ctx, command, cwd)
+	}
+	running, err := async.Start(context.WithoutCancel(ctx), command, cwd)
+	if err != nil {
+		return nil, err
+	}
+	return &forgeRunningCommand{
+		RunningCommand: running,
+		noteBytes:      len(strings.TrimSpace(strings.TrimPrefix(trimmed, forgePrefix))),
+		startedAt:      time.Now(),
+	}, nil
+}
+
+type forgeRunningCommand struct {
+	minisweagent.RunningCommand
+	noteBytes int
+	startedAt time.Time
+	once      sync.Once
+	result    minisweagent.ExecuteResult
+	err       error
+}
+
+func (c *forgeRunningCommand) Wait() (minisweagent.ExecuteResult, error) {
+	c.once.Do(func() {
+		c.result, c.err = c.RunningCommand.Wait()
+		meta := forgeMetadata{
+			Action:      "forge",
+			ExitCode:    c.result.ReturnCode,
+			DurationMS:  time.Since(c.startedAt).Milliseconds(),
+			NoteBytes:   c.noteBytes,
+			OutputBytes: len(c.result.Output),
+		}
+		if payload, err := json.Marshal(meta); err == nil {
+			c.result.Metadata = string(payload)
+		} else {
+			c.result.Metadata = fmt.Sprintf(`{"error":"marshal metadata: %s"}`, err.Error())
+		}
+	})
+	return c.result, c.err
 }
 
 // Config delegates to the inner environment.

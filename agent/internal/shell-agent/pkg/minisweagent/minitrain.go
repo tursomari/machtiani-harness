@@ -1,6 +1,10 @@
 package minisweagent
 
-import "context"
+import (
+	"context"
+	"errors"
+	"time"
+)
 
 // QueryOption configures optional behaviour for model queries.
 type QueryOption func(*queryOptions)
@@ -31,8 +35,40 @@ type Environment interface {
 	Config() interface{}
 	Execute(ctx context.Context, command, cwd string) (ExecuteResult, error)
 	GetTemplateVars() map[string]interface{}
-	GetSyncProgress() float64  // Returns 0.0 to 1.0; optional (default 1.0)
-	GetSyncStatus() string     // Returns status description; optional (default "")
+	GetSyncProgress() float64 // Returns 0.0 to 1.0; optional (default 1.0)
+	GetSyncStatus() string    // Returns status description; optional (default "")
+}
+
+// AsyncEnvironment can expose a command while it is still running. Callers
+// may fall back to Environment.Execute when this optional interface is absent.
+type AsyncEnvironment interface {
+	Start(ctx context.Context, command, cwd string) (RunningCommand, error)
+}
+
+// ErrAsyncExecutionUnsupported asks a caller to use Environment.Execute for
+// an environment or command that cannot expose a running lifecycle.
+var ErrAsyncExecutionUnsupported = errors.New("asynchronous command execution is not supported")
+
+// RunningCommand is a started shell command whose output and process identity
+// remain observable until Wait returns.
+type RunningCommand interface {
+	PID() int
+	ProcessGroupID() int
+	StartedAt() time.Time
+	Snapshot() CommandOutputSnapshot
+	Done() <-chan struct{}
+	Wait() (ExecuteResult, error)
+	Kill() error
+}
+
+// CommandOutputSnapshot is a concurrency-safe point-in-time view of a running
+// command's combined stdout and stderr.
+type CommandOutputSnapshot struct {
+	Output        string
+	CapturedBytes int64
+	TotalBytes    int64
+	OverflowBytes int64
+	UpdatedAt     time.Time
 }
 
 // ExecuteResult captures the outcome of a command executed by the environment.
