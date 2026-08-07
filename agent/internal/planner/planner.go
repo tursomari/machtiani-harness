@@ -1396,7 +1396,7 @@ func (c *Client) finalizePromptFallback(goal string, transcript string) string {
 	_ = transcript
 	var b strings.Builder
 	b.WriteString("[answer_the_user] Reply to the user now based on the conversation so far.\n\n")
-	b.WriteString("Answer for the user's current need. Do not make further work requests. Use relevant prior `work_result` messages when helpful. If the latest user turn calls for a narrow or conversational reply, answer naturally instead of re-summarizing the whole session. If the latest user turn asks for a summary or wrap-up, provide it. If important uncertainty remains, mention it briefly.")
+	b.WriteString("Answer for the user's current need. Align your answer with the latest user message. If the latest message is an unrelated new ask, answer only that new ask and do not continue prior work. If the latest message is a natural continuation such as continue, carry forward the existing task. Do not make further work requests. Use relevant prior `work_result` messages when helpful. If the latest user turn calls for a narrow or conversational reply, answer naturally instead of re-summarizing the whole session. If the latest user turn asks for a summary or wrap-up, provide it. If important uncertainty remains, mention it briefly.")
 	return b.String()
 }
 
@@ -1405,6 +1405,9 @@ func (c *Client) finalizeTemplate() string {
 		if trimmed := strings.TrimSpace(c.cfg.Prompts.FinalizePrompt); trimmed != "" {
 			return trimmed
 		}
+	}
+	if embedded, err := templates.GetEmbeddedTemplate("planner.finalize_prompt"); err == nil {
+		return embedded
 	}
 	return ""
 }

@@ -12,9 +12,10 @@ import (
 
 	"github.com/tursomari/machtiani/agent/internal/conversation"
 	"github.com/tursomari/machtiani/agent/internal/llm"
+	"github.com/tursomari/machtiani/agent/internal/templates"
 )
 
-const answerTheUserPrompt = "[answer_the_user] Reply to the user now based on the conversation so far.\n\nAnswer for the user's current need. Do not make further work requests. Use relevant prior `work_result` messages when helpful. If the latest user turn calls for a narrow or conversational reply, answer naturally instead of re-summarizing the whole session. If the latest user turn asks for a summary or wrap-up, provide it. If important uncertainty remains, mention it briefly."
+const answerTheUserPrompt = "[answer_the_user] Reply to the user now based on the conversation so far.\n\nAnswer for the user's current need. Align your answer with the latest user message. If the latest message is an unrelated new ask, answer only that new ask and do not continue prior work. If the latest message is a natural continuation such as continue, carry forward the existing task. Do not make further work requests. Use relevant prior `work_result` messages when helpful. If the latest user turn calls for a narrow or conversational reply, answer naturally instead of re-summarizing the whole session. If the latest user turn asks for a summary or wrap-up, provide it. If important uncertainty remains, mention it briefly."
 
 func readRepoFile(t *testing.T, rel string) string {
 	t.Helper()
@@ -1170,6 +1171,41 @@ func TestFinalizePromptOmitsTranscript(t *testing.T) {
 	}
 	if !contains(prompt, "Do not make further work requests.") {
 		t.Fatalf("finalize prompt should block further work requests:\n%s", prompt)
+	}
+}
+
+func TestFinalizeTemplateUsesEmbeddedDefault(t *testing.T) {
+	want, err := templates.GetEmbeddedTemplate("planner.finalize_prompt")
+	if err != nil {
+		t.Fatalf("GetEmbeddedTemplate: %v", err)
+	}
+
+	client := NewClient(ClientConfig{})
+	if got := client.finalizeTemplate(); got != want {
+		t.Fatalf("default finalize template = %q, want embedded template %q", got, want)
+	}
+}
+
+func TestFinalizeTemplatePrefersConfiguredOverride(t *testing.T) {
+	const configured = "configured finalize prompt"
+	client := NewClient(ClientConfig{
+		Prompts: &llm.PlannerPromptsConfig{FinalizePrompt: configured},
+	})
+
+	if got := client.finalizeTemplate(); got != configured {
+		t.Fatalf("finalize template = %q, want configured override %q", got, configured)
+	}
+}
+
+func TestFinalizePromptFallbackMatchesEmbeddedDefault(t *testing.T) {
+	want, err := templates.GetEmbeddedTemplate("planner.finalize_prompt")
+	if err != nil {
+		t.Fatalf("GetEmbeddedTemplate: %v", err)
+	}
+
+	client := NewClient(ClientConfig{})
+	if got := client.finalizePromptFallback("stale goal", "stale transcript"); got != want {
+		t.Fatalf("finalize fallback = %q, want embedded default %q", got, want)
 	}
 }
 
