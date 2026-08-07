@@ -51,6 +51,23 @@ func (a *DefaultAgent) waitForRunningCommand(
 	reviewTimeout := time.Duration(a.RunConfig.CommandSupervisorTimeout) * time.Second
 	deadlineBuffer := time.Duration(a.RunConfig.CommandSupervisorDeadlineBuffer) * time.Second
 	reviewsEnabled := after > 0 && reviewTimeout > 0 && a.RunConfig.CommandReviewer != nil
+	var trace *commandSupervisorTrace
+	if reviewsEnabled {
+		trace = newCommandSupervisorTrace(
+			a,
+			clock,
+			command,
+			commandNumber,
+			running,
+			deadline,
+			timeout,
+			after,
+			reviewTimeout,
+			deadlineBuffer,
+			a.RunConfig.CommandSupervisorFailureLimit,
+		)
+		trace.emit("command_started")
+	}
 
 	var nextReview time.Time
 	var urgentAt time.Time
@@ -65,7 +82,7 @@ func (a *DefaultAgent) waitForRunningCommand(
 	for {
 		now := clock.Now()
 		if !now.Before(deadline) {
-			return stopRunningCommand(running, &minisweagent.ExecutionTimeoutError{Message: fmt.Sprintf("command timed out after %s", timeout)})
+			return trace.stop(running, &minisweagent.ExecutionTimeoutError{Message: fmt.Sprintf("command timed out after %s", timeout)}, "hard_timeout")
 		}
 
 		eventAt := deadline
@@ -92,16 +109,18 @@ func (a *DefaultAgent) waitForRunningCommand(
 		select {
 		case <-running.Done():
 			timer.Stop()
-			return running.Wait()
+			result, err := running.Wait()
+			trace.completed(result, err, "before_review")
+			return result, err
 		case <-ctx.Done():
 			timer.Stop()
-			return stopRunningCommand(running, ctx.Err())
+			return trace.stop(running, ctx.Err(), "context_cancelled")
 		case <-timer.C():
 		}
 
 		now = clock.Now()
 		if !now.Before(deadline) || reason == "" {
-			return stopRunningCommand(running, &minisweagent.ExecutionTimeoutError{Message: fmt.Sprintf("command timed out after %s", timeout)})
+			return trace.stop(running, &minisweagent.ExecutionTimeoutError{Message: fmt.Sprintf("command timed out after %s", timeout)}, "hard_timeout")
 		}
 		if reason == CommandReviewDeadline {
 			urgentDone = true
@@ -131,35 +150,69 @@ func (a *DefaultAgent) waitForRunningCommand(
 			Output:              running.Snapshot(),
 		}
 		effectiveReviewTimeout := min(reviewTimeout, remaining)
+		reviewStartedAt := clock.Now()
+		trace.emit("review_started", func(event *commandSupervisorLogEvent) {
+			event.ReviewNumber = reviewNumber
+			event.Reason = reason
+			event.ConsecutiveFailures = consecutiveFailures
+			event.ReviewTimeoutMilliseconds = effectiveReviewTimeout.Milliseconds()
+			event.CapturedOutputBytes = request.Output.CapturedBytes
+			event.TotalOutputBytes = request.Output.TotalBytes
+			if !request.Output.UpdatedAt.IsZero() {
+				updatedAt := request.Output.UpdatedAt.UTC()
+				event.OutputUpdatedAt = &updatedAt
+			}
+		})
 		decision, reviewErr, completed := a.performCommandReview(ctx, running, request, effectiveReviewTimeout)
 		if completed {
-			return running.Wait()
+			result, err := running.Wait()
+			trace.completed(result, err, "during_review")
+			return result, err
 		}
 		if ctx.Err() != nil {
-			return stopRunningCommand(running, ctx.Err())
+			return trace.stop(running, ctx.Err(), "context_cancelled")
 		}
 		if reviewErr == nil && decision.Disposition != CommandDispositionContinue && decision.Disposition != CommandDispositionCancel {
 			reviewErr = fmt.Errorf("invalid command supervisor disposition %q", decision.Disposition)
 		}
 		if reviewErr != nil {
 			consecutiveFailures++
+			trace.emit("review_failed", func(event *commandSupervisorLogEvent) {
+				event.ReviewNumber = reviewNumber
+				event.Reason = reason
+				event.ConsecutiveFailures = consecutiveFailures
+				event.ReviewDurationMilliseconds = clock.Now().Sub(reviewStartedAt).Milliseconds()
+				event.ErrorKind = commandSupervisorErrorKind(reviewErr)
+			})
 			if consecutiveFailures >= a.RunConfig.CommandSupervisorFailureLimit {
-				return stopRunningCommand(running, &minisweagent.ExecutionStoppedError{Message: fmt.Sprintf("command stopped after %d consecutive supervisor failures: %v", consecutiveFailures, reviewErr)})
+				return trace.stop(running, &minisweagent.ExecutionStoppedError{Message: fmt.Sprintf("command stopped after %d consecutive supervisor failures: %v", consecutiveFailures, reviewErr)}, "failure_limit")
 			}
 			if !urgentDone {
 				nextReview = clock.Now().Add(after)
 			}
 			continue
 		}
+		trace.emit("review_completed", func(event *commandSupervisorLogEvent) {
+			event.ReviewNumber = reviewNumber
+			event.Reason = reason
+			event.ConsecutiveFailures = consecutiveFailures
+			event.Disposition = decision.Disposition
+			event.ReviewDurationMilliseconds = clock.Now().Sub(reviewStartedAt).Milliseconds()
+		})
 		if decision.Disposition == CommandDispositionCancel {
 			message := "command stopped by supervisor"
 			if decision.Summary != "" {
 				message += ": " + decision.Summary
 			}
-			return stopRunningCommand(running, &minisweagent.ExecutionStoppedError{Message: message})
+			return trace.stop(running, &minisweagent.ExecutionStoppedError{Message: message}, "supervisor_cancel")
 		}
 
 		consecutiveFailures = 0
+		trace.emit("command_continued", func(event *commandSupervisorLogEvent) {
+			event.ReviewNumber = reviewNumber
+			event.Reason = reason
+			event.Disposition = decision.Disposition
+		})
 		if !urgentDone {
 			nextReview = clock.Now().Add(after)
 		}

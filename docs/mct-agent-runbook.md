@@ -126,6 +126,29 @@ Useful artifacts under `$PROJECT_STORE/sessions/<session-id>/`:
 - `trajectory/agent.jsonl` — lower-level step/event log.
 - `mode-plan.json` — parent-session plan state for mode-system runs.
 
+## Temporary command-supervisor monitoring
+
+During internal Device Client validation, command-supervisor lifecycle events
+are appended by default to `/tmp/mct-command-supervisor.jsonl`. Follow the
+current client while it runs with:
+
+```bash
+tail -F /tmp/mct-command-supervisor.jsonl
+```
+
+Each JSONL record identifies the agent process, session, command number,
+command hash, command PID/process group, review number and reason, remaining
+deadline, disposition or failure streak, and final completion/stop outcome.
+The file is created with mode `0600`. It intentionally excludes raw commands,
+command output, prompts, reviewer summaries, and error messages so it does not
+become a second transcript or credential-bearing log. Records from multiple
+runs append to the same file; use `session_id` and `agent_pid` to distinguish
+them.
+
+This always-on `/tmp` diagnostic is temporary internal instrumentation, has no
+configuration flag, and must be removed before the public/open-source release
+as recorded in `ROADMAP.md`.
+
 ## Completion signal
 
 - The best completion check is the presence and contents of `chat/agent-final-answer.md` for the session you care about.

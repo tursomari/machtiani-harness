@@ -150,6 +150,15 @@ chmod +x "$blocker_dir/go"
 
 stdout_file="$smoke_root/stdout"
 stderr_file="$smoke_root/stderr"
+supervisor_log=/tmp/mct-command-supervisor.jsonl
+supervisor_log_offset=$(python3 - "$supervisor_log" <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+print(path.stat().st_size if path.exists() else 0)
+PY
+)
 started=$(date +%s)
 set +e
 (
@@ -202,6 +211,39 @@ while time.time() < deadline:
     time.sleep(0.02)
 else:
     raise SystemExit(f"planted blocker PID {pid} is still running")
+PY
+
+python3 - "$supervisor_log" "$supervisor_log_offset" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+if not path.is_file():
+    raise SystemExit(f"command supervisor diagnostic log missing: {path}")
+with path.open("rb") as handle:
+    handle.seek(int(sys.argv[2]))
+    appended = handle.read().decode("utf-8")
+records = [json.loads(line) for line in appended.splitlines() if line.strip()]
+events = [record.get("event") for record in records]
+expected = [
+    "command_started",
+    "review_started",
+    "review_completed",
+    "command_stopping",
+    "command_stopped",
+]
+if events != expected:
+    raise SystemExit(f"unexpected supervisor diagnostic events: {events!r}")
+if records[2].get("disposition") != "cancel":
+    raise SystemExit(f"missing explicit cancel disposition: {records[2]!r}")
+if records[-1].get("stop_reason") != "supervisor_cancel":
+    raise SystemExit(f"unexpected supervisor stop reason: {records[-1]!r}")
+if records[0].get("pid", 0) <= 0 or records[0].get("process_group_id", 0) <= 0:
+    raise SystemExit(f"missing process identity: {records[0]!r}")
+for sensitive in ("go test ./...", "planted go blocker", "intentionally blocked"):
+    if sensitive in appended:
+        raise SystemExit(f"supervisor diagnostic log leaked sensitive text: {sensitive!r}")
 PY
 
 echo "COMMAND SUPERVISOR SMOKE PASSED: planted go blocker stopped in ${elapsed}s"

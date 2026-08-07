@@ -2,13 +2,120 @@ package agents
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/tursomari/machtiani/agent/internal/shell-agent/pkg/minisweagent"
 )
+
+func TestCommandSupervisorWritesSafeDiagnosticLog(t *testing.T) {
+	clock := newFakeCommandClock(time.Unix(900, 0))
+	running := newFakeRunningCommand(clock.Now())
+	logPath := filepath.Join(t.TempDir(), "command-supervisor.jsonl")
+	reviewed := make(chan struct{}, 1)
+	agent := commandSupervisorTestAgent(clock, func(context.Context, CommandReviewRequest) (CommandReviewResult, error) {
+		reviewed <- struct{}{}
+		return CommandReviewResult{Disposition: CommandDispositionContinue, Summary: "sensitive reviewer summary"}, nil
+	})
+	agent.RunConfig.SessionID = "diagnostic-session"
+	agent.RunConfig.CommandSupervisorLogPath = logPath
+
+	done := runCommandWait(agent, running, time.Hour)
+	clock.waitForActiveTimer(t, clock.Now().Add(10*time.Second))
+	clock.Advance(10 * time.Second)
+	receiveSignal(t, reviewed)
+	clock.waitForActiveTimer(t, clock.Now().Add(10*time.Second))
+	running.complete(minisweagent.ExecuteResult{Output: "done", ReturnCode: 0})
+	result := receiveCommandWait(t, done)
+	if result.err != nil {
+		t.Fatalf("wait error = %v", result.err)
+	}
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read supervisor diagnostic log: %v", err)
+	}
+	for _, secret := range []string{"make test", "working", "sensitive reviewer summary"} {
+		if strings.Contains(string(data), secret) {
+			t.Fatalf("diagnostic log contains sensitive content %q: %s", secret, data)
+		}
+	}
+	info, err := os.Stat(logPath)
+	if err != nil {
+		t.Fatalf("stat supervisor diagnostic log: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("diagnostic log mode = %o, want 600", got)
+	}
+
+	events := readSupervisorLogEvents(t, logPath)
+	wantEvents := []string{"command_started", "review_started", "review_completed", "command_continued", "command_completed"}
+	if len(events) != len(wantEvents) {
+		t.Fatalf("event count = %d, want %d: %+v", len(events), len(wantEvents), events)
+	}
+	for i, want := range wantEvents {
+		if got := events[i]["event"]; got != want {
+			t.Fatalf("event %d = %v, want %q", i, got, want)
+		}
+	}
+	started := events[0]
+	if started["session_id"] != "diagnostic-session" || started["command_sha256"] == "" {
+		t.Fatalf("command_started metadata = %+v", started)
+	}
+	if started["pid"] != float64(123) || started["process_group_id"] != float64(123) {
+		t.Fatalf("command_started process metadata = %+v", started)
+	}
+	completed := events[len(events)-1]
+	if completed["return_code"] != float64(0) {
+		t.Fatalf("command_completed metadata = %+v", completed)
+	}
+}
+
+func TestCommandSupervisorDiagnosticLogFailureDoesNotAffectCommand(t *testing.T) {
+	clock := newFakeCommandClock(time.Unix(950, 0))
+	running := newFakeRunningCommand(clock.Now())
+	reviewed := make(chan struct{}, 1)
+	agent := commandSupervisorTestAgent(clock, func(context.Context, CommandReviewRequest) (CommandReviewResult, error) {
+		reviewed <- struct{}{}
+		return CommandReviewResult{Disposition: CommandDispositionContinue}, nil
+	})
+	agent.RunConfig.CommandSupervisorLogPath = t.TempDir() // Opening a directory for append must fail.
+
+	done := runCommandWait(agent, running, time.Hour)
+	clock.waitForActiveTimer(t, clock.Now().Add(10*time.Second))
+	clock.Advance(10 * time.Second)
+	receiveSignal(t, reviewed)
+	clock.waitForActiveTimer(t, clock.Now().Add(10*time.Second))
+	running.complete(minisweagent.ExecuteResult{ReturnCode: 0})
+	result := receiveCommandWait(t, done)
+	if result.err != nil || result.result.ReturnCode != 0 || running.killCount() != 0 {
+		t.Fatalf("logging failure changed command result: %+v, kill count = %d", result, running.killCount())
+	}
+}
+
+func readSupervisorLogEvents(t *testing.T, path string) []map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read supervisor log: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	events := make([]map[string]any, 0, len(lines))
+	for index, line := range lines {
+		var event map[string]any
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Fatalf("parse supervisor log line %d: %v: %q", index+1, err, line)
+		}
+		events = append(events, event)
+	}
+	return events
+}
 
 func TestCommandSupervisorAllowsUnlimitedExplicitContinues(t *testing.T) {
 	clock := newFakeCommandClock(time.Unix(1_000, 0))
@@ -44,11 +151,13 @@ func TestCommandSupervisorAllowsUnlimitedExplicitContinues(t *testing.T) {
 func TestCommandSupervisorCancelsAfterConsecutiveReviewFailures(t *testing.T) {
 	clock := newFakeCommandClock(time.Unix(2_000, 0))
 	running := newFakeRunningCommand(clock.Now())
+	logPath := filepath.Join(t.TempDir(), "command-supervisor.jsonl")
 	called := make(chan struct{}, 2)
 	agent := commandSupervisorTestAgent(clock, func(context.Context, CommandReviewRequest) (CommandReviewResult, error) {
 		called <- struct{}{}
 		return CommandReviewResult{}, errors.New("provider unavailable")
 	})
+	agent.RunConfig.CommandSupervisorLogPath = logPath
 	done := runCommandWait(agent, running, time.Hour)
 
 	for attempt := 1; attempt <= 2; attempt++ {
@@ -69,6 +178,16 @@ func TestCommandSupervisorCancelsAfterConsecutiveReviewFailures(t *testing.T) {
 	}
 	if running.killCount() != 1 {
 		t.Fatalf("kill count = %d, want 1", running.killCount())
+	}
+	events := readSupervisorLogEvents(t, logPath)
+	if got := events[len(events)-2]["event"]; got != "command_stopping" {
+		t.Fatalf("penultimate event = %v, want command_stopping", got)
+	}
+	if got := events[len(events)-1]["event"]; got != "command_stopped" {
+		t.Fatalf("last event = %v, want command_stopped", got)
+	}
+	if got := events[len(events)-1]["stop_reason"]; got != "failure_limit" {
+		t.Fatalf("stop reason = %v, want failure_limit", got)
 	}
 }
 
@@ -175,12 +294,14 @@ func TestCommandSupervisorTimeoutCountsAsReviewFailure(t *testing.T) {
 func TestCommandCompletionDuringReviewNeedsNoDisposition(t *testing.T) {
 	clock := newFakeCommandClock(time.Unix(6_000, 0))
 	running := newFakeRunningCommand(clock.Now())
+	logPath := filepath.Join(t.TempDir(), "command-supervisor.jsonl")
 	started := make(chan struct{})
 	agent := commandSupervisorTestAgent(clock, func(ctx context.Context, _ CommandReviewRequest) (CommandReviewResult, error) {
 		close(started)
 		<-ctx.Done()
 		return CommandReviewResult{}, ctx.Err()
 	})
+	agent.RunConfig.CommandSupervisorLogPath = logPath
 	done := runCommandWait(agent, running, time.Hour)
 	clock.waitForActiveTimer(t, clock.Now().Add(10*time.Second))
 	clock.Advance(10 * time.Second)
@@ -191,11 +312,17 @@ func TestCommandCompletionDuringReviewNeedsNoDisposition(t *testing.T) {
 	if result.err != nil || result.result.ReturnCode != 0 || running.killCount() != 0 {
 		t.Fatalf("result = %+v, kill count = %d", result, running.killCount())
 	}
+	events := readSupervisorLogEvents(t, logPath)
+	completed := events[len(events)-1]
+	if completed["event"] != "command_completed" || completed["completion_reason"] != "during_review" {
+		t.Fatalf("completion event = %+v", completed)
+	}
 }
 
 func TestCommandDeadlineCannotBeExtendedByActiveReviews(t *testing.T) {
 	clock := newFakeCommandClock(time.Unix(7_000, 0))
 	running := newFakeRunningCommand(clock.Now())
+	logPath := filepath.Join(t.TempDir(), "command-supervisor.jsonl")
 	started := make(chan agentsReviewStart, 2)
 	agent := commandSupervisorTestAgent(clock, func(ctx context.Context, request CommandReviewRequest) (CommandReviewResult, error) {
 		started <- agentsReviewStart{reason: request.Reason, remaining: request.Remaining}
@@ -206,6 +333,7 @@ func TestCommandDeadlineCannotBeExtendedByActiveReviews(t *testing.T) {
 	agent.RunConfig.CommandSupervisorTimeout = 20
 	agent.RunConfig.CommandSupervisorFailureLimit = 4
 	agent.RunConfig.CommandSupervisorDeadlineBuffer = 20
+	agent.RunConfig.CommandSupervisorLogPath = logPath
 	done := runCommandWait(agent, running, 100*time.Second)
 
 	clock.waitForActiveTimer(t, clock.Now().Add(70*time.Second))
@@ -230,6 +358,11 @@ func TestCommandDeadlineCannotBeExtendedByActiveReviews(t *testing.T) {
 	}
 	if got := clock.Now(); !got.Equal(running.StartedAt().Add(100 * time.Second)) {
 		t.Fatalf("command stopped at %s, want exact deadline", got)
+	}
+	events := readSupervisorLogEvents(t, logPath)
+	stopped := events[len(events)-1]
+	if stopped["event"] != "command_stopped" || stopped["stop_reason"] != "hard_timeout" {
+		t.Fatalf("deadline stop event = %+v", stopped)
 	}
 }
 

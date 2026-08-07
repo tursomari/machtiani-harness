@@ -25,14 +25,17 @@ type AgentRunConfig struct {
 	CommandSupervisorFailureLimit   int
 	CommandSupervisorMaxSteps       int
 	CommandSupervisorDeadlineBuffer int
-	CommandReviewer                 CommandReviewer
-	Clock                           CommandClock
-	AnswerTag                       string
-	CommandTag                      string
-	Verbose                         bool
-	SystemPrompt                    string
-	SystemPromptCached              bool
-	NewModel                        func() (minisweagent.Model, error)
+	// CommandSupervisorLogPath is an internal, temporary diagnostic sink. It is
+	// deliberately not exposed through user configuration or CLI flags.
+	CommandSupervisorLogPath string
+	CommandReviewer          CommandReviewer
+	Clock                    CommandClock
+	AnswerTag                string
+	CommandTag               string
+	Verbose                  bool
+	SystemPrompt             string
+	SystemPromptCached       bool
+	NewModel                 func() (minisweagent.Model, error)
 	// CheckpointDir is the directory where per-step trajectory checkpoints are written.
 	// When empty, no checkpointing occurs.
 	CheckpointDir string

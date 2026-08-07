@@ -88,6 +88,7 @@ func NewDefaultAgent(model minisweagent.Model, env minisweagent.Environment, cfg
 		CommandSupervisorFailureLimit:   cfg.CommandSupervisorFailureLimit,
 		CommandSupervisorMaxSteps:       cfg.CommandSupervisorMaxSteps,
 		CommandSupervisorDeadlineBuffer: cfg.CommandSupervisorDeadlineBuffer,
+		CommandSupervisorLogPath:        defaultCommandSupervisorLogPath,
 		Clock:                           realCommandClock{},
 		AnswerTag:                       "answer",
 		CommandTag:                      "command",
