@@ -22,13 +22,17 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WORKTREE="/tmp/mct-agent-smoke-context"
 UPDATE_ONLY=false
+COMMAND_SUPERVISOR_ONLY=false
 
 if [[ "${1:-}" == "--update-only" ]]; then
   UPDATE_ONLY=true
   shift
+elif [[ "${1:-}" == "--command-supervisor-only" ]]; then
+  COMMAND_SUPERVISOR_ONLY=true
+  shift
 fi
 if [[ $# -ne 0 ]]; then
-  echo "Usage: $0 [--update-only]" >&2
+  echo "Usage: $0 [--update-only|--command-supervisor-only]" >&2
   exit 2
 fi
 
@@ -120,7 +124,7 @@ trap cleanup EXIT
 missing=false
 
 for var in TEST_API_KEY TEST_BASE_URL TEST_MODEL; do
-  if $UPDATE_ONLY; then
+  if $UPDATE_ONLY || $COMMAND_SUPERVISOR_ONLY; then
     break
   fi
   if [[ -z "${!var:-}" ]]; then
@@ -156,6 +160,8 @@ set +e
 container_args=()
 if $UPDATE_ONLY; then
   container_args=(nix develop path:/fixtures/mct-source#smoke -c bash /fixtures/mct-source/tests/smoke/update-container.sh)
+elif $COMMAND_SUPERVISOR_ONLY; then
+  container_args=(nix develop path:/fixtures/mct-source#smoke -c bash /fixtures/mct-source/tests/smoke/command-supervisor-container.sh)
 fi
 docker run --rm \
   -e TEST_API_KEY \

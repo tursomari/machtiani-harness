@@ -95,6 +95,12 @@ sync_clean=$(mktemp)
 wrapper_agent=$(readlink -f "$(command -v mct-agent)")
 native_agent="$(dirname "$wrapper_agent")/.mct-agent-wrapped"
 test -x "$native_agent"
+
+echo "==> Verifying command supervision with a planted PATH blocker..."
+MCT_AGENT_BIN="$native_agent" \
+  MCT_SUPERVISOR_SMOKE_REPO="$PWD" \
+  bash /fixtures/mct-source/agent/tests/command-supervisor-smoke.sh
+
 shell_tool_trap=$(mktemp -d)
 for tool in rg sed ls; do
   printf '#!/bin/sh\necho "unexpected sync file-tool invocation: %s" >&2\nexit 97\n' "$tool" > "$shell_tool_trap/$tool"

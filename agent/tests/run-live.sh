@@ -1307,12 +1307,19 @@ def replace_environment_type(src_lines):
 
 lines = replace_environment_type(lines)
 lines = replace_section_key(lines, "environment", "command_timeout", "600")
+lines = replace_section_key(lines, "shell-agent", "command_supervisor_after", "0")
 lines = replace_section_key(lines, "shell-agent", "max_steps", "2")
 lines = replace_section_key(lines, "shell-agent", "finalize_remaining_steps", "1")
 path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 PY
 
   echo "$config_file"
+}
+
+run_command_supervisor_smoke_case() {
+  MCT_AGENT_BIN="$MCT_AGENT" \
+    MCT_SUPERVISOR_SMOKE_REPO="$REPO_ROOT" \
+    bash "$REPO_ROOT/agent/tests/command-supervisor-smoke.sh"
 }
 
 resolve_live_workspace_root() {
@@ -4124,6 +4131,7 @@ PY
 }
 
 declare -A TESTS=(
+	["command-supervisor-smoke"]="run_command_supervisor_smoke_case"
 	["final-answer-path"]="run_final_answer_path_case"
 	["sync-footer"]="run_sync_footer_case"
 	["discovery-turn-timeout"]="test_discovery_turn_timeout"
@@ -4191,6 +4199,7 @@ fi
 
 if [[ $# -eq 0 ]]; then
 # Per-component flag coverage.
+run_test_case "command_supervisor_smoke" run_command_supervisor_smoke_case
 run_test_case "final_answer_path" run_final_answer_path_case
 run_test_case "sync_footer" run_sync_footer_case
 run_test_case "discovery_turn_timeout" test_discovery_turn_timeout

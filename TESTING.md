@@ -128,6 +128,15 @@ provider checks. The local updater harness also verifies rejection of dirty
 bootstrap and managed checkouts, origin mismatches, and embedded credentials;
 the Go updater tests verify managed-source and rollback behavior.
 
+To run only the deterministic command-supervisor container scenario, without
+provider credentials, plant a blocking `go` executable at the front of `PATH`
+and verify that its process group is stopped after an explicit supervisor
+decision:
+
+```bash
+./tests/smoke/run.sh --command-supervisor-only
+```
+
 Prerequisites:
 
 - Docker with a running daemon.
@@ -182,7 +191,9 @@ The container test must complete all of these checks before printing its success
     earlier tagged blob into `conversation.json`.
 14. `<project-store>/sessions/*/artifacts/conversation.json` exists and the
     repository contains `.machtiani/project.uuid` rather than session data.
-15. A separate synthetic legacy repository passes migration dry-run and actual
+15. A planted `go test ./...` command blocks through a `PATH` shim, triggers a
+    short command-supervisor review, and leaves no running blocker process.
+16. A separate synthetic legacy repository passes migration dry-run and actual
     non-interactive migration, including verified home-store data and a legacy
     archive.
 
@@ -220,6 +231,13 @@ bash agent/tests/run-live.sh
   - `OPENAI_API_KEY`/`BASE_URL`/`MODEL` remain authoritative even when aliases are set.
 
 Scenarios include Issue A/B/C happy paths, one-turn and three-turn bounds, per-component model selection, the `--mode code` regression in stub and live paths, empty prompts, missing configuration, menu flow, shell-command trajectory events, and related error paths.
+
+The deterministic planted-command case can be targeted independently. It uses
+a local ChatCompletion stub even when live credentials are exported:
+
+```bash
+MCT_AGENT_BIN="$test_agent" bash agent/tests/run-live.sh command-supervisor-smoke
+```
 
 #### Targeting Cases
 
