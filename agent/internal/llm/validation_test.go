@@ -261,6 +261,45 @@ max_command_output_bytes = 0
 	}
 }
 
+func TestCommandSupervisorValidation(t *testing.T) {
+	tests := []struct {
+		name string
+		edit func(*Config)
+		path string
+	}{
+		{name: "timeout", edit: func(cfg *Config) { cfg.ShellAgent.CommandSupervisorTimeout = 0 }, path: "shell-agent.command_supervisor_timeout"},
+		{name: "failure limit", edit: func(cfg *Config) { cfg.ShellAgent.CommandSupervisorFailureLimit = 0 }, path: "shell-agent.command_supervisor_failure_limit"},
+		{name: "max steps", edit: func(cfg *Config) { cfg.ShellAgent.CommandSupervisorMaxSteps = 0 }, path: "shell-agent.command_supervisor_max_steps"},
+		{name: "deadline buffer", edit: func(cfg *Config) { cfg.ShellAgent.CommandSupervisorDeadlineBuffer = 0 }, path: "shell-agent.command_supervisor_deadline_buffer"},
+		{name: "buffer below timeout", edit: func(cfg *Config) {
+			cfg.ShellAgent.CommandSupervisorDeadlineBuffer = cfg.ShellAgent.CommandSupervisorTimeout - 1
+		}, path: "shell-agent.command_supervisor_deadline_buffer"},
+		{name: "buffer reaches command timeout", edit: func(cfg *Config) { cfg.ShellAgent.CommandSupervisorDeadlineBuffer = cfg.Environment.CommandTimeout }, path: "shell-agent.command_supervisor_deadline_buffer"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := DefaultConfig()
+			tt.edit(&cfg)
+			diagnostics := ValidateConfig(cfg, "config.toml", ValidationOptions{})
+			if !hasDiagnostic(diagnostics, tt.path, "invalid_value") {
+				t.Fatalf("expected %s invalid_value diagnostic, got %#v", tt.path, diagnostics)
+			}
+		})
+	}
+}
+
+func TestCommandSupervisorCanBeDisabledWithZeroAfter(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.ShellAgent.CommandSupervisorAfter = 0
+	cfg.ShellAgent.CommandSupervisorTimeout = 0
+	cfg.ShellAgent.CommandSupervisorFailureLimit = 0
+	cfg.ShellAgent.CommandSupervisorMaxSteps = 0
+	cfg.ShellAgent.CommandSupervisorDeadlineBuffer = 0
+	if diagnostics := ValidateConfig(cfg, "config.toml", ValidationOptions{}); hasDiagnostic(diagnostics, "shell-agent.command_supervisor_timeout", "invalid_value") {
+		t.Fatalf("disabled supervisor should ignore subordinate limits: %#v", diagnostics)
+	}
+}
+
 func TestDocumentedConfigFixturesPassStructuralAndSemanticValidation(t *testing.T) {
 	for _, name := range []string{"config.minimal.toml", "config.comprehensive.toml"} {
 		t.Run(name, func(t *testing.T) {

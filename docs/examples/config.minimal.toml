@@ -16,6 +16,11 @@ max_turns = 150
 [shell-agent]
 finalize_remaining_steps = 10
 max_steps = 110
+command_supervisor_after = 900
+command_supervisor_timeout = 600
+command_supervisor_failure_limit = 4
+command_supervisor_max_steps = 20
+command_supervisor_deadline_buffer = 900
 
 [model_defaults]
 context_length = 128000 # total input + output tokens; models may override
@@ -33,7 +38,7 @@ effort = "medium"
 
 [environment]
 type = "local"
-command_timeout = 9999
+command_timeout = 86400
 
 [ui]
 # terminal | machtiani-dark | machtiani-light | none

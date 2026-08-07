@@ -13,12 +13,17 @@ func DefaultConfig() Config {
 		},
 		ModelDefaults: &ModelDefaultsConfig{ContextLength: DefaultContextLength},
 		ShellAgent: &ShellAgentConfig{
-			MaxSteps:               110,
-			FinalizeRemainingSteps: 10,
+			MaxSteps:                        110,
+			FinalizeRemainingSteps:          10,
+			CommandSupervisorAfter:          900,
+			CommandSupervisorTimeout:        600,
+			CommandSupervisorFailureLimit:   4,
+			CommandSupervisorMaxSteps:       20,
+			CommandSupervisorDeadlineBuffer: 900,
 		},
 		Environment: &EnvironmentConfig{
 			Type:                  "local",
-			CommandTimeout:        9999,
+			CommandTimeout:        86400,
 			MaxCommandOutputBytes: 65536,
 		},
 		Trajectory: &TrajectoryConfig{
@@ -62,12 +67,17 @@ func DefaultMinimalConfigMap() map[string]any {
 			"turn_timeout": int64(0),
 		},
 		"shell-agent": map[string]any{
-			"max_steps":                int64(110),
-			"finalize_remaining_steps": int64(10),
+			"max_steps":                          int64(110),
+			"finalize_remaining_steps":           int64(10),
+			"command_supervisor_after":           int64(900),
+			"command_supervisor_timeout":         int64(600),
+			"command_supervisor_failure_limit":   int64(4),
+			"command_supervisor_max_steps":       int64(20),
+			"command_supervisor_deadline_buffer": int64(900),
 		},
 		"environment": map[string]any{
 			"type":                     "local",
-			"command_timeout":          int64(9999),
+			"command_timeout":          int64(86400),
 			"max_command_output_bytes": int64(65536),
 		},
 		"ui": map[string]any{
@@ -129,6 +139,26 @@ func overlayConfig(target *Config, source Config, srcSource FieldSource) {
 		if source.ShellAgent.finalizeRemainingStepsSet || source.ShellAgent.FinalizeRemainingSteps != 0 {
 			target.ShellAgent.FinalizeRemainingSteps = source.ShellAgent.FinalizeRemainingSteps
 			target.ShellAgent.FinalizeRemainingStepsSource = srcSource
+		}
+		if source.ShellAgent.commandSupervisorAfterSet || source.ShellAgent.CommandSupervisorAfter != 0 {
+			target.ShellAgent.CommandSupervisorAfter = source.ShellAgent.CommandSupervisorAfter
+			target.ShellAgent.CommandSupervisorAfterSource = srcSource
+		}
+		if source.ShellAgent.commandSupervisorTimeoutSet || source.ShellAgent.CommandSupervisorTimeout != 0 {
+			target.ShellAgent.CommandSupervisorTimeout = source.ShellAgent.CommandSupervisorTimeout
+			target.ShellAgent.CommandSupervisorTimeoutSource = srcSource
+		}
+		if source.ShellAgent.commandSupervisorFailureLimitSet || source.ShellAgent.CommandSupervisorFailureLimit != 0 {
+			target.ShellAgent.CommandSupervisorFailureLimit = source.ShellAgent.CommandSupervisorFailureLimit
+			target.ShellAgent.CommandSupervisorFailureLimitSource = srcSource
+		}
+		if source.ShellAgent.commandSupervisorMaxStepsSet || source.ShellAgent.CommandSupervisorMaxSteps != 0 {
+			target.ShellAgent.CommandSupervisorMaxSteps = source.ShellAgent.CommandSupervisorMaxSteps
+			target.ShellAgent.CommandSupervisorMaxStepsSource = srcSource
+		}
+		if source.ShellAgent.commandSupervisorDeadlineBufferSet || source.ShellAgent.CommandSupervisorDeadlineBuffer != 0 {
+			target.ShellAgent.CommandSupervisorDeadlineBuffer = source.ShellAgent.CommandSupervisorDeadlineBuffer
+			target.ShellAgent.CommandSupervisorDeadlineBufferSource = srcSource
 		}
 	}
 

@@ -402,6 +402,11 @@ instance_template = "Task: {{.Task}}"
 [shell-agent]
 max_steps = 110
 finalize_remaining_steps = 10
+command_supervisor_after = 900
+command_supervisor_timeout = 600
+command_supervisor_failure_limit = 4
+command_supervisor_max_steps = 20
+command_supervisor_deadline_buffer = 900
 format_error_template = "Your response did not include a properly formatted bash command. Please respond with exactly one fenced bash command."
 
 [model_defaults]
@@ -409,7 +414,7 @@ context_length = 128000
 
 [environment]
 type = "local"
-command_timeout = 30
+command_timeout = 86400
 max_command_output_bytes = 65536
 
 [providers.openrouter]

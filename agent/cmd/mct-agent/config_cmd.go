@@ -357,6 +357,36 @@ var fieldDocs = map[string]fieldDoc{
 			"Default: 10",
 		},
 	},
+	"shell-agent.command_supervisor_after": {
+		summary:     "Delay before supervising a running command",
+		explanation: "Starts a command-supervisor review after a shell command has run for this many seconds. Set to 0 to disable supervision.",
+		example:     "shell-agent.command_supervisor_after = 900",
+		details:     []string{"Default: 900 seconds", "A valid continue decision schedules another review after the same interval."},
+	},
+	"shell-agent.command_supervisor_timeout": {
+		summary:     "Timeout for one command-supervisor review",
+		explanation: "Maximum duration in seconds for a command supervisor to investigate and decide what to do with a running command.",
+		example:     "shell-agent.command_supervisor_timeout = 600",
+		details:     []string{"Default: 600 seconds"},
+	},
+	"shell-agent.command_supervisor_failure_limit": {
+		summary:     "Consecutive failed supervisor reviews allowed",
+		explanation: "Cancels the running command after this many consecutive reviews fail to return a valid decision. Explicit continue decisions reset the count.",
+		example:     "shell-agent.command_supervisor_failure_limit = 4",
+		details:     []string{"Default: 4", "Failed reviews provisionally allow the command to continue until this limit is reached."},
+	},
+	"shell-agent.command_supervisor_max_steps": {
+		summary:     "Action-step budget for each supervisor review",
+		explanation: "Maximum number of agent action steps available during one review of a running command.",
+		example:     "shell-agent.command_supervisor_max_steps = 20",
+		details:     []string{"Default: 20"},
+	},
+	"shell-agent.command_supervisor_deadline_buffer": {
+		summary:     "Lead time for the final deadline review",
+		explanation: "Starts one urgent supervisor review this many seconds before the command's absolute timeout.",
+		example:     "shell-agent.command_supervisor_deadline_buffer = 900",
+		details:     []string{"Default: 900 seconds", "The environment command timeout remains absolute and cannot be extended."},
+	},
 	"environment.type": {
 		summary:     "Execution environment selector",
 		explanation: "Controls whether the session runs in local mode or an isolated workspace. Non-local values redirect MACHTIANI_TMP_ROOT.",
@@ -370,9 +400,9 @@ var fieldDocs = map[string]fieldDoc{
 	"environment.command_timeout": {
 		summary:     "Shell command timeout",
 		explanation: "Maximum duration for a single shell command executed by the shell-agent.",
-		example:     "environment.command_timeout = 9999",
+		example:     "environment.command_timeout = 86400",
 		details: []string{
-			"Default: 9999 seconds",
+			"Default: 86400 seconds (24 hours)",
 			"Long-running commands will be killed after this timeout.",
 		},
 	},
@@ -738,6 +768,16 @@ func getFieldValue(effective llm.Config, key string) (value string, source strin
 		return fmt.Sprintf("%d", effective.ShellAgent.MaxSteps), sourceLabel(effective.ShellAgent.MaxStepsSource)
 	case "shell-agent.finalize_remaining_steps":
 		return fmt.Sprintf("%d", effective.ShellAgent.FinalizeRemainingSteps), sourceLabel(effective.ShellAgent.FinalizeRemainingStepsSource)
+	case "shell-agent.command_supervisor_after":
+		return fmt.Sprintf("%d", effective.ShellAgent.CommandSupervisorAfter), sourceLabel(effective.ShellAgent.CommandSupervisorAfterSource)
+	case "shell-agent.command_supervisor_timeout":
+		return fmt.Sprintf("%d", effective.ShellAgent.CommandSupervisorTimeout), sourceLabel(effective.ShellAgent.CommandSupervisorTimeoutSource)
+	case "shell-agent.command_supervisor_failure_limit":
+		return fmt.Sprintf("%d", effective.ShellAgent.CommandSupervisorFailureLimit), sourceLabel(effective.ShellAgent.CommandSupervisorFailureLimitSource)
+	case "shell-agent.command_supervisor_max_steps":
+		return fmt.Sprintf("%d", effective.ShellAgent.CommandSupervisorMaxSteps), sourceLabel(effective.ShellAgent.CommandSupervisorMaxStepsSource)
+	case "shell-agent.command_supervisor_deadline_buffer":
+		return fmt.Sprintf("%d", effective.ShellAgent.CommandSupervisorDeadlineBuffer), sourceLabel(effective.ShellAgent.CommandSupervisorDeadlineBufferSource)
 	case "environment.type":
 		return effective.Environment.Type, sourceLabel(effective.Environment.TypeSource)
 	case "environment.command_timeout":
@@ -1172,11 +1212,21 @@ func printConfigWithSources(effective, defaults llm.Config, showFull bool) {
 		saEntries = []configEntry{
 			{key: "shell-agent.max_steps", value: fmt.Sprintf("%d", effective.ShellAgent.MaxSteps), source: sourceLabel(effective.ShellAgent.MaxStepsSource)},
 			{key: "shell-agent.finalize_remaining_steps", value: fmt.Sprintf("%d", effective.ShellAgent.FinalizeRemainingSteps), source: sourceLabel(effective.ShellAgent.FinalizeRemainingStepsSource)},
+			{key: "shell-agent.command_supervisor_after", value: fmt.Sprintf("%d", effective.ShellAgent.CommandSupervisorAfter), source: sourceLabel(effective.ShellAgent.CommandSupervisorAfterSource)},
+			{key: "shell-agent.command_supervisor_timeout", value: fmt.Sprintf("%d", effective.ShellAgent.CommandSupervisorTimeout), source: sourceLabel(effective.ShellAgent.CommandSupervisorTimeoutSource)},
+			{key: "shell-agent.command_supervisor_failure_limit", value: fmt.Sprintf("%d", effective.ShellAgent.CommandSupervisorFailureLimit), source: sourceLabel(effective.ShellAgent.CommandSupervisorFailureLimitSource)},
+			{key: "shell-agent.command_supervisor_max_steps", value: fmt.Sprintf("%d", effective.ShellAgent.CommandSupervisorMaxSteps), source: sourceLabel(effective.ShellAgent.CommandSupervisorMaxStepsSource)},
+			{key: "shell-agent.command_supervisor_deadline_buffer", value: fmt.Sprintf("%d", effective.ShellAgent.CommandSupervisorDeadlineBuffer), source: sourceLabel(effective.ShellAgent.CommandSupervisorDeadlineBufferSource)},
 		}
 	} else {
 		saEntries = []configEntry{
 			{key: "shell-agent.max_steps", value: "", source: "default"},
 			{key: "shell-agent.finalize_remaining_steps", value: "", source: "default"},
+			{key: "shell-agent.command_supervisor_after", value: "", source: "default"},
+			{key: "shell-agent.command_supervisor_timeout", value: "", source: "default"},
+			{key: "shell-agent.command_supervisor_failure_limit", value: "", source: "default"},
+			{key: "shell-agent.command_supervisor_max_steps", value: "", source: "default"},
+			{key: "shell-agent.command_supervisor_deadline_buffer", value: "", source: "default"},
 		}
 	}
 	renderScalarSection(&buf, "Shell Agent", "Step budget and finalize window", saEntries)

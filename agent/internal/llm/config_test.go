@@ -109,6 +109,11 @@ action_observation_template = "Observation: {{.Output}}"
 max_turns = 7
 
 [shell-agent]
+command_supervisor_after = 12
+command_supervisor_timeout = 34
+command_supervisor_failure_limit = 5
+command_supervisor_max_steps = 21
+command_supervisor_deadline_buffer = 40
 
 [environment]
 type = "local"
@@ -148,6 +153,13 @@ model = "alias-impl"
 	if cfg.ShellAgent.MaxSteps != 110 {
 		t.Fatalf("expected shell-agent max_steps 110 (default from MergeConfig), got %+v", cfg.ShellAgent)
 	}
+	if cfg.ShellAgent.CommandSupervisorAfter != 12 ||
+		cfg.ShellAgent.CommandSupervisorTimeout != 34 ||
+		cfg.ShellAgent.CommandSupervisorFailureLimit != 5 ||
+		cfg.ShellAgent.CommandSupervisorMaxSteps != 21 ||
+		cfg.ShellAgent.CommandSupervisorDeadlineBuffer != 40 {
+		t.Fatalf("unexpected command-supervisor config: %+v", cfg.ShellAgent)
+	}
 	if cfg.UI == nil || cfg.UI.Theme != "machtiani-light" {
 		t.Fatalf("expected UI theme to be parsed, got %+v", cfg.UI)
 	}
@@ -174,6 +186,24 @@ model = "alias-impl"
 	}
 	if cfg.Environment == nil || cfg.Environment.CommandTimeout != 45 {
 		t.Fatalf("expected environment command_timeout 45, got %+v", cfg.Environment)
+	}
+}
+
+func TestLoadGlobalConfigExplicitlyDisablesCommandSupervisor(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	mustWriteFile(t, path, "[shell-agent]\ncommand_supervisor_after = 0\n")
+	t.Setenv("MACHTIANI_CONFIG", path)
+	ResetConfigForTesting()
+
+	cfg, _, err := LoadGlobalConfig()
+	if err != nil {
+		t.Fatalf("LoadGlobalConfig: %v", err)
+	}
+	if got := cfg.ShellAgent.CommandSupervisorAfter; got != 0 {
+		t.Fatalf("explicit command_supervisor_after = 0 merged to %d, want disabled", got)
+	}
+	if cfg.ShellAgent.CommandSupervisorAfterSource != SourceFile {
+		t.Fatalf("disabled supervisor source = %v, want config file", cfg.ShellAgent.CommandSupervisorAfterSource)
 	}
 }
 
@@ -931,6 +961,21 @@ func TestDefaultMinimalConfig(t *testing.T) {
 		if cfg.ShellAgent.MaxSteps != 110 {
 			t.Fatalf("expected ShellAgent.MaxSteps 0, got %d", cfg.ShellAgent.MaxSteps)
 		}
+		if cfg.ShellAgent.CommandSupervisorAfter != 900 {
+			t.Fatalf("expected ShellAgent.CommandSupervisorAfter 900, got %d", cfg.ShellAgent.CommandSupervisorAfter)
+		}
+		if cfg.ShellAgent.CommandSupervisorTimeout != 600 {
+			t.Fatalf("expected ShellAgent.CommandSupervisorTimeout 600, got %d", cfg.ShellAgent.CommandSupervisorTimeout)
+		}
+		if cfg.ShellAgent.CommandSupervisorFailureLimit != 4 {
+			t.Fatalf("expected ShellAgent.CommandSupervisorFailureLimit 4, got %d", cfg.ShellAgent.CommandSupervisorFailureLimit)
+		}
+		if cfg.ShellAgent.CommandSupervisorMaxSteps != 20 {
+			t.Fatalf("expected ShellAgent.CommandSupervisorMaxSteps 20, got %d", cfg.ShellAgent.CommandSupervisorMaxSteps)
+		}
+		if cfg.ShellAgent.CommandSupervisorDeadlineBuffer != 900 {
+			t.Fatalf("expected ShellAgent.CommandSupervisorDeadlineBuffer 900, got %d", cfg.ShellAgent.CommandSupervisorDeadlineBuffer)
+		}
 	}
 
 	if cfg.Environment == nil {
@@ -939,8 +984,8 @@ func TestDefaultMinimalConfig(t *testing.T) {
 		if cfg.Environment.Type != "local" {
 			t.Fatalf("expected Environment.Type local, got %q", cfg.Environment.Type)
 		}
-		if cfg.Environment.CommandTimeout != 9999 {
-			t.Fatalf("expected Environment.CommandTimeout 9999, got %d", cfg.Environment.CommandTimeout)
+		if cfg.Environment.CommandTimeout != 86400 {
+			t.Fatalf("expected Environment.CommandTimeout 86400, got %d", cfg.Environment.CommandTimeout)
 		}
 		if cfg.Environment.MaxCommandOutputBytes != 0 {
 			t.Fatalf("expected Environment.MaxCommandOutputBytes 0, got %d", cfg.Environment.MaxCommandOutputBytes)
@@ -955,6 +1000,29 @@ func TestDefaultMinimalConfig(t *testing.T) {
 	}
 	if cfg.Models != nil {
 		t.Fatalf("expected Models to be nil, got %+v", cfg.Models)
+	}
+}
+
+func TestDefaultMinimalConfigMapIncludesCommandSupervisor(t *testing.T) {
+	shellAgent, ok := DefaultMinimalConfigMap()["shell-agent"].(map[string]any)
+	if !ok {
+		t.Fatal("default minimal config shell-agent is not a table")
+	}
+	want := map[string]int64{
+		"command_supervisor_after":           900,
+		"command_supervisor_timeout":         600,
+		"command_supervisor_failure_limit":   4,
+		"command_supervisor_max_steps":       20,
+		"command_supervisor_deadline_buffer": 900,
+	}
+	for key, value := range want {
+		if got := shellAgent[key]; got != value {
+			t.Errorf("shell-agent.%s = %#v, want %d", key, got, value)
+		}
+	}
+	environment := DefaultMinimalConfigMap()["environment"].(map[string]any)
+	if got := environment["command_timeout"]; got != int64(86400) {
+		t.Fatalf("environment.command_timeout = %#v, want 86400", got)
 	}
 }
 

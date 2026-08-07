@@ -90,7 +90,10 @@ func validateRawConfig(path string, raw map[string]any) error {
 	}
 	shellFields := map[string]string{
 		"max_steps": "integer", "finalize_remaining_steps": "integer", "system_template": "template",
-		"instance_template": "template", "timeout_template": "template", "format_error_template": "template",
+		"command_supervisor_after": "integer", "command_supervisor_timeout": "integer",
+		"command_supervisor_failure_limit": "integer", "command_supervisor_max_steps": "integer",
+		"command_supervisor_deadline_buffer": "integer",
+		"instance_template":                  "template", "timeout_template": "template", "format_error_template": "template",
 		"action_observation_template": "template", "lightweight_system_template": "template",
 		"lightweight_intent_template": "template", "lightweight_error_template": "template",
 	}
@@ -474,6 +477,24 @@ func ValidateConfig(cfg Config, path string, options ValidationOptions) []Diagno
 		}
 		if cfg.ShellAgent.FinalizeRemainingSteps < 0 || cfg.ShellAgent.FinalizeRemainingSteps > cfg.ShellAgent.MaxSteps {
 			diagnostics = append(diagnostics, configError("shell-agent.finalize_remaining_steps", "invalid_value", "must be between zero and max_steps"))
+		}
+		validateNonnegative("shell-agent.command_supervisor_after", cfg.ShellAgent.CommandSupervisorAfter, &diagnostics)
+		if cfg.ShellAgent.CommandSupervisorAfter > 0 {
+			if cfg.ShellAgent.CommandSupervisorTimeout <= 0 {
+				diagnostics = append(diagnostics, configError("shell-agent.command_supervisor_timeout", "invalid_value", "must be positive when command supervision is enabled"))
+			}
+			if cfg.ShellAgent.CommandSupervisorFailureLimit <= 0 {
+				diagnostics = append(diagnostics, configError("shell-agent.command_supervisor_failure_limit", "invalid_value", "must be positive when command supervision is enabled"))
+			}
+			if cfg.ShellAgent.CommandSupervisorMaxSteps <= 0 {
+				diagnostics = append(diagnostics, configError("shell-agent.command_supervisor_max_steps", "invalid_value", "must be positive when command supervision is enabled"))
+			}
+			if cfg.ShellAgent.CommandSupervisorDeadlineBuffer < cfg.ShellAgent.CommandSupervisorTimeout {
+				diagnostics = append(diagnostics, configError("shell-agent.command_supervisor_deadline_buffer", "invalid_value", "must be at least command_supervisor_timeout"))
+			}
+			if cfg.Environment != nil && cfg.ShellAgent.CommandSupervisorDeadlineBuffer >= cfg.Environment.CommandTimeout {
+				diagnostics = append(diagnostics, configError("shell-agent.command_supervisor_deadline_buffer", "invalid_value", "must be less than environment.command_timeout"))
+			}
 		}
 	}
 	if cfg.Environment != nil {

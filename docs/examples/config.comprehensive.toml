@@ -52,6 +52,17 @@ max_turns = 150
 max_steps = 110
 # finalize_remaining_steps: when set, finalize after this many remaining steps.
 finalize_remaining_steps = 1  # Inject a "wrap up now" prompt once remaining LLM calls (max_steps - calls so far) drop to this value or below, giving the model a chance to produce a final answer before the hard max_steps cap.
+# Start a supervisor agent when one command remains active for this many seconds.
+# Set to 0 to disable command supervision.
+command_supervisor_after = 900
+# Give each supervisor review up to this many seconds and action steps.
+command_supervisor_timeout = 600
+command_supervisor_max_steps = 20
+# Failed or malformed reviews provisionally continue. This many consecutive
+# failures cancel the command; an explicit continue decision resets the count.
+command_supervisor_failure_limit = 4
+# Run one urgent review this many seconds before the absolute command deadline.
+command_supervisor_deadline_buffer = 900
 
 # Prompt templates (override defaults):
 # system_template = "..."
@@ -69,8 +80,8 @@ finalize_remaining_steps = 1  # Inject a "wrap up now" prompt once remaining LLM
 [environment]
 # type: "local" (default) or "docker".
 type = "local"
-# timeout: per-command timeout in seconds.
-command_timeout = 30
+# Absolute per-command timeout in seconds; supervisor decisions cannot extend it.
+command_timeout = 86400
 # ── [ui] ────────────────────────────────────────────────────────────────────────
 # Human-facing terminal presentation. MACHTIANI_THEME overrides this value.
 [ui]

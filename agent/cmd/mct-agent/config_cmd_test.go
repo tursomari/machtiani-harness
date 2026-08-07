@@ -359,6 +359,19 @@ func TestConfigShowCommand_NoConfig(t *testing.T) {
 	if !strings.Contains(stdout, "Step budget and finalize window") {
 		t.Error("missing Shell Agent description")
 	}
+	for _, expected := range []string{
+		"shell-agent.command_supervisor_after",
+		"shell-agent.command_supervisor_timeout",
+		"shell-agent.command_supervisor_failure_limit",
+		"shell-agent.command_supervisor_max_steps",
+		"shell-agent.command_supervisor_deadline_buffer",
+		"environment.command_timeout",
+		"86400",
+	} {
+		if !strings.Contains(stdout, expected) {
+			t.Errorf("missing default config output %q", expected)
+		}
+	}
 	if !strings.Contains(stdout, "Execution environment and workspace settings") {
 		t.Error("missing Environment description")
 	}

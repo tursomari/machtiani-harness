@@ -77,13 +77,28 @@ type UIConfig struct {
 // ShellAgentConfig mirrors the shell-agent configuration section and is loaded
 // from the global TOML configuration under [shell-agent] (or legacy [agent]).
 type ShellAgentConfig struct {
-	MaxSteps               int `toml:"max_steps"`
-	FinalizeRemainingSteps int `toml:"finalize_remaining_steps"`
+	MaxSteps                        int `toml:"max_steps"`
+	FinalizeRemainingSteps          int `toml:"finalize_remaining_steps"`
+	CommandSupervisorAfter          int `toml:"command_supervisor_after"`
+	CommandSupervisorTimeout        int `toml:"command_supervisor_timeout"`
+	CommandSupervisorFailureLimit   int `toml:"command_supervisor_failure_limit"`
+	CommandSupervisorMaxSteps       int `toml:"command_supervisor_max_steps"`
+	CommandSupervisorDeadlineBuffer int `toml:"command_supervisor_deadline_buffer"`
 
-	maxStepsSet                  bool        `toml:"-"`
-	finalizeRemainingStepsSet    bool        `toml:"-"`
-	MaxStepsSource               FieldSource `toml:"-"`
-	FinalizeRemainingStepsSource FieldSource `toml:"-"`
+	maxStepsSet                           bool        `toml:"-"`
+	finalizeRemainingStepsSet             bool        `toml:"-"`
+	commandSupervisorAfterSet             bool        `toml:"-"`
+	commandSupervisorTimeoutSet           bool        `toml:"-"`
+	commandSupervisorFailureLimitSet      bool        `toml:"-"`
+	commandSupervisorMaxStepsSet          bool        `toml:"-"`
+	commandSupervisorDeadlineBufferSet    bool        `toml:"-"`
+	MaxStepsSource                        FieldSource `toml:"-"`
+	FinalizeRemainingStepsSource          FieldSource `toml:"-"`
+	CommandSupervisorAfterSource          FieldSource `toml:"-"`
+	CommandSupervisorTimeoutSource        FieldSource `toml:"-"`
+	CommandSupervisorFailureLimitSource   FieldSource `toml:"-"`
+	CommandSupervisorMaxStepsSource       FieldSource `toml:"-"`
+	CommandSupervisorDeadlineBufferSource FieldSource `toml:"-"`
 }
 
 // PlannerConfig captures configuration intended for the orchestration planner.
@@ -1210,6 +1225,26 @@ func parseShellAgentSection(path, section string, data map[string]any) (*ShellAg
 		agent.FinalizeRemainingSteps = val
 		agent.finalizeRemainingStepsSet = true
 	}
+	if val, ok := toInt(data["command_supervisor_after"]); ok {
+		agent.CommandSupervisorAfter = val
+		agent.commandSupervisorAfterSet = true
+	}
+	if val, ok := toInt(data["command_supervisor_timeout"]); ok {
+		agent.CommandSupervisorTimeout = val
+		agent.commandSupervisorTimeoutSet = true
+	}
+	if val, ok := toInt(data["command_supervisor_failure_limit"]); ok {
+		agent.CommandSupervisorFailureLimit = val
+		agent.commandSupervisorFailureLimitSet = true
+	}
+	if val, ok := toInt(data["command_supervisor_max_steps"]); ok {
+		agent.CommandSupervisorMaxSteps = val
+		agent.commandSupervisorMaxStepsSet = true
+	}
+	if val, ok := toInt(data["command_supervisor_deadline_buffer"]); ok {
+		agent.CommandSupervisorDeadlineBuffer = val
+		agent.commandSupervisorDeadlineBufferSet = true
+	}
 	return agent, shellPrompts, plannerPrompts, nil
 }
 
@@ -2257,13 +2292,21 @@ func toStringMap(v any) (map[string]any, bool) {
 
 func DefaultMinimalConfig() Config {
 	return Config{
-		DefaultModel:  "",
-		Planner:       &PlannerConfig{MaxTurns: 150},
-		ShellAgent:    &ShellAgentConfig{FinalizeRemainingSteps: 10, MaxSteps: 110},
+		DefaultModel: "",
+		Planner:      &PlannerConfig{MaxTurns: 150},
+		ShellAgent: &ShellAgentConfig{
+			FinalizeRemainingSteps:          10,
+			MaxSteps:                        110,
+			CommandSupervisorAfter:          900,
+			CommandSupervisorTimeout:        600,
+			CommandSupervisorFailureLimit:   4,
+			CommandSupervisorMaxSteps:       20,
+			CommandSupervisorDeadlineBuffer: 900,
+		},
 		ModelDefaults: &ModelDefaultsConfig{ContextLength: DefaultContextLength},
 		Environment: &EnvironmentConfig{
 			Type:           "local",
-			CommandTimeout: 9999,
+			CommandTimeout: 86400,
 		},
 		Prompts:   nil,
 		Mode:      nil,
