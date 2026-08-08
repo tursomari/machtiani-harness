@@ -172,6 +172,8 @@ single `--tui <full|standard|focused>` knob:
 - Defer the Neutral Resume Path work associated with commit `65360eb`, which
   applies injection-rejection framing to all resumes. Ship it when resume
   quality degrades or the Device Client requires clean resume semantics.
+- Cassette Agent: cassette tapes carrying mct-agent modes as audio, decoded
+  into `~/.machtiani/modes/`; very low priority, fun idea, likely won't happen.
 
 ## Decisions log
 
