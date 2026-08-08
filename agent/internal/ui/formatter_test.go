@@ -956,6 +956,64 @@ func TestFormatterNoShellStepsHidesActionBlocks(t *testing.T) {
 	_ = f
 }
 
+func TestFormatterFocusedShowsOnlyBannerAndConclusion(t *testing.T) {
+	f, bus, buf := newTestFormatter()
+	defer bus.Close()
+	f.focused = true
+	f.timerEnabled = true
+	f.width = 88
+
+	bus.Emit(SessionStartedEvent{
+		SessionID:     "agent-focused",
+		Goal:          "focused banner goal",
+		BuildVersion:  "v1.2.3",
+		BuildCommit:   "0123456789abcdef",
+		ContextLength: 200000,
+		ShowBanner:    true,
+	})
+	bus.Emit(PromptStartedEvent{StreamID: "s1", Prompt: "Ask prompt text"})
+	bus.Emit(ChunkReceivedEvent{StreamID: "s1", Text: "chunked work response"})
+	bus.Emit(ActionExecutedEvent{
+		Step:        2,
+		StepLimit:   5,
+		Command:     "ls -la",
+		Description: "I'll list the directory.",
+	})
+	bus.Emit(PromptCompletedEvent{StreamID: "s1", FinalText: "completed work response"})
+	bus.Emit(NotificationEvent{Level: NotificationInfo, Message: "[resume] shell-agent session is resumable"})
+	bus.Emit(NotificationEvent{Level: NotificationError, Message: "required focused error"})
+	bus.Emit(SessionConclusionEvent{
+		Outcome:        SessionConclusionCompleted,
+		RenderedAnswer: "focused conclusion text",
+		SessionID:      "agent-focused",
+	})
+	bus.Emit(SessionEndedEvent{})
+
+	select {
+	case <-f.Done():
+	case <-time.After(time.Second):
+		t.Fatal("formatter lifecycle did not complete")
+	}
+
+	output := stripANSI(buf.String())
+	for _, visible := range []string{"machtiani (mct)", "focused banner goal", "required focused error", "focused conclusion text"} {
+		requireContains(t, output, visible)
+	}
+	for _, hidden := range []string{
+		"Ask prompt text",
+		"chunked work response",
+		"completed work response",
+		"Step 2 of 5",
+		"$ ls -la",
+		"session token input",
+		"[resume] shell-agent session is resumable",
+	} {
+		if strings.Contains(output, hidden) {
+			t.Errorf("expected focused output NOT to contain %q\nGot: %s", hidden, output)
+		}
+	}
+}
+
 func TestFormatterActionExecutedCommandOnly(t *testing.T) {
 	f, bus, buf := newTestFormatter()
 	defer bus.Close()

@@ -92,6 +92,7 @@ type Formatter struct {
 	id                   string
 	done                 chan struct{}
 	noShellSteps         bool
+	focused              bool
 }
 
 type coordinatedWriter struct {
@@ -242,7 +243,10 @@ func (f *Formatter) handleSessionEnded(_ SessionEndedEvent) {
 	f.activePromptTokens = 0
 	f.maxInputTokens = 0
 	f.activities = nil
-	finalFooter := f.finalFooterLinesLocked()
+	var finalFooter []string
+	if !f.focused {
+		finalFooter = f.finalFooterLinesLocked()
+	}
 	f.closed = true
 	f.stopTimerLocked()
 	ResetTerminal(f.out)
@@ -260,6 +264,12 @@ func (f *Formatter) handleActivitySnapshot(e ActivitySnapshotEvent) {
 
 func (f *Formatter) handlePromptStarted(e PromptStartedEvent) {
 	f.started = true
+	if f.focused {
+		f.hasPrompt = true
+		f.currentStreamID = e.StreamID
+		f.streams[e.StreamID] = &promptStreamState{streamID: e.StreamID}
+		return
+	}
 	f.ensureTimerLocked()
 
 	// flush the current stream if one exists
@@ -301,6 +311,9 @@ func (f *Formatter) handleChunkReceived(e ChunkReceivedEvent) {
 	if st == nil || st.done {
 		return
 	}
+	if f.focused {
+		return
+	}
 	st.buffer.WriteString(e.Text)
 	f.renderTextLocked(st.buffer.String(), st)
 }
@@ -310,7 +323,7 @@ func (f *Formatter) handleActionExecuted(e ActionExecutedEvent) {
 		f.printNotificationLineLocked(e.Description, presentation.RoleNormal, false)
 		return
 	}
-	if f.noShellSteps {
+	if f.noShellSteps || f.focused {
 		return
 	}
 	st := f.streams[f.currentStreamID]
@@ -323,6 +336,13 @@ func (f *Formatter) handleActionExecuted(e ActionExecutedEvent) {
 func (f *Formatter) handlePromptCompleted(e PromptCompletedEvent) {
 	st := f.streams[e.StreamID]
 	if st == nil || st.done {
+		return
+	}
+	if f.focused {
+		st.done = true
+		if f.currentStreamID == e.StreamID {
+			f.currentStreamID = ""
+		}
 		return
 	}
 
@@ -381,6 +401,9 @@ func (f *Formatter) handlePromptAborted(e PromptAbortedEvent) {
 }
 
 func (f *Formatter) handleNotification(e NotificationEvent) {
+	if f.focused && e.Level != NotificationWarning && e.Level != NotificationError {
+		return
+	}
 	lines := sanitizeLines(e.Message)
 	if len(lines) == 0 {
 		return
@@ -472,6 +495,9 @@ func (f *Formatter) handleModeTaskStatusUpdate(e ModeTaskStatusUpdateEvent) {
 }
 
 func (f *Formatter) handleRawString(e RawStringEvent) {
+	if f.focused {
+		return
+	}
 	f.clearLiveFooterLocked()
 	fmt.Fprintln(f.out, e.Text)
 	f.renderTimerLocked()
@@ -707,7 +733,7 @@ func (f *Formatter) interruptWithNotificationLocked(lines []string, role present
 // --- timer ------------------------------------------------------------------
 
 func (f *Formatter) ensureTimerLocked() {
-	if !f.timerEnabled || f.closed {
+	if f.focused || !f.timerEnabled || f.closed {
 		return
 	}
 	if !f.timerStart.IsZero() {
@@ -801,6 +827,10 @@ func (f *Formatter) footerLineCountLocked() int {
 }
 
 func (f *Formatter) renderTimerLocked() {
+	if f.focused {
+		f.clearLiveFooterLocked()
+		return
+	}
 	if !f.timerEnabled || f.timerStart.IsZero() || f.closed {
 		if f.activityCursorHidden && (!f.timerEnabled || f.closed) {
 			f.setActivityCursorHiddenLocked(false)
