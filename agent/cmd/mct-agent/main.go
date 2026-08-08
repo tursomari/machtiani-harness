@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/pflag"
@@ -870,17 +871,35 @@ func handleSessionListCommand(args []string) int {
 		return 0
 	}
 
-	fmt.Printf("%-20s  %-30s  %-10s  %-5s  %s\n", "SESSION_ID", "GOAL", "STATUS", "TURNS", "UPDATED")
-	fmt.Println(strings.Repeat("-", 80))
+	headings := []string{"SESSION_ID", "GOAL", "STATUS", "TURNS", "UPDATED"}
+	table := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(table, strings.Join(headings, "\t"))
+	separator := make([]string, len(headings))
+	for i, heading := range headings {
+		separator[i] = strings.Repeat("-", len(heading))
+	}
+	fmt.Fprintln(table, strings.Join(separator, "\t"))
 	for _, s := range sessions {
-		goal := s.Goal
-		if len(goal) > 30 {
-			goal = goal[:27] + "..."
-		}
+		goal := truncateSessionGoal(s.Goal, 30)
 		updated := s.UpdatedAt.Format("2006-01-02 15:04")
-		fmt.Printf("%-20s  %-30s  %-10s  %-5d  %s\n", s.SessionID, goal, s.Status, s.TurnsCompleted, updated)
+		fmt.Fprintf(table, "%s\t%s\t%s\t%d\t%s\n", s.SessionID, goal, s.Status, s.TurnsCompleted, updated)
+	}
+	if err := table.Flush(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error writing session table: %v\n", err)
+		return 1
 	}
 	return 0
+}
+
+func truncateSessionGoal(goal string, width int) string {
+	runes := []rune(strings.TrimSpace(goal))
+	if len(runes) <= width {
+		return string(runes)
+	}
+	if width <= 3 {
+		return string(runes[:width])
+	}
+	return string(runes[:width-3]) + "..."
 }
 
 func handleSessionShowCommand(args []string) int {
