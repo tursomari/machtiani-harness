@@ -791,6 +791,7 @@ func handleSessionCommand(args []string) int {
 		fmt.Fprintln(os.Stderr, "  show    Show details for a specific session")
 		fmt.Fprintln(os.Stderr, "  archive Archive a session by ID or date range")
 		fmt.Fprintln(os.Stderr, "  unarchive Unarchive a session by ID or date range")
+		fmt.Fprintln(os.Stderr, "  menu    Open the session management menu")
 		fmt.Fprintln(os.Stderr, "  fork    Fork a session")
 		fmt.Fprintln(os.Stderr, "  delete  Delete a session")
 		fmt.Fprintln(os.Stderr, "  prune   Remove disposable session diagnostics and deprecated state")
@@ -807,6 +808,8 @@ func handleSessionCommand(args []string) int {
 		return handleSessionArchiveCommand(args[1:])
 	case "unarchive":
 		return handleSessionUnarchiveCommand(args[1:])
+	case "menu":
+		return handleSessionMenuCommand(args[1:])
 	case "fork":
 		return handleSessionForkCommand(args[1:])
 	case "delete":
@@ -823,6 +826,7 @@ func handleSessionCommand(args []string) int {
 		fmt.Fprintln(os.Stderr, "  show    Show details for a specific session")
 		fmt.Fprintln(os.Stderr, "  archive Archive a session by ID or date range")
 		fmt.Fprintln(os.Stderr, "  unarchive Unarchive a session by ID or date range")
+		fmt.Fprintln(os.Stderr, "  menu    Open the session management menu")
 		fmt.Fprintln(os.Stderr, "  fork    Fork a session")
 		fmt.Fprintln(os.Stderr, "  delete  Delete a session")
 		fmt.Fprintln(os.Stderr, "  prune   Remove disposable session diagnostics and deprecated state")
