@@ -375,7 +375,10 @@ func runSession(ctx context.Context, opts Options) Result {
 		return Result{ExitCode: 2, Err: themeErr}
 	}
 	runState.presentation = presentationTheme
-	formatter := ui.NewFormatter(captureWriter, eventBus, ui.DefaultTheme(presentationTheme), timerMgr, sessionID)
+	formatter := ui.NewFormatter(captureWriter, eventBus, ui.DefaultTheme(presentationTheme), timerMgr, sessionID, ui.FormatterOptions{
+		Focused:      opts.Config.Focused,
+		NoShellSteps: opts.Config.NoShellSteps,
+	})
 	diagWriter = formatter.CoordinateWriter(diagWriter)
 	previousLogWriter := log.Writer()
 	log.SetOutput(diagWriter)

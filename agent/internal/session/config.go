@@ -17,6 +17,8 @@ type Config struct {
 	TurnTimeout             int
 	DryRun                  bool
 	Verbose                 bool
+	Focused                 bool
+	NoShellSteps            bool
 	PersistTmpData          bool
 	MaxCommandOutputBytes   int
 	FinalFile               string

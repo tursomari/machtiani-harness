@@ -52,6 +52,10 @@ func (b *lockedBuffer) Len() int {
 }
 
 func newTestFormatter() (f *Formatter, bus *EventBus, buf *lockedBuffer) {
+	return newTestFormatterWithOptions(FormatterOptions{})
+}
+
+func newTestFormatterWithOptions(options FormatterOptions) (f *Formatter, bus *EventBus, buf *lockedBuffer) {
 	buf = new(lockedBuffer)
 	bus = NewEventBus(256)
 
@@ -66,7 +70,7 @@ func newTestFormatter() (f *Formatter, bus *EventBus, buf *lockedBuffer) {
 		PromptContentLines:    2,
 	}
 
-	f = NewFormatter(buf, bus, theme, nil, "test")
+	f = NewFormatter(buf, bus, theme, nil, "test", options)
 	return
 }
 
@@ -931,9 +935,8 @@ func TestFormatterActionExecuted(t *testing.T) {
 }
 
 func TestFormatterNoShellStepsHidesActionBlocks(t *testing.T) {
-	f, bus, buf := newTestFormatter()
+	f, bus, buf := newTestFormatterWithOptions(FormatterOptions{NoShellSteps: true})
 	defer bus.Close()
-	f.noShellSteps = true
 
 	bus.Emit(PromptStartedEvent{StreamID: "s1", Prompt: "Ask about the directory"})
 	bus.Emit(ActionExecutedEvent{
@@ -957,9 +960,8 @@ func TestFormatterNoShellStepsHidesActionBlocks(t *testing.T) {
 }
 
 func TestFormatterFocusedShowsOnlyBannerAndConclusion(t *testing.T) {
-	f, bus, buf := newTestFormatter()
+	f, bus, buf := newTestFormatterWithOptions(FormatterOptions{Focused: true})
 	defer bus.Close()
-	f.focused = true
 	f.timerEnabled = true
 	f.width = 88
 

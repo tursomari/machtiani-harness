@@ -95,6 +95,13 @@ type Formatter struct {
 	focused              bool
 }
 
+// FormatterOptions controls presentation-only filtering. Events are still
+// received and processed so transcripts and trajectories remain complete.
+type FormatterOptions struct {
+	Focused      bool
+	NoShellSteps bool
+}
+
 type coordinatedWriter struct {
 	formatter *Formatter
 	writer    io.Writer
@@ -114,7 +121,7 @@ func (w coordinatedWriter) Write(p []byte) (int, error) {
 // It subscribes to the EventBus and launches an event-processing goroutine. If
 // the bus returns nil for subscription (bus already closed), the goroutine is
 // skipped.
-func NewFormatter(out io.Writer, bus *EventBus, theme Theme, manager *ProcessTimerManager, id string) *Formatter {
+func NewFormatter(out io.Writer, bus *EventBus, theme Theme, manager *ProcessTimerManager, id string, options ...FormatterOptions) *Formatter {
 	if out == nil {
 		out = os.Stdout
 	}
@@ -123,6 +130,10 @@ func NewFormatter(out io.Writer, bus *EventBus, theme Theme, manager *ProcessTim
 	}
 	if theme == (Theme{}) {
 		theme = DefaultTheme()
+	}
+	var displayOptions FormatterOptions
+	if len(options) > 0 {
+		displayOptions = options[0]
 	}
 	f := &Formatter{
 		out:            out,
@@ -136,6 +147,8 @@ func NewFormatter(out io.Writer, bus *EventBus, theme Theme, manager *ProcessTim
 		manager:        manager,
 		id:             strings.TrimSpace(id),
 		done:           make(chan struct{}),
+		noShellSteps:   displayOptions.NoShellSteps,
+		focused:        displayOptions.Focused,
 	}
 
 	sub := bus.Subscribe()

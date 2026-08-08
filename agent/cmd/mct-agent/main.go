@@ -156,7 +156,7 @@ func newRunFlagSet(cfg *session.Config) runFlagSetResult {
 	var paramFlags multiString
 	var paramJSON multiString
 	var apiKeyFlags multiString
-	configureSessionFlags(fs, cfg, &paramFlags, &paramJSON, &apiKeyFlags)
+	configureSessionFlags(fs, cfg, &paramFlags, &paramJSON, &apiKeyFlags, true)
 	promptFile := fs.StringP("file", "f", "", "Read goal from file (mutually exclusive with --text)")
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: mct-agent run -t \"<your prompt>\" | --file <path> [flags]\n\n")
@@ -497,7 +497,7 @@ func handleSyncCommand(args []string) int {
 	var apiKeyFlags multiString
 	commitRef := fs.String("commit", "", "project commit hash to sync")
 	includeDocs := fs.Bool("include-docs", false, "include documentation/markdown changes when deciding whether to regenerate the internal README")
-	configureSessionFlags(fs, &cfg, &paramFlags, &paramJSON, &apiKeyFlags)
+	configureSessionFlags(fs, &cfg, &paramFlags, &paramJSON, &apiKeyFlags, false)
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: mct-agent sync [--commit <hash>] [flags]\n\n")
 		fmt.Fprintln(os.Stderr, "Flags:")
@@ -648,7 +648,7 @@ func markExplicitModelOverrides(fs *pflag.FlagSet, cfg *session.Config) {
 	}
 }
 
-func configureSessionFlags(fs *pflag.FlagSet, cfg *session.Config, paramFlags, paramJSON, apiKeyFlags *multiString) {
+func configureSessionFlags(fs *pflag.FlagSet, cfg *session.Config, paramFlags, paramJSON, apiKeyFlags *multiString, includeDisplayFlags bool) {
 	fs.IntVar(&cfg.MaxTurns, "max-turns", cfg.MaxTurns, "maximum number of turns before finalizing (default 150)")
 	fs.StringVar(&cfg.OrchModel, "model", "", "Model alias defined in the selected Machtiani config (alias for --orch-model)")
 	fs.StringVar(&cfg.OrchModel, "orch-model", "", "Model alias for orchestration/planner steps (default: config or env)")
@@ -673,6 +673,10 @@ func configureSessionFlags(fs *pflag.FlagSet, cfg *session.Config, paramFlags, p
 	fs.BoolVar(&cfg.NoTrajectory, "no-trajectory", cfg.NoTrajectory, "disable unified trajectory JSONL emission")
 	fs.BoolVar(&cfg.NoBanner, "no-banner", cfg.NoBanner, "disable the interactive session banner")
 	fs.BoolVar(&cfg.NoCursor, "no-cursor", cfg.NoCursor, "disable the animated activity cursor")
+	if includeDisplayFlags {
+		fs.BoolVar(&cfg.Focused, "focused", cfg.Focused, "show only the session banner, conclusion, warnings, and errors")
+		fs.BoolVar(&cfg.NoShellSteps, "no-shell-steps", cfg.NoShellSteps, "hide shell step and command blocks")
+	}
 	fs.BoolVar(&cfg.TrajectoryVerboseLLM, "trajectory-verbose-llm", cfg.TrajectoryVerboseLLM, "include expanded LLM details in the trajectory stream")
 	fs.BoolVar(&cfg.TrajectoryStreamTokens, "trajectory-stream-tokens", cfg.TrajectoryStreamTokens, "record LLM token streaming events in the trajectory (disabled by default)")
 	fs.IntVar(&cfg.TrajectoryExcerpt, "trajectory-excerpt", cfg.TrajectoryExcerpt, "excerpt length (in characters) for prompts/responses captured in the trajectory")
