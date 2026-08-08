@@ -981,8 +981,10 @@ func TestFormatterFocusedShowsOnlyBannerAndConclusion(t *testing.T) {
 		Command:     "ls -la",
 		Description: "I'll list the directory.",
 	})
+	bus.Emit(ActionExecutedEvent{Description: "required description-only notification"})
 	bus.Emit(PromptCompletedEvent{StreamID: "s1", FinalText: "completed work response"})
 	bus.Emit(NotificationEvent{Level: NotificationInfo, Message: "[resume] shell-agent session is resumable"})
+	bus.Emit(NotificationEvent{Level: NotificationWarning, Message: "required focused warning"})
 	bus.Emit(NotificationEvent{Level: NotificationError, Message: "required focused error"})
 	bus.Emit(SessionConclusionEvent{
 		Outcome:        SessionConclusionCompleted,
@@ -998,7 +1000,14 @@ func TestFormatterFocusedShowsOnlyBannerAndConclusion(t *testing.T) {
 	}
 
 	output := stripANSI(buf.String())
-	for _, visible := range []string{"machtiani (mct)", "focused banner goal", "required focused error", "focused conclusion text"} {
+	for _, visible := range []string{
+		"machtiani (mct)",
+		"focused banner goal",
+		"required description-only notification",
+		"required focused warning",
+		"required focused error",
+		"focused conclusion text",
+	} {
 		requireContains(t, output, visible)
 	}
 	for _, hidden := range []string{
