@@ -12,6 +12,7 @@ import (
 
 type SessionState struct {
 	SessionID                string                                `json:"session_id"`
+	Archived                 bool                                  `json:"archived,omitempty"`
 	Goal                     string                                `json:"goal"`
 	OriginalGoal             string                                `json:"original_goal,omitempty"`
 	OriginalPrompt           string                                `json:"original_prompt,omitempty"`
@@ -37,6 +38,7 @@ func sessionStateFromConversation(conv *conversation.Conversation, sessionID str
 	if conv != nil && conv.Goal != "" {
 		ss := SessionState{
 			SessionID:                conv.SessionID,
+			Archived:                 conv.Archived,
 			Goal:                     conv.Goal,
 			OriginalGoal:             conv.OriginalGoal,
 			OriginalPrompt:           conv.OriginalPrompt,
@@ -107,6 +109,9 @@ func ListSessions() ([]SessionState, error) {
 		}
 		state, err := sessionStateFromConversation(conv, sessionID)
 		if err != nil {
+			continue
+		}
+		if state.Archived {
 			continue
 		}
 		sessions = append(sessions, *state)

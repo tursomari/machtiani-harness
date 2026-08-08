@@ -19,6 +19,7 @@ import (
 // Timestamps are stored in RFC3339 format via the default json marshaler.
 type Conversation struct {
 	SessionID                string                   `json:"session_id"`
+	Archived                 bool                     `json:"archived,omitempty"`
 	OriginalGoal             string                   `json:"original_goal"`
 	Messages                 []Message                `json:"messages"`
 	CreatedAt                time.Time                `json:"created_at"`
