@@ -1016,6 +1016,41 @@ func TestFormatterFocusedShowsOnlyBannerAndConclusion(t *testing.T) {
 	}
 }
 
+func TestFormatterVerboseUnaffectedByDisplayModes(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		options FormatterOptions
+	}{
+		{name: "no shell steps", options: FormatterOptions{NoShellSteps: true}},
+		{name: "focused", options: FormatterOptions{Focused: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, bus, buf := newTestFormatterWithOptions(tc.options)
+			defer bus.Close()
+
+			bus.Emit(SessionConclusionEvent{
+				Outcome:        SessionConclusionCompleted,
+				RenderedAnswer: "verbose conclusion",
+				SessionID:      "agent-verbose",
+				Verbose:        true,
+				TurnsCompleted: 7,
+				Goal:           "preserve verbose detail",
+			})
+			time.Sleep(50 * time.Millisecond)
+
+			output := stripANSI(buf.String())
+			for _, visible := range []string{
+				"verbose conclusion",
+				"Session ID: agent-verbose",
+				"Turns completed: 7",
+				`Goal so far: "preserve verbose detail"`,
+			} {
+				requireContains(t, output, visible)
+			}
+		})
+	}
+}
+
 func TestFormatterActionExecutedCommandOnly(t *testing.T) {
 	f, bus, buf := newTestFormatter()
 	defer bus.Close()
