@@ -25,6 +25,23 @@ func ArchiveSession(id string) error {
 	return nil
 }
 
+// UnarchiveSession restores an archived session to the default session list.
+// Unarchiving an active session is a no-op.
+func UnarchiveSession(id string) error {
+	conv, path, err := loadSessionConversation(id)
+	if err != nil {
+		return err
+	}
+	if !conv.Archived {
+		return nil
+	}
+	conv.Archived = false
+	if err := writeSessionConversation(path, conv); err != nil {
+		return fmt.Errorf("unarchive session %s: %w", id, err)
+	}
+	return nil
+}
+
 func loadSessionConversation(id string) (*conversation.Conversation, string, error) {
 	path, err := artifacts.SessionConversationFile(id)
 	if err != nil {
