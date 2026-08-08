@@ -1009,6 +1009,9 @@ func handleSessionShowCommand(args []string) int {
 	// Output as key-value pairs
 	fmt.Printf("Session ID:      %s\n", state.SessionID)
 	fmt.Printf("Archived:        %t\n", state.Archived)
+	if state.ForkedFrom != "" {
+		fmt.Printf("Forked from:     %s\n", state.ForkedFrom)
+	}
 	fmt.Printf("Goal:            %s\n", state.Goal)
 	if state.OriginalPrompt != "" {
 		fmt.Printf("Original Prompt: %s\n", state.OriginalPrompt)
