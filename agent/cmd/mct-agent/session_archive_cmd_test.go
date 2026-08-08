@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/tursomari/machtiani/agent/internal/conversation"
@@ -14,10 +15,7 @@ import (
 )
 
 func TestSessionArchiveUnarchiveRestoresShow(t *testing.T) {
-	_, project := setupMigrationTest(t)
-	if err := projectstore.WriteProjectUUID(project, uuid.New()); err != nil {
-		t.Fatal(err)
-	}
+	setupSessionArchiveCommandTest(t)
 	sessionID := "agent-unarchive-show"
 	writeSessionArchiveCommandConversation(t, sessionID, "Show this restored session")
 
@@ -41,6 +39,69 @@ func TestSessionArchiveUnarchiveRestoresShow(t *testing.T) {
 	}
 }
 
+func TestSessionArchiveCommandsByIDAndDateRange(t *testing.T) {
+	setupSessionArchiveCommandTest(t)
+	sessionID := "agent-command-archive"
+	path := writeSessionArchiveCommandConversation(t, sessionID, "Archive from the command line")
+
+	stdout, stderr := captureOutput(func() {
+		if code := handleSessionCommand([]string{"archive", sessionID}); code != 0 {
+			t.Fatalf("session archive exit = %d, want 0", code)
+		}
+	})
+	if stderr != "" || !strings.Contains(stdout, sessionID) {
+		t.Fatalf("session archive stdout=%q stderr=%q", stdout, stderr)
+	}
+	assertSessionArchiveCommandState(t, path, true)
+
+	_, stderr = captureOutput(func() {
+		if code := handleSessionCommand([]string{"unarchive", sessionID}); code != 0 {
+			t.Fatalf("session unarchive exit = %d, want 0", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("session unarchive stderr=%q", stderr)
+	}
+	assertSessionArchiveCommandState(t, path, false)
+
+	convData, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conv, err := conversation.Unmarshal(convData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conv.UpdatedAt = time.Date(2026, time.March, 5, 18, 30, 0, 0, time.UTC)
+	convData, err = conv.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, convData, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr = captureOutput(func() {
+		if code := handleSessionCommand([]string{"archive", "--since", "2026-03-05", "--until", "2026-03-05"}); code != 0 {
+			t.Fatalf("session archive date range exit = %d, want 0", code)
+		}
+	})
+	if stderr != "" || !strings.Contains(stdout, "Archived 1 session") {
+		t.Fatalf("bulk archive stdout=%q stderr=%q", stdout, stderr)
+	}
+	assertSessionArchiveCommandState(t, path, true)
+
+	stdout, stderr = captureOutput(func() {
+		if code := handleSessionCommand([]string{"unarchive", "--since", "2026-03-05", "--until", "2026-03-05"}); code != 0 {
+			t.Fatalf("session unarchive date range exit = %d, want 0", code)
+		}
+	})
+	if stderr != "" || !strings.Contains(stdout, "Unarchived 1 session") {
+		t.Fatalf("bulk unarchive stdout=%q stderr=%q", stdout, stderr)
+	}
+	assertSessionArchiveCommandState(t, path, false)
+}
+
 func writeSessionArchiveCommandConversation(t *testing.T, sessionID, goal string) string {
 	t.Helper()
 	conv := conversation.New(sessionID, goal)
@@ -61,4 +122,27 @@ func writeSessionArchiveCommandConversation(t *testing.T, sessionID, goal string
 		t.Fatal(err)
 	}
 	return path
+}
+
+func setupSessionArchiveCommandTest(t *testing.T) {
+	t.Helper()
+	_, project := setupMigrationTest(t)
+	if err := projectstore.WriteProjectUUID(project, uuid.New()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertSessionArchiveCommandState(t *testing.T, path string, wantArchived bool) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conv, err := conversation.Unmarshal(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if conv.Archived != wantArchived {
+		t.Fatalf("conversation Archived = %v, want %v", conv.Archived, wantArchived)
+	}
 }
