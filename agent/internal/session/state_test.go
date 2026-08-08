@@ -107,6 +107,32 @@ func TestListSessionsMultiple(t *testing.T) {
 	}
 }
 
+func TestListSessionsFiltersArchived(t *testing.T) {
+	setupArchiveTestWorkingDirectory(t)
+	now := time.Now().UTC()
+	writeArchiveTestConversationAt(t, "agent-list-active", "Active session", now, false)
+	writeArchiveTestConversationAt(t, "agent-list-archived", "Archived session", now.Add(-time.Minute), true)
+
+	sessions, err := ListSessions()
+	if err != nil {
+		t.Fatalf("ListSessions() error = %v", err)
+	}
+	if len(sessions) != 1 || sessions[0].SessionID != "agent-list-active" {
+		t.Fatalf("ListSessions() = %#v, want only active session", sessions)
+	}
+
+	allSessions, err := ListSessionsWithOptions(SessionListOptions{IncludeArchived: true})
+	if err != nil {
+		t.Fatalf("ListSessionsWithOptions() error = %v", err)
+	}
+	if len(allSessions) != 2 {
+		t.Fatalf("ListSessionsWithOptions() returned %d sessions, want 2", len(allSessions))
+	}
+	if !allSessions[1].Archived || allSessions[1].SessionID != "agent-list-archived" {
+		t.Fatalf("archived session state = %#v", allSessions[1])
+	}
+}
+
 func TestListSessionsSkipsCorrupt(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("HOME", tmpDir)

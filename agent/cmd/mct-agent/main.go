@@ -832,6 +832,8 @@ func handleSessionCommand(args []string) int {
 func handleSessionListCommand(args []string) int {
 	fs := pflag.NewFlagSet("mct-agent session list", pflag.ContinueOnError)
 	jsonOutput := fs.Bool("json", false, "Output sessions as JSON array")
+	includeArchived := fs.Bool("archived", false, "Include archived sessions")
+	includeAll := fs.Bool("all", false, "Include archived sessions")
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: mct-agent session list [flags]\n\n")
 		fmt.Fprintln(os.Stderr, "Flags:")
@@ -845,7 +847,7 @@ func handleSessionListCommand(args []string) int {
 		return 2
 	}
 
-	sessions, err := session.ListSessions()
+	sessions, err := session.ListSessionsWithOptions(session.SessionListOptions{IncludeArchived: *includeArchived || *includeAll})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error listing sessions: %v\n", err)
 		return 1

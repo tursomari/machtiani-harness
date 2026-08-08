@@ -34,6 +34,10 @@ type SessionState struct {
 	ModelSelection           *conversation.ModelSelectionState     `json:"model_selection,omitempty"`
 }
 
+type SessionListOptions struct {
+	IncludeArchived bool
+}
+
 func sessionStateFromConversation(conv *conversation.Conversation, sessionID string) (*SessionState, error) {
 	if conv != nil && conv.Goal != "" {
 		ss := SessionState{
@@ -75,6 +79,12 @@ func SessionStateFromConversation(conv *conversation.Conversation, sessionID str
 // sorted by UpdatedAt in descending order (most recent first).
 // Sessions that fail to load (corrupt or missing files) are skipped.
 func ListSessions() ([]SessionState, error) {
+	return ListSessionsWithOptions(SessionListOptions{})
+}
+
+// ListSessionsWithOptions returns session states with optional inclusion of
+// archived sessions. Results are sorted by UpdatedAt descending.
+func ListSessionsWithOptions(options SessionListOptions) ([]SessionState, error) {
 	sessionsDir, err := artifacts.SessionsRoot()
 	if err != nil {
 		return nil, fmt.Errorf("resolve sessions root: %w", err)
@@ -111,7 +121,7 @@ func ListSessions() ([]SessionState, error) {
 		if err != nil {
 			continue
 		}
-		if state.Archived {
+		if state.Archived && !options.IncludeArchived {
 			continue
 		}
 		sessions = append(sessions, *state)

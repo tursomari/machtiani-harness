@@ -102,6 +102,37 @@ func TestSessionArchiveCommandsByIDAndDateRange(t *testing.T) {
 	assertSessionArchiveCommandState(t, path, false)
 }
 
+func TestSessionListArchivedFlag(t *testing.T) {
+	setupSessionArchiveCommandTest(t)
+	activeID := "agent-list-command-active"
+	archivedID := "agent-list-command-archived"
+	writeSessionArchiveCommandConversation(t, activeID, "Active list entry")
+	writeSessionArchiveCommandConversation(t, archivedID, "Archived list entry")
+	if err := session.ArchiveSession(archivedID); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr := captureOutput(func() {
+		if code := handleSessionListCommand(nil); code != 0 {
+			t.Fatalf("session list exit = %d, want 0", code)
+		}
+	})
+	if stderr != "" || !strings.Contains(stdout, activeID) || strings.Contains(stdout, archivedID) {
+		t.Fatalf("default list stdout=%q stderr=%q", stdout, stderr)
+	}
+
+	for _, flag := range []string{"--archived", "--all"} {
+		stdout, stderr = captureOutput(func() {
+			if code := handleSessionListCommand([]string{flag}); code != 0 {
+				t.Fatalf("session list %s exit = %d, want 0", flag, code)
+			}
+		})
+		if stderr != "" || !strings.Contains(stdout, activeID) || !strings.Contains(stdout, archivedID) {
+			t.Fatalf("list %s stdout=%q stderr=%q", flag, stdout, stderr)
+		}
+	}
+}
+
 func writeSessionArchiveCommandConversation(t *testing.T, sessionID, goal string) string {
 	t.Helper()
 	conv := conversation.New(sessionID, goal)
