@@ -22,11 +22,20 @@ func TestSessionArchiveUnarchiveRestoresShow(t *testing.T) {
 	if err := session.ArchiveSession(sessionID); err != nil {
 		t.Fatal(err)
 	}
+	stdout, stderr := captureOutput(func() {
+		if code := handleSessionShowCommand([]string{sessionID}); code != 0 {
+			t.Fatalf("archived session show exit = %d, want 0", code)
+		}
+	})
+	if stderr != "" || !strings.Contains(stdout, "Archived:        true") {
+		t.Fatalf("archived session show stdout=%q stderr=%q", stdout, stderr)
+	}
+
 	if err := session.UnarchiveSession(sessionID); err != nil {
 		t.Fatal(err)
 	}
 
-	stdout, stderr := captureOutput(func() {
+	stdout, stderr = captureOutput(func() {
 		if code := handleSessionShowCommand([]string{sessionID}); code != 0 {
 			t.Fatalf("session show exit = %d, want 0", code)
 		}
@@ -34,7 +43,7 @@ func TestSessionArchiveUnarchiveRestoresShow(t *testing.T) {
 	if stderr != "" {
 		t.Fatalf("stderr = %q", stderr)
 	}
-	if !strings.Contains(stdout, sessionID) || !strings.Contains(stdout, "Show this restored session") {
+	if !strings.Contains(stdout, sessionID) || !strings.Contains(stdout, "Show this restored session") || !strings.Contains(stdout, "Archived:        false") {
 		t.Fatalf("session show output = %q", stdout)
 	}
 }
@@ -121,15 +130,25 @@ func TestSessionListArchivedFlag(t *testing.T) {
 		t.Fatalf("default list stdout=%q stderr=%q", stdout, stderr)
 	}
 
-	for _, flag := range []string{"--archived", "--all"} {
-		stdout, stderr = captureOutput(func() {
-			if code := handleSessionListCommand([]string{flag}); code != 0 {
-				t.Fatalf("session list %s exit = %d, want 0", flag, code)
-			}
-		})
-		if stderr != "" || !strings.Contains(stdout, activeID) || !strings.Contains(stdout, archivedID) {
-			t.Fatalf("list %s stdout=%q stderr=%q", flag, stdout, stderr)
+	stdout, stderr = captureOutput(func() {
+		if code := handleSessionListCommand([]string{"--archived"}); code != 0 {
+			t.Fatalf("session list --archived exit = %d, want 0", code)
 		}
+	})
+	if stderr != "" || strings.Contains(stdout, activeID) || !strings.Contains(stdout, archivedID) {
+		t.Fatalf("list --archived stdout=%q stderr=%q", stdout, stderr)
+	}
+
+	stdout, stderr = captureOutput(func() {
+		if code := handleSessionListCommand([]string{"--all"}); code != 0 {
+			t.Fatalf("session list --all exit = %d, want 0", code)
+		}
+	})
+	if stderr != "" || !strings.Contains(stdout, activeID) || !strings.Contains(stdout, archivedID) {
+		t.Fatalf("list --all stdout=%q stderr=%q", stdout, stderr)
+	}
+	if !strings.Contains(stdout, archivedID+" [archived]") {
+		t.Fatalf("list --all missing archived badge: %q", stdout)
 	}
 }
 

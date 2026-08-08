@@ -787,7 +787,7 @@ func handleSessionCommand(args []string) int {
 		fmt.Fprintln(os.Stderr, "Usage: mct-agent session <subcommand> [flags]")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Subcommands:")
-		fmt.Fprintln(os.Stderr, "  list    List all sessions")
+		fmt.Fprintln(os.Stderr, "  list    List sessions")
 		fmt.Fprintln(os.Stderr, "  show    Show details for a specific session")
 		fmt.Fprintln(os.Stderr, "  archive Archive a session by ID or date range")
 		fmt.Fprintln(os.Stderr, "  unarchive Unarchive a session by ID or date range")
@@ -822,7 +822,7 @@ func handleSessionCommand(args []string) int {
 		fmt.Fprintln(os.Stderr, "Usage: mct-agent session <subcommand> [flags]")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Subcommands:")
-		fmt.Fprintln(os.Stderr, "  list    List all sessions")
+		fmt.Fprintln(os.Stderr, "  list    List sessions")
 		fmt.Fprintln(os.Stderr, "  show    Show details for a specific session")
 		fmt.Fprintln(os.Stderr, "  archive Archive a session by ID or date range")
 		fmt.Fprintln(os.Stderr, "  unarchive Unarchive a session by ID or date range")
@@ -837,8 +837,8 @@ func handleSessionCommand(args []string) int {
 func handleSessionListCommand(args []string) int {
 	fs := pflag.NewFlagSet("mct-agent session list", pflag.ContinueOnError)
 	jsonOutput := fs.Bool("json", false, "Output sessions as JSON array")
-	includeArchived := fs.Bool("archived", false, "Include archived sessions")
-	includeAll := fs.Bool("all", false, "Include archived sessions")
+	archivedOnly := fs.Bool("archived", false, "Show only archived sessions")
+	listAll := fs.Bool("all", false, "Show active and archived sessions")
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: mct-agent session list [flags]\n\n")
 		fmt.Fprintln(os.Stderr, "Flags:")
@@ -852,7 +852,14 @@ func handleSessionListCommand(args []string) int {
 		return 2
 	}
 
-	sessions, err := session.ListSessionsWithOptions(session.SessionListOptions{IncludeArchived: *includeArchived || *includeAll})
+	listMode := session.ListActive
+	if *archivedOnly {
+		listMode = session.ListArchived
+	}
+	if *listAll {
+		listMode = session.ListAll
+	}
+	sessions, err := session.ListSessionsWithOptions(session.SessionListOptions{Mode: listMode})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error listing sessions: %v\n", err)
 		return 1
@@ -884,9 +891,13 @@ func handleSessionListCommand(args []string) int {
 	}
 	fmt.Fprintln(table, strings.Join(separator, "\t"))
 	for _, s := range sessions {
+		sessionID := s.SessionID
+		if s.Archived {
+			sessionID += " [archived]"
+		}
 		goal := truncateSessionGoal(s.Goal, 30)
 		updated := s.UpdatedAt.Format("2006-01-02 15:04")
-		fmt.Fprintf(table, "%s\t%s\t%s\t%d\t%s\n", s.SessionID, goal, s.Status, s.TurnsCompleted, updated)
+		fmt.Fprintf(table, "%s\t%s\t%s\t%d\t%s\n", sessionID, goal, s.Status, s.TurnsCompleted, updated)
 	}
 	if err := table.Flush(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error writing session table: %v\n", err)
@@ -963,6 +974,7 @@ func handleSessionShowCommand(args []string) int {
 
 	// Output as key-value pairs
 	fmt.Printf("Session ID:      %s\n", state.SessionID)
+	fmt.Printf("Archived:        %t\n", state.Archived)
 	fmt.Printf("Goal:            %s\n", state.Goal)
 	if state.OriginalPrompt != "" {
 		fmt.Printf("Original Prompt: %s\n", state.OriginalPrompt)

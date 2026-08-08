@@ -107,7 +107,7 @@ func TestListSessionsMultiple(t *testing.T) {
 	}
 }
 
-func TestListSessionsFiltersArchived(t *testing.T) {
+func TestListSessionsModes(t *testing.T) {
 	setupArchiveTestWorkingDirectory(t)
 	now := time.Now().UTC()
 	writeArchiveTestConversationAt(t, "agent-list-active", "Active session", now, false)
@@ -121,12 +121,20 @@ func TestListSessionsFiltersArchived(t *testing.T) {
 		t.Fatalf("ListSessions() = %#v, want only active session", sessions)
 	}
 
-	allSessions, err := ListSessionsWithOptions(SessionListOptions{IncludeArchived: true})
+	archivedSessions, err := ListSessionsWithOptions(SessionListOptions{Mode: ListArchived})
 	if err != nil {
-		t.Fatalf("ListSessionsWithOptions() error = %v", err)
+		t.Fatalf("ListSessionsWithOptions(ListArchived) error = %v", err)
+	}
+	if len(archivedSessions) != 1 || archivedSessions[0].SessionID != "agent-list-archived" {
+		t.Fatalf("ListSessionsWithOptions(ListArchived) = %#v, want only archived session", archivedSessions)
+	}
+
+	allSessions, err := ListSessionsWithOptions(SessionListOptions{Mode: ListAll})
+	if err != nil {
+		t.Fatalf("ListSessionsWithOptions(ListAll) error = %v", err)
 	}
 	if len(allSessions) != 2 {
-		t.Fatalf("ListSessionsWithOptions() returned %d sessions, want 2", len(allSessions))
+		t.Fatalf("ListSessionsWithOptions(ListAll) returned %d sessions, want 2", len(allSessions))
 	}
 	if !allSessions[1].Archived || allSessions[1].SessionID != "agent-list-archived" {
 		t.Fatalf("archived session state = %#v", allSessions[1])

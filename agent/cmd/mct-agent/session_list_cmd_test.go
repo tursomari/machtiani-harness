@@ -3,6 +3,8 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"github.com/tursomari/machtiani/agent/internal/session"
 )
 
 func TestSessionListAlignedTable(t *testing.T) {
@@ -13,10 +15,13 @@ func TestSessionListAlignedTable(t *testing.T) {
 	}
 	writeSessionArchiveCommandConversation(t, longID, "A deliberately long session goal that must be truncated cleanly in the table")
 	writeSessionArchiveCommandConversation(t, "agent-short", "Short goal")
+	if err := session.ArchiveSession(longID); err != nil {
+		t.Fatal(err)
+	}
 
 	stdout, stderr := captureOutput(func() {
-		if code := handleSessionListCommand(nil); code != 0 {
-			t.Fatalf("session list exit = %d, want 0", code)
+		if code := handleSessionListCommand([]string{"--all"}); code != 0 {
+			t.Fatalf("session list --all exit = %d, want 0", code)
 		}
 	})
 	if stderr != "" {
@@ -30,6 +35,9 @@ func TestSessionListAlignedTable(t *testing.T) {
 	statusOffset := strings.Index(lines[0], "STATUS")
 	if statusOffset < 0 {
 		t.Fatalf("STATUS missing from header %q", lines[0])
+	}
+	if !strings.Contains(stdout, longID+" [archived]") {
+		t.Fatalf("archived badge missing from table:\n%s", stdout)
 	}
 	for _, row := range lines[2:] {
 		if got := strings.Index(row, "completed"); got != statusOffset {
