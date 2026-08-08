@@ -35,9 +35,16 @@ func ForkSession(sourceSessionID string) (string, error) {
 			forkedConv, _ = conversation.Unmarshal(data)
 		}
 	}
-	sourceState, err := sessionStateFromConversation(forkedConv, sourceSessionID)
-	if err != nil {
+	if _, err := sessionStateFromConversation(forkedConv, sourceSessionID); err != nil {
 		return "", fmt.Errorf("load source session state: %w", err)
+	}
+	canonicalHash, err := CanonicalConversationDigest(forkedConv)
+	if err != nil {
+		return "", fmt.Errorf("hash source conversation: %w", err)
+	}
+	effectiveParent := sourceSessionID
+	if forkedConv.ForkedHash != "" && canonicalHash == forkedConv.ForkedHash {
+		effectiveParent = forkedConv.ForkedFrom
 	}
 
 	newSessionID := runner.GenerateSessionID()
@@ -60,8 +67,6 @@ func ForkSession(sourceSessionID string) (string, error) {
 		return "", fmt.Errorf("copy session directory: %w", err)
 	}
 
-	sourceState.SessionID = newSessionID
-
 	convPath, err := artifacts.SessionConversationFile(newSessionID)
 	if err != nil {
 		return "", fmt.Errorf("resolve conversation file: %w", err)
@@ -78,6 +83,9 @@ func ForkSession(sourceSessionID string) (string, error) {
 	}
 
 	conv.SessionID = newSessionID
+	conv.Archived = false
+	conv.ForkedFrom = effectiveParent
+	conv.ForkedHash = canonicalHash
 
 	marshaled, err := conv.Marshal()
 	if err != nil {

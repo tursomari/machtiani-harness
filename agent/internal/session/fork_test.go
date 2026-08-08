@@ -226,6 +226,83 @@ func TestForkSessionSuccess(t *testing.T) {
 	})
 }
 
+func TestForkRecordsEffectiveParent(t *testing.T) {
+	setupForkTestWorkingDirectory(t)
+	originalID := "agent-fork-original"
+	writeForkTestConversation(t, conversation.New(originalID, "Original goal"))
+
+	firstForkID, err := ForkSession(originalID)
+	if err != nil {
+		t.Fatalf("ForkSession(original): %v", err)
+	}
+	firstFork := readForkTestConversation(t, firstForkID)
+	if firstFork.ForkedFrom != originalID {
+		t.Fatalf("first fork ForkedFrom = %q, want %q", firstFork.ForkedFrom, originalID)
+	}
+	if firstFork.ForkedHash == "" {
+		t.Fatal("first fork ForkedHash is empty")
+	}
+
+	secondForkID, err := ForkSession(firstForkID)
+	if err != nil {
+		t.Fatalf("ForkSession(first fork): %v", err)
+	}
+	secondFork := readForkTestConversation(t, secondForkID)
+	if secondFork.ForkedFrom != originalID {
+		t.Fatalf("pristine fork-of-fork ForkedFrom = %q, want effective parent %q", secondFork.ForkedFrom, originalID)
+	}
+	if secondFork.ForkedHash != firstFork.ForkedHash {
+		t.Fatalf("pristine fork hashes differ: second = %q first = %q", secondFork.ForkedHash, firstFork.ForkedHash)
+	}
+}
+
+func TestForkRecordsDivergedParent(t *testing.T) {
+	setupForkTestWorkingDirectory(t)
+	originalID := "agent-diverged-original"
+	original := conversation.New(originalID, "Original goal")
+	original.Goal = "Original goal"
+	writeForkTestConversation(t, original)
+
+	firstForkID, err := ForkSession(originalID)
+	if err != nil {
+		t.Fatalf("ForkSession(original): %v", err)
+	}
+	firstFork := readForkTestConversation(t, firstForkID)
+	firstFork.Goal = "Diverged goal"
+	firstFork.AddMessage("assistant", "Diverged content", nil)
+	writeForkTestConversation(t, firstFork)
+
+	secondForkID, err := ForkSession(firstForkID)
+	if err != nil {
+		t.Fatalf("ForkSession(diverged fork): %v", err)
+	}
+	secondFork := readForkTestConversation(t, secondForkID)
+	if secondFork.ForkedFrom != firstForkID {
+		t.Fatalf("diverged fork ForkedFrom = %q, want immediate parent %q", secondFork.ForkedFrom, firstForkID)
+	}
+	if secondFork.ForkedHash == firstFork.ForkedHash {
+		t.Fatalf("diverged fork retained inherited hash %q", secondFork.ForkedHash)
+	}
+}
+
+func TestForkOfArchivedSessionResetsArchived(t *testing.T) {
+	setupForkTestWorkingDirectory(t)
+	sourceID := "agent-archived-fork-source"
+	source := conversation.New(sourceID, "Archived source")
+	source.Goal = "Archived source"
+	source.Archived = true
+	writeForkTestConversation(t, source)
+
+	forkID, err := ForkSession(sourceID)
+	if err != nil {
+		t.Fatalf("ForkSession(archived): %v", err)
+	}
+	forked := readForkTestConversation(t, forkID)
+	if forked.Archived {
+		t.Fatal("fork of archived session remained archived")
+	}
+}
+
 func TestForkSessionSkipsLockFiles(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("HOME", tmpDir)
@@ -291,6 +368,58 @@ func TestForkSessionSkipsLockFiles(t *testing.T) {
 		_ = os.RemoveAll(srcDir)
 		_ = os.RemoveAll(dstDir)
 	})
+}
+
+func setupForkTestWorkingDirectory(t *testing.T) {
+	t.Helper()
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWd) })
+}
+
+func writeForkTestConversation(t *testing.T, conv *conversation.Conversation) {
+	t.Helper()
+	if conv.Goal == "" {
+		conv.Goal = conv.OriginalGoal
+	}
+	data, err := conv.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, err := artifacts.SessionConversationFile(conv.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func readForkTestConversation(t *testing.T, sessionID string) *conversation.Conversation {
+	t.Helper()
+	path, err := artifacts.SessionConversationFile(sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conv, err := conversation.Unmarshal(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return conv
 }
 
 // Ensure encoding/json is used (satisfies the import requirement).
