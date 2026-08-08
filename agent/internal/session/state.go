@@ -13,6 +13,8 @@ import (
 type SessionState struct {
 	SessionID                string                                `json:"session_id"`
 	Archived                 bool                                  `json:"archived,omitempty"`
+	ForkedFrom               string                                `json:"forked_from,omitempty"`
+	ForkedHash               string                                `json:"forked_hash,omitempty"`
 	Goal                     string                                `json:"goal"`
 	OriginalGoal             string                                `json:"original_goal,omitempty"`
 	OriginalPrompt           string                                `json:"original_prompt,omitempty"`
@@ -51,6 +53,8 @@ func sessionStateFromConversation(conv *conversation.Conversation, sessionID str
 		ss := SessionState{
 			SessionID:                conv.SessionID,
 			Archived:                 conv.Archived,
+			ForkedFrom:               conv.ForkedFrom,
+			ForkedHash:               conv.ForkedHash,
 			Goal:                     conv.Goal,
 			OriginalGoal:             conv.OriginalGoal,
 			OriginalPrompt:           conv.OriginalPrompt,
