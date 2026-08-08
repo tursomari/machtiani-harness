@@ -930,6 +930,32 @@ func TestFormatterActionExecuted(t *testing.T) {
 	_ = f
 }
 
+func TestFormatterNoShellStepsHidesActionBlocks(t *testing.T) {
+	f, bus, buf := newTestFormatter()
+	defer bus.Close()
+	f.noShellSteps = true
+
+	bus.Emit(PromptStartedEvent{StreamID: "s1", Prompt: "Ask about the directory"})
+	bus.Emit(ActionExecutedEvent{
+		Step:        2,
+		StepLimit:   5,
+		Command:     "ls -la",
+		Description: "I'll list the directory.",
+	})
+	bus.Emit(PromptCompletedEvent{StreamID: "s1", FinalText: "llm output"})
+	time.Sleep(50 * time.Millisecond)
+
+	output := stripANSI(buf.String())
+	requireContains(t, output, "Ask about the directory")
+	requireContains(t, output, "llm output")
+	for _, hidden := range []string{"Step 2 of 5", "$ ls -la"} {
+		if strings.Contains(output, hidden) {
+			t.Errorf("expected output NOT to contain %q\nGot: %s", hidden, output)
+		}
+	}
+	_ = f
+}
+
 func TestFormatterActionExecutedCommandOnly(t *testing.T) {
 	f, bus, buf := newTestFormatter()
 	defer bus.Close()

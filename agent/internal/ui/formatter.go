@@ -91,6 +91,7 @@ type Formatter struct {
 	manager              *ProcessTimerManager
 	id                   string
 	done                 chan struct{}
+	noShellSteps         bool
 }
 
 type coordinatedWriter struct {
@@ -307,6 +308,9 @@ func (f *Formatter) handleChunkReceived(e ChunkReceivedEvent) {
 func (f *Formatter) handleActionExecuted(e ActionExecutedEvent) {
 	if e.Command == "" && e.Step == 0 && e.StepLimit == 0 {
 		f.printNotificationLineLocked(e.Description, presentation.RoleNormal, false)
+		return
+	}
+	if f.noShellSteps {
 		return
 	}
 	st := f.streams[f.currentStreamID]
