@@ -41,6 +41,8 @@ type SessionListMode int
 const (
 	ListActive SessionListMode = iota
 	ListArchived
+	ListForked
+	ListArchivedForked
 	ListAll
 )
 
@@ -137,10 +139,7 @@ func ListSessionsWithOptions(options SessionListOptions) ([]SessionState, error)
 		if err != nil {
 			continue
 		}
-		if options.Mode == ListActive && state.Archived {
-			continue
-		}
-		if options.Mode == ListArchived && !state.Archived {
+		if !sessionMatchesListMode(state, options.Mode) {
 			continue
 		}
 		sessions = append(sessions, *state)
@@ -156,4 +155,21 @@ func ListSessionsWithOptions(options SessionListOptions) ([]SessionState, error)
 	}
 
 	return sessions, nil
+}
+
+func sessionMatchesListMode(state *SessionState, mode SessionListMode) bool {
+	switch mode {
+	case ListActive:
+		return !state.Archived
+	case ListArchived:
+		return state.Archived
+	case ListForked:
+		return state.ForkedFrom != ""
+	case ListArchivedForked:
+		return state.Archived && state.ForkedFrom != ""
+	case ListAll:
+		return true
+	default:
+		return false
+	}
 }

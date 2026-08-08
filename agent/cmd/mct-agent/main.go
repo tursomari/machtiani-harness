@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"text/tabwriter"
@@ -837,8 +838,9 @@ func handleSessionCommand(args []string) int {
 func handleSessionListCommand(args []string) int {
 	fs := pflag.NewFlagSet("mct-agent session list", pflag.ContinueOnError)
 	jsonOutput := fs.Bool("json", false, "Output sessions as JSON array")
-	archivedOnly := fs.Bool("archived", false, "Show only archived sessions")
-	listAll := fs.Bool("all", false, "Show active and archived sessions")
+	archivedOnly := fs.Bool("archived", false, "Show only archived sessions (intersects with --forked)")
+	forkedOnly := fs.Bool("forked", false, "Show only forked sessions (intersects with --archived)")
+	listAll := fs.Bool("all", false, "Show all sessions (overrides --archived and --forked)")
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: mct-agent session list [flags]\n\n")
 		fmt.Fprintln(os.Stderr, "Flags:")
@@ -853,11 +855,15 @@ func handleSessionListCommand(args []string) int {
 	}
 
 	listMode := session.ListActive
-	if *archivedOnly {
-		listMode = session.ListArchived
-	}
-	if *listAll {
+	switch {
+	case *listAll:
 		listMode = session.ListAll
+	case *archivedOnly && *forkedOnly:
+		listMode = session.ListArchivedForked
+	case *archivedOnly:
+		listMode = session.ListArchived
+	case *forkedOnly:
+		listMode = session.ListForked
 	}
 	sessions, err := session.ListSessionsWithOptions(session.SessionListOptions{Mode: listMode})
 	if err != nil {
@@ -883,7 +889,8 @@ func handleSessionListCommand(args []string) int {
 	}
 
 	headings := []string{"SESSION_ID", "GOAL", "STATUS", "TURNS", "UPDATED"}
-	table := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+	goalWidth := sessionListGoalWidth(sessions)
+	table := tabwriter.NewWriter(os.Stdout, 0, 4, 1, ' ', 0)
 	fmt.Fprintln(table, strings.Join(headings, "\t"))
 	separator := make([]string, len(headings))
 	for i, heading := range headings {
@@ -891,12 +898,9 @@ func handleSessionListCommand(args []string) int {
 	}
 	fmt.Fprintln(table, strings.Join(separator, "\t"))
 	for _, s := range sessions {
-		sessionID := s.SessionID
-		if s.Archived {
-			sessionID += " [archived]"
-		}
-		goal := truncateSessionGoal(s.Goal, 30)
-		updated := s.UpdatedAt.Format("2006-01-02 15:04")
+		sessionID := sessionListDisplayID(s)
+		goal := truncateSessionGoal(s.Goal, goalWidth)
+		updated := s.UpdatedAt.Format("2006-01-02")
 		fmt.Fprintf(table, "%s\t%s\t%s\t%d\t%s\n", sessionID, goal, s.Status, s.TurnsCompleted, updated)
 	}
 	if err := table.Flush(); err != nil {
@@ -904,6 +908,36 @@ func handleSessionListCommand(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+func sessionListDisplayID(state session.SessionState) string {
+	sessionID := state.SessionID
+	if state.Archived {
+		sessionID += " [archived]"
+	}
+	if state.ForkedFrom != "" {
+		sessionID += " [forked]"
+	}
+	return sessionID
+}
+
+func sessionListGoalWidth(sessions []session.SessionState) int {
+	const (
+		maxTableWidth = 80
+		maxGoalWidth  = 30
+		columnPadding = 1
+		updatedWidth  = len("2006-01-02")
+	)
+	maxSessionIDWidth := len("SESSION_ID")
+	maxStatusWidth := len("STATUS")
+	maxTurnsWidth := len("TURNS")
+	for _, state := range sessions {
+		maxSessionIDWidth = max(maxSessionIDWidth, len(sessionListDisplayID(state)))
+		maxStatusWidth = max(maxStatusWidth, len(state.Status))
+		maxTurnsWidth = max(maxTurnsWidth, len(strconv.Itoa(state.TurnsCompleted)))
+	}
+	fixedWidth := maxSessionIDWidth + maxStatusWidth + maxTurnsWidth + updatedWidth + 4*columnPadding
+	return max(len("GOAL"), min(maxGoalWidth, maxTableWidth-fixedWidth))
 }
 
 func truncateSessionGoal(goal string, width int) string {
