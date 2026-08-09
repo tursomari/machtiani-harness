@@ -178,25 +178,25 @@ mct-agent sync \
 
 ## Follow-up workflow
 
-To continue a child session directly:
+To resume a child session directly:
 
 ```bash
 OPENROUTER_API_KEY="$TEST_API_KEY" \
-mct-agent run --model glm-5-high \
+mct-agent resume <child-session-id> --model glm-5-high \
   --max-steps 100 --timeout-per-turn 0 \
-  --session-id <child-session-id> -t "<follow-up>"
+  -t "<follow-up>"
 ```
 
-To resume or continue the parent session:
+To resume the parent session:
 
 ```bash
 OPENROUTER_API_KEY="$TEST_API_KEY" \
-mct-agent run --model glm-5-high \
+mct-agent resume <parent-session-id> --model glm-5-high \
   --max-steps 100 --timeout-per-turn 0 \
-  --session-id <parent-session-id> -t "<your follow-up prompt>"
+  -t "<your follow-up prompt>"
 ```
 
-- A follow-up run with `--session-id <child-session-id>` rewrites that child session's `chat/agent-final-answer.md`.
+- Resuming `<child-session-id>` rewrites that child session's `chat/agent-final-answer.md`.
 - Check artifacts on disk after follow-ups rather than assuming every printed path or summary is perfectly current.
 
 ## Practical expectations
@@ -210,7 +210,7 @@ mct-agent run --model glm-5-high \
 
 - The local workflow relies on `--mode` to create the parent orchestration session.
 - A good workflow checks or updates `chat/agent-final-answer.md` in the relevant session directory to confirm the run finished.
-- Follow-ups are typically done by passing a new prompt together with `--session-id`.
+- Follow-ups are typically done with `mct-agent resume <session-id> -t "<prompt>"`. The command requires an explicit ID; run `mct-agent session list` to find one.
 
 ## Operator tips
 

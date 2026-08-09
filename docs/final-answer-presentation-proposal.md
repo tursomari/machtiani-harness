@@ -35,9 +35,9 @@ configured independently with `[ui].glyphs = "unicode"` or `"ascii"`; the
   Answer saved to:
     ~/.machtiani/7e6be546-9043-42d6-90c9-13cf67c2421f/sessions/agent-20260718T051605-0813/chat/agent-final-answer.md
 
-  Continue this session:
+  Resume this session:
     ──────────────────────────────────────────────────────────────────────────────────────────────
-    $ mct-agent run -t "<your follow-up prompt>" --session-id agent-20260718T051605-0813
+    $ mct-agent resume agent-20260718T051605-0813 -t "<your follow-up prompt>"
     ──────────────────────────────────────────────────────────────────────────────────────────────
 
   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -53,11 +53,11 @@ configured independently with `[ui].glyphs = "unicode"` or `"ascii"`; the
   user-facing conclusion.
 - `Answer saved to:` uses **Provenance**. The path uses underlined **Beauty**,
   matching the existing link treatment while remaining easy to copy.
-- `Continue this session:` and the command rules use **Goodness**. The bounded
+- `Resume this session:` and the command rules use **Goodness**. The bounded
 region makes it obvious that the command is intended to be copied, edited,
 and run. Its rules are sized to the longest command row plus two columns of
 right padding.
-- Inside the command, `$` uses **Goodness**, `mct-agent run` uses
+- Inside the command, `$` uses **Goodness**, `mct-agent resume` uses
   **Provenance**, and the editable arguments remain the terminal foreground.
 - The footer keeps its current role-based styling: elapsed time, turn, and
   running state use **Truth**; the mode uses **Beauty**; session/model identity
@@ -75,7 +75,7 @@ The same renderer owns all conclusion outcomes. A resumable interruption uses
 the red `SHELL-AGENT INTERRUPTED` heading and a resume command without `-t`. A
 user-input suspension uses an amber `USER INPUT NEEDED` heading, optional
 `Why this needs your input:` context, a Beauty-styled decision, and
-`<your answer>` in the continuation command. Neither outcome invents a final
+`<your answer>` in the resume command. Neither outcome invents a final
 answer or saved-answer path.
 
 ## Palette reference

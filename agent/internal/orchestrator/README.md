@@ -25,14 +25,14 @@ meta-orchestrator --mode code --model gpt-4 -f instruction.md
 
 The meta-orchestrator runs a loop with the following steps:
 
-1. **Invoke** `mct-agent run` with the given mode, model, and instruction file. On the first invocation, a fresh session ID is generated and passed to `mct-agent` via the `MACHTIANI_SESSION_ID` environment variable. The `--session-id` flag is reserved for continuing an existing session.
+1. **Invoke** `mct-agent run` with the given mode, model, and instruction file. On the first invocation, a fresh session ID is generated and passed to `mct-agent` via the `MACHTIANI_SESSION_ID` environment variable. Internal recovery still uses the deprecated `--session-id` flag during the compatibility window; user-facing flows use `mct-agent resume <session-id>`.
 
 2. **Classify** the resulting `agent-final-answer.md` using a separate LLM call with a strict classification prompt. The classifier assigns one of three labels:
    - `SOLUTION` — a genuinely completed solution with concrete code changes or implemented work.
    - `PERMISSION_ASK` — a permission ask, status report, design discussion, proposal, or anything short of actual implementation.
    - `HARD_BLOCKER` — an unrecoverable condition such as missing API credits or a critical environment failure.
 
-3. **Re-invoke** if the classification is `PERMISSION_ASK`. The meta-orchestrator calls `mct-agent run --session-id <id> -t "<your follow-up prompt>"` to start a fresh turn with an authoritative instruction to continue working and implement the solution without asking for permission.
+3. **Re-invoke** if the classification is `PERMISSION_ASK`. During the deprecation window, the meta-orchestrator internally calls `mct-agent run --session-id <id> -t "<your follow-up prompt>"` to start a fresh turn with an authoritative instruction to resume work and implement the solution without asking for permission. This internal transport is intentionally retained until the dedicated resume command is battle-tested.
 
 4. **Repeat** steps 2–3 until the classifier returns `SOLUTION` (the task is complete) or `HARD_BLOCKER` (further continuation is impossible).
 

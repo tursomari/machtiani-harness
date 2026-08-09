@@ -371,6 +371,8 @@ func ensureSessionIDArg(args []string, sessionID string) []string {
 			return out
 		}
 	}
+	// TODO(resume-command): migrate internal recovery plumbing once the
+	// dedicated resume command has been battle-tested.
 	return append(out, "--session-id", sessionID)
 }
 
@@ -1470,6 +1472,8 @@ func RunLoop(
 			if tag != "" {
 				args = append(args, "--tag", tag)
 			}
+			// TODO(resume-command): migrate internal continuation plumbing once
+			// the dedicated resume command has been battle-tested.
 			args = append(args, "--session-id", mctSessionID)
 			args = append(args, "-t", message)
 			if persistTmpData {
@@ -1605,6 +1609,8 @@ func RunLoop(
 					if tag != "" {
 						reviewArgs = append(reviewArgs, "--tag", tag)
 					}
+					// TODO(resume-command): migrate internal review plumbing once the
+					// dedicated resume command has been battle-tested.
 					reviewArgs = append(reviewArgs, "--session-id", mctSessionID)
 					reviewArgs = append(reviewArgs, "-t", reviewMessage)
 					if persistTmpData {
@@ -1726,6 +1732,8 @@ func RunLoop(
 					if tag != "" {
 						reviewArgs2 = append(reviewArgs2, "--tag", tag)
 					}
+					// TODO(resume-command): migrate internal review plumbing once the
+					// dedicated resume command has been battle-tested.
 					reviewArgs2 = append(reviewArgs2, "--session-id", mctSessionID)
 					reviewArgs2 = append(reviewArgs2, "-t", reviewMessage2)
 					if persistTmpData {

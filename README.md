@@ -500,7 +500,7 @@ cache_reanchor_min_cached_tokens = 2048
 
 Other helpful overrides:
 - `MACHTIANI_CONFIG`: explicit path to the config file.
-- `MACHTIANI_SESSION_ID`: pre-set session ID to use for the current run; overridden by `--session-id` flag.
+- `MACHTIANI_SESSION_ID`: pre-set session ID to use for the current run; overridden by the `--session`, `--resume`, or `--continue` flag and by the dedicated `resume` command. The legacy `--session-id` flag also overrides it during the deprecation window.
 - `MCT_LLM_INPUT_LOG`: explicit path for the full redacted LLM request log; this enables logging and overrides `--log-llm-inputs`' canonical session path.
 - `MACHTIANI_THEME`: override `[ui].theme` with `terminal`, `machtiani-dark`, `machtiani-light`, or `none`.
 - `MACHTIANI_GLYPHS`: override `[ui].glyphs` with `unicode` or `ascii`.
@@ -566,7 +566,8 @@ mct-agent run --t "Explain the architecture and identify main components" --verb
 Useful flags (agent):
 - `--max-steps int`: max `mct` Q&A turns before finalizing (default ~4).
 - `--t string`: Required flag to specify the prompt/question. Positional arguments for prompts are no longer supported.
-- `--session-id string`: Continue or resume a previous session by ID. When specified, the agent loads prior transcript and goal, then appends your new instruction to the goal. If omitted, a new session ID is auto-generated.
+- `--session string`, `--resume string`, `--continue string`: Equivalent flags that resume a previous session by ID. When one is specified, the agent loads the prior transcript and goal, then appends any new instruction to the goal. If all are omitted, a new session ID is auto-generated.
+- `--session-id string`: Deprecated alias for `--session`, `--resume`, and `--continue`. It remains available during the deprecation window, but new user-facing commands should use `mct-agent resume <session-id>`.
 - `--api-key provider:key`: provider-specific API key override for this run (repeatable; beats config/env).
 - `--openai-api-key string`: API key for OpenAI‑compatible endpoint.
 - `--openai-base-url string`: Base URL for OpenAI‑compatible endpoint.
@@ -589,9 +590,9 @@ mct-agent run --t "triage regression" \
   --api-key openrouter:sk-openrouter-yyy
 ```
 
-### Continuing Conversations With Session Resumption
+### Resuming Conversations
 
-Sessions are resumable by session ID. If your process is interrupted (Ctrl+C) or you'd like to append additional instructions to an ongoing task, specify the `--session-id` flag:
+Sessions are resumable by session ID. If your process is interrupted (Ctrl+C) or you would like to append instructions to an ongoing task, use the dedicated `resume` command:
 
 The examples below use the initialized project store:
 
@@ -604,19 +605,26 @@ PROJECT_STORE="$HOME/.machtiani/$(cat .machtiani/project.uuid)"
 mct-agent run --t "Fix all lint issues" --verbose
 # Output includes: Session ID: <session-id>
 
-# Later, continue the same session with new instructions
-mct-agent run -t "<your follow-up prompt>" --session-id <session-id>
+# Later, resume the same session, optionally with new instructions
+mct-agent resume <session-id>
+mct-agent resume <session-id> -t "<your follow-up prompt>"
 ```
 
+`resume` always requires an explicit session ID. It never guesses or
+auto-resumes the most recent session; use `mct-agent session list` to find the
+ID you want. For compatibility, `mct-agent run --session <session-id>`,
+`--resume <session-id>`, and `--continue <session-id>` are equivalent flag
+forms. The older `--session-id` spelling is deprecated but not removed.
+
 Normal completion output shows the saved final-answer path followed by the
-continuation command. Paths under the current home directory use `~/`. Add
+resume command. Paths under the current home directory use `~/`. Add
 `--verbose` when you also want the detailed session ID, turn count, and goal
 summary; verbose output reports the saved path once in its diagnostic output.
 
 When resuming, the agent:
 - Loads the prior goal and transcript from disk
 - Appends your new instruction to the goal (resulting in a combined objective)
-- Continues the conversation from where it left off
+- Resumes the conversation from where it left off
 - Writes new turns to the same transcript and trajectory files
 
 Session state is stored in `$PROJECT_STORE/sessions/<session-id>/session-state.json` and includes the goal, turn count, and paths to transcript artifacts. This allows you to pause, inspect results, and resume later without losing context.
@@ -664,13 +672,16 @@ mct-agent session show <session-id> --json
 When `mct-agent` receives `SIGINT` (Ctrl+C) or `SIGTERM`, it:
 - Gracefully terminates the current operation
 - Saves session state to `session-state.json` immediately
-- Prints an interruption summary including session ID and turns completed:
+- If interrupted shell-agent work has a resumable checkpoint, prints the current resume conclusion:
   ```
-  === SESSION INTERRUPTED ===
-  Session ID: <session-id>
-  Turns completed: 2
-  To resume: mct-agent run -t "<your follow-up prompt>" --session-id <session-id>
+  SHELL-AGENT INTERRUPTED
+  Shell-agent work is resumable.
+  Resume the interrupted shell-agent work:
+    $ mct-agent resume <session-id>
   ```
+
+The older `=== SESSION INTERRUPTED ===` banner is historical and is no longer
+emitted by the current Go implementation.
 
 No manual backup is needed. All context (transcript, goals, artifacts) is preserved and ready for resumption. This is especially useful when working on large codebases where discovery or planning may take time—you can interrupt safely and continue later without re-running earlier steps.
 
