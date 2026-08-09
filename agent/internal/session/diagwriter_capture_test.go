@@ -67,7 +67,7 @@ func TestSuspendForUserInputDiagWriterCapturesUserInputHint(t *testing.T) {
 		"Your decision:",
 		"The safer fix preserves existing behavior.",
 		"Do you want the safer fix?",
-		`mct-agent run -t "<your answer>" --session-id suspend-diag-test`,
+		`mct-agent resume suspend-diag-test -t "<your answer>"`,
 	} {
 		if !strings.Contains(output, want) {
 			t.Errorf("expected %q in diagWriter output, got:\n%s", want, output)

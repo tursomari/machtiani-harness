@@ -203,9 +203,7 @@ func TestSessionConclusionDiagWriterFallback(t *testing.T) {
 		"Session ID: resume-hint-test",
 		"Turns completed: 3",
 		"Test goal for resume hint",
-		"mct-agent run \\",
-		`-t "<your follow-up prompt>" \`,
-		"--session-id resume-hint-test",
+		`mct-agent resume resume-hint-test -t "<your follow-up prompt>"`,
 	} {
 		if !strings.Contains(output, want) {
 			t.Errorf("expected %q in diagWriter output, got:\n%s", want, output)
@@ -293,7 +291,7 @@ func TestSessionConclusionNonVerboseOmitsDetails(t *testing.T) {
 
 	var diagBuf bytes.Buffer
 	runState.printSessionConclusion(nil, &diagBuf, event)
-	if got := diagBuf.String(); !strings.Contains(got, "Answer saved to:") || !strings.Contains(got, "Continue this session:") {
+	if got := diagBuf.String(); !strings.Contains(got, "Answer saved to:") || !strings.Contains(got, "Resume this session:") {
 		t.Fatalf("quiet conclusion missing essential information:\n%s", got)
 	} else if strings.Contains(got, "Turns completed:") || strings.Contains(got, "Goal so far:") {
 		t.Fatalf("quiet conclusion leaked verbose details:\n%s", got)

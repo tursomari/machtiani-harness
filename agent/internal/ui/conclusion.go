@@ -108,7 +108,7 @@ func RenderSessionConclusion(event SessionConclusionEvent, theme Theme, width in
 			writeConclusionDetail(&b, theme, "Goal so far:", fmt.Sprintf("%q", strings.TrimSpace(event.Goal)), presentation.RoleNormal, false)
 			blank()
 		}
-		writeConclusionAction(&b, theme, width, event, "Continue this session:", "<your follow-up prompt>")
+		writeConclusionAction(&b, theme, width, event, "Resume this session:", "<your follow-up prompt>")
 	}
 
 	if closeAfterActions {
@@ -156,23 +156,21 @@ func writeConclusionAction(b *strings.Builder, theme Theme, width int, event Ses
 }
 
 func conclusionCommandBlock(theme Theme, width int, sessionID, promptPlaceholder string) []presentation.StyledLine {
-	command := "mct-agent run"
+	command := "mct-agent resume " + sessionID
 	if promptPlaceholder != "" {
 		command += " -t \"" + promptPlaceholder + "\""
 	}
-	command += " --session-id " + sessionID
 
 	singleVisible := "$ " + command
-	useSingle := 4+runeLen(singleVisible)+2 <= width-1
+	useSingle := promptPlaceholder == "" || 4+runeLen(singleVisible)+2 <= width-1
 	var visible []string
 	if useSingle {
 		visible = []string{singleVisible}
 	} else {
-		visible = []string{"mct-agent run \\"}
+		visible = []string{"mct-agent resume " + sessionID + " \\"}
 		if promptPlaceholder != "" {
-			visible = append(visible, "  -t \""+promptPlaceholder+"\" \\")
+			visible = append(visible, "  -t \""+promptPlaceholder+"\"")
 		}
-		visible = append(visible, "  --session-id "+sessionID)
 	}
 
 	longest := 0
@@ -191,24 +189,21 @@ func conclusionCommandBlock(theme Theme, width int, sessionID, promptPlaceholder
 	} else {
 		lines = append(lines, presentation.StyledLine{
 			presentation.Text("    "),
-			presentation.Bold(presentation.RoleProvenance, "mct-agent run"),
-			presentation.Text(" \\"),
+			presentation.Bold(presentation.RoleProvenance, "mct-agent resume"),
+			presentation.Text(" " + sessionID + " \\"),
 		})
 		if promptPlaceholder != "" {
 			lines = append(lines, presentation.StyledLine{
-				presentation.Text("      -t \"" + promptPlaceholder + "\" \\"),
+				presentation.Text("      -t \"" + promptPlaceholder + "\""),
 			})
 		}
-		lines = append(lines, presentation.StyledLine{
-			presentation.Text("      --session-id " + sessionID),
-		})
 	}
 	lines = append(lines, rule)
 	return lines
 }
 
 func styleConclusionSingleCommand(command string) presentation.StyledLine {
-	const executable = "mct-agent run"
+	const executable = "mct-agent resume"
 	return presentation.StyledLine{
 		presentation.Text("    "),
 		presentation.Bold(presentation.RoleGoodness, "$ "),

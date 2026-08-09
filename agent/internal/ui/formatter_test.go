@@ -97,10 +97,10 @@ func TestFormatterSessionConclusionSemanticRoles(t *testing.T) {
 
 	output := buf.String()
 	for _, want := range []string{
-		"\x1b[1;32mContinue this session:\x1b[0m",
+		"\x1b[1;32mResume this session:\x1b[0m",
 		"\x1b[32m────────────────",
 		"\x1b[1;32m$ \x1b[0m",
-		"\x1b[1;33mmct-agent run\x1b[0m",
+		"\x1b[1;33mmct-agent resume\x1b[0m",
 	} {
 		if !strings.Contains(output, want) {
 			t.Errorf("expected semantic output %q in %q", want, output)
@@ -126,11 +126,11 @@ func TestFormatterSessionConclusionUsesOneUnifiedBlock(t *testing.T) {
 
 	output := stripANSI(buf.String())
 	outerRule := "  " + strings.Repeat(f.theme.Presentation.Glyphs().OuterRule, conclusionOuterRuleWidth(f.width))
-	want := "last stdout line\n\n" + outerRule + "\n\n  Continue this session:"
+	want := "last stdout line\n\n" + outerRule + "\n\n  Resume this session:"
 	if !strings.Contains(output, want) {
 		t.Fatalf("expected answer and continuation in one block, got %q", output)
 	}
-	if !strings.Contains(output, "    $ mct-agent run -t \"<your follow-up prompt>\" --session-id agent-test") {
+	if !strings.Contains(output, "    $ mct-agent resume agent-test -t \"<your follow-up prompt>\"") {
 		t.Fatalf("expected shell-style continuation command, got %q", output)
 	}
 	if strings.Contains(output, "FINAL RESPONSE") || strings.Contains(output, "<next instruction>") {
@@ -155,7 +155,7 @@ func TestFormatterSessionConclusionShowsFinalAnswerPathBeforeInstruction(t *test
 	output := stripANSI(buf.String())
 	want := "  Answer saved to:\n" +
 		"    ~/.machtiani/project/sessions/agent-test/chat/agent-final-answer.md\n\n" +
-		"  Continue this session:\n"
+		"  Resume this session:\n"
 	if !strings.Contains(output, want) {
 		t.Fatalf("final-answer continuation layout mismatch\nwant substring: %q\noutput: %q", want, output)
 	}
@@ -176,10 +176,10 @@ func TestFormatterSessionConclusionInterrupted(t *testing.T) {
 	if !strings.Contains(output, "Resume the interrupted shell-agent work:") {
 		t.Fatalf("expected custom instruction, got %q", output)
 	}
-	if strings.Contains(output, "Continue this session:") || strings.Contains(output, " -t ") {
+	if strings.Contains(output, "Resume this session:") || strings.Contains(output, " -t ") {
 		t.Fatalf("interrupted conclusion used completed command: %q", output)
 	}
-	if !strings.Contains(output, "    $ mct-agent run --session-id agent-test") {
+	if !strings.Contains(output, "    $ mct-agent resume agent-test") {
 		t.Fatalf("expected shell-agent resume command block, got %q", output)
 	}
 }
@@ -905,7 +905,7 @@ func TestFormatterSessionConclusionDispatch(t *testing.T) {
 	output := stripANSI(buf.String())
 
 	requireContains(t, output, "answer text here")
-	requireContains(t, output, "Continue this session:")
+	requireContains(t, output, "Resume this session:")
 	_ = f
 }
 

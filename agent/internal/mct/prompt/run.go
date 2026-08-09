@@ -92,7 +92,7 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 			historyNote = "Review the session history above and "
 		}
 		opts.Prompt = fmt.Sprintf(
-			"Continue this session. %sAnalyze the conversation history and decide what action to take or how to respond: %s",
+			"Resume this session. %sAnalyze the conversation history and decide what action to take or how to respond: %s",
 			historyNote, opts.Prompt)
 	}
 	answerMaterialTruncated := false

@@ -267,14 +267,12 @@ func TestPrepareSessionEnvironmentLocalKeepsLockInSessionScratchRoot(t *testing.
 	}
 }
 
-
-
 func TestPrepareSessionEnvironment_ImplicitSessionID_IgnoresInheritedTempRoot(t *testing.T) {
 	repo := setupSessionEnvironmentTestRepo(t, "[environment]\ntype = \"local\"\n")
 
 	// Simulate a child process that inherited both MACHTIANI_SESSION_ID
 	// and MACHTIANI_SESSION_TEMP_ROOT from a parent process.
-	// When no explicit --session-id is given (cfg.sessionID == ""),
+	// When no explicit resume/session selector is given (cfg.sessionID == ""),
 	// prepareRunBootstrap unsets the env var before
 	// prepareSessionEnvironment runs so that the child session never
 	// reuses the parent's lock directory.
