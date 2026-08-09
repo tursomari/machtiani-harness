@@ -640,22 +640,21 @@ if [ "$SEQUENTIAL" -eq 1 ]; then
     # Run mct-agent with implementation prompt
     cd "$MCT_WORKTREE"
     MCT_IMPL_SUCCESS=false
-    MCT_SESSION_ID_ARG=""
+    MCT_COMMAND=(run)
     if [ -n "$MCT_SESSION_ID" ]; then
-        MCT_SESSION_ID_ARG="--session-id $MCT_SESSION_ID"
-        echo "[mct-agent] Continuing session $MCT_SESSION_ID for implementation..."
+        MCT_COMMAND=(resume "$MCT_SESSION_ID")
+        echo "[mct-agent] Resuming session $MCT_SESSION_ID for implementation..."
     else
         echo "[mct-agent] Starting fresh session for implementation (no session ID captured)..."
     fi
 
     for ATTEMPT in 1 2 3; do
         echo "[mct-agent] Impl attempt $ATTEMPT/3: Running mct-agent..."
-        if MACHTIANI_CONFIG="$CONFIG" mct-agent run \
+        if MACHTIANI_CONFIG="$CONFIG" mct-agent "${MCT_COMMAND[@]}" \
             --mode code-strong-forge \
             --final-file "$OUTPUT_DIR/mct_answer.md" \
             --model "$MODEL" \
             $MCT_API_KEY_ARG \
-            $MCT_SESSION_ID_ARG \
             --timeout-per-turn 0 \
             --max-steps 20 \
             --file "$IMPL_PROMPT"; then
@@ -696,21 +695,20 @@ else
     # Define runner for mct-agent implementation with retry logic
     _mct_impl_runner() {
         cd "$MCT_WORKTREE"
-        local session_arg=""
+        local -a mct_command=(run)
         if [ -n "$MCT_SESSION_ID" ]; then
-            session_arg="--session-id $MCT_SESSION_ID"
-            echo "[mct-agent] Continuing session $MCT_SESSION_ID for implementation..."
+            mct_command=(resume "$MCT_SESSION_ID")
+            echo "[mct-agent] Resuming session $MCT_SESSION_ID for implementation..."
         else
             echo "[mct-agent] Starting fresh session for implementation (no session ID captured)..."
         fi
         for ATTEMPT in 1 2 3; do
             echo "[mct-agent] Impl attempt $ATTEMPT/3: Running mct-agent..."
-            if MACHTIANI_CONFIG="$CONFIG" mct-agent run \
+            if MACHTIANI_CONFIG="$CONFIG" mct-agent "${mct_command[@]}" \
                 --mode code-strong-forge \
                 --final-file "$OUTPUT_DIR/mct_answer.md" \
                 --model "$MODEL" \
                 $MCT_API_KEY_ARG \
-                $session_arg \
                 --timeout-per-turn 0 \
                 --max-steps 20 \
                 --file "$IMPL_PROMPT"; then

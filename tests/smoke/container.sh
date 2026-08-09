@@ -141,7 +141,7 @@ project_store=$(mct-agent project show --json | sed -n 's/^[[:space:]]*"store": 
 test -n "$project_store"
 default_run_output=$(mktemp)
 mct-agent run -t "List the last commit message, then finish." --max-turns 5 | tee "$default_run_output"
-default_session_id=$(sed -n 's/.*--session-id \([^[:space:]]*\).*/\1/p' "$default_run_output" | tail -n 1)
+default_session_id=$(sed -n 's/.*mct-agent resume \([^[:space:]]*\).*/\1/p' "$default_run_output" | tail -n 1)
 test -n "$default_session_id"
 default_session="$project_store/sessions/$default_session_id"
 default_conversation="$default_session/artifacts/conversation.json"
@@ -161,7 +161,7 @@ path = sys.argv[2]
 expected = (
     "  Answer saved to:\n"
     f"    {path}\n\n"
-    "  Continue this session:\n"
+    "  Resume this session:\n"
 )
 if expected not in output:
     raise SystemExit(f"missing final-answer continuation block {expected!r} in {output!r}")

@@ -142,22 +142,20 @@ print_outer_rule() {
 print_command_block() {
   local placeholder="$1"
   local session_id='agent-20260718T051605-0813'
-  local command='mct-agent run'
+  local command="mct-agent resume $session_id"
   local -a rows
   if [[ -n "$placeholder" ]]; then
     command+=" -t \"$placeholder\""
   fi
-  command+=" --session-id $session_id"
 
   local single="\$ $command"
-  if ((4 + ${#single} + 2 <= terminal_width - 1)); then
+  if [[ -z "$placeholder" ]] || ((4 + ${#single} + 2 <= terminal_width - 1)); then
     rows=("$single")
   else
-    rows=('mct-agent run \')
+    rows=("mct-agent resume $session_id \\")
     if [[ -n "$placeholder" ]]; then
-      rows+=("  -t \"$placeholder\" \\")
+      rows+=("  -t \"$placeholder\"")
     fi
-    rows+=("  --session-id $session_id")
   fi
 
   local longest=0
@@ -171,14 +169,13 @@ print_command_block() {
   if ((${#rows[@]} == 1)); then
     printf '    %s%s%s\n' \
       "$(span "${bold}${goodness}" '$ ')" \
-      "$(span "${bold}${provenance}" 'mct-agent run')" \
-      "${command#mct-agent run}"
+      "$(span "${bold}${provenance}" 'mct-agent resume')" \
+      "${command#mct-agent resume}"
   else
-    printf '    %s \\\n' "$(span "${bold}${provenance}" 'mct-agent run')"
+    printf '    %s %s \\\n' "$(span "${bold}${provenance}" 'mct-agent resume')" "$session_id"
     if [[ -n "$placeholder" ]]; then
-      printf '      -t "%s" \\\n' "$placeholder"
+      printf '      -t "%s"\n' "$placeholder"
     fi
-    printf '      --session-id %s\n' "$session_id"
   fi
   printf '    %s\n' "$(span "$goodness" "$rule")"
 }
@@ -196,7 +193,7 @@ case "$outcome" in
     printf '\n\n'
     printf '  %s\n' "$(span "$provenance" 'Answer saved to:')"
     printf '    %s\n\n' "$(span "${underline}${beauty}" '~/.machtiani/7e6be546-9043-42d6-90c9-13cf67c2421f/sessions/agent-20260718T051605-0813/chat/agent-final-answer.md')"
-    printf '  %s\n' "$(span "${bold}${goodness}" 'Continue this session:')"
+    printf '  %s\n' "$(span "${bold}${goodness}" 'Resume this session:')"
     print_command_block '<your follow-up prompt>'
     ;;
   interrupted)

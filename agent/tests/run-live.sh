@@ -547,8 +547,8 @@ extract_agent_session_id() {
 
   sid=$(grep -m1 '^Session ID:' "$stdout_file" 2>/dev/null | awk '{print $NF}' || true)
 	if [[ -z "$sid" ]]; then
-		sid=$(grep -oE -- '--session-id agent-[0-9TZ]+-[0-9]+' "$stdout_file" 2>/dev/null \
-			| head -1 | awk '{print $2}' || true)
+		sid=$(grep -oE -- 'mct-agent resume agent-[0-9TZ]+-[0-9]+' "$stdout_file" 2>/dev/null \
+			| head -1 | awk '{print $3}' || true)
 	fi
   if [[ -z "$sid" ]]; then
     sid=$(grep -m1 '^Session:' "$stderr_file" 2>/dev/null | awk '{print $2}' || true)
@@ -2727,7 +2727,7 @@ test_code_forge_initial() {
 }
 
 # test_code_forge_resume_with_mode starts a session with --mode code-forge,
-# captures the session ID, then resumes with --session-id and --mode code-forge,
+# captures the session ID, then uses the resume command with --mode code-forge,
 # asserting mode-plan.json mode and forge instruction presence in both phases.
 test_code_forge_resume_with_mode() {
   local case_id="code-forge-resume-with-mode"
@@ -2810,12 +2810,11 @@ test_code_forge_resume_with_mode() {
   pushd "$REPO_ROOT" >/dev/null
   set +e
   MACHTIANI_CONFIG="$stub_config" \
-  timeout 120 "$MCT_AGENT" run \
+  timeout 120 "$MCT_AGENT" resume "$agent_session" \
     --max-turns 2 \
     --log-llm-inputs \
     \
     --turn-timeout 300 \
-    --session-id "$agent_session" \
     --mode code-forge \
     --model "$stub_alias" \
     --orch-model "$stub_alias" \
@@ -2939,12 +2938,11 @@ test_code_forge_resume_without_mode() {
   pushd "$REPO_ROOT" >/dev/null
   set +e
   MACHTIANI_CONFIG="$stub_config" \
-  timeout 120 "$MCT_AGENT" run \
+  timeout 120 "$MCT_AGENT" resume "$agent_session" \
     --max-turns 2 \
     --log-llm-inputs \
     \
     --turn-timeout 300 \
-    --session-id "$agent_session" \
     --model "$stub_alias" \
     --orch-model "$stub_alias" \
     --file-discovery-model "$stub_alias" \
@@ -3067,12 +3065,11 @@ test_code_resume_without_mode_no_forge() {
   pushd "$REPO_ROOT" >/dev/null
   set +e
   MACHTIANI_CONFIG="$stub_config" \
-  timeout 120 "$MCT_AGENT" run \
+  timeout 120 "$MCT_AGENT" resume "$agent_session" \
     --max-turns 2 \
     --log-llm-inputs \
     \
     --turn-timeout 300 \
-    --session-id "$agent_session" \
     --model "$stub_alias" \
     --orch-model "$stub_alias" \
     --file-discovery-model "$stub_alias" \
@@ -3315,11 +3312,10 @@ PY
   # Run 2: resume the session
   pushd "$REPO_ROOT" >/dev/null
   set +e
-  timeout 420 "$MCT_AGENT" run \
+  timeout 420 "$MCT_AGENT" resume "$agent_session" \
     --max-turns 2 \
     \
     --turn-timeout 300 \
-    --session-id "$agent_session" \
     "${DEFAULT_MODEL_ARGS[@]}" \
     --text "Continue." \
     > "$stdout_resume" 2> "$stderr_resume"
@@ -3668,7 +3664,7 @@ path = sys.argv[2]
 expected = (
     "  Answer saved to:\n"
     f"    {path}\n\n"
-    "  Continue this session:\n"
+    "  Resume this session:\n"
 )
 if expected not in output:
     print(f"ERROR: missing final-answer continuation block {expected!r} in {output!r}", file=sys.stderr)

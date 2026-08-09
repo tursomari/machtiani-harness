@@ -227,9 +227,9 @@ session_from_log() {
   awk '
     /^Session ID: / {gsub(/\r/, "", $NF); print $NF; exit}
     /^Session: / {gsub(/\r/, "", $2); print $2; exit}
-	/--session-id agent-[0-9TZ]+-[0-9]+/ {
+	/mct-agent resume agent-[0-9TZ]+-[0-9]+/ {
 	  for (i = 1; i <= NF; i++) {
-	    if ($i == "--session-id" && (i + 1) <= NF) {
+	    if ($i == "resume" && i > 1 && $(i - 1) == "mct-agent" && (i + 1) <= NF) {
 	      gsub(/\r/, "", $(i + 1)); print $(i + 1); exit
 	    }
 	  }
@@ -321,7 +321,7 @@ assert_display_mode_captures() {
   local resume_focused="$RUN_DIR/resume-focused.tui.plain.txt"
   local action_step='^Step [0-9]+( of [0-9]+)?$'
   local action_command='^\$ [^[:space:]]'
-  local conclusion='Continue this session:|SHELL-AGENT INTERRUPTED|USER INPUT NEEDED'
+  local conclusion='Resume this session:|SHELL-AGENT INTERRUPTED|USER INPUT NEEDED'
 
   # The unflagged live and replay captures establish the pre-flag visual shape.
   for file in "$live" "$default"; do
@@ -545,18 +545,18 @@ if [[ "$CHECK_DISPLAY_MODES" == "1" && "$replay_exit" == "0" ]]; then
   fi
 
   if [[ "$display_exit" == "0" ]]; then
-    RESUME_COMMON_ARGS=(run)
+    RESUME_COMMON_ARGS=()
     if [[ "$VERBOSE" == "1" ]]; then
       RESUME_COMMON_ARGS+=(--verbose)
     fi
     RESUME_COMMON_ARGS+=("${RUN_ARG_VALUES[@]}")
 
     set +e
-    run_replay_case resume "${RESUME_COMMON_ARGS[@]}" --session-id "$default_session"
+    run_replay_case resume resume "$default_session" "${RESUME_COMMON_ARGS[@]}"
     resume_exit=$?
-    run_replay_case resume-no-shell-steps "${RESUME_COMMON_ARGS[@]}" --session-id "$no_shell_session" --no-shell-steps
+    run_replay_case resume-no-shell-steps resume "$no_shell_session" "${RESUME_COMMON_ARGS[@]}" --no-shell-steps
     resume_no_shell_exit=$?
-    run_replay_case resume-focused "${RESUME_COMMON_ARGS[@]}" --session-id "$focused_session" --focused
+    run_replay_case resume-focused resume "$focused_session" "${RESUME_COMMON_ARGS[@]}" --focused
     resume_focused_exit=$?
     set -e
     if [[ "$resume_exit" != "0" || "$resume_no_shell_exit" != "0" || "$resume_focused_exit" != "0" ]]; then
