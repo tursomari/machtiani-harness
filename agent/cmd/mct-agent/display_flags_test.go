@@ -55,7 +55,7 @@ func TestRunFlagDisplayModesParseForResume(t *testing.T) {
 		{name: "no shell steps", flag: "--no-shell-steps", wantNoShell: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg := parseRunDisplayFlags(t, "--session-id", "agent-resume", tc.flag)
+			cfg := parseRunDisplayFlags(t, "--session", "agent-resume", tc.flag)
 			if cfg.SessionID != "agent-resume" || cfg.Focused != tc.wantFocused || cfg.NoShellSteps != tc.wantNoShell {
 				t.Fatalf("resume config = %#v", cfg)
 			}

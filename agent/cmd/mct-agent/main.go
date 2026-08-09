@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"strconv"
@@ -67,6 +68,7 @@ type cliCommand struct {
 
 var cliCommands = []cliCommand{
 	{name: "run", description: "Run an agent session with a prompt", handler: handleRunCommand},
+	{name: "resume", description: "Resume an agent session by ID", handler: handleResumeCommand},
 	{name: "sync", description: "Sync the internal README with current git state", handler: handleSyncCommand},
 	{name: "session", description: "Manage sessions (list, show)", handler: handleSessionCommand},
 	{name: "config", description: "Create and manage configuration", handler: handleConfigCommand},
@@ -213,6 +215,10 @@ func handleRunCommand(args []string) int {
 			return 0
 		}
 		fmt.Fprintln(os.Stderr, err)
+		return 2
+	}
+	if flags := changedSessionSelectorFlags(fs); len(flags) > 1 {
+		fmt.Fprintf(os.Stderr, "Error: session flags are mutually exclusive; use only one of --session-id, --session, --resume, or --continue (received %s)\n", strings.Join(flags, ", "))
 		return 2
 	}
 	markExplicitModelOverrides(fs, &cfg)
@@ -371,6 +377,61 @@ func handleRunCommand(args []string) int {
 		}
 	}
 	return res.ExitCode
+}
+
+func handleResumeCommand(args []string) int {
+	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
+		printResumeUsage()
+		return 0
+	}
+	if len(args) == 2 && (args[1] == "--help" || args[1] == "-h") {
+		printResumeUsage()
+		return 0
+	}
+
+	// Keep resume deterministic: require an explicit ID instead of guessing the
+	// most recent session. The session list command is the discovery path.
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") || strings.TrimSpace(args[0]) == "" {
+		fmt.Fprintln(os.Stderr, "Error: a session ID is required; run 'mct-agent session list' to find session IDs")
+		printResumeUsage()
+		return 2
+	}
+
+	probeCfg := session.Config{}
+	probe := newRunFlagSet(&probeCfg)
+	probe.fs.SetOutput(io.Discard)
+	if err := probe.fs.Parse(args[1:]); err == nil && len(changedSessionSelectorFlags(probe.fs)) > 0 {
+		fmt.Fprintln(os.Stderr, "Error: mct-agent resume takes the session ID as its first argument; do not also pass a session flag")
+		return 2
+	}
+
+	runArgs := append([]string{"--session", strings.TrimSpace(args[0])}, args[1:]...)
+	return handleRunCommand(runArgs)
+}
+
+func printResumeUsage() {
+	cfg := session.Config{MaxTurns: 150}
+	r := newRunFlagSet(&cfg)
+	for _, name := range []string{"session", "resume", "continue"} {
+		_ = r.fs.MarkHidden(name)
+	}
+	fmt.Fprintln(os.Stderr, "Usage: mct-agent resume <session-id> [-t \"<prompt>\"] [flags]")
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "A session ID is required; run 'mct-agent session list' to find session IDs.")
+	fmt.Fprintln(os.Stderr, "The command never auto-resumes the most recent session.")
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Flags:")
+	r.fs.PrintDefaults()
+}
+
+func changedSessionSelectorFlags(fs *pflag.FlagSet) []string {
+	var changed []string
+	for _, name := range []string{"session-id", "session", "resume", "continue"} {
+		if fs.Changed(name) {
+			changed = append(changed, "--"+name)
+		}
+	}
+	return changed
 }
 
 type exitError struct {
@@ -685,7 +746,11 @@ func configureSessionFlags(fs *pflag.FlagSet, cfg *session.Config, paramFlags, p
 	fs.StringVar(&cfg.OpenAIAPIKey, "openai-api-key", "", "OpenAI-compatible API key (overrides env, deprecated)")
 	fs.StringVar(&cfg.OpenAIBaseURL, "openai-base-url", "", "OpenAI-compatible base URL (overrides env, deprecated)")
 	fs.StringVar(&cfg.OpenAIModel, "openai-model", "", "Direct upstream model name (deprecated; prefer --model)")
-	fs.StringVar(&cfg.SessionID, "session-id", "", "Existing session identifier to resume")
+	fs.StringVar(&cfg.SessionID, "session-id", "", "Existing session identifier to resume (deprecated; use --session, --resume, --continue, or mct-agent resume)")
+	fs.StringVar(&cfg.SessionID, "session", "", "Existing session identifier to resume (alias for --resume and --continue)")
+	fs.StringVar(&cfg.SessionID, "resume", "", "Existing session identifier to resume (alias for --session and --continue)")
+	fs.StringVar(&cfg.SessionID, "continue", "", "Existing session identifier to resume (alias for --session and --resume)")
+	_ = fs.MarkDeprecated("session-id", "use --session, --resume, --continue, or 'mct-agent resume <session-id>'")
 	fs.BoolVar(&cfg.EnableTagFormat, "enable-tag-format", cfg.EnableTagFormat, "Enable tag-format response directives and validation (experimental)")
 	fs.IntVar(&cfg.ShellAgentInterruptStep, "shell-agent-interrupt-step", 0, "deterministic interrupt after this many shell-agent steps (0 = disabled)")
 	fs.StringVar(&cfg.ShellAgentStepLog, "shell-agent-step-log", "", "path for step-log JSONL file (empty disables)")
