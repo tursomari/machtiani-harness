@@ -1087,6 +1087,44 @@ func TestFormatterPrintEmitsOnlyRawAnswer(t *testing.T) {
 	_ = f
 }
 
+func TestFormatterPrintSuppressesBannerAndStream(t *testing.T) {
+	f, bus, buf := newTestFormatterWithOptions(FormatterOptions{Print: true})
+	defer bus.Close()
+	// Force the banner gate open: with print mode the banner must be disabled
+	// by the flag itself, not by the non-TTY test writer.
+	f.timerEnabled = true
+	f.width = 88
+
+	bus.Emit(SessionStartedEvent{
+		SessionID:     "agent-print-suppress",
+		Goal:          "print-suppress banner goal",
+		BuildVersion:  "v1.2.3",
+		BuildCommit:   "0123456789abcdef",
+		ContextLength: 200000,
+		ShowBanner:    true,
+	})
+	bus.Emit(PromptStartedEvent{StreamID: "s1", Prompt: "print-suppress prompt text"})
+	bus.Emit(ChunkReceivedEvent{StreamID: "s1", Text: "print-suppress chunk text"})
+	time.Sleep(50 * time.Millisecond)
+
+	output := stripANSI(buf.String())
+	for _, hidden := range []string{
+		"machtiani (mct)",
+		"print-suppress banner goal",
+		"v1.2.3",
+		"print-suppress prompt text",
+		"print-suppress chunk text",
+	} {
+		if strings.Contains(output, hidden) {
+			t.Errorf("expected print output NOT to contain %q\nGot: %s", hidden, output)
+		}
+	}
+	if output != "" {
+		t.Fatalf("print output = %q, want empty (no banner, no stream)", output)
+	}
+	_ = f
+}
+
 func TestFormatterVerboseUnaffectedByDisplayModes(t *testing.T) {
 	for _, tc := range []struct {
 		name    string

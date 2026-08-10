@@ -226,7 +226,7 @@ func (f *Formatter) eventLoop(ch <-chan DisplayEvent) {
 // --- handler methods (mu is held by caller) ---------------------------------
 
 func (f *Formatter) handleSessionStarted(e SessionStartedEvent) {
-	if !f.started && e.ShowBanner && f.timerEnabled {
+	if !f.started && e.ShowBanner && f.timerEnabled && !f.print {
 		fmt.Fprint(f.out, RenderSessionHeader(e, f.theme, f.width))
 	}
 	f.started = true
