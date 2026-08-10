@@ -93,6 +93,7 @@ type Formatter struct {
 	done                 chan struct{}
 	noShellSteps         bool
 	focused              bool
+	print                bool
 }
 
 // FormatterOptions controls presentation-only filtering. Events are still
@@ -100,6 +101,9 @@ type Formatter struct {
 type FormatterOptions struct {
 	Focused      bool
 	NoShellSteps bool
+	// Print restricts stdout to exactly the raw final answer (no banner, no
+	// stream output, no notifications, no styled conclusion).
+	Print bool
 }
 
 type coordinatedWriter struct {
@@ -148,7 +152,8 @@ func NewFormatter(out io.Writer, bus *EventBus, theme Theme, manager *ProcessTim
 		id:             strings.TrimSpace(id),
 		done:           make(chan struct{}),
 		noShellSteps:   displayOptions.NoShellSteps,
-		focused:        displayOptions.Focused,
+		focused:        displayOptions.Focused || displayOptions.Print,
+		print:          displayOptions.Print,
 	}
 
 	sub := bus.Subscribe()
@@ -332,6 +337,9 @@ func (f *Formatter) handleChunkReceived(e ChunkReceivedEvent) {
 }
 
 func (f *Formatter) handleActionExecuted(e ActionExecutedEvent) {
+	if f.print {
+		return
+	}
 	if e.Command == "" && e.Step == 0 && e.StepLimit == 0 {
 		f.printNotificationLineLocked(e.Description, presentation.RoleNormal, false)
 		return
@@ -391,6 +399,9 @@ func (f *Formatter) handlePromptCompleted(e PromptCompletedEvent) {
 }
 
 func (f *Formatter) handlePromptAborted(e PromptAbortedEvent) {
+	if f.print {
+		return
+	}
 	st := f.streams[e.StreamID]
 	if st == nil || st.done {
 		return
@@ -414,6 +425,9 @@ func (f *Formatter) handlePromptAborted(e PromptAbortedEvent) {
 }
 
 func (f *Formatter) handleNotification(e NotificationEvent) {
+	if f.print {
+		return
+	}
 	if f.focused && e.Level != NotificationWarning && e.Level != NotificationError {
 		return
 	}
@@ -466,6 +480,12 @@ func (f *Formatter) handleTurnStatusUpdated(e TurnStatusUpdatedEvent) {
 }
 
 func (f *Formatter) handleSessionConclusion(e SessionConclusionEvent) {
+	if f.print {
+		if answer := strings.TrimSpace(e.RawAnswer); answer != "" {
+			fmt.Fprint(f.out, answer+"\n")
+		}
+		return
+	}
 	if f.currentStreamID != "" {
 		if st := f.streams[f.currentStreamID]; st != nil {
 			f.flushLineLocked(st)

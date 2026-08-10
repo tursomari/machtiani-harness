@@ -176,6 +176,10 @@ const (
 type SessionConclusionEvent struct {
 	Outcome         SessionConclusionOutcome
 	RenderedAnswer  string
+	// RawAnswer is the un-styled final answer exactly as persisted to
+	// agent-final-answer.md. Print mode emits this verbatim instead of the
+	// styled rendering.
+	RawAnswer       string
 	FinalAnswerPath string
 	SessionID       string
 	Verbose         bool

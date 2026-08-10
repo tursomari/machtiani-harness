@@ -1025,6 +1025,68 @@ func TestFormatterFocusedShowsOnlyBannerAndConclusion(t *testing.T) {
 	}
 }
 
+func TestFormatterPrintEmitsOnlyRawAnswer(t *testing.T) {
+	f, bus, buf := newTestFormatterWithOptions(FormatterOptions{Print: true})
+	defer bus.Close()
+
+	bus.Emit(SessionStartedEvent{
+		SessionID:     "agent-print",
+		Goal:          "print banner goal",
+		BuildVersion:  "v9.8.7",
+		BuildCommit:   "0123456789abcdef",
+		ContextLength: 200000,
+		ShowBanner:    true,
+	})
+	bus.Emit(PromptStartedEvent{StreamID: "s1", Prompt: "print prompt text"})
+	bus.Emit(ChunkReceivedEvent{StreamID: "s1", Text: "print chunk text"})
+	bus.Emit(ActionExecutedEvent{
+		Step:        1,
+		StepLimit:   3,
+		Command:     "ls -la",
+		Description: "print action description",
+	})
+	bus.Emit(NotificationEvent{Level: NotificationInfo, Message: "print info notification"})
+	bus.Emit(NotificationEvent{Level: NotificationWarning, Message: "print warning notification"})
+	bus.Emit(SessionConclusionEvent{
+		Outcome:         SessionConclusionCompleted,
+		RenderedAnswer:  "styled conclusion text",
+		RawAnswer:       "# Title\n\nBody",
+		FinalAnswerPath: "/tmp/agent-print/chat/agent-final-answer.md",
+		SessionID:       "agent-print",
+	})
+	time.Sleep(50 * time.Millisecond)
+
+	output := stripANSI(buf.String())
+	for _, visible := range []string{"# Title", "Body"} {
+		requireContains(t, output, visible)
+	}
+	for _, hidden := range []string{
+		"machtiani (mct)",
+		"print banner goal",
+		"v9.8.7",
+		"━",
+		"Answer saved to:",
+		"Resume this session:",
+		"Session ID:",
+		"print info notification",
+		"print warning notification",
+		"print prompt text",
+		"print chunk text",
+		"print action description",
+		"Step 1 of 3",
+		"$ ls -la",
+		"styled conclusion text",
+	} {
+		if strings.Contains(output, hidden) {
+			t.Errorf("expected print output NOT to contain %q\nGot: %s", hidden, output)
+		}
+	}
+	if want := strings.TrimSpace("# Title\n\nBody") + "\n"; output != want {
+		t.Fatalf("print output = %q, want %q", output, want)
+	}
+	_ = f
+}
+
 func TestFormatterVerboseUnaffectedByDisplayModes(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
