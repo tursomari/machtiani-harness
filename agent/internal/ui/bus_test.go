@@ -113,3 +113,32 @@ func TestEventBus_ShutdownAlias(t *testing.T) {
 		t.Error("expected nil channel from Subscribe after Shutdown")
 	}
 }
+
+func TestSessionConclusionEventRawAnswerRoundTrip(t *testing.T) {
+	bus := NewEventBus(10)
+	ch := bus.Subscribe()
+	defer bus.Close()
+
+	bus.Emit(SessionConclusionEvent{
+		Outcome:         SessionConclusionCompleted,
+		RenderedAnswer:  "styled conclusion",
+		RawAnswer:       "# Title\n\nBody",
+		FinalAnswerPath: "/tmp/agent-roundtrip/agent-final-answer.md",
+		SessionID:       "agent-roundtrip",
+	})
+
+	evt := <-ch
+	got, ok := evt.(SessionConclusionEvent)
+	if !ok {
+		t.Fatalf("expected SessionConclusionEvent, got %T", evt)
+	}
+	if got.RawAnswer != "# Title\n\nBody" {
+		t.Errorf("RawAnswer = %q, want %q", got.RawAnswer, "# Title\n\nBody")
+	}
+	if got.RenderedAnswer != "styled conclusion" {
+		t.Errorf("RenderedAnswer = %q, want %q", got.RenderedAnswer, "styled conclusion")
+	}
+	if got.FinalAnswerPath != "/tmp/agent-roundtrip/agent-final-answer.md" {
+		t.Errorf("FinalAnswerPath = %q, want %q", got.FinalAnswerPath, "/tmp/agent-roundtrip/agent-final-answer.md")
+	}
+}
