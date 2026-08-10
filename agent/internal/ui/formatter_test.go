@@ -1087,6 +1087,23 @@ func TestFormatterPrintEmitsOnlyRawAnswer(t *testing.T) {
 	_ = f
 }
 
+func TestFormatterPrintEmitsNothingOnEmptyRawAnswer(t *testing.T) {
+	f, bus, buf := newTestFormatterWithOptions(FormatterOptions{Print: true})
+	defer bus.Close()
+
+	f.mu.Lock()
+	f.handleSessionConclusion(SessionConclusionEvent{
+		Outcome:        SessionConclusionCompleted,
+		RenderedAnswer: "styled",
+		RawAnswer:      "",
+	})
+	f.mu.Unlock()
+
+	if got := buf.String(); got != "" {
+		t.Fatalf("print mode with empty raw answer wrote %q to stdout, want nothing", got)
+	}
+}
+
 func TestFormatterPrintSuppressesBannerAndStream(t *testing.T) {
 	f, bus, buf := newTestFormatterWithOptions(FormatterOptions{Print: true})
 	defer bus.Close()
