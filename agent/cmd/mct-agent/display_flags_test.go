@@ -44,6 +44,34 @@ func TestRunFlagFocusedAndNoShellStepsCompose(t *testing.T) {
 	}
 }
 
+func TestRunFlagPrint(t *testing.T) {
+	cfg := parseRunDisplayFlags(t, "--text", "test prompt")
+	if cfg.Print {
+		t.Fatal("print default = true, want false")
+	}
+
+	cfgLong := parseRunDisplayFlags(t, "--text", "test prompt", "--print")
+	if !cfgLong.Print {
+		t.Fatal("--print did not set session config")
+	}
+
+	cfgShort := parseRunDisplayFlags(t, "--text", "test prompt", "-p")
+	if !cfgShort.Print {
+		t.Fatal("-p shorthand did not set session config")
+	}
+
+	runFlags := newRunFlagSet(&session.Config{})
+	if runFlags.fs.Lookup("print") == nil {
+		t.Fatal("expected --print flag to be registered")
+	}
+	if runFlags.fs.ShorthandLookup("p") == nil {
+		t.Fatal("expected -p shorthand to be registered")
+	}
+	if runFlags.fs.Lookup("print").DefValue != "false" {
+		t.Errorf("--print default = %q, want false", runFlags.fs.Lookup("print").DefValue)
+	}
+}
+
 func TestRunFlagDisplayModesParseForResume(t *testing.T) {
 	for _, tc := range []struct {
 		name        string

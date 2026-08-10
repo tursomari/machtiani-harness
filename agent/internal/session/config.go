@@ -19,6 +19,10 @@ type Config struct {
 	Verbose                 bool
 	Focused                 bool
 	NoShellSteps            bool
+	// Print restricts stdout to exactly the raw final answer (no glow, no
+	// banner, no rules, no resume line). Warnings and errors still go to
+	// stderr; persistence and exit codes are unchanged.
+	Print                   bool
 	PersistTmpData          bool
 	MaxCommandOutputBytes   int
 	FinalFile               string

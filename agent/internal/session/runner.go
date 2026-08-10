@@ -378,6 +378,7 @@ func runSession(ctx context.Context, opts Options) Result {
 	formatter := ui.NewFormatter(captureWriter, eventBus, ui.DefaultTheme(presentationTheme), timerMgr, sessionID, ui.FormatterOptions{
 		Focused:      opts.Config.Focused,
 		NoShellSteps: opts.Config.NoShellSteps,
+		Print:        opts.Config.Print,
 	})
 	diagWriter = formatter.CoordinateWriter(diagWriter)
 	previousLogWriter := log.Writer()

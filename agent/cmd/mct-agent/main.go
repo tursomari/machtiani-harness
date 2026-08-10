@@ -737,6 +737,7 @@ func configureSessionFlags(fs *pflag.FlagSet, cfg *session.Config, paramFlags, p
 	if includeDisplayFlags {
 		fs.BoolVar(&cfg.Focused, "focused", cfg.Focused, "show only the session banner, conclusion, warnings, and errors")
 		fs.BoolVar(&cfg.NoShellSteps, "no-shell-steps", cfg.NoShellSteps, "hide shell step and command blocks")
+		fs.BoolVarP(&cfg.Print, "print", "p", cfg.Print, "print only the raw final answer to stdout (no glow, no banner, no rules)")
 	}
 	fs.BoolVar(&cfg.TrajectoryVerboseLLM, "trajectory-verbose-llm", cfg.TrajectoryVerboseLLM, "include expanded LLM details in the trajectory stream")
 	fs.BoolVar(&cfg.TrajectoryStreamTokens, "trajectory-stream-tokens", cfg.TrajectoryStreamTokens, "record LLM token streaming events in the trajectory (disabled by default)")
