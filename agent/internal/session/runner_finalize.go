@@ -35,6 +35,7 @@ func (r *runLifecycleState) completeSession(bus *ui.EventBus, diagWriter io.Writ
 	r.printSessionConclusion(bus, diagWriter, ui.SessionConclusionEvent{
 		Outcome:         ui.SessionConclusionCompleted,
 		RenderedAnswer:  renderedAnswer,
+		RawAnswer:       finalAnswer,
 		FinalAnswerPath: finalAnswerPath,
 		SessionID:       r.sessionID,
 		Verbose:         r.cfg.verbose,
