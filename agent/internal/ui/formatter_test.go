@@ -1219,3 +1219,49 @@ func TestFormatterRawString(t *testing.T) {
 	requireContains(t, output, "raw output line")
 	_ = f
 }
+
+func TestFormatterPrintModeNoTerminalResetOnSessionEnded(t *testing.T) {
+	// Print mode must not emit any terminal-control bytes; the stdout
+	// contract is purely the raw final-answer markdown.
+	f, bus, buf := newTestFormatterWithOptions(FormatterOptions{Print: true})
+	defer bus.Close()
+
+	bus.Emit(SessionEndedEvent{})
+
+	select {
+	case <-f.Done():
+	case <-time.After(time.Second):
+		t.Fatal("formatter lifecycle did not complete")
+	}
+
+	output := buf.String()
+	if strings.Contains(output, "\x1b[s") {
+		t.Errorf("print mode emitted save-cursor escape (%q), want no terminal-control bytes", output)
+	}
+	if strings.Contains(output, "\x1b[r") {
+		t.Errorf("print mode emitted reset-scroll-region escape (%q), want no terminal-control bytes", output)
+	}
+	if strings.Contains(output, "\x1b") {
+		t.Errorf("print mode emitted ANSI escape (%q), want no terminal-control bytes", output)
+	}
+}
+
+func TestFormatterDefaultModeEmitsTerminalResetOnSessionEnded(t *testing.T) {
+	// Default (styled) mode must still emit the terminal reset sequence
+	// after SessionEnded, preserving the existing styled behavior.
+	f, bus, buf := newTestFormatterWithOptions(FormatterOptions{})
+	defer bus.Close()
+
+	bus.Emit(SessionEndedEvent{})
+
+	select {
+	case <-f.Done():
+	case <-time.After(time.Second):
+		t.Fatal("formatter lifecycle did not complete")
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "\x1b[s") {
+		t.Errorf("default mode did not emit save-cursor escape; output: %q", output)
+	}
+}

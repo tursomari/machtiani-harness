@@ -267,7 +267,9 @@ func (f *Formatter) handleSessionEnded(_ SessionEndedEvent) {
 	}
 	f.closed = true
 	f.stopTimerLocked()
-	ResetTerminal(f.out)
+	if !f.print {
+		ResetTerminal(f.out)
+	}
 	if f.manager != nil {
 		f.manager.UnregisterDisplay(f.id)
 	}

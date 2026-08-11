@@ -176,8 +176,8 @@ launch_run() {
     cd "$REPO_ROOT"
     MACHTIANI_CONFIG="$CONFIG_FILE" \
       timeout 180 mct-agent run \
-      --max-steps 1 \
-      --timeout-per-turn 120 \
+      --max-turns 1 \
+      --turn-timeout 120 \
       --persist-tmp-data \
       --patch-no-apply \
       --verbose \

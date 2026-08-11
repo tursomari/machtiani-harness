@@ -435,8 +435,8 @@ cd "$MCT_WORKTREE"
 MACHTIANI_CONFIG="$CONFIG" mct-agent sync \
     --model "$SYNC_MODEL" \
     $SYNC_API_KEY_ARG \
-    --timeout-per-turn 0 \
-    --max-steps 20 || {
+    --turn-timeout 0 \
+    --max-turns 20 || {
     echo "ERROR: mct-agent sync failed" >&2
     exit 1
 }
@@ -488,8 +488,8 @@ if [ "$SEQUENTIAL" -eq 1 ]; then
             --final-file "$OUTPUT_DIR/mct_plan.md" \
             --model "$MODEL" \
             $MCT_API_KEY_ARG \
-            --timeout-per-turn 0 \
-            --max-steps 20 \
+            --turn-timeout 0 \
+            --max-turns 20 \
             --file "$PLAN_PROMPT"; then
             MCT_PLAN_SUCCESS=true
             break
@@ -543,8 +543,8 @@ else
                 --final-file "$OUTPUT_DIR/mct_plan.md" \
                 --model "$MODEL" \
                 $MCT_API_KEY_ARG \
-                --timeout-per-turn 0 \
-                --max-steps 20 \
+                --turn-timeout 0 \
+                --max-turns 20 \
                 --file "$PLAN_PROMPT"; then
                 return 0
             fi
@@ -655,8 +655,8 @@ if [ "$SEQUENTIAL" -eq 1 ]; then
             --final-file "$OUTPUT_DIR/mct_answer.md" \
             --model "$MODEL" \
             $MCT_API_KEY_ARG \
-            --timeout-per-turn 0 \
-            --max-steps 20 \
+            --turn-timeout 0 \
+            --max-turns 20 \
             --file "$IMPL_PROMPT"; then
             MCT_IMPL_SUCCESS=true
             break
@@ -709,8 +709,8 @@ else
                 --final-file "$OUTPUT_DIR/mct_answer.md" \
                 --model "$MODEL" \
                 $MCT_API_KEY_ARG \
-                --timeout-per-turn 0 \
-                --max-steps 20 \
+                --turn-timeout 0 \
+                --max-turns 20 \
                 --file "$IMPL_PROMPT"; then
                 return 0
             fi

@@ -31,8 +31,8 @@ run_session() {
     "$MCT_AGENT" run \
       --text "$(cat "$GOAL_FILE")" \
       --shell-agent \
-      --max-steps 20 \
-      --timeout-per-turn 180 \
+      --max-turns 20 \
+      --turn-timeout 180 \
       1>"$stdout_log" 2>"$stderr_log"
 
   local rc=$?

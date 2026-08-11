@@ -13,6 +13,11 @@
 # ("Skipping <case> (needs ...)"), and prints a clear SKIP otherwise.
 set -euo pipefail
 
+# Unset ambient session env vars that can cause the runner to attempt
+# resuming an inherited DearMachine session, which fails with a "session
+# already active" lock error.
+unset MACHTIANI_SESSION_ID MACHTIANI_SESSION_TEMP_ROOT MINISWE_FINAL_DIR 2>/dev/null || true
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
@@ -44,14 +49,15 @@ STDERR_LOG="$OUT_DIR/stderr.log"
 GOAL_FILE="$SCRIPT_DIR/fixtures/synthetic_shell_goal.txt"
 if [[ -f "$GOAL_FILE" ]]; then
   GOAL="$(cat "$GOAL_FILE")"
+  echo "Goal file: $GOAL_FILE"
 else
   # No offline fixture exists; use a short trivial shell-agent goal inline.
+  echo "NOTE: fixture file not found ($GOAL_FILE); using inline goal fallback" >&2
   GOAL="Run the shell command printf print-mode-smoke-ok and report its output."
 fi
 
 echo "=== print-mode smoke test ==="
 echo "Output dir: $OUT_DIR"
-echo "Goal file: ${GOAL_FILE:-<inline goal>}"
 echo ""
 
 set +e
@@ -167,6 +173,15 @@ for needle in "━" "Answer saved to:" "Resume this session:" "mct-agent resume"
     fail=1
   fi
 done
+
+# (6) Byte-level ANSI/escape rejection: stdout must contain no ESC byte.
+# This catches any terminal-control sequence like ResetTerminal that
+# leaks onto stdout (e.g. ESC[s, ESC[r).
+if LC_ALL=C grep -q "$(printf '\033')" "$STDOUT_LOG" 2>/dev/null; then
+  echo "FAIL: stdout.log contains ANSI escape bytes (ESC). Actual bytes:" >&2
+  od -An -tx1 "$STDOUT_LOG" | head -5 >&2 || true
+  fail=1
+fi
 
 echo ""
 if [[ "$fail" -eq 0 ]]; then
