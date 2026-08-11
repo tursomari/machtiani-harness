@@ -141,7 +141,7 @@ project_store=$(mct-agent project show --json | sed -n 's/^[[:space:]]*"store": 
 test -n "$project_store"
 default_run_output=$(mktemp)
 mct-agent run -t "List the last commit message, then finish." --max-turns 5 | tee "$default_run_output"
-default_session_id=$(sed -n 's/.*mct-agent run.*--resume \([^[:space:]]*\).*/\1/p' "$default_run_output" | tail -n 1)
+default_session_id=$(sed -n 's/.*--resume \(agent-[0-9TZ]\+-[0-9]\+\).*/\1/p' "$default_run_output" | tail -n 1)
 test -n "$default_session_id"
 default_session="$project_store/sessions/$default_session_id"
 default_conversation="$default_session/artifacts/conversation.json"
