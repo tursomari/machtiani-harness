@@ -2810,7 +2810,7 @@ test_code_forge_resume_with_mode() {
   pushd "$REPO_ROOT" >/dev/null
   set +e
   MACHTIANI_CONFIG="$stub_config" \
-  timeout 120 "$MCT_AGENT" resume "$agent_session" \
+  timeout 120 "$MCT_AGENT" run --resume "$agent_session" \
     --max-turns 2 \
     --log-llm-inputs \
     \
@@ -2938,7 +2938,7 @@ test_code_forge_resume_without_mode() {
   pushd "$REPO_ROOT" >/dev/null
   set +e
   MACHTIANI_CONFIG="$stub_config" \
-  timeout 120 "$MCT_AGENT" resume "$agent_session" \
+  timeout 120 "$MCT_AGENT" run --resume "$agent_session" \
     --max-turns 2 \
     --log-llm-inputs \
     \
@@ -3065,7 +3065,7 @@ test_code_resume_without_mode_no_forge() {
   pushd "$REPO_ROOT" >/dev/null
   set +e
   MACHTIANI_CONFIG="$stub_config" \
-  timeout 120 "$MCT_AGENT" resume "$agent_session" \
+  timeout 120 "$MCT_AGENT" run --resume "$agent_session" \
     --max-turns 2 \
     --log-llm-inputs \
     \
@@ -3312,7 +3312,7 @@ PY
   # Run 2: resume the session
   pushd "$REPO_ROOT" >/dev/null
   set +e
-  timeout 420 "$MCT_AGENT" resume "$agent_session" \
+  timeout 420 "$MCT_AGENT" run --resume "$agent_session" \
     --max-turns 2 \
     \
     --turn-timeout 300 \
