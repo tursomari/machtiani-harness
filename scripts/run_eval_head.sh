@@ -385,17 +385,17 @@ else
 fi
 
 # Derive environment variables for forge from resolved API key
-FORGE_ENV="TERM=dumb"
+FORGE_ENV="TERM=dumb FORGE_UPDATES__FREQUENCY=never FORGE_UPDATES__AUTO_UPDATE=false"
 if [ -n "$MCT_API_KEY_ARG" ]; then
     API_KEY_PROVIDER="$(echo "$MCT_API_KEY_ARG" | sed "s/--api-key //" | cut -d: -f1)"
     API_KEY_VALUE="$(echo "$MCT_API_KEY_ARG" | sed "s/--api-key //" | cut -d: -f2-)"
     case "$API_KEY_PROVIDER" in
-        deepseek)   FORGE_ENV="TERM=dumb DEEPSEEK_API_KEY=$API_KEY_VALUE" ;;
-        openrouter) FORGE_ENV="TERM=dumb OPENROUTER_API_KEY=$API_KEY_VALUE" ;;
-        openai)     FORGE_ENV="TERM=dumb OPENAI_API_KEY=$API_KEY_VALUE" ;;
-        anthropic)  FORGE_ENV="TERM=dumb ANTHROPIC_API_KEY=$API_KEY_VALUE" ;;
-        deepinfra)  FORGE_ENV="TERM=dumb DEEPINFRA_API_KEY=$API_KEY_VALUE" ;;
-        *)          FORGE_ENV="TERM=dumb" ;;
+        deepseek)   FORGE_ENV="TERM=dumb DEEPSEEK_API_KEY=$API_KEY_VALUE FORGE_UPDATES__FREQUENCY=never FORGE_UPDATES__AUTO_UPDATE=false" ;;
+        openrouter) FORGE_ENV="TERM=dumb OPENROUTER_API_KEY=$API_KEY_VALUE FORGE_UPDATES__FREQUENCY=never FORGE_UPDATES__AUTO_UPDATE=false" ;;
+        openai)     FORGE_ENV="TERM=dumb OPENAI_API_KEY=$API_KEY_VALUE FORGE_UPDATES__FREQUENCY=never FORGE_UPDATES__AUTO_UPDATE=false" ;;
+        anthropic)  FORGE_ENV="TERM=dumb ANTHROPIC_API_KEY=$API_KEY_VALUE FORGE_UPDATES__FREQUENCY=never FORGE_UPDATES__AUTO_UPDATE=false" ;;
+        deepinfra)  FORGE_ENV="TERM=dumb DEEPINFRA_API_KEY=$API_KEY_VALUE FORGE_UPDATES__FREQUENCY=never FORGE_UPDATES__AUTO_UPDATE=false" ;;
+        *)          FORGE_ENV="TERM=dumb FORGE_UPDATES__FREQUENCY=never FORGE_UPDATES__AUTO_UPDATE=false" ;;
     esac
 fi
 

@@ -301,6 +301,8 @@ docker run --rm \
     --volume "$CONTROL_OUT:/output:rw" \
     $FORGE_MOUNT \
     -e MACHTIANI_WORKSPACE_DEBUG=${MACHTIANI_WORKSPACE_DEBUG:-} \
+    -e FORGE_UPDATES__FREQUENCY=never \
+    -e FORGE_UPDATES__AUTO_UPDATE=false \
     ${ENV_FLAGS[@]} \
     --entrypoint /bin/bash \
     "$CONTROL_IMAGE" \
@@ -337,6 +339,8 @@ docker run --rm \
     --volume "$TREATMENT_OUT:/output:rw" \
     $FORGE_MOUNT \
     -e MACHTIANI_WORKSPACE_DEBUG=${MACHTIANI_WORKSPACE_DEBUG:-} \
+    -e FORGE_UPDATES__FREQUENCY=never \
+    -e FORGE_UPDATES__AUTO_UPDATE=false \
     ${ENV_FLAGS[@]} \
     --entrypoint /bin/bash \
     "$TREATMENT_IMAGE" \
