@@ -547,8 +547,8 @@ extract_agent_session_id() {
 
   sid=$(grep -m1 '^Session ID:' "$stdout_file" 2>/dev/null | awk '{print $NF}' || true)
 	if [[ -z "$sid" ]]; then
-		sid=$(grep -oE -- 'mct-agent resume agent-[0-9TZ]+-[0-9]+' "$stdout_file" 2>/dev/null \
-			| head -1 | awk '{print $3}' || true)
+		sid=$(grep -oE -- 'mct-agent run .* --session agent-[0-9TZ]+-[0-9]+' "$stdout_file" 2>/dev/null \
+			| head -1 | sed -E 's/.*--session (agent-[0-9TZ]+-[0-9]+).*/\1/' || true)
 	fi
   if [[ -z "$sid" ]]; then
     sid=$(grep -m1 '^Session:' "$stderr_file" 2>/dev/null | awk '{print $2}' || true)

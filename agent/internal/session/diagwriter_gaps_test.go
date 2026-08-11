@@ -203,7 +203,7 @@ func TestSessionConclusionDiagWriterFallback(t *testing.T) {
 		"Session ID: resume-hint-test",
 		"Turns completed: 3",
 		"Test goal for resume hint",
-		`mct-agent resume resume-hint-test -t "<your follow-up prompt>"`,
+		`mct-agent run -t "<your follow-up prompt>" --session resume-hint-test`,
 	} {
 		if !strings.Contains(output, want) {
 			t.Errorf("expected %q in diagWriter output, got:\n%s", want, output)

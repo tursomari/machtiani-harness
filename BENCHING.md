@@ -281,7 +281,7 @@ Phase model:
 - Initial implementation: agent reads, plans, edits, tests, and commits.
 - Test failure fix loop: agent runs tests, gets failures, and iterates.
 - Waiting on meta-orchestrator: `mct-agent` produced a final answer and exited; child shell-agent trajectory goes quiet.
-- Re-invoked on resume: meta-orchestrator currently launches `mct-agent run --session-id <session-id> -t <follow-up>`, often producing a new shell-agent child trajectory. This is deprecated internal compatibility plumbing; user-facing invocations should use `mct-agent resume <session-id> -t <follow-up>`.
+- Re-invoked on resume: meta-orchestrator currently launches `mct-agent run --session-id <session-id> -t <follow-up>`, often producing a new shell-agent child trajectory. This is deprecated internal compatibility plumbing; user-facing invocations should use `mct-agent run -t "<your follow-up prompt>" --session <session-id>`.
 
 Always read `/app/instruction.md` before judging whether a task is over-scoped. Some benchmark tasks require large features even when the symptom sounds small.
 

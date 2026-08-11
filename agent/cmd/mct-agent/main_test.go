@@ -773,18 +773,6 @@ func TestRunSessionFlagAliasesResolveToSessionID(t *testing.T) {
 	}
 }
 
-func TestResumeCommandIsRegistered(t *testing.T) {
-	for _, cmd := range cliCommands {
-		if cmd.name == "resume" {
-			if cmd.handler == nil {
-				t.Fatal("resume command has no handler")
-			}
-			return
-		}
-	}
-	t.Fatal("resume command is not registered")
-}
-
 func TestSessionIDFlagEmitsDeprecationWarning(t *testing.T) {
 	cfg := session.Config{}
 	r := newRunFlagSet(&cfg)
@@ -794,7 +782,7 @@ func TestSessionIDFlagEmitsDeprecationWarning(t *testing.T) {
 		t.Fatalf("parse --session-id: %v", err)
 	}
 	if !strings.Contains(output.String(), "Flag --session-id has been deprecated") ||
-		!strings.Contains(output.String(), "mct-agent resume <session-id>") {
+		!strings.Contains(output.String(), "use --session, --resume, or --continue") {
 		t.Fatalf("deprecation warning missing migration guidance: %q", output.String())
 	}
 	flag := r.fs.Lookup("session-id")
@@ -815,80 +803,6 @@ func TestRunCommandRejectsConflictingSessionFlags(t *testing.T) {
 		if !strings.Contains(stderr, want) {
 			t.Fatalf("conflict error missing %q: %q", want, stderr)
 		}
-	}
-}
-
-func TestResumeCommandRequiresExplicitSessionID(t *testing.T) {
-	var exitCode int
-	stderr := captureStderr(t, func() {
-		exitCode = handleResumeCommand(nil)
-	})
-	if exitCode != 2 {
-		t.Fatalf("exit code = %d, want 2", exitCode)
-	}
-	for _, want := range []string{"a session ID is required", "mct-agent session list", "never auto-resumes"} {
-		if !strings.Contains(stderr, want) {
-			t.Fatalf("missing-ID usage missing %q: %q", want, stderr)
-		}
-	}
-}
-
-func TestResumeCommandRunsRequestedSession(t *testing.T) {
-	origHead := readmeHeadCommitFn
-	origCommit := readmeCommitForProjectFn
-	origSession := sessionRunFn
-	t.Cleanup(func() {
-		readmeHeadCommitFn = origHead
-		readmeCommitForProjectFn = origCommit
-		sessionRunFn = origSession
-	})
-
-	prepareTestConfig(t)
-	readmeHeadCommitFn = func() (string, error) { return "abcdef123456", nil }
-	readmeCommitForProjectFn = func(string) (string, error) { return "deadbeef", nil }
-
-	var received session.Options
-	sessionRunFn = func(_ context.Context, opts session.Options) session.Result {
-		received = opts
-		return session.Result{ExitCode: 0}
-	}
-
-	if exitCode := handleResumeCommand([]string{"agent-resume"}); exitCode != 0 {
-		t.Fatalf("exit code = %d, want 0", exitCode)
-	}
-	if received.Config.SessionID != "agent-resume" {
-		t.Fatalf("SessionID = %q, want agent-resume", received.Config.SessionID)
-	}
-	if received.HasNewInput || received.Goal != "" {
-		t.Fatalf("resume without prompt unexpectedly supplied input: %#v", received)
-	}
-}
-
-func TestResumeCommandPassesFollowUpPrompt(t *testing.T) {
-	origHead := readmeHeadCommitFn
-	origCommit := readmeCommitForProjectFn
-	origSession := sessionRunFn
-	t.Cleanup(func() {
-		readmeHeadCommitFn = origHead
-		readmeCommitForProjectFn = origCommit
-		sessionRunFn = origSession
-	})
-
-	prepareTestConfig(t)
-	readmeHeadCommitFn = func() (string, error) { return "abcdef123456", nil }
-	readmeCommitForProjectFn = func(string) (string, error) { return "deadbeef", nil }
-
-	var received session.Options
-	sessionRunFn = func(_ context.Context, opts session.Options) session.Result {
-		received = opts
-		return session.Result{ExitCode: 0}
-	}
-
-	if exitCode := handleResumeCommand([]string{"agent-resume", "-t", "Follow up"}); exitCode != 0 {
-		t.Fatalf("exit code = %d, want 0", exitCode)
-	}
-	if received.Config.SessionID != "agent-resume" || received.Goal != "Follow up" || !received.HasNewInput {
-		t.Fatalf("unexpected resume options: %#v", received)
 	}
 }
 

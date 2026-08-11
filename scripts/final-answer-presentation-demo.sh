@@ -142,7 +142,7 @@ print_outer_rule() {
 print_command_block() {
   local placeholder="$1"
   local session_id='agent-20260718T051605-0813'
-  local command="mct-agent resume $session_id"
+  local command="mct-agent run --session $session_id"
   local -a rows
   if [[ -n "$placeholder" ]]; then
     command+=" -t \"$placeholder\""
@@ -152,7 +152,7 @@ print_command_block() {
   if [[ -z "$placeholder" ]] || ((4 + ${#single} + 2 <= terminal_width - 1)); then
     rows=("$single")
   else
-    rows=("mct-agent resume $session_id \\")
+    rows=("mct-agent run --session $session_id \\")
     if [[ -n "$placeholder" ]]; then
       rows+=("  -t \"$placeholder\"")
     fi
@@ -169,10 +169,10 @@ print_command_block() {
   if ((${#rows[@]} == 1)); then
     printf '    %s%s%s\n' \
       "$(span "${bold}${goodness}" '$ ')" \
-      "$(span "${bold}${provenance}" 'mct-agent resume')" \
-      "${command#mct-agent resume}"
+      "$(span "${bold}${provenance}" 'mct-agent run')" \
+      "${command#mct-agent run}"
   else
-    printf '    %s %s \\\n' "$(span "${bold}${provenance}" 'mct-agent resume')" "$session_id"
+    printf '    %s %s \\\n' "$(span "${bold}${provenance}" 'mct-agent run')" "$session_id"
     if [[ -n "$placeholder" ]]; then
       printf '      -t "%s"\n' "$placeholder"
     fi

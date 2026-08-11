@@ -182,7 +182,7 @@ To resume a child session directly:
 
 ```bash
 OPENROUTER_API_KEY="$TEST_API_KEY" \
-mct-agent resume <child-session-id> --model glm-5-high \
+mct-agent run --session <child-session-id> --model glm-5-high \
   --max-steps 100 --timeout-per-turn 0 \
   -t "<follow-up>"
 ```
@@ -191,7 +191,7 @@ To resume the parent session:
 
 ```bash
 OPENROUTER_API_KEY="$TEST_API_KEY" \
-mct-agent resume <parent-session-id> --model glm-5-high \
+mct-agent run --session <parent-session-id> --model glm-5-high \
   --max-steps 100 --timeout-per-turn 0 \
   -t "<your follow-up prompt>"
 ```
@@ -210,7 +210,7 @@ mct-agent resume <parent-session-id> --model glm-5-high \
 
 - The local workflow relies on `--mode` to create the parent orchestration session.
 - A good workflow checks or updates `chat/agent-final-answer.md` in the relevant session directory to confirm the run finished.
-- Follow-ups are typically done with `mct-agent resume <session-id> -t "<prompt>"`. The command requires an explicit ID; run `mct-agent session list` to find one.
+- Follow-ups are typically done with `mct-agent run -t "<your follow-up prompt>" --session <session-id>`. The command requires an explicit ID; run `mct-agent session list` to find one.
 
 ## Operator tips
 

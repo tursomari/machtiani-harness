@@ -646,8 +646,8 @@ if [ "$SEQUENTIAL" -eq 1 ]; then
     MCT_IMPL_SUCCESS=false
     MCT_COMMAND=(run)
     if [ -n "$MCT_SESSION_ID" ]; then
-        MCT_COMMAND=(resume "$MCT_SESSION_ID")
-        echo "[mct-agent] Resuming session $MCT_SESSION_ID for implementation..."
+        MCT_COMMAND+=(--session "$MCT_SESSION_ID")
+        echo "[mct-agent] Continuing session $MCT_SESSION_ID for implementation..."
     else
         echo "[mct-agent] Starting fresh session for implementation (no session ID captured)..."
     fi
@@ -701,8 +701,8 @@ else
         cd "$MCT_WORKTREE"
         local -a mct_command=(run)
         if [ -n "$MCT_SESSION_ID" ]; then
-            mct_command=(resume "$MCT_SESSION_ID")
-            echo "[mct-agent] Resuming session $MCT_SESSION_ID for implementation..."
+            mct_command+=(--session "$MCT_SESSION_ID")
+            echo "[mct-agent] Continuing session $MCT_SESSION_ID for implementation..."
         else
             echo "[mct-agent] Starting fresh session for implementation (no session ID captured)..."
         fi

@@ -37,7 +37,7 @@ configured independently with `[ui].glyphs = "unicode"` or `"ascii"`; the
 
   Resume this session:
     ──────────────────────────────────────────────────────────────────────────────────────────────
-    $ mct-agent resume agent-20260718T051605-0813 -t "<your follow-up prompt>"
+    $ mct-agent run -t "<your follow-up prompt>" --session agent-20260718T051605-0813
     ──────────────────────────────────────────────────────────────────────────────────────────────
 
   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -57,7 +57,7 @@ configured independently with `[ui].glyphs = "unicode"` or `"ascii"`; the
 region makes it obvious that the command is intended to be copied, edited,
 and run. Its rules are sized to the longest command row plus two columns of
 right padding.
-- Inside the command, `$` uses **Goodness**, `mct-agent resume` uses
+- Inside the command, `$` uses **Goodness**, `mct-agent run` uses
   **Provenance**, and the editable arguments remain the terminal foreground.
 - The footer keeps its current role-based styling: elapsed time, turn, and
   running state use **Truth**; the mode uses **Beauty**; session/model identity

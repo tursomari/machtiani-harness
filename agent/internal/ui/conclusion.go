@@ -156,21 +156,23 @@ func writeConclusionAction(b *strings.Builder, theme Theme, width int, event Ses
 }
 
 func conclusionCommandBlock(theme Theme, width int, sessionID, promptPlaceholder string) []presentation.StyledLine {
-	command := "mct-agent resume " + sessionID
+	command := "mct-agent run"
 	if promptPlaceholder != "" {
 		command += " -t \"" + promptPlaceholder + "\""
 	}
+	command += " --session " + sessionID
 
 	singleVisible := "$ " + command
-	useSingle := promptPlaceholder == "" || 4+runeLen(singleVisible)+2 <= width-1
+	useSingle := 4+runeLen(singleVisible)+2 <= width-1
 	var visible []string
 	if useSingle {
 		visible = []string{singleVisible}
 	} else {
-		visible = []string{"mct-agent resume " + sessionID + " \\"}
+		visible = []string{"mct-agent run \\"}
 		if promptPlaceholder != "" {
-			visible = append(visible, "  -t \""+promptPlaceholder+"\"")
+			visible = append(visible, "  -t \""+promptPlaceholder+"\" \\")
 		}
+		visible = append(visible, "  --session "+sessionID)
 	}
 
 	longest := 0
@@ -189,21 +191,24 @@ func conclusionCommandBlock(theme Theme, width int, sessionID, promptPlaceholder
 	} else {
 		lines = append(lines, presentation.StyledLine{
 			presentation.Text("    "),
-			presentation.Bold(presentation.RoleProvenance, "mct-agent resume"),
-			presentation.Text(" " + sessionID + " \\"),
+			presentation.Bold(presentation.RoleProvenance, "mct-agent run"),
+			presentation.Text(" \\"),
 		})
 		if promptPlaceholder != "" {
 			lines = append(lines, presentation.StyledLine{
-				presentation.Text("      -t \"" + promptPlaceholder + "\""),
+				presentation.Text("      -t \"" + promptPlaceholder + "\" \\"),
 			})
 		}
+		lines = append(lines, presentation.StyledLine{
+			presentation.Text("      --session " + sessionID),
+		})
 	}
 	lines = append(lines, rule)
 	return lines
 }
 
 func styleConclusionSingleCommand(command string) presentation.StyledLine {
-	const executable = "mct-agent resume"
+	const executable = "mct-agent run"
 	return presentation.StyledLine{
 		presentation.Text("    "),
 		presentation.Bold(presentation.RoleGoodness, "$ "),

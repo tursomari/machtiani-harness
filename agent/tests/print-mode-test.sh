@@ -167,7 +167,7 @@ for needle in "━" "Answer saved to:" "Resume this session:"; do
 done
 
 # (5) stdout.log must not contain styled block artifacts
-for needle in "━" "Answer saved to:" "Resume this session:" "mct-agent resume"; do
+for needle in "━" "Answer saved to:" "Resume this session:" "mct-agent run"; do
   if grep -qF "$needle" "$STDOUT_LOG" 2>/dev/null; then
     echo "FAIL: stdout.log contains styled block artifact: $needle" >&2
     fail=1
