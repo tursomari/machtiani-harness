@@ -62,6 +62,11 @@ HOME="$update_home" "$prefix/bin/mct-agent" update --yes --no-interactive --json
   grep -q '"status":"updated"'
 test "$(HOME="$update_home" "$prefix/bin/mct-agent" --version | sed -n 's/^commit: //p')" = "$commit_b"
 
+# The installed binary must be a symlink into the managed profile so that
+# future profile-only updates are immediately visible.  A regular file
+# indicates a stale install that was never repaired.
+test -L "$prefix/bin/mct-agent" || { echo "Binary is not a symlink after update" >&2; exit 1; }
+
 cat >"$update_home/.machtiani/installations/mct-agent/update.toml" <<'EOF'
 policy = "auto"
 cooldown_hours = 0

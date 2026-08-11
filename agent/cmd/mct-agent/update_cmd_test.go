@@ -186,6 +186,32 @@ func TestPromptInstallPrefixShowsDestinationsAndExpandsCustomHome(t *testing.T) 
 	}
 }
 
+func TestPrintUpdateSummaryWarnsOnDivergentBinary(t *testing.T) {
+	fake := &fakeUpdateManager{result: updatepkg.Result{
+		Status:             updatepkg.StatusCurrent,
+		CurrentCommit:      strings.Repeat("a", 40),
+		CandidateCommit:    strings.Repeat("a", 40),
+		Remote:             "file:///tmp/remote.git",
+		InstalledDivergent: true,
+	}}
+	restore := replaceUpdateManagerForTest(fake)
+	defer restore()
+
+	_, stderr := captureOutput(func() {
+		if code := handleUpdateCommand([]string{"--check"}); code != 0 {
+			t.Fatalf("exit code = %d", code)
+		}
+	})
+	// RED: current code prints "mct-agent is current at ..." even when the
+	// binary on disk is divergent. The fixed code must warn instead.
+	if !strings.Contains(stderr, "stale") && !strings.Contains(stderr, "divergent") && !strings.Contains(stderr, "not current") {
+		t.Fatalf("expected divergence warning for stale binary, got: %s", stderr)
+	}
+	if strings.Contains(stderr, "mct-agent is current at") {
+		t.Fatalf("must not report 'current' when binary is divergent, got: %s", stderr)
+	}
+}
+
 func TestAutomaticUpdateEligibilityProtectsMachineOutput(t *testing.T) {
 	tests := []struct {
 		name                  string

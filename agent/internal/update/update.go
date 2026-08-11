@@ -94,14 +94,15 @@ type State struct {
 }
 
 type Result struct {
-	Status          Status    `json:"status"`
-	CurrentCommit   string    `json:"current_commit,omitempty"`
-	CandidateCommit string    `json:"candidate_commit,omitempty"`
-	Remote          string    `json:"remote,omitempty"`
-	DefaultBranch   string    `json:"default_branch,omitempty"`
-	SourceDir       string    `json:"source_dir,omitempty"`
-	BinaryPath      string    `json:"binary_path,omitempty"`
-	CheckedAt       time.Time `json:"checked_at"`
+	Status            Status    `json:"status"`
+	CurrentCommit     string    `json:"current_commit,omitempty"`
+	CandidateCommit   string    `json:"candidate_commit,omitempty"`
+	Remote            string    `json:"remote,omitempty"`
+	DefaultBranch     string    `json:"default_branch,omitempty"`
+	SourceDir         string    `json:"source_dir,omitempty"`
+	BinaryPath        string    `json:"binary_path,omitempty"`
+	InstalledDivergent bool    `json:"installed_divergent,omitempty"`
+	CheckedAt         time.Time `json:"checked_at"`
 }
 
 type Options struct {
@@ -280,7 +281,22 @@ func (m *Manager) Check(ctx context.Context) (Result, error) {
 	if candidate == receipt.InstalledCommit {
 		status = StatusCurrent
 	}
-	result := Result{Status: status, CurrentCommit: receipt.InstalledCommit, CandidateCommit: candidate, Remote: receipt.Remote, DefaultBranch: branch, SourceDir: receipt.SourceDir, BinaryPath: receipt.BinaryPath, CheckedAt: now}
+
+	// Cross-check the on-disk binary commit stamp against the receipt.
+	// A mismatch means the installed executable is stale even when the
+	// managed profile and receipt are current (for example, when the
+	// binary was a regular file that survived a profile-only update).
+	installedDivergent := false
+	if _, statErr := os.Stat(receipt.BinaryPath); statErr != nil {
+		// Binary path is missing — the installed binary is divergent.
+		installedDivergent = true
+	} else if binaryCommit, checkErr := readBinaryCommit(ctx, receipt.BinaryPath); checkErr == nil {
+		if binaryCommit != receipt.InstalledCommit {
+			installedDivergent = true
+		}
+	}
+
+	result := Result{Status: status, CurrentCommit: receipt.InstalledCommit, CandidateCommit: candidate, Remote: receipt.Remote, DefaultBranch: branch, SourceDir: receipt.SourceDir, BinaryPath: receipt.BinaryPath, InstalledDivergent: installedDivergent, CheckedAt: now}
 	_ = saveState(m.paths.State, State{LastAttemptAt: now, LastSuccessAt: now, LastSeenCommit: candidate})
 	return result, nil
 }
@@ -478,6 +494,15 @@ func (m *Manager) Update(ctx context.Context, result Result) (updated Result, re
 		return Result{}, err
 	}
 	profileAdvanced = true
+
+	// Re-assert the binary symlink so the installed binary always
+	// resolves through the active profile.  This repairs the link when
+	// it was replaced by a regular file (e.g. a direct store copy or
+	// an earlier install that predates the atomicSymlink installer).
+	if err := atomicSymlink(filepath.Join(m.paths.Profile, "bin", "mct-agent"), receipt.BinaryPath); err != nil {
+		return Result{}, err
+	}
+
 	if _, err := gitOutput(ctx, receipt.SourceDir, "checkout", "-B", result.DefaultBranch, result.CandidateCommit); err != nil {
 		return Result{}, err
 	}
@@ -630,6 +655,23 @@ func atomicSymlink(target, destination string) error {
 func versionFromOutput(output string) string {
 	first, _, _ := strings.Cut(strings.TrimSpace(output), "\n")
 	return strings.TrimSpace(strings.TrimPrefix(first, "mct-agent "))
+}
+
+// readBinaryCommit invokes the installed binary with --version and extracts
+// the full commit hash from the "commit: <hash>" line.
+func readBinaryCommit(ctx context.Context, binaryPath string) (string, error) {
+	cmd := exec.CommandContext(ctx, binaryPath, "--version")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("read binary version from %s: %w: %s", binaryPath, err, strings.TrimSpace(string(out)))
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "commit: ") {
+			return strings.TrimPrefix(line, "commit: "), nil
+		}
+	}
+	return "", fmt.Errorf("binary %s --version output missing commit line", binaryPath)
 }
 
 func (m *Manager) Config() (Config, error) { return LoadConfig(m.paths.Config) }

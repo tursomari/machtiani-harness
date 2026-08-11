@@ -263,7 +263,12 @@ func directoryExists(path string) bool {
 func printUpdateSummary(out *os.File, result updatepkg.Result) {
 	switch result.Status {
 	case updatepkg.StatusCurrent:
-		fmt.Fprintf(out, "mct-agent is current at %s.\n", shortSHA(result.CurrentCommit, 12))
+		if result.InstalledDivergent {
+			fmt.Fprintf(out, "mct-agent install is stale: receipt commit %s does not match the installed binary.\n", shortSHA(result.CurrentCommit, 12))
+			fmt.Fprintln(out, "Run \"mct-agent update\" to reinstall the correct binary.")
+		} else {
+			fmt.Fprintf(out, "mct-agent is current at %s.\n", shortSHA(result.CurrentCommit, 12))
+		}
 	case updatepkg.StatusAvailable:
 		fmt.Fprintf(out, "mct-agent update available: %s -> %s\n", shortSHA(result.CurrentCommit, 12), shortSHA(result.CandidateCommit, 12))
 	case updatepkg.StatusUpdated:
