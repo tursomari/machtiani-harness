@@ -500,7 +500,7 @@ cache_reanchor_min_cached_tokens = 2048
 
 Other helpful overrides:
 - `MACHTIANI_CONFIG`: explicit path to the config file.
-- `MACHTIANI_SESSION_ID`: pre-set session ID to use for the current run; overridden by the `--session`, `--resume`, or `--continue` flag and by the dedicated `resume` command. The legacy `--session-id` flag also overrides it during the deprecation window.
+- `MACHTIANI_SESSION_ID`: pre-set session ID to use for the current run; overridden by the `--resume` flag. The legacy `--session-id` flag also overrides it during the deprecation window.
 - `MCT_LLM_INPUT_LOG`: explicit path for the full redacted LLM request log; this enables logging and overrides `--log-llm-inputs`' canonical session path.
 - `MACHTIANI_THEME`: override `[ui].theme` with `terminal`, `machtiani-dark`, `machtiani-light`, or `none`.
 - `MACHTIANI_GLYPHS`: override `[ui].glyphs` with `unicode` or `ascii`.
@@ -566,8 +566,8 @@ mct-agent run --t "Explain the architecture and identify main components" --verb
 Useful flags (agent):
 - `--max-steps int`: max `mct` Q&A turns before finalizing (default ~4).
 - `--t string`: Required flag to specify the prompt/question. Positional arguments for prompts are no longer supported.
-- `--session string`, `--resume string`, `--continue string`: Equivalent flags that resume a previous session by ID. When one is specified, the agent loads the prior transcript and goal, then appends any new instruction to the goal. If all are omitted, a new session ID is auto-generated.
-- `--session-id string`: Deprecated alias for `--session`, `--resume`, and `--continue`. It remains available during the deprecation window, but new user-facing commands should use `mct-agent run -t "<your follow-up prompt>" --session <session-id>`.
+- `--resume string`, `-r string`: Resume a previous session by ID. When specified, the agent loads the prior transcript and goal, then appends any new instruction to the goal. If omitted, a new session ID is auto-generated.
+- `--session-id string`: Deprecated alias for `--resume`. It remains available during the deprecation window, but new user-facing commands should use `mct-agent run -t "<your follow-up prompt>" --resume <session-id>` (or `-r`).
 - `--api-key provider:key`: provider-specific API key override for this run (repeatable; beats config/env).
 - `--openai-api-key string`: API key for OpenAI‑compatible endpoint.
 - `--openai-base-url string`: Base URL for OpenAI‑compatible endpoint.
@@ -606,14 +606,13 @@ mct-agent run --t "Fix all lint issues" --verbose
 # Output includes: Session ID: <session-id>
 
 # Later, resume the same session, optionally with new instructions
-mct-agent run -t "<your follow-up prompt>" --session <session-id>
+mct-agent run -t "<your follow-up prompt>" --resume <session-id>
 ```
 
-`mct-agent run --session` always requires an explicit session ID. It never guesses or
+`mct-agent run --resume` always requires an explicit session ID. It never guesses or
 auto-resumes the most recent session; use `mct-agent session list` to find the
-ID you want. For compatibility, `mct-agent run --session=<session-id>`,
-`--resume=<session-id>`, and `--continue=<session-id>` are equivalent flag
-forms. The older `--session-id` spelling is deprecated but not removed.
+ID you want. For compatibility, `mct-agent run --resume=<session-id>` and `-r <session-id>` are
+equivalent. The older `--session-id` spelling is deprecated but not removed.
 
 Normal completion output shows the saved final-answer path followed by the
 resume command. Paths under the current home directory use `~/`. Add
@@ -676,7 +675,7 @@ When `mct-agent` receives `SIGINT` (Ctrl+C) or `SIGTERM`, it:
   SHELL-AGENT INTERRUPTED
   Shell-agent work is resumable.
   Resume the interrupted shell-agent work:
-    $ mct-agent run -t "<your follow-up prompt>" --session <session-id>
+    $ mct-agent run -t "<your follow-up prompt>" --resume <session-id>
   ```
 
 The older `=== SESSION INTERRUPTED ===` banner is historical and is no longer

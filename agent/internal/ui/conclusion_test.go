@@ -31,7 +31,7 @@ func TestRenderCompletedSessionConclusion(t *testing.T) {
 		"  Turns completed: 3",
 		`  Goal so far: "Improve the conclusion"`,
 		"  Resume this session:",
-		`    $ mct-agent run -t "<your follow-up prompt>" --session agent-test`,
+		`    $ mct-agent run -t "<your follow-up prompt>" --resume agent-test`,
 	} {
 		if !strings.Contains(output, want) {
 			t.Errorf("missing %q in:\n%s", want, output)
@@ -76,7 +76,7 @@ func TestRenderInterruptedSessionConclusion(t *testing.T) {
 		"  SHELL-AGENT INTERRUPTED",
 		"  Shell-agent work is resumable.",
 		"  Resume the interrupted shell-agent work:",
-		"    $ mct-agent run --session agent-interrupted",
+		"    $ mct-agent run --resume agent-interrupted",
 	} {
 		if !strings.Contains(output, want) {
 			t.Errorf("missing %q in:\n%s", want, output)
@@ -108,7 +108,7 @@ func TestRenderUserInputSessionConclusion(t *testing.T) {
 	if strings.Contains(output, "Session ID:") {
 		t.Fatalf("duplicated session ID metadata:\n%s", output)
 	}
-	if !strings.Contains(output, `    $ mct-agent run -t "<your answer>" --session agent-question`) {
+	if !strings.Contains(output, `    $ mct-agent run -t "<your answer>" --resume agent-question`) {
 		t.Fatalf("missing answer command:\n%s", output)
 	}
 }
@@ -131,7 +131,7 @@ func TestConclusionCommandUsesCanonicalMultilineBashWhenNarrow(t *testing.T) {
 	}, conclusionTestTheme(presentation.GlyphUnicode), 72))
 	want := "    mct-agent run \\\n" +
 		"      -t \"<your follow-up prompt>\" \\\n" +
-		"      --session agent-20260718T051605-0813"
+		"      --resume agent-20260718T051605-0813"
 	if !strings.Contains(output, want) {
 		t.Fatalf("multiline command mismatch\nwant: %q\ngot:\n%s", want, output)
 	}

@@ -216,7 +216,7 @@ func handleRunCommand(args []string) int {
 		return 2
 	}
 	if flags := changedSessionSelectorFlags(fs); len(flags) > 1 {
-		fmt.Fprintf(os.Stderr, "Error: session flags are mutually exclusive; use only one of --session-id, --session, --resume, or --continue (received %s)\n", strings.Join(flags, ", "))
+		fmt.Fprintf(os.Stderr, "Error: session flags are mutually exclusive; use only one of --session-id or --resume (received %s)\n", strings.Join(flags, ", "))
 		return 2
 	}
 	markExplicitModelOverrides(fs, &cfg)
@@ -383,7 +383,7 @@ func handleRunCommand(args []string) int {
 
 func changedSessionSelectorFlags(fs *pflag.FlagSet) []string {
 	var changed []string
-	for _, name := range []string{"session-id", "session", "resume", "continue"} {
+	for _, name := range []string{"session-id", "resume"} {
 		if fs.Changed(name) {
 			changed = append(changed, "--"+name)
 		}
@@ -704,11 +704,9 @@ func configureSessionFlags(fs *pflag.FlagSet, cfg *session.Config, paramFlags, p
 	fs.StringVar(&cfg.OpenAIAPIKey, "openai-api-key", "", "OpenAI-compatible API key (overrides env, deprecated)")
 	fs.StringVar(&cfg.OpenAIBaseURL, "openai-base-url", "", "OpenAI-compatible base URL (overrides env, deprecated)")
 	fs.StringVar(&cfg.OpenAIModel, "openai-model", "", "Direct upstream model name (deprecated; prefer --model)")
-	fs.StringVar(&cfg.SessionID, "session-id", "", "Existing session identifier to resume (deprecated; use --session, --resume, or --continue)")
-	fs.StringVar(&cfg.SessionID, "session", "", "Existing session identifier to resume (alias for --resume and --continue)")
-	fs.StringVar(&cfg.SessionID, "resume", "", "Existing session identifier to resume (alias for --session and --continue)")
-	fs.StringVar(&cfg.SessionID, "continue", "", "Existing session identifier to resume (alias for --session and --resume)")
-	_ = fs.MarkDeprecated("session-id", "use --session, --resume, or --continue")
+	fs.StringVar(&cfg.SessionID, "session-id", "", "Existing session identifier to resume (deprecated; use --resume or -r)")
+	fs.StringVarP(&cfg.SessionID, "resume", "r", "", "Existing session identifier to resume")
+	_ = fs.MarkDeprecated("session-id", "use 'mct-agent run --resume <session-id>' or -r")
 	fs.BoolVar(&cfg.EnableTagFormat, "enable-tag-format", cfg.EnableTagFormat, "Enable tag-format response directives and validation (experimental)")
 	fs.IntVar(&cfg.ShellAgentInterruptStep, "shell-agent-interrupt-step", 0, "deterministic interrupt after this many shell-agent steps (0 = disabled)")
 	fs.StringVar(&cfg.ShellAgentStepLog, "shell-agent-step-log", "", "path for step-log JSONL file (empty disables)")

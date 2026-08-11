@@ -25,7 +25,7 @@ meta-orchestrator --mode code --model gpt-4 -f instruction.md
 
 The meta-orchestrator runs a loop with the following steps:
 
-1. **Invoke** `mct-agent run` with the given mode, model, and instruction file. On the first invocation, a fresh session ID is generated and passed to `mct-agent` via the `MACHTIANI_SESSION_ID` environment variable. Internal recovery still uses the deprecated `--session-id` flag during the compatibility window; user-facing flows use `mct-agent run -t "<your follow-up prompt>" --session <session-id>`.
+1. **Invoke** `mct-agent run` with the given mode, model, and instruction file. On the first invocation, a fresh session ID is generated and passed to `mct-agent` via the `MACHTIANI_SESSION_ID` environment variable. Internal recovery still uses the deprecated `--session-id` flag during the compatibility window; user-facing flows use `mct-agent run -t "<your follow-up prompt>" --resume <session-id>` (or `-r`).
 
 2. **Classify** the resulting `agent-final-answer.md` using a separate LLM call with a strict classification prompt. The classifier assigns one of three labels:
    - `SOLUTION` — a genuinely completed solution with concrete code changes or implemented work.

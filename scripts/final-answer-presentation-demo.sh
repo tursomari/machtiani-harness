@@ -142,7 +142,7 @@ print_outer_rule() {
 print_command_block() {
   local placeholder="$1"
   local session_id='agent-20260718T051605-0813'
-  local command="mct-agent run --session $session_id"
+  local command="mct-agent run --resume $session_id"
   local -a rows
   if [[ -n "$placeholder" ]]; then
     command+=" -t \"$placeholder\""
@@ -152,7 +152,7 @@ print_command_block() {
   if [[ -z "$placeholder" ]] || ((4 + ${#single} + 2 <= terminal_width - 1)); then
     rows=("$single")
   else
-    rows=("mct-agent run --session $session_id \\")
+    rows=("mct-agent run --resume $session_id \\")
     if [[ -n "$placeholder" ]]; then
       rows+=("  -t \"$placeholder\"")
     fi

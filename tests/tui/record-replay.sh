@@ -227,9 +227,9 @@ session_from_log() {
   awk '
     /^Session ID: / {gsub(/\r/, "", $NF); print $NF; exit}
     /^Session: / {gsub(/\r/, "", $2); print $2; exit}
-	/mct-agent run.*--session agent-[0-9TZ]+-[0-9]+/ {
+	/mct-agent run.*--resume agent-[0-9TZ]+-[0-9]+/ {
 	  for (i = 1; i <= NF; i++) {
-	    if ($i == "--session" && (i + 1) <= NF && $(i + 1) ~ /^agent-[0-9TZ]+-[0-9]+$/) {
+	    if ($i == "--resume" && (i + 1) <= NF && $(i + 1) ~ /^agent-[0-9TZ]+-[0-9]+$/) {
 	      gsub(/\r/, "", $(i + 1)); print $(i + 1); exit
 	    }
 	  }

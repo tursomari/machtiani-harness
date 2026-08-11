@@ -757,7 +757,7 @@ func prepareTestConfig(t *testing.T) {
 }
 
 func TestRunSessionFlagAliasesResolveToSessionID(t *testing.T) {
-	for _, flag := range []string{"session-id", "session", "resume", "continue"} {
+	for _, flag := range []string{"session-id", "resume"} {
 		t.Run(flag, func(t *testing.T) {
 			cfg := session.Config{}
 			r := newRunFlagSet(&cfg)
@@ -782,7 +782,7 @@ func TestSessionIDFlagEmitsDeprecationWarning(t *testing.T) {
 		t.Fatalf("parse --session-id: %v", err)
 	}
 	if !strings.Contains(output.String(), "Flag --session-id has been deprecated") ||
-		!strings.Contains(output.String(), "use --session, --resume, or --continue") {
+		!strings.Contains(output.String(), "use 'mct-agent run --resume <session-id>' or -r") {
 		t.Fatalf("deprecation warning missing migration guidance: %q", output.String())
 	}
 	flag := r.fs.Lookup("session-id")
@@ -794,12 +794,12 @@ func TestSessionIDFlagEmitsDeprecationWarning(t *testing.T) {
 func TestRunCommandRejectsConflictingSessionFlags(t *testing.T) {
 	var exitCode int
 	stderr := captureStderr(t, func() {
-		exitCode = handleRunCommand([]string{"--session", "agent-one", "--continue", "agent-two", "-t", "Follow up"})
+		exitCode = handleRunCommand([]string{"--session-id", "agent-one", "--resume", "agent-two", "-t", "Follow up"})
 	})
 	if exitCode != 2 {
 		t.Fatalf("exit code = %d, want 2", exitCode)
 	}
-	for _, want := range []string{"session flags are mutually exclusive", "--session", "--continue"} {
+	for _, want := range []string{"session flags are mutually exclusive", "--session-id", "--resume"} {
 		if !strings.Contains(stderr, want) {
 			t.Fatalf("conflict error missing %q: %q", want, stderr)
 		}

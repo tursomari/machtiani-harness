@@ -391,7 +391,7 @@ Expected normal-output behavior:
 
 - no startup `[trajectory] unified stream: ...`
 - no startup `Session: <id>`
-- normal completion output contains the saved final-answer path and concise `mct-agent run -t "..." --session <session-id>` command; the detailed completion summary is reserved for `--verbose`
+- normal completion output contains the saved final-answer path and concise `mct-agent run -t "..." --resume <session-id>` command; the detailed completion summary is reserved for `--verbose`
 - final footer includes elapsed time, token totals, turn, and `session <id>`
 - fresh-session logo appears once when that feature is enabled
 - no unexpected terminal cursor/background queries such as `ESC[6n` or `OSC 11`; theme selection never probes the background

@@ -160,7 +160,7 @@ func conclusionCommandBlock(theme Theme, width int, sessionID, promptPlaceholder
 	if promptPlaceholder != "" {
 		command += " -t \"" + promptPlaceholder + "\""
 	}
-	command += " --session " + sessionID
+	command += " --resume " + sessionID
 
 	singleVisible := "$ " + command
 	useSingle := 4+runeLen(singleVisible)+2 <= width-1
@@ -172,7 +172,7 @@ func conclusionCommandBlock(theme Theme, width int, sessionID, promptPlaceholder
 		if promptPlaceholder != "" {
 			visible = append(visible, "  -t \""+promptPlaceholder+"\" \\")
 		}
-		visible = append(visible, "  --session "+sessionID)
+		visible = append(visible, "  --resume "+sessionID)
 	}
 
 	longest := 0
@@ -200,7 +200,7 @@ func conclusionCommandBlock(theme Theme, width int, sessionID, promptPlaceholder
 			})
 		}
 		lines = append(lines, presentation.StyledLine{
-			presentation.Text("      --session " + sessionID),
+			presentation.Text("      --resume " + sessionID),
 		})
 	}
 	lines = append(lines, rule)
