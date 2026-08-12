@@ -268,6 +268,16 @@ cd ~/projects/DearMachine/device-client
 go get github.com/BurntSushi/toml@latest
 ```
 
+## MACHTIANI_SESSION_ID collision warning
+
+When testing a temporary device-client from within an existing mct-agent
+session, the inherited `MACHTIANI_SESSION_ID` environment variable causes
+the temporary client to collide with the parent session lock. The client
+fails with an error matching
+`session already active for .../session.lock`. Either unset the variable
+(`unset MACHTIANI_SESSION_ID`) or launch with a clean environment
+(`env -i PATH="$PATH" HOME="$HOME" device-client ...`).
+
 ## Reference
 
 - [Custom Backend Configuration Design Document](~/projects/pm/docs/custom-backend-design.md)
