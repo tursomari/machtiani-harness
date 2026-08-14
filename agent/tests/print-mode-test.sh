@@ -1,7 +1,7 @@
 #!/bin/bash
-# print-mode-test.sh — e2e smoke test for `mct-agent run --print` (R7).
+# print-mode-test.sh — e2e smoke test for `mct-agent run --exec` (R7).
 #
-# Verifies that `mct-agent run --shell-agent --text <goal> --print` writes ONLY
+# Verifies that `mct-agent run --shell-agent --prompt <goal> --exec` writes ONLY
 # the raw final answer to stdout (byte-for-byte equal to the session's
 # agent-final-answer.md after trailing-newline normalization) and that no
 # styled/banner content leaks to stdout or stderr.
@@ -63,8 +63,8 @@ echo ""
 set +e
 "$MCT_AGENT" run \
   --shell-agent \
-  --text "$GOAL" \
-  --print \
+  --prompt "$GOAL" \
+  --exec \
   --max-turns 30 \
   --turn-timeout 180 \
   1>"$STDOUT_LOG" 2>"$STDERR_LOG"

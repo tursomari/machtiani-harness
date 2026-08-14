@@ -145,7 +145,7 @@ print_command_block() {
   local command="mct-agent run --resume $session_id"
   local -a rows
   if [[ -n "$placeholder" ]]; then
-    command+=" -t \"$placeholder\""
+    command+=" -p \"$placeholder\""
   fi
 
   local single="\$ $command"
@@ -154,7 +154,7 @@ print_command_block() {
   else
     rows=("mct-agent run --resume $session_id \\")
     if [[ -n "$placeholder" ]]; then
-      rows+=("  -t \"$placeholder\"")
+      rows+=("  -p \"$placeholder\"")
     fi
   fi
 
@@ -174,7 +174,7 @@ print_command_block() {
   else
     printf '    %s %s \\\n' "$(span "${bold}${provenance}" 'mct-agent run')" "$session_id"
     if [[ -n "$placeholder" ]]; then
-      printf '      -t "%s"\n' "$placeholder"
+      printf '      -p "%s"\n' "$placeholder"
     fi
   fi
   printf '    %s\n' "$(span "$goodness" "$rule")"

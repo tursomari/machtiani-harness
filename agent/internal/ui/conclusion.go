@@ -158,7 +158,7 @@ func writeConclusionAction(b *strings.Builder, theme Theme, width int, event Ses
 func conclusionCommandBlock(theme Theme, width int, sessionID, promptPlaceholder string) []presentation.StyledLine {
 	command := "mct-agent run"
 	if promptPlaceholder != "" {
-		command += " -t \"" + promptPlaceholder + "\""
+		command += " -p \"" + promptPlaceholder + "\""
 	}
 	command += " --resume " + sessionID
 
@@ -170,7 +170,7 @@ func conclusionCommandBlock(theme Theme, width int, sessionID, promptPlaceholder
 	} else {
 		visible = []string{"mct-agent run \\"}
 		if promptPlaceholder != "" {
-			visible = append(visible, "  -t \""+promptPlaceholder+"\" \\")
+			visible = append(visible, "  -p \""+promptPlaceholder+"\" \\")
 		}
 		visible = append(visible, "  --resume "+sessionID)
 	}
@@ -196,7 +196,7 @@ func conclusionCommandBlock(theme Theme, width int, sessionID, promptPlaceholder
 		})
 		if promptPlaceholder != "" {
 			lines = append(lines, presentation.StyledLine{
-				presentation.Text("      -t \"" + promptPlaceholder + "\" \\"),
+				presentation.Text("      -p \"" + promptPlaceholder + "\" \\"),
 			})
 		}
 		lines = append(lines, presentation.StyledLine{

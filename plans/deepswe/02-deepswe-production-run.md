@@ -26,7 +26,7 @@ The root cause is threefold: (1) no project context (`mct-agent sync` was never 
 
 ## Strategy
 
-Replace the generated config approach with uploading the host `.machtiani/config.toml` and `.machtiani/modes/code-forge/` into the container, add a `mct-agent sync` step (with 10 retries on failure), and invoke `mct-agent run` with production flags (`--mode code-forge`, `--max-steps 1000`, `--timeout-per-turn 0`, `--model deepseek-v4-pro`, `--shell-agent-model deepseek-v4-pro`, `--max-input-tokens 800000`). Network allowlisting reads all provider domains from the uploaded config.toml. All CLI flags are configurable via environment variables with sensible defaults.
+Replace the generated config approach with uploading the host `.machtiani/config.toml` and `.machtiani/modes/code-forge/` into the container, add a `mct-agent sync` step (with 10 retries on failure), and invoke `mct-agent run` with production flags (`--mode code-forge`, `--max-turns 1000`, `--turn-timeout 0`, `--model deepseek-v4-pro`, `--shell-agent-model deepseek-v4-pro`, `--max-input-tokens 800000`). Network allowlisting reads all provider domains from the uploaded config.toml. All CLI flags are configurable via environment variables with sensible defaults.
 
 ## mct-agent Invocation Sequence (inside container)
 
@@ -42,8 +42,8 @@ mct-agent sync --model deepseek-v4-pro --max-input-tokens 800000
 # 3. Run agent
 mct-agent run \
   --mode code-forge \
-  --max-steps 1000 \
-  --timeout-per-turn 0 \
+  --max-turns 1000 \
+  --turn-timeout 0 \
   --model deepseek-v4-pro \
   --shell-agent-model deepseek-v4-pro \
   --max-input-tokens 800000 \
@@ -172,7 +172,7 @@ No `--api-key` flag — keys come from the uploaded config.toml automatically vi
 | Host `.machtiani/modes/code-forge/` uploaded to `/app/.machtiani/modes/code-forge/` | `--mode code-forge` loads the planner overlay and shell-agent system prompt |
 | `mct-agent sync` succeeds (exit 0) | Project README generated at `.machtiani/artifacts/readme/`; agent has repository context |
 | `mct-agent sync` fails 10 times | Task fails with exception; Pier records the failure; no `mct-agent run` attempted |
-| `mct-agent run` with `--mode code-forge --max-steps 1000` | Agent runs with forge system prompt, up to 1000 steps, no per-turn timeout |
+| `mct-agent run` with `--mode code-forge --max-turns 1000` | Agent runs with forge system prompt, up to 1000 steps, no per-turn timeout |
 | Air-gapped task with `network_allowlist()` returning all provider domains | mct-agent reaches all LLM APIs; sync and run both succeed |
 | Air-gapped task with missing provider domain in allowlist | mct-agent fails with network errors; task fails |
 | `git add -A && git commit -m "fix" --allow-empty` after agent run | All modifications committed; Pier captures diff via `git diff base_commit HEAD` |
@@ -203,7 +203,7 @@ The adapter should copy `/app/.machtiani/sessions/` to the host job directory, p
 - `go test ./...` from `agent/` passes.
 - Single go-critic-doc-link-checker task completes end-to-end with sync + run.
 - Trial log shows `mct-agent sync` completed successfully.
-- Trial log shows `mct-agent run` invoked with `--mode code-forge --max-steps 1000`.
+- Trial log shows `mct-agent run` invoked with `--mode code-forge --max-turns 1000`.
 - `reward.json` produced by Pier verifier.
 
 **After Phase C**:
@@ -223,7 +223,7 @@ The adapter should copy `/app/.machtiani/sessions/` to the host job directory, p
 | config.toml contains API keys for multiple providers | LOW — Keys are uploaded into the task container, which is ephemeral and air-gapped. No risk of key leakage beyond the container. | Container is destroyed after the task. Network allowlisting restricts outbound traffic to LLM API domains only. |
 | `upload_file` / `upload_dir` for modes directory | LOW — Pier `upload_dir` copies a host directory into the container. If the modes directory has subdirectories or symlinks, it may not copy correctly. | Verify in Phase B that `code-forge/` uploads correctly and `--mode code-forge` resolves. |
 | `mct-agent sync` needs git history | LOW — The task container starts at a specific base commit with full git history. Sync should work. | Verify in Phase B that sync can resolve HEAD in the container. |
-| `--timeout-per-turn 0` means no timeout | MEDIUM — A hung LLM call could block the agent indefinitely. The Pier task timeout (5400s) provides an outer bound. | Acceptable tradeoff: the task timeout kills the container after 90 minutes. |
+| `--turn-timeout 0` means no timeout | MEDIUM — A hung LLM call could block the agent indefinitely. The Pier task timeout (5400s) provides an outer bound. | Acceptable tradeoff: the task timeout kills the container after 90 minutes. |
 
 ## Progress Log
 

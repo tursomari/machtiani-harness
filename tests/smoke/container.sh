@@ -140,7 +140,7 @@ echo "==> Running live smoke test..."
 project_store=$(mct-agent project show --json | sed -n 's/^[[:space:]]*"store": "\([^"]*\)"[,]\{0,1\}$/\1/p')
 test -n "$project_store"
 default_run_output=$(mktemp)
-mct-agent run -t "List the last commit message, then finish." --max-turns 5 | tee "$default_run_output"
+mct-agent run -p "List the last commit message, then finish." --max-turns 5 | tee "$default_run_output"
 default_session_id=$(sed -n 's/.*--resume \(agent-[0-9TZ]\+-[0-9]\+\).*/\1/p' "$default_run_output" | tail -n 1)
 test -n "$default_session_id"
 default_session="$project_store/sessions/$default_session_id"
@@ -172,13 +172,13 @@ grep -Fq '"context_length":128000' "$default_session/trajectory/agent.jsonl"
 grep -Fq '"source":"model_default"' "$default_session/trajectory/agent.jsonl"
 
 echo "==> Verifying run session context override..."
-mct-agent run --context-length 64000 -t "List the last commit message, then finish." --max-turns 5
+mct-agent run --context-length 64000 -p "List the last commit message, then finish." --max-turns 5
 grep -R -Fq '"context_length":64000' "$project_store/sessions"/*/trajectory/agent.jsonl
 grep -R -Fq '"source":"session_flag"' "$project_store/sessions"/*/trajectory/agent.jsonl
 test "$(sha256sum "$HOME/.machtiani/config.toml" | cut -d ' ' -f 1)" = "$config_checksum"
 
 echo "==> Verifying explicit LLM input logging..."
-mct-agent run --log-llm-inputs -t "List the last commit message, then finish." --max-turns 5
+mct-agent run --log-llm-inputs -p "List the last commit message, then finish." --max-turns 5
 logged_input=$(find "$project_store/sessions" -path '*/artifacts/llm/inputs.jsonl' -type f -print -quit)
 test -s "$logged_input"
 logged_session=${logged_input%/artifacts/llm/inputs.jsonl}
@@ -217,7 +217,7 @@ test "$(git rev-parse HEAD)" = "$early_project_commit"
 rollback_session_id="smoke-readme-rollback"
 MACHTIANI_SESSION_ID="$rollback_session_id" mct-agent run --dry-run \
   --max-turns 1 \
-  -t "Verify historical internal README injection."
+  -p "Verify historical internal README injection."
 rollback_conversation="$project_store/sessions/$rollback_session_id/artifacts/conversation.json"
 test -s "$rollback_conversation"
 jq -j 'first(.messages[] | select(.turn == 0 and .metadata.type == "work_result") | .content)' \
@@ -257,7 +257,7 @@ for provider in "${smoke_providers[@]}"; do
   mct-agent config cache disable --model "smoke-${provider}" --no-interactive
   mct-agent config check
   mct-agent run --model "smoke-${provider}" \
-    -t "List the last commit message, then finish." \
+    -p "List the last commit message, then finish." \
     --max-turns 5
 done
 

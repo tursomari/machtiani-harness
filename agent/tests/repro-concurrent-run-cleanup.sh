@@ -184,7 +184,7 @@ launch_run() {
       --model "$STUB_ALIAS" \
       --orch-model "$STUB_ALIAS" \
       --file-discovery-model "$STUB_ALIAS" \
-      -t "$prompt" \
+      -p "$prompt" \
       >"$stdout_file" 2>"$stderr_file"
   ) &
   LAST_PID=$!

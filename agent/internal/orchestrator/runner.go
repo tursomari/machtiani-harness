@@ -203,9 +203,9 @@ When to BLOCKED:
 
 Escalate firmness with each successive CONTINUE. Always tell the agent exactly which section is inadequate and what specific information is missing. Never accept "looks good" or "no issues found" without detailed justification of the investigation performed.`
 
-// extractPrompt scans the args slice for "-f" or "-t" and returns the
+// extractPrompt scans the args slice for "-f" or "-p" and returns the
 // associated prompt text. If "-f" is found, the next element is treated as a
-// file path and its contents are read and returned. If "-t" is found, the
+// file path and its contents are read and returned. If "-p" is found, the
 // next element is returned directly. Returns an empty string if neither flag
 // is present.
 func extractPrompt(args []string) string {
@@ -218,7 +218,7 @@ func extractPrompt(args []string) string {
 					return strings.TrimSpace(string(data))
 				}
 			}
-		case "-t":
+		case "-p":
 			if i+1 < len(args) {
 				return args[i+1]
 			}
@@ -899,7 +899,7 @@ func buildHailMaryRunArgs(mode string, model string, shellAgentModel string, tag
 	if tag != "" {
 		args = append(args, "--tag", tag+"-hail-mary")
 	}
-	args = append(args, "-t", hailMaryInstruction)
+	args = append(args, "-p", hailMaryInstruction)
 	if persistTmpData {
 		args = append(args, "--persist-tmp-data")
 	}
@@ -1471,7 +1471,7 @@ func RunLoop(
 				args = append(args, "--tag", tag)
 			}
 			args = append(args, "--session-id", mctSessionID)
-			args = append(args, "-t", message)
+			args = append(args, "-p", message)
 			if persistTmpData {
 				args = append(args, "--persist-tmp-data")
 			}
@@ -1606,7 +1606,7 @@ func RunLoop(
 						reviewArgs = append(reviewArgs, "--tag", tag)
 					}
 					reviewArgs = append(reviewArgs, "--session-id", mctSessionID)
-					reviewArgs = append(reviewArgs, "-t", reviewMessage)
+					reviewArgs = append(reviewArgs, "-p", reviewMessage)
 					if persistTmpData {
 						reviewArgs = append(reviewArgs, "--persist-tmp-data")
 					}
@@ -1727,7 +1727,7 @@ func RunLoop(
 						reviewArgs2 = append(reviewArgs2, "--tag", tag)
 					}
 					reviewArgs2 = append(reviewArgs2, "--session-id", mctSessionID)
-					reviewArgs2 = append(reviewArgs2, "-t", reviewMessage2)
+					reviewArgs2 = append(reviewArgs2, "-p", reviewMessage2)
 					if persistTmpData {
 						reviewArgs2 = append(reviewArgs2, "--persist-tmp-data")
 					}

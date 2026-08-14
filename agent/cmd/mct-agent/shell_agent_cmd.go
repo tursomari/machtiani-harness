@@ -28,14 +28,14 @@ func handleShellAgentCommand(args []string) int {
 	contextLength := fs.Int("context-length", 0, "total input-plus-output token context for this session")
 	maxCommandOutputBytes := fs.Int("max-command-output-bytes", 65536, "maximum bytes of shell command output captured per step (default 64KB)")
 	modelFlag := fs.String("model", "", "Model alias defined in the selected Machtiani config")
-	promptFile := fs.StringP("file", "f", "", "Read task from file (mutually exclusive with --text)")
+	promptFile := fs.StringP("file", "f", "", "Read task from file (mutually exclusive with --prompt)")
 	var promptText string
-	fs.StringVarP(&promptText, "text", "t", "", "Task text (mutually exclusive with --file)")
+	fs.StringVarP(&promptText, "prompt", "p", "", "Inline task prompt (mutually exclusive with --file)")
 	fs.Var(&apiKeyFlags, "api-key", "Provider-specific API key override in provider:key format (repeatable)")
 	answerTag := fs.String("answer-tag", "", `Override the final-answer tag name used by the parser and prompt templates. Must not contain "<", ">", "/", "{{", or "}}". Empty input keeps the default ("answer").`)
 	tagSuffix := fs.String("tag", "", "single suffix for both answer and command tags (e.g. --tag foo produces answer-foo and command-foo)")
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: mct-agent shell-agent --text \"<task>\" | --file <path> [flags]\n\n")
+		fmt.Fprintf(os.Stderr, "Usage: mct-agent shell-agent -p \"<task>\" | --file <path> [flags]\n\n")
 		fmt.Fprintln(os.Stderr, "Flags:")
 		fs.PrintDefaults()
 	}
@@ -48,15 +48,15 @@ func handleShellAgentCommand(args []string) int {
 		return 2
 	}
 
-	// Validate task input: exactly one of --text or --file is required.
+	// Validate task input: exactly one of --prompt or --file is required.
 	hasText := strings.TrimSpace(promptText) != ""
 	hasFile := strings.TrimSpace(*promptFile) != ""
 	if hasText && hasFile {
-		fmt.Fprintln(os.Stderr, "Error: --text and --file are mutually exclusive")
+		fmt.Fprintln(os.Stderr, "Error: --prompt and --file are mutually exclusive")
 		return 2
 	}
 	if !hasText && !hasFile {
-		fmt.Fprintln(os.Stderr, "Error: one of --text or --file is required")
+		fmt.Fprintln(os.Stderr, "Error: one of --prompt or --file is required")
 		return 2
 	}
 
@@ -72,13 +72,13 @@ func handleShellAgentCommand(args []string) int {
 		task = strings.TrimSpace(promptText)
 	}
 	if task == "" {
-		fmt.Fprintln(os.Stderr, "Error: task is empty. Provide non-empty content via -t or --file.")
+		fmt.Fprintln(os.Stderr, "Error: task is empty. Provide non-empty content via -p or --file.")
 		return 2
 	}
 
 	parsedArgs := fs.Args()
 	if len(parsedArgs) > 0 {
-		fmt.Fprintln(os.Stderr, "Error: unexpected positional arguments for 'shell-agent' command. Use -t or --file to specify the task.")
+		fmt.Fprintln(os.Stderr, "Error: unexpected positional arguments for 'shell-agent' command. Use -p or --file to specify the task.")
 		return 2
 	}
 

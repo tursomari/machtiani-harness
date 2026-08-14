@@ -431,7 +431,7 @@ write_manifest() {
 
 echo "run_dir=$RUN_DIR"
 
-RUN_ARGS=(run --text "$PROMPT")
+RUN_ARGS=(run --prompt "$PROMPT")
 if [[ "$VERBOSE" == "1" ]]; then
   RUN_ARGS+=(--verbose)
 fi

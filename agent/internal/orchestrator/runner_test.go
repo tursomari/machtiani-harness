@@ -428,7 +428,7 @@ func TestBuildHailMaryRunArgsStartsFreshSessionWithoutSessionIDFlag(t *testing.T
 		"shell-model",
 		"--tag",
 		"task-tag-hail-mary",
-		"-t",
+		"-p",
 		hailMaryInstruction,
 		"--persist-tmp-data",
 	} {
@@ -461,7 +461,7 @@ func TestInvokeMCTAgent_Signature(t *testing.T) {
 }
 
 func TestEnsureSessionIDArgAddsMissingSessionID(t *testing.T) {
-	args := ensureSessionIDArg([]string{"--mode", "code", "-t", "continue"}, "agent-1")
+	args := ensureSessionIDArg([]string{"--mode", "code", "-p", "continue"}, "agent-1")
 	if !containsString(args, "--session-id") || !containsString(args, "agent-1") {
 		t.Fatalf("args missing session id: %#v", args)
 	}
@@ -471,7 +471,7 @@ func TestEnsureSessionIDArgAddsMissingSessionID(t *testing.T) {
 }
 
 func TestEnsureSessionIDArgDoesNotDuplicateSessionID(t *testing.T) {
-	args := ensureSessionIDArg([]string{"--mode", "code", "--session-id", "agent-existing", "-t", "continue"}, "agent-1")
+	args := ensureSessionIDArg([]string{"--mode", "code", "--session-id", "agent-existing", "-p", "continue"}, "agent-1")
 	if countString(args, "--session-id") != 1 {
 		t.Fatalf("args should contain one --session-id: %#v", args)
 	}
@@ -479,7 +479,7 @@ func TestEnsureSessionIDArgDoesNotDuplicateSessionID(t *testing.T) {
 		t.Fatalf("existing session id should be preserved: %#v", args)
 	}
 
-	args = ensureSessionIDArg([]string{"--mode", "code", "--session-id=agent-inline", "-t", "continue"}, "agent-1")
+	args = ensureSessionIDArg([]string{"--mode", "code", "--session-id=agent-inline", "-p", "continue"}, "agent-1")
 	if !containsString(args, "--session-id=agent-inline") || containsString(args, "agent-1") {
 		t.Fatalf("inline session id should be preserved: %#v", args)
 	}
@@ -505,7 +505,7 @@ func TestInvokeMCTAgentWithRecoveryRetriesFailedRunWithSameSession(t *testing.T)
 	defer snapshot.cleanup()
 
 	trajDir := filepath.Join(appDir, ".machtiani", "meta-orchestrator", "sessions", "meta-1")
-	exitCode, err := invokeMCTAgentWithRecovery(context.Background(), "meta-1", trajDir, "agent-1", "test-run", snapshot, "--mode", "code", "-t", "continue")
+	exitCode, err := invokeMCTAgentWithRecovery(context.Background(), "meta-1", trajDir, "agent-1", "test-run", snapshot, "--mode", "code", "-p", "continue")
 	if err != nil {
 		t.Fatalf("invokeMCTAgentWithRecovery returned error: %v", err)
 	}
@@ -561,7 +561,7 @@ func TestInvokeMCTAgentWithRecoveryRestoresRuntimeStateBeforeRetry(t *testing.T)
 	defer snapshot.cleanup()
 
 	trajDir := filepath.Join(appDir, ".machtiani", "meta-orchestrator", "sessions", "meta-1")
-	exitCode, err := invokeMCTAgentWithRecovery(context.Background(), "meta-1", trajDir, "agent-1", "test-run", snapshot, "--mode", "code", "-t", "continue")
+	exitCode, err := invokeMCTAgentWithRecovery(context.Background(), "meta-1", trajDir, "agent-1", "test-run", snapshot, "--mode", "code", "-p", "continue")
 	if err != nil {
 		t.Fatalf("invokeMCTAgentWithRecovery returned error: %v", err)
 	}

@@ -17,58 +17,72 @@ func parseRunDisplayFlags(t *testing.T, args ...string) session.Config {
 }
 
 func TestRunFlagDisplayModesDefaultToFalse(t *testing.T) {
-	cfg := parseRunDisplayFlags(t, "--text", "test prompt")
+	cfg := parseRunDisplayFlags(t, "--prompt", "test prompt")
 	if cfg.Focused || cfg.NoShellSteps {
 		t.Fatalf("display mode defaults = focused:%t no-shell-steps:%t, want both false", cfg.Focused, cfg.NoShellSteps)
 	}
 }
 
 func TestRunFlagFocused(t *testing.T) {
-	cfg := parseRunDisplayFlags(t, "--text", "test prompt", "--focused")
+	cfg := parseRunDisplayFlags(t, "--prompt", "test prompt", "--focused")
 	if !cfg.Focused {
 		t.Fatal("--focused did not set session config")
 	}
 }
 
 func TestRunFlagNoShellSteps(t *testing.T) {
-	cfg := parseRunDisplayFlags(t, "--text", "test prompt", "--no-shell-steps")
+	cfg := parseRunDisplayFlags(t, "--prompt", "test prompt", "--no-shell-steps")
 	if !cfg.NoShellSteps {
 		t.Fatal("--no-shell-steps did not set session config")
 	}
 }
 
 func TestRunFlagFocusedAndNoShellStepsCompose(t *testing.T) {
-	cfg := parseRunDisplayFlags(t, "--text", "test prompt", "--focused", "--no-shell-steps")
+	cfg := parseRunDisplayFlags(t, "--prompt", "test prompt", "--focused", "--no-shell-steps")
 	if !cfg.Focused || !cfg.NoShellSteps {
 		t.Fatalf("composed display modes = focused:%t no-shell-steps:%t, want both true", cfg.Focused, cfg.NoShellSteps)
 	}
 }
 
-func TestRunFlagPrint(t *testing.T) {
-	cfg := parseRunDisplayFlags(t, "--text", "test prompt")
+func TestRunFlagExec(t *testing.T) {
+	cfg := parseRunDisplayFlags(t, "--prompt", "test prompt")
 	if cfg.Print {
-		t.Fatal("print default = true, want false")
+		t.Fatal("exec default = true, want false")
+	}
+	if cfg.PromptText != "test prompt" {
+		t.Fatalf("prompt text = %q, want %q", cfg.PromptText, "test prompt")
 	}
 
-	cfgLong := parseRunDisplayFlags(t, "--text", "test prompt", "--print")
+	cfgLong := parseRunDisplayFlags(t, "--prompt", "test prompt", "--exec")
 	if !cfgLong.Print {
-		t.Fatal("--print did not set session config")
+		t.Fatal("--exec did not set session config")
 	}
 
-	cfgShort := parseRunDisplayFlags(t, "--text", "test prompt", "-p")
+	cfgShort := parseRunDisplayFlags(t, "--prompt", "test prompt", "-x")
 	if !cfgShort.Print {
-		t.Fatal("-p shorthand did not set session config")
+		t.Fatal("-x shorthand did not set session config")
 	}
 
 	runFlags := newRunFlagSet(&session.Config{})
-	if runFlags.fs.Lookup("print") == nil {
-		t.Fatal("expected --print flag to be registered")
+	if runFlags.fs.Lookup("exec") == nil {
+		t.Fatal("expected --exec flag to be registered")
 	}
-	if runFlags.fs.ShorthandLookup("p") == nil {
-		t.Fatal("expected -p shorthand to be registered")
+	if runFlags.fs.ShorthandLookup("x") == nil {
+		t.Fatal("expected -x shorthand to be registered")
 	}
-	if runFlags.fs.Lookup("print").DefValue != "false" {
-		t.Errorf("--print default = %q, want false", runFlags.fs.Lookup("print").DefValue)
+	if runFlags.fs.Lookup("exec").DefValue != "false" {
+		t.Errorf("--exec default = %q, want false", runFlags.fs.Lookup("exec").DefValue)
+	}
+	if runFlags.fs.Lookup("prompt") == nil || runFlags.fs.ShorthandLookup("p") == nil {
+		t.Fatal("expected --prompt/-p to be registered")
+	}
+	for _, legacy := range []string{"text", "print"} {
+		if runFlags.fs.Lookup(legacy) != nil {
+			t.Fatalf("legacy flag --%s must not be registered", legacy)
+		}
+	}
+	if runFlags.fs.ShorthandLookup("t") != nil {
+		t.Fatal("legacy prompt shorthand must not be registered")
 	}
 }
 

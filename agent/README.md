@@ -80,10 +80,14 @@ full input logging for future runs.
 
 ## Usage
 ```
-mct-agent run -t "<your prompt>" [flags]
+mct-agent run -p "<your prompt>" [flags]
 ```
 Flags:
-- `--max-steps int`: maximum turns before finalizing (default: 4)
+- `--max-turns int`: maximum turns before finalizing (default: 150)
+- `-p`, `--prompt string`: inline prompt text, mutually exclusive with `--file`
+- `-f`, `--file path`: read the prompt from a file, mutually exclusive with `--prompt`
+- `-x`, `--exec`: one-shot mode; print only raw final-answer markdown to stdout, with warnings and errors on stderr and normal persistence/exit behavior unchanged
+- `--focused`: show only the banner, conclusion, warnings, and errors; this is a display tier, not one-shot mode
 - `--api-key provider:key`: provider-specific API key override for this invocation (repeatable; takes precedence over config/env)
 - `--openai-api-key string`: API key for OpenAI-compatible endpoint
 - `--openai-base-url string`: Base URL for OpenAI-compatible endpoint
@@ -91,7 +95,7 @@ Flags:
 - `--answer-model string`: Model alias for final answer generation (default: `--orch-model`)
 - `--file-discovery-model string`: Model alias for file discovery runs (default: orchestration model)
 - `--openai-model string`: Direct upstream model name for orchestrator (deprecated; prefer aliases)
-- `--timeout-per-turn int`: per-turn timeout in seconds (default: 120; set 0 for unlimited)
+- `--turn-timeout int`: per-turn timeout in seconds (default: 120; set 0 for unlimited)
 - `--version`: print build metadata for the agent and exit
 - `--dry-run`: print intended discovery calls; no remote LLM requests executed
 - `--verbose`: verbose agent logging (includes discovery and planner context)
@@ -104,7 +108,7 @@ Flags:
 Example: mix models from different providers by repeating `--api-key` for each provider referenced by your aliases:
 
 ```
-mct-agent run "triage regression" \
+mct-agent run -p "triage regression" \
   --orch-model gpt-5-nano \
   --file-discovery-model haiku \
   --api-key openai:sk-openai-xxx \
@@ -116,7 +120,7 @@ mct-agent run "triage regression" \
 - On `ask`, it runs the `mct` prompt service via Go packages, retrieving the answer text and retrieved-path metadata without invoking external binaries. The service still writes `$PROJECT_STORE/sessions/<session-id>/chat/machtiani-response.md` for compatibility, and the agent records the paths plus answer payload directly from memory.
 - When `--shell-agent` is enabled, the agent first invokes the external `shell-agent` binary, tags the combined prompt with the transcript (`Here is possibly relevant information from the shell agent.`), and then asks the configured LLM for the final response. The shell-agent trajectory JSON file is still saved for post-run inspection.
 - It maintains a concise evolving summary/evidence log across turns.
-- On finalize (or at `--max-steps`), the agent composes the final answer via its own LLM and prints it.
+- On finalize (or at `--max-turns`), the agent composes the final answer via its own LLM and prints it.
 - A transcript is saved to `$PROJECT_STORE/sessions/<session-id>/chat/agent-transcript.adoc` with per-turn entries and the final conclusion.
 
 ## Environment Details
@@ -133,7 +137,7 @@ mct-agent run "triage regression" \
 - The orchestrator and discovery paths resolve their effective model; the shell-agent model falls back to the orchestrator configuration when not specified.
 - `MACHTIANI_SESSION_ID` is generated per run and passed into the discovery service for correlation across artifacts.
 - `MACHTIANI_SHELL_AGENT_MARKER_MAX_AGE` overrides the startup cleanup threshold for shell-agent marker files (Go duration like `30m`, `2h`; default `1h`).
-- `--timeout-per-turn` applies to both the discovery steps and the planner/finalizer LLM calls. Set to `0` to disable the deadline for all per-turn operations.
+- `--turn-timeout` applies to both the discovery steps and the planner/finalizer LLM calls. Set to `0` to disable the deadline for all per-turn operations.
 
 ## Troubleshooting
 - “mct-agent not found”
@@ -143,7 +147,7 @@ mct-agent run "triage regression" \
 - “Saved chat missing/unreadable”
   - The embedded discovery service still writes `$PROJECT_STORE/sessions/<session-id>/chat/machtiani-response.md`. Ensure the workspace is writable and no other process removed the file mid-run.
 - “Discovery timed out”
-  - Increase `--timeout-per-turn` (e.g., `--timeout-per-turn=600`) or set `--timeout-per-turn=0` to disable the deadline for discovery and planner steps.
+  - Increase `--turn-timeout` (e.g., `--turn-timeout=600`) or set `--turn-timeout=0` to disable the deadline for discovery and planner steps.
 
 ## Notes
 - The agent links against the `mct` Go package directly; no external binaries are required for default operation.

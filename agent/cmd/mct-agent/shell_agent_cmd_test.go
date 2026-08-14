@@ -30,7 +30,7 @@ func stubLibrary() *shellagent.ShellAgentLibrary {
 	}
 }
 
-func TestShellAgentTextFlag(t *testing.T) {
+func TestShellAgentPromptFlag(t *testing.T) {
 	prepareTestConfig(t)
 
 	origBuild := shellAgentBuildLibFn
@@ -52,7 +52,7 @@ func TestShellAgentTextFlag(t *testing.T) {
 
 	var exitCode int
 	stdout := captureStdout(t, func() {
-		exitCode = handleShellAgentCommand([]string{"--text", "list files"})
+		exitCode = handleShellAgentCommand([]string{"--prompt", "list files"})
 	})
 
 	if exitCode != 0 {
@@ -157,7 +157,7 @@ func TestShellAgentTextAndFileMutuallyExclusive(t *testing.T) {
 
 	var exitCode int
 	stderr := captureStderr(t, func() {
-		exitCode = handleShellAgentCommand([]string{"--text", "inline", "--file", taskPath})
+		exitCode = handleShellAgentCommand([]string{"--prompt", "inline", "--file", taskPath})
 	})
 	if exitCode != 2 {
 		t.Fatalf("expected exit code 2, got %d", exitCode)
@@ -177,8 +177,8 @@ func TestShellAgentNeitherTextNorFile(t *testing.T) {
 	if exitCode != 2 {
 		t.Fatalf("expected exit code 2, got %d", exitCode)
 	}
-	if !strings.Contains(stderr, "one of --text or --file is required") {
-		t.Fatalf("expected 'one of --text or --file is required' in stderr, got %q", stderr)
+	if !strings.Contains(stderr, "one of --prompt or --file is required") {
+		t.Fatalf("expected 'one of --prompt or --file is required' in stderr, got %q", stderr)
 	}
 }
 
@@ -198,8 +198,8 @@ func TestShellAgentEmptyFile(t *testing.T) {
 	if exitCode != 2 {
 		t.Fatalf("expected exit code 2, got %d", exitCode)
 	}
-	if !strings.Contains(stderr, "Provide non-empty content via -t or --file") {
-		t.Fatalf("expected 'Provide non-empty content via -t or --file' in stderr, got %q", stderr)
+	if !strings.Contains(stderr, "Provide non-empty content via -p or --file") {
+		t.Fatalf("expected 'Provide non-empty content via -p or --file' in stderr, got %q", stderr)
 	}
 }
 
@@ -223,13 +223,13 @@ func TestShellAgentPositionalArgumentsError(t *testing.T) {
 
 	var exitCode int
 	stderr := captureStderr(t, func() {
-		exitCode = handleShellAgentCommand([]string{"--text", "task", "extra-arg"})
+		exitCode = handleShellAgentCommand([]string{"--prompt", "task", "extra-arg"})
 	})
 	if exitCode != 2 {
 		t.Fatalf("expected exit code 2, got %d", exitCode)
 	}
-	if !strings.Contains(stderr, "Use -t or --file to specify the task") {
-		t.Fatalf("expected 'Use -t or --file to specify the task' in stderr, got %q", stderr)
+	if !strings.Contains(stderr, "Use -p or --file to specify the task") {
+		t.Fatalf("expected 'Use -p or --file to specify the task' in stderr, got %q", stderr)
 	}
 }
 
@@ -253,7 +253,7 @@ func TestShellAgentModelFlagPropagation(t *testing.T) {
 		return shellagent.Result{Answer: "ok", ExitStatus: "Submitted"}, nil
 	}
 
-	exitCode := handleShellAgentCommand([]string{"--model", "gpt4", "--text", "test"})
+	exitCode := handleShellAgentCommand([]string{"--model", "gpt4", "--prompt", "test"})
 	if exitCode != 0 {
 		t.Fatalf("expected exit code 0, got %d", exitCode)
 	}
@@ -282,7 +282,7 @@ func TestShellAgentVerboseFlagPropagation(t *testing.T) {
 		return shellagent.Result{Answer: "ok", ExitStatus: "Submitted"}, nil
 	}
 
-	exitCode := handleShellAgentCommand([]string{"--verbose", "--text", "test"})
+	exitCode := handleShellAgentCommand([]string{"--verbose", "--prompt", "test"})
 	if exitCode != 0 {
 		t.Fatalf("expected exit code 0, got %d", exitCode)
 	}
@@ -311,7 +311,7 @@ func TestShellAgentContextLengthPropagation(t *testing.T) {
 		return shellagent.Result{Answer: "ok", ExitStatus: "Submitted"}, nil
 	}
 
-	exitCode := handleShellAgentCommand([]string{"--context-length", "64000", "--text", "test"})
+	exitCode := handleShellAgentCommand([]string{"--context-length", "64000", "--prompt", "test"})
 	if exitCode != 0 {
 		t.Fatalf("expected exit code 0, got %d", exitCode)
 	}
@@ -326,7 +326,7 @@ func TestShellAgentRemovedMaxInputTokens(t *testing.T) {
 
 	var exitCode int
 	stderr := captureStderr(t, func() {
-		exitCode = handleShellAgentCommand([]string{"--max-input-tokens", "4096", "--text", "test"})
+		exitCode = handleShellAgentCommand([]string{"--max-input-tokens", "4096", "--prompt", "test"})
 	})
 	if exitCode != 2 {
 		t.Fatalf("expected exit code 2, got %d", exitCode)
@@ -357,7 +357,7 @@ func TestShellAgentBuildLibraryError(t *testing.T) {
 
 	var exitCode int
 	stderr := captureStderr(t, func() {
-		exitCode = handleShellAgentCommand([]string{"--text", "test"})
+		exitCode = handleShellAgentCommand([]string{"--prompt", "test"})
 	})
 	if exitCode != 1 {
 		t.Fatalf("expected exit code 1, got %d", exitCode)
@@ -387,7 +387,7 @@ func TestShellAgentRunError(t *testing.T) {
 
 	var exitCode int
 	stderr := captureStderr(t, func() {
-		exitCode = handleShellAgentCommand([]string{"--text", "test"})
+		exitCode = handleShellAgentCommand([]string{"--prompt", "test"})
 	})
 	if exitCode != 1 {
 		t.Fatalf("expected exit code 1, got %d", exitCode)
@@ -417,7 +417,7 @@ func TestShellAgentRunResultError(t *testing.T) {
 
 	var exitCode int
 	stderr := captureStderr(t, func() {
-		exitCode = handleShellAgentCommand([]string{"--text", "test"})
+		exitCode = handleShellAgentCommand([]string{"--prompt", "test"})
 	})
 	if exitCode != 1 {
 		t.Fatalf("expected exit code 1, got %d", exitCode)
@@ -442,24 +442,39 @@ func TestShellAgentUsageLine(t *testing.T) {
 	fs.BoolP("verbose", "v", false, "verbose agent logging")
 	fs.Int("context-length", 0, "total input-plus-output token context")
 	fs.String("model", "", "Model alias defined in .machtiani/config.toml")
-	fs.StringP("file", "f", "", "Read task from file (mutually exclusive with --text)")
+	fs.StringP("file", "f", "", "Read task from file (mutually exclusive with --prompt)")
 	var promptText string
-	fs.StringVarP(&promptText, "text", "t", "", "Task text (mutually exclusive with --file)")
+	fs.StringVarP(&promptText, "prompt", "p", "", "Inline task prompt (mutually exclusive with --file)")
 	fs.Var(&apiKeyFlags, "api-key", "Provider-specific API key override in provider:key format (repeatable)")
 
 	var buf strings.Builder
 	fs.SetOutput(&buf)
 	fs.Usage = func() {
-		fmt.Fprintf(&buf, "Usage: mct-agent shell-agent --text \"<task>\" | --file <path> [flags]\n\n")
+		fmt.Fprintf(&buf, "Usage: mct-agent shell-agent --prompt \"<task>\" | --file <path> [flags]\n\n")
 		fmt.Fprintln(&buf, "Flags:")
 		fs.PrintDefaults()
 	}
 	fs.Usage()
 
 	output := buf.String()
-	for _, flag := range []string{"--text", "--file", "--model", "--verbose", "--context-length"} {
+	for _, flag := range []string{"--prompt", "--file", "--model", "--verbose", "--context-length"} {
 		if !strings.Contains(output, flag) {
 			t.Errorf("expected %q in usage output, got %q", flag, output)
+		}
+	}
+}
+
+func TestShellAgentLegacyPromptFlagsRejected(t *testing.T) {
+	for _, flag := range []string{"--" + "text", "-" + "t"} {
+		var exitCode int
+		stderr := captureStderr(t, func() {
+			exitCode = handleShellAgentCommand([]string{flag, "task"})
+		})
+		if exitCode != 2 {
+			t.Fatalf("%s exit code = %d, want 2", flag, exitCode)
+		}
+		if !strings.Contains(stderr, "unknown") {
+			t.Fatalf("%s stderr = %q, want unknown-flag error", flag, stderr)
 		}
 	}
 }
@@ -506,7 +521,7 @@ func TestShellAgentTagFlagSetsBothTags(t *testing.T) {
 
 	var exitCode int
 	stdout := captureStdout(t, func() {
-		exitCode = handleShellAgentCommand([]string{"--text", "test task", "--tag", "foo"})
+		exitCode = handleShellAgentCommand([]string{"--prompt", "test task", "--tag", "foo"})
 	})
 
 	if exitCode != 0 {
@@ -526,7 +541,7 @@ func TestShellAgentTagAndAnswerTagMutuallyExclusive(t *testing.T) {
 
 	var exitCode int
 	stderr := captureStderr(t, func() {
-		exitCode = handleShellAgentCommand([]string{"--text", "test task", "--tag", "foo", "--answer-tag", "bar"})
+		exitCode = handleShellAgentCommand([]string{"--prompt", "test task", "--tag", "foo", "--answer-tag", "bar"})
 	})
 	if exitCode != 2 {
 		t.Fatalf("expected exit code 2, got %d", exitCode)
@@ -558,7 +573,7 @@ func TestShellAgentDefaultCommandTag(t *testing.T) {
 
 	var exitCode int
 	stdout := captureStdout(t, func() {
-		exitCode = handleShellAgentCommand([]string{"--text", "test task"})
+		exitCode = handleShellAgentCommand([]string{"--prompt", "test task"})
 	})
 
 	if exitCode != 0 {
@@ -595,7 +610,7 @@ func TestShellAgentAnswerTagAlone(t *testing.T) {
 
 	var exitCode int
 	stdout := captureStdout(t, func() {
-		exitCode = handleShellAgentCommand([]string{"--text", "test task", "--answer-tag", "bar"})
+		exitCode = handleShellAgentCommand([]string{"--prompt", "test task", "--answer-tag", "bar"})
 	})
 
 	if exitCode != 0 {

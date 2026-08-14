@@ -29,7 +29,7 @@ run_session() {
 
   MACHTIANI_SHELL_AGENT_FEW_SHOT_VARIANT="$variant" \
     "$MCT_AGENT" run \
-      --text "$(cat "$GOAL_FILE")" \
+      --prompt "$(cat "$GOAL_FILE")" \
       --shell-agent \
       --max-turns 20 \
       --turn-timeout 180 \

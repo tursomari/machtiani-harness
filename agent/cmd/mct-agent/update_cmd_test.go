@@ -219,7 +219,7 @@ func TestAutomaticUpdateEligibilityProtectsMachineOutput(t *testing.T) {
 		inTTY, outTTY, errTTY bool
 		want                  bool
 	}{
-		{name: "interactive command", args: []string{"run", "-t", "hello"}, inTTY: true, outTTY: true, errTTY: true, want: true},
+		{name: "interactive command", args: []string{"run", "-p", "hello"}, inTTY: true, outTTY: true, errTTY: true, want: true},
 		{name: "stdout pipe", args: []string{"project", "show"}, inTTY: true, outTTY: false, errTTY: true},
 		{name: "json", args: []string{"project", "show", "--json"}, inTTY: true, outTTY: true, errTTY: true},
 		{name: "noninteractive", args: []string{"init", "--no-interactive"}, inTTY: true, outTTY: true, errTTY: true},

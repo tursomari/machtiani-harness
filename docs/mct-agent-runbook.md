@@ -19,12 +19,12 @@ Preferred live invocation:
 ```bash
 OPENROUTER_API_KEY="$TEST_API_KEY" \
 mct-agent run --mode code --model glm-5-high \
-  --max-steps 100 --timeout-per-turn 0 --verbose \
-  -t "<your prompt>"
+  --max-turns 100 --turn-timeout 0 --verbose \
+  -p "<your prompt>"
 ```
 
-- Use `--max-steps 100` as the practical default ceiling in this repo.
-- Use `--timeout-per-turn 0` to disable per-turn timeouts; runs may take from a minute to an hour or more depending on the prompt.
+- Use `--max-turns 100` as the practical default ceiling in this repo.
+- Use `--turn-timeout 0` to disable per-turn timeouts; runs may take from a minute to an hour or more depending on the prompt.
 
 ## Why `--mode code`
 
@@ -183,8 +183,8 @@ To resume a child session directly:
 ```bash
 OPENROUTER_API_KEY="$TEST_API_KEY" \
 mct-agent run --resume <child-session-id> --model glm-5-high \
-  --max-steps 100 --timeout-per-turn 0 \
-  -t "<follow-up>"
+  --max-turns 100 --turn-timeout 0 \
+  -p "<follow-up>"
 ```
 
 To resume the parent session:
@@ -192,8 +192,8 @@ To resume the parent session:
 ```bash
 OPENROUTER_API_KEY="$TEST_API_KEY" \
 mct-agent run --resume <parent-session-id> --model glm-5-high \
-  --max-steps 100 --timeout-per-turn 0 \
-  -t "<your follow-up prompt>"
+  --max-turns 100 --turn-timeout 0 \
+  -p "<your follow-up prompt>"
 ```
 
 - Resuming `<child-session-id>` rewrites that child session's `chat/agent-final-answer.md`.
@@ -210,7 +210,7 @@ mct-agent run --resume <parent-session-id> --model glm-5-high \
 
 - The local workflow relies on `--mode` to create the parent orchestration session.
 - A good workflow checks or updates `chat/agent-final-answer.md` in the relevant session directory to confirm the run finished.
-- Follow-ups are typically done with `mct-agent run -t "<your follow-up prompt>" --resume <session-id>` (or `-r`). The command requires an explicit ID; run `mct-agent session list` to find one.
+- Follow-ups are typically done with `mct-agent run -p "<your follow-up prompt>" --resume <session-id>` (or `-r`). The command requires an explicit ID; run `mct-agent session list` to find one.
 
 ## Operator tips
 
@@ -230,8 +230,8 @@ Adapted from `agent-20260409T170609-4898`.
 ```bash
 OPENROUTER_API_KEY="$TEST_API_KEY" \
 mct-agent run --model glm-5-high \
-  --max-steps 100 --timeout-per-turn 0 --verbose \
-  -t 'Inspect the recent git commit subject style in this repository and inspect the currently staged changes. Then draft exactly one conventional commit subject line that matches the existing style. Return only the commit subject line, with no quotes, no bullets, and no explanation. Do not modify files.'
+  --max-turns 100 --turn-timeout 0 --verbose \
+  -p 'Inspect the recent git commit subject style in this repository and inspect the currently staged changes. Then draft exactly one conventional commit subject line that matches the existing style. Return only the commit subject line, with no quotes, no bullets, and no explanation. Do not modify files.'
 ```
 
 ### Medium: explain behavior and report repo state
@@ -241,8 +241,8 @@ Adapted from `agent-20260302T212840-6500`.
 ```bash
 OPENROUTER_API_KEY="$TEST_API_KEY" \
 mct-agent run --mode code --model glm-5-high \
-  --max-steps 100 --timeout-per-turn 0 --verbose \
-  -t 'Explain the planner menu flow and what happens after an ask is selected. Also run `git diff --stat` and report the output. Do not modify files.'
+  --max-turns 100 --turn-timeout 0 --verbose \
+  -p 'Explain the planner menu flow and what happens after an ask is selected. Also run `git diff --stat` and report the output. Do not modify files.'
 ```
 
 ### Complex: investigate a behavior and draft an engineering issue
@@ -271,6 +271,6 @@ EOF
 
 OPENROUTER_API_KEY="$TEST_API_KEY" \
 mct-agent run --mode code --model glm-5-high \
-  --max-steps 100 --timeout-per-turn 0 --verbose \
-  -t "$PROMPT"
+  --max-turns 100 --turn-timeout 0 --verbose \
+  -p "$PROMPT"
 ```

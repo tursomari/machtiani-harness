@@ -130,7 +130,7 @@ func TestFormatterSessionConclusionUsesOneUnifiedBlock(t *testing.T) {
 	if !strings.Contains(output, want) {
 		t.Fatalf("expected answer and continuation in one block, got %q", output)
 	}
-	if !strings.Contains(output, "    $ mct-agent run -t \"<your follow-up prompt>\" --resume agent-test") {
+	if !strings.Contains(output, "    $ mct-agent run -p \"<your follow-up prompt>\" --resume agent-test") {
 		t.Fatalf("expected shell-style continuation command, got %q", output)
 	}
 	if strings.Contains(output, "FINAL RESPONSE") || strings.Contains(output, "<next instruction>") {
@@ -176,7 +176,7 @@ func TestFormatterSessionConclusionInterrupted(t *testing.T) {
 	if !strings.Contains(output, "Resume the interrupted shell-agent work:") {
 		t.Fatalf("expected custom instruction, got %q", output)
 	}
-	if strings.Contains(output, "Resume this session:") || strings.Contains(output, " -t ") {
+	if strings.Contains(output, "Resume this session:") || strings.Contains(output, " -p ") {
 		t.Fatalf("interrupted conclusion used completed command: %q", output)
 	}
 	if !strings.Contains(output, "    $ mct-agent run --resume agent-test") {

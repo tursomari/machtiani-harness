@@ -157,9 +157,9 @@ func newRunFlagSet(cfg *session.Config) runFlagSetResult {
 	var paramJSON multiString
 	var apiKeyFlags multiString
 	configureSessionFlags(fs, cfg, &paramFlags, &paramJSON, &apiKeyFlags, true)
-	promptFile := fs.StringP("file", "f", "", "Read goal from file (mutually exclusive with --text)")
+	promptFile := fs.StringP("file", "f", "", "Read goal from file (mutually exclusive with --prompt)")
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: mct-agent run -t \"<your prompt>\" | --file <path> [flags]\n\n")
+		fmt.Fprintf(os.Stderr, "Usage: mct-agent run -p \"<your prompt>\" | --file <path> [flags]\n\n")
 		fmt.Fprintln(os.Stderr, "Flags:")
 		fs.PrintDefaults()
 	}
@@ -252,18 +252,18 @@ func handleRunCommand(args []string) int {
 		cfg.CommandTag = "command"
 	}
 
-	// Validate goal input: --text and --file are mutually exclusive.
-	// When not resuming a session, exactly one of --text or --file is required.
+	// Validate goal input: --prompt and --file are mutually exclusive.
+	// When not resuming a session, exactly one of --prompt or --file is required.
 	hasText := strings.TrimSpace(cfg.PromptText) != ""
 	hasFile := strings.TrimSpace(*promptFile) != ""
 	var hasNewInput bool
 	if hasText && hasFile {
-		fmt.Fprintln(os.Stderr, "Error: --text and --file are mutually exclusive")
+		fmt.Fprintln(os.Stderr, "Error: --prompt and --file are mutually exclusive")
 		return 2
 	}
 	if cfg.SessionID == "" {
 		if !hasText && !hasFile {
-			fmt.Fprintln(os.Stderr, "Error: one of --text or --file is required")
+			fmt.Fprintln(os.Stderr, "Error: one of --prompt or --file is required")
 			return 2
 		}
 	}
@@ -295,11 +295,11 @@ func handleRunCommand(args []string) int {
 	}
 	parsedArgs := fs.Args()
 	if len(parsedArgs) > 0 {
-		fmt.Fprintln(os.Stderr, "Error: unexpected positional arguments for 'run' command. Use -t or --file to specify the prompt.")
+		fmt.Fprintln(os.Stderr, "Error: unexpected positional arguments for 'run' command. Use -p or --file to specify the prompt.")
 		return 2
 	}
 	if goal == "" && cfg.SessionID == "" {
-		fmt.Fprintln(os.Stderr, "Error: goal is empty. Provide non-empty content via -t or --file.")
+		fmt.Fprintln(os.Stderr, "Error: goal is empty. Provide non-empty content via -p or --file.")
 		return 2
 	}
 
@@ -376,10 +376,6 @@ func handleRunCommand(args []string) int {
 	}
 	return res.ExitCode
 }
-
-
-
-
 
 func changedSessionSelectorFlags(fs *pflag.FlagSet) []string {
 	var changed []string
@@ -694,7 +690,7 @@ func configureSessionFlags(fs *pflag.FlagSet, cfg *session.Config, paramFlags, p
 	if includeDisplayFlags {
 		fs.BoolVar(&cfg.Focused, "focused", cfg.Focused, "show only the session banner, conclusion, warnings, and errors")
 		fs.BoolVar(&cfg.NoShellSteps, "no-shell-steps", cfg.NoShellSteps, "hide shell step and command blocks")
-		fs.BoolVarP(&cfg.Print, "print", "p", cfg.Print, "print only the raw final answer to stdout (no glow, no banner, no rules)")
+		fs.BoolVarP(&cfg.Print, "exec", "x", cfg.Print, "one-shot mode: run once and print only raw final-answer markdown to stdout (no styling, banner, rules, save path, or resume line); warnings and errors stay on stderr")
 	}
 	fs.BoolVar(&cfg.TrajectoryVerboseLLM, "trajectory-verbose-llm", cfg.TrajectoryVerboseLLM, "include expanded LLM details in the trajectory stream")
 	fs.BoolVar(&cfg.TrajectoryStreamTokens, "trajectory-stream-tokens", cfg.TrajectoryStreamTokens, "record LLM token streaming events in the trajectory (disabled by default)")
@@ -711,7 +707,7 @@ func configureSessionFlags(fs *pflag.FlagSet, cfg *session.Config, paramFlags, p
 	fs.IntVar(&cfg.ShellAgentInterruptStep, "shell-agent-interrupt-step", 0, "deterministic interrupt after this many shell-agent steps (0 = disabled)")
 	fs.StringVar(&cfg.ShellAgentStepLog, "shell-agent-step-log", "", "path for step-log JSONL file (empty disables)")
 	fs.StringVar(&cfg.Mode, "mode", "", "Operating mode")
-	fs.StringVarP(&cfg.PromptText, "text", "t", "", "prompt text (alternative to positional argument)")
+	fs.StringVarP(&cfg.PromptText, "prompt", "p", "", "inline prompt text (mutually exclusive with --file)")
 	if apiKeyFlags != nil {
 		fs.Var(apiKeyFlags, "api-key", "Provider-specific API key override in provider:key format (repeatable)")
 	}

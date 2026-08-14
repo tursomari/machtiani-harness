@@ -178,7 +178,7 @@ func TestRunCommandSucceedsWhenReadmeTagPresent(t *testing.T) {
 
 	var exitCode int
 	stderr := captureStderr(t, func() {
-		exitCode = handleRunCommand([]string{"-t", "Investigate bug"})
+		exitCode = handleRunCommand([]string{"-p", "Investigate bug"})
 	})
 	if exitCode != 0 {
 		t.Fatalf("expected exit code 0, got %d", exitCode)
@@ -216,7 +216,7 @@ func TestRunCommandFailsWhenReadmeMissing(t *testing.T) {
 
 	var exitCode int
 	stderr := captureStderr(t, func() {
-		exitCode = handleRunCommand([]string{"--dry-run", "-t", "Document behavior"})
+		exitCode = handleRunCommand([]string{"--dry-run", "-p", "Document behavior"})
 	})
 	if exitCode != 1 {
 		t.Fatalf("expected exit code 1, got %d", exitCode)
@@ -261,7 +261,7 @@ model = "dormant-model"
 
 	var code int
 	stderr := captureStderr(t, func() {
-		code = handleRunCommand([]string{"-t", "test"})
+		code = handleRunCommand([]string{"-p", "test"})
 	})
 	if code != 1 {
 		t.Fatalf("expected exit 1, got %d", code)
@@ -354,7 +354,7 @@ func TestRunCommandFailsWhenRepoHasNoCommits(t *testing.T) {
 
 	var exitCode int
 	stderr := captureStderr(t, func() {
-		exitCode = handleRunCommand([]string{"-t", "Assess repo"})
+		exitCode = handleRunCommand([]string{"-p", "Assess repo"})
 	})
 	if exitCode != 1 {
 		t.Fatalf("expected exit code 1, got %d", exitCode)
@@ -385,7 +385,7 @@ func TestRunCommandPropagatesShellAgentFlag(t *testing.T) {
 		return session.Result{ExitCode: 0}
 	}
 
-	if exit := handleRunCommand([]string{"--shell-agent", "-t", "Investigate env drift"}); exit != 0 {
+	if exit := handleRunCommand([]string{"--shell-agent", "-p", "Investigate env drift"}); exit != 0 {
 		t.Fatalf("expected exit code 0, got %d", exit)
 	}
 
@@ -418,7 +418,7 @@ func TestRunCommandPropagatesShellAgentModel(t *testing.T) {
 		return session.Result{ExitCode: 0}
 	}
 
-	args := []string{"--shell-agent", "--shell-agent-model", "gpt-shell", "-t", "Diagnose drift"}
+	args := []string{"--shell-agent", "--shell-agent-model", "gpt-shell", "-p", "Diagnose drift"}
 	if exit := handleRunCommand(args); exit != 0 {
 		t.Fatalf("expected exit code 0, got %d", exit)
 	}
@@ -452,7 +452,7 @@ func TestRunCommandDefaultsToFileDiscoveryMode(t *testing.T) {
 		return session.Result{ExitCode: 0}
 	}
 
-	if exit := handleRunCommand([]string{"-t", "Audit service rollout"}); exit != 0 {
+	if exit := handleRunCommand([]string{"-p", "Audit service rollout"}); exit != 0 {
 		t.Fatalf("expected exit code 0, got %d", exit)
 	}
 
@@ -794,7 +794,7 @@ func TestSessionIDFlagEmitsDeprecationWarning(t *testing.T) {
 func TestRunCommandRejectsConflictingSessionFlags(t *testing.T) {
 	var exitCode int
 	stderr := captureStderr(t, func() {
-		exitCode = handleRunCommand([]string{"--session-id", "agent-one", "--resume", "agent-two", "-t", "Follow up"})
+		exitCode = handleRunCommand([]string{"--session-id", "agent-one", "--resume", "agent-two", "-p", "Follow up"})
 	})
 	if exitCode != 2 {
 		t.Fatalf("exit code = %d, want 2", exitCode)
@@ -965,7 +965,7 @@ func TestTextAndFileMutuallyExclusive(t *testing.T) {
 
 	var exitCode int
 	stderr := captureStderr(t, func() {
-		exitCode = handleRunCommand([]string{"--text", "inline goal", "--file", goalPath})
+		exitCode = handleRunCommand([]string{"--prompt", "inline goal", "--file", goalPath})
 	})
 	if exitCode != 2 {
 		t.Fatalf("expected exit code 2, got %d", exitCode)
@@ -983,8 +983,8 @@ func TestNeitherTextNorFileProvided(t *testing.T) {
 	if exitCode != 2 {
 		t.Fatalf("expected exit code 2, got %d", exitCode)
 	}
-	if !strings.Contains(stderr, "one of --text or --file is required") {
-		t.Fatalf("expected 'one of --text or --file is required' in stderr, got: %q", stderr)
+	if !strings.Contains(stderr, "one of --prompt or --file is required") {
+		t.Fatalf("expected 'one of --prompt or --file is required' in stderr, got: %q", stderr)
 	}
 }
 
@@ -1013,21 +1013,21 @@ func TestUsageLineReflectsBothInputMethods(t *testing.T) {
 	if !strings.Contains(output, "--file") {
 		t.Fatalf("expected --file in usage output, got: %q", output)
 	}
-	if !strings.Contains(output, "-t") {
-		t.Fatalf("expected -t in usage output, got: %q", output)
+	if !strings.Contains(output, "-p") {
+		t.Fatalf("expected -p in usage output, got: %q", output)
 	}
 }
 
 func TestPositionalArgumentsError(t *testing.T) {
 	var exitCode int
 	stderr := captureStderr(t, func() {
-		exitCode = handleRunCommand([]string{"--text", "goal", "extra-arg"})
+		exitCode = handleRunCommand([]string{"--prompt", "goal", "extra-arg"})
 	})
 	if exitCode != 2 {
 		t.Fatalf("expected exit code 2, got %d", exitCode)
 	}
-	if !strings.Contains(stderr, "Use -t or --file to specify the prompt") {
-		t.Fatalf("expected 'Use -t or --file to specify the prompt' in stderr, got: %q", stderr)
+	if !strings.Contains(stderr, "Use -p or --file to specify the prompt") {
+		t.Fatalf("expected 'Use -p or --file to specify the prompt' in stderr, got: %q", stderr)
 	}
 }
 
@@ -1045,8 +1045,8 @@ func TestEmptyGoalError(t *testing.T) {
 	if exitCode != 2 {
 		t.Fatalf("expected exit code 2, got %d", exitCode)
 	}
-	if !strings.Contains(stderr, "Provide non-empty content via -t or --file") {
-		t.Fatalf("expected 'Provide non-empty content via -t or --file' in stderr, got: %q", stderr)
+	if !strings.Contains(stderr, "Provide non-empty content via -p or --file") {
+		t.Fatalf("expected 'Provide non-empty content via -p or --file' in stderr, got: %q", stderr)
 	}
 }
 
@@ -1077,7 +1077,7 @@ func TestRunCommandTagFlagSetsBothTags(t *testing.T) {
 		return session.Result{ExitCode: 0}
 	}
 
-	exitCode := handleRunCommand([]string{"--tag", "foo", "-t", "task"})
+	exitCode := handleRunCommand([]string{"--tag", "foo", "-p", "task"})
 	if exitCode != 0 {
 		t.Fatalf("expected exit code 0, got %d", exitCode)
 	}
@@ -1094,7 +1094,7 @@ func TestRunCommandTagAndAnswerTagMutuallyExclusive(t *testing.T) {
 
 	var exitCode int
 	stderr := captureStderr(t, func() {
-		exitCode = handleRunCommand([]string{"--tag", "foo", "--answer-tag", "bar", "-t", "task"})
+		exitCode = handleRunCommand([]string{"--tag", "foo", "--answer-tag", "bar", "-p", "task"})
 	})
 	if exitCode != 2 {
 		t.Fatalf("expected exit code 2, got %d", exitCode)
@@ -1129,7 +1129,7 @@ func TestRunCommandDefaultCommandTag(t *testing.T) {
 		return session.Result{ExitCode: 0}
 	}
 
-	exitCode := handleRunCommand([]string{"-t", "task"})
+	exitCode := handleRunCommand([]string{"-p", "task"})
 	if exitCode != 0 {
 		t.Fatalf("expected exit code 0, got %d", exitCode)
 	}
@@ -1163,7 +1163,7 @@ func TestRunCommandAnswerTagAlone(t *testing.T) {
 		return session.Result{ExitCode: 0}
 	}
 
-	exitCode := handleRunCommand([]string{"--answer-tag", "bar", "-t", "task"})
+	exitCode := handleRunCommand([]string{"--answer-tag", "bar", "-p", "task"})
 	if exitCode != 0 {
 		t.Fatalf("expected exit code 0, got %d", exitCode)
 	}

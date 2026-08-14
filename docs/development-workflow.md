@@ -34,7 +34,7 @@ The Docker-based development workflow supports running mct-agent in code-forge m
 
 To run a comparison with code-forge mode, use a command like:
 
-./scripts/ab-dev.sh --cmd "mct-agent run --mode code-forge --verbose --api-key deepseek:sk-YOURKEY --max-steps 1000 --timeout-per-turn 0 -t \"Your prompt\"" my-change.patch
+./scripts/ab-dev.sh --cmd "mct-agent run --mode code-forge --verbose --api-key deepseek:sk-YOURKEY --max-turns 1000 --turn-timeout 0 -p \"Your prompt\"" my-change.patch
 
 Export MACHTIANI_WORKSPACE_DEBUG=1 before running if debug output is desired.
 

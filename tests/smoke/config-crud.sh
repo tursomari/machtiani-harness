@@ -137,7 +137,7 @@ cp "$CONFIG_PATH" "$legacy_config"
 sed -i '/\[planner\]/a max_input_tokens = 180000' "$legacy_config"
 expect_exit 1 mct-agent config check --path "$legacy_config"
 assert_file_contains 'configure models.<alias>.context_length instead' "$SCRATCH_DIR/expected-stderr"
-expect_exit 2 mct-agent run --max-input-tokens 4096 -t ignored
+expect_exit 2 mct-agent run --max-input-tokens 4096 -p ignored
 assert_file_contains 'use --context-length' "$SCRATCH_DIR/expected-stderr"
 
 echo "==> Verifying Manage models adds through the provider-first wizard..."

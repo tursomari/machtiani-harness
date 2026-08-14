@@ -85,11 +85,11 @@ single `--tui <full|standard|focused>` knob:
 
 ### Acceptance checks
 
-- `mct-agent run -t "<prompt>"` is visually unchanged.
-- `mct-agent run -t "<prompt>" --focused` shows only the full banner and the
+- `mct-agent run -p "<prompt>"` is visually unchanged.
+- `mct-agent run -p "<prompt>" --focused` shows only the full banner and the
   final conclusion; no asks, work responses, shell steps, footer, or resume
   notices; errors still appear.
-- `mct-agent run -t "<prompt>" --no-shell-steps` shows banner, asks, and work
+- `mct-agent run -p "<prompt>" --no-shell-steps` shows banner, asks, and work
   responses with their existing rendering/truncation behavior; no `Step N of
   M`/`$ command` blocks; footer still appears.
 - The same flags work in the `resume` flow.

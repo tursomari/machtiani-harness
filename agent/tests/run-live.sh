@@ -1567,7 +1567,7 @@ run_happy_case() {
   if ((${#runtime_args[@]})); then
     cmd+=("${runtime_args[@]}")
   fi
-  cmd+=(--text "$prompt")
+  cmd+=(--prompt "$prompt")
 
   pushd "$REPO_ROOT" >/dev/null
   set +e
@@ -2008,7 +2008,7 @@ EOF
   fi
   cmd+=(
     --model "$TEST_MODEL_ALIAS"
-    --text "$prompt"
+    --prompt "$prompt"
   )
 
   pushd "$REPO_ROOT" >/dev/null
@@ -2095,7 +2095,7 @@ run_shell_command_trajectory_live_case() {
   cmd+=(
     --verbose
     --model "$TEST_MODEL_ALIAS"
-    --text "Run the command echo hello and report the output."
+    --prompt "Run the command echo hello and report the output."
   )
 
   pushd "$REPO_ROOT" >/dev/null
@@ -2178,7 +2178,7 @@ PY
   fi
   cmd2+=(
     --model "$TEST_MODEL_ALIAS"
-    --text "Run the command echo hello and report the output."
+    --prompt "Run the command echo hello and report the output."
   )
 
   pushd "$REPO_ROOT" >/dev/null
@@ -2253,7 +2253,7 @@ run_shell_agent_subcommand_live_case() {
     local output
     output=$(${MCT_AGENT} shell-agent \
         --model "${TEST_SHELL_AGENT_MODEL:-${TEST_MODEL_ALIAS}}" \
-        --text "${prompt}" \
+        --prompt "${prompt}" \
         2>&1)
     local exit_code=$?
 
@@ -2326,7 +2326,7 @@ run_resume_without_mode_case() {
     --model "$stub_alias" \
     --orch-model "$stub_alias" \
     --file-discovery-model "$stub_alias" \
-    --text "Explain how to modify files in this project." \
+    --prompt "Explain how to modify files in this project." \
     > "$stdout_init" 2> "$stderr_init"
   rc=$?
   set -e
@@ -2419,7 +2419,7 @@ test_code_no_forge() {
     --model "$stub_alias" \
     --orch-model "$stub_alias" \
     --file-discovery-model "$stub_alias" \
-    --text "confirm the full path to README.md in the cwd" \
+    --prompt "confirm the full path to README.md in the cwd" \
     > "$stdout_file" 2> "$stderr_file"
   rc=$?
   set -e
@@ -2522,7 +2522,7 @@ run_enforce_early_commands_case() {
       --model "$stub_alias" \
       --orch-model "$stub_alias" \
       --file-discovery-model "$stub_alias" \
-      --text "List the README.md file path under the cwd." \
+      --prompt "List the README.md file path under the cwd." \
       > "$stdout_file" 2> "$stderr_file"
   rc=$?
   set -e
@@ -2609,7 +2609,7 @@ PY
       --model "$stub_alias" \
       --orch-model "$stub_alias" \
       --file-discovery-model "$stub_alias" \
-      --text "List the README.md file path under the cwd." \
+      --prompt "List the README.md file path under the cwd." \
       > "$control_stdout" 2> "$control_stderr"
   rc=$?
   set -e
@@ -2676,7 +2676,7 @@ test_code_forge_initial() {
     --model "$stub_alias" \
     --orch-model "$stub_alias" \
     --file-discovery-model "$stub_alias" \
-    --text "confirm the full path to README.md in the cwd" \
+    --prompt "confirm the full path to README.md in the cwd" \
     > "$stdout_file" 2> "$stderr_file"
   rc=$?
   set -e
@@ -2767,7 +2767,7 @@ test_code_forge_resume_with_mode() {
     --model "$stub_alias" \
     --orch-model "$stub_alias" \
     --file-discovery-model "$stub_alias" \
-    --text "confirm the full path to README.md in the cwd" \
+    --prompt "confirm the full path to README.md in the cwd" \
     > "$stdout_init" 2> "$stderr_init"
   rc=$?
   set -e
@@ -2819,7 +2819,7 @@ test_code_forge_resume_with_mode() {
     --model "$stub_alias" \
     --orch-model "$stub_alias" \
     --file-discovery-model "$stub_alias" \
-    --text "Continue." \
+    --prompt "Continue." \
     > "$stdout_resume" 2> "$stderr_resume"
   rc=$?
   set -e
@@ -2895,7 +2895,7 @@ test_code_forge_resume_without_mode() {
     --model "$stub_alias" \
     --orch-model "$stub_alias" \
     --file-discovery-model "$stub_alias" \
-    --text "confirm the full path to README.md in the cwd" \
+    --prompt "confirm the full path to README.md in the cwd" \
     > "$stdout_init" 2> "$stderr_init"
   rc=$?
   set -e
@@ -2946,7 +2946,7 @@ test_code_forge_resume_without_mode() {
     --model "$stub_alias" \
     --orch-model "$stub_alias" \
     --file-discovery-model "$stub_alias" \
-    --text "Continue." \
+    --prompt "Continue." \
     > "$stdout_resume" 2> "$stderr_resume"
   rc=$?
   set -e
@@ -3022,7 +3022,7 @@ test_code_resume_without_mode_no_forge() {
     --model "$stub_alias" \
     --orch-model "$stub_alias" \
     --file-discovery-model "$stub_alias" \
-    --text "confirm the full path to README.md in the cwd" \
+    --prompt "confirm the full path to README.md in the cwd" \
     > "$stdout_init" 2> "$stderr_init"
   rc=$?
   set -e
@@ -3073,7 +3073,7 @@ test_code_resume_without_mode_no_forge() {
     --model "$stub_alias" \
     --orch-model "$stub_alias" \
     --file-discovery-model "$stub_alias" \
-    --text "Continue." \
+    --prompt "Continue." \
     > "$stdout_resume" 2> "$stderr_resume"
   rc=$?
   set -e
@@ -3182,7 +3182,7 @@ PY
     --max-turns 15 \
     --turn-timeout 300 \
     "${DEFAULT_MODEL_ARGS[@]}" \
-    --text "Investigate the repository structure: find the main Go package for the mct-agent binary, list its key source files, and identify what Go version is required in go.mod. Report your findings step by step." \
+    --prompt "Investigate the repository structure: find the main Go package for the mct-agent binary, list its key source files, and identify what Go version is required in go.mod. Report your findings step by step." \
     > "$stdout_file" 2> "$stderr_file"
   rc=$?
   set -e
@@ -3253,7 +3253,7 @@ run_resume_from_conversation_json_case() {
     \
     --turn-timeout 300 \
     "${DEFAULT_MODEL_ARGS[@]}" \
-    --text "Identify the main components of the mct-agent binary by reading agent/README.md and agent/cmd/mct-agent/main.go. List them." \
+    --prompt "Identify the main components of the mct-agent binary by reading agent/README.md and agent/cmd/mct-agent/main.go. List them." \
     > "$stdout_interrupt" 2> "$stderr_interrupt"
   rc=$?
   set -e
@@ -3317,7 +3317,7 @@ PY
     \
     --turn-timeout 300 \
     "${DEFAULT_MODEL_ARGS[@]}" \
-    --text "Continue." \
+    --prompt "Continue." \
     > "$stdout_resume" 2> "$stderr_resume"
   rc=$?
   set -e
@@ -3446,7 +3446,7 @@ run_error_case() {
     
   )
   if [[ -n "$prompt_override" ]]; then
-    cmd+=(-t "$prompt_override")
+    cmd+=(-p "$prompt_override")
   fi
 
   pushd "$REPO_ROOT" >/dev/null
@@ -3633,7 +3633,7 @@ run_final_answer_path_case() {
       --model "$stub_alias" \
       --orch-model "$stub_alias" \
       --file-discovery-model "$stub_alias" \
-      --text "Summarize the purpose of README.md." \
+      --prompt "Summarize the purpose of README.md." \
       >"$stdout_file" 2>"$stderr_file"
   local rc=$?
   set -e
@@ -3689,7 +3689,7 @@ PY
       --model "$stub_alias" \
       --orch-model "$stub_alias" \
       --file-discovery-model "$stub_alias" \
-      --text "Summarize the purpose of README.md." \
+      --prompt "Summarize the purpose of README.md." \
       >"$verbose_stdout" 2>"$verbose_stderr"
   rc=$?
   set -e
@@ -3795,7 +3795,7 @@ test_issue_c_3turn() {
 }
 
 test_empty_goal() {
-  run_error_case "empty-goal" "" 1 "one of --text or --file is required" "${DEFAULT_MODEL_ARGS[@]}"
+  run_error_case "empty-goal" "" 1 "one of --prompt or --file is required" "${DEFAULT_MODEL_ARGS[@]}"
 }
 
 test_invalid_orch_model() {
@@ -4270,7 +4270,7 @@ run_test_case "issue-c-3turn" run_happy_case "issue-c-3turn" 3 \
   "error|handling|finalize|transcript|fallback" \
   "${DEFAULT_MODEL_ARGS[@]}"
 
-run_test_case "empty-goal" run_error_case "empty-goal" "" 1 "one of --text or --file is required" "${DEFAULT_MODEL_ARGS[@]}"
+run_test_case "empty-goal" run_error_case "empty-goal" "" 1 "one of --prompt or --file is required" "${DEFAULT_MODEL_ARGS[@]}"
 
 run_test_case "invalid-orch-model" run_error_case "invalid-orch-model" "" 1 "$MODEL_ALIAS_NOT_FOUND_PATTERN" \
   "Trigger orchestrator alias failure" \

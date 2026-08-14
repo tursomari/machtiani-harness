@@ -75,7 +75,7 @@ without modifying the main repository.
     git -C "{{PROJECT_ROOT}}" worktree add {{WORKTREE_DIR}} {{EVAL_COMMIT}}
     cd "{{WORKTREE_DIR}}"
     # Use the config path resolved by the runbook generator.
-      MACHTIANI_CONFIG="{{MCT_CONFIG_PATH}}" mct-agent sync --model {{MCT_MODEL}} --timeout-per-turn 0 {{MCT_API_KEY_ARG}}
+      MACHTIANI_CONFIG="{{MCT_CONFIG_PATH}}" mct-agent sync --model {{MCT_MODEL}} --turn-timeout 0 {{MCT_API_KEY_ARG}}
 
 - The worktree is an isolated checkout at the pre-fix state. The main repo is untouched.
 - mct-agent sync generates the internal README for this commit (required before mct-agent run).
@@ -98,19 +98,19 @@ without modifying the main repository.
     MACHTIANI_CONFIG="{{MCT_CONFIG_PATH}}" mct-agent run \
       --mode code \
       --final-file /tmp/mct_answer{{ARTIFACT_SUFFIX}}.md \
-      --timeout-per-turn 0 \
+      --turn-timeout 0 \
       --model {{MCT_MODEL}} {{MCT_API_KEY_ARG}} \
       --file "{{PROMPT_FILE}}"
 
 - `--mode code` — coding-oriented orchestrator preset.
 - `--final-file /tmp/mct_answer{{ARTIFACT_SUFFIX}}.md` — writes the final answer directly to this path.
-- `--timeout-per-turn 0` — disables the per-turn timeout.
+- `--turn-timeout 0` — disables the per-turn timeout.
 - `--model {{MCT_MODEL}}` resolves from config.toml `[models]` section.
 - API key resolution order: CLI `--api-key` override then config file then environment variables.
 - If mct-agent exits after 0 turns, re-run with `--step-limit` increased (e.g., `--step-limit 30`).
 
 > **Note on duration:** mct-agent runs can take **10-30 minutes** for complex tasks.
-> The `--timeout-per-turn 0` flag disables per-turn timeouts, but the overall process may
+> The `--turn-timeout 0` flag disables per-turn timeouts, but the overall process may
 > still be killed by shell timeouts (e.g., SSH idle disconnect or job control limits).
 > For long evals, consider running with `nohup` or in a `tmux` session:
 >

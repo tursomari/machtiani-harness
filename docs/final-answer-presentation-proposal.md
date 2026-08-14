@@ -37,7 +37,7 @@ configured independently with `[ui].glyphs = "unicode"` or `"ascii"`; the
 
   Resume this session:
     ──────────────────────────────────────────────────────────────────────────────────────────────
-    $ mct-agent run -t "<your follow-up prompt>" --resume agent-20260718T051605-0813
+    $ mct-agent run -p "<your follow-up prompt>" --resume agent-20260718T051605-0813
     ──────────────────────────────────────────────────────────────────────────────────────────────
 
   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -72,7 +72,7 @@ surface rather than ordinary prose. A command stays on one line with a leading
 continuation backslashes and no prompt marker.
 
 The same renderer owns all conclusion outcomes. A resumable interruption uses
-the red `SHELL-AGENT INTERRUPTED` heading and a resume command without `-t`. A
+the red `SHELL-AGENT INTERRUPTED` heading and a resume command without `-p`. A
 user-input suspension uses an amber `USER INPUT NEEDED` heading, optional
 `Why this needs your input:` context, a Beauty-styled decision, and
 `<your answer>` in the resume command. Neither outcome invents a final

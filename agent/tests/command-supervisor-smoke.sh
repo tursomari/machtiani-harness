@@ -168,7 +168,7 @@ set +e
     MACHTIANI_CONFIG="$config_file" \
     timeout 25 "$MCT_AGENT_BIN" shell-agent \
       --model supervisor-smoke \
-      --text "Run go test ./... exactly once and report the result."
+      --prompt "Run go test ./... exactly once and report the result."
 ) >"$stdout_file" 2>"$stderr_file"
 status=$?
 set -e

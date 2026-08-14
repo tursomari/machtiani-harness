@@ -20,7 +20,7 @@ If you are using `mct-agent` inside this repository, start with `docs/mct-agent-
 ## Mode System
 The agent now ships with a mode system that supervises multi-step work. When you enable it, a top-level session applies the mode's PlannerOverlay and task guidance, runs the agent loop with the configured mode presets, and finally emits a summary artifact that records the result.
 
-- **Enable it per run** with `mct-agent run --mode <mode> -t "<your prompt>"`. Modes are loaded only from `~/.machtiani/modes/<mode>/`. `mct-agent init` installs or refreshes the canonical modes shipped by this binary.
+- **Enable it per run** with `mct-agent run --mode <mode> -p "<your prompt>"`. Modes are loaded only from `~/.machtiani/modes/<mode>/`. `mct-agent init` installs or refreshes the canonical modes shipped by this binary.
 - **What happens during a run:** the terminal prints `[mode]` updates as the mode system works through the plan. For every task the session applies the task's PlannerOverlay and records progress under the UUID project store returned by `mct-agent project show`.
 - **Outputs:** the session transcript collects all turns, and every task contributes its own artifacts under the session directory. The final summary lists the tasks, their status, and where to find the detailed artifacts.
 - **Resume support:** progress is stored in `<project-store>/sessions/<session-id>/mode-plan.json`, so resuming the session continues with the remaining tasks instead of replaying everything from scratch.
@@ -180,8 +180,8 @@ mct-agent-dev --version
 Use the commands independently:
 
 ```bash
-mct-agent-dev run -t "Test the development build"
-mct-agent run -t "Use the managed build"
+mct-agent-dev run -p "Test the development build"
+mct-agent run -p "Use the managed build"
 ```
 
 Do not run `mct-agent-dev update`; rebuild it with `nix build --profile`.
@@ -560,14 +560,17 @@ file-discovery -version
 ## Usage
 Basic `mct-agent` run (drives the embedded discovery/planning loop and finalizes):
 ```
-mct-agent run --t "Explain the architecture and identify main components" --verbose
+mct-agent run -p "Explain the architecture and identify main components" --verbose
 ```
 
 Useful flags (agent):
-- `--max-steps int`: max `mct` Q&A turns before finalizing (default ~4).
-- `--t string`: Required flag to specify the prompt/question. Positional arguments for prompts are no longer supported.
+- `--max-turns int`: maximum turns before finalizing (default: 150).
+- `-p`, `--prompt string`: inline prompt text, mutually exclusive with `--file`. Positional prompt arguments are not supported.
+- `-f`, `--file path`: read the prompt from a file, mutually exclusive with `--prompt`.
+- `-x`, `--exec`: one-shot mode; print only raw final-answer markdown to stdout, while warnings and errors remain on stderr. It does not change session persistence, transcript/final-answer writes, exit codes, or execution behavior.
+- `--focused`: display only the banner, conclusion, warnings, and errors. This is a display tier, not one-shot mode.
 - `--resume string`, `-r string`: Resume a previous session by ID. When specified, the agent loads the prior transcript and goal, then appends any new instruction to the goal. If omitted, a new session ID is auto-generated.
-- `--session-id string`: Deprecated alias for `--resume`. It remains available during the deprecation window, but new user-facing commands should use `mct-agent run -t "<your follow-up prompt>" --resume <session-id>` (or `-r`).
+- `--session-id string`: Deprecated alias for `--resume`. It remains available during the deprecation window, but new user-facing commands should use `mct-agent run -p "<your follow-up prompt>" --resume <session-id>` (or `-r`).
 - `--api-key provider:key`: provider-specific API key override for this run (repeatable; beats config/env).
 - `--openai-api-key string`: API key for OpenAI‑compatible endpoint.
 - `--openai-base-url string`: Base URL for OpenAI‑compatible endpoint.
@@ -583,7 +586,7 @@ Useful flags (agent):
 To mix providers in a single invocation, repeat `--api-key` once per provider referenced by your model aliases:
 
 ```
-mct-agent run --t "triage regression" \
+mct-agent run -p "triage regression" \
   --orch-model gpt-5-nano \
   --file-discovery-model haiku \
   --api-key openai:sk-openai-xxx \
@@ -602,11 +605,11 @@ PROJECT_STORE="$HOME/.machtiani/$(cat .machtiani/project.uuid)"
 
 ```bash
 # Start a new session (auto-assigned ID)
-mct-agent run --t "Fix all lint issues" --verbose
+mct-agent run -p "Fix all lint issues" --verbose
 # Output includes: Session ID: <session-id>
 
 # Later, resume the same session, optionally with new instructions
-mct-agent run -t "<your follow-up prompt>" --resume <session-id>
+mct-agent run -p "<your follow-up prompt>" --resume <session-id>
 ```
 
 `mct-agent run --resume` always requires an explicit session ID. It never guesses or
@@ -675,7 +678,7 @@ When `mct-agent` receives `SIGINT` (Ctrl+C) or `SIGTERM`, it:
   SHELL-AGENT INTERRUPTED
   Shell-agent work is resumable.
   Resume the interrupted shell-agent work:
-    $ mct-agent run -t "<your follow-up prompt>" --resume <session-id>
+    $ mct-agent run -p "<your follow-up prompt>" --resume <session-id>
   ```
 
 The older `=== SESSION INTERRUPTED ===` banner is historical and is no longer

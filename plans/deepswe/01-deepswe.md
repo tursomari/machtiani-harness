@@ -21,13 +21,13 @@ Workflow:
 
 ## Problem Summary
 
-mct-agent has no official benchmark integration with Deep-SWE V1.1. There is no Pier agent adapter for mct-agent, so its SWE-bench performance cannot be measured, compared on the Deep-SWE leaderboard, or tracked across versions. Deep-SWE V1.1 uses the Pier harness which expects agents to conform to the BaseInstalledAgent Python interface. mct-agent is a Go binary with a CLI (`mct-agent run -f <file> -t <text> --model <alias> --api-key <provider:key>`) that modifies the worktree in-place but does not commit. Deep-SWE V1.1 captures the model patch via `git diff base_commit HEAD` in pre_artifacts.sh, so a post-run commit wrapper is required. An adapter must bridge these two worlds: a Python class registered via Pier's `--agent-import-path` flag, implementing `install_spec()`, `setup()`, `run()`, and `network_allowlist()` to invoke mct-agent inside a task container, commit its changes, and return control to the Pier verifier.
+mct-agent has no official benchmark integration with Deep-SWE V1.1. There is no Pier agent adapter for mct-agent, so its SWE-bench performance cannot be measured, compared on the Deep-SWE leaderboard, or tracked across versions. Deep-SWE V1.1 uses the Pier harness which expects agents to conform to the BaseInstalledAgent Python interface. mct-agent is a Go binary with a CLI (`mct-agent run -f <file>` or `mct-agent run -p <text>`, plus `--model <alias>` and `--api-key <provider:key>`) that modifies the worktree in-place but does not commit. Deep-SWE V1.1 captures the model patch via `git diff base_commit HEAD` in pre_artifacts.sh, so a post-run commit wrapper is required. An adapter must bridge these two worlds: a Python class registered via Pier's `--agent-import-path` flag, implementing `install_spec()`, `setup()`, `run()`, and `network_allowlist()` to invoke mct-agent inside a task container, commit its changes, and return control to the Pier verifier.
 
 **Root cause**: No adapter exists. mct-agent was designed as a standalone CLI tool; Deep-SWE's Pier harness expects a specific Python agent contract. The gap is purely integration — no fundamental incompatibility.
 
 **Current State Verified**:
 - ☐ Pier argument parser inspected for exact `--agent-import-path` flag syntax (to be completed before Phase 1)
-- ☐ mct-agent CLI flags confirmed: `-f`, `-t`, `--model`, `--api-key` (no `--prompt` flag)
+- ☐ mct-agent CLI flags confirmed: `-f`/`--file`, `-p`/`--prompt`, `--model`, and `--api-key`
 - ☐ reasoning_effort passthrough confirmed working via `[models.<alias>.params]` in config.toml
 - ☐ A/B container workflow confirmed operational with `scripts/Dockerfile.build` and `scripts/ab-dev.sh`
 - ☐ TEST_API_KEY, TEST_BASE_URL, TEST_MODEL env vars confirmed as mct-agent's eval configuration mechanism
