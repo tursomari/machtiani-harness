@@ -1288,7 +1288,7 @@ func TestResumeAttemptFlagPropagatesFromCLIToRequest(t *testing.T) {
 		Config:  &minisweagent.ShellAgentConfig{},
 		Prompts: &minisweagent.PromptsConfig{},
 	}
-	// Explicitly false == fresh start (new -t/-f input provided).
+	// Explicitly false == fresh start (new -p/-f input provided).
 	req.ResumeAttempt = false
 	if req.ResumeAttempt {
 		t.Fatal("expected ResumeAttempt=false to mean fresh start")

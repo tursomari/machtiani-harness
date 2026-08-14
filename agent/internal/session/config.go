@@ -98,7 +98,7 @@ type Options struct {
 	ProcessTimerManager     *ui.ProcessTimerManager
 	Diagnostics             io.Writer
 	PlannerOverride         Planner
-	HasNewInput             bool   // true when -t/-f provided on resume (shell-agent starts fresh, no resume attempt)
+	HasNewInput             bool   // true when -p/-f provided on resume (shell-agent starts fresh, no resume attempt)
 	ShellAgentInterruptStep int    // > 0 triggers deterministic interrupt after this many shell-agent steps
 	ShellAgentStepLog       string // path for step-log JSONL file (empty disables)
 }
