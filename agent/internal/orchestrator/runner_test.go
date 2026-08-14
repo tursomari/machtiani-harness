@@ -389,7 +389,7 @@ func TestRestoreProtectedRuntimeStateBeforeSyncRestoresAndLogs(t *testing.T) {
 }
 
 func TestCodeStrongForgePromptProtectsRepoLocalRuntimeArtifacts(t *testing.T) {
-	promptPath := filepath.Join(repoRoot(t), ".machtiani", "modes", "code-strong-forge", "shell-agent-system-prompt.txt")
+	promptPath := filepath.Join(repoRoot(t), "agent", "internal", "modes", "canonical", "code-strong-forge", "shell-agent-system-prompt.txt")
 	data, err := os.ReadFile(promptPath)
 	if err != nil {
 		t.Fatalf("read prompt: %v", err)
@@ -849,7 +849,7 @@ func repoRoot(t *testing.T) string {
 		t.Fatalf("getwd: %v", err)
 	}
 	for {
-		if _, err := os.Stat(filepath.Join(dir, ".machtiani", "modes", "code-strong-forge", "shell-agent-system-prompt.txt")); err == nil {
+		if _, err := os.Stat(filepath.Join(dir, "agent", "internal", "modes", "canonical", "code-strong-forge", "shell-agent-system-prompt.txt")); err == nil {
 			return dir
 		}
 		parent := filepath.Dir(dir)
