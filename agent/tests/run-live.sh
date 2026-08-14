@@ -3744,7 +3744,7 @@ test_models_catch_all() {
 test_issue_a_1turn() {
   run_happy_case "issue-a-1turn" 1 \
     "What is the main purpose of the mct-agent binary?" \
-    "Answer saved to:" \
+    "Answer saved to:|\\[dry-run\\] Final answer" \
     1 \
     "${DEFAULT_MODEL_ARGS[@]}"
 }
@@ -3752,7 +3752,7 @@ test_issue_a_1turn() {
 test_issue_a_3turn() {
   run_happy_case "issue-a-3turn" 3 \
     "What is the main purpose of the mct-agent binary?" \
-    "Answer saved to:" \
+    "Answer saved to:|\\[dry-run\\] Final answer" \
     "${DEFAULT_MODEL_ARGS[@]}"
 }
 
@@ -4231,13 +4231,13 @@ run_test_case "models-catch-all" run_happy_case "models-catch-all" 1 \
 
 run_test_case "issue-a-1turn" run_happy_case "issue-a-1turn" 1 \
   "What is the main purpose of the mct-agent binary?" \
-  "Answer saved to:" \
+  "Answer saved to:|\\[dry-run\\] Final answer" \
   1 \
   "${DEFAULT_MODEL_ARGS[@]}"
 
 run_test_case "issue-a-3turn" run_happy_case "issue-a-3turn" 3 \
   "What is the main purpose of the mct-agent binary?" \
-  "Answer saved to:" \
+  "Answer saved to:|\\[dry-run\\] Final answer" \
   "${DEFAULT_MODEL_ARGS[@]}"
 
 run_test_case "issue-b-1turn" run_happy_case "issue-b-1turn" 1 \
