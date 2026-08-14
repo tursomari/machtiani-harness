@@ -191,7 +191,7 @@ The phases are ordered by dependency: the adapter must exist before it can be te
 
 ## Note
 
-DeepSWE code can be found in \`~/projects/deep-swe\`.
+Set `DEEP_SWE_TASKS` to the `tasks` directory in your Deep-SWE checkout.
 
 ## Final Summary
 

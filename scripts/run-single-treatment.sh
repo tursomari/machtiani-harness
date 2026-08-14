@@ -21,6 +21,8 @@ Usage: run-single-treatment.sh [OPTIONS] TASK_NAME [MODEL] [SHELL_AGENT_MODEL]
                      Default: deepseek-v4-pro
 
 Options:
+  --tasks-path PATH      Path to Deep-SWE task directory
+                         (required unless DEEP_SWE_TASKS is set)
   --agent-name NAME       Agent label for the results tree
                           Default: mct-orchestrator
   --treatment-name NAME   Treatment label for the results tree
@@ -29,7 +31,7 @@ Options:
 
 Prerequisites:
   - TEST_API_KEY, TEST_BASE_URL exported in the environment
-  - Deep-SWE tasks at ~/projects/deep-swe/tasks
+  - Deep-SWE tasks supplied with --tasks-path or DEEP_SWE_TASKS
   - Go toolchain for building binaries
   - Docker running, pier Python package installed
 
@@ -42,6 +44,7 @@ Output:
 Example:
   export TEST_API_KEY=sk-...
   export TEST_BASE_URL=https://api.deepseek.com
+  export DEEP_SWE_TASKS=/path/to/deep-swe/tasks
   ./scripts/run-single-treatment.sh abs-module-cache-flags glm-5-high deepseek-v4-pro
   ./scripts/run-single-treatment.sh --agent-name mct-orchestrator \
       --treatment-name with-peer-review abs-module-cache-flags
@@ -54,6 +57,7 @@ EOF
 # ---------------------------------------------------------------------------
 AGENT_NAME="mct-orchestrator"
 TREATMENT_NAME="with-peer-review"
+TASKS="${DEEP_SWE_TASKS:-}"
 TASK_NAME=""
 MODEL="deepseek-v4-pro"
 SHELL_AGENT_MODEL="deepseek-v4-pro"
@@ -61,6 +65,14 @@ SHELL_AGENT_MODEL="deepseek-v4-pro"
 POSITIONAL=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --tasks-path)
+            TASKS="${2:?--tasks-path requires a value}"
+            shift 2
+            ;;
+        --tasks-path=*)
+            TASKS="${1#*=}"
+            shift
+            ;;
         --agent-name)
             AGENT_NAME="${2:?--agent-name requires a value}"
             shift 2
@@ -100,6 +112,21 @@ if [[ -z "${TASK_NAME}" ]]; then
     usage
 fi
 
+if [[ -z "${TASKS}" ]]; then
+    echo "Error: pass --tasks-path or set DEEP_SWE_TASKS." >&2
+    exit 1
+fi
+if [[ ! -d "${TASKS}" ]]; then
+    echo "Error: Deep-SWE task directory does not exist: ${TASKS}" >&2
+    exit 1
+fi
+TASKS="$(cd "${TASKS}" && pwd)"
+DEEP_SWE_REPO="$(git -C "${TASKS}" rev-parse --show-toplevel 2>/dev/null || :)"
+if [[ -z "${DEEP_SWE_REPO}" ]]; then
+    echo "Error: Deep-SWE task directory is not inside a Git checkout: ${TASKS}" >&2
+    exit 1
+fi
+
 for var in TEST_API_KEY TEST_BASE_URL; do
     if [[ -z "${!var:-}" ]]; then
         echo "Error: ${var} must be set and non-empty." >&2
@@ -115,8 +142,6 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 OUTPUT_BASE="/tmp/mct-single-treatment"
 OUTPUT_BIN="${OUTPUT_BASE}/bin"
 JOBS_DIR="${OUTPUT_BASE}/jobs"
-TASKS="${HOME}/projects/deep-swe/tasks"
-DEEP_SWE_REPO="${HOME}/projects/deep-swe"
 SAFE_AGENT_MOUNTS_JSON='[{"type":"bind","source":"${HOST_AGENT_LOGS_PATH}","target":"${ENV_AGENT_LOGS_PATH}"},{"type":"bind","source":"${HOST_ARTIFACTS_PATH}","target":"${ENV_ARTIFACTS_PATH}"}]'
 
 AGENT_BIN="${OUTPUT_BIN}/mct-agent"

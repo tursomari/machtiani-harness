@@ -16,20 +16,24 @@ Options:
   --control-commit <ref>      Git ref for control baseline (default: master)
   --treatment-commit <ref>    Git ref for treatment experiment (default: HEAD)
   --tasks, -p <path>          Path to Deep-SWE task directory
-                              (default: $HOME/projects/deep-swe/tasks)
+                              (required unless DEEP_SWE_TASKS is set)
   --concurrent, -n <int>      Number of concurrent pier trials (default: 4)
   --agent-timeout-multiplier <float>  Timeout multiplier for pier agent (default: 1.0)
   --agent-import-path <path>  Pier agent import path
                               (default: mct_pier_adapter.mct_agent:MctAgent)
   --treatment-only           Skip control benchmark and comparison; only run
                               the treatment benchmark and persist results
-  --build-only              Build control and treatment binaries, then exit;
+  --build-only               Build control and treatment binaries, then exit;
                               does not require benchmark credentials or tools
   --agent-name <name>        Agent label for the results tree
                               (default: mct-orchestrator)
   --treatment-name <name>    Treatment label for the results tree
                               (default: with-peer-review)
   --help, -h                  Print this help message and exit
+
+Environment:
+  DEEP_SWE_TASKS              Default task directory when --tasks is omitted;
+                              not needed with --build-only
 EOF
     exit 0
 }
@@ -39,7 +43,7 @@ EOF
 # ----------------------------------------------------------------------------
 CONTROL_COMMIT="master"
 TREATMENT_COMMIT="HEAD"
-TASKS="${HOME}/projects/deep-swe/tasks"
+TASKS="${DEEP_SWE_TASKS:-}"
 CONCURRENT="4"
 TIMEOUT_MULTIPLIER="1.0"
 AGENT_IMPORT_PATH="mct_pier_adapter.mct_agent:MctAgent"
@@ -47,7 +51,6 @@ AGENT_NAME="mct-orchestrator"
 TREATMENT_NAME="with-peer-review"
 TREATMENT_ONLY="false"
 BUILD_ONLY="false"
-DEEP_SWE_REPO="${HOME}/projects/deep-swe"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -76,6 +79,21 @@ if [[ "${BUILD_ONLY}" != "true" ]]; then
             exit 1
         fi
     done
+
+    if [[ -z "${TASKS}" ]]; then
+        echo "Error: pass --tasks or set DEEP_SWE_TASKS." >&2
+        exit 1
+    fi
+    if [[ ! -d "${TASKS}" ]]; then
+        echo "Error: Deep-SWE task directory does not exist: ${TASKS}" >&2
+        exit 1
+    fi
+    TASKS="$(cd "${TASKS}" && pwd)"
+    DEEP_SWE_REPO="$(git -C "${TASKS}" rev-parse --show-toplevel 2>/dev/null || :)"
+    if [[ -z "${DEEP_SWE_REPO}" ]]; then
+        echo "Error: Deep-SWE task directory is not inside a Git checkout: ${TASKS}" >&2
+        exit 1
+    fi
 fi
 
 # ----------------------------------------------------------------------------

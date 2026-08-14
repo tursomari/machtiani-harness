@@ -5,7 +5,8 @@ This is the operator entrypoint for running and monitoring Deep-SWE benches from
 ## Prerequisites
 
 - `TEST_API_KEY` and `TEST_BASE_URL` exported in the host shell.
-- Deep-SWE tasks checked out at `~/projects/deep-swe/tasks`, unless `--tasks-path` is provided.
+- A Deep-SWE checkout. Set `DEEP_SWE_TASKS=/path/to/deep-swe/tasks` or pass
+  `--tasks-path`; the launchers derive repository metadata from that checkout.
 - Nix 2.24 or newer with flakes enabled. The launchers enter the locked
   `bench` shell automatically; a separately installed Go toolchain is ignored.
 - Docker running, `pier` installed, and `mct_pier_adapter` importable.
@@ -25,6 +26,7 @@ WORK_DIR=".data/treatment12-${RUN_ID}"
 
 export TEST_API_KEY=sk-...
 export TEST_BASE_URL=https://api.deepseek.com
+export DEEP_SWE_TASKS=/path/to/deep-swe/tasks
 
 ./scripts/run-batch-subset.sh \
   --treatment-only \
@@ -101,7 +103,7 @@ pier run \
   --include-task-name abs-module-cache-flags \
   --n-concurrent 1 \
   --agent-timeout-multiplier 3.0 \
-  -p ~/projects/deep-swe/tasks
+  -p "$DEEP_SWE_TASKS"
 ```
 
 If `MCT_META_ORCHESTRATOR_BINARY` is missing or invalid in the host shell, the adapter skips the upload and the run can fall back to direct `mct-agent` instead of the multi-phase meta-orchestrator loop.

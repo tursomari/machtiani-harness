@@ -55,6 +55,9 @@ git add -A && git commit -m "fix" --allow-empty || true
 
 No `--api-key` flag — keys come from the uploaded config.toml automatically via mct-agent resolution order (CLI flag > config file `api_key` field > env var).
 
+Set `DEEP_SWE_TASKS` to the `tasks` directory in the Deep-SWE checkout before
+running the benchmark commands below.
+
 ## Key Design Decisions
 
 | Decision | Rationale |
@@ -116,7 +119,7 @@ No `--api-key` flag — keys come from the uploaded config.toml automatically vi
 
 - ☑ B.1 Build the mct-agent binary: `cd agent && go build -o ../agent/bin/mct-agent ./cmd/mct-agent`
 - ☑ B.2 Verify the host config has the required model definitions: confirm `[models.deepseek-v4-pro]` and `[providers.deepseek]` with `api_key` exist in `.machtiani/config.toml`.
-- ☑ B.3 Run Pier on a single task: `pier run -p ~/projects/deep-swe/tasks/go-critic-doc-link-checker --agent-import-path mct_pier_adapter.mct_agent:MctAgent --ae MCT_AGENT_BINARY=$(pwd)/agent/bin/mct-agent --n-concurrent 1`
+- ☑ B.3 Run Pier on a single task: `pier run -p "$DEEP_SWE_TASKS/go-critic-doc-link-checker" --agent-import-path mct_pier_adapter.mct_agent:MctAgent --ae MCT_AGENT_BINARY=$(pwd)/agent/bin/mct-agent --n-concurrent 1`
 - ☐ B.4 After the task run, extract `.machtiani/sessions/` from the container to the host job directory, for example by adding a post-run step in `populate_context_post_run` or using a Pier hook.
 - ☐ B.5 Verify that session transcripts show mct-forge commands executed successfully with no `command not found` errors.
 - ☑ B.6 Verify: sync completes (check trial log for "Readme synced for commit"), agent runs with `--mode code-forge` (check command in trial log), git commit captured, `reward.json` produced.
@@ -146,7 +149,7 @@ No `--api-key` flag — keys come from the uploaded config.toml automatically vi
 
 **Goal**: Execute mct-agent on all 113 Deep-SWE tasks with the production configuration, collect per-task `reward.json`, compute overall pass rate, and compare against the initial 0-F2P baseline.
 
-- ☐ C.1 Run `pier run -p ~/projects/deep-swe/tasks --agent-import-path mct_pier_adapter.mct_agent:MctAgent --ae MCT_AGENT_BINARY=$(pwd)/agent/bin/mct-agent --job-name mct-agent-deepswe-prod-v1 --n-concurrent 4`
+- ☐ C.1 Run `pier run -p "$DEEP_SWE_TASKS" --agent-import-path mct_pier_adapter.mct_agent:MctAgent --ae MCT_AGENT_BINARY=$(pwd)/agent/bin/mct-agent --job-name mct-agent-deepswe-prod-v1 --n-concurrent 4`
 - ☐ C.2 Collect per-task `reward.json` files from `jobs/mct-agent-deepswe-prod-v1/`.
 - ☐ C.3 Compute overall F2P, P2P, partial scores and per-language breakdown.
 - ☐ C.4 Compare against the initial baseline (0 F2P, 99.96% P2P, 0.70 partial with DeepSeek v4 Flash).

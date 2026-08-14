@@ -21,7 +21,7 @@ Runs a 12-task A/B batch on the Deep-SWE benchmark:
 
 Options:
   --tasks-path PATH         Path to Deep-SWE task directory
-                            (default: $HOME/projects/deep-swe/tasks)
+                            (required unless DEEP_SWE_TASKS is set)
   -n, --concurrent N        Number of concurrent pier trials per side
                             (default: 2; control and treatment run in parallel)
   --timeout-mult F          Agent timeout multiplier (default: 3.0)
@@ -45,6 +45,7 @@ Options:
 Environment:
   TEST_API_KEY              Required; API key passed to both sides.
   TEST_BASE_URL             Required; base URL passed to the treatment side.
+  DEEP_SWE_TASKS            Default task directory when --tasks-path is omitted.
   TEST_MODEL is NOT required; this script overrides it.
 
 Both --flag value and --flag=value forms are accepted.
@@ -55,7 +56,7 @@ EOF
 # ----------------------------------------------------------------------------
 # Defaults and parse CLI arguments
 # ----------------------------------------------------------------------------
-TASKS_PATH="${HOME}/projects/deep-swe/tasks"
+TASKS_PATH="${DEEP_SWE_TASKS:-}"
 CONCURRENT="2"
 TIMEOUT_MULTIPLIER="3.0"
 MODEL="deepseek-v4-pro"
@@ -174,6 +175,21 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+if [[ -z "${TASKS_PATH}" ]]; then
+    echo "Error: pass --tasks-path or set DEEP_SWE_TASKS." >&2
+    exit 1
+fi
+if [[ ! -d "${TASKS_PATH}" ]]; then
+    echo "Error: Deep-SWE task directory does not exist: ${TASKS_PATH}" >&2
+    exit 1
+fi
+TASKS_PATH="$(cd "${TASKS_PATH}" && pwd)"
+DEEP_SWE_REPO="$(git -C "${TASKS_PATH}" rev-parse --show-toplevel 2>/dev/null || :)"
+if [[ -z "${DEEP_SWE_REPO}" ]]; then
+    echo "Error: Deep-SWE task directory is not inside a Git checkout: ${TASKS_PATH}" >&2
+    exit 1
+fi
+
 # ----------------------------------------------------------------------------
 # Validate environment variables
 # NOTE: TEST_MODEL is intentionally NOT required; the script overrides it.
@@ -266,7 +282,7 @@ done
 # Snapshot git heads
 # ----------------------------------------------------------------------------
 MCT_BENCH_HEAD="$(git -C "${REPO_ROOT}" rev-parse HEAD 2>/dev/null || echo unknown)"
-DEEP_SWE_HEAD="$(git -C "${HOME}/projects/deep-swe" rev-parse HEAD 2>/dev/null || echo unknown)"
+DEEP_SWE_HEAD="$(git -C "${DEEP_SWE_REPO}" rev-parse HEAD 2>/dev/null || echo unknown)"
 
 # ----------------------------------------------------------------------------
 # Compute batch timestamps BEFORE launching the runs so both sides share the
