@@ -463,9 +463,6 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 		if *env.turnsCompleted == env.cfg.maxTurns {
 			return turnExecutionResult{action: turnLoopAnswerUser, shellAgentUsed: shellAgentUsedThisTurn}
 		}
-		if !env.hasNewInput {
-			return turnExecutionResult{action: turnLoopAnswerUser, shellAgentUsed: shellAgentUsedThisTurn}
-		}
 		return turnExecutionResult{action: turnLoopAskWorker, shellAgentUsed: shellAgentUsedThisTurn}
 	}
 	sasID := fmt.Sprintf("%s/shell-agent/%d", env.sessionID, env.step)
@@ -617,9 +614,6 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 
 	finishTurn(env.sessTelemetry, env.turn, env.turnDecision, "success", env.turnInfo, nil)
 	if *env.turnsCompleted == env.cfg.maxTurns {
-		return turnExecutionResult{action: turnLoopAnswerUser, shellAgentUsed: shellAgentUsedThisTurn}
-	}
-	if !env.hasNewInput {
 		return turnExecutionResult{action: turnLoopAnswerUser, shellAgentUsed: shellAgentUsedThisTurn}
 	}
 	return turnExecutionResult{action: turnLoopAskWorker, shellAgentUsed: shellAgentUsedThisTurn}
