@@ -288,7 +288,7 @@ func printUpdateError(err error, jsonOutput bool) int {
 	return 1
 }
 
-const updateReexecEnv = "MCT_AGENT_UPDATE_REEXEC"
+const updateReexecEnv = "MACHTIANI_UPDATE_REEXEC"
 
 func automaticUpdateEligible(args []string, stdinTTY, stdoutTTY, stderrTTY bool) bool {
 	if !stdinTTY || !stdoutTTY || !stderrTTY || len(args) == 0 {

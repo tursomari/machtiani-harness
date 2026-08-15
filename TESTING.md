@@ -58,7 +58,7 @@ docker run --rm -it -e RUN_SLOW=1 --entrypoint /usr/local/bin/run-flags.sh file-
 #### Internal README Manager
 
 ```bash
-cd agent/internal/mct
+cd agent
 GOCACHE=$(pwd)/.gocache go test ./...
 ```
 

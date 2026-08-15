@@ -15,9 +15,9 @@ import (
 
 	"github.com/spf13/pflag"
 	"github.com/tursomari/machtiani/agent/internal/conversation"
+	"github.com/tursomari/machtiani/agent/internal/core/artifacts"
+	"github.com/tursomari/machtiani/agent/internal/core/readmesync"
 	"github.com/tursomari/machtiani/agent/internal/llm"
-	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
-	"github.com/tursomari/machtiani/agent/internal/mct/readmesync"
 	"github.com/tursomari/machtiani/agent/internal/presentation"
 	"github.com/tursomari/machtiani/agent/internal/session"
 	shellagent "github.com/tursomari/machtiani/agent/internal/shell-agent"

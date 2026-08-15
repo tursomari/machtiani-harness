@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
+	"github.com/tursomari/machtiani/agent/internal/core/artifacts"
 	"github.com/tursomari/machtiani/agent/internal/projectstore"
 	"github.com/tursomari/machtiani/agent/internal/trajectory"
 )

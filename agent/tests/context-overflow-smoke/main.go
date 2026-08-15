@@ -13,8 +13,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/tursomari/machtiani/agent/internal/core/prompt"
 	"github.com/tursomari/machtiani/agent/internal/llm"
-	"github.com/tursomari/machtiani/agent/internal/mct/prompt"
 )
 
 const successfulAnswer = "discovery overflow recovery succeeded"

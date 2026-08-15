@@ -58,7 +58,6 @@ RUN if [ -n "${CHANGE_PATCH_B64}" ]; then \
 RUN mkdir -p /build/bin && cd agent && \
     go build -buildvcs=false -o /build/bin/machtiani ./cmd/machtiani && \
     go build -buildvcs=false -o /build/bin/meta-orchestrator ./cmd/meta-orchestrator && \
-    go build -buildvcs=false -o /build/bin/mct ./internal/mct/cmd/mct && \
     go build -buildvcs=false -o /build/bin/file-discovery ./internal/file-discovery/cmd/file-discovery && \
     go build -buildvcs=false -o /build/bin/snippet-discovery ./internal/snippet-discovery/cmd/snippet-discovery && \
     go build -buildvcs=false -o /build/bin/shell-agent ./internal/shell-agent/cmd/shell-agent

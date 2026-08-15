@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
+	"github.com/tursomari/machtiani/agent/internal/core/artifacts"
 	"github.com/tursomari/machtiani/agent/internal/presentation"
 )
 

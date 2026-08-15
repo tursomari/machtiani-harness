@@ -26,9 +26,9 @@ if [[ "${MCT_LIVE_PRINT_TEST:-}" != "1" ]]; then
   exit 0
 fi
 
-MCT_AGENT="${MACHTIANI_BIN:-$REPO_ROOT/machtiani}"
-if [[ ! -x "$MCT_AGENT" ]]; then
-  echo "ERROR: machtiani binary not found or not executable: $MCT_AGENT" >&2
+MACHTIANI_EXE="${MACHTIANI_BIN:-$REPO_ROOT/machtiani}"
+if [[ ! -x "$MACHTIANI_EXE" ]]; then
+  echo "ERROR: machtiani binary not found or not executable: $MACHTIANI_EXE" >&2
   exit 1
 fi
 
@@ -61,7 +61,7 @@ echo "Output dir: $OUT_DIR"
 echo ""
 
 set +e
-"$MCT_AGENT" run \
+"$MACHTIANI_EXE" run \
   --shell-agent \
   --prompt "$GOAL" \
   --exec \
@@ -76,7 +76,7 @@ echo "Exit code: $rc"
 # Resolve the sessions root: project store first, then legacy local, then home.
 SESSIONS_ROOT=""
 if command -v python3 >/dev/null 2>&1; then
-  STORE=$("$MCT_AGENT" project show --json 2>/dev/null |
+  STORE=$("$MACHTIANI_EXE" project show --json 2>/dev/null |
     python3 -c 'import json, sys; print(json.load(sys.stdin)["store"])' 2>/dev/null || true)
   if [[ -n "$STORE" && -d "$STORE/sessions" ]]; then
     SESSIONS_ROOT="$STORE/sessions"

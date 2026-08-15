@@ -1,4 +1,4 @@
-// Package ui provides the terminal user interface components for mct-agent.
+// Package ui provides the terminal user interface components for Machtiani.
 //
 // Theme holds all configurable formatting values for the terminal display,
 // centralizing color codes, prompt prefixes, and layout constants that were

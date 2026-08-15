@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/tursomari/machtiani/agent/internal/conversation"
-	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
+	"github.com/tursomari/machtiani/agent/internal/core/artifacts"
 )
 
 type ArchiveOptions struct {

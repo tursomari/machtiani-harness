@@ -16,13 +16,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
-	"path/filepath"
 	"syscall"
 	"time"
 
-	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
+	"github.com/tursomari/machtiani/agent/internal/core/artifacts"
 )
 
 // sessionLock maintains an exclusive lock file for the lifetime of a session.

@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tursomari/machtiani/agent/internal/llm"
-	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
-	"github.com/tursomari/machtiani/agent/internal/ui"
 	"github.com/tursomari/machtiani/agent/internal/conversation"
+	"github.com/tursomari/machtiani/agent/internal/core/artifacts"
+	"github.com/tursomari/machtiani/agent/internal/llm"
+	"github.com/tursomari/machtiani/agent/internal/ui"
 )
 
 const modePlanFilename = "mode-plan.json"
@@ -135,7 +135,6 @@ func configureModePlan(ctx *modeContext, plan modePlanState) (modePlanState, err
 
 	// Apply mode defaults (e.g., patch=true, maxTurns floor for coding mode).
 	applyModeDefaults(&ctx.Options.Config, task.Mode)
-
 
 	// Mark the task as running.
 	task.Status = "running"
@@ -294,7 +293,6 @@ func tasksFromTOML(goal, mode string, instructions llm.ModeInstructions) []modeT
 			PlannerOverlay: plannerOverlay,
 			Mode:           mode,
 			Status:         "pending",
-
 		},
 	}
 }
@@ -400,10 +398,6 @@ func applyModeDefaults(cfg *Config, mode string) {
 		}
 	}
 }
-
-
-
-
 
 func modesFromPlan(plan modePlanState) []string {
 	seen := make(map[string]struct{})

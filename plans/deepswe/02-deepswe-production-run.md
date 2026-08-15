@@ -117,7 +117,7 @@ running the benchmark commands below.
 
 > **Note**: The original Phase B smoke test completed with F2P 0.667 but revealed forge was not available in the container, causing mct-forge commands to fail silently. The phase goal is now to re-run the go-critic-doc-link-checker task with forge properly integrated.
 
-- ☑ B.1 Build the mct-agent binary: `cd agent && go build -o ../agent/bin/mct-agent ./cmd/mct-agent`
+- ☑ B.1 Build the Machtiani binary: `cd agent && go build -o ../agent/bin/machtiani ./cmd/machtiani`
 - ☑ B.2 Verify the host config has the required model definitions: confirm `[models.deepseek-v4-pro]` and `[providers.deepseek]` with `api_key` exist in `.machtiani/config.toml`.
 - ☑ B.3 Run Pier on a single task: `pier run -p "$DEEP_SWE_TASKS/go-critic-doc-link-checker" --agent-import-path mct_pier_adapter.mct_agent:MctAgent --ae MCT_AGENT_BINARY=$(pwd)/agent/bin/mct-agent --n-concurrent 1`
 - ☐ B.4 After the task run, extract `.machtiani/sessions/` from the container to the host job directory, for example by adding a post-run step in `populate_context_post_run` or using a Pier hook.

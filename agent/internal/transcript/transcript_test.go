@@ -62,7 +62,7 @@ func TestTranscriptRestoreSeedsContent(t *testing.T) {
 	}
 	defer tr.Close()
 
-	existing := "= mct-agent Transcript\n\nSession: resume-sess\n\n== Goal:\n\nResume testing\n\n"
+	existing := "= Machtiani Transcript\n\nSession: resume-sess\n\n== Goal:\n\nResume testing\n\n"
 	if err := tr.Restore(existing); err != nil {
 		t.Fatalf("Restore returned error: %v", err)
 	}
@@ -263,4 +263,3 @@ func TestWriteTurn_CompactsNULBytesBeforeWriting(t *testing.T) {
 		t.Fatalf("expected transcript to compact NUL bytes before writing")
 	}
 }
-

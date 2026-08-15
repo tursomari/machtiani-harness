@@ -15,9 +15,9 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/tursomari/machtiani/agent/internal/core/artifacts"
+	promptsvc "github.com/tursomari/machtiani/agent/internal/core/prompt"
 	"github.com/tursomari/machtiani/agent/internal/llm"
-	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
-	promptsvc "github.com/tursomari/machtiani/agent/internal/mct/prompt"
 	"github.com/tursomari/machtiani/agent/internal/presentation"
 	"github.com/tursomari/machtiani/agent/internal/runner"
 	shellagent "github.com/tursomari/machtiani/agent/internal/shell-agent"

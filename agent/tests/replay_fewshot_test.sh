@@ -8,7 +8,7 @@ TIMESTAMP=$(date +%s)
 OUT_DIR="$SCRIPT_DIR/tmp/fewshot-ab-$TIMESTAMP"
 mkdir -p "$OUT_DIR"
 
-MCT_AGENT="$REPO_ROOT/machtiani"
+MACHTIANI_EXE="$REPO_ROOT/machtiani"
 CONFIG="$REPO_ROOT/.machtiani/config.toml"
 export MACHTIANI_CONFIG="$CONFIG"
 
@@ -28,7 +28,7 @@ run_session() {
   local stderr_log="$out/stderr.log"
 
   MACHTIANI_SHELL_AGENT_FEW_SHOT_VARIANT="$variant" \
-    "$MCT_AGENT" run \
+    "$MACHTIANI_EXE" run \
       --prompt "$(cat "$GOAL_FILE")" \
       --shell-agent \
       --max-turns 20 \

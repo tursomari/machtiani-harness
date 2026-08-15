@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
+	"github.com/tursomari/machtiani/agent/internal/core/artifacts"
 	"github.com/tursomari/machtiani/agent/internal/trajectory"
 )
 
@@ -315,5 +315,3 @@ func (t *Transcript) emit(op string, payload map[string]any) {
 		fmt.Fprintf(os.Stderr, "[trajectory] transcript emit error: %v\n", err)
 	}
 }
-
-

@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/tursomari/machtiani/agent/internal/conversation"
-	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
+	"github.com/tursomari/machtiani/agent/internal/core/artifacts"
 	"github.com/tursomari/machtiani/agent/internal/runner"
 	"github.com/tursomari/machtiani/agent/internal/sessionfiles"
 )

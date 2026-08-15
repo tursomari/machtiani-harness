@@ -9,7 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/tursomari/machtiani/agent/internal/conversation"
-	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
+	"github.com/tursomari/machtiani/agent/internal/core/artifacts"
 	"github.com/tursomari/machtiani/agent/internal/projectstore"
 	"github.com/tursomari/machtiani/agent/internal/session"
 )

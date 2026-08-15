@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/tursomari/machtiani/agent/internal/conversation"
+	"github.com/tursomari/machtiani/agent/internal/core/artifacts"
 	"github.com/tursomari/machtiani/agent/internal/llm"
-	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
 	"github.com/tursomari/machtiani/agent/internal/shell-agent/internal/agents"
 	runpkg "github.com/tursomari/machtiani/agent/internal/shell-agent/internal/run"
 	"github.com/tursomari/machtiani/agent/internal/shell-agent/pkg/minisweagent"
@@ -432,7 +432,7 @@ type stubEnv struct {
 	GetTemplateVarsResult map[string]interface{}
 }
 
-func (s *stubEnv) Config() interface{}                           { return &minisweagent.EnvironmentConfig{} }
+func (s *stubEnv) Config() interface{} { return &minisweagent.EnvironmentConfig{} }
 func (s *stubEnv) Execute(_ context.Context, _, _ string) (minisweagent.ExecuteResult, error) {
 	return minisweagent.ExecuteResult{}, nil
 }
@@ -469,8 +469,8 @@ func TestPerRunCallCountStartsAtZero(t *testing.T) {
 			ActionObservationTemplate: "{{.Output}}",
 		},
 	},
-	agents.WithNewModel(factory),
-)
+		agents.WithNewModel(factory),
+	)
 
 	exitStatus, answer, err := agent.Run(context.Background(), "do the thing")
 	if err != nil {
@@ -510,8 +510,8 @@ func TestSecondRunResetsCallCount(t *testing.T) {
 			ActionObservationTemplate: "{{.Output}}",
 		},
 	},
-	agents.WithNewModel(factory),
-)
+		agents.WithNewModel(factory),
+	)
 
 	if _, _, err := agent.Run(context.Background(), "first run"); err != nil {
 		t.Fatalf("first Run() error = %v", err)
@@ -550,8 +550,8 @@ func TestStepLimitEnforcedOnPerRunCounter(t *testing.T) {
 			ActionObservationTemplate: "{{.Output}}",
 		},
 	},
-	agents.WithNewModel(factory),
-)
+		agents.WithNewModel(factory),
+	)
 
 	exitStatus, _, runErr := agent.Run(context.Background(), "loop forever")
 	if runErr != nil {
@@ -645,9 +645,11 @@ func (s *stubEnvForCounting) Config() interface{} { return &minisweagent.Environ
 func (s *stubEnvForCounting) Execute(_ context.Context, _, _ string) (minisweagent.ExecuteResult, error) {
 	return minisweagent.ExecuteResult{Output: "", ReturnCode: 0}, nil
 }
-func (s *stubEnvForCounting) GetTemplateVars() map[string]interface{} { return map[string]interface{}{} }
-func (s *stubEnvForCounting) GetSyncProgress() float64               { return 1.0 }
-func (s *stubEnvForCounting) GetSyncStatus() string                  { return "" }
+func (s *stubEnvForCounting) GetTemplateVars() map[string]interface{} {
+	return map[string]interface{}{}
+}
+func (s *stubEnvForCounting) GetSyncProgress() float64 { return 1.0 }
+func (s *stubEnvForCounting) GetSyncStatus() string    { return "" }
 
 // TestRunResumeNoSavedState verifies that when no resume file exists
 // for a given SessionID, a fresh run proceeds normally without error.
@@ -700,11 +702,11 @@ func TestRunResumeFromSavedState(t *testing.T) {
 
 	// Step 1: Save a resume state file with known values.
 	resumeState := &runpkg.ResumeState{
-		Version:                      runpkg.ResumeStateVersion,
-		StepCounter:                  5,
-		CommandsExecuted:             3,
-		FinalizeRequested:            true,
-		SystemPrompt:                 "custom system prompt content",
+		Version:           runpkg.ResumeStateVersion,
+		StepCounter:       5,
+		CommandsExecuted:  3,
+		FinalizeRequested: true,
+		SystemPrompt:      "custom system prompt content",
 	}
 	savedMessages := []minisweagent.Message{
 		{Role: "system", Content: "custom system prompt content"},
@@ -1115,7 +1117,7 @@ func TestShellAgentResumesWithoutNewInput(t *testing.T) {
 		Model:                  model,
 		Env:                    &stubEnvForCounting{},
 		SessionID:              sessionID,
-		ResumeAttempt: true,
+		ResumeAttempt:          true,
 	}
 
 	result, err := Run(context.Background(), req)
@@ -1300,6 +1302,7 @@ func TestResumeAttemptFlagPropagatesFromCLIToRequest(t *testing.T) {
 		t.Fatal("expected ResumeAttempt=true to mean resume")
 	}
 }
+
 // TestResumeRestoresStepCounter verifies that when a shell-agent session
 // is resumed from a saved resume file, the agent continues from the saved
 // StepCounter rather than restarting from step 1.  The test creates a

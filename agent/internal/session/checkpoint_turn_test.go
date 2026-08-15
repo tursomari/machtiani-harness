@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/tursomari/machtiani/agent/internal/conversation"
-	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
+	"github.com/tursomari/machtiani/agent/internal/core/artifacts"
 )
 
 func TestCheckpointTurn_callsBothPersistMethods(t *testing.T) {
@@ -120,6 +120,5 @@ func TestCheckpointTurnDiagWriterCapturesSaveFailure(t *testing.T) {
 
 	var diagBuf bytes.Buffer
 	runState.checkpointTurn(&diagBuf)
-
 
 }

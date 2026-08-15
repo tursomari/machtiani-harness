@@ -69,7 +69,7 @@ The ecosystem is balanced: no single language overreaches. The only requirement:
 ## References
 
 - `go.mod` — Go 1.26.5
-- `agent/internal/mct/shellagent/` — `os/exec.CommandContext`
-- `agent/internal/mct/orchestrator/` — goroutine/channel concurrency
-- `agent/internal/mct/session/runner_turns.go` — routing policy
+- `agent/internal/shell-agent/` — `os/exec.CommandContext`
+- `agent/internal/orchestrator/` — goroutine/channel concurrency
+- `agent/internal/session/runner_turns.go` — routing policy
 - `flake.nix` — `CGO_ENABLED=0`, cross-compilation

@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
+	promptsvc "github.com/tursomari/machtiani/agent/internal/core/prompt"
 	"github.com/tursomari/machtiani/agent/internal/llm"
-	promptsvc "github.com/tursomari/machtiani/agent/internal/mct/prompt"
 	"github.com/tursomari/machtiani/agent/internal/presentation"
 	shellagent "github.com/tursomari/machtiani/agent/internal/shell-agent"
 	"github.com/tursomari/machtiani/agent/internal/trajectory"

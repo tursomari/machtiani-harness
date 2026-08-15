@@ -15,9 +15,9 @@ import (
 	"strings"
 
 	"github.com/tursomari/machtiani/agent/internal/conversation"
+	"github.com/tursomari/machtiani/agent/internal/core/artifacts"
+	"github.com/tursomari/machtiani/agent/internal/core/readmesync"
 	"github.com/tursomari/machtiani/agent/internal/llm"
-	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
-	"github.com/tursomari/machtiani/agent/internal/mct/readmesync"
 	"github.com/tursomari/machtiani/agent/internal/planner"
 	"github.com/tursomari/machtiani/agent/internal/presentation"
 	"github.com/tursomari/machtiani/agent/internal/runner"
@@ -490,7 +490,7 @@ func runSession(ctx context.Context, opts Options) Result {
 	isContextCancelled := runState.isContextCancelled
 	if cfg.verbose {
 		fmt.Fprintln(diagWriter, "Session:", sessionID)
-		fmt.Fprintln(diagWriter, "mct-agent starting; transcript:", tr.Path())
+		fmt.Fprintln(diagWriter, "machtiani starting; transcript:", tr.Path())
 	}
 
 	trajectoryPath, err := resolveFileDiscoveryTrajectory(cfg, sessionID)

@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/tursomari/machtiani/agent/internal/conversation"
+	"github.com/tursomari/machtiani/agent/internal/core/artifacts"
 	"github.com/tursomari/machtiani/agent/internal/llm"
-	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
 	shellagent "github.com/tursomari/machtiani/agent/internal/shell-agent"
 	"github.com/tursomari/machtiani/agent/internal/shell-agent/pkg/minisweagent"
 )

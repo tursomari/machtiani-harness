@@ -38,7 +38,7 @@ Sandboxing and environment isolation belong in an external scaffold layer, not i
 - The installed Nix package supplies pinned Git, ripgrep, Bash, coreutils, and
   GNU sed for agent-launched commands; they do not need separate host installs.
 - OpenAI‑compatible API access:
-  - API key and base URL for models used by `mct` and/or the agent.
+  - API key and base URL for models used by Machtiani.
 - A writable bin directory on PATH (e.g., `~/.local/bin`).
 - A global `~/.machtiani/config.toml`, a selected UUID-project config, or a `MACHTIANI_CONFIG` path describing your agent, model, and environment settings. See the *Configuration* section below.
 
@@ -152,7 +152,7 @@ nix build --profile "$dev_profile" '.#machtiani'
 mkdir -p "$HOME/.local/bin"
 cat >"$HOME/.local/bin/machtiani-dev" <<'EOF'
 #!/usr/bin/env sh
-export MCT_AGENT_UPDATE_REEXEC=1
+export MACHTIANI_UPDATE_REEXEC=1
 exec "$HOME/.machtiani/installations/machtiani/dev-profile/bin/machtiani" "$@"
 EOF
 chmod +x "$HOME/.local/bin/machtiani-dev"
@@ -504,7 +504,7 @@ Other helpful overrides:
 - `MCT_LLM_INPUT_LOG`: explicit path for the full redacted LLM request log; this enables logging and overrides `--log-llm-inputs`' canonical session path.
 - `MACHTIANI_THEME`: override `[ui].theme` with `terminal`, `machtiani-dark`, `machtiani-light`, or `none`.
 - `MACHTIANI_GLYPHS`: override `[ui].glyphs` with `unicode` or `ascii`.
-- `FILE_DISCOVERY_BIN`: override the discovery binary that `mct` invokes.
+- `FILE_DISCOVERY_BIN`: override the discovery binary used by synchronization.
 
 ### Shared discovery timeout and context policy
 
@@ -521,7 +521,7 @@ Shell command timeouts remain controlled separately by `[environment].command_ti
 ### Terminal Theme
 
 Human-facing `machtiani run` output, interactive setup/configuration menus, and
-Markdown rendered by the standalone `mct` command share a semantic theme.
+Markdown rendered by Machtiani shares a semantic theme.
 Configure it globally:
 
 ```toml
@@ -550,10 +550,9 @@ errors. Verbose diagnostic lines and machine-oriented subcommands remain plain.
 machtiani --version
 ```
 
-If you also installed the peripherals, confirm each binary resolves on PATH:
+If you also installed the file-discovery peripheral, confirm it resolves on PATH:
 
 ```
-mct --help | head -n 1
 file-discovery -version
 ```
 
@@ -749,28 +748,9 @@ When investigating failures, treat `$PROJECT_STORE/tmp/<session-id>/session.lock
 
 ## Internal Tools (Development/Debugging Only)
 
-These tools are used internally by `mct-agent` and are exposed for development or debugging purposes. Most users should use `machtiani` directly.
-
-Developer peripherals are not part of the default Nix installation. If you build `mct` directly from the source tree, example flows are:
-
-```
-# Inline question
-mct prompt "Summarize the project's README files."
-
-# From a prompt file
-mct prompt --file prompt.md
-
-# Limit prompt size for models with strict budgets
-mct prompt "Summarize architecture" --context-length 64000
-
-# Answer-only mode (no discovery/saving)
-mct prompt --mode=answer-only -f prompt.md
-
-# Shell-agent context first, then LLM response
-mct prompt --shell-agent "Upgrade dependencies and report any issues"
-```
-
-The `--shell-agent` flag expects a `shell-agent` binary on PATH. Build the included implementation with:
+Most users should use `machtiani` directly. Developer peripherals are not part
+of the default Nix installation. To build the standalone `shell-agent` from the
+source tree:
 
 ```
 cd agent/internal/shell-agent
@@ -797,14 +777,10 @@ See `agent/internal/file-discovery/README.md` for direct `file-discovery` usage.
 - `rg` missing
   - Sync file-discovery does not require `rg`. This error can only come from a
     separate shell-agent workflow; install ripgrep if that workflow needs it.
-- Saved chat not found
-  - If you are using the optional `mct` CLI, ensure it completed successfully and wrote `$PROJECT_STORE/sessions/<session-id>/chat/machtiani-response.md`.
-
 ## Notes and Pointers
-- Detailed `mct` docs: see `agent/internal/mct/README.md` for configuration, discovery rules, and troubleshooting.
+- Prompt, README synchronization, and artifact helpers live under `agent/internal/core/` and are exercised by the main Go test suite.
 - `file-discovery` internals and flags: see `agent/internal/file-discovery/README.md`.
 - Agent specifics (flags, behavior): see `agent/README.md`.
-- If you installed the `mct` CLI, it falls back to a bundled `file-discovery` if it can’t find one on PATH and was built via `build.sh`.
 - **Ask categorization** — The planner's `no-shell`/`shell` categories shape the question, not the execution path. [`docs/adr/0001`](docs/adr/0001-ask-categorization-as-cognitive-scaffold.md)
 
 ## Integration Tests (mct-agent)
@@ -823,7 +799,7 @@ For Deep-SWE bench execution, monitoring commands, score summaries, reward locat
 ## Uninstall
 Remove the installed binaries (adjust paths to your environment):
 ```
-rm -f ~/.local/bin/machtiani ~/.local/bin/mct ~/.local/bin/file-discovery ~/.local/bin/shell-agent
+rm -f ~/.local/bin/machtiani ~/.local/bin/file-discovery ~/.local/bin/shell-agent
 ```
 
 Remove `~/.machtiani/installations/machtiani/` as well to discard the managed

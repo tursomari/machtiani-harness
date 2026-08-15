@@ -1,4 +1,4 @@
-// Package ui provides the terminal user interface components for mct-agent.
+// Package ui provides the terminal user interface components for Machtiani.
 //
 // Terminal control helpers that consolidate ANSI escape sequence generation
 // for the TUI event bus refactor. Previously these sequences were spread

@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tursomari/machtiani/agent/internal/core/readmesync"
 	"github.com/tursomari/machtiani/agent/internal/llm"
-	"github.com/tursomari/machtiani/agent/internal/mct/readmesync"
 	"github.com/tursomari/machtiani/agent/internal/session"
 )
 

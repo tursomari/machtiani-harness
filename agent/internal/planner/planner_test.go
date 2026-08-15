@@ -212,7 +212,7 @@ func TestParseDecisionAllowsShortPreamble(t *testing.T) {
 func TestParseAskMenuRealisticNoShell(t *testing.T) {
 	resp := strings.TrimSpace(`
 Ask Mode: no-shell
-Ask: How does mct-agent manage context across its orchestrated tools (file-discovery, snippet-discovery, shell-agent) and the planner, particularly in terms of session state, workspace snapshots, and LLM prompting?
+Ask: How does Machtiani manage context across its orchestrated tools (file-discovery, snippet-discovery, shell-agent) and the planner, particularly in terms of session state, workspace snapshots, and LLM prompting?
 `)
 	mode, ask, err := parseAskMenu(resp)
 	if err != nil {

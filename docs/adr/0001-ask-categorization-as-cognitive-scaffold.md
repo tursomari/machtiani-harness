@@ -73,12 +73,12 @@ The collapse of split asks and forcing of single asks to shell-agent made shell-
 
 ## References
 
-- `agent/internal/mct/prompt/util.go` — `applySingleAskRoutingPolicy()`
+- `agent/internal/core/prompt/util.go` — `applySingleAskRoutingPolicy()`
 - `agent/internal/session/runner_turns.go` — split-ask collapse (`hasSplitAsk=false`, `collapsedLegacyBothAsk=true`)
-- `agent/internal/mct/prompt/preflight.go` — `PreflightShellRouting()`, `shouldPreferContentRouting()`
-- `agent/internal/mct/prompt/run.go` — `promptsvc.Run()` guard on `opts.ShellAgent`
-- `agent/internal/mct/internal/discoveryrunner/discoveryrunner.go` — file-discovery execution (unreachable in `run`)
-- `agent/internal/mct/readmesync/sync.go` — sync path (only reachable file-discovery path)
+- `agent/internal/core/prompt/preflight.go` — `PreflightShellRouting()`, `shouldPreferContentRouting()`
+- `agent/internal/core/prompt/run.go` — `promptsvc.Run()` guard on `opts.ShellAgent`
+- `agent/internal/core/discoveryrunner/discoveryrunner.go` — file-discovery execution (unreachable in `run`)
+- `agent/internal/core/readmesync/sync.go` — sync path (only reachable file-discovery path)
 
 | Commit | Date | Significance |
 |---|---|---|

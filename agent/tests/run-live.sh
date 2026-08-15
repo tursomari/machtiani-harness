@@ -1317,7 +1317,7 @@ PY
 }
 
 run_command_supervisor_smoke_case() {
-  MACHTIANI_BIN="$MCT_AGENT" \
+  MACHTIANI_BIN="$MACHTIANI_EXE" \
     MCT_SUPERVISOR_SMOKE_REPO="$REPO_ROOT" \
     bash "$REPO_ROOT/agent/tests/command-supervisor-smoke.sh"
 }
@@ -1392,7 +1392,7 @@ fi
 
 DEFAULT_MODEL_ARGS=(--model "$TEST_MODEL_ALIAS")
 
-MCT_AGENT="$MACHTIANI_BIN"
+MACHTIANI_EXE="$MACHTIANI_BIN"
 
 assert_snippet_single_file() {
   local traj_path="$1"
@@ -1554,7 +1554,7 @@ run_happy_case() {
   local tmp_root="${TMP_ROOT:-}"
   local scratch_root=$(mktemp -d "$tmp_root/scratch-${case_id:-default}.XXXXXX")
   local -a cmd=(
-    timeout $((max_steps * 180)) "$MCT_AGENT" run
+    timeout $((max_steps * 180)) "$MACHTIANI_EXE" run
     --max-turns "$max_steps"
     
   )
@@ -1825,7 +1825,7 @@ run_mode_live_case() {
   local case_id="mode-code-live"
 
   HARNESS_STDIN_INPUT=$'c\n' run_happy_case "$case_id" 2 \
-    'Using only `docs/mct-agent-runbook.md`, summarize the recommended `--mode code` workflow in this repository and name the most useful artifacts written under `.machtiani/sessions/<session-id>/`.' \
+    'Using only the repository runbook, summarize the recommended `--mode code` workflow in this repository and name the most useful artifacts written under `.machtiani/sessions/<session-id>/`.' \
     'mode-plan.json|agent-transcript.adoc|agent-final-answer.md' \
     1 \
     --mode code \
@@ -1998,7 +1998,7 @@ EOF
 
   echo "Running happy case: $case_id (local env tmp-root regression)..." >&2
   local -a cmd=(
-    timeout 240 "$MCT_AGENT" run
+    timeout 240 "$MACHTIANI_EXE" run
     --max-turns 2
     
     --turn-timeout 300
@@ -2084,7 +2084,7 @@ run_shell_command_trajectory_live_case() {
 
   echo "Running sub-test: $case_id (verbose)..." >&2
   local -a cmd=(
-    timeout 240 "$MCT_AGENT" run
+    timeout 240 "$MACHTIANI_EXE" run
     --max-turns 3
     --turn-timeout 120
     --mode code
@@ -2168,7 +2168,7 @@ PY
 
   echo "Running sub-test: $case_id (non-verbose)..." >&2
   local -a cmd2=(
-    timeout 240 "$MCT_AGENT" run
+    timeout 240 "$MACHTIANI_EXE" run
     --max-turns 3
     --turn-timeout 120
     --mode code
@@ -2251,7 +2251,7 @@ run_shell_agent_subcommand_live_case() {
     local prompt="List the files in the current working directory, then report how many there are."
 
     local output
-    output=$(${MCT_AGENT} shell-agent \
+    output=$(${MACHTIANI_EXE} shell-agent \
         --model "${TEST_SHELL_AGENT_MODEL:-${TEST_MODEL_ALIAS}}" \
         --prompt "${prompt}" \
         2>&1)
@@ -2318,7 +2318,7 @@ run_resume_without_mode_case() {
   pushd "$REPO_ROOT" >/dev/null
   set +e
   MACHTIANI_CONFIG="$stub_config" \
-  timeout 120 "$MCT_AGENT" run \
+  timeout 120 "$MACHTIANI_EXE" run \
     --max-turns 2 \
     \
     --turn-timeout 300 \
@@ -2410,7 +2410,7 @@ test_code_no_forge() {
   pushd "$REPO_ROOT" >/dev/null
   set +e
   MACHTIANI_CONFIG="$stub_config" \
-  timeout 120 "$MCT_AGENT" run \
+  timeout 120 "$MACHTIANI_EXE" run \
     --max-turns 2 \
     --log-llm-inputs \
     \
@@ -2514,7 +2514,7 @@ run_enforce_early_commands_case() {
   MACHTIANI_CONFIG="$stub_config" \
   MACHTIANI_SHELL_AGENT_ENFORCE_EARLY_COMMANDS=true \
   STUB_FORCE_REPLY=ask_worker \
-    timeout 120 "$MCT_AGENT" run \
+    timeout 120 "$MACHTIANI_EXE" run \
       --max-turns 2 \
       \
       --turn-timeout 300 \
@@ -2601,7 +2601,7 @@ PY
   MACHTIANI_CONFIG="$stub_config" \
   MACHTIANI_SHELL_AGENT_ENFORCE_EARLY_COMMANDS=false \
   STUB_FORCE_REPLY=ask_worker \
-    timeout 120 "$MCT_AGENT" run \
+    timeout 120 "$MACHTIANI_EXE" run \
       --max-turns 2 \
       \
       --turn-timeout 300 \
@@ -2667,7 +2667,7 @@ test_code_forge_initial() {
   pushd "$REPO_ROOT" >/dev/null
   set +e
   MACHTIANI_CONFIG="$stub_config" \
-  timeout 120 "$MCT_AGENT" run \
+  timeout 120 "$MACHTIANI_EXE" run \
     --max-turns 2 \
     --log-llm-inputs \
     \
@@ -2758,7 +2758,7 @@ test_code_forge_resume_with_mode() {
   pushd "$REPO_ROOT" >/dev/null
   set +e
   MACHTIANI_CONFIG="$stub_config" \
-  timeout 120 "$MCT_AGENT" run \
+  timeout 120 "$MACHTIANI_EXE" run \
     --max-turns 2 \
     --log-llm-inputs \
     \
@@ -2810,7 +2810,7 @@ test_code_forge_resume_with_mode() {
   pushd "$REPO_ROOT" >/dev/null
   set +e
   MACHTIANI_CONFIG="$stub_config" \
-  timeout 120 "$MCT_AGENT" run --resume "$agent_session" \
+  timeout 120 "$MACHTIANI_EXE" run --resume "$agent_session" \
     --max-turns 2 \
     --log-llm-inputs \
     \
@@ -2886,7 +2886,7 @@ test_code_forge_resume_without_mode() {
   pushd "$REPO_ROOT" >/dev/null
   set +e
   MACHTIANI_CONFIG="$stub_config" \
-  timeout 120 "$MCT_AGENT" run \
+  timeout 120 "$MACHTIANI_EXE" run \
     --max-turns 2 \
     --log-llm-inputs \
     \
@@ -2938,7 +2938,7 @@ test_code_forge_resume_without_mode() {
   pushd "$REPO_ROOT" >/dev/null
   set +e
   MACHTIANI_CONFIG="$stub_config" \
-  timeout 120 "$MCT_AGENT" run --resume "$agent_session" \
+  timeout 120 "$MACHTIANI_EXE" run --resume "$agent_session" \
     --max-turns 2 \
     --log-llm-inputs \
     \
@@ -3013,7 +3013,7 @@ test_code_resume_without_mode_no_forge() {
   pushd "$REPO_ROOT" >/dev/null
   set +e
   MACHTIANI_CONFIG="$stub_config" \
-  timeout 120 "$MCT_AGENT" run \
+  timeout 120 "$MACHTIANI_EXE" run \
     --max-turns 2 \
     --log-llm-inputs \
     \
@@ -3065,7 +3065,7 @@ test_code_resume_without_mode_no_forge() {
   pushd "$REPO_ROOT" >/dev/null
   set +e
   MACHTIANI_CONFIG="$stub_config" \
-  timeout 120 "$MCT_AGENT" run --resume "$agent_session" \
+  timeout 120 "$MACHTIANI_EXE" run --resume "$agent_session" \
     --max-turns 2 \
     --log-llm-inputs \
     \
@@ -3178,7 +3178,7 @@ PY
   set +e
   MACHTIANI_CONFIG="$local_config" \
   MACHTIANI_SESSION_ID="$session_id" \
-  timeout 600 "$MCT_AGENT" run \
+  timeout 600 "$MACHTIANI_EXE" run \
     --max-turns 15 \
     --turn-timeout 300 \
     "${DEFAULT_MODEL_ARGS[@]}" \
@@ -3248,7 +3248,7 @@ run_resume_from_conversation_json_case() {
   run_started_epoch=$(date +%s)
   pushd "$REPO_ROOT" >/dev/null
   set +e
-  timeout 420 "$MCT_AGENT" run \
+  timeout 420 "$MACHTIANI_EXE" run \
     --max-turns 3 \
     \
     --turn-timeout 300 \
@@ -3312,7 +3312,7 @@ PY
   # Run 2: resume the session
   pushd "$REPO_ROOT" >/dev/null
   set +e
-  timeout 420 "$MCT_AGENT" run --resume "$agent_session" \
+  timeout 420 "$MACHTIANI_EXE" run --resume "$agent_session" \
     --max-turns 2 \
     \
     --turn-timeout 300 \
@@ -3425,7 +3425,7 @@ run_error_case() {
     esac
   done
   local -a cmd=(
-    timeout $((max_steps * 60)) "$MCT_AGENT" run
+    timeout $((max_steps * 60)) "$MACHTIANI_EXE" run
   )
   if ((${#provided_args[@]})); then
     cmd+=("${provided_args[@]}")
@@ -3627,7 +3627,7 @@ run_final_answer_path_case() {
   set +e
   MACHTIANI_CONFIG="$stub_config" \
   MACHTIANI_SESSION_ID="$session_id" \
-    timeout 120 "$MCT_AGENT" run \
+    timeout 120 "$MACHTIANI_EXE" run \
       --max-turns 1 \
       --turn-timeout 300 \
       --model "$stub_alias" \
@@ -3682,7 +3682,7 @@ PY
   set +e
   MACHTIANI_CONFIG="$stub_config" \
   MACHTIANI_SESSION_ID="$verbose_session" \
-    timeout 120 "$MCT_AGENT" run \
+    timeout 120 "$MACHTIANI_EXE" run \
       --verbose \
       --max-turns 1 \
       --turn-timeout 300 \
@@ -3858,13 +3858,13 @@ EOF
 
   (
     cd "$repo"
-    MACHTIANI_CONFIG="$config_file" "$MCT_AGENT" init --no-interactive --config-scope global >/dev/null
+    MACHTIANI_CONFIG="$config_file" "$MACHTIANI_EXE" init --no-interactive --config-scope global >/dev/null
   )
 
   set +e
   (
     cd "$repo"
-    MACHTIANI_CONFIG="$config_file" "$MCT_AGENT" sync --turn-timeout 1
+    MACHTIANI_CONFIG="$config_file" "$MACHTIANI_EXE" sync --turn-timeout 1
   ) >"$short_stdout" 2>"$short_stderr"
   local short_status=$?
   set -e
@@ -3882,7 +3882,7 @@ EOF
 
   if ! (
     cd "$repo"
-    MACHTIANI_CONFIG="$config_file" "$MCT_AGENT" sync --turn-timeout 0
+    MACHTIANI_CONFIG="$config_file" "$MACHTIANI_EXE" sync --turn-timeout 0
   ) >"$unlimited_stdout" 2>"$unlimited_stderr"; then
     echo "ERROR: unlimited discovery sync failed" >&2
     cat "$unlimited_stderr" >&2
@@ -3960,8 +3960,8 @@ EOF
 
   (
     cd "$repo"
-    MACHTIANI_CONFIG="$config_file" "$MCT_AGENT" init --no-interactive --config-scope global >/dev/null
-    MACHTIANI_CONFIG="$config_file" "$MCT_AGENT" sync --turn-timeout 30 --context-length 8192
+    MACHTIANI_CONFIG="$config_file" "$MACHTIANI_EXE" init --no-interactive --config-scope global >/dev/null
+    MACHTIANI_CONFIG="$config_file" "$MACHTIANI_EXE" sync --turn-timeout 30 --context-length 8192
   ) >"$stdout_file" 2>"$stderr_file" || {
     echo "ERROR: multi-round discovery budget sync failed" >&2
     cat "$stderr_file" >&2
@@ -4027,9 +4027,9 @@ test_discovery_context_budget_live() {
 
   (
     cd "$repo"
-    MACHTIANI_CONFIG="$TEST_CONFIG_FILE" "$MCT_AGENT" init --no-interactive --config-scope global >/dev/null
+    MACHTIANI_CONFIG="$TEST_CONFIG_FILE" "$MACHTIANI_EXE" init --no-interactive --config-scope global >/dev/null
     MACHTIANI_CONFIG="$TEST_CONFIG_FILE" MCT_README_TEST_STUB=basic \
-      "$MCT_AGENT" sync \
+      "$MACHTIANI_EXE" sync \
       --model "$TEST_MODEL_ALIAS" \
       --answer-model "$TEST_MODEL_ALIAS" \
       --file-discovery-model "$TEST_MODEL_ALIAS"
@@ -4054,7 +4054,7 @@ PY
 
   if ! (
     cd "$repo"
-    MACHTIANI_CONFIG="$TEST_CONFIG_FILE" "$MCT_AGENT" sync --verbose \
+    MACHTIANI_CONFIG="$TEST_CONFIG_FILE" "$MACHTIANI_EXE" sync --verbose \
       --context-length 8192 \
       --turn-timeout 300 \
       --model "$TEST_MODEL_ALIAS" \
@@ -4071,7 +4071,7 @@ PY
     return 1
   fi
 
-  project_json="$(cd "$repo" && MACHTIANI_CONFIG="$TEST_CONFIG_FILE" "$MCT_AGENT" project show --json)"
+  project_json="$(cd "$repo" && MACHTIANI_CONFIG="$TEST_CONFIG_FILE" "$MACHTIANI_EXE" project show --json)"
   project_store="$(printf '%s' "$project_json" | "$PYTHON_BIN" -c 'import json, sys; print(json.load(sys.stdin)["store"])')"
   trajectory="$project_store/sessions/readme-${commit:0:12}/artifacts/file-discovery.jsonl"
   if [[ ! -s "$trajectory" ]]; then

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
+	"github.com/tursomari/machtiani/agent/internal/core/artifacts"
 )
 
 // DeleteSession removes a session directory when it is not active.

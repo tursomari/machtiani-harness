@@ -14,8 +14,8 @@ import (
 	"time"
 
 	"github.com/tursomari/machtiani/agent/internal/conversation"
+	"github.com/tursomari/machtiani/agent/internal/core/artifacts"
 	"github.com/tursomari/machtiani/agent/internal/llm"
-	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
 	"github.com/tursomari/machtiani/agent/internal/planner"
 	"github.com/tursomari/machtiani/agent/internal/presentation"
 	"github.com/tursomari/machtiani/agent/internal/runner"

@@ -14,8 +14,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/tursomari/machtiani/agent/internal/core/artifacts"
 	"github.com/tursomari/machtiani/agent/internal/llm"
-	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
 	"github.com/tursomari/machtiani/agent/internal/shell-agent/internal/agents"
 	"github.com/tursomari/machtiani/agent/internal/shell-agent/internal/environments"
 	shellmodels "github.com/tursomari/machtiani/agent/internal/shell-agent/internal/models"

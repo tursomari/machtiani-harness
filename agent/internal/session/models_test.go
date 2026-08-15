@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tursomari/machtiani/agent/internal/core/artifacts"
 	"github.com/tursomari/machtiani/agent/internal/llm"
-	"github.com/tursomari/machtiani/agent/internal/mct/artifacts"
 )
 
 func TestResolveFileDiscoveryTrajectoryConflictingFlags(t *testing.T) {
