@@ -1,7 +1,7 @@
 #!/bin/bash
-# print-mode-test.sh — e2e smoke test for `mct-agent run --exec` (R7).
+# print-mode-test.sh — e2e smoke test for `machtiani run --exec` (R7).
 #
-# Verifies that `mct-agent run --shell-agent --prompt <goal> --exec` writes ONLY
+# Verifies that `machtiani run --shell-agent --prompt <goal> --exec` writes ONLY
 # the raw final answer to stdout (byte-for-byte equal to the session's
 # agent-final-answer.md after trailing-newline normalization) and that no
 # styled/banner content leaks to stdout or stderr.
@@ -26,9 +26,9 @@ if [[ "${MCT_LIVE_PRINT_TEST:-}" != "1" ]]; then
   exit 0
 fi
 
-MCT_AGENT="${MCT_AGENT_BIN:-$REPO_ROOT/mct-agent}"
+MCT_AGENT="${MACHTIANI_BIN:-$REPO_ROOT/machtiani}"
 if [[ ! -x "$MCT_AGENT" ]]; then
-  echo "ERROR: mct-agent binary not found or not executable: $MCT_AGENT" >&2
+  echo "ERROR: machtiani binary not found or not executable: $MCT_AGENT" >&2
   exit 1
 fi
 
@@ -118,7 +118,7 @@ fail=0
 
 # (4) process exit code must be 0
 if [[ "$rc" -ne 0 ]]; then
-  echo "FAIL: mct-agent run exit code = $rc, want 0" >&2
+  echo "FAIL: machtiani run exit code = $rc, want 0" >&2
   fail=1
 fi
 
@@ -167,7 +167,7 @@ for needle in "━" "Answer saved to:" "Resume this session:"; do
 done
 
 # (5) stdout.log must not contain styled block artifacts
-for needle in "━" "Answer saved to:" "Resume this session:" "mct-agent run"; do
+for needle in "━" "Answer saved to:" "Resume this session:" "machtiani run"; do
   if grep -qF "$needle" "$STDOUT_LOG" 2>/dev/null; then
     echo "FAIL: stdout.log contains styled block artifact: $needle" >&2
     fail=1

@@ -130,7 +130,7 @@ func validateKnownMap(data map[string]any, prefix string, fields map[string]stri
 			if path == "planner.max_input_tokens" {
 				message = "removed; delete this key and configure models.<alias>.context_length instead"
 			} else if path == "environment.cwd" {
-				message = "removed; delete this key. Shell commands now start in the directory where mct-agent was launched"
+				message = "removed; delete this key. Shell commands now start in the directory where machtiani was launched"
 			}
 			diagnostic := configError(path, "unknown_key", message)
 			if suggestion := nearestConfigKey(key, fields); suggestion != "" {

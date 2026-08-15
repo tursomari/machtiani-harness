@@ -94,7 +94,7 @@ class ArtifactPreservationCommandTest(unittest.TestCase):
             "git diff > /logs/agent/repo/git-diff.patch",
             "git diff --cached > /logs/agent/repo/git-diff-cached.patch",
             "git log --oneline -n 20",
-            "/tmp/mct-agent",
+            "/tmp/machtiani",
             "/app/.machtiani/tmp-data",
             "/logs/agent/tmp-data",
         ):

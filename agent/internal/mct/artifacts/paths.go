@@ -253,7 +253,7 @@ func ReadmeDirectoryAt(start string) (string, error) {
 }
 
 func projectInitializationError(projectRoot string) error {
-	return fmt.Errorf("project at %s is not initialized; run mct-agent init", projectRoot)
+	return fmt.Errorf("project at %s is not initialized; run machtiani init", projectRoot)
 }
 
 // IsLocalContext reports whether the current working directory is inside a git repository.

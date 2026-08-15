@@ -85,7 +85,7 @@ func TestRenderSessionHeaderUsesSemanticThemeAndItalicQuote(t *testing.T) {
 		"v1.2.3",
 		"0123456",
 		"200,000",
-		"mct-agent --help",
+		"machtiani --help",
 		"PROMPT",
 		event.Goal,
 	} {

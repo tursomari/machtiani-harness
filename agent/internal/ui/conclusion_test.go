@@ -31,7 +31,7 @@ func TestRenderCompletedSessionConclusion(t *testing.T) {
 		"  Turns completed: 3",
 		`  Goal so far: "Improve the conclusion"`,
 		"  Resume this session:",
-		`    $ mct-agent run -p "<your follow-up prompt>" --resume agent-test`,
+		`    $ machtiani run -p "<your follow-up prompt>" --resume agent-test`,
 	} {
 		if !strings.Contains(output, want) {
 			t.Errorf("missing %q in:\n%s", want, output)
@@ -76,7 +76,7 @@ func TestRenderInterruptedSessionConclusion(t *testing.T) {
 		"  SHELL-AGENT INTERRUPTED",
 		"  Shell-agent work is resumable.",
 		"  Resume the interrupted shell-agent work:",
-		"    $ mct-agent run --resume agent-interrupted",
+		"    $ machtiani run --resume agent-interrupted",
 	} {
 		if !strings.Contains(output, want) {
 			t.Errorf("missing %q in:\n%s", want, output)
@@ -108,7 +108,7 @@ func TestRenderUserInputSessionConclusion(t *testing.T) {
 	if strings.Contains(output, "Session ID:") {
 		t.Fatalf("duplicated session ID metadata:\n%s", output)
 	}
-	if !strings.Contains(output, `    $ mct-agent run -p "<your answer>" --resume agent-question`) {
+	if !strings.Contains(output, `    $ machtiani run -p "<your answer>" --resume agent-question`) {
 		t.Fatalf("missing answer command:\n%s", output)
 	}
 }
@@ -129,13 +129,13 @@ func TestConclusionCommandUsesCanonicalMultilineBashWhenNarrow(t *testing.T) {
 		Outcome:   SessionConclusionCompleted,
 		SessionID: "agent-20260718T051605-0813",
 	}, conclusionTestTheme(presentation.GlyphUnicode), 72))
-	want := "    mct-agent run \\\n" +
+	want := "    machtiani run \\\n" +
 		"      -p \"<your follow-up prompt>\" \\\n" +
 		"      --resume agent-20260718T051605-0813"
 	if !strings.Contains(output, want) {
 		t.Fatalf("multiline command mismatch\nwant: %q\ngot:\n%s", want, output)
 	}
-	if strings.Contains(output, "    $ mct-agent run") {
+	if strings.Contains(output, "    $ machtiani run") {
 		t.Fatalf("multiline command retained shell prompt:\n%s", output)
 	}
 	lines := strings.Split(output, "\n")
@@ -159,7 +159,7 @@ func TestConclusionCommandRuleEndsTwoColumnsAfterSingleLineCommand(t *testing.T)
 	var command, rule string
 	for _, line := range strings.Split(output, "\n") {
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "$ mct-agent run") {
+		if strings.HasPrefix(trimmed, "$ machtiani run") {
 			command = trimmed
 		}
 		if trimmed != "" && strings.Trim(trimmed, "─") == "" {

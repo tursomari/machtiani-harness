@@ -2,13 +2,13 @@
 set -euo pipefail
 
 # ==============================================================================
-# worktree-init.sh — Initialize a secondary git worktree for mct-agent sessions
+# worktree-init.sh — Initialize a secondary git worktree for machtiani sessions
 #
 # Usage:
 #   scripts/worktree-init.sh [--force] <session-id>
 #
 # This script prepares a secondary (non-primary) git worktree for running
-# mct-agent by copying essential configuration, skills, plans, and a specific
+# machtiani by copying essential configuration, skills, plans, and a specific
 # session from the primary worktree into the current worktree.
 #
 # Specifically, it copies from the primary worktree (first entry in
@@ -31,7 +31,7 @@ set -euo pipefail
 #
 # A git worktree lets you check out multiple branches of the same repository
 # simultaneously in different directories, each with its own working tree but
-# sharing a single .git (object database).  This is useful for running mct-agent
+# sharing a single .git (object database).  This is useful for running machtiani
 # experiments or evaluations in isolation without affecting your main checkout.
 #
 # Examples:
@@ -54,7 +54,7 @@ set -euo pipefail
 
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
     cat <<USAGE
-worktree-init.sh — Initialize a secondary git worktree for mct-agent sessions
+worktree-init.sh — Initialize a secondary git worktree for machtiani sessions
 
 Usage:
   scripts/worktree-init.sh [--force] <session-id>

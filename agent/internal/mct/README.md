@@ -144,7 +144,7 @@ Binary resolution for `file-discovery`:
 
 - **Chat transcripts**: saved under `.machtiani/sessions/<session-id>/chat/` at the Git repository root when running inside a repo. Outside a repo, they fall back to `~/.machtiani/sessions/<session-id>/chat/`.
 - **Readme artifacts**: always written to `.machtiani/artifacts/readme/` at the repository root and require a Git working tree.
-- `mct-agent` and helper tools use the same resolution so invocations from subdirectories share the project-scoped artifacts.
+- `machtiani` and helper tools use the same resolution so invocations from subdirectories share the project-scoped artifacts.
 
 ## Notes
 - The `prompt` command is fully local and does not hit Machtiani server URLs.

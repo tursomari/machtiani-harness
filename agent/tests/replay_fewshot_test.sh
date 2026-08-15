@@ -8,7 +8,7 @@ TIMESTAMP=$(date +%s)
 OUT_DIR="$SCRIPT_DIR/tmp/fewshot-ab-$TIMESTAMP"
 mkdir -p "$OUT_DIR"
 
-MCT_AGENT="$REPO_ROOT/mct-agent"
+MCT_AGENT="$REPO_ROOT/machtiani"
 CONFIG="$REPO_ROOT/.machtiani/config.toml"
 export MACHTIANI_CONFIG="$CONFIG"
 

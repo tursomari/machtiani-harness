@@ -2037,7 +2037,7 @@ func LoadModeInstructions(mode, overrideDir string, cfg Config, configPath strin
 	data, err := os.ReadFile(candidate)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return ModeInstructions{}, fmt.Errorf("mode instructions for mode %q not found at %s; run mct-agent init or copy an existing home mode", trimmedMode, candidate)
+			return ModeInstructions{}, fmt.Errorf("mode instructions for mode %q not found at %s; run machtiani init or copy an existing home mode", trimmedMode, candidate)
 		}
 		return ModeInstructions{}, fmt.Errorf("read mode instructions %s: %w", candidate, err)
 	}

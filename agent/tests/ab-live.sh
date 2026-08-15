@@ -64,7 +64,7 @@ parse_line() {
         return 0
     fi
 
-    if [[ "$line" =~ ^[[:space:]]*FAIL[[:space:]]*:[[:space:]]+mct-agent[[:space:]]shell-agent[[:space:]][^[:space:]]+ ]]; then
+    if [[ "$line" =~ ^[[:space:]]*FAIL[[:space:]]*:[[:space:]]+machtiani[[:space:]]shell-agent[[:space:]][^[:space:]]+ ]]; then
         record_result "run_shell_agent_subcommand_live_case" "FAIL" "$detail"
         return 0
     fi

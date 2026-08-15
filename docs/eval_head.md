@@ -42,7 +42,7 @@ Judge implementation files (write mode only): judge_impl_prompt.md (the prompt g
 
 Report: report.md containing the final comparative results in a structured format with score tables, winner determinations, and artifact path references.
 
-Session lock workaround: When running run_eval_head.sh inside an active mct-agent session, unset the environment variables MACHTIANI_SESSION_ID and MACHTIANI_SESSION_TEMP_ROOT, and set MACHTIANI_SESSION_TEMP_ROOT to an isolated directory outside the session scratch root. This avoids flock conflicts between the outer mct-agent session and the evaluation script's own subprocesses.
+Session lock workaround: When running run_eval_head.sh inside an active machtiani session, unset the environment variables MACHTIANI_SESSION_ID and MACHTIANI_SESSION_TEMP_ROOT, and set MACHTIANI_SESSION_TEMP_ROOT to an isolated directory outside the session scratch root. This avoids flock conflicts between the outer machtiani session and the evaluation script's own subprocesses.
 
 Validation checklist after a completed run:
 

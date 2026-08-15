@@ -7,7 +7,7 @@
 The `scripts/` directory contains build helpers, A/B testing harnesses, and
 evaluation infrastructure for the mct-agent monorepo. It provides the Docker
 tooling for reproducible A/B comparison of code changes (`ab-dev.sh` plus
-`Dockerfile.build`), the evaluation pipeline for comparing mct-agent against Forge (`run_eval.sh`,
+`Dockerfile.build`), the evaluation pipeline for comparing machtiani against Forge (`run_eval.sh`,
 `run_eval_head.sh`), and supporting files for Skyvern web interaction and judge
 prompting.  Agent-side test runner documentation lives in
 `agent/tests/README.md` — this file focuses on the scripts that sit above the
@@ -47,7 +47,7 @@ Key flags:
 
 When `--env` is not used, the script automatically discovers every `TEST_*`
 variable from the host environment and forwards them into both containers.  The
-script also always forwards `MCT_AGENT_BIN=/usr/local/bin/mct-agent` so that
+script also always forwards `MACHTIANI_BIN=/usr/local/bin/machtiani` so that
 `run-live.sh` bypasses its `check_bin` validation inside the container (where
 `.git/` is absent).  Output is collected under `/tmp/mct-ab-output/control/`
 and `/tmp/mct-ab-output/treatment/`.
@@ -72,7 +72,7 @@ patch, removes broken submodule metadata to avoid path resolution errors,
 reverts patched files to `HEAD~1` so the patch applies cleanly, applies the
 patch with `git apply`, and creates a git commit with message `"treatment
 patch"`. The commit gives the A/B image a coherent Git state for runtime
-checks and diagnostics. All binaries (`mct-agent`, `mct`,
+checks and diagnostics. All binaries (`machtiani`, `mct`,
 `file-discovery`, `snippet-discovery`, `shell-agent`) are built into
 `/build/bin` via direct Go builds inside the internal image.
 
@@ -104,14 +104,14 @@ Docker workflows such as the LLM evaluator.  It starts from
 caching.  It does not embed the A/B infrastructure (no patch application
 logic, no multi-stage separation, no runtime stage), making it suitable as a
 lightweight base for evaluation containers that only need the Go toolchain and
-module dependencies rather than a full mct-agent runtime.
+module dependencies rather than a full machtiani runtime.
 
 ---
 
 ## generate_comparison.sh
 
 `scripts/generate_comparison.sh` generates a structured comparison runbook
-between two `mct-agent` run outputs (e.g., control vs treatment).  It takes
+between two `machtiani` run outputs (e.g., control vs treatment).  It takes
 `--root <path>` (the project root), `--prompt <path>` (the task prompt file),
 and optional `--model`, `--api-key`, `--api-key-file`, `--config`,
 `--ground-truth <oid>`, and `--eval-commit <oid>` flags.  The script produces a
@@ -125,9 +125,9 @@ comparison document that feeds into the judge LLM.  The script lives at
 ## run_eval_head.sh
 
 `scripts/run_eval_head.sh` runs the head evaluation: tasks without a
-ground-truth commit, used for measuring mct-agent quality against the current
+ground-truth commit, used for measuring machtiani quality against the current
 repository HEAD.  It is a two-phase pipeline that creates git worktrees for
-mct-agent and Forge, runs both agents on the same prompt, invokes the judge LLM
+machtiani and Forge, runs both agents on the same prompt, invokes the judge LLM
 with `scripts/judge_prompt_head_template.md`, and produces scored evaluation
 output.  It supports `--mode read-only` (judge evaluates agent outputs only)
 and `--mode write` (judge also produces its own implementation as an unscored
@@ -142,8 +142,8 @@ full usage and output artifact descriptions.
 ## run_eval.sh
 
 `scripts/run_eval.sh` runs the standard evaluation pipeline: a two-phase
-comparison of mct-agent against Forge on resolved issues with known
-ground-truth commits.  It creates git worktrees for the mct-agent run, the
+comparison of machtiani against Forge on resolved issues with known
+ground-truth commits.  It creates git worktrees for the machtiani run, the
 Forge run, and the judge, invokes both agents against the pre-fix commit,
 generates a comparison runbook via `scripts/generate_comparison.sh`, and runs
 the judge LLM with `scripts/judge_prompt_template.md` to score plan quality and
@@ -188,7 +188,7 @@ evaluation modes.
 ## runbook_template.md
 
 `scripts/runbook_template.md` is a template for human-written runbooks that
-guide mct-agent through complex tasks.  It includes placeholders for project
+guide machtiani through complex tasks.  It includes placeholders for project
 name, project root, prompt file, eval commit, and ground truth commit, along
 with sections for purpose, prerequisites, setup instructions, agent invocation
 commands, and evaluation criteria.  The evaluation pipeline populates this
@@ -204,7 +204,7 @@ interaction tasks.  It checks whether Skyvern is already running on port 8000
 and, if so, extracts and prints the API key.  Otherwise it kills any existing
 process on port 8000, starts the Skyvern server from
 `third_party/skyvern/.env`, and outputs the generated API key.  The script is
-used by mct-agent modes that require browser automation (e.g.,
+used by machtiani modes that require browser automation (e.g.,
 `code-forge-skyvern`).  It lives at `scripts/skyvern-start.sh:1`.
 
 ---

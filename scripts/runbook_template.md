@@ -1,4 +1,4 @@
-# Harness Comparison Runbook: mct-agent vs Forge (`muse`)
+# Harness Comparison Runbook: machtiani vs Forge (`muse`)
 
 **Generated** {{GENERATION_DATE}}
 **Project** `{{PROJECT_NAME}}` at `{{PROJECT_ROOT}}`
@@ -12,12 +12,12 @@
 
 ## Purpose
 
-Evaluate **mct-agent** (`code` mode) against **forge** (`muse` agent) on their
+Evaluate **machtiani** (`code` mode) against **forge** (`muse` agent) on their
 ability to analyze the `{{PROJECT_NAME}}` codebase and produce a high-quality
 analytical document. **You, the agent reading this runbook, will perform the
 judgment yourself** by verifying claims against the actual source code.
 
-mct-agent uses the **{{MCT_MODEL}}** model alias; forge uses **DeepSeek V4 Pro** via OpenRouter.
+machtiani uses the **{{MCT_MODEL}}** model alias; forge uses **DeepSeek V4 Pro** via OpenRouter.
 <!-- IF_EVAL -->
 
 This is a **retrospective eval case**: an isolated git worktree will be created at commit
@@ -32,7 +32,7 @@ and their outputs will be compared against the ground-truth fix at commit `{{GRO
 | Requirement | Detail |
 |---|---|
 | **API key** | API key configured via config file or `--api-key` flag (see Model Configuration Reference) |
-| **mct-agent** | Binary on `PATH`; repo root is the working directory |
+| **machtiani** | Binary on `PATH`; repo root is the working directory |
 | **Forge** | Binary at `~/.local/bin/forge`, logged into OpenRouter |
 | **jq** | Installed (for extracting forge answer) |
 | **Project** | `{{PROJECT_ROOT}}` exists and is readable |
@@ -44,10 +44,10 @@ and their outputs will be compared against the ground-truth fix at commit `{{GRO
 **Pre-flight checks:**
 
     # Verify prerequisites
-    command -v mct-agent >/dev/null 2>&1 || { echo "mct-agent not on PATH"; exit 1; }
+    command -v machtiani >/dev/null 2>&1 || { echo "machtiani not on PATH"; exit 1; }
     command -v forge >/dev/null 2>&1      || { echo "forge not found"; exit 1; }
     command -v jq >/dev/null 2>&1          || { echo "jq not installed"; exit 1; }
-    mct-agent config check >/dev/null 2>&1 || { echo "mct-agent config check failed (verify config.toml and API key)"; exit 1; }
+    machtiani config check >/dev/null 2>&1 || { echo "machtiani config check failed (verify config.toml and API key)"; exit 1; }
     test -d "{{PROJECT_ROOT}}"             || { echo "Project root not found: {{PROJECT_ROOT}}"; exit 1; }
     test -f "{{PROMPT_FILE}}"              || { echo "Prompt file not found: {{PROMPT_FILE}}"; exit 1; }
     if [ -n "{{MCT_API_KEY_ARG}}" ]; then
@@ -75,16 +75,16 @@ without modifying the main repository.
     git -C "{{PROJECT_ROOT}}" worktree add {{WORKTREE_DIR}} {{EVAL_COMMIT}}
     cd "{{WORKTREE_DIR}}"
     # Use the config path resolved by the runbook generator.
-      MACHTIANI_CONFIG="{{MCT_CONFIG_PATH}}" mct-agent sync --model {{MCT_MODEL}} --turn-timeout 0 {{MCT_API_KEY_ARG}}
+      MACHTIANI_CONFIG="{{MCT_CONFIG_PATH}}" machtiani sync --model {{MCT_MODEL}} --turn-timeout 0 {{MCT_API_KEY_ARG}}
 
 - The worktree is an isolated checkout at the pre-fix state. The main repo is untouched.
-- mct-agent sync generates the internal README for this commit (required before mct-agent run).
+- machtiani sync generates the internal README for this commit (required before machtiani run).
 - MACHTIANI_CONFIG is set to the config path resolved by the runbook generator.
 
 ---
 <!-- END_IF_EVAL -->
 
-## Step 1: Run mct-agent
+## Step 1: Run machtiani
 
 ### Invocation
 
@@ -95,7 +95,7 @@ without modifying the main repository.
     cd {{PROJECT_ROOT}}   # project repository root
 <!-- END_IF_NOT_EVAL -->
 
-    MACHTIANI_CONFIG="{{MCT_CONFIG_PATH}}" mct-agent run \
+    MACHTIANI_CONFIG="{{MCT_CONFIG_PATH}}" machtiani run \
       --mode code \
       --final-file /tmp/mct_answer{{ARTIFACT_SUFFIX}}.md \
       --turn-timeout 0 \
@@ -107,22 +107,22 @@ without modifying the main repository.
 - `--turn-timeout 0` — disables the per-turn timeout.
 - `--model {{MCT_MODEL}}` resolves from config.toml `[models]` section.
 - API key resolution order: CLI `--api-key` override then config file then environment variables.
-- If mct-agent exits after 0 turns, re-run with `--step-limit` increased (e.g., `--step-limit 30`).
+- If machtiani exits after 0 turns, re-run with `--step-limit` increased (e.g., `--step-limit 30`).
 
-> **Note on duration:** mct-agent runs can take **10-30 minutes** for complex tasks.
+> **Note on duration:** machtiani runs can take **10-30 minutes** for complex tasks.
 > The `--turn-timeout 0` flag disables per-turn timeouts, but the overall process may
 > still be killed by shell timeouts (e.g., SSH idle disconnect or job control limits).
 > For long evals, consider running with `nohup` or in a `tmux` session:
 >
->     nohup mct-agent run ... > /tmp/mct_agent{{ARTIFACT_SUFFIX}}.log 2>&1 &
+>     nohup machtiani run ... > /tmp/mct_agent{{ARTIFACT_SUFFIX}}.log 2>&1 &
 >     # or
->     tmux new-session -d -s mct-eval 'mct-agent run ...'
+>     tmux new-session -d -s mct-eval 'machtiani run ...'
 
 ### Verify Answer
 
-    test -s /tmp/mct_answer{{ARTIFACT_SUFFIX}}.md || { echo "mct-agent did not produce an answer"; exit 1; }
+    test -s /tmp/mct_answer{{ARTIFACT_SUFFIX}}.md || { echo "machtiani did not produce an answer"; exit 1; }
     wc -l /tmp/mct_answer{{ARTIFACT_SUFFIX}}.md
-    echo "mct-agent finished"
+    echo "machtiani finished"
 
 ---
 
@@ -181,7 +181,7 @@ Now that both agents have run against the pre-fix state, capture the actual fix 
 **This step is yours.** Do not delegate the judgment.
 
 1. **Read both answers:**
-   - `/tmp/mct_answer{{ARTIFACT_SUFFIX}}.md` (mct-agent)
+   - `/tmp/mct_answer{{ARTIFACT_SUFFIX}}.md` (machtiani)
    - `/tmp/forge_answer{{ARTIFACT_SUFFIX}}.md` (forge)
 <!-- IF_EVAL -->
 2. **Read the ground truth:**
@@ -228,10 +228,10 @@ Now that both agents have run against the pre-fix state, capture the actual fix 
 
 | Harness | Provider | Model |
 |---|---|---|
-| mct-agent | Per `{{MCT_MODEL}}` alias in `.machtiani/config.toml` | `{{MCT_MODEL}}` |
+| machtiani | Per `{{MCT_MODEL}}` alias in `.machtiani/config.toml` | `{{MCT_MODEL}}` |
 | Forge `muse` | OpenRouter | `deepseek/deepseek-v4-pro` |
 
-To route mct-agent through OpenRouter, use `--model` with an alias mapped to the openrouter provider and pass `--api-key openrouter:key`.
+To route machtiani through OpenRouter, use `--model` with an alias mapped to the openrouter provider and pass `--api-key openrouter:key`.
 
 > **Note:** If using a model alias that routes through OpenRouter (e.g.,
 > `deepseek-v4-pro-openrouter`), the API key is already stored in the config file

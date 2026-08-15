@@ -14,7 +14,7 @@
 | 5 | GNU sed | Pinned by flake | Transcript and helper transformations | Text transformations fail. | ✅ |
 
 Go is a locked build dependency and is not retained in the installed runtime
-closure. Nix itself is a host prerequisite and is not bundled into mct-agent.
+closure. Nix itself is a host prerequisite and is not bundled into machtiani.
 
 ## Platform Notes
 

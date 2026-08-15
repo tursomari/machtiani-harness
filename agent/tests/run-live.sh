@@ -5,16 +5,16 @@ unset MACHTIANI_SESSION_ID
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${REPO_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 
-if [[ -n "${MCT_AGENT_BIN:-}" ]]; then
-  if [[ "$MCT_AGENT_BIN" != /* ]]; then
-    MCT_AGENT_BIN="$(cd "$(dirname "$MCT_AGENT_BIN")" && pwd)/$(basename "$MCT_AGENT_BIN")"
+if [[ -n "${MACHTIANI_BIN:-}" ]]; then
+  if [[ "$MACHTIANI_BIN" != /* ]]; then
+    MACHTIANI_BIN="$(cd "$(dirname "$MACHTIANI_BIN")" && pwd)/$(basename "$MACHTIANI_BIN")"
   fi
-  if [[ ! -x "$MCT_AGENT_BIN" ]]; then
-    echo "ERROR: MCT_AGENT_BIN is not executable: $MCT_AGENT_BIN" >&2
+  if [[ ! -x "$MACHTIANI_BIN" ]]; then
+    echo "ERROR: MACHTIANI_BIN is not executable: $MACHTIANI_BIN" >&2
     exit 1
   fi
-  MCT_AGENT_BIN="$(realpath "$MCT_AGENT_BIN" 2>/dev/null || printf '%s\n' "$MCT_AGENT_BIN")"
-  export MCT_AGENT_BIN
+  MACHTIANI_BIN="$(realpath "$MACHTIANI_BIN" 2>/dev/null || printf '%s\n' "$MACHTIANI_BIN")"
+  export MACHTIANI_BIN
 fi
 
 if [[ "${MCT_REQUIRE_LIVE:-false}" == "true" ]] && ! {
@@ -58,7 +58,7 @@ if [[ "${MCT_RUN_LIVE_INNER:-}" != "1" ]]; then
   fi
 
   if [[ -f "$TEST_HOME/.machtiani/config.toml" ]]; then
-    outer_agent="${MCT_AGENT_BIN:-mct-agent}"
+    outer_agent="${MACHTIANI_BIN:-machtiani}"
     (
       cd "$WORKTREE"
       HOME="$TEST_HOME" \
@@ -73,7 +73,7 @@ if [[ "${MCT_RUN_LIVE_INNER:-}" != "1" ]]; then
 
   PROJECT_STORE=$(
     cd "$WORKTREE"
-    HOME="$TEST_HOME" "${MCT_AGENT_BIN:-mct-agent}" project show --json |
+    HOME="$TEST_HOME" "${MACHTIANI_BIN:-machtiani}" project show --json |
       python3 -c 'import json, sys; print(json.load(sys.stdin)["store"])'
   )
 
@@ -547,7 +547,7 @@ extract_agent_session_id() {
 
   sid=$(grep -m1 '^Session ID:' "$stdout_file" 2>/dev/null | awk '{print $NF}' || true)
 	if [[ -z "$sid" ]]; then
-		sid=$(grep -oE -- 'mct-agent run .* --resume agent-[0-9TZ]+-[0-9]+' "$stdout_file" 2>/dev/null \
+		sid=$(grep -oE -- 'machtiani run .* --resume agent-[0-9TZ]+-[0-9]+' "$stdout_file" 2>/dev/null \
 			| head -1 | sed -E 's/.*--resume (agent-[0-9TZ]+-[0-9]+).*/\1/' || true)
 	fi
   if [[ -z "$sid" ]]; then
@@ -930,7 +930,7 @@ check_bin() {
   local got_dirty_raw=""
   if [ -n "$version_output" ]; then
     case "$name" in
-      mct-agent)
+      machtiani)
         got_commit="$(printf '%s\n' "$version_output" | awk -F': ' '/^commit:/ {print $2; exit}')"
         got_commit="${got_commit:0:12}"
         got_dirty_raw="$(printf '%s\n' "$version_output" | awk -F': ' '/^dirty:/ {print $2; exit}')"
@@ -1017,12 +1017,12 @@ check_bin() {
   echo "--" >&2
 }
 
-echo "== Preflight: verifying mct-agent binary ==" >&2
-if [ -n "${MCT_AGENT_BIN:-}" ]; then
-  echo "Using MCT_AGENT_BIN from environment: $MCT_AGENT_BIN" >&2
-  check_bin MCT_AGENT_BIN mct-agent "$REPO_ROOT/agent" "--version" "$MCT_AGENT_BIN"
+echo "== Preflight: verifying machtiani binary ==" >&2
+if [ -n "${MACHTIANI_BIN:-}" ]; then
+  echo "Using MACHTIANI_BIN from environment: $MACHTIANI_BIN" >&2
+  check_bin MACHTIANI_BIN machtiani "$REPO_ROOT/agent" "--version" "$MACHTIANI_BIN"
 else
-  check_bin MCT_AGENT_BIN mct-agent "$REPO_ROOT/agent" "--version"
+  check_bin MACHTIANI_BIN machtiani "$REPO_ROOT/agent" "--version"
 fi
 echo "Preflight OK" >&2
 
@@ -1317,7 +1317,7 @@ PY
 }
 
 run_command_supervisor_smoke_case() {
-  MCT_AGENT_BIN="$MCT_AGENT" \
+  MACHTIANI_BIN="$MCT_AGENT" \
     MCT_SUPERVISOR_SMOKE_REPO="$REPO_ROOT" \
     bash "$REPO_ROOT/agent/tests/command-supervisor-smoke.sh"
 }
@@ -1392,7 +1392,7 @@ fi
 
 DEFAULT_MODEL_ARGS=(--model "$TEST_MODEL_ALIAS")
 
-MCT_AGENT="$MCT_AGENT_BIN"
+MCT_AGENT="$MACHTIANI_BIN"
 
 assert_snippet_single_file() {
   local traj_path="$1"
@@ -2258,29 +2258,29 @@ run_shell_agent_subcommand_live_case() {
     local exit_code=$?
 
     [ "$exit_code" -eq 0 ] || {
-        echo "FAIL: mct-agent shell-agent exit ${exit_code}, output: ${output}"
+        echo "FAIL: machtiani shell-agent exit ${exit_code}, output: ${output}"
         return 1
     }
 
     echo "$output" | grep -q "Exit Status: Submitted" || {
-        echo "FAIL: mct-agent shell-agent output missing submitted status"
+        echo "FAIL: machtiani shell-agent output missing submitted status"
         return 1
     }
 
     if [[ -n "${TEST_STUB_SERVER:-}" ]]; then
         echo "$output" | grep -q "Stub shell-agent final answer" || {
-            echo "FAIL: mct-agent shell-agent output missing final answer text (stub mode)"
+            echo "FAIL: machtiani shell-agent output missing final answer text (stub mode)"
             return 1
         }
     else
         if [[ -z "$(echo "$output" | grep -v '^Exit Status:' | tr -d '[:space:]')" ]]; then
-            echo "FAIL: mct-agent shell-agent output missing final answer text (live mode)"
+            echo "FAIL: machtiani shell-agent output missing final answer text (live mode)"
             return 1
         fi
     fi
 
     if echo "$output" | grep -q "## Answer\|<answer>"; then
-        echo "FAIL: mct-agent shell-agent output should not expose answer control markers"
+        echo "FAIL: machtiani shell-agent output should not expose answer control markers"
         return 1
     fi
 
@@ -3182,7 +3182,7 @@ PY
     --max-turns 15 \
     --turn-timeout 300 \
     "${DEFAULT_MODEL_ARGS[@]}" \
-    --prompt "Investigate the repository structure: find the main Go package for the mct-agent binary, list its key source files, and identify what Go version is required in go.mod. Report your findings step by step." \
+    --prompt "Investigate the repository structure: find the main Go package for the machtiani binary, list its key source files, and identify what Go version is required in go.mod. Report your findings step by step." \
     > "$stdout_file" 2> "$stderr_file"
   rc=$?
   set -e
@@ -3253,7 +3253,7 @@ run_resume_from_conversation_json_case() {
     \
     --turn-timeout 300 \
     "${DEFAULT_MODEL_ARGS[@]}" \
-    --prompt "Identify the main components of the mct-agent binary by reading agent/README.md and agent/cmd/mct-agent/main.go. List them." \
+    --prompt "Identify the main components of the machtiani binary by reading agent/README.md and agent/cmd/machtiani/main.go. List them." \
     > "$stdout_interrupt" 2> "$stderr_interrupt"
   rc=$?
   set -e
@@ -3477,7 +3477,7 @@ run_sync_footer_case() {
   mkdir -p "$out_dir"
 
   set +e
-  "$PYTHON_BIN" - "$MCT_AGENT_BIN" "$REPO_ROOT" "$output_file" <<'PY'
+  "$PYTHON_BIN" - "$MACHTIANI_BIN" "$REPO_ROOT" "$output_file" <<'PY'
 import errno
 import fcntl
 import os
@@ -3743,7 +3743,7 @@ test_models_catch_all() {
 
 test_issue_a_1turn() {
   run_happy_case "issue-a-1turn" 1 \
-    "What is the main purpose of the mct-agent binary?" \
+    "What is the main purpose of the machtiani binary?" \
     "Answer saved to:|\\[dry-run\\] Final answer" \
     1 \
     "${DEFAULT_MODEL_ARGS[@]}"
@@ -3751,14 +3751,14 @@ test_issue_a_1turn() {
 
 test_issue_a_3turn() {
   run_happy_case "issue-a-3turn" 3 \
-    "What is the main purpose of the mct-agent binary?" \
+    "What is the main purpose of the machtiani binary?" \
     "Answer saved to:|\\[dry-run\\] Final answer" \
     "${DEFAULT_MODEL_ARGS[@]}"
 }
 
 test_issue_b_1turn() {
   run_happy_case "issue-b-1turn" 1 \
-    "Describe the full multi-turn flow in mct-agent, including planning and context retention." \
+    "Describe the full multi-turn flow in machtiani, including planning and context retention." \
     "multi-turn|conversation|context|planner|ask" \
     1 \
     "${DEFAULT_MODEL_ARGS[@]}"
@@ -3766,7 +3766,7 @@ test_issue_b_1turn() {
 
 test_issue_b_3turn() {
   run_happy_case "issue-b-3turn" 3 \
-    "Describe the full multi-turn flow in mct-agent, including planning and context retention." \
+    "Describe the full multi-turn flow in machtiani, including planning and context retention." \
     "multi-turn|conversation|context|planner|ask" \
     1 \
     "${DEFAULT_MODEL_ARGS[@]}"
@@ -3782,14 +3782,14 @@ test_planner_ask_monitor() {
 
 test_issue_c_1turn() {
   run_happy_case "issue-c-1turn" 1 \
-    "Explain how mct-agent handles errors during finalization and transcript writing." \
+    "Explain how machtiani handles errors during finalization and transcript writing." \
     "error|handling|finalize|transcript|fallback" \
     "${DEFAULT_MODEL_ARGS[@]}"
 }
 
 test_issue_c_3turn() {
   run_happy_case "issue-c-3turn" 3 \
-    "Explain how mct-agent handles errors during finalization and transcript writing, with examples from code." \
+    "Explain how machtiani handles errors during finalization and transcript writing, with examples from code." \
     "error|handling|finalize|transcript|fallback" \
     "${DEFAULT_MODEL_ARGS[@]}"
 }
@@ -4230,24 +4230,24 @@ run_test_case "models-catch-all" run_happy_case "models-catch-all" 1 \
   "${DEFAULT_MODEL_ARGS[@]}"
 
 run_test_case "issue-a-1turn" run_happy_case "issue-a-1turn" 1 \
-  "What is the main purpose of the mct-agent binary?" \
+  "What is the main purpose of the machtiani binary?" \
   "Answer saved to:|\\[dry-run\\] Final answer" \
   1 \
   "${DEFAULT_MODEL_ARGS[@]}"
 
 run_test_case "issue-a-3turn" run_happy_case "issue-a-3turn" 3 \
-  "What is the main purpose of the mct-agent binary?" \
+  "What is the main purpose of the machtiani binary?" \
   "Answer saved to:|\\[dry-run\\] Final answer" \
   "${DEFAULT_MODEL_ARGS[@]}"
 
 run_test_case "issue-b-1turn" run_happy_case "issue-b-1turn" 1 \
-  "Describe the full multi-turn flow in mct-agent, including planning and context retention." \
+  "Describe the full multi-turn flow in machtiani, including planning and context retention." \
   "multi-turn|conversation|context|planner|ask" \
   1 \
   "${DEFAULT_MODEL_ARGS[@]}"
 
 run_test_case "issue-b-3turn" run_happy_case "issue-b-3turn" 3 \
-  "Describe the full multi-turn flow in mct-agent, including planning and context retention." \
+  "Describe the full multi-turn flow in machtiani, including planning and context retention." \
   "multi-turn|conversation|context|planner|ask" \
   1 \
   "${DEFAULT_MODEL_ARGS[@]}"
@@ -4261,12 +4261,12 @@ run_test_case "planner-ask-monitor" run_happy_case "planner-ask-monitor" 2 \
 
 
 run_test_case "issue-c-1turn" run_happy_case "issue-c-1turn" 1 \
-  "Explain how mct-agent handles errors during finalization and transcript writing." \
+  "Explain how machtiani handles errors during finalization and transcript writing." \
   "error|handling|finalize|transcript|fallback" \
   "${DEFAULT_MODEL_ARGS[@]}"
 
 run_test_case "issue-c-3turn" run_happy_case "issue-c-3turn" 3 \
-  "Explain how mct-agent handles errors during finalization and transcript writing, with examples from code." \
+  "Explain how machtiani handles errors during finalization and transcript writing, with examples from code." \
   "error|handling|finalize|transcript|fallback" \
   "${DEFAULT_MODEL_ARGS[@]}"
 

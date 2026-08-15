@@ -3,7 +3,7 @@
 
 The script is intentionally artifact-oriented. It reads Pier logs and reward
 files from the jobs directory, then inspects the copied mct-orchestrator,
-mct-agent conversation, and shell-agent trajectory artifacts. When the Pier
+machtiani conversation, and shell-agent trajectory artifacts. When the Pier
 containers are still alive it also samples the same files from /app inside the
 matching Docker container.
 """
@@ -361,7 +361,7 @@ def summarize_meta(
                 elif label in pending_sync_failures:
                     summary.sync_recovered.append(f"{label}:{pending_sync_failures.pop(label)}")
             if typ == "mct_invocation" and int(entry.get("exit_code", 0) or 0) != 0:
-                summary.invocation_failures.append(str(entry.get("session_id", "mct-agent")))
+                summary.invocation_failures.append(str(entry.get("session_id", "machtiani")))
             if "crash" in typ:
                 summary.crash_events += 1
             if typ == "runtime_state_restored":

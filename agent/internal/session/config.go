@@ -9,16 +9,16 @@ import (
 )
 
 type Config struct {
-	MaxTurns                int
-	OrchModel               string
-	AnswerModel             string
-	FileDiscoveryModel      string
-	AgentModel              string
-	TurnTimeout             int
-	DryRun                  bool
-	Verbose                 bool
-	Focused                 bool
-	NoShellSteps            bool
+	MaxTurns           int
+	OrchModel          string
+	AnswerModel        string
+	FileDiscoveryModel string
+	AgentModel         string
+	TurnTimeout        int
+	DryRun             bool
+	Verbose            bool
+	Focused            bool
+	NoShellSteps       bool
 	// Print restricts stdout to exactly the raw final answer (no glow, no
 	// banner, no rules, no resume line). Warnings and errors still go to
 	// stderr; persistence and exit codes are unchanged.
@@ -47,7 +47,7 @@ type Config struct {
 	// AnswerTag overrides the final-answer tag name used by the
 	// shell-agent parser and the prompt templates. Empty input is
 	// normalised to "answer" downstream; validation of the tag name
-	// happens at the CLI boundary in agent/cmd/mct-agent.
+	// happens at the CLI boundary in agent/cmd/machtiani.
 	AnswerTag       string
 	APIKeyOverrides map[string]string
 	// CommandTag overrides the command tag name used by the

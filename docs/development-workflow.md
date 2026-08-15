@@ -17,7 +17,7 @@ Build and compare a patch against the current state:
 ./scripts/ab-dev.sh --no-run my-change.patch
 
 # Run a custom command inside both images
-./scripts/ab-dev.sh --cmd 'mct-agent --version && go test ./...' my-change.patch
+./scripts/ab-dev.sh --cmd 'machtiani --version && go test ./...' my-change.patch
 ```
 
 After the run, inspect the outputs and diff:
@@ -30,11 +30,11 @@ cat /tmp/mct-ab-output/treatment/stdout.log
 
 ## Using code-forge Mode
 
-The Docker-based development workflow supports running mct-agent in code-forge mode. The container includes the mct-forge wrapper script (copied from peripherals/), and the ab-dev.sh script automatically mounts the external forge binary from the host if it is found at ~/.local/bin/forge. If the binary is not found, the script prints a warning and skips the mount; in that case mct-forge will not work inside the container but other commands still execute.
+The Docker-based development workflow supports running machtiani in code-forge mode. The container includes the mct-forge wrapper script (copied from peripherals/), and the ab-dev.sh script automatically mounts the external forge binary from the host if it is found at ~/.local/bin/forge. If the binary is not found, the script prints a warning and skips the mount; in that case mct-forge will not work inside the container but other commands still execute.
 
 To run a comparison with code-forge mode, use a command like:
 
-./scripts/ab-dev.sh --cmd "mct-agent run --mode code-forge --verbose --api-key deepseek:sk-YOURKEY --max-turns 1000 --turn-timeout 0 -p \"Your prompt\"" my-change.patch
+./scripts/ab-dev.sh --cmd "machtiani run --mode code-forge --verbose --api-key deepseek:sk-YOURKEY --max-turns 1000 --turn-timeout 0 -p \"Your prompt\"" my-change.patch
 
 Export MACHTIANI_WORKSPACE_DEBUG=1 before running if debug output is desired.
 
@@ -55,7 +55,7 @@ BuildKit is enabled by default in Docker Engine 23.0+. The script explicitly set
 mct/
 ├── agent/                         # Go module (github.com/tursomari/machtiani/agent)
 │   ├── cmd/
-│   │   ├── mct-agent/             # Main orchestrator binary
+│   │   ├── machtiani/             # Main orchestrator binary
 │   │   └── print-config/          # Config debug helper
 │   ├── internal/
 │   │   ├── file-discovery/        # LLM-guided file discovery (rg protocol)
@@ -166,7 +166,7 @@ RUN if [ -n "${CHANGE_PATCH}" ]; then \
     fi
 
 # Build all binaries
-RUN cd agent && go build ./cmd/mct-agent
+RUN cd agent && go build ./cmd/machtiani
 ```
 
 **Stage 2 — `runtime`** (based on `debian:bookworm-slim`):
@@ -270,7 +270,7 @@ Overrides the default verification command. The command is executed inside each 
 ```default
 set -euo pipefail
 echo "=== Built binaries ==="
-for bin in mct-agent mct file-discovery snippet-discovery shell-agent; do
+for bin in machtiani mct file-discovery snippet-discovery shell-agent; do
     if command -v "$bin" &>/dev/null; then
         echo "--- $bin ---"
         "$bin" --version 2>&1 || "$bin" --help 2>&1 | head -5 || echo "(no version/help output)"
@@ -288,7 +288,7 @@ Custom command examples:
 ./scripts/ab-dev.sh --cmd 'cd /build/agent && go test ./...' HEAD~1
 
 # Verify a specific binary and its flags
-./scripts/ab-dev.sh --cmd 'mct-agent --help && mct-agent --version' my-change.patch
+./scripts/ab-dev.sh --cmd 'machtiani --help && machtiani --version' my-change.patch
 
 # Shell into the container interactively (use docker run manually for this)
 docker run --rm -it mct-treatment bash

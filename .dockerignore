@@ -3,7 +3,7 @@
 /.machtiani/tmp/
 /.machtiani/issues/
 # Allow the internal readme repo at .machtiani/artifacts/readme/ since
-# mct-agent run preflight requires a git tag in it for the current HEAD.
+# machtiani run preflight requires a git tag in it for the current HEAD.
 # Other artifacts/ contents (e.g. generated reports) remain excluded by
 # the broad /artifacts/ pattern.
 /.machtiani/artifacts/*

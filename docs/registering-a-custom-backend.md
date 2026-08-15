@@ -11,7 +11,7 @@ for the configuration schema, executable contract, health checks, wrapper
 example, and troubleshooting steps. Keeping that contract in the DearMachine
 repository prevents the two projects from publishing divergent instructions.
 
-When testing a backend that invokes mct-agent, ensure the intended mct-agent
+When testing a backend that invokes machtiani, ensure the intended machtiani
 binary is on `PATH` and follow this repository's
 [mct-agent runbook](./mct-agent-runbook.md) for project initialization and
 session handling.

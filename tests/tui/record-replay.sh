@@ -5,7 +5,7 @@ usage() {
   cat <<'USAGE'
 Usage: tests/tui/record-replay.sh [options]
 
-Record a live mct-agent run and replay it from recorded LLM fixtures.
+Record a live machtiani run and replay it from recorded LLM fixtures.
 
 Options:
   --name NAME          Fixture name under .data/tui-replay (default: planner-shell-agent-cache)
@@ -13,8 +13,8 @@ Options:
   --prompt-file PATH   File containing prompt text
   --base-dir PATH      Artifact root (default: .data/tui-replay)
   --port PORT          Replay server port (default: first free port from 19876)
-  --verbose            Record and replay mct-agent run --verbose
-  --run-arg ARG        Append one mct-agent run argument in both phases (repeatable)
+  --verbose            Record and replay machtiani run --verbose
+  --run-arg ARG        Append one machtiani run argument in both phases (repeatable)
   --check-display-modes
                        Replay default, no-shell-steps, and focused run/resume modes
   --theme PROFILE      Set MACHTIANI_THEME for both phases
@@ -24,8 +24,8 @@ Options:
 Artifacts are written under:
   <base-dir>/<name>/runs/<timestamp>/
 
-Set MCT_AGENT_BIN to an explicit executable path to avoid PATH lookup. When it
-is unset, the harness uses mct-agent from PATH. It records a PTY transcript
+Set MACHTIANI_BIN to an explicit executable path to avoid PATH lookup. When it
+is unset, the harness uses machtiani from PATH. It records a PTY transcript
 (*.terminal.log) as the whole terminal output, plus formatter capture
 (*.tui.txt), process logs where applicable, LLM fixtures, replay config,
 session ids, and a manifest.
@@ -140,22 +140,22 @@ if ! command -v script >/dev/null 2>&1; then
 fi
 
 BIN_DIR="$ROOT/.data/bin"
-MCT_AGENT_BIN="${MCT_AGENT_BIN:-}"
-if [[ -n "$MCT_AGENT_BIN" ]]; then
-  if [[ "$MCT_AGENT_BIN" != /* ]]; then
-    MCT_AGENT_BIN="$(cd "$(dirname "$MCT_AGENT_BIN")" && pwd)/$(basename "$MCT_AGENT_BIN")"
+MACHTIANI_BIN="${MACHTIANI_BIN:-}"
+if [[ -n "$MACHTIANI_BIN" ]]; then
+  if [[ "$MACHTIANI_BIN" != /* ]]; then
+    MACHTIANI_BIN="$(cd "$(dirname "$MACHTIANI_BIN")" && pwd)/$(basename "$MACHTIANI_BIN")"
   fi
-  MCT_AGENT_BIN="$(realpath "$MCT_AGENT_BIN" 2>/dev/null || printf '%s\n' "$MCT_AGENT_BIN")"
+  MACHTIANI_BIN="$(realpath "$MACHTIANI_BIN" 2>/dev/null || printf '%s\n' "$MACHTIANI_BIN")"
 else
-  MCT_AGENT_BIN="$(command -v mct-agent || true)"
+  MACHTIANI_BIN="$(command -v machtiani || true)"
 fi
 REPLAY_SERVER_BIN="$(command -v replay-server || true)"
 if [[ -z "$REPLAY_SERVER_BIN" ]]; then
   REPLAY_SERVER_BIN="$BIN_DIR/replay-server"
 fi
 
-if [[ -z "$MCT_AGENT_BIN" || ! -x "$MCT_AGENT_BIN" ]]; then
-  echo "error: set MCT_AGENT_BIN to an executable or make mct-agent available on PATH" >&2
+if [[ -z "$MACHTIANI_BIN" || ! -x "$MACHTIANI_BIN" ]]; then
+  echo "error: set MACHTIANI_BIN to an executable or make machtiani available on PATH" >&2
   exit 2
 fi
 
@@ -177,9 +177,9 @@ timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 RUN_DIR="$BASE_DIR/$NAME/runs/$timestamp"
 mkdir -p "$RUN_DIR"
 printf '%s\n' "$PROMPT" > "$RUN_DIR/prompt.txt"
-"$MCT_AGENT_BIN" --version > "$RUN_DIR/mct-agent.version.txt" 2>&1 || true
+"$MACHTIANI_BIN" --version > "$RUN_DIR/machtiani.version.txt" 2>&1 || true
 {
-  printf 'mct_agent_path=%s\n' "$MCT_AGENT_BIN"
+  printf 'mct_agent_path=%s\n' "$MACHTIANI_BIN"
   printf 'replay_server_path=%s\n' "$REPLAY_SERVER_BIN"
 } > "$RUN_DIR/binaries.txt"
 
@@ -227,7 +227,7 @@ session_from_log() {
   awk '
     /^Session ID: / {gsub(/\r/, "", $NF); print $NF; exit}
     /^Session: / {gsub(/\r/, "", $2); print $2; exit}
-	/mct-agent run.*--resume agent-[0-9TZ]+-[0-9]+/ {
+	/machtiani run.*--resume agent-[0-9TZ]+-[0-9]+/ {
 	  for (i = 1; i <= NF; i++) {
 	    if ($i == "--resume" && (i + 1) <= NF && $(i + 1) ~ /^agent-[0-9TZ]+-[0-9]+$/) {
 	      gsub(/\r/, "", $(i + 1)); print $(i + 1); exit
@@ -385,7 +385,7 @@ write_manifest() {
 
   {
     printf 'run_dir=%s\n' "$RUN_DIR"
-    printf 'mct_agent_path=%s\n' "$MCT_AGENT_BIN"
+    printf 'mct_agent_path=%s\n' "$MACHTIANI_BIN"
     printf 'replay_server_path=%s\n' "$REPLAY_SERVER_BIN"
     printf 'verbose=%s\n' "$VERBOSE"
     printf 'theme=%s\n' "${THEME:-config}"
@@ -448,7 +448,7 @@ set +e
 run_under_pty "$RUN_DIR/live.terminal.log" \
   env \
   "${LIVE_ENV[@]}" \
-  "$MCT_AGENT_BIN" "${RUN_ARGS[@]}"
+  "$MACHTIANI_BIN" "${RUN_ARGS[@]}"
 live_exit=$?
 set -e
 printf 'exit=%s\n' "$live_exit" > "$RUN_DIR/live.exit"
@@ -507,7 +507,7 @@ run_replay_case() {
   run_under_pty "$terminal_log" \
     env \
     "${replay_env[@]}" \
-    "$MCT_AGENT_BIN" "$@"
+    "$MACHTIANI_BIN" "$@"
   local case_exit=$?
   printf 'exit=%s\n' "$case_exit" > "$RUN_DIR/$prefix.exit"
   session_from_log "$terminal_log" > "$RUN_DIR/$prefix-session-id.txt"

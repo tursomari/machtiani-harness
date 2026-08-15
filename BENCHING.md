@@ -50,7 +50,7 @@ The script prints the treatment job name, usually `treatment-batch-<pid>`, and t
 ## Run a Single Retest
 
 Use `scripts/run-single-treatment.sh` for one-off treatment retests. It rebuilds
-standalone `mct-agent` and `meta-orchestrator` binaries from `HEAD` through the
+standalone `machtiani` and `meta-orchestrator` binaries from `HEAD` through the
 pinned Nix toolchain, uses a fixed `/tmp/mct-single-treatment` workspace, and
 persists results under `.bench/deep-swe/`.
 
@@ -72,9 +72,9 @@ Use `--agent-name` and `--treatment-name` to control the persisted result path:
 
 The single-task runner:
 
-- builds static, container-portable `mct-agent` and `meta-orchestrator` from `HEAD`
+- builds static, container-portable `machtiani` and `meta-orchestrator` from `HEAD`
 - downloads the musl Forge binary
-- sets `MCT_AGENT_BINARY`, `MCT_META_ORCHESTRATOR_BINARY`, and `MCT_FORGE_BINARY`
+- sets `MACHTIANI_BIN`, `MCT_META_ORCHESTRATOR_BINARY`, and `MCT_FORGE_BINARY`
 - runs Pier with `--agent-import-path mct_pier_adapter.mct_agent:MctAgent`
 - runs with `--n-concurrent 1`
 - preserves live job data under `/tmp/treatment-preserved-<epoch>/`
@@ -83,7 +83,7 @@ The single-task runner:
 If you invoke Pier manually for a single task, the adapter needs binary paths exported in the host shell and passed as `--ae` runtime environment values:
 
 ```bash
-export MCT_AGENT_BINARY=/path/to/mct-agent
+export MACHTIANI_BIN=/path/to/machtiani
 export MCT_META_ORCHESTRATOR_BINARY=/path/to/meta-orchestrator
 export MCT_FORGE_BINARY=/path/to/forge
 export TEST_API_KEY=sk-...
@@ -92,7 +92,7 @@ export TEST_MODEL=deepseek-v4-pro
 
 pier run \
   --agent-import-path mct_pier_adapter.mct_agent:MctAgent \
-  --ae "MCT_AGENT_BINARY=${MCT_AGENT_BINARY}" \
+  --ae "MACHTIANI_BIN=${MACHTIANI_BIN}" \
   --ae "MCT_META_ORCHESTRATOR_BINARY=${MCT_META_ORCHESTRATOR_BINARY}" \
   --ae "MCT_FORGE_BINARY=${MCT_FORGE_BINARY}" \
   --ae "TEST_API_KEY=${TEST_API_KEY}" \
@@ -106,7 +106,7 @@ pier run \
   -p "$DEEP_SWE_TASKS"
 ```
 
-If `MCT_META_ORCHESTRATOR_BINARY` is missing or invalid in the host shell, the adapter skips the upload and the run can fall back to direct `mct-agent` instead of the multi-phase meta-orchestrator loop.
+If `MCT_META_ORCHESTRATOR_BINARY` is missing or invalid in the host shell, the adapter skips the upload and the run can fall back to direct `machtiani` instead of the multi-phase meta-orchestrator loop.
 
 ## Monitor a Batch
 
@@ -149,7 +149,7 @@ The monitor reports:
 
 - reward files and `f2p` / `p2p` / `partial` scores
 - meta-orchestrator trajectory phase markers
-- `mct-agent sync` attempts, retries, failures, and recoveries
+- `machtiani sync` attempts, retries, failures, and recoveries
 - runner errors, including GLIBC / Forge binary compatibility failures
 - shell-agent trajectory activity and `mct-forge` command errors
 - live Docker container status when containers are still running
@@ -162,7 +162,7 @@ Batch working data:
 
 ```text
 <work-dir>/
-  bin/                         # built mct-agent, meta-orchestrator, forge
+  bin/                         # built machtiani, meta-orchestrator, forge
   control/pier.log             # control Pier stdout/stderr, when control is run
   control/jobs/<job-name>/      # control Pier job state
   treatment/pier.log           # treatment Pier stdout/stderr
@@ -222,7 +222,7 @@ Check whether the meta-orchestrator is active:
 ```bash
 CONTAINER=abs-module-cache-flags__bjd773o-main-1
 docker exec "$CONTAINER" sh -lc \
-  'ps -eo pid,ppid,etime,stat,cmd | grep -E "meta-orchestrator|mct-agent run|mct-forge|forge$|pytest|go test|pnpm|npm|verifier|git clean" | grep -v grep'
+  'ps -eo pid,ppid,etime,stat,cmd | grep -E "meta-orchestrator|machtiani run|mct-forge|forge$|pytest|go test|pnpm|npm|verifier|git clean" | grep -v grep'
 ```
 
 Check the worktree and recent commits:
@@ -236,10 +236,10 @@ Find the active session ID:
 
 ```bash
 docker exec "$CONTAINER" sh -lc \
-  'ps aux | grep "mct-agent run" | grep -o -- "--session-id [^ ]*" || true; ls -t /app/.machtiani/sessions 2>/dev/null | head'
+  'ps aux | grep "machtiani run" | grep -o -- "--session-id [^ ]*" || true; ls -t /app/.machtiani/sessions 2>/dev/null | head'
 ```
 
-The meta-orchestrator may have its own session and the child `mct-agent` may have another. Do not assume the newest session is the one doing useful work; confirm from the process command line when possible.
+The meta-orchestrator may have its own session and the child `machtiani` may have another. Do not assume the newest session is the one doing useful work; confirm from the process command line when possible.
 
 ## Heartbeat Signals
 
@@ -251,7 +251,7 @@ Use three signals together:
 | `conversation.json` mtime | an agent turn completed recently | only updates after a full assistant turn |
 | child shell-agent trajectory | shell commands are executing | best real-time heartbeat |
 
-The parent `trajectory/agent.jsonl` often records events only when `mct-agent` produces a final answer for the meta-orchestrator. Silence there does not mean the agent is dead. Check the child shell-agent trajectory first.
+The parent `trajectory/agent.jsonl` often records events only when `machtiani` produces a final answer for the meta-orchestrator. Silence there does not mean the agent is dead. Check the child shell-agent trajectory first.
 
 Inside the container:
 
@@ -275,15 +275,15 @@ SESSION="$(docker exec "$CONTAINER" sh -lc 'ls -t /app/.machtiani/sessions 2>/de
 docker exec "$CONTAINER" sh -lc "echo branch=\$(git -C /app branch --show-current); \
   echo child=\$(ls -t /app/.machtiani/sessions/${SESSION}/shell-agent 2>/dev/null | head -1); \
   stat -c 'conversation_mtime=%y' /app/.machtiani/sessions/${SESSION}/conversation.json 2>/dev/null || true; \
-  ps -eo pid,etime,stat,cmd | grep -E 'meta-orchestrator|mct-agent run|mct-forge|forge$' | grep -v grep"
+  ps -eo pid,etime,stat,cmd | grep -E 'meta-orchestrator|machtiani run|mct-forge|forge$' | grep -v grep"
 ```
 
 Phase model:
 
 - Initial implementation: agent reads, plans, edits, tests, and commits.
 - Test failure fix loop: agent runs tests, gets failures, and iterates.
-- Waiting on meta-orchestrator: `mct-agent` produced a final answer and exited; child shell-agent trajectory goes quiet.
-- Re-invoked on resume: meta-orchestrator currently launches `mct-agent run --session-id <session-id> -p <follow-up>`, often producing a new shell-agent child trajectory. This is deprecated internal compatibility plumbing; user-facing invocations should use `mct-agent run -p "<your follow-up prompt>" --resume <session-id>` (or `-r`).
+- Waiting on meta-orchestrator: `machtiani` produced a final answer and exited; child shell-agent trajectory goes quiet.
+- Re-invoked on resume: meta-orchestrator currently launches `machtiani run --session-id <session-id> -p <follow-up>`, often producing a new shell-agent child trajectory. This is deprecated internal compatibility plumbing; user-facing invocations should use `machtiani run -p "<your follow-up prompt>" --resume <session-id>` (or `-r`).
 
 Always read `/app/instruction.md` before judging whether a task is over-scoped. Some benchmark tasks require large features even when the symptom sounds small.
 

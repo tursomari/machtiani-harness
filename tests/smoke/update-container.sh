@@ -11,7 +11,7 @@ seed="$root/seed"
 remote="$root/remote.git"
 update_home="$HOME"
 prefix="$HOME/.local"
-source_dir="$update_home/.machtiani/installations/mct-agent/source"
+source_dir="$update_home/.machtiani/installations/machtiani/source"
 user_clone="$update_home/src/mct-install"
 probe="$root/probe"
 legacy_artifact="$update_home/.machtiani/existing-project/artifacts/preserve-me.txt"
@@ -43,31 +43,31 @@ git -C "$remote" symbolic-ref HEAD refs/heads/rolling
 git clone --quiet --depth 1 --single-branch "file://$remote" "$user_clone"
 (cd "$user_clone" && HOME="$update_home" nix run .#install -- --prefix "$prefix")
 grep -Fxq 'legacy-project-sentinel' "$legacy_artifact"
-test "$(HOME="$update_home" "$prefix/bin/mct-agent" --version | sed -n 's/^commit: //p')" = "$commit_a"
+test "$(HOME="$update_home" "$prefix/bin/machtiani" --version | sed -n 's/^commit: //p')" = "$commit_a"
 test -d "$source_dir/.git"
 test "$(git -C "$source_dir" remote get-url origin)" = "file://$remote"
-receipt="$update_home/.machtiani/installations/mct-agent/receipt.json"
+receipt="$update_home/.machtiani/installations/machtiani/receipt.json"
 grep -Fq '"schema_version": 2' "$receipt"
 grep -Fq '"source_dir": "'"$source_dir"'"' "$receipt"
-grep -Fq '"profile": "'"$update_home/.machtiani/installations/mct-agent/profile"'"' "$receipt"
+grep -Fq '"profile": "'"$update_home/.machtiani/installations/machtiani/profile"'"' "$receipt"
 
 rm -rf "$user_clone"
 
 git -C "$seed" commit --quiet --allow-empty -m explicit-update
 commit_b=$(git -C "$seed" rev-parse HEAD)
 git -C "$seed" push --quiet origin rolling
-HOME="$update_home" "$prefix/bin/mct-agent" update --check --json |
+HOME="$update_home" "$prefix/bin/machtiani" update --check --json |
   grep -q '"status":"available"'
-HOME="$update_home" "$prefix/bin/mct-agent" update --yes --no-interactive --json |
+HOME="$update_home" "$prefix/bin/machtiani" update --yes --no-interactive --json |
   grep -q '"status":"updated"'
-test "$(HOME="$update_home" "$prefix/bin/mct-agent" --version | sed -n 's/^commit: //p')" = "$commit_b"
+test "$(HOME="$update_home" "$prefix/bin/machtiani" --version | sed -n 's/^commit: //p')" = "$commit_b"
 
 # The installed binary must be a symlink into the managed profile so that
 # future profile-only updates are immediately visible.  A regular file
 # indicates a stale install that was never repaired.
-test -L "$prefix/bin/mct-agent" || { echo "Binary is not a symlink after update" >&2; exit 1; }
+test -L "$prefix/bin/machtiani" || { echo "Binary is not a symlink after update" >&2; exit 1; }
 
-cat >"$update_home/.machtiani/installations/mct-agent/update.toml" <<'EOF'
+cat >"$update_home/.machtiani/installations/machtiani/update.toml" <<'EOF'
 policy = "auto"
 cooldown_hours = 0
 failure_retry_hours = 0
@@ -80,14 +80,14 @@ git -C "$seed" push --quiet origin rolling
   cd "$probe"
   expect <<EOF
 set timeout 300
-spawn env HOME=$update_home PATH=$prefix/bin:\$env(PATH) mct-agent project show
+spawn env HOME=$update_home PATH=$prefix/bin:\$env(PATH) machtiani project show
 expect "Status:"
 expect eof
 catch wait result
 exit [lindex \$result 3]
 EOF
 )
-test "$(HOME="$update_home" "$prefix/bin/mct-agent" --version | sed -n 's/^commit: //p')" = "$commit_c"
+test "$(HOME="$update_home" "$prefix/bin/machtiani" --version | sed -n 's/^commit: //p')" = "$commit_c"
 
 # The default branch is authoritative even after a forced history rewrite.
 git -C "$seed" reset --quiet --hard "$commit_a"
@@ -104,14 +104,14 @@ fi
   cd "$probe"
   expect <<EOF
 set timeout 300
-spawn env HOME=$update_home PATH=$prefix/bin:\$env(PATH) mct-agent project show
+spawn env HOME=$update_home PATH=$prefix/bin:\$env(PATH) machtiani project show
 expect "Status:"
 expect eof
 catch wait result
 exit [lindex \$result 3]
 EOF
 )
-test "$(HOME="$update_home" "$prefix/bin/mct-agent" --version | sed -n 's/^commit: //p')" = "$commit_d"
+test "$(HOME="$update_home" "$prefix/bin/machtiani" --version | sed -n 's/^commit: //p')" = "$commit_d"
 test "$(git -C "$source_dir" rev-parse HEAD)" = "$commit_d"
 
 # A bad flake candidate never replaces the last working profile or receipt.
@@ -120,14 +120,14 @@ git -C "$seed" add flake.nix
 git -C "$seed" commit --quiet -m broken-flake
 git -C "$seed" push --quiet origin rolling
 receipt_before=$(sha256sum "$receipt" | cut -d' ' -f1)
-profile_before=$(readlink "$update_home/.machtiani/installations/mct-agent/profile")
-if HOME="$update_home" "$prefix/bin/mct-agent" update --yes --no-interactive >/dev/null 2>&1; then
+profile_before=$(readlink "$update_home/.machtiani/installations/machtiani/profile")
+if HOME="$update_home" "$prefix/bin/machtiani" update --yes --no-interactive >/dev/null 2>&1; then
   echo "broken update candidate unexpectedly installed" >&2
   exit 1
 fi
-test "$(HOME="$update_home" "$prefix/bin/mct-agent" --version | sed -n 's/^commit: //p')" = "$commit_d"
+test "$(HOME="$update_home" "$prefix/bin/machtiani" --version | sed -n 's/^commit: //p')" = "$commit_d"
 test "$(sha256sum "$receipt" | cut -d' ' -f1)" = "$receipt_before"
-test "$(readlink "$update_home/.machtiani/installations/mct-agent/profile")" = "$profile_before"
-test "$(find "$update_home/.machtiani/installations/mct-agent" -maxdepth 1 -name 'profile-*-link' | wc -l)" -le 2
+test "$(readlink "$update_home/.machtiani/installations/machtiani/profile")" = "$profile_before"
+test "$(find "$update_home/.machtiani/installations/machtiani" -maxdepth 1 -name 'profile-*-link' | wc -l)" -le 2
 
 echo "UPDATE SMOKE PASSED"

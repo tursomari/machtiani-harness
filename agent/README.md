@@ -1,6 +1,6 @@
 # mct-agent — Agent Orchestrator
 
-Initialize the current project with `mct-agent init`. Where paths below use
+Initialize the current project with `machtiani init`. Where paths below use
 `$PROJECT_STORE`, resolve it with
 `PROJECT_STORE="$HOME/.machtiani/$(cat .machtiani/project.uuid)"`.
 
@@ -14,14 +14,14 @@ Initialize the current project with `mct-agent init`. Where paths below use
 
 ## Install
 
-From a clean repo root, install **mct-agent** into the dedicated managed profile:
+From a clean repo root, install **machtiani** into the dedicated managed profile:
 
 ```
 nix run .#install
 ```
 
 When run from a terminal, the installer prompts for the destination and
-defaults to `~/.local/bin/mct-agent`. Press Enter to accept it. For automation,
+defaults to `~/.local/bin/machtiani`. Press Enter to accept it. For automation,
 pass `--no-interactive` to keep that default without prompting.
 
 Override the stable binary prefix if you prefer a different path:
@@ -31,10 +31,10 @@ nix run .#install -- --prefix "$PWD/.mct-bin"
 export PATH="$PWD/.mct-bin/bin:$PATH"
 ```
 
-After installation, confirm `mct-agent` resolves via PATH:
+After installation, confirm `machtiani` resolves via PATH:
 
 ```
-mct-agent --version
+machtiani --version
 ```
 
 If you built the peripherals, check them too:
@@ -59,7 +59,7 @@ JSON request payload (including prompts, messages, and source context) for one
 run to the canonical session log, pass:
 
 ```
-mct-agent run --log-llm-inputs "Explain X and identify root cause"
+machtiani run --log-llm-inputs "Explain X and identify root cause"
 ```
 
 WARNING: this may write sensitive prompts and source material to disk, and the
@@ -80,7 +80,7 @@ full input logging for future runs.
 
 ## Usage
 ```
-mct-agent run -p "<your prompt>" [flags]
+machtiani run -p "<your prompt>" [flags]
 ```
 Flags:
 - `--max-turns int`: maximum turns before finalizing (default: 150)
@@ -108,7 +108,7 @@ Flags:
 Example: mix models from different providers by repeating `--api-key` for each provider referenced by your aliases:
 
 ```
-mct-agent run -p "triage regression" \
+machtiani run -p "triage regression" \
   --orch-model gpt-5-nano \
   --file-discovery-model haiku \
   --api-key openai:sk-openai-xxx \
@@ -124,7 +124,7 @@ mct-agent run -p "triage regression" \
 - A transcript is saved to `$PROJECT_STORE/sessions/<session-id>/chat/agent-transcript.adoc` with per-turn entries and the final conclusion.
 
 ## Environment Details
-- Shell commands start in the directory where `mct-agent` is launched. The
+- Shell commands start in the directory where `machtiani` is launched. The
   removed `environment.cwd` key is rejected with migration guidance.
 - Component model selection precedence:
   - Flags `--orch-model`, `--answer-model`, `--file-discovery-model`
@@ -140,7 +140,7 @@ mct-agent run -p "triage regression" \
 - `--turn-timeout` applies to both the discovery steps and the planner/finalizer LLM calls. Set to `0` to disable the deadline for all per-turn operations.
 
 ## Troubleshooting
-- “mct-agent not found”
+- “machtiani not found”
   - Re-run `nix run .#install` and ensure the chosen prefix is on PATH.
 - “Missing model configuration”
   - Provide a valid `.machtiani/config.toml` (or set `MACHTIANI_CONFIG`) containing the model alias, or export `OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_MODEL` so the agent can generate one.
@@ -168,14 +168,14 @@ GOCACHE=$(pwd)/.gocache go test ./...
 ```
 
 ### Integration Tests (Live or Dry-Run)
-`agent/tests/run-live.sh` exercises the PATH-installed `mct-agent` binary end-to-end (see `TESTING.md` for full details). The default install is sufficient; optional CLIs are not required for this harness.
+`agent/tests/run-live.sh` exercises the PATH-installed `machtiani` binary end-to-end (see `TESTING.md` for full details). The default install is sufficient; optional CLIs are not required for this harness.
 
 Prerequisites:
-1. Run `nix build .#mct-agent` and put `result/bin` on PATH.
+1. Run `nix build .#machtiani` and put `result/bin` on PATH.
 2. Optional for live mode: export `OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_MODEL`. When these variables are absent the script forces deterministic dry-run mode.
 
 What the script does:
-- Performs a preflight that resolves `mct-agent` on PATH, prints `--version`/`go version -m` metadata, and fails if the commit/time does not match the current sources.
+- Performs a preflight that resolves `machtiani` on PATH, prints `--version`/`go version -m` metadata, and fails if the commit/time does not match the current sources.
 - Generates a temporary `.machtiani/config.toml` under `agent/tests/tmp/` and exports `MACHTIANI_CONFIG` for the duration of the run. The file uses your `OPENAI_*` values in live mode and stub credentials in dry-run.
 - Runs Issue A/B/C happy-path scenarios (1-turn and 3-turn variants) plus deterministic error cases (empty input, missing config when in live mode). Artifacts land under `test-out-*` directories in the repo root.
 - Seeds shell-agent marker files under a per-run temp root and validates that stale markers are removed at startup while recent markers remain; override the threshold via `MACHTIANI_SHELL_AGENT_MARKER_MAX_AGE` or disable checks with `CHECK_SHELL_AGENT_MARKERS=false`.
@@ -184,10 +184,10 @@ What the script does:
 Run from the repo root:
 
 ```
-nix build .#mct-agent
+nix build .#machtiani
 PATH="$PWD/result/bin:$PATH" bash agent/tests/run-live.sh
 ```
-Ensure the flake-built `mct-agent` is on PATH before executing `bash agent/tests/run-live.sh`.
+Ensure the flake-built `machtiani` is on PATH before executing `bash agent/tests/run-live.sh`.
 
 The script no longer mutates PATH or accepts binary override flags; everything must resolve via PATH.
 - When `OPENAI_*` are not provided, the generated config points at stub credentials and the script forces `--dry-run`, so no network or `mct` subprocess calls occur; transcripts remain available for assertions while the final artifact is intentionally skipped.

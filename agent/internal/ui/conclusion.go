@@ -156,7 +156,7 @@ func writeConclusionAction(b *strings.Builder, theme Theme, width int, event Ses
 }
 
 func conclusionCommandBlock(theme Theme, width int, sessionID, promptPlaceholder string) []presentation.StyledLine {
-	command := "mct-agent run"
+	command := "machtiani run"
 	if promptPlaceholder != "" {
 		command += " -p \"" + promptPlaceholder + "\""
 	}
@@ -168,7 +168,7 @@ func conclusionCommandBlock(theme Theme, width int, sessionID, promptPlaceholder
 	if useSingle {
 		visible = []string{singleVisible}
 	} else {
-		visible = []string{"mct-agent run \\"}
+		visible = []string{"machtiani run \\"}
 		if promptPlaceholder != "" {
 			visible = append(visible, "  -p \""+promptPlaceholder+"\" \\")
 		}
@@ -191,7 +191,7 @@ func conclusionCommandBlock(theme Theme, width int, sessionID, promptPlaceholder
 	} else {
 		lines = append(lines, presentation.StyledLine{
 			presentation.Text("    "),
-			presentation.Bold(presentation.RoleProvenance, "mct-agent run"),
+			presentation.Bold(presentation.RoleProvenance, "machtiani run"),
 			presentation.Text(" \\"),
 		})
 		if promptPlaceholder != "" {
@@ -208,7 +208,7 @@ func conclusionCommandBlock(theme Theme, width int, sessionID, promptPlaceholder
 }
 
 func styleConclusionSingleCommand(command string) presentation.StyledLine {
-	const executable = "mct-agent run"
+	const executable = "machtiani run"
 	return presentation.StyledLine{
 		presentation.Text("    "),
 		presentation.Bold(presentation.RoleGoodness, "$ "),

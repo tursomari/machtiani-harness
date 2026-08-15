@@ -1,7 +1,7 @@
 # Machtiani Configuration Guide
 
-`mct-agent config` creates and manages the unified Machtiani configuration used
-by `mct-agent`, `mct`, and `shell-agent`. The configuration connects local model
+`machtiani config` creates and manages the unified Machtiani configuration used
+by `machtiani`, `mct`, and `shell-agent`. The configuration connects local model
 aliases to named providers and stores shared defaults such as prompt caching.
 
 For the complete TOML schema beyond providers and models, see
@@ -12,7 +12,7 @@ For the complete TOML schema beyond providers and models, see
 Use `init` from a project for first-time setup:
 
 ```bash
-mct-agent init
+machtiani init
 ```
 
 `init` creates `.machtiani/project.uuid`, the private
@@ -26,7 +26,7 @@ Every setup choice has a script-safe form. This selects global scope without
 reading stdin:
 
 ```bash
-mct-agent init --no-interactive --config-scope global
+machtiani init --no-interactive --config-scope global
 ```
 
 Use `--config-scope project` to select a complete UUID-scoped config. Provider
@@ -37,7 +37,7 @@ file does not yet exist.
 Run the configuration manager without a subcommand for follow-up changes:
 
 ```bash
-mct-agent config
+machtiani config
 ```
 
 If the selected file does not exist, this opens initial setup. Otherwise it
@@ -65,7 +65,7 @@ Use `--no-interactive` for scripts and CI:
 
 ```bash
 export OPENAI_API_KEY=sk-...
-mct-agent config add --preset openai --no-interactive
+machtiani config add --preset openai --no-interactive
 ```
 
 `--no-interactive` is the only prompt-bypass flag. It guarantees that the
@@ -96,18 +96,18 @@ environment value was ignored.
 Examples:
 
 ```bash
-mct-agent config --global
-mct-agent config check --project
-mct-agent config check --path ./configs/agent.toml
-mct-agent config model list --global
+machtiani config --global
+machtiani config check --project
+machtiani config check --path ./configs/agent.toml
+machtiani config model list --global
 ```
 
 The selected project scope is itself scriptable:
 
 ```bash
-mct-agent config scope show --json
-mct-agent config scope use project --copy-global --no-interactive
-mct-agent config scope use global --no-interactive
+machtiani config scope show --json
+machtiani config scope use project --copy-global --no-interactive
+machtiani config scope use global --no-interactive
 ```
 
 ## Adding a provider and model together
@@ -116,7 +116,7 @@ mct-agent config scope use global --no-interactive
 model/provider set:
 
 ```text
-mct-agent config add [flags]
+machtiani config add [flags]
 ```
 
 | Flag | Meaning |
@@ -152,9 +152,9 @@ The embedded catalogue supplies setup defaults for OpenAI-compatible providers
 that Machtiani can configure directly:
 
 ```text
-mct-agent config catalog list
-mct-agent config catalog show <provider>
-mct-agent config catalog show <provider> --json
+machtiani config catalog list
+machtiani config catalog show <provider>
+machtiani config catalog show <provider> --json
 ```
 
 The initial catalogue contains `deepseek`, `openai`, and `openrouter`. Each
@@ -190,14 +190,14 @@ line:
 
 ```bash
 export DEEPSEEK_API_KEY=...
-mct-agent config add --preset deepseek --no-interactive
+machtiani config add --preset deepseek --no-interactive
 ```
 
 Preset values are starting points. Explicit flags override the URL, endpoint,
 credential reference, model, alias, reasoning, headers, or query parameters:
 
 ```bash
-mct-agent config add \
+machtiani config add \
   --preset openrouter \
   --model vendor/new-model \
   --alias experimental \
@@ -225,7 +225,7 @@ configuration file:
 
 ```bash
 export OPENAI_API_KEY=sk-...
-mct-agent config add \
+machtiani config add \
   --provider openai \
   --url https://api.openai.com/v1 \
   --api-key-env OPENAI_API_KEY \
@@ -249,12 +249,12 @@ model = "gpt-5"
 ## Provider commands
 
 ```text
-mct-agent config provider list
-mct-agent config provider show <name>
-mct-agent config provider add [<name>] [flags]
-mct-agent config provider set [<name>] [flags]
-mct-agent config provider rename <old> <new> [flags]
-mct-agent config provider remove [<name>] [flags]
+machtiani config provider list
+machtiani config provider show <name>
+machtiani config provider add [<name>] [flags]
+machtiani config provider set [<name>] [flags]
+machtiani config provider rename <old> <new> [flags]
+machtiani config provider remove [<name>] [flags]
 ```
 
 `list` prints provider names and base URLs. `show` displays the URL, endpoint,
@@ -280,18 +280,18 @@ Provider `add` and `set` support:
 Examples:
 
 ```bash
-mct-agent config provider add azure \
+machtiani config provider add azure \
   --url https://example.openai.azure.com \
   --api-key-env AZURE_OPENAI_API_KEY \
   --endpoint /openai/deployments/coder/chat/completions \
   --query api-version=2025-04-01-preview
 
-mct-agent config provider set azure \
+machtiani config provider set azure \
   --header X-Client=machtiani \
   --remove-query old-parameter \
   --reasoning-format reasoning_effort
 
-mct-agent config provider rename azure azure-production
+machtiani config provider rename azure azure-production
 ```
 
 Renaming a provider updates every model that references it. A provider cannot
@@ -301,13 +301,13 @@ first. Provider removal never cascades.
 ## Model commands
 
 ```text
-mct-agent config model list
-mct-agent config model show <alias>
-mct-agent config model add [<alias>] [flags]
-mct-agent config model set [<alias>] [flags]
-mct-agent config model rename <old> <new> [flags]
-mct-agent config model remove [<alias>] [flags]
-mct-agent config model default [<alias>] [flags]
+machtiani config model list
+machtiani config model show <alias>
+machtiani config model add [<alias>] [flags]
+machtiani config model set [<alias>] [flags]
+machtiani config model rename <old> <new> [flags]
+machtiani config model remove [<alias>] [flags]
+machtiani config model default [<alias>] [flags]
 ```
 
 `list` displays each alias, provider, upstream model identifier, and marks the
@@ -334,17 +334,17 @@ likely misspellings but otherwise passes provider-specific values through.
 Examples:
 
 ```bash
-mct-agent config model add reviewer \
+machtiani config model add reviewer \
   --provider openai \
   --model gpt-5 \
   --reasoning xhigh
 
-mct-agent config model set reviewer \
+machtiani config model set reviewer \
   --param-json '{"reasoning":{"effort":"high","budget_tokens":null,"enabled":true},"max_tokens":8192}'
 
-mct-agent config model set reviewer --clear-reasoning
-mct-agent config model default reviewer
-mct-agent config model rename reviewer final-reviewer
+machtiani config model set reviewer --clear-reasoning
+machtiani config model default reviewer
+machtiani config model rename reviewer final-reviewer
 ```
 
 ### Reasoning request compatibility
@@ -386,7 +386,7 @@ referenced model requires selecting a replacement interactively or supplying
 `--replacement <alias>` with `--no-interactive`:
 
 ```bash
-mct-agent config model remove old-model \
+machtiani config model remove old-model \
   --replacement primary \
   --no-interactive
 ```
@@ -397,11 +397,11 @@ remain.
 ## Prompt-cache commands
 
 ```text
-mct-agent config cache show [--model <alias>]
-mct-agent config cache enable [--model <alias>]
-mct-agent config cache disable [--model <alias>]
-mct-agent config cache inherit --model <alias>
-mct-agent config cache set [--model <alias>] [flags]
+machtiani config cache show [--model <alias>]
+machtiani config cache enable [--model <alias>]
+machtiani config cache disable [--model <alias>]
+machtiani config cache inherit --model <alias>
+machtiani config cache set [--model <alias>] [flags]
 ```
 
 Without `--model`, cache commands operate on `[model_defaults]`. With
@@ -431,11 +431,11 @@ Numeric values must be non-negative.
 Examples:
 
 ```bash
-mct-agent config cache enable --no-interactive
-mct-agent config cache disable --model uncached --no-interactive
-mct-agent config cache inherit --model uncached --no-interactive
+machtiani config cache enable --no-interactive
+machtiani config cache disable --model uncached --no-interactive
+machtiani config cache inherit --model uncached --no-interactive
 
-mct-agent config cache set \
+machtiani config cache set \
   --trigger-threshold 8192 \
   --lookback-offset 2 \
   --control-json '{"type":"ephemeral"}' \
@@ -447,7 +447,7 @@ mct-agent config cache set \
 Validate relationships and value types:
 
 ```bash
-mct-agent config check
+machtiani config check
 ```
 
 Validation checks that providers and models are well formed, every model names
@@ -457,9 +457,9 @@ are non-negative.
 Display the effective configuration with source annotations:
 
 ```bash
-mct-agent config show
-mct-agent config show --full
-mct-agent config show --key models.primary
+machtiani config show
+machtiani config show --full
+machtiani config show --key models.primary
 ```
 
 API keys are redacted from inspection output.
@@ -480,18 +480,18 @@ usage or missing noninteractive arguments.
 
 ## Initial setup and compatibility
 
-`mct-agent init` initializes both project identity and configuration. The former
+`machtiani init` initializes both project identity and configuration. The former
 `--provider-url`, `--api-key`, `--model`, `--reasoning`, `--alias`, and `--force`
 init flags have been removed so there is only one setup model. Automation can
-use `mct-agent init --no-interactive` with configuration flags, or manage an
-already selected target with `mct-agent config ... --no-interactive`.
+use `machtiani init --no-interactive` with configuration flags, or manage an
+already selected target with `machtiani config ... --no-interactive`.
 
 Legacy repo-local state remains readable until explicitly migrated. Review and
 execute migration without menus as follows:
 
 ```bash
-mct-agent migrate --dry-run --json
-mct-agent migrate --no-interactive --yes --json
+machtiani migrate --dry-run --json
+machtiani migrate --no-interactive --yes --json
 ```
 
 The command copies through a private staging directory, checksum-verifies every

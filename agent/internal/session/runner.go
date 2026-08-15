@@ -29,7 +29,7 @@ import (
 
 const (
 	backgroundQuestionPrompt = "Give me the background of the project."
-	backgroundFallbackAnswer = "No project documentation has been created yet. Please run `mct-agent sync` to generate initial project documentation."
+	backgroundFallbackAnswer = "No project documentation has been created yet. Please run `machtiani sync` to generate initial project documentation."
 )
 
 var (

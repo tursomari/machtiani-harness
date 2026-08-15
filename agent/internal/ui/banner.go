@@ -127,7 +127,7 @@ func RenderSessionHeader(event SessionStartedEvent, theme Theme, width int) stri
 		writeBannerLabelValue(&b, theme, maxWidth, "context", formatBannerInteger(event.ContextLength)+" tokens")
 	}
 	helpPrefix := "  help "
-	helpValue := truncateCellsWithDots("mct-agent --help", maxWidth-runewidth.StringWidth(helpPrefix))
+	helpValue := truncateCellsWithDots("machtiani --help", maxWidth-runewidth.StringWidth(helpPrefix))
 	write(presentation.StyledLine{
 		presentation.Text("  "),
 		presentation.Bold(presentation.RoleGoodness, "help"),

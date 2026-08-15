@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-MCT_AGENT_BIN="${MCT_AGENT_BIN:-mct-agent}"
+MACHTIANI_BIN="${MACHTIANI_BIN:-machtiani}"
 SMOKE_REPO="${MCT_SUPERVISOR_SMOKE_REPO:-$PWD}"
 
-if [[ "$MCT_AGENT_BIN" != /* ]]; then
-  MCT_AGENT_BIN="$(command -v "$MCT_AGENT_BIN")"
+if [[ "$MACHTIANI_BIN" != /* ]]; then
+  MACHTIANI_BIN="$(command -v "$MACHTIANI_BIN")"
 fi
-if [[ ! -x "$MCT_AGENT_BIN" ]]; then
-  echo "ERROR: command-supervisor smoke binary is not executable: $MCT_AGENT_BIN" >&2
+if [[ ! -x "$MACHTIANI_BIN" ]]; then
+  echo "ERROR: command-supervisor smoke binary is not executable: $MACHTIANI_BIN" >&2
   exit 1
 fi
 if ! git -C "$SMOKE_REPO" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -166,7 +166,7 @@ set +e
   PATH="$blocker_dir:$PATH" \
     MCT_BLOCKER_PID_FILE="$blocker_pid_file" \
     MACHTIANI_CONFIG="$config_file" \
-    timeout 25 "$MCT_AGENT_BIN" shell-agent \
+    timeout 25 "$MACHTIANI_BIN" shell-agent \
       --model supervisor-smoke \
       --prompt "Run go test ./... exactly once and report the result."
 ) >"$stdout_file" 2>"$stderr_file"

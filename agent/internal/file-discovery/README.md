@@ -237,6 +237,6 @@ When the round cap is reached without a valid final block, the agent performs on
 
 ## Scope
 
-This native backend is used by file-discovery during `mct-agent sync`.
+This native backend is used by file-discovery during `machtiani sync`.
 Standalone shell-agent execution is separate, and snippet-discovery and
 deprecated mct-code behavior are unchanged.

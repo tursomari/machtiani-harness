@@ -100,7 +100,7 @@ func TestFormatterSessionConclusionSemanticRoles(t *testing.T) {
 		"\x1b[1;32mResume this session:\x1b[0m",
 		"\x1b[32m────────────────",
 		"\x1b[1;32m$ \x1b[0m",
-		"\x1b[1;33mmct-agent run\x1b[0m",
+		"\x1b[1;33mmachtiani run\x1b[0m",
 	} {
 		if !strings.Contains(output, want) {
 			t.Errorf("expected semantic output %q in %q", want, output)
@@ -130,7 +130,7 @@ func TestFormatterSessionConclusionUsesOneUnifiedBlock(t *testing.T) {
 	if !strings.Contains(output, want) {
 		t.Fatalf("expected answer and continuation in one block, got %q", output)
 	}
-	if !strings.Contains(output, "    $ mct-agent run -p \"<your follow-up prompt>\" --resume agent-test") {
+	if !strings.Contains(output, "    $ machtiani run -p \"<your follow-up prompt>\" --resume agent-test") {
 		t.Fatalf("expected shell-style continuation command, got %q", output)
 	}
 	if strings.Contains(output, "FINAL RESPONSE") || strings.Contains(output, "<next instruction>") {
@@ -179,7 +179,7 @@ func TestFormatterSessionConclusionInterrupted(t *testing.T) {
 	if strings.Contains(output, "Resume this session:") || strings.Contains(output, " -p ") {
 		t.Fatalf("interrupted conclusion used completed command: %q", output)
 	}
-	if !strings.Contains(output, "    $ mct-agent run --resume agent-test") {
+	if !strings.Contains(output, "    $ machtiani run --resume agent-test") {
 		t.Fatalf("expected shell-agent resume command block, got %q", output)
 	}
 }

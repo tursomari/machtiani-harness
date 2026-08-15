@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
-# Host-side runner for the mct-agent smoke test.
+# Host-side runner for the machtiani smoke test.
 #
 # Prerequisites
 #   - Docker
@@ -20,7 +20,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-WORKTREE="/tmp/mct-agent-smoke-context"
+WORKTREE="/tmp/machtiani-smoke-context"
 UPDATE_ONLY=false
 COMMAND_SUPERVISOR_ONLY=false
 
@@ -151,8 +151,8 @@ echo "==> Creating git worktree from HEAD..."
 git worktree add --detach "$WORKTREE" HEAD
 
 # --- Build the Docker image from the worktree ------------------------------
-echo "==> Building Docker image 'mct-agent-smoke'..."
-docker build -f "$WORKTREE/tests/smoke/Dockerfile" -t mct-agent-smoke "$WORKTREE"
+echo "==> Building Docker image 'machtiani-smoke'..."
+docker build -f "$WORKTREE/tests/smoke/Dockerfile" -t machtiani-smoke "$WORKTREE"
 
 # --- Run the smoke test ----------------------------------------------------
 echo "==> Running smoke-test container..."
@@ -172,7 +172,7 @@ docker run --rm \
   -e SMOKE_OPENROUTER_API_KEY -e SMOKE_OPENROUTER_BASE_URL -e SMOKE_OPENROUTER_MODEL \
   -e SMOKE_DEEPINFRA_API_KEY -e SMOKE_DEEPINFRA_BASE_URL -e SMOKE_DEEPINFRA_MODEL \
   -e SMOKE_DEEPSEEK_API_KEY -e SMOKE_DEEPSEEK_BASE_URL -e SMOKE_DEEPSEEK_MODEL \
-  mct-agent-smoke "${container_args[@]}"
+  machtiani-smoke "${container_args[@]}"
 exit_code=$?
 set -e
 

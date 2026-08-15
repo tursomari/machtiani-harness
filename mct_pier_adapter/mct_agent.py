@@ -53,13 +53,13 @@ def artifact_preservation_commands() -> tuple[str, ...]:
         "(git diff --cached > /logs/agent/repo/git-diff-cached.patch 2>/dev/null || true) && "
         "(git log --oneline -n 20 > /logs/agent/repo/git-log.txt 2>/dev/null || true)",
         "mkdir -p /logs/agent/tmp-data && "
-        "(cp -r /tmp/mct-agent /logs/agent/tmp-data/ 2>/dev/null; "
+        "(cp -r /tmp/machtiani /logs/agent/tmp-data/ 2>/dev/null; "
         "cp -r /app/.machtiani/tmp-data /logs/agent/tmp-data/ 2>/dev/null; true)",
     )
 
 
 class MctAgent(BaseInstalledAgent):
-    """Pier agent adapter that runs mct-agent inside a task container.
+    """Pier agent adapter that runs machtiani inside a task container.
 
     Post-run it commits all changes so the Pier verifier can capture
     the model patch via ``git diff base_commit HEAD``.
@@ -67,13 +67,13 @@ class MctAgent(BaseInstalledAgent):
 
     @staticmethod
     def name() -> str:
-        return "mct-agent"
+        return "machtiani"
 
     def install_spec(self) -> AgentInstallSpec:
         return AgentInstallSpec(
-            agent_name="mct-agent",
+            agent_name="machtiani",
             steps=[InstallStep(user="root", run="apt-get update && apt-get install -y ripgrep rsync")],
-            verification_command="mct-agent --help",
+            verification_command="machtiani --help",
         )
 
     def network_allowlist(self) -> NetworkAllowlist:
@@ -111,9 +111,9 @@ class MctAgent(BaseInstalledAgent):
 
     async def setup(self, environment: BaseEnvironment) -> None:
         await super().setup(environment)
-        local_path = os.environ.get("MCT_AGENT_BINARY", "./agent/bin/mct-agent")
-        await environment.upload_file(local_path, "/usr/local/bin/mct-agent")
-        await self.exec_as_root(environment, "chmod +x /usr/local/bin/mct-agent")
+        local_path = os.environ.get("MACHTIANI_BIN", "./agent/bin/machtiani")
+        await environment.upload_file(local_path, "/usr/local/bin/machtiani")
+        await self.exec_as_root(environment, "chmod +x /usr/local/bin/machtiani")
 
         mode = os.environ.get("MCT_MODE", "code-strong-forge")
 
@@ -154,7 +154,7 @@ class MctAgent(BaseInstalledAgent):
         environment: BaseEnvironment,
         context: AgentContext,
     ) -> None:
-        """Run mct-agent on the task, then commit all changes."""
+        """Run machtiani on the task, then commit all changes."""
 
         mode = os.environ.get("MCT_MODE", "code-strong-forge")
 
@@ -185,14 +185,14 @@ class MctAgent(BaseInstalledAgent):
         except NonZeroAgentExitCodeError:
             pass
 
-        # Step 5: Run mct-agent sync with retries.
+        # Step 5: Run machtiani sync with retries.
         import asyncio
         sync_model = os.environ.get("MCT_SYNC_MODEL", "deepseek-v4-pro")
         max_input_tokens = os.environ.get("MCT_MAX_INPUT_TOKENS", "800000")
         sync_log = "/logs/agent/mct-sync.log"
         sync_cmd = (
             f"mkdir -p /logs/agent && "
-            f"(mct-agent sync"
+            f"(machtiani sync"
             f" --model {shlex.quote(sync_model)}"
             f" --max-input-tokens {shlex.quote(max_input_tokens)}"
             f") >> {shlex.quote(sync_log)} 2>&1"
@@ -206,7 +206,7 @@ class MctAgent(BaseInstalledAgent):
                     raise RuntimeError("sync failed after 10 retries")
                 await asyncio.sleep(2 ** i)
 
-        # Step 6: Run mct-agent run.
+        # Step 6: Run machtiani run.
         model = os.environ.get("MCT_MODEL", "deepseek-v4-pro")
         shell_agent_model = os.environ.get("MCT_SHELL_AGENT_MODEL", "deepseek-v4-pro")
 
@@ -216,9 +216,9 @@ class MctAgent(BaseInstalledAgent):
             use_meta = True
         except NonZeroAgentExitCodeError:
             pass
-        binary = "meta-orchestrator" if use_meta else "mct-agent run"
+        binary = "meta-orchestrator" if use_meta else "machtiani run"
         if not use_meta:
-            print("Meta-orchestrator not available; falling back to mct-agent run")
+            print("Meta-orchestrator not available; falling back to machtiani run")
         run_log = "/logs/agent/mct-run.log"
         run_cmd = (
             f"mkdir -p /logs/agent && ({binary}"
@@ -241,7 +241,7 @@ class MctAgent(BaseInstalledAgent):
         try:
             await self.exec_as_agent(
                 environment,
-                'git config user.email agent@machtiani.com && git config user.name mct-agent',
+                'git config user.email agent@machtiani.com && git config user.name machtiani',
             )
         except NonZeroAgentExitCodeError:
             pass

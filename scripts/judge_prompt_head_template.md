@@ -1,12 +1,12 @@
-# Judge Prompt: mct-agent vs Forge — Two-Axis Evaluation
+# Judge Prompt: machtiani vs Forge — Two-Axis Evaluation
 
-You are an expert software engineering judge. Your task is to evaluate two AI coding assistants — **mct-agent** and **Forge** — along two independent axes: **Plan Quality** and **Implementation Quality**. Each axis uses a separate rubric and set of inputs, evaluated against the current state of the repository at HEAD in **{{PROJECT_NAME}}**.
+You are an expert software engineering judge. Your task is to evaluate two AI coding assistants — **machtiani** and **Forge** — along two independent axes: **Plan Quality** and **Implementation Quality**. Each axis uses a separate rubric and set of inputs, evaluated against the current state of the repository at HEAD in **{{PROJECT_NAME}}**.
 
 ## Operating Modes
 
 This evaluation supports two modes:
 
-- **Read-Only Mode:** You evaluate mct-agent's and Forge's plans and implementations by verifying their claims against the provided agent answers, the code diffs each agent produced, and your own worktree (checked out to `{{HEAD_SHA}}`). You assign scores on all axes based on validity against the current repository state and each agent's worktree contents.
+- **Read-Only Mode:** You evaluate machtiani's and Forge's plans and implementations by verifying their claims against the provided agent answers, the code diffs each agent produced, and your own worktree (checked out to `{{HEAD_SHA}}`). You assign scores on all axes based on validity against the current repository state and each agent's worktree contents.
 - **Write Mode:** After completing the same evaluation as read-only mode, you produce your own implementation based on learnings from both agents' outputs. This implementation is an **unscored benchmark** — it demonstrates what an expert judge would produce given the same information, but does not factor into the agent scores.
 
 ## Context
@@ -27,7 +27,7 @@ Judging the planning documents produced by each assistant *before* implementatio
 
 ### Inputs for this axis
 
-- **mct_plan.md** — mct-agent's plan (appended below)
+- **mct_plan.md** — machtiani's plan (appended below)
 - **forge_plan.md** — Forge's plan (appended below)
 - **Repository at HEAD** — the source tree at `{{HEAD_SHA}}`
 
@@ -53,9 +53,9 @@ Judging the actual code changes (patches) produced by each assistant.
 
 ### Inputs for this axis
 
-- **mct_changes.patch** — mct-agent's implementation diff (appended below)
+- **mct_changes.patch** — machtiani's implementation diff (appended below)
 - **forge_changes.patch** — Forge's implementation diff (appended below)
-- **mct-agent Implementation Answer** — mct-agent's implementation narrative (appended below)
+- **machtiani Implementation Answer** — machtiani's implementation narrative (appended below)
 - **Forge Implementation Answer** — Forge's implementation narrative (appended below)
 - **Repository at HEAD** — the source tree at `{{HEAD_SHA}}`
 
@@ -81,7 +81,7 @@ If operating in **read-only mode**, follow steps 1–7. If operating in **write 
 
 1. **Read the plans.** Read both mct_plan.md and forge_plan.md from the appended sections. Understand each assistant's diagnosis, proposed approach, and reasoning.
 
-2. **Read the implementation answers and diffs.** Read both mct-agent's and Forge's implementation answers and their code diffs (mct_changes.patch and forge_changes.patch). Understand what each assistant actually changed and their stated reasoning.
+2. **Read the implementation answers and diffs.** Read both machtiani's and Forge's implementation answers and their code diffs (mct_changes.patch and forge_changes.patch). Understand what each assistant actually changed and their stated reasoning.
 
 3. **Explore the source files in the worktree.** Use `rg`, file reads, and directory exploration to inspect the files referenced in the plans, answers, and patches. Verify claims about:
    - File paths, function names, and line numbers.
@@ -112,7 +112,7 @@ Emit your judgment in **valid Markdown** with the following sections (use exactl
 
 ### Plan Quality
 
-#### mct-agent Plan
+#### machtiani Plan
 
 - **Accuracy (X/10):** ...
 - **Completeness (X/10):** ...
@@ -130,11 +130,11 @@ Emit your judgment in **valid Markdown** with the following sections (use exactl
 
 #### Plan Winner
 
-State the winner and the score delta (e.g., "**mct-agent** wins 27/30 vs 22/30"). If a draw, explain why.
+State the winner and the score delta (e.g., "**machtiani** wins 27/30 vs 22/30"). If a draw, explain why.
 
 ### Implementation Quality
 
-#### mct-agent Implementation
+#### machtiani Implementation
 
 - **Correctness (X/10):** ...
 - **Precision (X/10):** ...
@@ -162,7 +162,7 @@ A 2-4 sentence summary comparing both agents across both axes. Declare an **Over
 
 A bulleted list of specific observations tied to source evidence. Each bullet must reference at least one file path with line numbers using the format `path:line` or `path:line-line`. Example:
 
-- `src/parser.rs:142-148` — mct-agent's plan correctly identified the need for a null check here, but Forge's plan missed it.
+- `src/parser.rs:142-148` — machtiani's plan correctly identified the need for a null check here, but Forge's plan missed it.
 - `lib/handler.go:33` — Forge's patch renames this function unnecessarily, adding churn without benefit.
 
 ### Judge Implementation (write mode only)

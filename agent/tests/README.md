@@ -1,7 +1,7 @@
 # agent/tests/ - Test Infrastructure
 
 This directory contains `run-live.sh` (the live integration test runner for
-`mct-agent`), `ab-live.sh` (a bash parser that translates test output into
+`machtiani`), `ab-live.sh` (a bash parser that translates test output into
 structured TSV), and supporting files for the Docker-based A/B testing workflow
 driven by `scripts/ab-dev.sh` and `scripts/Dockerfile.build`.
 
@@ -9,7 +9,7 @@ driven by `scripts/ab-dev.sh` and `scripts/Dockerfile.build`.
 
 ## run-live.sh
 
-`run-live.sh` is the live integration test runner for `mct-agent`.  It executes
+`run-live.sh` is the live integration test runner for `machtiani`.  It executes
 the agent binary against a series of named test cases and emits PASS/FAIL lines
 on stdout/stderr.  It can be run as a full suite (no arguments) or with one or
 more test names for targeted execution.
@@ -50,23 +50,23 @@ computation.  In Docker, the runtime image sets `ENV REPO_ROOT=/workspace`, so
 the script automatically works inside containers; on a host, the `cd`/`pwd`
 fallback computes the correct path from the script's location.
 
-### MCT_AGENT_BIN env-var-skip pattern
+### MACHTIANI_BIN env-var-skip pattern
 
 The preflight block uses an **env-var-skip** pattern to bypass the `check_bin`
-function entirely when `MCT_AGENT_BIN` is set:
+function entirely when `MACHTIANI_BIN` is set:
 
 ```bash
-if [ -n "${MCT_AGENT_BIN:-}" ]; then
-  echo "Using MCT_AGENT_BIN from environment: $MCT_AGENT_BIN" >&2
+if [ -n "${MACHTIANI_BIN:-}" ]; then
+  echo "Using MACHTIANI_BIN from environment: $MACHTIANI_BIN" >&2
 else
-  check_bin MCT_AGENT_BIN mct-agent "$REPO_ROOT/agent" "--version"
+  check_bin MACHTIANI_BIN machtiani "$REPO_ROOT/agent" "--version"
 fi
 ```
 
 `check_bin` performs commit-metadata validation, dirty-flag comparison, and
 binary-staleness checks that all require a live `.git` directory.  In Docker
 the runtime image omits `.git/` (only the builder stage has it), so setting
-`MCT_AGENT_BIN` in the container is the expected way to make `run-live.sh`
+`MACHTIANI_BIN` in the container is the expected way to make `run-live.sh`
 work there.
 
 ### TEST_* environment variables
@@ -98,7 +98,7 @@ resolution and any `go build` invocations operate from the correct module root.
 
 1. **Define a function** — for happy-path tests, use the `run_happy_case`
    helper; for stub-server tests, use `start_llm_stub_server` /
-   `generate_stub_config` / `stop_llm_stub_server` and invoke `mct-agent`
+   `generate_stub_config` / `stop_llm_stub_server` and invoke `machtiani`
    directly with `MACHTIANI_CONFIG` set.
 
 2. **Register it in the `TESTS` array** — add a `["test_<name>"]="<function>"` entry
@@ -140,7 +140,7 @@ rules (evaluated in order):
 | `PASSED: shell-command-trajectory-live case` | `shell-command-trajectory-live` | PASS |
 | `Failed ... for <case_id>` (trailing word) | `<case_id>` | FAIL |
 | `Failed (rc=N): <case_id>` | `<case_id>` | FAIL |
-| `FAIL: mct-agent shell-agent ...` | `shell-agent-subcommand` | FAIL |
+| `FAIL: machtiani shell-agent ...` | `shell-agent-subcommand` | FAIL |
 | `FAILED (non-fatal): <case_id>` | `<case_id>` | FAIL |
 | `FATAL:` (no `case_id`) | `fatal-preflight` | SKIP |
 
@@ -166,7 +166,7 @@ sanitised source line (truncated to 200 characters) as detail.  Example:
 case_id	status	detail
 enforce-early-commands	PASS	Passed: enforce-early-commands (flag plumbed through end-to-end without regression)
 models-per-component	FAIL	Missing keywords: models-per-component
-fatal-preflight	SKIP	FATAL: mct-agent binary not found
+fatal-preflight	SKIP	FATAL: machtiani binary not found
 ```
 
 ### Known gap: shell-agent subcommand case_id mismatch
@@ -176,7 +176,7 @@ two different `case_id` strings depending on whether the run passed or failed:
 
 - **Pass**: emits `PASS: run_shell_agent_subcommand_live_case` — the parser
   maps this to `case_id = run_shell_agent_subcommand_live_case`.
-- **Fail**: emits `FAIL: mct-agent shell-agent ...` — the parser maps this to
+- **Fail**: emits `FAIL: machtiani shell-agent ...` — the parser maps this to
   `case_id = shell-agent-subcommand`.
 
 This means the control and treatment containers may produce different
@@ -287,7 +287,7 @@ image.
    - Creates a git commit with message `"treatment patch"` so that embedded
      commit metadata (from `-buildvcs=auto`) matches the patched state.
 5. Builds the required benchmark binaries directly into `/build/bin`
-   `mct-agent`, `mct`, `file-discovery`, `snippet-discovery`, and `shell-agent`
+   `machtiani`, `mct`, `file-discovery`, `snippet-discovery`, and `shell-agent`
    into `/build/bin`.
 
 **Stage 2: runtime** (base: `debian:bookworm-slim`)
@@ -308,7 +308,7 @@ image.
 
 - **`.git/` is NOT in the runtime image.**  Only the builder stage has it.
   This means runtime git operations (like those in `check_bin`) will not find
-  a repository.  To work around this, `run-live.sh` uses the `MCT_AGENT_BIN`
+  a repository.  To work around this, `run-live.sh` uses the `MACHTIANI_BIN`
   env-var-skip pattern to bypass `check_bin` entirely when a binary path is
   provided from the environment.
 
@@ -323,7 +323,7 @@ image.
 - **Treatment commit metadata**: because the builder applies the treatment
   patch and commits it as `"treatment patch"`, the Go build embeds commit
   metadata that reflects the patched state.  This is important for `check_bin`
-  commit-mismatch detection and for `mct-agent --version` output.
+  commit-mismatch detection and for `machtiani --version` output.
 
 ### .dockerignore
 

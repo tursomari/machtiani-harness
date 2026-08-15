@@ -144,7 +144,7 @@ OUTPUT_BIN="${OUTPUT_BASE}/bin"
 JOBS_DIR="${OUTPUT_BASE}/jobs"
 SAFE_AGENT_MOUNTS_JSON='[{"type":"bind","source":"${HOST_AGENT_LOGS_PATH}","target":"${ENV_AGENT_LOGS_PATH}"},{"type":"bind","source":"${HOST_ARTIFACTS_PATH}","target":"${ENV_ARTIFACTS_PATH}"}]'
 
-AGENT_BIN="${OUTPUT_BIN}/mct-agent"
+AGENT_BIN="${OUTPUT_BIN}/machtiani"
 META_BIN="${OUTPUT_BIN}/meta-orchestrator"
 FORGE_BIN="${OUTPUT_BIN}/forge"
 
@@ -178,7 +178,7 @@ echo "  Meta-orchestrator: ${META_BIN}"
 echo "  Agent binary:      ${AGENT_BIN}"
 echo ""
 
-export MCT_AGENT_BINARY="${AGENT_BIN}"
+export MACHTIANI_BIN="${AGENT_BIN}"
 export MCT_META_ORCHESTRATOR_BINARY="${META_BIN}"
 export MCT_FORGE_BINARY="${FORGE_BIN}"
 export MCT_MODEL="${MODEL}"
@@ -193,7 +193,7 @@ PRESERVE_PID=$!
 echo "[preserve] Background preservation loop started (PID ${PRESERVE_PID}) -> ${PRESERVE_BASE}"
 
 pier run \
-    --ae "MCT_AGENT_BINARY=${AGENT_BIN}" \
+    --ae "MACHTIANI_BIN=${AGENT_BIN}" \
     --ae "MCT_META_ORCHESTRATOR_BINARY=${META_BIN}" \
     --ae "MCT_FORGE_BINARY=${FORGE_BIN}" \
     --ae "MCT_MODEL=${MODEL}" \

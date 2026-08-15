@@ -257,7 +257,7 @@ mkdir -p "${CONTROL_JOBS}" "${TREATMENT_JOBS}" "${BIN_DIR}"
 # Build step: binaries feed the treatment side only; the control side uses
 # the built-in mini-swe-agent.
 # ----------------------------------------------------------------------------
-AGENT_BIN="${BIN_DIR}/mct-agent"
+AGENT_BIN="${BIN_DIR}/machtiani"
 META_BIN="${BIN_DIR}/meta-orchestrator"
 FORGE_BIN="${BIN_DIR}/forge"
 
@@ -335,12 +335,12 @@ fi
 echo ""
 echo "==== Launching treatment (mct-orchestrator) ===="
 env \
-    MCT_AGENT_BINARY="${AGENT_BIN}" \
+    MACHTIANI_BIN="${AGENT_BIN}" \
     MCT_META_ORCHESTRATOR_BINARY="${META_BIN}" \
     MCT_FORGE_BINARY="${FORGE_BIN}" \
     pier run \
     --agent-import-path mct_pier_adapter.mct_agent:MctAgent \
-    --ae "MCT_AGENT_BINARY=${AGENT_BIN}" \
+    --ae "MACHTIANI_BIN=${AGENT_BIN}" \
     --ae "MCT_META_ORCHESTRATOR_BINARY=${META_BIN}" \
     --ae "MCT_FORGE_BINARY=${FORGE_BIN}" \
     --ae "MCT_MODEL=${MODEL}" \

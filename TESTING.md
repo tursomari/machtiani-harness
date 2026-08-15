@@ -1,11 +1,11 @@
 # Project-Wide Testing Guide
 
-This is the canonical, self-contained guide for every test harness in the `mct-agent` monorepo. Test commands, prerequisites, environment variables, artifacts, and debugging guidance belong here rather than in component-local testing documents.
+This is the canonical, self-contained guide for every test harness in the `machtiani` monorepo. Test commands, prerequisites, environment variables, artifacts, and debugging guidance belong here rather than in component-local testing documents.
 
 ## Test Layout
 
 - Go `*_test.go` files stay beside the packages they exercise.
-- `agent/tests/` owns integration harnesses specific to the `mct-agent` binary and their helpers.
+- `agent/tests/` owns integration harnesses specific to the `machtiani` binary and their helpers.
 - `tests/smoke/` owns the clean-container smoke Dockerfile, host runner, and container assertions.
 - `tests/tui/` owns whole-terminal record/replay regression tooling.
 - `tests/python/` owns Python adapter tests.
@@ -97,7 +97,7 @@ This suite tests protected-artifact staging and preservation commands and verifi
 
 ## Clean-Container Smoke Test
 
-The Docker smoke test builds `mct-agent` in a clean image, exercises the full
+The Docker smoke test builds `machtiani` in a clean image, exercises the full
 script-safe configuration lifecycle, restores a clean provider configuration,
 performs live agent runs, and verifies that session conversation artifacts were
 created. Explicit `TEST_*` values select the primary target. When they are not
@@ -158,12 +158,12 @@ The host runner creates a detached Git worktree at the current committed `HEAD`,
 The container test must complete all of these checks before printing its success message:
 
 1. A clean Git repository with an initial commit is created in `/workspace`.
-2. `mct-agent --version` runs.
+2. `machtiani --version` runs.
 3. `config-crud.sh` inspects the built-in provider catalogue, then creates the
    primary provider/model with the DeepSeek preset and an API-key environment
    reference; the literal live key is never passed as a CLI argument or written
    to TOML.
-4. `mct-agent init --no-interactive` creates a UUID marker/home store, installs
+4. `machtiani init --no-interactive` creates a UUID marker/home store, installs
    canonical modes, selects global config, and remains idempotent without
    replacing existing configuration or runtime sentinels.
 5. A pseudo-terminal wizard run verifies that an existing OpenRouter provider
@@ -181,8 +181,8 @@ The container test must complete all of these checks before printing its success
    separate aliases, rejects discovery's first request with a structured
    context-overflow error, accepts its reduced retry, and verifies that only
    the unambiguous discovery alias learns the lower `context_length`.
-10. `mct-agent sync` initializes the repository's internal README state.
-11. `mct-agent run` completes successfully against the primary live provider.
+10. `machtiani sync` initializes the repository's internal README state.
+11. `machtiani run` completes successfully against the primary live provider.
 12. Any additional discoverable provider targets are added with `config
     provider/model`, validated, and exercised with a low-reasoning live run.
 13. Two deterministic internal READMEs are synced at successive project
@@ -203,7 +203,7 @@ The scripts use `set -euo pipefail`; any failed command must produce a non-zero 
 All integration harnesses default to deterministic stub or dry-run behavior. Export the listed environment variables to invoke live LLM calls.
 
 ### Live Agent Integration Tests (`agent/tests/run-live.sh`)
-End-to-end regression suite for the installed `mct-agent` binary.
+End-to-end regression suite for the installed `machtiani` binary.
 
 ```bash
 export TEST_API_KEY=sk_...
@@ -214,14 +214,14 @@ short="$(git rev-parse --short=12 HEAD)"
 built="$(git show -s --format=%ct HEAD)"
 test_agent="$(mktemp -d)/mct-rg-ls-sed-test-agent"
 nix develop .#default -c bash -c \
-  "cd agent && CGO_ENABLED=0 go build -trimpath -ldflags '-X main.Version=dev-$short -X main.Commit=$rev -X main.BuiltAt=$built -X main.Dirty=clean' -o '$test_agent' ./cmd/mct-agent"
-MCT_AGENT_BIN="$test_agent" \
+  "cd agent && CGO_ENABLED=0 go build -trimpath -ldflags '-X main.Version=dev-$short -X main.Commit=$rev -X main.BuiltAt=$built -X main.Dirty=clean' -o '$test_agent' ./cmd/machtiani"
+MACHTIANI_BIN="$test_agent" \
 MCT_REQUIRE_LIVE=true \
 bash agent/tests/run-live.sh
 ```
 
 - Tests committed `HEAD`; commit intended changes before building the exact revision.
-- `MCT_AGENT_BIN` must resolve to an absolute executable file. The outer harness validates and canonicalizes it before creating its detached worktree, and every setup/test call uses that path.
+- `MACHTIANI_BIN` must resolve to an absolute executable file. The outer harness validates and canonicalizes it before creating its detached worktree, and every setup/test call uses that path.
 - `MCT_REQUIRE_LIVE=true` fails preflight unless complete `TEST_*` or supported fallback credentials are available. A stub or dry-run cannot satisfy this mode.
 - `TEST_*` takes precedence over `OPENAI_*`. When neither complete set is available, the script generates stub credentials, writes a temporary `config.toml`, and forces `--dry-run`.
 - Artifacts land in `test-out-*` directories at the repo root; each case includes stdout, stderr, transcripts, and (for live runs) generated assets.
@@ -236,7 +236,7 @@ The deterministic planted-command case can be targeted independently. It uses
 a local ChatCompletion stub even when live credentials are exported:
 
 ```bash
-MCT_AGENT_BIN="$test_agent" bash agent/tests/run-live.sh command-supervisor-smoke
+MACHTIANI_BIN="$test_agent" bash agent/tests/run-live.sh command-supervisor-smoke
 ```
 
 #### Targeting Cases
@@ -258,7 +258,7 @@ bash agent/tests/run-live.sh no-such-case 2>&1 | head -5
 #### Repo Synchronization and Installed Binary
 
 The harness does not install, profile-link, PATH-resolve, or invoke a host
-command named `mct-agent`. Build committed `HEAD` under a collision-free test
+command named `machtiani`. Build committed `HEAD` under a collision-free test
 name, then pass that absolute path explicitly:
 
 ```bash
@@ -267,12 +267,12 @@ short="$(git rev-parse --short=12 HEAD)"
 built="$(git show -s --format=%ct HEAD)"
 test_agent="$(mktemp -d)/mct-rg-ls-sed-test-agent"
 nix develop .#default -c bash -c \
-  "cd agent && CGO_ENABLED=0 go build -trimpath -ldflags '-X main.Version=dev-$short -X main.Commit=$rev -X main.BuiltAt=$built -X main.Dirty=clean' -o '$test_agent' ./cmd/mct-agent"
-MCT_AGENT_BIN="$test_agent" bash agent/tests/run-live.sh discovery-multiround-budget
+  "cd agent && CGO_ENABLED=0 go build -trimpath -ldflags '-X main.Version=dev-$short -X main.Commit=$rev -X main.BuiltAt=$built -X main.Dirty=clean' -o '$test_agent' ./cmd/machtiani"
+MACHTIANI_BIN="$test_agent" bash agent/tests/run-live.sh discovery-multiround-budget
 ```
 
-This workflow leaves `~/.local/bin/mct-agent` and
-`~/.machtiani/installations/mct-agent/profile` untouched. Installation and
+This workflow leaves `~/.local/bin/machtiani` and
+`~/.machtiani/installations/machtiani/profile` untouched. Installation and
 update behavior belongs only in the disposable clean-container smoke test.
 
 The timeout and context-policy cases include a delayed local endpoint, a
@@ -282,7 +282,7 @@ asserts every request stays at or below its derived cap and observes compacted
 state. Target them directly with:
 
 ```bash
-MCT_AGENT_BIN="$agent_store/bin/mct-agent" bash agent/tests/run-live.sh \
+MACHTIANI_BIN="$agent_store/bin/machtiani" bash agent/tests/run-live.sh \
   discovery-turn-timeout \
   discovery-multiround-budget \
   discovery-context-budget-live
@@ -326,7 +326,7 @@ Use `EXPECT_REPRO=true` only to confirm the historical buggy behavior. `KEEP_REP
 
 ## TUI Record and Replay
 
-Use the record/replay harness when changing terminal output, footer rendering, startup headers, token accounting, final-answer presentation, or anything else where a normal stdout diff misses cursor movement. The harness records one live `mct-agent run`, captures the LLM responses as fixtures, then replays the same prompt against a local replay server.
+Use the record/replay harness when changing terminal output, footer rendering, startup headers, token accounting, final-answer presentation, or anything else where a normal stdout diff misses cursor movement. The harness records one live `machtiani run`, captures the LLM responses as fixtures, then replays the same prompt against a local replay server.
 
 ### Record a Fresh Session
 
@@ -335,11 +335,11 @@ agent path explicitly:
 
 ```bash
 cd agent
-GOCACHE=$(pwd)/.gocache go build -o ../.data/bin/mct-tui-test-agent ./cmd/mct-agent
+GOCACHE=$(pwd)/.gocache go build -o ../.data/bin/mct-tui-test-agent ./cmd/machtiani
 GOCACHE=$(pwd)/.gocache go build -o ../.data/bin/replay-server ./cmd/replay-server
 cd ..
 
-MCT_AGENT_BIN="$PWD/.data/bin/mct-tui-test-agent" \
+MACHTIANI_BIN="$PWD/.data/bin/mct-tui-test-agent" \
   ./tests/tui/record-replay.sh \
   --name planner-shell-agent-cache \
   --prompt-file .data/tui-replay/planner-shell-agent-cache/prompt.txt
@@ -366,7 +366,7 @@ Each run directory contains:
 - `live.llm-fixtures.jsonl` — recorded provider responses used by replay.
 - `replay.config.toml` — sanitized config whose provider URLs point to the local replay server and whose API keys are `dummy`.
 - `manifest.txt` — run directory, binary paths, session ids, fixture count, line counts, trajectory action counts, and final-answer hashes.
-- `mct-agent.version.txt`, `binaries.txt`, `live.exit`, `replay.exit`, and `replay-server.log` — provenance and process diagnostics.
+- `machtiani.version.txt`, `binaries.txt`, `live.exit`, `replay.exit`, and `replay-server.log` — provenance and process diagnostics.
 
 ### What to Check
 
@@ -382,7 +382,7 @@ For TUI-specific checks, inspect targeted substrings instead of line-by-line pla
 Useful checks:
 
 ```bash
-rg -- 'Resume this session:|mct-agent run|tokens|session agent-|turn [0-9]+' "$RUN_DIR/replay.terminal.log"
+rg -- 'Resume this session:|machtiani run|tokens|session agent-|turn [0-9]+' "$RUN_DIR/replay.terminal.log"
 rg '^\[trajectory\] unified stream:|^Session: ' "$RUN_DIR/replay.terminal.log" || true
 rg 'achtiani|\x1b\[6n|\x1b\]11;\?' "$RUN_DIR/replay.terminal.log" || true
 ```
@@ -391,7 +391,7 @@ Expected normal-output behavior:
 
 - no startup `[trajectory] unified stream: ...`
 - no startup `Session: <id>`
-- normal completion output contains the saved final-answer path and concise `mct-agent run -p "..." --resume <session-id>` command; the detailed completion summary is reserved for `--verbose`
+- normal completion output contains the saved final-answer path and concise `machtiani run -p "..." --resume <session-id>` command; the detailed completion summary is reserved for `--verbose`
 - final footer includes elapsed time, token totals, turn, and `session <id>`
 - fresh-session logo appears once when that feature is enabled
 - no unexpected terminal cursor/background queries such as `ESC[6n` or `OSC 11`; theme selection never probes the background
@@ -451,7 +451,7 @@ Run it with `.data/bin/replay-server -fixtures <fixture.jsonl> -port <port>`. Re
 
 ### HEAD-Based Evaluation (run_eval_head.sh)
 
-A separate evaluation pipeline that tests the mct-agent and Forge on arbitrary tasks on the current repository HEAD, without requiring pre-defined ground truth commits. It creates worktrees from HEAD, runs agents in plan and implement phases, and uses a judge to score their plans and implementations against the current repo state. Supports two modes:
+A separate evaluation pipeline that tests the machtiani and Forge on arbitrary tasks on the current repository HEAD, without requiring pre-defined ground truth commits. It creates worktrees from HEAD, runs agents in plan and implement phases, and uses a judge to score their plans and implementations against the current repo state. Supports two modes:
 
 - write (default): The judge also produces its own implementation as an unscored benchmark.
 - read-only: The judge only evaluates and scores the agents.
@@ -482,7 +482,7 @@ Replace <path-to-your-api-key-file> with the path to your API key file. Replace 
 | Flag | Required | Description |
 | --repo | yes | Path to the target git repository |
 | --prompt | yes | Path to a markdown file describing the task |
-| --model | no | Model alias for mct-agent and Forge (default: glm-5-high-deepinfra) |
+| --model | no | Model alias for machtiani and Forge (default: glm-5-high-deepinfra) |
 | --judge-model | no | Separate model alias for the judge agent |
 | --mode | no | write (default) or read-only |
 | --api-key | no | API key in provider:key format (e.g., deepinfra:sk-... ; the provider must match the model's provider in .machtiani/config.toml) |
@@ -505,7 +505,7 @@ All files land under output-dir/:
 
 #### Session Lock Workaround
 
-When running inside an active mct-agent session (e.g., during development), unset the inherited session variables to avoid flock conflicts:
+When running inside an active machtiani session (e.g., during development), unset the inherited session variables to avoid flock conflicts:
 
 ```bash
 env -u MACHTIANI_SESSION_ID -u MACHTIANI_SESSION_TEMP_ROOT \
@@ -539,7 +539,7 @@ The original evaluation pipeline, documented in scripts/run_eval.sh itself. It c
 ## Troubleshooting
 - Unit tests should pass without extra setup; if they fail due to missing cache directories, ensure your shell honors the `GOCACHE` export above.
 - Integration runs that report a missing binary require a valid absolute
-  `MCT_AGENT_BIN`; rebuild committed `HEAD` under a collision-free test name as
+  `MACHTIANI_BIN`; rebuild committed `HEAD` under a collision-free test name as
   shown above and pass that path.
 - Stub mode is active when outputs mention `stub-echo`, `mock`, or `--dry-run`. Verify that the required `OPENAI_*`/`MACHTIANI_CONFIG` values are exported to switch to live mode.
 - The Docker smoke runner tests committed `HEAD`, not working-tree changes. A surprising old result usually means the intended change has not been committed.

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ============================================================================
-# ab-deep-swe.sh — A/B regression test of mct-agent against Deep-SWE benchmark
+# ab-deep-swe.sh — A/B regression test of machtiani against Deep-SWE benchmark
 # ============================================================================
 
 # ----------------------------------------------------------------------------
@@ -113,8 +113,8 @@ mkdir -p "${CONTROL_OUT}" "${TREATMENT_OUT}"
 declare -a WORKTREES=()
 trap 'for w in "${WORKTREES[@]}"; do git -C "${REPO_ROOT}" worktree remove --force "$w" 2>/dev/null || true; done' EXIT
 
-CONTROL_BIN="${CONTROL_OUT}/mct-agent"
-TREATMENT_BIN="${TREATMENT_OUT}/mct-agent"
+CONTROL_BIN="${CONTROL_OUT}/machtiani"
+TREATMENT_BIN="${TREATMENT_OUT}/machtiani"
 CONTROL_META_BIN="${CONTROL_OUT}/meta-orchestrator"
 TREATMENT_META_BIN="${TREATMENT_OUT}/meta-orchestrator"
 CONTROL_FORGE_BIN="${CONTROL_OUT}/forge"
@@ -145,12 +145,12 @@ hydrate_historical_shell_agent() {
 }
 
 # ----------------------------------------------------------------------------
-# Helper: build mct-agent from a given commit into a given output path
+# Helper: build machtiani from a given commit into a given output path
 # ----------------------------------------------------------------------------
 build_agent() {
     local commit="$1" output_path="$2" label="$3" meta_output_path="$4"
 
-    echo "[build:${label}] Building mct-agent at ${commit} -> ${output_path}"
+    echo "[build:${label}] Building machtiani at ${commit} -> ${output_path}"
 
     if ! git -C "${REPO_ROOT}" rev-parse --verify "${commit}" >/dev/null 2>&1; then
         echo "Error: commit ${commit} does not exist in the repository." >&2
@@ -167,8 +167,8 @@ build_agent() {
     # their gitlink. New commits already contain ordinary tracked source.
     hydrate_historical_shell_agent "${commit}" "${worktree_dir}"
 
-    if [[ ! -d "${worktree_dir}/agent/cmd/mct-agent" ]]; then
-        echo "Error: agent/cmd/mct-agent not found at commit ${commit}." >&2
+    if [[ ! -d "${worktree_dir}/agent/cmd/machtiani" ]]; then
+        echo "Error: agent/cmd/machtiani not found at commit ${commit}." >&2
         exit 1
     fi
 
@@ -273,10 +273,10 @@ if [[ "${TREATMENT_ONLY}" != "true" ]]; then
     echo "==== Step 1 — Run control benchmark ===="
 
     export MCT_META_ORCHESTRATOR_BINARY=${CONTROL_META_BIN}
-    export MCT_AGENT_BINARY=${CONTROL_BIN}
+    export MACHTIANI_BIN=${CONTROL_BIN}
     export MCT_FORGE_BINARY=${CONTROL_FORGE_BIN}
     pier run \
-        --ae "MCT_AGENT_BINARY=${CONTROL_BIN}" \
+        --ae "MACHTIANI_BIN=${CONTROL_BIN}" \
         --ae "MCT_META_ORCHESTRATOR_BINARY=${CONTROL_META_BIN}" \
         --ae "MCT_FORGE_BINARY=${CONTROL_FORGE_BIN}" \
         --ae "TEST_API_KEY=${TEST_API_KEY}" \
@@ -303,10 +303,10 @@ echo ""
 echo "==== Step 2 — Run treatment benchmark ===="
 
 export MCT_META_ORCHESTRATOR_BINARY=${TREATMENT_META_BIN}
-export MCT_AGENT_BINARY=${TREATMENT_BIN}
+export MACHTIANI_BIN=${TREATMENT_BIN}
 export MCT_FORGE_BINARY=${TREATMENT_FORGE_BIN}
 pier run \
-    --ae "MCT_AGENT_BINARY=${TREATMENT_BIN}" \
+    --ae "MACHTIANI_BIN=${TREATMENT_BIN}" \
     --ae "MCT_META_ORCHESTRATOR_BINARY=${TREATMENT_META_BIN}" \
     --ae "MCT_FORGE_BINARY=${TREATMENT_FORGE_BIN}" \
     --ae "TEST_API_KEY=${TEST_API_KEY}" \

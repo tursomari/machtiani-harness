@@ -5,23 +5,23 @@ This repository now houses the full Machtiani toolchain inside a single Go modul
 1) `agent/internal/file-discovery` — the helper binary that performs LLM-guided file discovery using a strict RG> protocol.
 2) `agent` — the orchestrator that drives the loop and links against the internal libraries directly.
 
-Most users only need the `mct-agent` binary. The default Nix package contains
+Most users only need the `machtiani` binary. The default Nix package contains
 only that executable; standalone internal tools remain development builds.
 Project state is keyed by a UUID in `~/.machtiani/<uuid>/`; the repository
 contains only the trackable `.machtiani/project.uuid` marker.
 
-## Repo-local `mct-agent` workflow
+## Repo-local `machtiani` workflow
 
-If you are using `mct-agent` inside this repository, start with `docs/mct-agent-runbook.md`.
+If you are using `machtiani` inside this repository, start with `docs/mct-agent-runbook.md`.
 
-- That runbook is the durable repo-specific guide for how to operate `mct-agent` in this repository.
+- That runbook is the durable repo-specific guide for how to operate `machtiani` in this repository.
 - Keep repo-specific operational guidance there; keep this README as the top-level discovery hook.
 
 ## Mode System
 The agent now ships with a mode system that supervises multi-step work. When you enable it, a top-level session applies the mode's PlannerOverlay and task guidance, runs the agent loop with the configured mode presets, and finally emits a summary artifact that records the result.
 
-- **Enable it per run** with `mct-agent run --mode <mode> -p "<your prompt>"`. Modes are loaded only from `~/.machtiani/modes/<mode>/`. `mct-agent init` installs or refreshes the canonical modes shipped by this binary.
-- **What happens during a run:** the terminal prints `[mode]` updates as the mode system works through the plan. For every task the session applies the task's PlannerOverlay and records progress under the UUID project store returned by `mct-agent project show`.
+- **Enable it per run** with `machtiani run --mode <mode> -p "<your prompt>"`. Modes are loaded only from `~/.machtiani/modes/<mode>/`. `machtiani init` installs or refreshes the canonical modes shipped by this binary.
+- **What happens during a run:** the terminal prints `[mode]` updates as the mode system works through the plan. For every task the session applies the task's PlannerOverlay and records progress under the UUID project store returned by `machtiani project show`.
 - **Outputs:** the session transcript collects all turns, and every task contributes its own artifacts under the session directory. The final summary lists the tasks, their status, and where to find the detailed artifacts.
 - **Resume support:** progress is stored in `<project-store>/sessions/<session-id>/mode-plan.json`, so resuming the session continues with the remaining tasks instead of replaying everything from scratch.
 - **Customize instructions:** do not edit a canonical mode in place. Copy it to a new name, then edit the copy: `cp -r ~/.machtiani/modes/code ~/.machtiani/modes/my-code`. Canonical refreshes leave custom mode names untouched.
@@ -66,17 +66,17 @@ export TEST_BASE_URL=https://api.openai.com/v1
 export TEST_MODEL=gpt-4o-mini
 rev="$(git rev-parse HEAD)"
 flake="git+file://$PWD?rev=$rev"
-agent_store="$(nix build --no-link --print-out-paths "$flake#mct-agent")"
-MCT_AGENT_BIN="$agent_store/bin/mct-agent" \
+agent_store="$(nix build --no-link --print-out-paths "$flake#machtiani")"
+MACHTIANI_BIN="$agent_store/bin/machtiani" \
 MCT_REQUIRE_LIVE=true \
 bash agent/tests/run-live.sh
 ```
 
 - Builds committed `HEAD` without a result link or profile mutation, then exercises Issue A/B/C scenarios, discovery timeout/context policies, a `--mode code` regression, and error paths.
-- `MCT_AGENT_BIN` must be an absolute executable path. The harness carries it into its detached worktree and never resolves or invokes a host command named `mct-agent`.
+- `MACHTIANI_BIN` must be an absolute executable path. The harness carries it into its detached worktree and never resolves or invokes a host command named `machtiani`.
 - `MCT_REQUIRE_LIVE=true` rejects stub/dry-run preflight; omit it only when intentionally exercising the non-live fallback mode.
 - Writes `test-out-*` directories containing logs, transcripts, and artifacts in the repo root.
-- If the harness fails with `mct is not synced at current git state ... Run mct-agent sync before proceeding.`, run the repo-local sync command from `docs/mct-agent-runbook.md` and rerun the harness.
+- If the harness fails with `mct is not synced at current git state ... Run machtiani sync before proceeding.`, run the repo-local sync command from `docs/mct-agent-runbook.md` and rerun the harness.
 - When `TEST_*` and `OPENAI_*` are both unset the script injects stub credentials and forces `--dry-run`.
 
 See `TESTING.md` for the complete testing guide, including prerequisites, commands, environment variables, artifacts, and debugging workflows for every harness.
@@ -85,15 +85,15 @@ See `TESTING.md` for the complete testing guide, including prerequisites, comman
 
 Use two distinct command names when testing development branches:
 
-- `mct-agent` is the managed installation. Its built-in updater follows the
+- `machtiani` is the managed installation. Its built-in updater follows the
   remote default branch.
-- `mct-agent-dev` is a development build from a checkout you advance and
-  rebuild manually. It does not replace or update `mct-agent`.
+- `machtiani-dev` is a development build from a checkout you advance and
+  rebuild manually. It does not replace or update `machtiani`.
 
 Both commands use the same Machtiani configuration and project data under
 `~/.machtiani`; only their executable installation and update paths differ.
 
-### Managed installation: `mct-agent`
+### Managed installation: `machtiani`
 
 Nix 2.24 or newer with flakes enabled is required on NixOS, macOS, and other
 Linux distributions. Install from a clean clone whose `origin` identifies the
@@ -104,23 +104,23 @@ git clone <repository-url> ~/src/mct-bootstrap
 cd ~/src/mct-bootstrap
 nix run '.#install'
 hash -r
-mct-agent --version
-mct-agent update --check
+machtiani --version
+machtiani update --check
 ```
 
 In Zsh, `rehash` can be used instead of `hash -r`. Quoting `'.#install'`
 prevents Zsh from treating the flake selector as a glob.
 
-In a terminal, the installer offers the default `~/.local/bin/mct-agent`, up
+In a terminal, the installer offers the default `~/.local/bin/machtiani`, up
 to two common existing binary locations, and a custom prefix. Press Enter to
 accept the default. Passing `--prefix <dir>` skips the prompt and installs the
-binary at `<dir>/bin/mct-agent`; automation can pass `--no-interactive` to use
+binary at `<dir>/bin/machtiani`; automation can pass `--no-interactive` to use
 the default without prompting.
 
 The installer builds the exact remote default-branch commit through the locked
 flake, activates it in the dedicated profile at
-`~/.machtiani/installations/mct-agent/profile`, and exposes
-`~/.local/bin/mct-agent`. Use `--prefix` to choose another stable binary
+`~/.machtiani/installations/machtiani/profile`, and exposes
+`~/.local/bin/machtiani`. Use `--prefix` to choose another stable binary
 prefix. Existing configuration, update policy, projects, sessions, and
 artifacts are preserved by an explicit reinstall; installations from the
 earlier receipt format must be reinstalled once.
@@ -129,15 +129,15 @@ When the remote default branch advances, check and install the exact new
 commit with:
 
 ```bash
-mct-agent update --check
-mct-agent update
-mct-agent --version
+machtiani update --check
+machtiani update
+machtiani --version
 ```
 
-Do not rebuild the managed profile manually. `mct-agent update` fetches,
+Do not rebuild the managed profile manually. `machtiani update` fetches,
 validates, activates, and records the new default-branch commit.
 
-### Development installation: `mct-agent-dev`
+### Development installation: `machtiani-dev`
 
 Clone the branch to test. This example uses the `install` branch, but the same
 workflow works for any development branch:
@@ -146,23 +146,23 @@ workflow works for any development branch:
 git clone --branch install --single-branch <repository-url> ~/src/mct-bootstrap
 cd ~/src/mct-bootstrap
 
-dev_profile="$HOME/.machtiani/installations/mct-agent/dev-profile"
-nix build --profile "$dev_profile" '.#mct-agent'
+dev_profile="$HOME/.machtiani/installations/machtiani/dev-profile"
+nix build --profile "$dev_profile" '.#machtiani'
 
 mkdir -p "$HOME/.local/bin"
-cat >"$HOME/.local/bin/mct-agent-dev" <<'EOF'
+cat >"$HOME/.local/bin/machtiani-dev" <<'EOF'
 #!/usr/bin/env sh
 export MCT_AGENT_UPDATE_REEXEC=1
-exec "$HOME/.machtiani/installations/mct-agent/dev-profile/bin/mct-agent" "$@"
+exec "$HOME/.machtiani/installations/machtiani/dev-profile/bin/machtiani" "$@"
 EOF
-chmod +x "$HOME/.local/bin/mct-agent-dev"
+chmod +x "$HOME/.local/bin/machtiani-dev"
 
 hash -r
-mct-agent-dev --version
+machtiani-dev --version
 ```
 
 The wrapper disables automatic managed-update checks for development
-invocations. It does not change `mct-agent` or its managed profile. Ensure
+invocations. It does not change `machtiani` or its managed profile. Ensure
 `~/.local/bin` is on `PATH`; Zsh users may run `rehash` after creating the
 wrapper.
 
@@ -172,36 +172,36 @@ When the development branch advances, pull it and rebuild the same profile:
 cd ~/src/mct-bootstrap
 git pull --ff-only origin install
 
-dev_profile="$HOME/.machtiani/installations/mct-agent/dev-profile"
-nix build --profile "$dev_profile" '.#mct-agent'
-mct-agent-dev --version
+dev_profile="$HOME/.machtiani/installations/machtiani/dev-profile"
+nix build --profile "$dev_profile" '.#machtiani'
+machtiani-dev --version
 ```
 
 Use the commands independently:
 
 ```bash
-mct-agent-dev run -p "Test the development build"
-mct-agent run -p "Use the managed build"
+machtiani-dev run -p "Test the development build"
+machtiani run -p "Use the managed build"
 ```
 
-Do not run `mct-agent-dev update`; rebuild it with `nix build --profile`.
-Reserve `mct-agent update` for the managed installation.
+Do not run `machtiani-dev update`; rebuild it with `nix build --profile`.
+Reserve `machtiani update` for the managed installation.
 
 Expanded commands:
 
 ```bash
-nix build '.#mct-agent'
-./result/bin/mct-agent install --source "$PWD" --verbose
-mct-agent update --check
-mct-agent update --check --json
-mct-agent update --yes --no-interactive --verbose
+nix build '.#machtiani'
+./result/bin/machtiani install --source "$PWD" --verbose
+machtiani update --check
+machtiani update --check --json
+machtiani update --yes --no-interactive --verbose
 ```
 
 Updates fetch, build, and validate an exact commit before switching the
 dedicated profile. A failed build restores the prior profile and source. The
 profile retains at most the current and previous generations; the updater never
 runs global garbage collection. Configure automatic behavior in
-`~/.machtiani/installations/mct-agent/update.toml` with `policy = "prompt"`
+`~/.machtiani/installations/machtiani/update.toml` with `policy = "prompt"`
 (the default), `"auto"`, `"notify"`, or `"off"`. Update notices use stderr;
 JSON, non-interactive, redirected, help, and version invocations never prompt.
 
@@ -222,7 +222,7 @@ Skyvern workspace because its environment, database, and logs make it dirty.
 From the project you want to use, initialize its identity, home store, canonical modes, and configuration:
 
 ```
-mct-agent init
+machtiani init
 ```
 
 By default, init explains that global configuration shares providers and models
@@ -235,7 +235,7 @@ README state, and scratch data remain outside the repository.
 The fully non-interactive equivalent is:
 
 ```bash
-mct-agent init --no-interactive --config-scope global
+machtiani init --no-interactive --config-scope global
 ```
 
 Configuration flags such as `--preset`, `--provider`, `--url`, `--model`, and
@@ -244,11 +244,11 @@ not yet exist. Re-running init keeps the same UUID and never replaces an
 existing config. Inspect the resolved paths at any time:
 
 ```bash
-mct-agent project show
-mct-agent project show --json
+machtiani project show
+machtiani project show --json
 ```
 
-Before starting an agent session at a new project commit, run `mct-agent sync`.
+Before starting an agent session at a new project commit, run `machtiani sync`.
 On an interactive terminal, sync keeps its existing success message and shows
 the same two-line elapsed-time and token footer as `run`, with the actual
 `discovery` and `answer` models used by the operation. Redirected output remains
@@ -257,7 +257,7 @@ script-safe and contains only the ordinary success or error message.
 Use the configuration manager for follow-up changes:
 
 ```
-mct-agent config
+machtiani config
 ```
 
 The manager safely adds or edits providers and models, selects the default
@@ -275,11 +275,11 @@ credential environment variable, default model, alias, and cache compatibility:
 
 ```
 export DEEPSEEK_API_KEY=...
-mct-agent config add --preset deepseek --no-interactive
+machtiani config add --preset deepseek --no-interactive
 ```
 
-Inspect the available values with `mct-agent config catalog list` and
-`mct-agent config catalog show deepseek`. Raw flags remain available for custom
+Inspect the available values with `machtiani config catalog list` and
+`machtiani config catalog show deepseek`. Raw flags remain available for custom
 providers and as preset overrides:
 
 OpenRouter's preset also offers **Search current model catalogue** in the
@@ -294,7 +294,7 @@ Non-interactive setup remains deterministic and uses the preset's documented
 default unless `--model` overrides it.
 
 ```
-mct-agent config add \
+machtiani config add \
   --provider example \
   --url https://api.example.com/v1 \
   --api-key-env EXAMPLE_API_KEY \
@@ -310,15 +310,15 @@ support explicit cache markers. Omit `--reasoning` to use the provider default.
 Manage resources with typed subcommands:
 
 ```
-mct-agent config provider list
-mct-agent config catalog list
-mct-agent config provider set example --url https://api.example.com/v1
-mct-agent config model add reviewer --provider example --model review-model
-mct-agent config model set reviewer --reasoning xhigh
-mct-agent config model default reviewer
-mct-agent config cache disable --model reviewer
-mct-agent config show
-mct-agent config check
+machtiani config provider list
+machtiani config catalog list
+machtiani config provider set example --url https://api.example.com/v1
+machtiani config model add reviewer --provider example --model review-model
+machtiani config model set reviewer --reasoning xhigh
+machtiani config model default reviewer
+machtiani config cache disable --model reviewer
+machtiani config show
+machtiani config check
 ```
 
 Mutations are interactive by default, even when flags prefill their values. Add
@@ -339,10 +339,10 @@ provider, model, cache, path-selection, interactive, and scripting command.
 The resource command groups are:
 
 ```text
-mct-agent config provider <list|show|add|set|rename|remove>
-mct-agent config model <list|show|add|set|rename|remove|default>
-mct-agent config cache <show|enable|disable|inherit|set>
-mct-agent config catalog <list|show>
+machtiani config provider <list|show|add|set|rename|remove>
+machtiani config model <list|show|add|set|rename|remove|default>
+machtiani config cache <show|enable|disable|inherit|set>
+machtiani config catalog <list|show>
 ```
 
 Provider `set` supports URL, API-key, endpoint, header, query, and reasoning
@@ -369,16 +369,16 @@ All binaries read a unified TOML configuration. Resolution order is:
 Switch scopes explicitly and without menus:
 
 ```bash
-mct-agent config scope show
-mct-agent config scope use project --copy-global --no-interactive
-mct-agent config scope use global --no-interactive
+machtiani config scope show
+machtiani config scope use project --copy-global --no-interactive
+machtiani config scope use global --no-interactive
 ```
 
 Migrate a legacy repo-local state tree only after reviewing the plan:
 
 ```bash
-mct-agent migrate --dry-run
-mct-agent migrate --no-interactive --yes
+machtiani migrate --dry-run
+machtiani migrate --no-interactive --yes
 ```
 
 Migration copies and checksum-verifies runtime state in the UUID home store
@@ -431,17 +431,17 @@ a minimal starting point, or
 [`docs/examples/config.comprehensive.toml`](docs/examples/config.comprehensive.toml)
 for a reference covering every section and field.
 
-Keys inside `[planner]`, `[shell-agent]`, `[providers]`, `[models]`, and `[environment]` are shared across Machtiani binaries. Omit `providers.<name>.api_key` to use the provider-derived environment variable, or set it to an exact `${NAME}` placeholder. When you need an alternate model temporarily, pass `--shell-agent-model <alias>` to `mct-agent run --shell-agent` or to the standalone `shell-agent` binary.
+Keys inside `[planner]`, `[shell-agent]`, `[providers]`, `[models]`, and `[environment]` are shared across Machtiani binaries. Omit `providers.<name>.api_key` to use the provider-derived environment variable, or set it to an exact `${NAME}` placeholder. When you need an alternate model temporarily, pass `--shell-agent-model <alias>` to `machtiani run --shell-agent` or to the standalone `shell-agent` binary.
 
-Shell commands start in the directory where `mct-agent` is launched. The old
+Shell commands start in the directory where `machtiani` is launched. The old
 `environment.cwd` key has been removed; delete it from existing configuration
 files before running this version.
 
-Configuration is validated automatically before `mct-agent run` and `mct-agent sync`. Use `mct-agent config check` for an explicit preflight or CI check; it audits every configured model and requires credentials for every referenced provider to resolve from the current environment or configuration file. Unknown keys, wrong types, invalid references, and unknown inline model request parameters are rejected. Put ordinary request parameters under `[models.<alias>.params]`; use the inline `params_json` string when an exact JSON shape or `null` is required. Compatible reasoning shapes are negotiated only after a reasoning-specific HTTP 400 and remembered for the current process without rewriting configuration. See the [reasoning compatibility details](docs/configuration.md#reasoning-request-compatibility).
+Configuration is validated automatically before `machtiani run` and `machtiani sync`. Use `machtiani config check` for an explicit preflight or CI check; it audits every configured model and requires credentials for every referenced provider to resolve from the current environment or configuration file. Unknown keys, wrong types, invalid references, and unknown inline model request parameters are rejected. Put ordinary request parameters under `[models.<alias>.params]`; use the inline `params_json` string when an exact JSON shape or `null` is required. Compatible reasoning shapes are negotiated only after a reasoning-specific HTTP 400 and remembered for the current process without rewriting configuration. See the [reasoning compatibility details](docs/configuration.md#reasoning-request-compatibility).
 
 ### Prompt Caching
 
-New configurations created by `mct-agent init` enable prompt caching through
+New configurations created by `machtiani init` enable prompt caching through
 inheritable model defaults:
 
 ```toml
@@ -520,7 +520,7 @@ Shell command timeouts remain controlled separately by `[environment].command_ti
 
 ### Terminal Theme
 
-Human-facing `mct-agent run` output, interactive setup/configuration menus, and
+Human-facing `machtiani run` output, interactive setup/configuration menus, and
 Markdown rendered by the standalone `mct` command share a semantic theme.
 Configure it globally:
 
@@ -547,7 +547,7 @@ errors. Verbose diagnostic lines and machine-oriented subcommands remain plain.
 
 ## Verify Installation
 ```
-mct-agent --version
+machtiani --version
 ```
 
 If you also installed the peripherals, confirm each binary resolves on PATH:
@@ -558,9 +558,9 @@ file-discovery -version
 ```
 
 ## Usage
-Basic `mct-agent` run (drives the embedded discovery/planning loop and finalizes):
+Basic `machtiani` run (drives the embedded discovery/planning loop and finalizes):
 ```
-mct-agent run -p "Explain the architecture and identify main components" --verbose
+machtiani run -p "Explain the architecture and identify main components" --verbose
 ```
 
 Useful flags (agent):
@@ -570,7 +570,7 @@ Useful flags (agent):
 - `-x`, `--exec`: one-shot mode; print only raw final-answer markdown to stdout, while warnings and errors remain on stderr. It does not change session persistence, transcript/final-answer writes, exit codes, or execution behavior.
 - `--focused`: display only the banner, conclusion, warnings, and errors. This is a display tier, not one-shot mode.
 - `--resume string`, `-r string`: Resume a previous session by ID. When specified, the agent loads the prior transcript and goal, then appends any new instruction to the goal. If omitted, a new session ID is auto-generated.
-- `--session-id string`: Deprecated alias for `--resume`. It remains available during the deprecation window, but new user-facing commands should use `mct-agent run -p "<your follow-up prompt>" --resume <session-id>` (or `-r`).
+- `--session-id string`: Deprecated alias for `--resume`. It remains available during the deprecation window, but new user-facing commands should use `machtiani run -p "<your follow-up prompt>" --resume <session-id>` (or `-r`).
 - `--api-key provider:key`: provider-specific API key override for this run (repeatable; beats config/env).
 - `--openai-api-key string`: API key for OpenAI‑compatible endpoint.
 - `--openai-base-url string`: Base URL for OpenAI‑compatible endpoint.
@@ -586,7 +586,7 @@ Useful flags (agent):
 To mix providers in a single invocation, repeat `--api-key` once per provider referenced by your model aliases:
 
 ```
-mct-agent run -p "triage regression" \
+machtiani run -p "triage regression" \
   --orch-model gpt-5-nano \
   --file-discovery-model haiku \
   --api-key openai:sk-openai-xxx \
@@ -595,7 +595,7 @@ mct-agent run -p "triage regression" \
 
 ### Resuming Conversations
 
-Sessions are resumable by session ID. If your process is interrupted (Ctrl+C) or you would like to append instructions to an ongoing task, use `mct-agent run` with a session flag:
+Sessions are resumable by session ID. If your process is interrupted (Ctrl+C) or you would like to append instructions to an ongoing task, use `machtiani run` with a session flag:
 
 The examples below use the initialized project store:
 
@@ -605,16 +605,16 @@ PROJECT_STORE="$HOME/.machtiani/$(cat .machtiani/project.uuid)"
 
 ```bash
 # Start a new session (auto-assigned ID)
-mct-agent run -p "Fix all lint issues" --verbose
+machtiani run -p "Fix all lint issues" --verbose
 # Output includes: Session ID: <session-id>
 
 # Later, resume the same session, optionally with new instructions
-mct-agent run -p "<your follow-up prompt>" --resume <session-id>
+machtiani run -p "<your follow-up prompt>" --resume <session-id>
 ```
 
-`mct-agent run --resume` always requires an explicit session ID. It never guesses or
-auto-resumes the most recent session; use `mct-agent session list` to find the
-ID you want. For compatibility, `mct-agent run --resume=<session-id>` and `-r <session-id>` are
+`machtiani run --resume` always requires an explicit session ID. It never guesses or
+auto-resumes the most recent session; use `machtiani session list` to find the
+ID you want. For compatibility, `machtiani run --resume=<session-id>` and `-r <session-id>` are
 equivalent. The older `--session-id` spelling is deprecated but not removed.
 
 Normal completion output shows the saved final-answer path followed by the
@@ -634,28 +634,28 @@ Session state is stored in `$PROJECT_STORE/sessions/<session-id>/session-state.j
 
 List all sessions:
 ```bash
-mct-agent session list
+machtiani session list
 ```
 
 Show details for a specific session:
 ```bash
-mct-agent session show <session-id>
+machtiani session show <session-id>
 ```
 
 Fork a session without duplicating disposable full-input logs or deprecated
 shell-agent state files:
 
 ```bash
-mct-agent session fork <session-id>
+machtiani session fork <session-id>
 ```
 
 Inspect or remove disposable data from every inactive session, or from one
 specific session:
 
 ```bash
-mct-agent session prune --dry-run
-mct-agent session prune --no-interactive --yes
-mct-agent session prune <session-id> --dry-run
+machtiani session prune --dry-run
+machtiani session prune --no-interactive --yes
+machtiani session prune <session-id> --dry-run
 ```
 
 Pruning removes full LLM input logs, deprecated shell-agent `state.json`
@@ -664,13 +664,13 @@ outputs, `trajectory/agent.jsonl`, and shell-agent `trajectory.json` checkpoints
 
 Both commands support `--json` for machine-readable output:
 ```bash
-mct-agent session list --json
-mct-agent session show <session-id> --json
+machtiani session list --json
+machtiani session show <session-id> --json
 ```
 
 ### Graceful Interruption and Auto-Save Mechanism
 
-When `mct-agent` receives `SIGINT` (Ctrl+C) or `SIGTERM`, it:
+When `machtiani` receives `SIGINT` (Ctrl+C) or `SIGTERM`, it:
 - Gracefully terminates the current operation
 - Saves session state to `session-state.json` immediately
 - If interrupted shell-agent work has a resumable checkpoint, prints the current resume conclusion:
@@ -678,7 +678,7 @@ When `mct-agent` receives `SIGINT` (Ctrl+C) or `SIGTERM`, it:
   SHELL-AGENT INTERRUPTED
   Shell-agent work is resumable.
   Resume the interrupted shell-agent work:
-    $ mct-agent run -p "<your follow-up prompt>" --resume <session-id>
+    $ machtiani run -p "<your follow-up prompt>" --resume <session-id>
   ```
 
 The older `=== SESSION INTERRUPTED ===` banner is historical and is no longer
@@ -749,7 +749,7 @@ When investigating failures, treat `$PROJECT_STORE/tmp/<session-id>/session.lock
 
 ## Internal Tools (Development/Debugging Only)
 
-These tools are used internally by `mct-agent` and are exposed for development or debugging purposes. Most users should use `mct-agent` directly.
+These tools are used internally by `mct-agent` and are exposed for development or debugging purposes. Most users should use `machtiani` directly.
 
 Developer peripherals are not part of the default Nix installation. If you build `mct` directly from the source tree, example flows are:
 
@@ -823,9 +823,9 @@ For Deep-SWE bench execution, monitoring commands, score summaries, reward locat
 ## Uninstall
 Remove the installed binaries (adjust paths to your environment):
 ```
-rm -f ~/.local/bin/mct-agent ~/.local/bin/mct ~/.local/bin/file-discovery ~/.local/bin/shell-agent
+rm -f ~/.local/bin/machtiani ~/.local/bin/mct ~/.local/bin/file-discovery ~/.local/bin/shell-agent
 ```
 
-Remove `~/.machtiani/installations/mct-agent/` as well to discard the managed
+Remove `~/.machtiani/installations/machtiani/` as well to discard the managed
 source clone and updater state. Project UUID stores and model configuration are
 independent and are not removed by this step.

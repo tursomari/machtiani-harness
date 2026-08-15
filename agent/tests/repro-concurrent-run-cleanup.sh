@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Reproduces and verifies the concurrent startup cleanup bug where a second
-# `mct-agent run` could remove the first session's live `workspace-*` tree.
+# `machtiani run` could remove the first session's live `workspace-*` tree.
 #
 # Modes:
 # - EXPECT_REPRO=true: succeed only if the old bug is reproduced.
@@ -25,8 +25,8 @@ case "$EXPECT_REPRO" in
     ;;
 esac
 
-if ! command -v mct-agent >/dev/null 2>&1; then
-  echo "mct-agent not found on PATH" >&2
+if ! command -v machtiani >/dev/null 2>&1; then
+  echo "machtiani not found on PATH" >&2
   exit 1
 fi
 
@@ -175,7 +175,7 @@ launch_run() {
     trap - EXIT
     cd "$REPO_ROOT"
     MACHTIANI_CONFIG="$CONFIG_FILE" \
-      timeout 180 mct-agent run \
+      timeout 180 machtiani run \
       --max-turns 1 \
       --turn-timeout 120 \
       --persist-tmp-data \
@@ -213,7 +213,7 @@ wait_for_dir() {
   return 1
 }
 
-launch_run a 'What is the main purpose of the mct-agent binary?'
+launch_run a 'What is the main purpose of the machtiani binary?'
 RUN_A_PID="$LAST_PID"
 SESSION_A="$(wait_for_session_id "$WORK_DIR/a.stderr")"
 WORKSPACE_A="$REPO_ROOT/.machtiani/tmp/workspace-${SESSION_A}"
@@ -231,7 +231,7 @@ if ! wait_for_dir "$(dirname "$LOCK_A")"; then
   exit 1
 fi
 
-launch_run b 'Describe the full multi-turn flow in mct-agent.'
+launch_run b 'Describe the full multi-turn flow in machtiani.'
 RUN_B_PID="$LAST_PID"
 SESSION_B="$(wait_for_session_id "$WORK_DIR/b.stderr")"
 

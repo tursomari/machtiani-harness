@@ -158,6 +158,6 @@ func reasoningFailureGuidance(model ResolvedModel, effort string, attempts map[s
 	if alias == "" {
 		alias = strings.TrimSpace(model.Model)
 	}
-	example := fmt.Sprintf(`mct-agent config model set %s --clear-reasoning --param-json '{"reasoning":{"effort":%q,"budget_tokens":null,"enabled":true}}' --no-interactive`, alias, effort)
-	return fmt.Errorf("provider rejected compatible reasoning request shapes (%s)\nTo configure provider-specific parameters, run:\n  %s\nOr use: mct-agent config -> Manage models -> Additional request parameters", strings.Join(parts, "; "), example)
+	example := fmt.Sprintf(`machtiani config model set %s --clear-reasoning --param-json '{"reasoning":{"effort":%q,"budget_tokens":null,"enabled":true}}' --no-interactive`, alias, effort)
+	return fmt.Errorf("provider rejected compatible reasoning request shapes (%s)\nTo configure provider-specific parameters, run:\n  %s\nOr use: machtiani config -> Manage models -> Additional request parameters", strings.Join(parts, "; "), example)
 }

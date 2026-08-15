@@ -1,1 +1,1 @@
-# Pier agent adapter package for mct-agent
+# Pier agent adapter package for machtiani

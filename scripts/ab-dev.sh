@@ -57,7 +57,7 @@ TREATMENT_OUT="$OUTPUT_BASE/treatment"
 DEFAULT_COMMAND='
 set -euo pipefail
 echo "=== Built binaries ==="
-for bin in mct-agent mct file-discovery snippet-discovery shell-agent; do
+for bin in machtiani mct file-discovery snippet-discovery shell-agent; do
     if command -v "$bin" &>/dev/null; then
         echo "--- $bin ---"
         "$bin" --version 2>&1 || "$bin" --help 2>&1 | head -5 || echo "(no version/help output)"
@@ -133,8 +133,8 @@ if [[ "$ENV_EXPLICIT" == false ]]; then
     done < <(compgen -v TEST_)
 fi
 
-# Always forward MCT_AGENT_BIN so run-live.sh skips check_bin in Docker
-EXTRA_ENV+=("MCT_AGENT_BIN=/usr/local/bin/mct-agent")
+# Always forward MACHTIANI_BIN so run-live.sh skips check_bin in Docker
+EXTRA_ENV+=("MACHTIANI_BIN=/usr/local/bin/machtiani")
 
 # ----------------------------------------------------------------------------
 # Resolve the patch file

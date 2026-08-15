@@ -1,6 +1,6 @@
-# Judge Prompt: mct-agent vs Forge — Two-Axis Evaluation
+# Judge Prompt: machtiani vs Forge — Two-Axis Evaluation
 
-You are an expert software engineering judge. Your task is to evaluate two AI coding assistants — **mct-agent** and **Forge** — along two independent axes: **Plan Quality** and **Implementation Quality**. Each axis uses a separate rubric and set of inputs, scored against a known ground-truth fix for a resolved software issue in **{{PROJECT_NAME}}**.
+You are an expert software engineering judge. Your task is to evaluate two AI coding assistants — **machtiani** and **Forge** — along two independent axes: **Plan Quality** and **Implementation Quality**. Each axis uses a separate rubric and set of inputs, scored against a known ground-truth fix for a resolved software issue in **{{PROJECT_NAME}}**.
 
 ## Context
 
@@ -21,7 +21,7 @@ Judging the planning documents produced by each assistant *before* implementatio
 
 ### Inputs for this axis
 
-- **mct_plan.md** — mct-agent's plan (appended below)
+- **mct_plan.md** — machtiani's plan (appended below)
 - **forge_plan.md** — Forge's plan (appended below)
 - **Ground Truth Diff** — the actual merged fix (appended below)
 - **Ground Truth Worktree** — the corrected source tree at `{{GROUND_TRUTH_COMMIT}}`
@@ -48,7 +48,7 @@ Judging the actual code changes (patches) produced by each assistant.
 
 ### Inputs for this axis
 
-- **mct_changes.patch** — mct-agent's implementation diff (appended below)
+- **mct_changes.patch** — machtiani's implementation diff (appended below)
 - **forge_changes.patch** — Forge's implementation diff (appended below)
 - **Ground Truth Diff** — the actual merged fix (appended below)
 
@@ -93,7 +93,7 @@ Emit your judgment in **valid Markdown** with the following sections (use exactl
 
 ### Plan Quality
 
-#### mct-agent Plan
+#### machtiani Plan
 
 - **Accuracy (X/10):** ...
 - **Completeness (X/10):** ...
@@ -111,11 +111,11 @@ Emit your judgment in **valid Markdown** with the following sections (use exactl
 
 #### Plan Winner
 
-State the winner and the score delta (e.g., "**mct-agent** wins 27/30 vs 22/30"). If a draw, explain why.
+State the winner and the score delta (e.g., "**machtiani** wins 27/30 vs 22/30"). If a draw, explain why.
 
 ### Implementation Quality
 
-#### mct-agent Implementation
+#### machtiani Implementation
 
 - **Correctness (X/10):** ...
 - **Precision (X/10):** ...
@@ -143,7 +143,7 @@ A 2-4 sentence summary comparing both agents across both axes. Declare an **Over
 
 A bulleted list of specific observations tied to source evidence. Each bullet must reference at least one file path with line numbers using the format `path:line` or `path:line-line`. Example:
 
-- `src/parser.rs:142-148` — The ground-truth fix adds a null check here. mct-agent's plan correctly identified this, but Forge's plan missed it.
+- `src/parser.rs:142-148` — The ground-truth fix adds a null check here. machtiani's plan correctly identified this, but Forge's plan missed it.
 - `lib/handler.go:33` — Forge's patch renames this function, but the ground truth does not rename it.
 
 ---

@@ -56,7 +56,7 @@ RUN if [ -n "${CHANGE_PATCH_B64}" ]; then \
 # Build internal benchmark/development binaries directly. User installation is
 # Nix-managed and does not use this image.
 RUN mkdir -p /build/bin && cd agent && \
-    go build -buildvcs=false -o /build/bin/mct-agent ./cmd/mct-agent && \
+    go build -buildvcs=false -o /build/bin/machtiani ./cmd/machtiani && \
     go build -buildvcs=false -o /build/bin/meta-orchestrator ./cmd/meta-orchestrator && \
     go build -buildvcs=false -o /build/bin/mct ./internal/mct/cmd/mct && \
     go build -buildvcs=false -o /build/bin/file-discovery ./internal/file-discovery/cmd/file-discovery && \

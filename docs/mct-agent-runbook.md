@@ -1,11 +1,11 @@
-# Repo-local `mct-agent` runbook
+# Repo-local `machtiani` runbook
 
-Use this runbook when operating `mct-agent` from inside this repository.
+Use this runbook when operating `machtiani` from inside this repository.
 
 ## Start here
 
-- Run from the repo root and initialize or migrate it before the first run. Use `mct-agent project show` to inspect the active UUID store.
-- This repository historically used repo-local state. Review `mct-agent migrate --dry-run`, then run `mct-agent migrate --no-interactive --yes` when ready to adopt the home store.
+- Run from the repo root and initialize or migrate it before the first run. Use `machtiani project show` to inspect the active UUID store.
+- This repository historically used repo-local state. Review `machtiani migrate --dry-run`, then run `machtiani migrate --no-interactive --yes` when ready to adopt the home store.
 - Set `PROJECT_STORE="$HOME/.machtiani/$(cat .machtiani/project.uuid)"` when using the artifact-path examples below.
 - In this repo, prefer the `glm-5-high` model alias from the selected global or UUID-project config.
 - See [`examples/config.minimal.toml`](examples/config.minimal.toml) for a minimal
@@ -18,7 +18,7 @@ Preferred live invocation:
 
 ```bash
 OPENROUTER_API_KEY="$TEST_API_KEY" \
-mct-agent run --mode code --model glm-5-high \
+machtiani run --mode code --model glm-5-high \
   --max-turns 100 --turn-timeout 0 --verbose \
   -p "<your prompt>"
 ```
@@ -157,15 +157,15 @@ as recorded in `ROADMAP.md`.
 
 ## Sync after new commits
 
-- After landing new commits in this repo, run `mct-agent sync` so the internal README state is updated to the current project `HEAD`.
+- After landing new commits in this repo, run `machtiani sync` so the internal README state is updated to the current project `HEAD`.
 - If more than one commit has landed since the last sync, that's fine; `sync` compares the current `HEAD` against the last processed commit and catches up in one run.
-- If `mct-agent run` or `bash agent/tests/run-live.sh` fails with `mct is not synced at current git state ... Run mct-agent sync before proceeding.`, this is the missing prerequisite. Re-run the sync command below, then retry the harness or agent run.
+- If `machtiani run` or `bash agent/tests/run-live.sh` fails with `mct is not synced at current git state ... Run machtiani sync before proceeding.`, this is the missing prerequisite. Re-run the sync command below, then retry the harness or agent run.
 - In this repo, developers and coding agents should use `TEST_*` for test and harness flows. For the repo-local sync command below, pass `TEST_API_KEY` through the same OpenRouter credential source as the normal `run` workflow via an `openrouter:` override on `--api-key`.
 
 Repo-local sync command:
 
 ```bash
-mct-agent sync \
+machtiani sync \
   --api-key "openrouter:$TEST_API_KEY" \
   --model glm-5-high \
   --context-length 128000
@@ -182,7 +182,7 @@ To resume a child session directly:
 
 ```bash
 OPENROUTER_API_KEY="$TEST_API_KEY" \
-mct-agent run --resume <child-session-id> --model glm-5-high \
+machtiani run --resume <child-session-id> --model glm-5-high \
   --max-turns 100 --turn-timeout 0 \
   -p "<follow-up>"
 ```
@@ -191,7 +191,7 @@ To resume the parent session:
 
 ```bash
 OPENROUTER_API_KEY="$TEST_API_KEY" \
-mct-agent run --resume <parent-session-id> --model glm-5-high \
+machtiani run --resume <parent-session-id> --model glm-5-high \
   --max-turns 100 --turn-timeout 0 \
   -p "<your follow-up prompt>"
 ```
@@ -201,7 +201,7 @@ mct-agent run --resume <parent-session-id> --model glm-5-high \
 
 ## Practical expectations
 
-- In this repo, treat `mct-agent` primarily as an informational / research assistant.
+- In this repo, treat `machtiani` primarily as an informational / research assistant.
 - It can inspect the codebase, use file-discovery, invoke shell steps, and run existing scripts when useful.
 - Do not rely on it as a dependable direct file-editing agent in the current setup.
 - Verify behavior from artifacts on disk instead of assuming a requested write happened.
@@ -210,11 +210,11 @@ mct-agent run --resume <parent-session-id> --model glm-5-high \
 
 - The local workflow relies on `--mode` to create the parent orchestration session.
 - A good workflow checks or updates `chat/agent-final-answer.md` in the relevant session directory to confirm the run finished.
-- Follow-ups are typically done with `mct-agent run -p "<your follow-up prompt>" --resume <session-id>` (or `-r`). The command requires an explicit ID; run `mct-agent session list` to find one.
+- Follow-ups are typically done with `machtiani run -p "<your follow-up prompt>" --resume <session-id>` (or `-r`). The command requires an explicit ID; run `machtiani session list` to find one.
 
 ## Operator tips
 
-- `mct-agent` often delegates repo inspection to `shell-agent`, so expect synthesized answers rather than raw shell output.
+- `machtiani` often delegates repo inspection to `shell-agent`, so expect synthesized answers rather than raw shell output.
 - Tight prompt contracts help: explicitly say what to return, what not to do, and whether file edits are allowed.
 - Trust on-disk artifacts more than intermediate console chatter; `chat/agent-final-answer.md` is the strongest completion signal.
 - Follow-ups on an existing child session rewrite that child's `chat/agent-final-answer.md`, so copy it elsewhere first if you want to preserve an earlier summary.
@@ -229,7 +229,7 @@ Adapted from `agent-20260409T170609-4898`.
 
 ```bash
 OPENROUTER_API_KEY="$TEST_API_KEY" \
-mct-agent run --model glm-5-high \
+machtiani run --model glm-5-high \
   --max-turns 100 --turn-timeout 0 --verbose \
   -p 'Inspect the recent git commit subject style in this repository and inspect the currently staged changes. Then draft exactly one conventional commit subject line that matches the existing style. Return only the commit subject line, with no quotes, no bullets, and no explanation. Do not modify files.'
 ```
@@ -240,7 +240,7 @@ Adapted from `agent-20260302T212840-6500`.
 
 ```bash
 OPENROUTER_API_KEY="$TEST_API_KEY" \
-mct-agent run --mode code --model glm-5-high \
+machtiani run --mode code --model glm-5-high \
   --max-turns 100 --turn-timeout 0 --verbose \
   -p 'Explain the planner menu flow and what happens after an ask is selected. Also run `git diff --stat` and report the output. Do not modify files.'
 ```
@@ -270,7 +270,7 @@ EOF
 )
 
 OPENROUTER_API_KEY="$TEST_API_KEY" \
-mct-agent run --mode code --model glm-5-high \
+machtiani run --mode code --model glm-5-high \
   --max-turns 100 --turn-timeout 0 --verbose \
   -p "$PROMPT"
 ```

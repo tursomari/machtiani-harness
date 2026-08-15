@@ -16,8 +16,8 @@ SOURCE_ROOT="$(cd "$1" && pwd)"
 mkdir -p "$2"
 OUTPUT_DIR="$(cd "$2" && pwd)"
 
-if [[ ! -d "$SOURCE_ROOT/agent/cmd/mct-agent" ]]; then
-  echo "Error: mct-agent source not found under $SOURCE_ROOT" >&2
+if [[ ! -d "$SOURCE_ROOT/agent/cmd/machtiani" ]]; then
+  echo "Error: machtiani source not found under $SOURCE_ROOT" >&2
   exit 1
 fi
 
@@ -27,7 +27,7 @@ nix develop "path:${REPO_ROOT}#bench" -c bash -c '
   set -euo pipefail
   export GOTOOLCHAIN=local CGO_ENABLED=0
   cd "$BENCH_SOURCE_ROOT/agent"
-  go build -trimpath -o "$BENCH_OUTPUT_DIR/mct-agent" ./cmd/mct-agent
+  go build -trimpath -o "$BENCH_OUTPUT_DIR/machtiani" ./cmd/machtiani
   if [[ -d cmd/meta-orchestrator ]]; then
     go build -trimpath -o "$BENCH_OUTPUT_DIR/meta-orchestrator" ./cmd/meta-orchestrator
   else
@@ -35,5 +35,5 @@ nix develop "path:${REPO_ROOT}#bench" -c bash -c '
   fi
 '
 
-test -x "$OUTPUT_DIR/mct-agent"
+test -x "$OUTPUT_DIR/machtiani"
 echo "Built benchmark binaries in $OUTPUT_DIR"

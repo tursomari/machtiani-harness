@@ -63,7 +63,7 @@ cwd = "."
 	if err == nil {
 		t.Fatal("expected removed environment.cwd to fail validation")
 	}
-	want := "environment.cwd: removed; delete this key. Shell commands now start in the directory where mct-agent was launched"
+	want := "environment.cwd: removed; delete this key. Shell commands now start in the directory where machtiani was launched"
 	if !strings.Contains(err.Error(), want) {
 		t.Fatalf("missing migration guidance %q in %q", want, err)
 	}

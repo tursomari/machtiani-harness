@@ -1,11 +1,11 @@
 # Comprehensive Machtiani configuration example.
-# Prefer `mct-agent init` and `mct-agent config` for normal setup.
+# Prefer `machtiani init` and `machtiani config` for normal setup.
 # To inspect this example directly, run:
-#   mct-agent config check --path docs/examples/config.comprehensive.toml
+#   machtiani config check --path docs/examples/config.comprehensive.toml
 # Every section and field is documented below. Omit sections you don't need.
 #
 # VALIDATION GAPS:
-# The 'mct-agent config check' command validates only:
+# The 'machtiani config check' command validates only:
 #   - default_model is non-empty
 #   - default_model resolves to a key in [models]
 #
@@ -115,7 +115,7 @@ api_key = "${OPENROUTER_API_KEY}"
 # ── [models] ────────────────────────────────────────────────────────────────────
 # Each model alias maps to a provider and an upstream model identifier.
 # The provider must reference a [providers] key. This is validated automatically
-# by run and sync, and explicitly by `mct-agent config check`.
+# by run and sync, and explicitly by `machtiani config check`.
 
 [models.foo]
 provider = "openrouter"
@@ -198,7 +198,7 @@ context_length = 128000
 
 
 # ── Runtime dependencies ────────────────────────────────────────────────────────
-# The following tools must be on PATH for mct-agent to function:
+# The following tools must be on PATH for machtiani to function:
 #   - git   (required for repo operations, README sync, and snapshots)
 #   - rg    (ripgrep; required for file-discovery)
 #   - sed   (used by shell-agent for inline edits)
