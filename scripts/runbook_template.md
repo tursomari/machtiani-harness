@@ -17,7 +17,7 @@ ability to analyze the `{{PROJECT_NAME}}` codebase and produce a high-quality
 analytical document. **You, the agent reading this runbook, will perform the
 judgment yourself** by verifying claims against the actual source code.
 
-machtiani uses the **{{MCT_MODEL}}** model alias; forge uses **DeepSeek V4 Pro** via OpenRouter.
+machtiani uses the **{{MACHTIANI_MODEL}}** model alias; forge uses **DeepSeek V4 Pro** via OpenRouter.
 <!-- IF_EVAL -->
 
 This is a **retrospective eval case**: an isolated git worktree will be created at commit
@@ -50,7 +50,7 @@ and their outputs will be compared against the ground-truth fix at commit `{{GRO
     machtiani config check >/dev/null 2>&1 || { echo "machtiani config check failed (verify config.toml and API key)"; exit 1; }
     test -d "{{PROJECT_ROOT}}"             || { echo "Project root not found: {{PROJECT_ROOT}}"; exit 1; }
     test -f "{{PROMPT_FILE}}"              || { echo "Prompt file not found: {{PROMPT_FILE}}"; exit 1; }
-    if [ -n "{{MCT_API_KEY_ARG}}" ]; then
+    if [ -n "{{MACHTIANI_API_KEY_ARG}}" ]; then
       echo "API key will be passed via --api-key flag"
     fi
 <!-- IF_EVAL -->
@@ -75,7 +75,7 @@ without modifying the main repository.
     git -C "{{PROJECT_ROOT}}" worktree add {{WORKTREE_DIR}} {{EVAL_COMMIT}}
     cd "{{WORKTREE_DIR}}"
     # Use the config path resolved by the runbook generator.
-      MACHTIANI_CONFIG="{{MCT_CONFIG_PATH}}" machtiani sync --model {{MCT_MODEL}} --turn-timeout 0 {{MCT_API_KEY_ARG}}
+      MACHTIANI_CONFIG="{{MACHTIANI_CONFIG_PATH}}" machtiani sync --model {{MACHTIANI_MODEL}} --turn-timeout 0 {{MACHTIANI_API_KEY_ARG}}
 
 - The worktree is an isolated checkout at the pre-fix state. The main repo is untouched.
 - machtiani sync generates the internal README for this commit (required before machtiani run).
@@ -95,17 +95,17 @@ without modifying the main repository.
     cd {{PROJECT_ROOT}}   # project repository root
 <!-- END_IF_NOT_EVAL -->
 
-    MACHTIANI_CONFIG="{{MCT_CONFIG_PATH}}" machtiani run \
+    MACHTIANI_CONFIG="{{MACHTIANI_CONFIG_PATH}}" machtiani run \
       --mode code \
       --final-file /tmp/mct_answer{{ARTIFACT_SUFFIX}}.md \
       --turn-timeout 0 \
-      --model {{MCT_MODEL}} {{MCT_API_KEY_ARG}} \
+      --model {{MACHTIANI_MODEL}} {{MACHTIANI_API_KEY_ARG}} \
       --file "{{PROMPT_FILE}}"
 
 - `--mode code` — coding-oriented orchestrator preset.
 - `--final-file /tmp/mct_answer{{ARTIFACT_SUFFIX}}.md` — writes the final answer directly to this path.
 - `--turn-timeout 0` — disables the per-turn timeout.
-- `--model {{MCT_MODEL}}` resolves from config.toml `[models]` section.
+- `--model {{MACHTIANI_MODEL}}` resolves from config.toml `[models]` section.
 - API key resolution order: CLI `--api-key` override then config file then environment variables.
 - If machtiani exits after 0 turns, re-run with `--step-limit` increased (e.g., `--step-limit 30`).
 
@@ -228,7 +228,7 @@ Now that both agents have run against the pre-fix state, capture the actual fix 
 
 | Harness | Provider | Model |
 |---|---|---|
-| machtiani | Per `{{MCT_MODEL}}` alias in `.machtiani/config.toml` | `{{MCT_MODEL}}` |
+| machtiani | Per `{{MACHTIANI_MODEL}}` alias in `.machtiani/config.toml` | `{{MACHTIANI_MODEL}}` |
 | Forge `muse` | OpenRouter | `deepseek/deepseek-v4-pro` |
 
 To route machtiani through OpenRouter, use `--model` with an alias mapped to the openrouter provider and pass `--api-key openrouter:key`.

@@ -102,7 +102,7 @@ If operating in **read-only mode**, follow steps 1–7. If operating in **write 
 
 ## Agent Worktree Paths
 
-- **MCT_WORKTREE:** `{{MCT_WORKTREE}}`
+- **MACHTIANI_WORKTREE:** `{{MACHTIANI_WORKTREE}}`
 - **FORGE_WORKTREE:** `{{FORGE_WORKTREE}}`
 - **JUDGE_WORKTREE:** `{{JUDGE_WORKTREE}}`
 

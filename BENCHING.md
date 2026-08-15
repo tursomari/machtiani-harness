@@ -74,7 +74,7 @@ The single-task runner:
 
 - builds static, container-portable `machtiani` and `meta-orchestrator` from `HEAD`
 - downloads the musl Forge binary
-- sets `MACHTIANI_BIN`, `MCT_META_ORCHESTRATOR_BINARY`, and `MCT_FORGE_BINARY`
+- sets `MACHTIANI_BIN`, `MACHTIANI_META_ORCHESTRATOR_BINARY`, and `MACHTIANI_FORGE_BINARY`
 - runs Pier with `--agent-import-path machtiani_pier_adapter.machtiani_agent:MachtianiAgent`
 - runs with `--n-concurrent 1`
 - preserves live job data under `/tmp/treatment-preserved-<epoch>/`
@@ -84,8 +84,8 @@ If you invoke Pier manually for a single task, the adapter needs binary paths ex
 
 ```bash
 export MACHTIANI_BIN=/path/to/machtiani
-export MCT_META_ORCHESTRATOR_BINARY=/path/to/meta-orchestrator
-export MCT_FORGE_BINARY=/path/to/forge
+export MACHTIANI_META_ORCHESTRATOR_BINARY=/path/to/meta-orchestrator
+export MACHTIANI_FORGE_BINARY=/path/to/forge
 export TEST_API_KEY=sk-...
 export TEST_BASE_URL=https://api.deepseek.com
 export TEST_MODEL=deepseek-v4-pro
@@ -93,8 +93,8 @@ export TEST_MODEL=deepseek-v4-pro
 pier run \
   --agent-import-path machtiani_pier_adapter.machtiani_agent:MachtianiAgent \
   --ae "MACHTIANI_BIN=${MACHTIANI_BIN}" \
-  --ae "MCT_META_ORCHESTRATOR_BINARY=${MCT_META_ORCHESTRATOR_BINARY}" \
-  --ae "MCT_FORGE_BINARY=${MCT_FORGE_BINARY}" \
+  --ae "MACHTIANI_META_ORCHESTRATOR_BINARY=${MACHTIANI_META_ORCHESTRATOR_BINARY}" \
+  --ae "MACHTIANI_FORGE_BINARY=${MACHTIANI_FORGE_BINARY}" \
   --ae "TEST_API_KEY=${TEST_API_KEY}" \
   --ae "TEST_BASE_URL=${TEST_BASE_URL}" \
   --ae "TEST_MODEL=${TEST_MODEL}" \
@@ -106,7 +106,7 @@ pier run \
   -p "$DEEP_SWE_TASKS"
 ```
 
-If `MCT_META_ORCHESTRATOR_BINARY` is missing or invalid in the host shell, the adapter skips the upload and the run can fall back to direct `machtiani` instead of the multi-phase meta-orchestrator loop.
+If `MACHTIANI_META_ORCHESTRATOR_BINARY` is missing or invalid in the host shell, the adapter skips the upload and the run can fall back to direct `machtiani` instead of the multi-phase meta-orchestrator loop.
 
 ## Monitor a Batch
 
@@ -151,7 +151,7 @@ The monitor reports:
 - meta-orchestrator trajectory phase markers
 - `machtiani sync` attempts, retries, failures, and recoveries
 - runner errors, including GLIBC / Forge binary compatibility failures
-- shell-agent trajectory activity and `mct-forge` command errors
+- shell-agent trajectory activity and `machtiani-forge` command errors
 - live Docker container status when containers are still running
 
 If the monitor prints `pier_running=False` while containers are still up, treat the batch as orphaned until proven otherwise. Inspect the Pier log and direct container process tables; new rewards may not be collected if the Pier supervisor has exited.
@@ -222,7 +222,7 @@ Check whether the meta-orchestrator is active:
 ```bash
 CONTAINER=abs-module-cache-flags__bjd773o-main-1
 docker exec "$CONTAINER" sh -lc \
-  'ps -eo pid,ppid,etime,stat,cmd | grep -E "meta-orchestrator|machtiani run|mct-forge|forge$|pytest|go test|pnpm|npm|verifier|git clean" | grep -v grep'
+  'ps -eo pid,ppid,etime,stat,cmd | grep -E "meta-orchestrator|machtiani run|machtiani-forge|forge$|pytest|go test|pnpm|npm|verifier|git clean" | grep -v grep'
 ```
 
 Check the worktree and recent commits:
@@ -275,7 +275,7 @@ SESSION="$(docker exec "$CONTAINER" sh -lc 'ls -t /app/.machtiani/sessions 2>/de
 docker exec "$CONTAINER" sh -lc "echo branch=\$(git -C /app branch --show-current); \
   echo child=\$(ls -t /app/.machtiani/sessions/${SESSION}/shell-agent 2>/dev/null | head -1); \
   stat -c 'conversation_mtime=%y' /app/.machtiani/sessions/${SESSION}/conversation.json 2>/dev/null || true; \
-  ps -eo pid,etime,stat,cmd | grep -E 'meta-orchestrator|machtiani run|mct-forge|forge$' | grep -v grep"
+  ps -eo pid,etime,stat,cmd | grep -E 'meta-orchestrator|machtiani run|machtiani-forge|forge$' | grep -v grep"
 ```
 
 Phase model:
@@ -289,7 +289,7 @@ Always read `/app/instruction.md` before judging whether a task is over-scoped. 
 
 ## Quick Score Summary
 
-List the best partial score per task across redundant MCT reward files and compare against control:
+List the best partial score per task across redundant Machtiani reward files and compare against control:
 
 ```bash
 python - <<'PY'

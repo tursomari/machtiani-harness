@@ -1,7 +1,7 @@
 # Machtiani Configuration Guide
 
 `machtiani config` creates and manages the unified Machtiani configuration used
-by `machtiani`, `mct`, and `shell-agent`. The configuration connects local model
+by `machtiani` and `shell-agent`. The configuration connects local model
 aliases to named providers and stores shared defaults such as prompt caching.
 
 For the complete TOML schema beyond providers and models, see

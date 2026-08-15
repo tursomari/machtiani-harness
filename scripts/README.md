@@ -5,7 +5,7 @@
 ## Overview
 
 The `scripts/` directory contains build helpers, A/B testing harnesses, and
-evaluation infrastructure for the mct-agent monorepo. It provides the Docker
+evaluation infrastructure for the Machtiani monorepo. It provides the Docker
 tooling for reproducible A/B comparison of code changes (`ab-dev.sh` plus
 `Dockerfile.build`), the evaluation pipeline for comparing machtiani against Forge (`run_eval.sh`,
 `run_eval_head.sh`), and supporting files for Skyvern web interaction and judge
@@ -72,13 +72,13 @@ patch, removes broken submodule metadata to avoid path resolution errors,
 reverts patched files to `HEAD~1` so the patch applies cleanly, applies the
 patch with `git apply`, and creates a git commit with message `"treatment
 patch"`. The commit gives the A/B image a coherent Git state for runtime
-checks and diagnostics. All binaries (`machtiani`, `mct`,
+checks and diagnostics. All binaries (`machtiani`, `meta-orchestrator`,
 `file-discovery`, `snippet-discovery`, `shell-agent`) are built into
 `/build/bin` via direct Go builds inside the internal image.
 
 **Stage 2 (runtime)** is based on `debian:bookworm-slim`.  It installs runtime
 dependencies (ripgrep, rsync, bash, python3, git), copies the built binaries
-from the builder (`/build/bin/` → `/usr/local/bin/`), copies `mct-forge` from
+from the builder (`/build/bin/` → `/usr/local/bin/`), copies `machtiani-forge` from
 the host's `peripherals/` directory, copies `.machtiani/` and `agent/` from
 the builder into `/workspace/`, and copies the full Go toolchain from the
 builder (`/usr/local/go`) so that tests which shell out to `go build` work in

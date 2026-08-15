@@ -30,7 +30,7 @@ cat /tmp/mct-ab-output/treatment/stdout.log
 
 ## Using code-forge Mode
 
-The Docker-based development workflow supports running machtiani in code-forge mode. The container includes the mct-forge wrapper script (copied from peripherals/), and the ab-dev.sh script automatically mounts the external forge binary from the host if it is found at ~/.local/bin/forge. If the binary is not found, the script prints a warning and skips the mount; in that case mct-forge will not work inside the container but other commands still execute.
+The Docker-based development workflow supports running machtiani in code-forge mode. The container includes the machtiani-forge wrapper script (copied from peripherals/), and the ab-dev.sh script automatically mounts the external forge binary from the host if it is found at ~/.local/bin/forge. If the binary is not found, the script prints a warning and skips the mount; in that case machtiani-forge will not work inside the container but other commands still execute.
 
 To run a comparison with code-forge mode, use a command like:
 
@@ -52,15 +52,15 @@ BuildKit is enabled by default in Docker Engine 23.0+. The script explicitly set
 ## Project Structure Overview
 
 ```
-mct/
+machtiani/
 ├── agent/                         # Go module (github.com/tursomari/machtiani/agent)
 │   ├── cmd/
 │   │   ├── machtiani/             # Main orchestrator binary
 │   │   └── print-config/          # Config debug helper
 │   ├── internal/
 │   │   ├── file-discovery/        # LLM-guided file discovery (rg protocol)
-│   │   ├── mct/                   # Core MCT CLI and README manager
-│   │   ├── mct-code/              # Native Go code-editing agent (FSRead/Write/Patch)
+│   │   ├── core/                  # Core Machtiani CLI and README manager
+│   │   │   └── codemode/          # Native Go code-editing agent (FSRead/Write/Patch)
 │   │   ├── shell-agent/           # Shell command execution agent
 │   │   ├── snippet-discovery/     # Snippet-level discovery
 │   │   ├── planner/               # Planning layer
@@ -80,7 +80,7 @@ mct/
 ├── docs/
 │   ├── development-workflow.md    # This file
 │   ├── examples/                  # Minimal and comprehensive config references
-│   ├── mct-agent-runbook.md       # Repo-local agent operation guide
+│   ├── machtiani-runbook.md       # Repo-local agent operation guide
 │   ├── runtime-prerequisites.md   # Dependency and platform notes
 │   └── adr/                       # Architecture Decision Records
 ├── tests/                         # Integration and smoke harnesses
@@ -270,7 +270,7 @@ Overrides the default verification command. The command is executed inside each 
 ```default
 set -euo pipefail
 echo "=== Built binaries ==="
-for bin in machtiani mct file-discovery snippet-discovery shell-agent; do
+for bin in machtiani meta-orchestrator file-discovery snippet-discovery shell-agent; do
     if command -v "$bin" &>/dev/null; then
         echo "--- $bin ---"
         "$bin" --version 2>&1 || "$bin" --help 2>&1 | head -5 || echo "(no version/help output)"

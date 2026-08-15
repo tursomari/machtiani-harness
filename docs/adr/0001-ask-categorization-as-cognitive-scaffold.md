@@ -14,7 +14,7 @@ Over time, testing showed shell-agent performed as well as or better than file-d
 
 ## Decision
 
-Route all asks through shell-agent in `mct-agent run`. Retain ask categorization (`no-shell`/`shell`) as a reasoning discipline for the planner, not as a routing signal.
+Route all asks through shell-agent in `machtiani run`. Retain ask categorization (`no-shell`/`shell`) as a reasoning discipline for the planner, not as a routing signal.
 
 The enforcement is explicit in code:
 
@@ -22,9 +22,9 @@ The enforcement is explicit in code:
 
 2. **Split-ask collapse** — When `splitAskLines()` detects a mixed ask with both `No-shell:` and `Shell:` prefixes, the code immediately resets `hasSplitAsk=false` and sets `collapsedLegacyBothAsk=true`. The split-ask dual-execution branch (which would route the no-shell portion to file-discovery) is dead code. The ask is merged back into a single question and routed through shell-agent.
 
-3. **`discoveryrunner.Run()` is unreachable in `mct-agent run`** — The guard `if !isAnswerOnly && !opts.ShellAgent` in `promptsvc.Run()` always evaluates to false because `ShellAgent` is always `true` after routing policy application.
+3. **`discoveryrunner.Run()` is unreachable in `machtiani run`** — The guard `if !isAnswerOnly && !opts.ShellAgent` in `promptsvc.Run()` always evaluates to false because `ShellAgent` is always `true` after routing policy application.
 
-The only path where file-discovery executes is `mct-agent sync`, which calls `promptsvc.Run()` with `ShellAgent` unset (defaults to `false`) and no routing policy override.
+The only path where file-discovery executes is `machtiani sync`, which calls `promptsvc.Run()` with `ShellAgent` unset (defaults to `false`) and no routing policy override.
 
 ## Historical Evidence
 
@@ -52,7 +52,7 @@ These fixes were attempts to make literal routing work correctly. But by the tim
 
 ### Phase 3: Shell-agent as default execution (Apr 2026 onward)
 
-The collapse of split asks and forcing of single asks to shell-agent made shell-agent the exclusive execution path for `mct-agent run`. The cognitive scaffold (ask categorization as no-shell/shell) remains as a reasoning discipline for the planner but has no routing effect — all asks execute through shell-agent. File-discovery is only reachable in `mct-agent sync`.
+The collapse of split asks and forcing of single asks to shell-agent made shell-agent the exclusive execution path for `machtiani run`. The cognitive scaffold (ask categorization as no-shell/shell) remains as a reasoning discipline for the planner but has no routing effect — all asks execute through shell-agent. File-discovery is only reachable in `machtiani sync`.
 
 ## Consequences
 
@@ -63,9 +63,9 @@ The collapse of split asks and forcing of single asks to shell-agent made shell-
 - A simple computation path outperformed clever routing
 
 **Negative:**
-- Dead code in the `run` path: `PreflightShellRouting()`, `shouldPreferContentRouting()`, `discoveryrunner.Run()`, and the split-ask execution branch are all unreachable during `mct-agent run`. Future contributors may attempt to "fix" the override or wire up file-discovery, not realizing the override *is* the design
+- Dead code in the `run` path: `PreflightShellRouting()`, `shouldPreferContentRouting()`, `discoveryrunner.Run()`, and the split-ask execution branch are all unreachable during `machtiani run`. Future contributors may attempt to "fix" the override or wire up file-discovery, not realizing the override *is* the design
 - The preflight LLM classification call is computed but discarded for single asks — a small cost in latency and tokens per turn
-- `mct-agent sync` still uses file-discovery, creating an inconsistency between the two execution paths
+- `machtiani sync` still uses file-discovery, creating an inconsistency between the two execution paths
 
 **Neutral:**
 - The ask categorization templates (`ask_prompt.tpl`, `ask_mixed_monitor.tpl`) remain valuable as reasoning scaffolds even without routing effect

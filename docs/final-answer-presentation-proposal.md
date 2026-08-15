@@ -37,12 +37,12 @@ configured independently with `[ui].glyphs = "unicode"` or `"ascii"`; the
 
   Resume this session:
     ──────────────────────────────────────────────────────────────────────────────────────────────
-    $ mct-agent run -p "<your follow-up prompt>" --resume agent-20260718T051605-0813
+    $ machtiani run -p "<your follow-up prompt>" --resume agent-20260718T051605-0813
     ──────────────────────────────────────────────────────────────────────────────────────────────
 
   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-  21s  ~/projects/mct  session token input 24,706 (cache 88%)  output 1,152
+  21s  ~/projects/machtiani  session token input 24,706 (cache 88%)  output 1,152
   code-forge-skyvern turn 1 running  session agent-20260718T051605-0813  planner deepseek:deepseek-v4-flash high  shell deepseek:deepseek-v4-flash high
 ```
 
@@ -57,7 +57,7 @@ configured independently with `[ui].glyphs = "unicode"` or `"ascii"`; the
 region makes it obvious that the command is intended to be copied, edited,
 and run. Its rules are sized to the longest command row plus two columns of
 right padding.
-- Inside the command, `$` uses **Goodness**, `mct-agent run` uses
+- Inside the command, `$` uses **Goodness**, `machtiani run` uses
   **Provenance**, and the editable arguments remain the terminal foreground.
 - The footer keeps its current role-based styling: elapsed time, turn, and
   running state use **Truth**; the mode uses **Beauty**; session/model identity

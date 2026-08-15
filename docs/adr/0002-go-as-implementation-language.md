@@ -6,13 +6,13 @@ Accepted
 
 ## Context
 
-mct is a terminal-native AI coding agent. Its core loop: prompt → stream LLM tokens → execute shell command → capture stdout/stderr → return result. It avoids AST parsers, MCP, LSP hooks, and IDE extensions by design. The project needs a language that excels at concurrent process orchestration, text processing, and single-binary distribution.
+Machtiani is a terminal-native AI coding agent. Its core loop: prompt → stream LLM tokens → execute shell command → capture stdout/stderr → return result. It avoids AST parsers, MCP, LSP hooks, and IDE extensions by design. The project needs a language that excels at concurrent process orchestration, text processing, and single-binary distribution.
 
 ## Decision
 
-mct is implemented in Go.
+Machtiani is implemented in Go.
 
-### Go strengths demonstrated by mct
+### Go strengths demonstrated by Machtiani
 
 1. **Process orchestration with `os/exec` and `context`.** Commands spawn via `exec.CommandContext`; timeouts and cancellation propagate through the context tree. Go's stdin/stdout/stderr piping eliminates subprocess bugs common elsewhere.
 
@@ -30,23 +30,23 @@ mct is implemented in Go.
 
 **Why it dominates AI coding agents:** TypeScript/Node.js runs natively inside VS Code, enabling IDE extensions via LSP hooks and webviews at zero overhead. Zod powers dynamic JSON schema generation for MCP tool calling. This is why Cursor and Copilot use TypeScript.
 
-**Why not for mct:** mct is terminal-only — no IDE, no MCP, no JSON schemas. A TS CLI requires bundling Node.js. `exec.Command` needs no Zod.
+**Why not for Machtiani:** Machtiani is terminal-only — no IDE, no MCP, no JSON schemas. A TS CLI requires bundling Node.js. `exec.Command` needs no Zod.
 
 ### Rust
 
 **Why it dominates AI coding agents:** Rust powers code-analysis tools: tree-sitter and SWC for AST parsing, oxc for linting, rust-analyzer for LSP. MCP servers favor Rust for performance and memory safety.
 
-**Why not for mct:** mct avoids AST parsing, MCP, and LSP. Its I/O-bound workload gains nothing from Rust's ownership model; goroutines with synchronous I/O are simpler.
+**Why not for Machtiani:** Machtiani avoids AST parsing, MCP, and LSP. Its I/O-bound workload gains nothing from Rust's ownership model; goroutines with synchronous I/O are simpler.
 
 ### Why Go wins by default
 
-mct sidesteps every domain where TS and Rust excel: no AST parsing, no MCP, no IDE, no LSP. Their advantages are irrelevant. What remains — streaming tokens, running commands, processing text — is Go's sweet spot: concurrent process management, single static binary, lightweight text handling.
+Machtiani sidesteps every domain where TS and Rust excel: no AST parsing, no MCP, no IDE, no LSP. Their advantages are irrelevant. What remains — streaming tokens, running commands, processing text — is Go's sweet spot: concurrent process management, single static binary, lightweight text handling.
 
 ### Technological Subsidiarity
 
-mct does not replace IDE-native coding agents. It complements them. Through its mode system, users define custom modes that invoke external tools headlessly, delegating structured code analysis and complex refactoring to the Rust and TypeScript agents that excel at those tasks.
+Machtiani does not replace IDE-native coding agents. It complements them. Through its mode system, users define custom modes that invoke external tools headlessly, delegating structured code analysis and complex refactoring to the Rust and TypeScript agents that excel at those tasks.
 
-mct stays focused on raw-intelligence-tapping, concurrent subprocess orchestration, and the main interaction loop. Go handles the orchestration layer — streaming tokens, spawning commands, managing sessions. Rust and TypeScript handle deep code intelligence, accessed headlessly via CLI. Each tool operates at its proper level; no capability is sacrificed.
+Machtiani stays focused on raw-intelligence-tapping, concurrent subprocess orchestration, and the main interaction loop. Go handles the orchestration layer — streaming tokens, spawning commands, managing sessions. Rust and TypeScript handle deep code intelligence, accessed headlessly via CLI. Each tool operates at its proper level; no capability is sacrificed.
 
 The ecosystem is balanced: no single language overreaches. The only requirement: a headless interface. Every tool should be usable in composition, not in isolation.
 

@@ -1,8 +1,8 @@
 # Registering a custom DearMachine backend
 
-Custom backend registration belongs to DearMachine, not to mct-agent. The
-backend executable may use mct, another coding agent, or any program that
-implements DearMachine's stdin/close-path contract, but mct itself does not
+Custom backend registration belongs to DearMachine, not to Machtiani. The
+backend executable may use Machtiani, another coding agent, or any program that
+implements DearMachine's stdin/close-path contract, but Machtiani itself does not
 load or configure DearMachine backends.
 
 Use the authoritative
@@ -13,5 +13,5 @@ repository prevents the two projects from publishing divergent instructions.
 
 When testing a backend that invokes machtiani, ensure the intended machtiani
 binary is on `PATH` and follow this repository's
-[mct-agent runbook](./mct-agent-runbook.md) for project initialization and
+[Machtiani runbook](./machtiani-runbook.md) for project initialization and
 session handling.

@@ -66,8 +66,8 @@ Trajectory recording:
 - `-no-trajectory`: disable trajectory recording entirely.
 - Env: `FILE_DISCOVERY_TRAJECTORY` is used if `-trajectory` is not set.
 
-When embedded in `mct-agent`, the initial byte setting is not the context
-contract. `mct-agent` derives a token budget from the resolved discovery model
+When embedded in `machtiani`, the initial byte setting is not the context
+contract. `machtiani` derives a token budget from the resolved discovery model
 and any session `--context-length` override, fits every request (including
 accumulated tool history and forced finalization), and uses a secondary ceiling
 of 16 bytes per allowed token with a 1 MiB floor and 64 MiB maximum. Older
@@ -239,4 +239,4 @@ When the round cap is reached without a valid final block, the agent performs on
 
 This native backend is used by file-discovery during `machtiani sync`.
 Standalone shell-agent execution is separate, and snippet-discovery and
-deprecated mct-code behavior are unchanged.
+deprecated machtiani-code behavior are unchanged.

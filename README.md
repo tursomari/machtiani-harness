@@ -1,4 +1,4 @@
-# mct-agent Monorepo — Build, Install, and Use
+# Machtiani Monorepo — Build, Install, and Use
 
 This repository now houses the full Machtiani toolchain inside a single Go module:
 
@@ -12,7 +12,7 @@ contains only the trackable `.machtiani/project.uuid` marker.
 
 ## Repo-local `machtiani` workflow
 
-If you are using `machtiani` inside this repository, start with `docs/mct-agent-runbook.md`.
+If you are using `machtiani` inside this repository, start with `docs/machtiani-runbook.md`.
 
 - That runbook is the durable repo-specific guide for how to operate `machtiani` in this repository.
 - Keep repo-specific operational guidance there; keep this README as the top-level discovery hook.
@@ -29,7 +29,7 @@ The agent now ships with a mode system that supervises multi-step work. When you
 - Available modes include code, code-forge, code-strong-forge, and code-forge-skyvern.
 
 ## Sandboxing and Reproducibility
-Sandboxing and environment isolation belong in an external scaffold layer, not inside mct-agent business logic. The agent itself supports only local process execution. For reproducible sandboxed runs, a separate scaffold such as the NixOS QEMU VM defined in the nixlab project or a Docker Compose setup provides the isolation boundary. The skyvern-docker branch preserves a Docker-based Skyvern experiment with VNC streaming as an example of external scaffolding. See shell.nix for a Nix-based Skyvern runtime environment.
+Sandboxing and environment isolation belong in an external scaffold layer, not inside Machtiani business logic. The agent itself supports only local process execution. For reproducible sandboxed runs, a separate scaffold such as the NixOS QEMU VM defined in the nixlab project or a Docker Compose setup provides the isolation boundary. The skyvern-docker branch preserves a Docker-based Skyvern experiment with VNC streaming as an example of external scaffolding. See shell.nix for a Nix-based Skyvern runtime environment.
 
 ## Prerequisites
 - Nix 2.24 or newer with flakes enabled for installation, updates, and the
@@ -68,15 +68,15 @@ rev="$(git rev-parse HEAD)"
 flake="git+file://$PWD?rev=$rev"
 agent_store="$(nix build --no-link --print-out-paths "$flake#machtiani")"
 MACHTIANI_BIN="$agent_store/bin/machtiani" \
-MCT_REQUIRE_LIVE=true \
+MACHTIANI_REQUIRE_LIVE=true \
 bash agent/tests/run-live.sh
 ```
 
 - Builds committed `HEAD` without a result link or profile mutation, then exercises Issue A/B/C scenarios, discovery timeout/context policies, a `--mode code` regression, and error paths.
 - `MACHTIANI_BIN` must be an absolute executable path. The harness carries it into its detached worktree and never resolves or invokes a host command named `machtiani`.
-- `MCT_REQUIRE_LIVE=true` rejects stub/dry-run preflight; omit it only when intentionally exercising the non-live fallback mode.
+- `MACHTIANI_REQUIRE_LIVE=true` rejects stub/dry-run preflight; omit it only when intentionally exercising the non-live fallback mode.
 - Writes `test-out-*` directories containing logs, transcripts, and artifacts in the repo root.
-- If the harness fails with `mct is not synced at current git state ... Run machtiani sync before proceeding.`, run the repo-local sync command from `docs/mct-agent-runbook.md` and rerun the harness.
+- If the harness fails with `mct is not synced at current git state ... Run machtiani sync before proceeding.`, run the repo-local sync command from `docs/machtiani-runbook.md` and rerun the harness.
 - When `TEST_*` and `OPENAI_*` are both unset the script injects stub credentials and forces `--dry-run`.
 
 See `TESTING.md` for the complete testing guide, including prerequisites, commands, environment variables, artifacts, and debugging workflows for every harness.
@@ -100,8 +100,8 @@ Linux distributions. Install from a clean clone whose `origin` identifies the
 update stream. The checkout must be at the tip of the remote default branch:
 
 ```bash
-git clone <repository-url> ~/src/mct-bootstrap
-cd ~/src/mct-bootstrap
+git clone <repository-url> ~/src/machtiani-bootstrap
+cd ~/src/machtiani-bootstrap
 nix run '.#install'
 hash -r
 machtiani --version
@@ -143,8 +143,8 @@ Clone the branch to test. This example uses the `install` branch, but the same
 workflow works for any development branch:
 
 ```bash
-git clone --branch install --single-branch <repository-url> ~/src/mct-bootstrap
-cd ~/src/mct-bootstrap
+git clone --branch install --single-branch <repository-url> ~/src/machtiani-bootstrap
+cd ~/src/machtiani-bootstrap
 
 dev_profile="$HOME/.machtiani/installations/machtiani/dev-profile"
 nix build --profile "$dev_profile" '.#machtiani'
@@ -169,7 +169,7 @@ wrapper.
 When the development branch advances, pull it and rebuild the same profile:
 
 ```bash
-cd ~/src/mct-bootstrap
+cd ~/src/machtiani-bootstrap
 git pull --ff-only origin install
 
 dev_profile="$HOME/.machtiani/installations/machtiani/dev-profile"
@@ -501,14 +501,14 @@ cache_reanchor_min_cached_tokens = 2048
 Other helpful overrides:
 - `MACHTIANI_CONFIG`: explicit path to the config file.
 - `MACHTIANI_SESSION_ID`: pre-set session ID to use for the current run; overridden by the `--resume` flag. The legacy `--session-id` flag also overrides it during the deprecation window.
-- `MCT_LLM_INPUT_LOG`: explicit path for the full redacted LLM request log; this enables logging and overrides `--log-llm-inputs`' canonical session path.
+- `MACHTIANI_LLM_INPUT_LOG`: explicit path for the full redacted LLM request log; this enables logging and overrides `--log-llm-inputs`' canonical session path.
 - `MACHTIANI_THEME`: override `[ui].theme` with `terminal`, `machtiani-dark`, `machtiani-light`, or `none`.
 - `MACHTIANI_GLYPHS`: override `[ui].glyphs` with `unicode` or `ascii`.
 - `FILE_DISCOVERY_BIN`: override the discovery binary used by synchronization.
 
 ### Shared discovery timeout and context policy
 
-Embedded file discovery uses the same controls as the rest of `mct-agent`:
+Embedded file discovery uses the same controls as the rest of `machtiani`:
 
 - `[planner].turn_timeout` and `--turn-timeout` apply independently to every discovery provider call, including forced finalization. A value of `0` preserves parent cancellation but adds no per-call deadline.
 - A model's `context_length`, inherited `[model_defaults].context_length`, or the session `--context-length` override determines both discovery and answer input budgets. When discovery has fallbacks, requests fit the smallest configured resolved budget in the chain.
@@ -516,7 +516,7 @@ Embedded file discovery uses the same controls as the rest of `mct-agent`:
 - A structured provider context-overflow response may reduce the active input cap four times. A successful reduction is persisted only when the successful discovery identity is unambiguous; fallback ambiguity emits telemetry without rewriting configuration.
 - Bytes are not the embedded product budget. An emergency initial-input ceiling is derived from the token cap at 16 bytes per token, with a 1 MiB floor and 64 MiB maximum.
 
-Shell command timeouts remain controlled separately by `[environment].command_timeout`; discovery's standalone compatibility flags do not create new `mct-agent` controls.
+Shell command timeouts remain controlled separately by `[environment].command_timeout`; discovery's standalone compatibility flags do not create new `machtiani` controls.
 
 ### Terminal Theme
 
@@ -693,7 +693,7 @@ Every run stores artifacts under `$PROJECT_STORE/sessions/<session-id>/`, includ
 - **`chat/agent-final-answer.md`** — final answer from the orchestrator
 - **`trajectory/agent.jsonl`** — unified trajectory stream with structured telemetry (see below)
 - **`shell-agent/<turn>/trajectory.json`** — shell-agent checkpoint state used to resume interrupted work
-- **`artifacts/llm/inputs.jsonl`** — optional full redacted input log, created only by `--log-llm-inputs` or `MCT_LLM_INPUT_LOG`
+- **`artifacts/llm/inputs.jsonl`** — optional full redacted input log, created only by `--log-llm-inputs` or `MACHTIANI_LLM_INPUT_LOG`
 
 The trajectory is enabled by default and can be controlled with the following flags (or their matching `MACHTIANI_TRAJECTORY_*` env vars):
 
@@ -761,9 +761,9 @@ The standalone `shell-agent` is a developer peripheral and is not installed by t
 
 See `agent/internal/file-discovery/README.md` for direct `file-discovery` usage.
 
-## mct-code
+## machtiani-code
 
-`mct-code` is a native Go code-editing agent that replaces the external `forgecode`/`mct-forge` dependency. It provides the file-operation primitives `FSRead`, `FSWrite`, `FSPatch`, `FSMultiPatch`, `FSRemove`, and `FSUndo`. It has been live-tested with DeepSeek and OpenRouter models, supports multi-file handoffs, exposes a `--verbose` flag, and is integrated via `--mode mct-code`. The aim is to fully replace mct-forge; note that mct-code is not yet fully vetted and may need additional work. Next steps include more complex workflow tests, error-handling hardening, optional structured logging, and integration into evaluation pipelines.
+`machtiani-code` is a native Go code-editing agent that replaces the external `forgecode`/`machtiani-forge` dependency. It provides the file-operation primitives `FSRead`, `FSWrite`, `FSPatch`, `FSMultiPatch`, `FSRemove`, and `FSUndo`. It has been live-tested with DeepSeek and OpenRouter models, supports multi-file handoffs, exposes a `--verbose` flag, and is integrated via `--mode machtiani-code`. The aim is to fully replace machtiani-forge; note that machtiani-code is not yet fully vetted and may need additional work. Next steps include more complex workflow tests, error-handling hardening, optional structured logging, and integration into evaluation pipelines.
 
 ## Troubleshooting
 - Command not found
@@ -783,7 +783,7 @@ See `agent/internal/file-discovery/README.md` for direct `file-discovery` usage.
 - Agent specifics (flags, behavior): see `agent/README.md`.
 - **Ask categorization** — The planner's `no-shell`/`shell` categories shape the question, not the execution path. [`docs/adr/0001`](docs/adr/0001-ask-categorization-as-cognitive-scaffold.md)
 
-## Integration Tests (mct-agent)
+## Integration Tests (Machtiani)
 See the [Testing](#testing) section above or `TESTING.md` for up-to-date commands, environment requirements, and artifact locations for `agent/tests/run-live.sh` and the smoke harness.
 
 ## HEAD-Based Evaluation

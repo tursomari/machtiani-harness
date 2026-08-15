@@ -216,13 +216,13 @@ test_agent="$(mktemp -d)/mct-rg-ls-sed-test-agent"
 nix develop .#default -c bash -c \
   "cd agent && CGO_ENABLED=0 go build -trimpath -ldflags '-X main.Version=dev-$short -X main.Commit=$rev -X main.BuiltAt=$built -X main.Dirty=clean' -o '$test_agent' ./cmd/machtiani"
 MACHTIANI_BIN="$test_agent" \
-MCT_REQUIRE_LIVE=true \
+MACHTIANI_REQUIRE_LIVE=true \
 bash agent/tests/run-live.sh
 ```
 
 - Tests committed `HEAD`; commit intended changes before building the exact revision.
 - `MACHTIANI_BIN` must resolve to an absolute executable file. The outer harness validates and canonicalizes it before creating its detached worktree, and every setup/test call uses that path.
-- `MCT_REQUIRE_LIVE=true` fails preflight unless complete `TEST_*` or supported fallback credentials are available. A stub or dry-run cannot satisfy this mode.
+- `MACHTIANI_REQUIRE_LIVE=true` fails preflight unless complete `TEST_*` or supported fallback credentials are available. A stub or dry-run cannot satisfy this mode.
 - `TEST_*` takes precedence over `OPENAI_*`. When neither complete set is available, the script generates stub credentials, writes a temporary `config.toml`, and forces `--dry-run`.
 - Artifacts land in `test-out-*` directories at the repo root; each case includes stdout, stderr, transcripts, and (for live runs) generated assets.
 - Optional overrides:
@@ -547,4 +547,4 @@ The original evaluation pipeline, documented in scripts/run_eval.sh itself. It c
 
 ## Related Documentation
 - `README.md` — quick-start install and environment setup guidance.
-- `docs/mct-agent-runbook.md` — repo-local synchronization and operation guidance.
+- `docs/machtiani-runbook.md` — repo-local synchronization and operation guidance.

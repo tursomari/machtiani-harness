@@ -286,15 +286,15 @@ image.
    - Applies the patch with `git apply`.
    - Creates a git commit with message `"treatment patch"` so that embedded
      commit metadata (from `-buildvcs=auto`) matches the patched state.
-5. Builds the required benchmark binaries directly into `/build/bin`
-   `machtiani`, `mct`, `file-discovery`, `snippet-discovery`, and `shell-agent`
-   into `/build/bin`.
+5. Builds the required benchmark binaries directly into `/build/bin`:
+   `machtiani`, `meta-orchestrator`, `file-discovery`, `snippet-discovery`, and
+   `shell-agent`.
 
 **Stage 2: runtime** (base: `debian:bookworm-slim`)
 
 1. Installs runtime dependencies: ripgrep, rsync, bash, python3, git.
 2. Copies built binaries from the builder: `/build/bin/` → `/usr/local/bin/`.
-3. Copies `peripherals/mct-forge` → `/usr/local/bin/mct-forge`.
+3. Copies `peripherals/machtiani-forge` → `/usr/local/bin/machtiani-forge`.
 4. Copies `.machtiani/` from the builder → `/workspace/.machtiani/`.
 5. Copies `agent/` from the builder → `/workspace/agent/`.
 6. Sets environment variables:

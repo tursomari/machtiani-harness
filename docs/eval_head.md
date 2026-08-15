@@ -10,7 +10,7 @@ Flags and their purposes:
 
 --prompt: path to the task prompt file.
 
---model: model alias for mct-agent and forge evaluation agents (default glm-5-high-deepinfra).
+--model: model alias for machtiani and forge evaluation agents (default glm-5-high-deepinfra).
 
 --judge-model: separate model alias for the judge forge agent (optional).
 

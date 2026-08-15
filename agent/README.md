@@ -1,4 +1,4 @@
-# mct-agent — Agent Orchestrator
+# Machtiani — Agent Orchestrator
 
 Initialize the current project with `machtiani init`. Where paths below use
 `$PROJECT_STORE`, resolve it with
@@ -10,7 +10,7 @@ Initialize the current project with `machtiani init`. Where paths below use
   - `OPENAI_API_KEY` (required)
   - `OPENAI_BASE_URL` (required)
   - `OPENAI_MODEL` (required)
-- Optional standalone CLIs (`mct`, `file-discovery`, `shell-agent`) are developer peripherals and are not part of the default package.
+- Optional standalone CLIs (`file-discovery`, `snippet-discovery`, `shell-agent`) are developer peripherals and are not part of the default package.
 
 ## Install
 
@@ -27,8 +27,8 @@ pass `--no-interactive` to keep that default without prompting.
 Override the stable binary prefix if you prefer a different path:
 
 ```
-nix run .#install -- --prefix "$PWD/.mct-bin"
-export PATH="$PWD/.mct-bin/bin:$PATH"
+nix run .#install -- --prefix "$PWD/.machtiani-bin"
+export PATH="$PWD/.machtiani-bin/bin:$PATH"
 ```
 
 After installation, confirm `machtiani` resolves via PATH:
@@ -40,12 +40,12 @@ machtiani --version
 If you built the peripherals, check them too:
 
 ```
-mct --help | head -n 1
 file-discovery -version
+shell-agent --help | head -n 1
 ```
 
 ## Quick Start
-Set model configuration (shared across the agent and any optional `mct` CLI):
+Set model configuration shared across Machtiani components:
 ```
 export OPENAI_API_KEY=sk_...
 export OPENAI_BASE_URL=https://api.openai.com/v1   # or your provider
@@ -69,10 +69,10 @@ For automation, an explicit environment path also enables logging and takes
 precedence over the flag's canonical destination:
 
 ```
-export MCT_LLM_INPUT_LOG=.machtiani/llm-input.log
+export MACHTIANI_LLM_INPUT_LOG=.machtiani/llm-input.log
 ```
 
-Optional: set `MCT_LLM_STAGE` to tag log entries when a stage isn't explicitly
+Optional: set `MACHTIANI_LLM_STAGE` to tag log entries when a stage isn't explicitly
 set by the caller.
 
 There is deliberately no persistent configuration switch that silently enables
@@ -117,7 +117,7 @@ machtiani run -p "triage regression" \
 
 ## How It Works
 - The agent controls the loop: it plans either `Decision: ask` with one next question or `Decision: finalize`.
-- On `ask`, it runs the `mct` prompt service via Go packages, retrieving the answer text and retrieved-path metadata without invoking external binaries. The service still writes `$PROJECT_STORE/sessions/<session-id>/chat/machtiani-response.md` for compatibility, and the agent records the paths plus answer payload directly from memory.
+- On `ask`, it runs the Machtiani prompt service via Go packages, retrieving the answer text and retrieved-path metadata without invoking external binaries. The service still writes `$PROJECT_STORE/sessions/<session-id>/chat/machtiani-response.md` for compatibility, and the agent records the paths plus answer payload directly from memory.
 - When `--shell-agent` is enabled, the agent first invokes the external `shell-agent` binary, tags the combined prompt with the transcript (`Here is possibly relevant information from the shell agent.`), and then asks the configured LLM for the final response. The shell-agent trajectory JSON file is still saved for post-run inspection.
 - It maintains a concise evolving summary/evidence log across turns.
 - On finalize (or at `--max-turns`), the agent composes the final answer via its own LLM and prints it.
@@ -128,7 +128,7 @@ machtiani run -p "triage regression" \
   removed `environment.cwd` key is rejected with migration guidance.
 - Component model selection precedence:
   - Flags `--orch-model`, `--answer-model`, `--file-discovery-model`
-  - Environment variables `MCT_ORCH_MODEL`, `MCT_ANSWER_MODEL`, `MCT_FILE_DISCOVERY_MODEL` (planner also honors `MCT_MODEL` as a legacy alias)
+  - Environment variables `MACHTIANI_ORCH_MODEL`, `MACHTIANI_ANSWER_MODEL`, `MACHTIANI_FILE_DISCOVERY_MODEL` (planner also honors `MACHTIANI_MODEL`)
   - Shared `.machtiani/config.toml` defaults or legacy `--agent-model`
 - `OPENAI_*` resolution controls direct upstream credentials when skipping aliases:
   - Flags `--openai-*` override
@@ -150,7 +150,7 @@ machtiani run -p "triage regression" \
   - Increase `--turn-timeout` (e.g., `--turn-timeout=600`) or set `--turn-timeout=0` to disable the deadline for discovery and planner steps.
 
 ## Notes
-- The agent links against the `mct` Go package directly; no external binaries are required for default operation.
+- The agent links against the Machtiani core Go packages directly; no external binaries are required for default operation.
 - Discovery responses are consumed in-memory while the library still persists `$PROJECT_STORE/sessions/<session-id>/chat/machtiani-response.md` for compatibility.
 - `--dry-run` simulates planning and discovery without making outbound LLM requests.
 - Patch planning is opt-in. Pass `--patch` to enable planner patch requests; without it the agent skips patch instructions entirely.
@@ -190,7 +190,7 @@ PATH="$PWD/result/bin:$PATH" bash agent/tests/run-live.sh
 Ensure the flake-built `machtiani` is on PATH before executing `bash agent/tests/run-live.sh`.
 
 The script no longer mutates PATH or accepts binary override flags; everything must resolve via PATH.
-- When `OPENAI_*` are not provided, the generated config points at stub credentials and the script forces `--dry-run`, so no network or `mct` subprocess calls occur; transcripts remain available for assertions while the final artifact is intentionally skipped.
+- When `OPENAI_*` are not provided, the generated config points at stub credentials and the script forces `--dry-run`, so no network or Machtiani subprocess calls occur; transcripts remain available for assertions while the final artifact is intentionally skipped.
 - Edge cases: Empty inputs, missing config/deps, timeouts (flaky; manual check advised).
 - Custom: Run in a test repo branch for git/file interactions.
 

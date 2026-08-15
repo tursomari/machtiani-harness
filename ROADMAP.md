@@ -1,8 +1,8 @@
-# mct Release 2 Roadmap
+# Machtiani Release 2 Roadmap
 
 ## Overview
 
-Release 2 is centered on giving users explicit control over what the mct TUI
+Release 2 is centered on giving users explicit control over what the Machtiani TUI
 shows. The headline feature is a pair of display flags, `--focused` and
 `--no-shell-steps`, which reduce on-screen noise without sacrificing the
 completeness of saved transcripts or trajectories. Around that, Release 2
@@ -85,11 +85,11 @@ single `--tui <full|standard|focused>` knob:
 
 ### Acceptance checks
 
-- `mct-agent run -p "<prompt>"` is visually unchanged.
-- `mct-agent run -p "<prompt>" --focused` shows only the full banner and the
+- `machtiani run -p "<prompt>"` is visually unchanged.
+- `machtiani run -p "<prompt>" --focused` shows only the full banner and the
   final conclusion; no asks, work responses, shell steps, footer, or resume
   notices; errors still appear.
-- `mct-agent run -p "<prompt>" --no-shell-steps` shows banner, asks, and work
+- `machtiani run -p "<prompt>" --no-shell-steps` shows banner, asks, and work
   responses with their existing rendering/truncation behavior; no `Step N of
   M`/`$ command` blocks; footer still appears.
 - The same flags work in the `resume` flow.
@@ -112,7 +112,7 @@ single `--tui <full|standard|focused>` knob:
 - Make the default user install a single binary; third-party submodules must
   not be mandatory.
 - Pin forgecode for reproducible behavior.
-- Stabilize the `mct-agent --help "<prompt>"` entry mode as a preconfigured
+- Stabilize the `machtiani --help "<prompt>"` entry mode as a preconfigured
   path that requires no sync. It should try configured models in order with
   reasoning, then fall back to the default model without reasoning and without
   caching; its mode guidance should point to common issues, runbooks,
@@ -157,8 +157,8 @@ single `--tui <full|standard|focused>` knob:
 
 ## Milestone 6: Memory subsystem
 
-- Add `mct memory list` and `mct memory prune`.
-- Add `mct memory update --codebase` and `mct memory update --workflow`.
+- Add `machtiani memory list` and `machtiani memory prune`.
+- Add `machtiani memory update --codebase` and `machtiani memory update --workflow`.
 - Record the relevant commit level on sessions so memory can be derived and
   selected against repository history.
 - Bind internal memory documentation to commit level and rename it away from
@@ -172,7 +172,7 @@ single `--tui <full|standard|focused>` knob:
 - Defer the Neutral Resume Path work associated with commit `65360eb`, which
   applies injection-rejection framing to all resumes. Ship it when resume
   quality degrades or the Device Client requires clean resume semantics.
-- Cassette Agent: cassette tapes carrying mct-agent modes as audio, decoded
+- Cassette Agent: cassette tapes carrying Machtiani modes as audio, decoded
   into `~/.machtiani/modes/`; very low priority, fun idea, likely won't happen.
 
 ## Decisions log

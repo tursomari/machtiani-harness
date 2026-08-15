@@ -55,7 +55,7 @@ User message(s)
 Approximate rendered shape:
 
 ```text
-You are the planner for mct, orchestrating repository understanding and modification.
+You are the planner for Machtiani, orchestrating repository understanding and modification.
 
 <PLANNER_SYSTEM_PROMPT>
 <CORE_SAFETY_RULES>
