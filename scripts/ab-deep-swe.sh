@@ -20,7 +20,7 @@ Options:
   --concurrent, -n <int>      Number of concurrent pier trials (default: 4)
   --agent-timeout-multiplier <float>  Timeout multiplier for pier agent (default: 1.0)
   --agent-import-path <path>  Pier agent import path
-                              (default: mct_pier_adapter.mct_agent:MctAgent)
+                              (default: machtiani_pier_adapter.machtiani_agent:MachtianiAgent)
   --treatment-only           Skip control benchmark and comparison; only run
                               the treatment benchmark and persist results
   --build-only               Build control and treatment binaries, then exit;
@@ -46,7 +46,7 @@ TREATMENT_COMMIT="HEAD"
 TASKS="${DEEP_SWE_TASKS:-}"
 CONCURRENT="4"
 TIMEOUT_MULTIPLIER="1.0"
-AGENT_IMPORT_PATH="mct_pier_adapter.mct_agent:MctAgent"
+AGENT_IMPORT_PATH="machtiani_pier_adapter.machtiani_agent:MachtianiAgent"
 AGENT_NAME="mct-orchestrator"
 TREATMENT_NAME="with-peer-review"
 TREATMENT_ONLY="false"

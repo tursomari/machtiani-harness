@@ -58,7 +58,7 @@ def artifact_preservation_commands() -> tuple[str, ...]:
     )
 
 
-class MctAgent(BaseInstalledAgent):
+class MachtianiAgent(BaseInstalledAgent):
     """Pier agent adapter that runs machtiani inside a task container.
 
     Post-run it commits all changes so the Pier verifier can capture

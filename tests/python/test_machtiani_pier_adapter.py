@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from mct_pier_adapter.mct_agent import (
+from machtiani_pier_adapter.machtiani_agent import (
     PROTECTED_RUNTIME_GIT_PATHS,
     artifact_preservation_commands,
     filtered_git_stage_command,

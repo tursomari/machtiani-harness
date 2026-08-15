@@ -202,7 +202,7 @@ pier run \
     --ae "TEST_BASE_URL=${TEST_BASE_URL}" \
     --ae "TEST_MODEL=${MODEL}" \
     --jobs-dir "${JOBS_DIR}" \
-    --agent-import-path "mct_pier_adapter.mct_agent:MctAgent" \
+    --agent-import-path "machtiani_pier_adapter.machtiani_agent:MachtianiAgent" \
     --job-name "mct-single-${TASK_NAME}" \
     --include-task-name "${TASK_NAME}" \
     --n-concurrent 1 \

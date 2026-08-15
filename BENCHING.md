@@ -9,7 +9,7 @@ This is the operator entrypoint for running and monitoring Deep-SWE benches from
   `--tasks-path`; the launchers derive repository metadata from that checkout.
 - Nix 2.24 or newer with flakes enabled. The launchers enter the locked
   `bench` shell automatically; a separately installed Go toolchain is ignored.
-- Docker running, `pier` installed, and `mct_pier_adapter` importable.
+- Docker running, `pier` installed, and `machtiani_pier_adapter` importable.
 - Run commands from the repo root.
 
 ## Run the 12-Task Treatment
@@ -75,7 +75,7 @@ The single-task runner:
 - builds static, container-portable `machtiani` and `meta-orchestrator` from `HEAD`
 - downloads the musl Forge binary
 - sets `MACHTIANI_BIN`, `MCT_META_ORCHESTRATOR_BINARY`, and `MCT_FORGE_BINARY`
-- runs Pier with `--agent-import-path mct_pier_adapter.mct_agent:MctAgent`
+- runs Pier with `--agent-import-path machtiani_pier_adapter.machtiani_agent:MachtianiAgent`
 - runs with `--n-concurrent 1`
 - preserves live job data under `/tmp/treatment-preserved-<epoch>/`
 - persists durable results under `.bench/deep-swe/<agent-label>/<treatment-label>/<timestamp>/<task>/`
@@ -91,7 +91,7 @@ export TEST_BASE_URL=https://api.deepseek.com
 export TEST_MODEL=deepseek-v4-pro
 
 pier run \
-  --agent-import-path mct_pier_adapter.mct_agent:MctAgent \
+  --agent-import-path machtiani_pier_adapter.machtiani_agent:MachtianiAgent \
   --ae "MACHTIANI_BIN=${MACHTIANI_BIN}" \
   --ae "MCT_META_ORCHESTRATOR_BINARY=${MCT_META_ORCHESTRATOR_BINARY}" \
   --ae "MCT_FORGE_BINARY=${MCT_FORGE_BINARY}" \

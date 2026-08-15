@@ -90,7 +90,7 @@ The tagged E2E suite builds a temporary binary and supplies stub responses throu
 #### Python Pier Adapter
 
 ```bash
-python3 tests/python/test_mct_pier_adapter.py
+python3 tests/python/test_machtiani_pier_adapter.py
 ```
 
 This suite tests protected-artifact staging and preservation commands and verifies that the existing benchmark treatment launchers do not expose verifier logs to agents.

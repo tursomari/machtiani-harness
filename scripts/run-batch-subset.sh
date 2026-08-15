@@ -339,7 +339,7 @@ env \
     MACHTIANI_META_ORCHESTRATOR_BINARY="${META_BIN}" \
     MACHTIANI_FORGE_BINARY="${FORGE_BIN}" \
     pier run \
-    --agent-import-path mct_pier_adapter.mct_agent:MctAgent \
+    --agent-import-path machtiani_pier_adapter.machtiani_agent:MachtianiAgent \
     --ae "MACHTIANI_BIN=${AGENT_BIN}" \
     --ae "MACHTIANI_META_ORCHESTRATOR_BINARY=${META_BIN}" \
     --ae "MACHTIANI_FORGE_BINARY=${FORGE_BIN}" \
