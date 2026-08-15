@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,21 @@ import (
 	"testing"
 	"time"
 )
+
+func TestNixGitInstallableIncludesVerifiedRefAndRevision(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "source with space")
+	got := nixGitInstallable(source, "release/next", strings.Repeat("a", 40))
+	parsed, err := url.Parse(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Scheme != "git+file" || parsed.Path != filepath.ToSlash(source) || parsed.Fragment != "mct-agent" {
+		t.Fatalf("unexpected installable identity: %q", got)
+	}
+	if parsed.Query().Get("ref") != "release/next" || parsed.Query().Get("rev") != strings.Repeat("a", 40) {
+		t.Fatalf("installable omitted the verified ref or revision: %q", got)
+	}
+}
 
 func TestReceiptRoundTripAndPermissions(t *testing.T) {
 	home := t.TempDir()

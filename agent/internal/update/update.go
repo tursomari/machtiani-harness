@@ -94,15 +94,15 @@ type State struct {
 }
 
 type Result struct {
-	Status            Status    `json:"status"`
-	CurrentCommit     string    `json:"current_commit,omitempty"`
-	CandidateCommit   string    `json:"candidate_commit,omitempty"`
-	Remote            string    `json:"remote,omitempty"`
-	DefaultBranch     string    `json:"default_branch,omitempty"`
-	SourceDir         string    `json:"source_dir,omitempty"`
-	BinaryPath        string    `json:"binary_path,omitempty"`
-	InstalledDivergent bool    `json:"installed_divergent,omitempty"`
-	CheckedAt         time.Time `json:"checked_at"`
+	Status             Status    `json:"status"`
+	CurrentCommit      string    `json:"current_commit,omitempty"`
+	CandidateCommit    string    `json:"candidate_commit,omitempty"`
+	Remote             string    `json:"remote,omitempty"`
+	DefaultBranch      string    `json:"default_branch,omitempty"`
+	SourceDir          string    `json:"source_dir,omitempty"`
+	BinaryPath         string    `json:"binary_path,omitempty"`
+	InstalledDivergent bool      `json:"installed_divergent,omitempty"`
+	CheckedAt          time.Time `json:"checked_at"`
 }
 
 type Options struct {
@@ -358,7 +358,7 @@ func (m *Manager) Install(ctx context.Context, source, prefix string) (receipt R
 	if _, err := gitOutput(ctx, stagedSource, "checkout", "--detach", head); err != nil {
 		return Receipt{}, err
 	}
-	storePath, version, err := m.buildExact(ctx, stagedSource, head)
+	storePath, version, err := m.buildExact(ctx, stagedSource, branch, head)
 	if err != nil {
 		return Receipt{}, err
 	}
@@ -468,7 +468,7 @@ func (m *Manager) Update(ctx context.Context, result Result) (updated Result, re
 	defer func() {
 		_, _ = gitOutput(context.Background(), receipt.SourceDir, "worktree", "remove", "--force", worktree)
 	}()
-	storePath, version, err := m.buildExact(ctx, worktree, result.CandidateCommit)
+	storePath, version, err := m.buildExact(ctx, worktree, result.DefaultBranch, result.CandidateCommit)
 	if err != nil {
 		return Result{}, err
 	}
@@ -569,8 +569,20 @@ func fetchFullHistory(ctx context.Context, source, refspec string) error {
 	return err
 }
 
-func (m *Manager) buildExact(ctx context.Context, source, commit string) (string, string, error) {
-	installable := fmt.Sprintf("git+file://%s?rev=%s#mct-agent", filepath.ToSlash(source), commit)
+func nixGitInstallable(source, branch, commit string) string {
+	query := url.Values{}
+	query.Set("ref", branch)
+	query.Set("rev", commit)
+	return (&url.URL{
+		Scheme:   "git+file",
+		Path:     filepath.ToSlash(source),
+		RawQuery: query.Encode(),
+		Fragment: "mct-agent",
+	}).String()
+}
+
+func (m *Manager) buildExact(ctx context.Context, source, branch, commit string) (string, string, error) {
+	installable := nixGitInstallable(source, branch, commit)
 	cmd := exec.CommandContext(ctx, "nix", "build", "--no-link", "--print-out-paths", installable)
 	cmd.Stdout = nil
 	cmd.Stderr = m.opts.Stderr
