@@ -12,9 +12,9 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/shell-agent/pkg/minisweagent"
 )
 
-const forgePrefix = "mct-forge"
+const forgePrefix = "machtiani-forge"
 
-// ForgeWrapper intercepts mct-forge commands to capture structured metadata
+// ForgeWrapper intercepts machtiani-forge commands to capture structured metadata
 // and detect misuse.  Commands are passed through to the inner environment unchanged.
 type ForgeWrapper struct {
 	inner minisweagent.Environment
@@ -35,18 +35,18 @@ type forgeMetadata struct {
 }
 
 // Execute implements minisweagent.Environment.  Commands that begin with
-// "mct-forge" are intercepted for metadata capture and misuse detection.
+// "machtiani-forge" are intercepted for metadata capture and misuse detection.
 // All other commands pass through to the inner environment unchanged.
 func (w *ForgeWrapper) Execute(ctx context.Context, command, cwd string) (minisweagent.ExecuteResult, error) {
 	trimmed := strings.TrimSpace(command)
 	if !strings.HasPrefix(trimmed, forgePrefix) {
 		if regexp.MustCompile("(\\|\\s*|;\\s*|&&\\s*|\\|\\|\\s*|xargs\\s+)" + forgePrefix + "(\\s|$)").MatchString(trimmed) {
-			return minisweagent.ExecuteResult{ReturnCode: 1, Output: "mct-forge error: mct-forge must be the first command and takes a single argument in single quotes. Do not pipe to mct-forge or use it with xargs. Usage: mct-forge your handoff note"}, nil
+			return minisweagent.ExecuteResult{ReturnCode: 1, Output: "machtiani-forge error: machtiani-forge must be the first command and takes a single argument in single quotes. Do not pipe to machtiani-forge or use it with xargs. Usage: machtiani-forge your handoff note"}, nil
 		}
 		return w.inner.Execute(ctx, command, cwd)
 	}
 
-	// Extract the handoff note after "mct-forge".
+	// Extract the handoff note after "machtiani-forge".
 	note := strings.TrimSpace(strings.TrimPrefix(trimmed, forgePrefix))
 
 	start := time.Now()

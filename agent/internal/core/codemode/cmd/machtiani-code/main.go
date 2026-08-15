@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	mctcode "github.com/tursomari/machtiani/agent/internal/core/mctcode"
+	"github.com/tursomari/machtiani/agent/internal/core/codemode"
 )
 
 func main() {
@@ -21,7 +21,7 @@ func main() {
 	// flag.Parse leaves non-flag args in flag.Args().
 	os.Args = append([]string{os.Args[0]}, flag.Args()...)
 
-	if err := mctcode.Run(*verbose); err != nil {
+	if err := codemode.Run(*verbose); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}

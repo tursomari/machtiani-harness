@@ -28,13 +28,13 @@ func TestParseXMLCommandFailureHeredoc(t *testing.T) {
 
 func TestParseXMLCommandFailureApostrophe(t *testing.T) {
 	content := `<command>
-mct-forge SELECT * FROM table WHERE name = 'O''Brien'
+machtiani-forge SELECT * FROM table WHERE name = 'O''Brien'
 </command>`
 	cmd, _, err := parseXMLCommand(content, "command")
 	if err != nil {
 		t.Fatalf("parseXMLCommand should succeed: %v", err)
 	}
-	expected := "mct-forge SELECT * FROM table WHERE name = 'O''Brien'"
+	expected := "machtiani-forge SELECT * FROM table WHERE name = 'O''Brien'"
 	if cmd != expected {
 		t.Errorf("expected %q, got %q", expected, cmd)
 	}
@@ -83,13 +83,13 @@ func TestParseXMLCommandHeredocSuffixed(t *testing.T) {
 
 func TestParseXMLCommandApostropheSuffixed(t *testing.T) {
 	content := `<command-foo>
-mct-forge SELECT * FROM table WHERE name = 'O''Brien'
+machtiani-forge SELECT * FROM table WHERE name = 'O''Brien'
 </command-foo>`
 	cmd, _, err := parseXMLCommand(content, "command-foo")
 	if err != nil {
 		t.Fatalf("parseXMLCommand should succeed: %v", err)
 	}
-	expected := "mct-forge SELECT * FROM table WHERE name = 'O''Brien'"
+	expected := "machtiani-forge SELECT * FROM table WHERE name = 'O''Brien'"
 	if cmd != expected {
 		t.Errorf("expected %q, got %q", expected, cmd)
 	}
@@ -206,15 +206,15 @@ Some text after`
 
 func TestParseXMLCommandMctForgePreservesSimpleHashLines(t *testing.T) {
 	content := `<command>
-mct-forge do something
+machtiani-forge do something
 # This is a comment
 </command>`
 	cmd, _, err := parseXMLCommand(content, "command")
 	if err != nil {
 		t.Fatalf("parseXMLCommand should succeed: %v", err)
 	}
-	if !strings.HasPrefix(cmd, "mct-forge") {
-		t.Errorf("expected command to start with mct-forge, got: %s", cmd)
+	if !strings.HasPrefix(cmd, "machtiani-forge") {
+		t.Errorf("expected command to start with machtiani-forge, got: %s", cmd)
 	}
 	if !strings.Contains(cmd, "# This is a comment") {
 		t.Errorf("expected hash line to be preserved, got: %s", cmd)

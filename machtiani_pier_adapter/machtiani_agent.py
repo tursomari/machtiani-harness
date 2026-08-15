@@ -123,10 +123,10 @@ class MachtianiAgent(BaseInstalledAgent):
         await self.exec_as_root(environment, "chmod +x /usr/local/bin/forge")
         await self.exec_as_root(environment, "/usr/local/bin/forge --version")
 
-        # Upload mct-forge wrapper.
-        forge_wrapper = os.path.expanduser(os.environ.get("MACHTIANI_FORGE_WRAPPER", "peripherals/mct-forge"))
-        await environment.upload_file(forge_wrapper, "/usr/local/bin/mct-forge")
-        await self.exec_as_root(environment, "chmod +x /usr/local/bin/mct-forge")
+        # Upload machtiani-forge wrapper.
+        forge_wrapper = os.path.expanduser(os.environ.get("MACHTIANI_FORGE_WRAPPER", "peripherals/machtiani-forge"))
+        await environment.upload_file(forge_wrapper, "/usr/local/bin/machtiani-forge")
+        await self.exec_as_root(environment, "chmod +x /usr/local/bin/machtiani-forge")
 
         # Upload meta-orchestrator binary (skip if not available, e.g., older control commits).
         meta_orch_path = os.path.expanduser(os.environ.get("MACHTIANI_META_ORCHESTRATOR_BINARY", "meta-orchestrator"))

@@ -88,7 +88,7 @@ func TestForgeWrapperAsyncCommandRetainsMetadataAndLaunchContext(t *testing.T) {
 	parent, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	got, err := env.Start(parent, "mct-forge 'finish this'", "/repo")
+	got, err := env.Start(parent, "machtiani-forge 'finish this'", "/repo")
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}

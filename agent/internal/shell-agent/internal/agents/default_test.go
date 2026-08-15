@@ -1692,7 +1692,6 @@ func TestRunWithMessagesPreservesSystemPromptEndToEnd(t *testing.T) {
 	}
 }
 
-
 func TestRunWithMessagesPreservesTaskForForcedFinalization(t *testing.T) {
 	const task = "Run the local tmp-root check and report the output."
 	messages := []minisweagent.Message{
@@ -1782,13 +1781,13 @@ func TestRunLoopFormatErrorCounterResetsOnNonFormatError(t *testing.T) {
 	}
 }
 func TestParseXMLCommandMctForgePreservesHashLines(t *testing.T) {
-	input := "<command>\nmct-forge Create file with heading:\n\n# Documentation Cache\n\n## Nix Reference\n\nSome content here.\ndo not stage.\n</command>"
+	input := "<command>\nmachtiani-forge Create file with heading:\n\n# Documentation Cache\n\n## Nix Reference\n\nSome content here.\ndo not stage.\n</command>"
 	command, corrections, err := parseXMLCommand(input, "command")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.HasPrefix(command, "mct-forge") {
-		t.Errorf("expected command to start with mct-forge, got: %s", command)
+	if !strings.HasPrefix(command, "machtiani-forge") {
+		t.Errorf("expected command to start with machtiani-forge, got: %s", command)
 	}
 	if !strings.Contains(command, "## Nix Reference") {
 		t.Errorf("expected ## Nix Reference to be preserved in command, got: %s", command)
@@ -1797,13 +1796,13 @@ func TestParseXMLCommandMctForgePreservesHashLines(t *testing.T) {
 		t.Errorf("expected # Documentation Cache to be preserved in command, got: %s", command)
 	}
 	if strings.Contains(command, "&&") {
-		t.Errorf("expected no && joining in mct-forge command, got: %s", command)
+		t.Errorf("expected no && joining in machtiani-forge command, got: %s", command)
 	}
 	_ = corrections
 }
 
 func TestParseXMLCommandMctForgePreservesMultiline(t *testing.T) {
-	input := "<command>\nmct-forge Create the following files:\n\n1. Create file flake.nix\n2. Create file hosts/nixlab.nix\ndo not stage.\n</command>"
+	input := "<command>\nmachtiani-forge Create the following files:\n\n1. Create file flake.nix\n2. Create file hosts/nixlab.nix\ndo not stage.\n</command>"
 	command, corrections, err := parseXMLCommand(input, "command")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1812,18 +1811,19 @@ func TestParseXMLCommandMctForgePreservesMultiline(t *testing.T) {
 		t.Errorf("expected multi-line content to be preserved, got: %s", command)
 	}
 	if strings.Contains(command, "&&") {
-		t.Errorf("expected no && joining in mct-forge command, got: %s", command)
+		t.Errorf("expected no && joining in machtiani-forge command, got: %s", command)
 	}
 	_ = corrections
 }
 
 func TestParseXMLCommandMctForgeDoesNotMatchSimilarPrefix(t *testing.T) {
-	input := "<command>\nmct-forge-test some args\n## should be stripped\nother line\n</command>"
+	input := "<command>\nmachtiani-forge-test some args\n## should be stripped\nother line\n</command>"
 	cmd, _, err := parseXMLCommand(input, "command")
 	if err != nil {
 		t.Fatalf("parseXMLCommand should succeed: %v", err)
 	}
-	t.Logf("parseXMLCommand returned raw multi-line content (as expected): %s", cmd); _ = cmd
+	t.Logf("parseXMLCommand returned raw multi-line content (as expected): %s", cmd)
+	_ = cmd
 }
 
 func TestParseXMLCommandWithBackticks(t *testing.T) {
@@ -2100,8 +2100,10 @@ func TestTranslateAndExecuteEnforcesEarlyTurnMalformedResponse(t *testing.T) {
 	agent := NewDefaultAgent(model, env, cfg, prompts)
 	agent.RunConfig.EnforceEarlyCommands = true
 	agent.State.commandsExecuted = 0
-	agent.RunConfig.AnswerTag = "customanswer"; agent.RunConfig.NormalizeAnswerTag()
-	agent.RunConfig.CommandTag = "command"; agent.RunConfig.NormalizeCommandTag()
+	agent.RunConfig.AnswerTag = "customanswer"
+	agent.RunConfig.NormalizeAnswerTag()
+	agent.RunConfig.CommandTag = "command"
+	agent.RunConfig.NormalizeCommandTag()
 	agent.addMessage("user", "List files", nil)
 
 	err := agent.Step(context.Background())
@@ -2259,10 +2261,10 @@ func TestTranslateAndExecuteSkipsBashSyntaxForMctForge(t *testing.T) {
 		Planner:    &minisweagent.PlannerPromptsConfig{SystemTemplate: "", InstanceTemplate: ""},
 		ShellAgent: &minisweagent.ShellAgentPromptsConfig{FormatErrorTemplate: "custom-template-message", ActionObservationTemplate: "{{.Output}}"},
 	}
-	// mct-forge commands embed natural-language content and are not
+	// machtiani-forge commands embed natural-language content and are not
 	// executed as bash, so the syntax check must be skipped even on
 	// early turns with enforcement on.
-	model := &scriptedModel{responses: []minisweagent.QueryResult{{Content: "<command>\nmct-forge Create the following files:\n## Heading\nSome content.\n</command>"}}}
+	model := &scriptedModel{responses: []minisweagent.QueryResult{{Content: "<command>\nmachtiani-forge Create the following files:\n## Heading\nSome content.\n</command>"}}}
 	env := &capturingEnvironment{result: minisweagent.ExecuteResult{ReturnCode: 0, Output: "ok"}}
 	agent := NewDefaultAgent(model, env, cfg, prompts)
 	agent.RunConfig.EnforceEarlyCommands = true
@@ -2270,10 +2272,10 @@ func TestTranslateAndExecuteSkipsBashSyntaxForMctForge(t *testing.T) {
 	agent.addMessage("user", "Create files", nil)
 
 	if err := agent.Step(context.Background()); err != nil {
-		t.Fatalf("Step() error = %v, mct-forge commands should skip bash syntax check", err)
+		t.Fatalf("Step() error = %v, machtiani-forge commands should skip bash syntax check", err)
 	}
 	if env.calls != 1 {
-		t.Fatalf("expected execute to be called once for mct-forge, got %d", env.calls)
+		t.Fatalf("expected execute to be called once for machtiani-forge, got %d", env.calls)
 	}
 }
 
@@ -2393,7 +2395,8 @@ func TestParseXMLAnswer_HonorsWhitespaceTag(t *testing.T) {
 // caller passes "" (the recommended "no override" signal).
 func TestDefaultAgentSetAnswerTagNormalisesEmpty(t *testing.T) {
 	agent := NewDefaultAgent(&stubModel{}, &stubEnvironment{}, &minisweagent.ShellAgentConfig{}, &minisweagent.PromptsConfig{})
-	agent.RunConfig.AnswerTag = ""; agent.RunConfig.NormalizeAnswerTag()
+	agent.RunConfig.AnswerTag = ""
+	agent.RunConfig.NormalizeAnswerTag()
 	if got := agent.RunConfig.AnswerTag; got != "answer" {
 		t.Fatalf("expected empty input to normalise to %q, got %q", "answer", got)
 	}
@@ -2406,7 +2409,8 @@ func TestDefaultAgentSetAnswerTagNormalisesEmpty(t *testing.T) {
 // actually overrides the default the agent was constructed with.
 func TestDefaultAgentSetAnswerTagOverridesDefault(t *testing.T) {
 	agent := NewDefaultAgent(&stubModel{}, &stubEnvironment{}, &minisweagent.ShellAgentConfig{}, &minisweagent.PromptsConfig{})
-	agent.RunConfig.AnswerTag = "answercode"; agent.RunConfig.NormalizeAnswerTag()
+	agent.RunConfig.AnswerTag = "answercode"
+	agent.RunConfig.NormalizeAnswerTag()
 	if got := agent.RunConfig.AnswerTag; got != "answercode" {
 		t.Fatalf("expected %q, got %q", "answercode", got)
 	}
@@ -2430,8 +2434,10 @@ func TestRenderFormatErrorUsesCustomAnswerTagInEarlyTurnTemplate(t *testing.T) {
 	agent := NewDefaultAgent(&stubModel{}, &stubEnvironment{}, cfg, prompts)
 	agent.RunConfig.EnforceEarlyCommands = true
 	agent.State.commandsExecuted = 0
-	agent.RunConfig.AnswerTag = "customanswer"; agent.RunConfig.NormalizeAnswerTag()
-	agent.RunConfig.CommandTag = "command"; agent.RunConfig.NormalizeCommandTag()
+	agent.RunConfig.AnswerTag = "customanswer"
+	agent.RunConfig.NormalizeAnswerTag()
+	agent.RunConfig.CommandTag = "command"
+	agent.RunConfig.NormalizeCommandTag()
 
 	got := agent.renderFormatError(fmt.Errorf("test error"))
 	want := "custom-format-error: test error tag=command ans=customanswer"

@@ -516,7 +516,7 @@ func (s *ShellService) Execute(ctx context.Context, command, cwd string) ToolRes
 	if err := cmd.Run(); err != nil {
 		if errors.Is(err, context.DeadlineExceeded) || ctxWithTimeout.Err() == context.DeadlineExceeded {
 			if s.verbose {
-				fmt.Fprintf(os.Stderr, "mct-code: shell command timed out after %v: %s\n", s.timeout, command)
+				fmt.Fprintf(os.Stderr, "machtiani-code: shell command timed out after %v: %s\n", s.timeout, command)
 			}
 			return ToolResult{Error: fmt.Errorf("shell command timed out after %v: %s", s.timeout, command)}
 		}
@@ -652,7 +652,7 @@ func (s *FsSearchService) Execute(ctx context.Context, params map[string]interfa
 		// Check for timeout first.
 		if errors.Is(err, context.DeadlineExceeded) || ctxWithTimeout.Err() == context.DeadlineExceeded {
 			if s.verbose {
-				fmt.Fprintf(os.Stderr, "mct-code: search timed out after %v\n", s.timeout)
+				fmt.Fprintf(os.Stderr, "machtiani-code: search timed out after %v\n", s.timeout)
 			}
 			return ToolResult{}, fmt.Errorf("search timed out after %v", s.timeout)
 		}

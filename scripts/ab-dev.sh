@@ -292,7 +292,7 @@ FORGE_MOUNT=""
 if [[ -f "$HOME/.local/bin/forge" ]]; then
     FORGE_MOUNT="--volume $HOME/.local/bin/forge:/usr/local/bin/forge:ro"
 else
-    echo "[ab-dev.sh] WARNING: forge binary not found at $HOME/.local/bin/forge; mct-forge will fail if called inside the container."
+    echo "[ab-dev.sh] WARNING: forge binary not found at $HOME/.local/bin/forge; machtiani-forge will fail if called inside the container."
 fi
 
 set +e
@@ -330,7 +330,7 @@ FORGE_MOUNT=""
 if [[ -f "$HOME/.local/bin/forge" ]]; then
     FORGE_MOUNT="--volume $HOME/.local/bin/forge:/usr/local/bin/forge:ro"
 else
-    echo "[ab-dev.sh] WARNING: forge binary not found at $HOME/.local/bin/forge; mct-forge will fail if called inside the container."
+    echo "[ab-dev.sh] WARNING: forge binary not found at $HOME/.local/bin/forge; machtiani-forge will fail if called inside the container."
 fi
 
 set +e

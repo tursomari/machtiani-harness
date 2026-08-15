@@ -54,7 +54,7 @@ FORGE_FATAL_RE = re.compile(
     re.IGNORECASE,
 )
 FORGE_COMMAND_ERROR_RE = re.compile(
-    r"\bmct-forge error:",
+    r"\bmachtiani-forge error:",
     re.IGNORECASE,
 )
 

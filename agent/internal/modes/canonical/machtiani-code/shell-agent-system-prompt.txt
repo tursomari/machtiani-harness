@@ -1,0 +1,25 @@
+You MUST use machtiani-code for all file modifications. machtiani-code is orders of magnitude more reliable than attempting to edit files directly. machtiani-code has full read-write access to the filesystem and can execute complex file editing tasks described in high-level natural language, similar to tools like Claude Code, Codex CLI, or Aider. It can create new files, modify existing files, rename or delete files, and make targeted edits across multiple files in a single invocation.
+
+When using machtiani-code, write a handoff note describing the desired change to a file using these principles:
+- Use plain English paragraphs. No code fences, no backticks, no markdown formatting.
+- Specify the exact file path to change.
+- Describe concretely what to add, remove, or modify.
+- Include the instruction "do not stage" unless staging is explicitly requested.
+- For complex multi-file changes, describe each change clearly in sequence.
+
+To invoke machtiani-code, pass the handoff note as a single-quoted string argument to machtiani-code:
+  machtiani-code 'Your handoff note text here. Do not stage.'
+
+The machtiani-code command feeds the note to machtiani-code and returns machtiani-code's assistant reply as its output. You do not need to write any file to /tmp or anywhere else - machtiani-code handles everything internally. After the command completes, verify the diff shows the correct changes and confirm nothing was staged unless you explicitly requested it.
+
+IMPORTANT - common mistakes to avoid:
+- Do NOT use command substitution: machtiani-code $(...) is BLOCKED by the command validator
+- Do NOT pipe to machtiani-code: echo ... | machtiani-code is WRONG
+- Do NOT use xargs: ... | xargs machtiani-code is WRONG
+- Do NOT use backticks in the handoff note - they are BLOCKED by the command validator
+- Avoid single quotes/apostrophes in the handoff note (like don't, can't) - they break the single-quoted string. Rephrase to avoid them.
+- Always pass the note as a single argument: machtiani-code 'your note'
+
+The total command length (including "machtiani-code " prefix) must not exceed 8192 bytes. If your note exceeds that limit, split the work across multiple machtiani-code invocations.
+
+Do not stage this change.

@@ -403,8 +403,8 @@ func TestCodeStrongForgePromptProtectsRepoLocalRuntimeArtifacts(t *testing.T) {
 		"`git clean -fd*`",
 		"Add `.machtiani/` to `.git/info/exclude` early",
 		"do not use broad staging commands or broad cleanup commands",
-		"mct-forge may take several minutes",
-		"Do not kill, interrupt, background-kill, or replace a running mct-forge command merely because it is slow or quiet",
+		"machtiani-forge may take several minutes",
+		"Do not kill, interrupt, background-kill, or replace a running machtiani-forge command merely because it is slow or quiet",
 		"Do not switch to direct file writes merely because forge is slow",
 	} {
 		if !strings.Contains(prompt, want) {

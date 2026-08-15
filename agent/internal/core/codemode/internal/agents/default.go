@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tursomari/machtiani/agent/internal/core/mctcode/internal/tools"
+	"github.com/tursomari/machtiani/agent/internal/core/codemode/internal/tools"
 	"github.com/tursomari/machtiani/agent/internal/llm"
 )
 
@@ -130,9 +130,9 @@ func (a *DefaultAgent) Run(ctx context.Context, handoffNote string) (string, []s
 		iter++
 		if iter > a.maxIterations {
 			if a.verbose {
-				fmt.Fprintf(os.Stderr, "mct-code: max iterations (%d) reached\n", a.maxIterations)
+				fmt.Fprintf(os.Stderr, "machtiani-code: max iterations (%d) reached\n", a.maxIterations)
 			}
-			return "", nil, fmt.Errorf("mct-code: max iterations (%d) reached", a.maxIterations)
+			return "", nil, fmt.Errorf("machtiani-code: max iterations (%d) reached", a.maxIterations)
 		}
 
 		resp, err := a.chatCompletionWithRetry(ctx, messages)
@@ -280,7 +280,7 @@ func (a *DefaultAgent) chatCompletionWithRetry(ctx context.Context, messages []l
 
 		backoff := time.Duration(1<<uint(attempt)) * time.Second
 		if a.verbose {
-			fmt.Fprintf(os.Stderr, "mct-code: retrying (attempt %d/%d, backoff %v) due to: %v\n", attempt+1, a.retryAttempts, backoff, err)
+			fmt.Fprintf(os.Stderr, "machtiani-code: retrying (attempt %d/%d, backoff %v) due to: %v\n", attempt+1, a.retryAttempts, backoff, err)
 		}
 		time.Sleep(backoff)
 	}

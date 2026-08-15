@@ -77,7 +77,7 @@ ENV PATH=/usr/local/go/bin:$PATH
 
 # Copy built binaries from the builder stage
 COPY --from=builder /build/bin/ /usr/local/bin/
-COPY --link peripherals/mct-forge /usr/local/bin/mct-forge
+COPY --link peripherals/machtiani-forge /usr/local/bin/machtiani-forge
 
 # Copy the Machtiani configuration
 COPY --from=builder /build/.machtiani/ /workspace/.machtiani/

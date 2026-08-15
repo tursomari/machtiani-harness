@@ -71,10 +71,10 @@ func TestForgeWrapper_MisuseDetection(t *testing.T) {
 		name    string
 		command string
 	}{
-		{"pipe to mct-forge", "echo 'hello' | mct-forge"},
-		{"xargs mct-forge", "echo 'hello' | xargs mct-forge"},
-		{"arbitrary command before mct-forge", "make test && mct-forge 'fix the failure'"},
-		{"semicolon before mct-forge", "cd /tmp; mct-forge 'fix the failure'"},
+		{"pipe to machtiani-forge", "echo 'hello' | machtiani-forge"},
+		{"xargs machtiani-forge", "echo 'hello' | xargs machtiani-forge"},
+		{"arbitrary command before machtiani-forge", "make test && machtiani-forge 'fix the failure'"},
+		{"semicolon before machtiani-forge", "cd /tmp; machtiani-forge 'fix the failure'"},
 	}
 
 	for _, tt := range tests {
@@ -87,8 +87,8 @@ func TestForgeWrapper_MisuseDetection(t *testing.T) {
 			if result.ReturnCode != 1 {
 				t.Fatalf("got ReturnCode %d, want 1", result.ReturnCode)
 			}
-			if !strings.Contains(result.Output, "mct-forge error") {
-				t.Fatalf("got Output %q, want it to contain 'mct-forge error'", result.Output)
+			if !strings.Contains(result.Output, "machtiani-forge error") {
+				t.Fatalf("got Output %q, want it to contain 'machtiani-forge error'", result.Output)
 			}
 			if !strings.Contains(result.Output, "must be the first command") {
 				t.Fatalf("got Output %q, want it to contain 'must be the first command'", result.Output)
@@ -111,9 +111,9 @@ func TestForgeWrapper_MisuseDetection_PathNotFlagged(t *testing.T) {
 		name    string
 		command string
 	}{
-		{"cat with forge in path", "cat /home/user/mct-forge/readme.txt"},
-		{"grep forge pattern", "grep mct-forge somefile.txt"},
-		{"ls with forge in path", "ls /path/to/mct-forge/"},
+		{"cat with forge in path", "cat /home/user/machtiani-forge/readme.txt"},
+		{"grep forge pattern", "grep machtiani-forge somefile.txt"},
+		{"ls with forge in path", "ls /path/to/machtiani-forge/"},
 	}
 
 	for _, tt := range tests {
@@ -147,7 +147,7 @@ func TestForgeWrapper_SuccessfulForgeCall(t *testing.T) {
 	parentCtx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	command := "mct-forge 'add a comment to main.go'"
+	command := "machtiani-forge 'add a comment to main.go'"
 	result, err := wrapper.Execute(parentCtx, command, "/home/user/project")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -230,7 +230,7 @@ func TestForgeWrapper_InnerError(t *testing.T) {
 	}
 	wrapper := NewForgeWrapper(fake)
 
-	command := "mct-forge 'fix the bug'"
+	command := "machtiani-forge 'fix the bug'"
 	_, err := wrapper.Execute(context.Background(), command, "/home/user/project")
 	if err == nil {
 		t.Fatal("expected an error, got nil")

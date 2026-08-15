@@ -1,4 +1,4 @@
-package mctcode
+package codemode
 
 import (
 	"context"
@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tursomari/machtiani/agent/internal/core/mctcode/internal/agents"
-	"github.com/tursomari/machtiani/agent/internal/core/mctcode/internal/tools"
+	"github.com/tursomari/machtiani/agent/internal/core/codemode/internal/agents"
+	"github.com/tursomari/machtiani/agent/internal/core/codemode/internal/tools"
 	"github.com/tursomari/machtiani/agent/internal/llm"
 )
 
@@ -121,8 +121,8 @@ func parseToolCalls(text string) []agents.ToolCall {
 		calls = parseToolXMLCalls(text)
 	}
 
-	// 6. Fallback: parse <mct-code:invoke> blocks (<mct-code:invoke name="...">
-	//    with <mct-code:parameter name="...">value</mct-code:parameter> children).
+	// 6. Fallback: parse <machtiani-code:invoke> blocks (<machtiani-code:invoke name="...">
+	//    with <machtiani-code:parameter name="...">value</machtiani-code:parameter> children).
 	if len(calls) == 0 {
 		calls = parseInvokeToolCalls(text)
 	}
@@ -159,14 +159,14 @@ func findToolJSONStart(s string, from int) int {
 	return -1
 }
 
-// parseInvokeToolCalls is a fallback parser for <mct-code:invoke> blocks where
-// each <mct-code:invoke name="..."> element contains <mct-code:parameter name="...">value</mct-code:parameter>
+// parseInvokeToolCalls is a fallback parser for <machtiani-code:invoke> blocks where
+// each <machtiani-code:invoke name="..."> element contains <machtiani-code:parameter name="...">value</machtiani-code:parameter>
 // children.
 func parseInvokeToolCalls(text string) []agents.ToolCall {
 	var calls []agents.ToolCall
 
-	startTag := "<mct-code:invoke>"
-	endTag := "</mct-code:invoke>"
+	startTag := "<machtiani-code:invoke>"
+	endTag := "</machtiani-code:invoke>"
 	remain := text
 
 	for {
@@ -183,9 +183,9 @@ func parseInvokeToolCalls(text string) []agents.ToolCall {
 		block := remain[start : start+end]
 		remain = remain[start+end+len(endTag):]
 
-		// Extract <mct-code:invoke name="...">...</mct-code:invoke> elements within this block.
-		invokeTag := "<mct-code:invoke "
-		invokeEnd := "</mct-code:invoke>"
+		// Extract <machtiani-code:invoke name="...">...</machtiani-code:invoke> elements within this block.
+		invokeTag := "<machtiani-code:invoke "
+		invokeEnd := "</machtiani-code:invoke>"
 		searchFrom := 0
 
 		for {
@@ -210,8 +210,8 @@ func parseInvokeToolCalls(text string) []agents.ToolCall {
 
 			// Extract parameters.
 			args := make(map[string]interface{})
-			paramStart := "<mct-code:parameter "
-			paramEnd := "</mct-code:parameter>"
+			paramStart := "<machtiani-code:parameter "
+			paramEnd := "</machtiani-code:parameter>"
 			pSearch := 0
 
 			for {
@@ -233,14 +233,14 @@ func parseInvokeToolCalls(text string) []agents.ToolCall {
 					continue
 				}
 
-				// Extract value: everything between > and </mct-code:parameter>
+				// Extract value: everything between > and </machtiani-code:parameter>
 				valStart := strings.Index(pBlock, ">")
 				if valStart < 0 {
 					continue
 				}
 				valStart++
 
-				valEnd := strings.LastIndex(pBlock, "</mct-code:parameter>")
+				valEnd := strings.LastIndex(pBlock, "</machtiani-code:parameter>")
 				if valEnd < 0 || valEnd <= valStart {
 					continue
 				}
@@ -517,7 +517,7 @@ func parseArgValue(s string) interface{} {
 // wires up all services and the LLM client, creates a DefaultAgent, and runs it.
 func Run(verbose bool) error {
 	if len(os.Args) < 2 {
-		return fmt.Errorf("usage: mct-code <handoff-note>")
+		return fmt.Errorf("usage: machtiani-code <handoff-note>")
 	}
 	handoffNote := os.Args[1]
 
