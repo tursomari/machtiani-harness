@@ -524,26 +524,26 @@ func Run(verbose bool) error {
 	ctx := context.Background()
 
 	// Determine the model alias (env var or default).
-	modelAlias := os.Getenv("MCT_DEFAULT_MODEL")
+	modelAlias := os.Getenv("MACHTIANI_DEFAULT_MODEL")
 	if modelAlias == "" {
 		modelAlias = "default"
 	}
 
 	// Tool configuration from environment (with defaults).
 	toolTimeoutSeconds := 60
-	if v := os.Getenv("MCT_CODE_TOOL_TIMEOUT"); v != "" {
+	if v := os.Getenv("MACHTIANI_CODE_TOOL_TIMEOUT"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			toolTimeoutSeconds = n
 		}
 	}
 	maxIterations := 100
-	if v := os.Getenv("MCT_CODE_MAX_ITERATIONS"); v != "" {
+	if v := os.Getenv("MACHTIANI_CODE_MAX_ITERATIONS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			maxIterations = n
 		}
 	}
 	retryAttempts := 3
-	if v := os.Getenv("MCT_CODE_RETRY_ATTEMPTS"); v != "" {
+	if v := os.Getenv("MACHTIANI_CODE_RETRY_ATTEMPTS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			retryAttempts = n
 		}

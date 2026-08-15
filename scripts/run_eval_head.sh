@@ -6,8 +6,8 @@ cleanup() {
     if [ "${KEEP:-false}" = true ]; then
         return
     fi
-    if [ -n "${MCT_WORKTREE:-}" ]; then
-        rm -rf "$MCT_WORKTREE" 2>/dev/null
+    if [ -n "${MACHTIANI_WORKTREE:-}" ]; then
+        rm -rf "$MACHTIANI_WORKTREE" 2>/dev/null
     fi
     if [ -n "${FORGE_WORKTREE:-}" ]; then
         rm -rf "$FORGE_WORKTREE" 2>/dev/null
@@ -288,13 +288,13 @@ export MACHTIANI_SESSION_TEMP_ROOT="$SESSION_TEMP_ROOT"
 echo "[setup] Session temp root: $SESSION_TEMP_ROOT"
 
 # Create three separate git worktrees
-MCT_WORKTREE="$OUTPUT_DIR/worktree_mct"
+MACHTIANI_WORKTREE="$OUTPUT_DIR/worktree_mct"
 FORGE_WORKTREE="$OUTPUT_DIR/worktree_forge"
 JUDGE_WORKTREE="$OUTPUT_DIR/worktree_judge"
 
-echo "[setup] Creating worktree for machtiani at $MCT_WORKTREE (commit $HEAD_SHA)..."
-rm -rf "$MCT_WORKTREE"
-git -C "$REPO" worktree add "$MCT_WORKTREE" "$HEAD_SHA"
+echo "[setup] Creating worktree for machtiani at $MACHTIANI_WORKTREE (commit $HEAD_SHA)..."
+rm -rf "$MACHTIANI_WORKTREE"
+git -C "$REPO" worktree add "$MACHTIANI_WORKTREE" "$HEAD_SHA"
 
 echo "[setup] Creating worktree for forge at $FORGE_WORKTREE (commit $HEAD_SHA)..."
 rm -rf "$FORGE_WORKTREE"
@@ -343,15 +343,15 @@ echo "[setup] Model: $MODEL"
 echo "[setup] Sync model: $SYNC_MODEL"
 
 # Resolve API key
-MCT_API_KEY_ARG=""
+MACHTIANI_API_KEY_ARG=""
 if [ -n "$API_KEY" ]; then
     # --api-key takes precedence
-    MCT_API_KEY_ARG="--api-key $API_KEY"
+    MACHTIANI_API_KEY_ARG="--api-key $API_KEY"
     if [[ "$API_KEY" != *:* ]]; then
         MODEL_PROVIDER=$(derive_model_provider "$MODEL" "$CONFIG")
         if [ -n "$MODEL_PROVIDER" ]; then
             API_KEY="${MODEL_PROVIDER}:${API_KEY}"
-            MCT_API_KEY_ARG="--api-key $API_KEY"
+            MACHTIANI_API_KEY_ARG="--api-key $API_KEY"
         else
             echo "Error: API_KEY does not contain a provider prefix and could not be derived from config" >&2
             exit 1
@@ -377,8 +377,8 @@ if [ -n "$SYNC_API_KEY" ]; then
     fi
     SYNC_API_KEY_ARG="--api-key $SYNC_API_KEY"
     echo "[setup] Sync API key: from --sync-api-key flag"
-elif [ -n "$MCT_API_KEY_ARG" ]; then
-    SYNC_API_KEY_ARG="$MCT_API_KEY_ARG"
+elif [ -n "$MACHTIANI_API_KEY_ARG" ]; then
+    SYNC_API_KEY_ARG="$MACHTIANI_API_KEY_ARG"
     echo "[setup] Sync API key: using main API key"
 else
     echo "[setup] Sync API key: using config file or environment"
@@ -386,9 +386,9 @@ fi
 
 # Derive environment variables for forge from resolved API key
 FORGE_ENV="TERM=dumb FORGE_UPDATES__FREQUENCY=never FORGE_UPDATES__AUTO_UPDATE=false"
-if [ -n "$MCT_API_KEY_ARG" ]; then
-    API_KEY_PROVIDER="$(echo "$MCT_API_KEY_ARG" | sed "s/--api-key //" | cut -d: -f1)"
-    API_KEY_VALUE="$(echo "$MCT_API_KEY_ARG" | sed "s/--api-key //" | cut -d: -f2-)"
+if [ -n "$MACHTIANI_API_KEY_ARG" ]; then
+    API_KEY_PROVIDER="$(echo "$MACHTIANI_API_KEY_ARG" | sed "s/--api-key //" | cut -d: -f1)"
+    API_KEY_VALUE="$(echo "$MACHTIANI_API_KEY_ARG" | sed "s/--api-key //" | cut -d: -f2-)"
     case "$API_KEY_PROVIDER" in
         deepseek)   FORGE_ENV="TERM=dumb DEEPSEEK_API_KEY=$API_KEY_VALUE FORGE_UPDATES__FREQUENCY=never FORGE_UPDATES__AUTO_UPDATE=false" ;;
         openrouter) FORGE_ENV="TERM=dumb OPENROUTER_API_KEY=$API_KEY_VALUE FORGE_UPDATES__FREQUENCY=never FORGE_UPDATES__AUTO_UPDATE=false" ;;
@@ -399,7 +399,7 @@ if [ -n "$MCT_API_KEY_ARG" ]; then
     esac
 fi
 
-MCT_ENV="$FORGE_ENV"
+MACHTIANI_ENV="$FORGE_ENV"
 
 # Sync cache setup
 SYNC_CACHE_DIR="$HOME/.cache/mct-eval-sync/$PROJECT_NAME/$HEAD_SHA/readme"
@@ -407,9 +407,9 @@ SYNC_CACHE_DIR="$HOME/.cache/mct-eval-sync/$PROJECT_NAME/$HEAD_SHA/readme"
 # Copy existing sync state from the main repo into the worktree if available and valid
 if [ -f "$REPO/.machtiani/artifacts/readme/internal-readme.md" ]; then
     echo "[setup] Found existing sync state in repo, copying to worktree..."
-    mkdir -p "$MCT_WORKTREE/.machtiani/artifacts/readme"
+    mkdir -p "$MACHTIANI_WORKTREE/.machtiani/artifacts/readme"
     shopt -s dotglob
-    cp -r "$REPO/.machtiani/artifacts/readme/." "$MCT_WORKTREE/.machtiani/artifacts/readme/"
+    cp -r "$REPO/.machtiani/artifacts/readme/." "$MACHTIANI_WORKTREE/.machtiani/artifacts/readme/"
     shopt -u dotglob
     echo "[setup] Sync state copied from main repo."
     SYNC_NEEDED=false
@@ -420,9 +420,9 @@ fi
 # Also check and restore from cache if available and we still need sync
 if [ "$SYNC_NEEDED" = true ] && [ -f "$SYNC_CACHE_DIR/internal-readme.md" ]; then
     echo "[setup] Found cached sync state, restoring to worktree..."
-    mkdir -p "$MCT_WORKTREE/.machtiani/artifacts/readme"
+    mkdir -p "$MACHTIANI_WORKTREE/.machtiani/artifacts/readme"
     shopt -s dotglob
-    cp -r "$SYNC_CACHE_DIR/." "$MCT_WORKTREE/.machtiani/artifacts/readme/"
+    cp -r "$SYNC_CACHE_DIR/." "$MACHTIANI_WORKTREE/.machtiani/artifacts/readme/"
     shopt -u dotglob
     echo "[setup] Sync state restored from cache."
     SYNC_NEEDED=false
@@ -431,7 +431,7 @@ fi
 if [ "$SYNC_NEEDED" = true ]; then
     echo ""
     echo "[setup] No existing sync state found. Running machtiani sync in worktree..."
-    cd "$MCT_WORKTREE"
+    cd "$MACHTIANI_WORKTREE"
     MACHTIANI_CONFIG="$CONFIG" machtiani sync \
         --model "$SYNC_MODEL" \
         $SYNC_API_KEY_ARG \
@@ -445,10 +445,10 @@ else
 fi
 
 # Cache the sync result for future runs
-if [ ! -d "$SYNC_CACHE_DIR" ] && [ -d "$MCT_WORKTREE/.machtiani/artifacts/readme" ]; then
+if [ ! -d "$SYNC_CACHE_DIR" ] && [ -d "$MACHTIANI_WORKTREE/.machtiani/artifacts/readme" ]; then
     mkdir -p "$SYNC_CACHE_DIR"
     shopt -s dotglob
-    cp -r "$MCT_WORKTREE/.machtiani/artifacts/readme/." "$SYNC_CACHE_DIR/"
+    cp -r "$MACHTIANI_WORKTREE/.machtiani/artifacts/readme/." "$SYNC_CACHE_DIR/"
     shopt -u dotglob
     echo "[setup] Sync result cached at: $SYNC_CACHE_DIR"
 fi
@@ -483,25 +483,25 @@ if [ "$SEQUENTIAL" -eq 1 ]; then
     echo "[plan] Running agents sequentially..."
 
     # Run machtiani with plan-only prompt
-    cd "$MCT_WORKTREE"
-    MCT_PLAN_SUCCESS=false
+    cd "$MACHTIANI_WORKTREE"
+    MACHTIANI_PLAN_SUCCESS=false
     for ATTEMPT in 1 2 3; do
         echo "[machtiani] Plan attempt $ATTEMPT/3: Running machtiani in plan mode..."
-        if env $MCT_ENV MACHTIANI_CONFIG="$CONFIG" machtiani run \
+        if env $MACHTIANI_ENV MACHTIANI_CONFIG="$CONFIG" machtiani run \
             --mode code-strong-forge \
             --final-file "$OUTPUT_DIR/mct_plan.md" \
             --model "$MODEL" \
-            $MCT_API_KEY_ARG \
+            $MACHTIANI_API_KEY_ARG \
             --turn-timeout 0 \
             --max-turns 20 \
             --file "$PLAN_PROMPT"; then
-            MCT_PLAN_SUCCESS=true
+            MACHTIANI_PLAN_SUCCESS=true
             break
         fi
         echo "[machtiani] Plan attempt $ATTEMPT failed. Waiting 30 seconds before retry..." >&2
         sleep 30
     done
-    if ! $MCT_PLAN_SUCCESS; then
+    if ! $MACHTIANI_PLAN_SUCCESS; then
         echo "[machtiani] ERROR: machtiani plan phase failed after 3 attempts" >&2
         echo "machtiani plan phase failed after 3 retry attempts" > "$OUTPUT_DIR/mct_plan.md"
     fi
@@ -513,9 +513,9 @@ if [ "$SEQUENTIAL" -eq 1 ]; then
     fi
 
     # Capture machtiani session ID for later continuation
-    MCT_SESSION_ID=$(ls -t "$MCT_WORKTREE/.machtiani/sessions/" 2>/dev/null | head -1)
-    if [ -n "$MCT_SESSION_ID" ]; then
-        echo "[machtiani] Captured session ID: $MCT_SESSION_ID"
+    MACHTIANI_SESSION_ID=$(ls -t "$MACHTIANI_WORKTREE/.machtiani/sessions/" 2>/dev/null | head -1)
+    if [ -n "$MACHTIANI_SESSION_ID" ]; then
+        echo "[machtiani] Captured session ID: $MACHTIANI_SESSION_ID"
     else
         echo "[machtiani] WARNING: Could not capture session ID; implementation will use fresh session" >&2
     fi
@@ -539,14 +539,14 @@ else
 
     # Define runner for machtiani plan with retry logic
     _mct_plan_runner() {
-        cd "$MCT_WORKTREE"
+        cd "$MACHTIANI_WORKTREE"
         for ATTEMPT in 1 2 3; do
             echo "[machtiani] Plan attempt $ATTEMPT/3: Running machtiani in plan mode..."
-            if env $MCT_ENV MACHTIANI_CONFIG="$CONFIG" machtiani run \
+            if env $MACHTIANI_ENV MACHTIANI_CONFIG="$CONFIG" machtiani run \
                 --mode code-strong-forge \
                 --final-file "$OUTPUT_DIR/mct_plan.md" \
                 --model "$MODEL" \
-                $MCT_API_KEY_ARG \
+                $MACHTIANI_API_KEY_ARG \
                 --turn-timeout 0 \
                 --max-turns 20 \
                 --file "$PLAN_PROMPT"; then
@@ -572,9 +572,9 @@ else
     fi
 
     # Capture machtiani session ID for later continuation
-    MCT_SESSION_ID=$(ls -t "$MCT_WORKTREE/.machtiani/sessions/" 2>/dev/null | head -1)
-    if [ -n "$MCT_SESSION_ID" ]; then
-        echo "[machtiani] Captured session ID: $MCT_SESSION_ID"
+    MACHTIANI_SESSION_ID=$(ls -t "$MACHTIANI_WORKTREE/.machtiani/sessions/" 2>/dev/null | head -1)
+    if [ -n "$MACHTIANI_SESSION_ID" ]; then
+        echo "[machtiani] Captured session ID: $MACHTIANI_SESSION_ID"
     else
         echo "[machtiani] WARNING: Could not capture session ID; implementation will use fresh session" >&2
     fi
@@ -608,17 +608,17 @@ fi
 
 # Step 5: Verify worktrees are clean after plan phase
 echo "[plan] Verifying worktrees are clean after plan phase..."
-MCT_CLEAN=true
+MACHTIANI_CLEAN=true
 FORGE_CLEAN=true
-if ! git -C "$MCT_WORKTREE" diff --exit-code > /dev/null 2>&1; then
+if ! git -C "$MACHTIANI_WORKTREE" diff --exit-code > /dev/null 2>&1; then
     echo "[plan] WARNING: mct worktree is dirty after plan phase!" >&2
-    MCT_CLEAN=false
+    MACHTIANI_CLEAN=false
 fi
 if ! git -C "$FORGE_WORKTREE" diff --exit-code > /dev/null 2>&1; then
     echo "[plan] WARNING: forge worktree is dirty after plan phase!" >&2
     FORGE_CLEAN=false
 fi
-if $MCT_CLEAN && $FORGE_CLEAN; then
+if $MACHTIANI_CLEAN && $FORGE_CLEAN; then
     echo "[plan] Both worktrees are clean."
 fi
 echo "[plan] Plan phase complete."
@@ -642,33 +642,33 @@ if [ "$SEQUENTIAL" -eq 1 ]; then
     echo "[impl] Running agents sequentially..."
 
     # Run machtiani with implementation prompt
-    cd "$MCT_WORKTREE"
-    MCT_IMPL_SUCCESS=false
-    MCT_COMMAND=(run)
-    if [ -n "$MCT_SESSION_ID" ]; then
-        MCT_COMMAND+=(--resume "$MCT_SESSION_ID")
-        echo "[machtiani] Continuing session $MCT_SESSION_ID for implementation..."
+    cd "$MACHTIANI_WORKTREE"
+    MACHTIANI_IMPL_SUCCESS=false
+    MACHTIANI_COMMAND=(run)
+    if [ -n "$MACHTIANI_SESSION_ID" ]; then
+        MACHTIANI_COMMAND+=(--resume "$MACHTIANI_SESSION_ID")
+        echo "[machtiani] Continuing session $MACHTIANI_SESSION_ID for implementation..."
     else
         echo "[machtiani] Starting fresh session for implementation (no session ID captured)..."
     fi
 
     for ATTEMPT in 1 2 3; do
         echo "[machtiani] Impl attempt $ATTEMPT/3: Running machtiani..."
-        if env $MCT_ENV MACHTIANI_CONFIG="$CONFIG" machtiani "${MCT_COMMAND[@]}" \
+        if env $MACHTIANI_ENV MACHTIANI_CONFIG="$CONFIG" machtiani "${MACHTIANI_COMMAND[@]}" \
             --mode code-strong-forge \
             --final-file "$OUTPUT_DIR/mct_answer.md" \
             --model "$MODEL" \
-            $MCT_API_KEY_ARG \
+            $MACHTIANI_API_KEY_ARG \
             --turn-timeout 0 \
             --max-turns 20 \
             --file "$IMPL_PROMPT"; then
-            MCT_IMPL_SUCCESS=true
+            MACHTIANI_IMPL_SUCCESS=true
             break
         fi
         echo "[machtiani] Impl attempt $ATTEMPT failed. Waiting 30 seconds before retry..." >&2
         sleep 30
     done
-    if ! $MCT_IMPL_SUCCESS; then
+    if ! $MACHTIANI_IMPL_SUCCESS; then
         echo "[machtiani] ERROR: machtiani implementation phase failed after 3 attempts" >&2
         echo "machtiani implementation phase failed after 3 retry attempts" > "$OUTPUT_DIR/mct_answer.md"
     fi
@@ -698,21 +698,21 @@ else
 
     # Define runner for machtiani implementation with retry logic
     _mct_impl_runner() {
-        cd "$MCT_WORKTREE"
+        cd "$MACHTIANI_WORKTREE"
         local -a mct_command=(run)
-        if [ -n "$MCT_SESSION_ID" ]; then
-            mct_command+=(--resume "$MCT_SESSION_ID")
-            echo "[machtiani] Continuing session $MCT_SESSION_ID for implementation..."
+        if [ -n "$MACHTIANI_SESSION_ID" ]; then
+            mct_command+=(--resume "$MACHTIANI_SESSION_ID")
+            echo "[machtiani] Continuing session $MACHTIANI_SESSION_ID for implementation..."
         else
             echo "[machtiani] Starting fresh session for implementation (no session ID captured)..."
         fi
         for ATTEMPT in 1 2 3; do
             echo "[machtiani] Impl attempt $ATTEMPT/3: Running machtiani..."
-            if env $MCT_ENV MACHTIANI_CONFIG="$CONFIG" machtiani "${mct_command[@]}" \
+            if env $MACHTIANI_ENV MACHTIANI_CONFIG="$CONFIG" machtiani "${mct_command[@]}" \
                 --mode code-strong-forge \
                 --final-file "$OUTPUT_DIR/mct_answer.md" \
                 --model "$MODEL" \
-                $MCT_API_KEY_ARG \
+                $MACHTIANI_API_KEY_ARG \
                 --turn-timeout 0 \
                 --max-turns 20 \
                 --file "$IMPL_PROMPT"; then
@@ -746,7 +746,7 @@ fi
 
 # Step 9: Capture git diffs from each worktree
 echo "[impl] Capturing git diffs..."
-git -C "$MCT_WORKTREE" diff > "$OUTPUT_DIR/mct_changes.patch"
+git -C "$MACHTIANI_WORKTREE" diff > "$OUTPUT_DIR/mct_changes.patch"
 echo "[impl] MCT changes: $OUTPUT_DIR/mct_changes.patch ($(wc -c < "$OUTPUT_DIR/mct_changes.patch") bytes, $(wc -l < "$OUTPUT_DIR/mct_changes.patch") lines)"
 
 git -C "$FORGE_WORKTREE" diff > "$OUTPUT_DIR/forge_changes.patch"
@@ -807,7 +807,7 @@ echo "[judge] Using template: $JUDGE_TEMPLATE"
 sed \
     -e "s|{{PROJECT_NAME}}|$PROJECT_NAME|g" \
     -e "s|{{HEAD_SHA}}|$HEAD_SHA|g" \
-    -e "s|{{MCT_WORKTREE}}|$MCT_WORKTREE|g" \
+    -e "s|{{MACHTIANI_WORKTREE}}|$MACHTIANI_WORKTREE|g" \
     -e "s|{{FORGE_WORKTREE}}|$FORGE_WORKTREE|g" \
     -e "s|{{JUDGE_WORKTREE}}|$JUDGE_WORKTREE|g" \
     "$JUDGE_TEMPLATE" > "$JUDGE_PROMPT_FILE"
@@ -1027,11 +1027,11 @@ if [ -s "$OUTPUT_DIR/judgment.md" ]; then
     PLAN_SECTION=$(sed -n '/^#.* Plan Quality/,/^#.* Implementation Quality/p' "$OUTPUT_DIR/judgment.md")
 
     # machtiani Plan scores
-    MCT_PLAN_SUB=$(echo "$PLAN_SECTION" | sed -n '/^#.* machtiani Plan/,/^#.* Forge Plan/p')
-    MCT_PLAN_ACC=$(echo "$MCT_PLAN_SUB" | grep -oP 'Accuracy\s*\(\K\d+' | head -1 || echo "N/A")
-    MCT_PLAN_COMP=$(echo "$MCT_PLAN_SUB" | grep -oP 'Completeness\s*\(\K\d+' | head -1 || echo "N/A")
-    MCT_PLAN_SPEC=$(echo "$MCT_PLAN_SUB" | grep -oP 'Specificity\s*\(\K\d+' | head -1 || echo "N/A")
-    MCT_PLAN_TOTAL=$(echo "$MCT_PLAN_SUB" | grep -oP '\*\*Total:\*\*\s*\K\d+' | head -1 || echo "N/A")
+    MACHTIANI_PLAN_SUB=$(echo "$PLAN_SECTION" | sed -n '/^#.* machtiani Plan/,/^#.* Forge Plan/p')
+    MACHTIANI_PLAN_ACC=$(echo "$MACHTIANI_PLAN_SUB" | grep -oP 'Accuracy\s*\(\K\d+' | head -1 || echo "N/A")
+    MACHTIANI_PLAN_COMP=$(echo "$MACHTIANI_PLAN_SUB" | grep -oP 'Completeness\s*\(\K\d+' | head -1 || echo "N/A")
+    MACHTIANI_PLAN_SPEC=$(echo "$MACHTIANI_PLAN_SUB" | grep -oP 'Specificity\s*\(\K\d+' | head -1 || echo "N/A")
+    MACHTIANI_PLAN_TOTAL=$(echo "$MACHTIANI_PLAN_SUB" | grep -oP '\*\*Total:\*\*\s*\K\d+' | head -1 || echo "N/A")
 
     # Forge Plan scores
     FORGE_PLAN_SUB=$(echo "$PLAN_SECTION" | sed -n '/^#.* Forge Plan/,/^#.* Plan Winner/p')
@@ -1049,11 +1049,11 @@ if [ -s "$OUTPUT_DIR/judgment.md" ]; then
     IMPL_SECTION=$(sed -n '/^#.* Implementation Quality/,/^#.* Overall Assessment/p' "$OUTPUT_DIR/judgment.md")
 
     # machtiani Implementation scores
-    MCT_IMPL_SUB=$(echo "$IMPL_SECTION" | sed -n '/^#.* machtiani Implementation/,/^#.* Forge Implementation/p')
-    MCT_IMPL_CORR=$(echo "$MCT_IMPL_SUB" | grep -oP 'Correctness\s*\(\K\d+' | head -1 || echo "N/A")
-    MCT_IMPL_PREC=$(echo "$MCT_IMPL_SUB" | grep -oP 'Precision\s*\(\K\d+' | head -1 || echo "N/A")
-    MCT_IMPL_COMP=$(echo "$MCT_IMPL_SUB" | grep -oP 'Completeness\s*\(\K\d+' | head -1 || echo "N/A")
-    MCT_IMPL_TOTAL=$(echo "$MCT_IMPL_SUB" | grep -oP '\*\*Total:\*\*\s*\K\d+' | head -1 || echo "N/A")
+    MACHTIANI_IMPL_SUB=$(echo "$IMPL_SECTION" | sed -n '/^#.* machtiani Implementation/,/^#.* Forge Implementation/p')
+    MACHTIANI_IMPL_CORR=$(echo "$MACHTIANI_IMPL_SUB" | grep -oP 'Correctness\s*\(\K\d+' | head -1 || echo "N/A")
+    MACHTIANI_IMPL_PREC=$(echo "$MACHTIANI_IMPL_SUB" | grep -oP 'Precision\s*\(\K\d+' | head -1 || echo "N/A")
+    MACHTIANI_IMPL_COMP=$(echo "$MACHTIANI_IMPL_SUB" | grep -oP 'Completeness\s*\(\K\d+' | head -1 || echo "N/A")
+    MACHTIANI_IMPL_TOTAL=$(echo "$MACHTIANI_IMPL_SUB" | grep -oP '\*\*Total:\*\*\s*\K\d+' | head -1 || echo "N/A")
 
     # Forge Implementation scores
     FORGE_IMPL_SUB=$(echo "$IMPL_SECTION" | sed -n '/^#.* Forge Implementation/,/^#.* Implementation Winner/p')
@@ -1081,11 +1081,11 @@ if [ -s "$OUTPUT_DIR/judgment.md" ]; then
     echo ""
     printf "  %-20s %-12s %-12s\\n" "Dimension" "machtiani" "Forge"
     printf "  %-20s %-12s %-12s\\n" "--------------------" "------------" "------------"
-    printf "  %-20s %-12s %-12s\\n" "Accuracy" "$MCT_PLAN_ACC" "$FORGE_PLAN_ACC"
-    printf "  %-20s %-12s %-12s\\n" "Completeness" "$MCT_PLAN_COMP" "$FORGE_PLAN_COMP"
-    printf "  %-20s %-12s %-12s\\n" "Specificity" "$MCT_PLAN_SPEC" "$FORGE_PLAN_SPEC"
+    printf "  %-20s %-12s %-12s\\n" "Accuracy" "$MACHTIANI_PLAN_ACC" "$FORGE_PLAN_ACC"
+    printf "  %-20s %-12s %-12s\\n" "Completeness" "$MACHTIANI_PLAN_COMP" "$FORGE_PLAN_COMP"
+    printf "  %-20s %-12s %-12s\\n" "Specificity" "$MACHTIANI_PLAN_SPEC" "$FORGE_PLAN_SPEC"
     printf "  %-20s %-12s %-12s\\n" "--------------------" "------------" "------------"
-    printf "  %-20s %-12s %-12s\\n" "PLAN TOTAL" "$MCT_PLAN_TOTAL" "$FORGE_PLAN_TOTAL"
+    printf "  %-20s %-12s %-12s\\n" "PLAN TOTAL" "$MACHTIANI_PLAN_TOTAL" "$FORGE_PLAN_TOTAL"
     echo ""
     echo "  Plan Winner: $PLAN_WINNER"
     echo ""
@@ -1093,11 +1093,11 @@ if [ -s "$OUTPUT_DIR/judgment.md" ]; then
     echo ""
     printf "  %-20s %-12s %-12s\\n" "Dimension" "machtiani" "Forge"
     printf "  %-20s %-12s %-12s\\n" "--------------------" "------------" "------------"
-    printf "  %-20s %-12s %-12s\\n" "Correctness" "$MCT_IMPL_CORR" "$FORGE_IMPL_CORR"
-    printf "  %-20s %-12s %-12s\\n" "Precision" "$MCT_IMPL_PREC" "$FORGE_IMPL_PREC"
-    printf "  %-20s %-12s %-12s\\n" "Completeness" "$MCT_IMPL_COMP" "$FORGE_IMPL_COMP"
+    printf "  %-20s %-12s %-12s\\n" "Correctness" "$MACHTIANI_IMPL_CORR" "$FORGE_IMPL_CORR"
+    printf "  %-20s %-12s %-12s\\n" "Precision" "$MACHTIANI_IMPL_PREC" "$FORGE_IMPL_PREC"
+    printf "  %-20s %-12s %-12s\\n" "Completeness" "$MACHTIANI_IMPL_COMP" "$FORGE_IMPL_COMP"
     printf "  %-20s %-12s %-12s\\n" "--------------------" "------------" "------------"
-    printf "  %-20s %-12s %-12s\\n" "IMPL TOTAL" "$MCT_IMPL_TOTAL" "$FORGE_IMPL_TOTAL"
+    printf "  %-20s %-12s %-12s\\n" "IMPL TOTAL" "$MACHTIANI_IMPL_TOTAL" "$FORGE_IMPL_TOTAL"
     echo ""
     echo "  Implementation Winner: $IMPL_WINNER"
     echo ""
@@ -1131,10 +1131,10 @@ if [ -s "$OUTPUT_DIR/judgment.md" ]; then
         echo ""
         echo "| Dimension | machtiani | Forge |"
         echo "|---------------|-----------|-------|"
-        echo "| Accuracy | $MCT_PLAN_ACC/10 | $FORGE_PLAN_ACC/10 |"
-        echo "| Completeness | $MCT_PLAN_COMP/10 | $FORGE_PLAN_COMP/10 |"
-        echo "| Specificity | $MCT_PLAN_SPEC/10 | $FORGE_PLAN_SPEC/10 |"
-        echo "| **Plan Total** | **$MCT_PLAN_TOTAL/30** | **$FORGE_PLAN_TOTAL/30** |"
+        echo "| Accuracy | $MACHTIANI_PLAN_ACC/10 | $FORGE_PLAN_ACC/10 |"
+        echo "| Completeness | $MACHTIANI_PLAN_COMP/10 | $FORGE_PLAN_COMP/10 |"
+        echo "| Specificity | $MACHTIANI_PLAN_SPEC/10 | $FORGE_PLAN_SPEC/10 |"
+        echo "| **Plan Total** | **$MACHTIANI_PLAN_TOTAL/30** | **$FORGE_PLAN_TOTAL/30** |"
         echo ""
         echo "**Plan Winner:** $PLAN_WINNER"
         echo ""
@@ -1142,10 +1142,10 @@ if [ -s "$OUTPUT_DIR/judgment.md" ]; then
         echo ""
         echo "| Dimension | machtiani | Forge |"
         echo "|---------------|-----------|-------|"
-        echo "| Correctness | $MCT_IMPL_CORR/10 | $FORGE_IMPL_CORR/10 |"
-        echo "| Precision | $MCT_IMPL_PREC/10 | $FORGE_IMPL_PREC/10 |"
-        echo "| Completeness | $MCT_IMPL_COMP/10 | $FORGE_IMPL_COMP/10 |"
-        echo "| **Impl Total** | **$MCT_IMPL_TOTAL/30** | **$FORGE_IMPL_TOTAL/30** |"
+        echo "| Correctness | $MACHTIANI_IMPL_CORR/10 | $FORGE_IMPL_CORR/10 |"
+        echo "| Precision | $MACHTIANI_IMPL_PREC/10 | $FORGE_IMPL_PREC/10 |"
+        echo "| Completeness | $MACHTIANI_IMPL_COMP/10 | $FORGE_IMPL_COMP/10 |"
+        echo "| **Impl Total** | **$MACHTIANI_IMPL_TOTAL/30** | **$FORGE_IMPL_TOTAL/30** |"
         echo ""
         echo "**Implementation Winner:** $IMPL_WINNER"
         echo ""
@@ -1199,14 +1199,14 @@ echo "============================================================"
 
 if [ "$KEEP" = true ]; then
     echo "[teardown] --keep set; preserving worktrees and artifacts."
-    echo "[teardown] Worktree (mct): $MCT_WORKTREE"
+    echo "[teardown] Worktree (mct): $MACHTIANI_WORKTREE"
     echo "[teardown] Worktree (forge): $FORGE_WORKTREE"
     echo "[teardown] Worktree (judge): $JUDGE_WORKTREE"
     echo "[teardown] Session temp root: $SESSION_TEMP_ROOT"
     echo "[teardown] Artifacts: $OUTPUT_DIR"
 else
     echo "[teardown] Removing worktrees..."
-    rm -rf "$MCT_WORKTREE" "$FORGE_WORKTREE" "$JUDGE_WORKTREE" "$JUDGE_CONFIG_TMP" 2>/dev/null
+    rm -rf "$MACHTIANI_WORKTREE" "$FORGE_WORKTREE" "$JUDGE_WORKTREE" "$JUDGE_CONFIG_TMP" 2>/dev/null
     git -C "$REPO" worktree prune 2>/dev/null || true
     echo "[teardown] Worktrees removed."
     echo "[teardown] Artifacts preserved at: $OUTPUT_DIR"

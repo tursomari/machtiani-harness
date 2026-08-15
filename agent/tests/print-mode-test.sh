@@ -8,7 +8,7 @@
 #
 # Gating: this test needs a live LLM (no offline shell-agent fixture exists;
 # agent/tests/fixtures/synthetic_shell_goal.txt is optional and the goal is
-# otherwise created inline). It therefore runs only when MCT_LIVE_PRINT_TEST=1
+# otherwise created inline). It therefore runs only when MACHTIANI_LIVE_PRINT_TEST=1
 # is set, following the skip convention used by agent/tests/run-live.sh
 # ("Skipping <case> (needs ...)"), and prints a clear SKIP otherwise.
 set -euo pipefail
@@ -21,8 +21,8 @@ unset MACHTIANI_SESSION_ID MACHTIANI_SESSION_TEMP_ROOT MINISWE_FINAL_DIR 2>/dev/
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-if [[ "${MCT_LIVE_PRINT_TEST:-}" != "1" ]]; then
-  echo "SKIP: print-mode-test (needs MCT_LIVE_PRINT_TEST=1; live LLM required, no offline fixture exists)" >&2
+if [[ "${MACHTIANI_LIVE_PRINT_TEST:-}" != "1" ]]; then
+  echo "SKIP: print-mode-test (needs MACHTIANI_LIVE_PRINT_TEST=1; live LLM required, no offline fixture exists)" >&2
   exit 0
 fi
 

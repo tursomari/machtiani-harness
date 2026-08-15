@@ -2,7 +2,7 @@
 set -euo pipefail
 
 MACHTIANI_BIN="${MACHTIANI_BIN:-machtiani}"
-SMOKE_REPO="${MCT_SUPERVISOR_SMOKE_REPO:-$PWD}"
+SMOKE_REPO="${MACHTIANI_SUPERVISOR_SMOKE_REPO:-$PWD}"
 
 if [[ "$MACHTIANI_BIN" != /* ]]; then
   MACHTIANI_BIN="$(command -v "$MACHTIANI_BIN")"
@@ -140,7 +140,7 @@ mkdir -p "$blocker_dir"
 cat >"$blocker_dir/go" <<'EOF'
 #!/bin/sh
 set -eu
-printf '%s\n' "$$" >"$MCT_BLOCKER_PID_FILE"
+printf '%s\n' "$$" >"$MACHTIANI_BLOCKER_PID_FILE"
 printf 'planted go blocker pid=%s args=%s\n' "$$" "$*"
 while :; do
   sleep 1
@@ -164,7 +164,7 @@ set +e
 (
   cd "$SMOKE_REPO"
   PATH="$blocker_dir:$PATH" \
-    MCT_BLOCKER_PID_FILE="$blocker_pid_file" \
+    MACHTIANI_BLOCKER_PID_FILE="$blocker_pid_file" \
     MACHTIANI_CONFIG="$config_file" \
     timeout 25 "$MACHTIANI_BIN" shell-agent \
       --model supervisor-smoke \

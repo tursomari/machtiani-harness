@@ -327,8 +327,8 @@ func Run(ctx context.Context, prompt string, model ModelSettings, sessionID stri
 	return Result{Paths: paths}, nil
 }
 
-// useGitFilter reads MCT_USE_GIT_FILTER and returns true unless explicitly disabled.
-// debugf writes debug lines to stderr when MCT_DEBUG is set.
+// useGitFilter reads MACHTIANI_USE_GIT_FILTER and returns true unless explicitly disabled.
+// debugf writes debug lines to stderr when MACHTIANI_DEBUG is set.
 func debugf(verbose bool, format string, args ...any) {
 	if !verbose {
 		return

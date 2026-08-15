@@ -6,7 +6,7 @@ usage() {
 Usage: download-forge-musl.sh OUTPUT_PATH [VERSION]
 
 Download the official ForgeCode musl Linux binary to OUTPUT_PATH. VERSION may
-be either "2.13.16" or "v2.13.16"; default is MCT_FORGE_VERSION or v2.13.16.
+be either "2.13.16" or "v2.13.16"; default is MACHTIANI_FORGE_VERSION or v2.13.16.
 
 The musl artifact is used for benchmark containers because host-built GNU
 Forge binaries can require newer glibc symbols than Debian bookworm provides.
@@ -19,7 +19,7 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" || $# -lt 1 ]]; then
 fi
 
 OUTPUT_PATH="$1"
-VERSION="${2:-${MCT_FORGE_VERSION:-v2.13.16}}"
+VERSION="${2:-${MACHTIANI_FORGE_VERSION:-v2.13.16}}"
 if [[ "${VERSION}" != v* ]]; then
     VERSION="v${VERSION}"
 fi

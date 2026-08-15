@@ -316,8 +316,8 @@ func resolveModelRuntimes(cfg legacyConfig, global llm.Config, paramPairs, param
 
 	orchAlias := firstNonEmpty(
 		strings.TrimSpace(cfg.orchModel),
-		strings.TrimSpace(os.Getenv("MCT_ORCH_MODEL")),
-		strings.TrimSpace(os.Getenv("MCT_MODEL")),
+		strings.TrimSpace(os.Getenv("MACHTIANI_ORCH_MODEL")),
+		strings.TrimSpace(os.Getenv("MACHTIANI_MODEL")),
 		strings.TrimSpace(cfg.agentModel),
 	)
 
@@ -383,13 +383,13 @@ func resolveModelRuntimes(cfg legacyConfig, global llm.Config, paramPairs, param
 		cfg.agentModel,
 		cfg.fileDiscoveryModel,
 		cfg.answerModel,
-		os.Getenv("MCT_MODEL"),
-		os.Getenv("MCT_ORCH_MODEL"),
-		os.Getenv("MCT_ANSWER_MODEL"),
+		os.Getenv("MACHTIANI_MODEL"),
+		os.Getenv("MACHTIANI_ORCH_MODEL"),
+		os.Getenv("MACHTIANI_ANSWER_MODEL"),
 	}, directBaseURL, directAPIKey, directModel)
 
 	fileDiscovery := cloneModelRuntime(primary)
-	fdAlias := firstNonEmpty(strings.TrimSpace(cfg.fileDiscoveryModel), strings.TrimSpace(os.Getenv("MCT_FILE_DISCOVERY_MODEL")))
+	fdAlias := firstNonEmpty(strings.TrimSpace(cfg.fileDiscoveryModel), strings.TrimSpace(os.Getenv("MACHTIANI_FILE_DISCOVERY_MODEL")))
 	if strings.TrimSpace(fdAlias) != "" {
 		resolved, err := llm.ResolveModelWithOverrides(fdAlias, apiKeyOverrides)
 		if err != nil {
@@ -402,7 +402,7 @@ func resolveModelRuntimes(cfg legacyConfig, global llm.Config, paramPairs, param
 	ensureFallbackToPrimary(&fileDiscovery, primary)
 
 	answer := cloneModelRuntime(primary)
-	answerAlias := firstNonEmpty(strings.TrimSpace(cfg.answerModel), strings.TrimSpace(os.Getenv("MCT_ANSWER_MODEL")))
+	answerAlias := firstNonEmpty(strings.TrimSpace(cfg.answerModel), strings.TrimSpace(os.Getenv("MACHTIANI_ANSWER_MODEL")))
 	if strings.TrimSpace(answerAlias) != "" {
 		resolved, err := llm.ResolveModelWithOverrides(answerAlias, apiKeyOverrides)
 		if err != nil {

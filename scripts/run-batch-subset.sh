@@ -66,7 +66,7 @@ TREATMENT_AGENT_LABEL="mct-orchestrator"
 CONTROL_TREATMENT_LABEL="default"
 TREATMENT_TREATMENT_LABEL="with-peer-review"
 TREATMENT_ONLY="false"
-WORK_DIR="__REPO_DATA_MCT_BATCH_SUBSET__"
+WORK_DIR="__REPO_DATA_MACHTIANI_BATCH_SUBSET__"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -207,7 +207,7 @@ done
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-if [[ "$WORK_DIR" == "__REPO_DATA_MCT_BATCH_SUBSET__" ]]; then
+if [[ "$WORK_DIR" == "__REPO_DATA_MACHTIANI_BATCH_SUBSET__" ]]; then
     WORK_DIR="${REPO_ROOT}/.data/mct-batch-subset"
 elif [[ "${WORK_DIR}" != /* ]]; then
     WORK_DIR="${REPO_ROOT}/${WORK_DIR}"
@@ -281,7 +281,7 @@ done
 # ----------------------------------------------------------------------------
 # Snapshot git heads
 # ----------------------------------------------------------------------------
-MCT_BENCH_HEAD="$(git -C "${REPO_ROOT}" rev-parse HEAD 2>/dev/null || echo unknown)"
+MACHTIANI_BENCH_HEAD="$(git -C "${REPO_ROOT}" rev-parse HEAD 2>/dev/null || echo unknown)"
 DEEP_SWE_HEAD="$(git -C "${DEEP_SWE_REPO}" rev-parse HEAD 2>/dev/null || echo unknown)"
 
 # ----------------------------------------------------------------------------
@@ -298,7 +298,7 @@ TREATMENT_JOB_NAME="treatment-batch-$$"
 echo "[setup] batch timestamp: ${BATCH_TIMESTAMP_ISO}"
 echo "[setup] control job:     ${CONTROL_JOB_NAME}"
 echo "[setup] treatment job:   ${TREATMENT_JOB_NAME}"
-echo "[setup] mct-bench head:  ${MCT_BENCH_HEAD}"
+echo "[setup] mct-bench head:  ${MACHTIANI_BENCH_HEAD}"
 echo "[setup] deep-swe head:   ${DEEP_SWE_HEAD}"
 
 # ----------------------------------------------------------------------------
@@ -336,15 +336,15 @@ echo ""
 echo "==== Launching treatment (mct-orchestrator) ===="
 env \
     MACHTIANI_BIN="${AGENT_BIN}" \
-    MCT_META_ORCHESTRATOR_BINARY="${META_BIN}" \
-    MCT_FORGE_BINARY="${FORGE_BIN}" \
+    MACHTIANI_META_ORCHESTRATOR_BINARY="${META_BIN}" \
+    MACHTIANI_FORGE_BINARY="${FORGE_BIN}" \
     pier run \
     --agent-import-path mct_pier_adapter.mct_agent:MctAgent \
     --ae "MACHTIANI_BIN=${AGENT_BIN}" \
-    --ae "MCT_META_ORCHESTRATOR_BINARY=${META_BIN}" \
-    --ae "MCT_FORGE_BINARY=${FORGE_BIN}" \
-    --ae "MCT_MODEL=${MODEL}" \
-    --ae "MCT_SHELL_AGENT_MODEL=${MODEL}" \
+    --ae "MACHTIANI_META_ORCHESTRATOR_BINARY=${META_BIN}" \
+    --ae "MACHTIANI_FORGE_BINARY=${FORGE_BIN}" \
+    --ae "MACHTIANI_MODEL=${MODEL}" \
+    --ae "MACHTIANI_SHELL_AGENT_MODEL=${MODEL}" \
     --ae "TEST_API_KEY=${TEST_API_KEY}" \
     --ae "TEST_BASE_URL=${TEST_BASE_URL}" \
     --ae "TEST_MODEL=${MODEL}" \
@@ -489,7 +489,7 @@ persist_side() {
         --arg timestamp "${BATCH_TIMESTAMP_ISO}" \
         --arg agent "${agent_label}" \
         --arg treatment "${treatment_label}" \
-        --arg mct_bench_head "${MCT_BENCH_HEAD}" \
+        --arg mct_bench_head "${MACHTIANI_BENCH_HEAD}" \
         --arg deep_swe_head "${DEEP_SWE_HEAD}" \
         --arg model "${model_for_meta}" \
         --arg shell_agent_model "${shell_agent_model}" \

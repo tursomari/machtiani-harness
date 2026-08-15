@@ -16,5 +16,5 @@ git config user.name "command supervisor smoke"
 git commit --quiet --allow-empty -m "initial smoke commit"
 
 MACHTIANI_BIN=/tmp/mct-command-supervisor-agent \
-  MCT_SUPERVISOR_SMOKE_REPO=/workspace \
+  MACHTIANI_SUPERVISOR_SMOKE_REPO=/workspace \
   bash /fixtures/mct-source/agent/tests/command-supervisor-smoke.sh

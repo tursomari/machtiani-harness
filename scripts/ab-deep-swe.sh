@@ -272,13 +272,13 @@ if [[ "${TREATMENT_ONLY}" != "true" ]]; then
     echo ""
     echo "==== Step 1 — Run control benchmark ===="
 
-    export MCT_META_ORCHESTRATOR_BINARY=${CONTROL_META_BIN}
+    export MACHTIANI_META_ORCHESTRATOR_BINARY=${CONTROL_META_BIN}
     export MACHTIANI_BIN=${CONTROL_BIN}
-    export MCT_FORGE_BINARY=${CONTROL_FORGE_BIN}
+    export MACHTIANI_FORGE_BINARY=${CONTROL_FORGE_BIN}
     pier run \
         --ae "MACHTIANI_BIN=${CONTROL_BIN}" \
-        --ae "MCT_META_ORCHESTRATOR_BINARY=${CONTROL_META_BIN}" \
-        --ae "MCT_FORGE_BINARY=${CONTROL_FORGE_BIN}" \
+        --ae "MACHTIANI_META_ORCHESTRATOR_BINARY=${CONTROL_META_BIN}" \
+        --ae "MACHTIANI_FORGE_BINARY=${CONTROL_FORGE_BIN}" \
         --ae "TEST_API_KEY=${TEST_API_KEY}" \
         --ae "TEST_BASE_URL=${TEST_BASE_URL}" \
         --ae "TEST_MODEL=${TEST_MODEL}" \
@@ -302,13 +302,13 @@ fi
 echo ""
 echo "==== Step 2 — Run treatment benchmark ===="
 
-export MCT_META_ORCHESTRATOR_BINARY=${TREATMENT_META_BIN}
+export MACHTIANI_META_ORCHESTRATOR_BINARY=${TREATMENT_META_BIN}
 export MACHTIANI_BIN=${TREATMENT_BIN}
-export MCT_FORGE_BINARY=${TREATMENT_FORGE_BIN}
+export MACHTIANI_FORGE_BINARY=${TREATMENT_FORGE_BIN}
 pier run \
     --ae "MACHTIANI_BIN=${TREATMENT_BIN}" \
-    --ae "MCT_META_ORCHESTRATOR_BINARY=${TREATMENT_META_BIN}" \
-    --ae "MCT_FORGE_BINARY=${TREATMENT_FORGE_BIN}" \
+    --ae "MACHTIANI_META_ORCHESTRATOR_BINARY=${TREATMENT_META_BIN}" \
+    --ae "MACHTIANI_FORGE_BINARY=${TREATMENT_FORGE_BIN}" \
     --ae "TEST_API_KEY=${TEST_API_KEY}" \
     --ae "TEST_BASE_URL=${TEST_BASE_URL}" \
     --ae "TEST_MODEL=${TEST_MODEL}" \
@@ -329,13 +329,13 @@ wait "${PERSIST_PID}" 2>/dev/null || true
 # ----------------------------------------------------------------------------
 # Write run-metadata.json at FULL_BENCH_DIR
 # ----------------------------------------------------------------------------
-MCT_BENCH_HEAD="$(git -C "${REPO_ROOT}" rev-parse HEAD 2>/dev/null || echo unknown)"
+MACHTIANI_BENCH_HEAD="$(git -C "${REPO_ROOT}" rev-parse HEAD 2>/dev/null || echo unknown)"
 DEEP_SWE_HEAD="$(git -C "${DEEP_SWE_REPO}" rev-parse HEAD 2>/dev/null || echo unknown)"
 jq -n \
     --arg timestamp "${BENCH_TIMESTAMP_ISO}" \
     --arg agent "${AGENT_NAME}" \
     --arg treatment "${TREATMENT_NAME}" \
-    --arg mct_bench_head "${MCT_BENCH_HEAD}" \
+    --arg mct_bench_head "${MACHTIANI_BENCH_HEAD}" \
     --arg deep_swe_head "${DEEP_SWE_HEAD}" \
     --arg model "${TEST_MODEL}" \
     --arg deep_swe_repo "${DEEP_SWE_REPO}" \

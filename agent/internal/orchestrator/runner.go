@@ -684,7 +684,7 @@ func invokeReviewer(ctx context.Context, reviewInstruction string, reviewMode st
 	}
 
 	// 3. Determine the child meta-orchestrator binary path.
-	binaryPath := os.Getenv("MCT_META_ORCHESTRATOR_BINARY")
+	binaryPath := os.Getenv("MACHTIANI_META_ORCHESTRATOR_BINARY")
 	if binaryPath == "" {
 		binaryPath = "meta-orchestrator"
 	} else {

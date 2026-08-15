@@ -398,8 +398,8 @@ write_manifest() {
     printf 'replay_terminal_lines=%s\n' "$(line_count "$RUN_DIR/replay.terminal.log")"
     printf 'live_tui_lines=%s\n' "$(line_count "$RUN_DIR/live.tui.txt")"
     printf 'replay_tui_lines=%s\n' "$(line_count "$RUN_DIR/replay.tui.txt")"
-    printf 'live_terminal_raw_actions=%s\n' "$(count_matches '^MCT_SHELL_ACTION' "$RUN_DIR/live.terminal.log")"
-    printf 'replay_terminal_raw_actions=%s\n' "$(count_matches '^MCT_SHELL_ACTION' "$RUN_DIR/replay.terminal.log")"
+    printf 'live_terminal_raw_actions=%s\n' "$(count_matches '^MACHTIANI_SHELL_ACTION' "$RUN_DIR/live.terminal.log")"
+    printf 'replay_terminal_raw_actions=%s\n' "$(count_matches '^MACHTIANI_SHELL_ACTION' "$RUN_DIR/replay.terminal.log")"
     printf 'live_tui_shell_step_lines=%s\n' "$(count_matches '\[shell step ' "$RUN_DIR/live.tui.txt")"
     printf 'replay_tui_shell_step_lines=%s\n' "$(count_matches '\[shell step ' "$RUN_DIR/replay.tui.txt")"
     if [[ -n "$live_session" && -f "$ROOT/.machtiani/sessions/$live_session/trajectory/agent.jsonl" ]]; then

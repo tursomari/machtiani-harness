@@ -208,7 +208,7 @@ func resolveModelRuntime(cfg *cfgpkg.Config, aliasFlag, directModelFlag string, 
 	}
 	runtime := modelRuntime{extras: extras, apiKeyOverrides: llm.CopyAPIKeyOverridesForRuntime(apiKeyOverrides)}
 
-	alias := firstNonEmpty(strings.TrimSpace(aliasFlag), strings.TrimSpace(os.Getenv("MCT_SNIPPET_DISCOVERY_MODEL")))
+	alias := firstNonEmpty(strings.TrimSpace(aliasFlag), strings.TrimSpace(os.Getenv("MACHTIANI_SNIPPET_DISCOVERY_MODEL")))
 	hasDirectFlags := strings.TrimSpace(cfg.APIKey) != "" || strings.TrimSpace(cfg.BaseURL) != "" || strings.TrimSpace(directModelFlag) != ""
 
 	directAPIKey := firstNonEmpty(strings.TrimSpace(cfg.APIKey), strings.TrimSpace(os.Getenv("OPENAI_API_KEY")))

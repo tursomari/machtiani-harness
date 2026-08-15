@@ -11,8 +11,8 @@ EOF
 PROJECT_ROOT=""
 PROMPT_FILE=""
 OUTPUT="/tmp/comparison_runbook.md"
-MCT_MODEL="glm-5-high-deepinfra"
-MCT_API_KEY=""
+MACHTIANI_MODEL="glm-5-high-deepinfra"
+MACHTIANI_API_KEY=""
 GROUND_TRUTH_COMMIT=""
 EVAL_COMMIT=""
 API_KEY_FILE=""
@@ -33,11 +33,11 @@ while [ $# -gt 0 ]; do
             shift 2
             ;;
         --model)
-            MCT_MODEL="$2"
+            MACHTIANI_MODEL="$2"
             shift 2
             ;;
         --api-key)
-            MCT_API_KEY="$2"
+            MACHTIANI_API_KEY="$2"
             shift 2
             ;;
         --api-key-file)
@@ -109,10 +109,10 @@ if [ -n "$API_KEY_FILE" ]; then
         echo "Error: API key file is empty: $API_KEY_FILEPATH" >&2
         exit 1
     fi
-    if [ -n "$MCT_API_KEY" ]; then
+    if [ -n "$MACHTIANI_API_KEY" ]; then
         echo "Warning: both --api-key and --api-key-file provided; --api-key takes precedence" >&2
     else
-        MCT_API_KEY="${API_KEY_PROVIDER}:${API_KEY_VALUE}"
+        MACHTIANI_API_KEY="${API_KEY_PROVIDER}:${API_KEY_VALUE}"
     fi
 fi
 
@@ -144,26 +144,26 @@ if [ -n "$EVAL_COMMIT" ]; then
 else
     WORKTREE_DIR=""
 fi
-if [ -n "$MCT_API_KEY" ]; then
-    MCT_API_KEY_ARG="--api-key $MCT_API_KEY"
+if [ -n "$MACHTIANI_API_KEY" ]; then
+    MACHTIANI_API_KEY_ARG="--api-key $MACHTIANI_API_KEY"
 else
-    MCT_API_KEY_ARG=""
+    MACHTIANI_API_KEY_ARG=""
 fi
 if [ -n "$CONFIG_FILE" ]; then
-    MCT_CONFIG_ARG="--config $CONFIG_FILE"
+    MACHTIANI_CONFIG_ARG="--config $CONFIG_FILE"
 else
-    MCT_CONFIG_ARG=""
+    MACHTIANI_CONFIG_ARG=""
 fi
-MCT_CONFIG_PATH="$(realpath "$CONFIG_FILE")"
+MACHTIANI_CONFIG_PATH="$(realpath "$CONFIG_FILE")"
 sed -e "s|{{PROJECT_ROOT}}|$PROJECT_ROOT|g" \
     -e "s|{{PROJECT_NAME}}|$PROJECT_NAME|g" \
     -e "s|{{PROMPT_FILE}}|$PROMPT_FILE|g" \
     -e "s|{{GENERATION_DATE}}|$GEN_DATE|g" \
-    -e "s|{{MCT_MODEL}}|$MCT_MODEL|g" \
-    -e "s|{{MCT_API_KEY}}|$MCT_API_KEY|g" \
-    -e "s|{{MCT_API_KEY_ARG}}|$MCT_API_KEY_ARG|g" \
-    -e "s|{{MCT_CONFIG_ARG}}|$MCT_CONFIG_ARG|g" \
-    -e "s|{{MCT_CONFIG_PATH}}|$MCT_CONFIG_PATH|g" \
+    -e "s|{{MACHTIANI_MODEL}}|$MACHTIANI_MODEL|g" \
+    -e "s|{{MACHTIANI_API_KEY}}|$MACHTIANI_API_KEY|g" \
+    -e "s|{{MACHTIANI_API_KEY_ARG}}|$MACHTIANI_API_KEY_ARG|g" \
+    -e "s|{{MACHTIANI_CONFIG_ARG}}|$MACHTIANI_CONFIG_ARG|g" \
+    -e "s|{{MACHTIANI_CONFIG_PATH}}|$MACHTIANI_CONFIG_PATH|g" \
     -e "s|{{GROUND_TRUTH_COMMIT}}|$GROUND_TRUTH_COMMIT|g" \
     -e "s|{{EVAL_COMMIT}}|$EVAL_COMMIT|g" \
     -e "s|{{ARTIFACT_SUFFIX}}|$ARTIFACT_SUFFIX|g" \

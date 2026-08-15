@@ -14,7 +14,7 @@ import (
 )
 
 func TestLLMAdapterQueryStub(t *testing.T) {
-	t.Setenv("MCT_LLM_TEST_STUB", "adapter-test")
+	t.Setenv("MACHTIANI_LLM_TEST_STUB", "adapter-test")
 
 	cfg := &minisweagent.ModelConfig{
 		ModelName: "anthropic/claude-haiku-4.5",
@@ -190,13 +190,13 @@ model = "gpt-shell"
 }
 
 func TestBuildResolvedModel_OverridesWinOverCfgAPIKey(t *testing.T) {
-    llm.ResetConfigForTesting()
-    t.Cleanup(llm.ResetConfigForTesting)
+	llm.ResetConfigForTesting()
+	t.Cleanup(llm.ResetConfigForTesting)
 
-    tmpDir := t.TempDir()
-    configPath := filepath.Join(tmpDir, "config.toml")
-    // Define two providers and an alias mapped to openai.
-    config := []byte(`default_model = "gpt-5"
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.toml")
+	// Define two providers and an alias mapped to openai.
+	config := []byte(`default_model = "gpt-5"
 
 [providers.openai]
 base_url = "https://api.openai.com/v1"
@@ -210,33 +210,33 @@ api_key = "cfg-openrouter-key"
 provider = "openai"
 model = "gpt-5"
 `)
-    if err := os.WriteFile(configPath, config, 0o600); err != nil {
-        t.Fatalf("write config: %v", err)
-    }
-    t.Setenv("MACHTIANI_CONFIG", configPath)
+	if err := os.WriteFile(configPath, config, 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	t.Setenv("MACHTIANI_CONFIG", configPath)
 
-    // Simulate an env-derived cfg.APIKey from the wrong provider (e.g., an OpenRouter key)
-    cfg := &minisweagent.ModelConfig{
-        ModelName: "gpt-5",
-        APIKey:    "sk-or-v1-should-not-win",
-    }
+	// Simulate an env-derived cfg.APIKey from the wrong provider (e.g., an OpenRouter key)
+	cfg := &minisweagent.ModelConfig{
+		ModelName: "gpt-5",
+		APIKey:    "sk-or-v1-should-not-win",
+	}
 
-    overrides := map[string]string{
-        "openai":     "sk-openai-correct",
-        "openrouter": "sk-openrouter-wrong",
-    }
+	overrides := map[string]string{
+		"openai":     "sk-openai-correct",
+		"openrouter": "sk-openrouter-wrong",
+	}
 
-    resolved, _, _, _, err := buildResolvedModel(cfg, overrides)
-    if err != nil {
-        t.Fatalf("buildResolvedModel error: %v", err)
-    }
-    if got := strings.TrimSpace(resolved.ProviderName); got != "openai" {
-        t.Fatalf("provider = %q, want openai", got)
-    }
-    if got := strings.TrimSpace(resolved.BaseURL); got != "https://api.openai.com/v1" {
-        t.Fatalf("base_url = %q, want https://api.openai.com/v1", got)
-    }
-    if got := strings.TrimSpace(resolved.APIKey); got != "sk-openai-correct" {
-        t.Fatalf("api_key = %q, want sk-openai-correct (CLI override should win over cfg.APIKey)", got)
-    }
+	resolved, _, _, _, err := buildResolvedModel(cfg, overrides)
+	if err != nil {
+		t.Fatalf("buildResolvedModel error: %v", err)
+	}
+	if got := strings.TrimSpace(resolved.ProviderName); got != "openai" {
+		t.Fatalf("provider = %q, want openai", got)
+	}
+	if got := strings.TrimSpace(resolved.BaseURL); got != "https://api.openai.com/v1" {
+		t.Fatalf("base_url = %q, want https://api.openai.com/v1", got)
+	}
+	if got := strings.TrimSpace(resolved.APIKey); got != "sk-openai-correct" {
+		t.Fatalf("api_key = %q, want sk-openai-correct (CLI override should win over cfg.APIKey)", got)
+	}
 }

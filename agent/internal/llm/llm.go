@@ -38,14 +38,14 @@ var (
 )
 
 const (
-	testStubEnv                               = "MCT_LLM_TEST_STUB" // test-only knob to bypass network LLM calls
+	testStubEnv                               = "MACHTIANI_LLM_TEST_STUB" // test-only knob to bypass network LLM calls
 	nonStreamRetryInitialBackoff              = 1 * time.Second
 	nonStreamRetryMaxBackoff                  = 30 * time.Second
 	retryAfterCap                             = 15 * time.Second
 	maxRetries                                = 20 // hard ceiling for LLM retry loops
 	probeTimeout                              = 10 * time.Minute
-	llmInputLogEnv                            = "MCT_LLM_INPUT_LOG" // optional debug log file path for full LLM request inputs
-	llmStageEnv                               = "MCT_LLM_STAGE"     // optional stage label for LLM calls (planner/shell-agent/etc)
+	llmInputLogEnv                            = "MACHTIANI_LLM_INPUT_LOG" // optional debug log file path for full LLM request inputs
+	llmStageEnv                               = "MACHTIANI_LLM_STAGE"     // optional stage label for LLM calls (planner/shell-agent/etc)
 	CacheAnchorMarkerText                     = "[cache anchor]"
 	cacheAnchorMarkerText                     = CacheAnchorMarkerText
 	CacheAnchorRetiredMetadataKey             = "cache_anchor_retired"
@@ -198,7 +198,7 @@ func WithUsageObserver(ctx context.Context, observer UsageObserver) context.Cont
 }
 
 // WithInputLog configures full redacted LLM request logging for calls made
-// with ctx. MCT_LLM_INPUT_LOG remains the highest-precedence explicit path.
+// with ctx. MACHTIANI_LLM_INPUT_LOG remains the highest-precedence explicit path.
 func WithInputLog(ctx context.Context, defaultPath string, warnings io.Writer) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
@@ -244,7 +244,7 @@ func appendLLMInputLog(ctx context.Context, payload any) {
 		recorder.append(payload)
 		return
 	}
-	// Preserve MCT_LLM_INPUT_LOG for callers outside a managed session. The
+	// Preserve MACHTIANI_LLM_INPUT_LOG for callers outside a managed session. The
 	// session path uses the recorder above so failures are warned once.
 	_ = appendLLMInputLogFile(path, payload)
 }

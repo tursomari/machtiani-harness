@@ -77,7 +77,7 @@ class MctAgent(BaseInstalledAgent):
         )
 
     def network_allowlist(self) -> NetworkAllowlist:
-        domains_env = os.environ.get("MCT_NETWORK_DOMAINS", "")
+        domains_env = os.environ.get("MACHTIANI_NETWORK_DOMAINS", "")
         if domains_env:
             domains = [d.strip() for d in domains_env.split(",") if d.strip()]
             return NetworkAllowlist(domains=domains)
@@ -115,21 +115,21 @@ class MctAgent(BaseInstalledAgent):
         await environment.upload_file(local_path, "/usr/local/bin/machtiani")
         await self.exec_as_root(environment, "chmod +x /usr/local/bin/machtiani")
 
-        mode = os.environ.get("MCT_MODE", "code-strong-forge")
+        mode = os.environ.get("MACHTIANI_MODE", "code-strong-forge")
 
         # Upload forge binary for forge-backed modes.
-        forge_binary = os.path.expanduser(os.environ.get("MCT_FORGE_BINARY", "~/.local/bin/forge"))
+        forge_binary = os.path.expanduser(os.environ.get("MACHTIANI_FORGE_BINARY", "~/.local/bin/forge"))
         await environment.upload_file(forge_binary, "/usr/local/bin/forge")
         await self.exec_as_root(environment, "chmod +x /usr/local/bin/forge")
         await self.exec_as_root(environment, "/usr/local/bin/forge --version")
 
         # Upload mct-forge wrapper.
-        forge_wrapper = os.path.expanduser(os.environ.get("MCT_FORGE_WRAPPER", "peripherals/mct-forge"))
+        forge_wrapper = os.path.expanduser(os.environ.get("MACHTIANI_FORGE_WRAPPER", "peripherals/mct-forge"))
         await environment.upload_file(forge_wrapper, "/usr/local/bin/mct-forge")
         await self.exec_as_root(environment, "chmod +x /usr/local/bin/mct-forge")
 
         # Upload meta-orchestrator binary (skip if not available, e.g., older control commits).
-        meta_orch_path = os.path.expanduser(os.environ.get("MCT_META_ORCHESTRATOR_BINARY", "meta-orchestrator"))
+        meta_orch_path = os.path.expanduser(os.environ.get("MACHTIANI_META_ORCHESTRATOR_BINARY", "meta-orchestrator"))
         if os.path.isfile(meta_orch_path):
             await environment.upload_file(meta_orch_path, "/usr/local/bin/meta-orchestrator")
             await self.exec_as_root(environment, "chmod +x /usr/local/bin/meta-orchestrator")
@@ -139,7 +139,7 @@ class MctAgent(BaseInstalledAgent):
             self._meta_orch_uploaded = False
 
         # Upload forge home directory.
-        forge_home = os.path.expanduser(os.environ.get("MCT_FORGE_HOME", "~/.forge"))
+        forge_home = os.path.expanduser(os.environ.get("MACHTIANI_FORGE_HOME", "~/.forge"))
         await self.exec_as_root(environment, "mkdir -p /root/.forge")
         await environment.upload_dir(forge_home, "/root/.forge/")
 
@@ -156,7 +156,7 @@ class MctAgent(BaseInstalledAgent):
     ) -> None:
         """Run machtiani on the task, then commit all changes."""
 
-        mode = os.environ.get("MCT_MODE", "code-strong-forge")
+        mode = os.environ.get("MACHTIANI_MODE", "code-strong-forge")
 
         # Step 0: Create the /app/.machtiani/ directory.
         try:
@@ -174,8 +174,8 @@ class MctAgent(BaseInstalledAgent):
         await self.exec_as_agent(
             environment,
             "python3 -c \"import pathlib, os; "
-            "pathlib.Path('/app/instruction.md').write_text(os.environ['MCT_INSTRUCTION'])\"",
-            env={"MCT_INSTRUCTION": instruction},
+            "pathlib.Path('/app/instruction.md').write_text(os.environ['MACHTIANI_INSTRUCTION'])\"",
+            env={"MACHTIANI_INSTRUCTION": instruction},
         )
 
         # Keep repo-local runtime state available to the agent, but out of the
@@ -187,8 +187,8 @@ class MctAgent(BaseInstalledAgent):
 
         # Step 5: Run machtiani sync with retries.
         import asyncio
-        sync_model = os.environ.get("MCT_SYNC_MODEL", "deepseek-v4-pro")
-        max_input_tokens = os.environ.get("MCT_MAX_INPUT_TOKENS", "800000")
+        sync_model = os.environ.get("MACHTIANI_SYNC_MODEL", "deepseek-v4-pro")
+        max_input_tokens = os.environ.get("MACHTIANI_MAX_INPUT_TOKENS", "800000")
         sync_log = "/logs/agent/mct-sync.log"
         sync_cmd = (
             f"mkdir -p /logs/agent && "
@@ -207,8 +207,8 @@ class MctAgent(BaseInstalledAgent):
                 await asyncio.sleep(2 ** i)
 
         # Step 6: Run machtiani run.
-        model = os.environ.get("MCT_MODEL", "deepseek-v4-pro")
-        shell_agent_model = os.environ.get("MCT_SHELL_AGENT_MODEL", "deepseek-v4-pro")
+        model = os.environ.get("MACHTIANI_MODEL", "deepseek-v4-pro")
+        shell_agent_model = os.environ.get("MACHTIANI_SHELL_AGENT_MODEL", "deepseek-v4-pro")
 
         use_meta = False
         try:

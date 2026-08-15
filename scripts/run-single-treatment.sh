@@ -179,10 +179,10 @@ echo "  Agent binary:      ${AGENT_BIN}"
 echo ""
 
 export MACHTIANI_BIN="${AGENT_BIN}"
-export MCT_META_ORCHESTRATOR_BINARY="${META_BIN}"
-export MCT_FORGE_BINARY="${FORGE_BIN}"
-export MCT_MODEL="${MODEL}"
-export MCT_SHELL_AGENT_MODEL="${SHELL_AGENT_MODEL}"
+export MACHTIANI_META_ORCHESTRATOR_BINARY="${META_BIN}"
+export MACHTIANI_FORGE_BINARY="${FORGE_BIN}"
+export MACHTIANI_MODEL="${MODEL}"
+export MACHTIANI_SHELL_AGENT_MODEL="${SHELL_AGENT_MODEL}"
 
 # Start background preservation loop to continuously save job output
 mkdir -p "${JOBS_DIR}"
@@ -194,10 +194,10 @@ echo "[preserve] Background preservation loop started (PID ${PRESERVE_PID}) -> $
 
 pier run \
     --ae "MACHTIANI_BIN=${AGENT_BIN}" \
-    --ae "MCT_META_ORCHESTRATOR_BINARY=${META_BIN}" \
-    --ae "MCT_FORGE_BINARY=${FORGE_BIN}" \
-    --ae "MCT_MODEL=${MODEL}" \
-    --ae "MCT_SHELL_AGENT_MODEL=${SHELL_AGENT_MODEL}" \
+    --ae "MACHTIANI_META_ORCHESTRATOR_BINARY=${META_BIN}" \
+    --ae "MACHTIANI_FORGE_BINARY=${FORGE_BIN}" \
+    --ae "MACHTIANI_MODEL=${MODEL}" \
+    --ae "MACHTIANI_SHELL_AGENT_MODEL=${SHELL_AGENT_MODEL}" \
     --ae "TEST_API_KEY=${TEST_API_KEY}" \
     --ae "TEST_BASE_URL=${TEST_BASE_URL}" \
     --ae "TEST_MODEL=${MODEL}" \
@@ -287,13 +287,13 @@ else
 fi
 
 # Write run-metadata.json at the BENCH_DIR level.
-MCT_BENCH_HEAD="$(git -C "${REPO_ROOT}" rev-parse HEAD 2>/dev/null || echo unknown)"
+MACHTIANI_BENCH_HEAD="$(git -C "${REPO_ROOT}" rev-parse HEAD 2>/dev/null || echo unknown)"
 DEEP_SWE_HEAD="$(git -C "${DEEP_SWE_REPO}" rev-parse HEAD 2>/dev/null || echo unknown)"
 jq -n \
     --arg timestamp "${BENCH_TIMESTAMP_ISO}" \
     --arg agent "${AGENT_NAME}" \
     --arg treatment "${TREATMENT_NAME}" \
-    --arg mct_bench_head "${MCT_BENCH_HEAD}" \
+    --arg mct_bench_head "${MACHTIANI_BENCH_HEAD}" \
     --arg deep_swe_head "${DEEP_SWE_HEAD}" \
     --arg model "${MODEL}" \
     --arg shell_agent_model "${SHELL_AGENT_MODEL}" \

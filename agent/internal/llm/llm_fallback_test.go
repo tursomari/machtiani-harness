@@ -924,7 +924,7 @@ model = "gpt-4"
 		t.Fatalf("write config: %v", err)
 	}
 	t.Setenv("MACHTIANI_CONFIG", configPath)
-	t.Setenv("MCT_LLM_TEST_STUB", "context-override")
+	t.Setenv("MACHTIANI_LLM_TEST_STUB", "context-override")
 	t.Setenv("OPENAI_API_KEY", "")
 	t.Setenv("ORCH_API_KEY", "")
 

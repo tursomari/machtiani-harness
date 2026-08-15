@@ -10,7 +10,7 @@ run_sync_under_pty() {
 set timeout -1
 log_user 1
 log_file -noappend "$output_file"
-spawn sh -c {stty cols 240; exec ${MCT_SMOKE_AGENT:-machtiani} sync $sync_args}
+spawn sh -c {stty cols 240; exec ${MACHTIANI_SMOKE_AGENT:-machtiani} sync $sync_args}
 expect eof
 set result [wait]
 exit [lindex \$result 3]
@@ -98,7 +98,7 @@ test -x "$native_agent"
 
 echo "==> Verifying command supervision with a planted PATH blocker..."
 MACHTIANI_BIN="$native_agent" \
-  MCT_SUPERVISOR_SMOKE_REPO="$PWD" \
+  MACHTIANI_SUPERVISOR_SMOKE_REPO="$PWD" \
   bash /fixtures/mct-source/agent/tests/command-supervisor-smoke.sh
 
 shell_tool_trap=$(mktemp -d)
@@ -106,7 +106,7 @@ for tool in rg sed ls; do
   printf '#!/bin/sh\necho "unexpected sync file-tool invocation: %s" >&2\nexit 97\n' "$tool" > "$shell_tool_trap/$tool"
   chmod +x "$shell_tool_trap/$tool"
 done
-MCT_SMOKE_AGENT="$native_agent" PATH="$shell_tool_trap:$PATH" run_sync_under_pty "$sync_output" --verbose
+MACHTIANI_SMOKE_AGENT="$native_agent" PATH="$shell_tool_trap:$PATH" run_sync_under_pty "$sync_output" --verbose
 strip_ansi "$sync_output" > "$sync_clean"
 grep -q 'Readme synced for commit ' "$sync_clean"
 grep -Eq 'session token input [0-9,]+[[:space:]]+\(cache [0-9]+%\)[[:space:]]+output [0-9,]+' "$sync_clean"
@@ -194,7 +194,7 @@ printf 'package architecture\n\nconst Version = "early"\n' > architecture.go
 git add architecture.go
 git commit -m "smoke: early architecture"
 early_project_commit=$(git rev-parse HEAD)
-MCT_README_TEST_STUB=smoke-early machtiani sync
+MACHTIANI_README_TEST_STUB=smoke-early machtiani sync
 early_readme_commit=$(git -C "$readme_repo" rev-parse "oid-${early_project_commit}^{commit}")
 git -C "$readme_repo" show "${early_readme_commit}:internal-readme.md" > "$rollback_dir/early.md"
 
@@ -202,7 +202,7 @@ printf 'package architecture\n\nconst Version = "late"\n' > architecture.go
 git add architecture.go
 git commit -m "smoke: late architecture"
 late_project_commit=$(git rev-parse HEAD)
-MCT_README_TEST_STUB=smoke-late machtiani sync
+MACHTIANI_README_TEST_STUB=smoke-late machtiani sync
 late_readme_commit=$(git -C "$readme_repo" rev-parse "oid-${late_project_commit}^{commit}")
 git -C "$readme_repo" show "${late_readme_commit}:internal-readme.md" > "$rollback_dir/late.md"
 

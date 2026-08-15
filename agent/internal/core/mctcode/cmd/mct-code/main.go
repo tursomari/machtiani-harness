@@ -13,7 +13,7 @@ func main() {
 	flag.Parse()
 
 	// Fallback env var
-	if !*verbose && os.Getenv("MCT_VERBOSE") == "1" {
+	if !*verbose && os.Getenv("MACHTIANI_VERBOSE") == "1" {
 		*verbose = true
 	}
 

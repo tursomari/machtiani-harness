@@ -17,12 +17,12 @@ if [[ -n "${MACHTIANI_BIN:-}" ]]; then
   export MACHTIANI_BIN
 fi
 
-if [[ "${MCT_REQUIRE_LIVE:-false}" == "true" ]] && ! {
+if [[ "${MACHTIANI_REQUIRE_LIVE:-false}" == "true" ]] && ! {
   [[ -n "${TEST_API_KEY:-${OPENAI_API_KEY:-}}" ]] &&
     [[ -n "${TEST_BASE_URL:-${OPENAI_BASE_URL:-}}" ]] &&
     [[ -n "${TEST_MODEL:-${OPENAI_MODEL:-}}" ]]
 }; then
-  echo "ERROR: MCT_REQUIRE_LIVE=true requires complete TEST_* or supported fallback credentials" >&2
+  echo "ERROR: MACHTIANI_REQUIRE_LIVE=true requires complete TEST_* or supported fallback credentials" >&2
   exit 1
 fi
 
@@ -30,7 +30,7 @@ fi
 # that state out of the developer's checkout by running the suite from a
 # detached worktree at committed HEAD with a disposable HOME. The inner run is
 # selected explicitly so invoking the copied script does not recurse.
-if [[ "${MCT_RUN_LIVE_INNER:-}" != "1" ]]; then
+if [[ "${MACHTIANI_RUN_LIVE_INNER:-}" != "1" ]]; then
   SOURCE_ROOT="$REPO_ROOT"
   RUN_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/mct-run-live.XXXXXX")
   WORKTREE="$RUN_ROOT/repo"
@@ -65,8 +65,8 @@ if [[ "${MCT_RUN_LIVE_INNER:-}" != "1" ]]; then
         "$outer_agent" init --no-interactive >/dev/null
       HOME="$TEST_HOME" \
         MACHTIANI_CONFIG="$TEST_HOME/.machtiani/config.toml" \
-        MCT_LLM_TEST_STUB=stub-echo \
-        MCT_README_TEST_STUB=basic \
+        MACHTIANI_LLM_TEST_STUB=stub-echo \
+        MACHTIANI_README_TEST_STUB=basic \
         "$outer_agent" sync >/dev/null
     )
   fi
@@ -82,7 +82,7 @@ if [[ "${MCT_RUN_LIVE_INNER:-}" != "1" ]]; then
     cd "$WORKTREE"
     HOME="$TEST_HOME" \
       REPO_ROOT="$WORKTREE" \
-      MCT_RUN_LIVE_INNER=1 \
+      MACHTIANI_RUN_LIVE_INNER=1 \
       MACHTIANI_TEST_SOURCE_CONFIG="$TEST_HOME/.machtiani/config.toml" \
       MACHTIANI_TEST_SESSIONS_ROOT="$PROJECT_STORE/sessions" \
       bash "$WORKTREE/agent/tests/run-live.sh" "$@"
@@ -1318,7 +1318,7 @@ PY
 
 run_command_supervisor_smoke_case() {
   MACHTIANI_BIN="$MACHTIANI_EXE" \
-    MCT_SUPERVISOR_SMOKE_REPO="$REPO_ROOT" \
+    MACHTIANI_SUPERVISOR_SMOKE_REPO="$REPO_ROOT" \
     bash "$REPO_ROOT/agent/tests/command-supervisor-smoke.sh"
 }
 
@@ -1943,7 +1943,7 @@ run_local_tmp_root_unset_live_case() {
   local local_config=""
   local prompt
   prompt=$(cat <<'EOF'
-Run this exact command and report the exact output token only: `python3 -c 'import os; print("MCT_LOCAL_TMP_ROOT=" + (os.environ.get("MACHTIANI_TMP_ROOT") or "UNSET"))'`
+Run this exact command and report the exact output token only: `python3 -c 'import os; print("MACHTIANI_LOCAL_TMP_ROOT=" + (os.environ.get("MACHTIANI_TMP_ROOT") or "UNSET"))'`
 EOF
 )
 
@@ -2048,7 +2048,7 @@ EOF
   cp -f "$transcript_path" "$out_dir/transcript-${session_id}.adoc"
   cp -f "$final_path" "$out_dir/final-${session_id}.md"
 
-  if ! contains_keywords "(?s)(?=.*\[mct:shell\])(?=.*MCT_LOCAL_TMP_ROOT=UNSET)" \
+  if ! contains_keywords "(?s)(?=.*\[mct:shell\])(?=.*MACHTIANI_LOCAL_TMP_ROOT=UNSET)" \
       "$stdout_file" "$transcript_path" "$final_path"; then
     echo "Missing local tmp-root unset proof: $case_id" >&2
     return_with_cleanup 1 || return 1
@@ -4028,7 +4028,7 @@ test_discovery_context_budget_live() {
   (
     cd "$repo"
     MACHTIANI_CONFIG="$TEST_CONFIG_FILE" "$MACHTIANI_EXE" init --no-interactive --config-scope global >/dev/null
-    MACHTIANI_CONFIG="$TEST_CONFIG_FILE" MCT_README_TEST_STUB=basic \
+    MACHTIANI_CONFIG="$TEST_CONFIG_FILE" MACHTIANI_README_TEST_STUB=basic \
       "$MACHTIANI_EXE" sync \
       --model "$TEST_MODEL_ALIAS" \
       --answer-model "$TEST_MODEL_ALIAS" \

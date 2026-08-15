@@ -20,7 +20,7 @@ func TestSyncCommandUsesHeadCommit(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "test-key")
 	t.Setenv("OPENAI_BASE_URL", "https://example.com/v1")
 	t.Setenv("OPENAI_MODEL", "test-model")
-	t.Setenv("MCT_README_TEST_STUB", "basic")
+	t.Setenv("MACHTIANI_README_TEST_STUB", "basic")
 
 	repoDir := initTestRepo(t)
 	if err := os.MkdirAll(filepath.Join(repoDir, ".machtiani", "artifacts"), 0o755); err != nil {
@@ -140,7 +140,7 @@ func TestSyncCommandRequiresGitRepository(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "test-key")
 	t.Setenv("OPENAI_BASE_URL", "https://example.com/v1")
 	t.Setenv("OPENAI_MODEL", "test-model")
-	t.Setenv("MCT_README_TEST_STUB", "basic")
+	t.Setenv("MACHTIANI_README_TEST_STUB", "basic")
 
 	tempDir := t.TempDir()
 	origWD := mustChdir(t, tempDir)

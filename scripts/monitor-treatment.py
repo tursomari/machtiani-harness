@@ -538,7 +538,7 @@ def agent_log_errors(trial_dir: Path | None, containers: list[str]) -> list[str]
     lines: list[str] = []
     for text in texts:
         for line in text.splitlines():
-            if line.startswith("MCT_SHELL_ACTION") and not FORGE_FATAL_RE.search(line):
+            if line.startswith("MACHTIANI_SHELL_ACTION") and not FORGE_FATAL_RE.search(line):
                 continue
             if RUNNER_ERROR_RE.search(line) and not BENIGN_LOG_RE.search(line):
                 lines.append(line[-240:])

@@ -25,9 +25,9 @@ const (
 	stateDirName         = ".state"
 	lastCommitFilename   = "last_project_commit"
 	syncLockFilename     = "sync.lock"
-	mockReadmeEnv        = "MCT_README_TEST_STUB"     // enables deterministic content for integration tests
-	SkipReadmeManagerEnv = "MCT_SKIP_INTERNAL_README" // disables recursive manager execution when invoking the CLI
-	verboseEnv           = "MCT_INTERNAL_README_VERBOSE"
+	mockReadmeEnv        = "MACHTIANI_README_TEST_STUB"     // enables deterministic content for integration tests
+	SkipReadmeManagerEnv = "MACHTIANI_SKIP_INTERNAL_README" // disables recursive manager execution when invoking the CLI
+	verboseEnv           = "MACHTIANI_INTERNAL_README_VERBOSE"
 )
 
 type PromptExecutor func(ctx context.Context, material llm.PromptMaterial) (string, error)
