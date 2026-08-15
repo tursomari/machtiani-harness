@@ -62,6 +62,29 @@ func TestNamesIncludesCode(t *testing.T) {
 	t.Fatal("code mode missing")
 }
 
+func TestNamesUsesMachtianiCanonicalIdentities(t *testing.T) {
+	names, err := Names()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make(map[string]bool, len(names))
+	for _, name := range names {
+		got[name] = true
+	}
+	for _, name := range []string{
+		"machtiani",
+		"machtiani-alt",
+		"machtiani-build-test",
+		"machtiani-patch",
+		"machtiani-simple",
+		"machtiani-validate",
+	} {
+		if !got[name] {
+			t.Errorf("canonical mode %q missing", name)
+		}
+	}
+}
+
 func TestAgentManagedModeKeepsExecutionTopologyOutOfPlanner(t *testing.T) {
 	planner, err := fs.ReadFile(canonical, "canonical/agent-managed/planner-overlay.txt")
 	if err != nil {

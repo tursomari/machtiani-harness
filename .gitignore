@@ -1,6 +1,6 @@
 *-dump.json
 deepseek-v4-pro
-mct-patch-llm-input-*.log
+machtiani-patch-llm-input-*.log
 test-out-*/
 .gocache/
 .state/
