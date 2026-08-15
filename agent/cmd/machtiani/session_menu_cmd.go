@@ -12,7 +12,7 @@ import (
 )
 
 func handleSessionMenuCommand(args []string) int {
-	fs := pflag.NewFlagSet("mct-agent session menu", pflag.ContinueOnError)
+	fs := pflag.NewFlagSet("machtiani session menu", pflag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	noInteractive := fs.Bool("no-interactive", false, "never prompt; requires exactly one supplied action")
 	list := fs.Bool("list", false, "list sessions without opening the menu")
@@ -21,11 +21,11 @@ func handleSessionMenuCommand(args []string) int {
 	archiveSince := fs.String("archive-since", "", "archive sessions updated on or after this date")
 	archiveUntil := fs.String("archive-until", "", "with --archive-since, include sessions through this date")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "Usage: mct-agent session menu")
-		fmt.Fprintln(os.Stderr, "       mct-agent session menu --no-interactive --archive <session-id>")
-		fmt.Fprintln(os.Stderr, "       mct-agent session menu --no-interactive --unarchive <session-id>")
-		fmt.Fprintln(os.Stderr, "       mct-agent session menu --no-interactive --archive-since <date> [--archive-until <date>]")
-		fmt.Fprintln(os.Stderr, "       mct-agent session menu --no-interactive --list")
+		fmt.Fprintln(os.Stderr, "Usage: machtiani session menu")
+		fmt.Fprintln(os.Stderr, "       machtiani session menu --no-interactive --archive <session-id>")
+		fmt.Fprintln(os.Stderr, "       machtiani session menu --no-interactive --unarchive <session-id>")
+		fmt.Fprintln(os.Stderr, "       machtiani session menu --no-interactive --archive-since <date> [--archive-until <date>]")
+		fmt.Fprintln(os.Stderr, "       machtiani session menu --no-interactive --list")
 	}
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, pflag.ErrHelp) {

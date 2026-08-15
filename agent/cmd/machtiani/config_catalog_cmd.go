@@ -21,7 +21,7 @@ func handleConfigCatalogCommand(args []string) int {
 	}
 	switch args[0] {
 	case "list":
-		fs := pflag.NewFlagSet("mct-agent config catalog list", pflag.ContinueOnError)
+		fs := pflag.NewFlagSet("machtiani config catalog list", pflag.ContinueOnError)
 		fs.SetOutput(os.Stderr)
 		if err := fs.Parse(args[1:]); err != nil {
 			if errors.Is(err, pflag.ErrHelp) {
@@ -37,7 +37,7 @@ func handleConfigCatalogCommand(args []string) int {
 		}
 		return 0
 	case "show":
-		fs := pflag.NewFlagSet("mct-agent config catalog show", pflag.ContinueOnError)
+		fs := pflag.NewFlagSet("machtiani config catalog show", pflag.ContinueOnError)
 		fs.SetOutput(os.Stderr)
 		asJSON := fs.Bool("json", false, "print machine-readable JSON")
 		if err := fs.Parse(args[1:]); err != nil {

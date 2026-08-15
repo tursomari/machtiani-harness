@@ -14,14 +14,14 @@ import (
 )
 
 func handleSessionPruneCommand(args []string) int {
-	fs := pflag.NewFlagSet("mct-agent session prune", pflag.ContinueOnError)
+	fs := pflag.NewFlagSet("machtiani session prune", pflag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	dryRun := fs.Bool("dry-run", false, "show disposable session data without removing it")
 	yes := fs.Bool("yes", false, "confirm removal of the reported disposable data")
 	noInteractive := fs.Bool("no-interactive", false, "never prompt; requires --yes unless --dry-run")
 	jsonOutput := fs.Bool("json", false, "print the prune report as JSON")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "Usage: mct-agent session prune [session-id] [--dry-run] [--yes] [--no-interactive] [--json]")
+		fmt.Fprintln(os.Stderr, "Usage: machtiani session prune [session-id] [--dry-run] [--yes] [--no-interactive] [--json]")
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr, "Remove full LLM input logs, deprecated shell-agent state files, and their empty directories.")
 		fmt.Fprintln(os.Stderr, "Omit session-id to inspect every inactive session in the current project store.")

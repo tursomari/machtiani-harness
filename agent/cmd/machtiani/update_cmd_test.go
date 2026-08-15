@@ -179,7 +179,7 @@ func TestPromptInstallPrefixShowsDestinationsAndExpandsCustomHome(t *testing.T) 
 	if got != "/home/demo/tools" {
 		t.Fatalf("prefix = %q", got)
 	}
-	for _, want := range []string{"~/.local/bin/mct-agent (recommended)", "/usr/local/bin/mct-agent", "Custom prefix"} {
+	for _, want := range []string{"~/.local/bin/machtiani (recommended)", "/usr/local/bin/machtiani", "Custom prefix"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("prompt output missing %q:\n%s", want, out.String())
 		}
@@ -202,12 +202,12 @@ func TestPrintUpdateSummaryWarnsOnDivergentBinary(t *testing.T) {
 			t.Fatalf("exit code = %d", code)
 		}
 	})
-	// RED: current code prints "mct-agent is current at ..." even when the
+	// RED: current code prints "machtiani is current at ..." even when the
 	// binary on disk is divergent. The fixed code must warn instead.
 	if !strings.Contains(stderr, "stale") && !strings.Contains(stderr, "divergent") && !strings.Contains(stderr, "not current") {
 		t.Fatalf("expected divergence warning for stale binary, got: %s", stderr)
 	}
-	if strings.Contains(stderr, "mct-agent is current at") {
+	if strings.Contains(stderr, "machtiani is current at") {
 		t.Fatalf("must not report 'current' when binary is divergent, got: %s", stderr)
 	}
 }

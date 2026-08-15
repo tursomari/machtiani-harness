@@ -65,7 +65,7 @@ func init() {
 }
 
 func handleInitCommand(args []string) int {
-	fs := pflag.NewFlagSet("mct-agent init", pflag.ContinueOnError)
+	fs := pflag.NewFlagSet("machtiani init", pflag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	noInteractive := fs.Bool("no-interactive", false, "never prompt; use existing or complete supplied configuration")
 	configScope := fs.String("config-scope", "", "configuration scope: global or project")
@@ -83,7 +83,7 @@ func handleInitCommand(args []string) int {
 	queries := fs.StringArray("query", nil, "provider query key=value (repeatable)")
 	noCache := fs.Bool("no-cache", false, "disable global prompt caching in the new configuration")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "Usage: mct-agent init [--no-interactive] [--config-scope global|project] [configuration flags]")
+		fmt.Fprintln(os.Stderr, "Usage: machtiani init [--no-interactive] [--config-scope global|project] [configuration flags]")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Initialize a UUID-backed project store and synchronize canonical modes.")
 		fmt.Fprintln(os.Stderr, "Global configuration is used by default; select project scope to keep a complete project-specific config.")
@@ -98,7 +98,7 @@ func handleInitCommand(args []string) int {
 		return 2
 	}
 	if fs.NArg() != 0 {
-		return configUsageError("mct-agent init takes flags, not positional arguments")
+		return configUsageError("machtiani init takes flags, not positional arguments")
 	}
 	ctx, err := projectstore.Discover("")
 	if err != nil {
@@ -108,7 +108,7 @@ func handleInitCommand(args []string) int {
 		if err := modes.SyncCanonical(); err != nil {
 			return configError(err)
 		}
-		fmt.Fprintln(os.Stdout, "Legacy project configuration preserved; canonical modes synchronized. Run mct-agent migrate to adopt the UUID home store.")
+		fmt.Fprintln(os.Stdout, "Legacy project configuration preserved; canonical modes synchronized. Run machtiani migrate to adopt the UUID home store.")
 		return 0
 	}
 
@@ -226,7 +226,7 @@ func promptInitConfigScope(reader *bufio.Reader, out io.Writer) (bool, error) {
 }
 
 func handleInitCommandWithDeps(args []string, deps initCommandDeps) int {
-	fs := pflag.NewFlagSet("mct-agent init", pflag.ContinueOnError)
+	fs := pflag.NewFlagSet("machtiani init", pflag.ContinueOnError)
 	fs.SetOutput(deps.errOut)
 
 	providerURL := fs.String("provider-url", "", "LLM provider base URL (required)")
@@ -240,8 +240,8 @@ func handleInitCommandWithDeps(args []string, deps initCommandDeps) int {
 
 	fs.Usage = func() {
 		fmt.Fprintln(deps.errOut, "Usage:")
-		fmt.Fprintln(deps.errOut, "  mct-agent init [--force] [--no-cache]")
-		fmt.Fprintln(deps.errOut, "  mct-agent init --provider-url <url> --api-key <key> --model <name> [flags]")
+		fmt.Fprintln(deps.errOut, "  machtiani init [--force] [--no-cache]")
+		fmt.Fprintln(deps.errOut, "  machtiani init --provider-url <url> --api-key <key> --model <name> [flags]")
 		fmt.Fprintln(deps.errOut, "\nFlags:")
 		fs.PrintDefaults()
 	}
@@ -283,7 +283,7 @@ func handleInitCommandWithDeps(args []string, deps initCommandDeps) int {
 			return 1
 		}
 		reader := bufio.NewReader(deps.in)
-		fmt.Fprintln(deps.out, "Welcome to mct-agent setup.")
+		fmt.Fprintln(deps.out, "Welcome to machtiani setup.")
 		fmt.Fprintln(deps.out, "This creates .machtiani/config.toml for local LLM access.")
 		fmt.Fprintln(deps.out)
 
@@ -495,7 +495,7 @@ func promptInitModel(reader *bufio.Reader, deps initCommandDeps, provider, defau
 		reader,
 		deps.out,
 		"Model alias",
-		"Local name used by mct-agent commands.",
+		"Local name used by machtiani commands.",
 		fmt.Sprintf("Alias [%s]: ", defaultAlias),
 		defaultAlias,
 		func(value string) bool {

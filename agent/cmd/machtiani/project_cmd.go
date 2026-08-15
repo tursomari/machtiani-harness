@@ -16,10 +16,10 @@ func init() {
 
 func handleProjectCommand(args []string) int {
 	if len(args) == 0 || args[0] != "show" {
-		fmt.Fprintln(os.Stderr, "Usage: mct-agent project show [--json]")
+		fmt.Fprintln(os.Stderr, "Usage: machtiani project show [--json]")
 		return 2
 	}
-	fs := pflag.NewFlagSet("mct-agent project show", pflag.ContinueOnError)
+	fs := pflag.NewFlagSet("machtiani project show", pflag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	jsonOutput := fs.Bool("json", false, "print project details as JSON")
 	if err := fs.Parse(args[1:]); err != nil {

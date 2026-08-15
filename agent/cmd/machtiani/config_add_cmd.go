@@ -15,7 +15,7 @@ import (
 )
 
 func handleConfigAddCommand(args []string) int {
-	fs := pflag.NewFlagSet("mct-agent config add", pflag.ContinueOnError)
+	fs := pflag.NewFlagSet("machtiani config add", pflag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	var flags configTargetFlags
 	addConfigTargetFlags(fs, &flags)
@@ -59,7 +59,7 @@ func handleConfigAddCommand(args []string) int {
 	if strings.TrimSpace(*presetID) != "" {
 		value, ok := catalog.Provider(strings.TrimSpace(*presetID))
 		if !ok {
-			return configUsageError(fmt.Sprintf("unknown provider preset %q; use 'mct-agent config catalog list'", *presetID))
+			return configUsageError(fmt.Sprintf("unknown provider preset %q; use 'machtiani config catalog list'", *presetID))
 		}
 		preset = &value
 	}

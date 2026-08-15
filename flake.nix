@@ -1,5 +1,5 @@
 {
-  description = "Machtiani mct-agent";
+  description = "Machtiani agent";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
 
@@ -35,11 +35,11 @@
                 && !(lib.hasPrefix ".gocache" rel)
                 && rel != "result";
           };
-          mct-agent = (pkgs.buildGoModule.override { go = patchedGo; }) {
-            pname = "mct-agent";
+          machtiani = (pkgs.buildGoModule.override { go = patchedGo; }) {
+            pname = "machtiani";
             version = "0.1.0-${shortRevision}";
             src = source + "/agent";
-            subPackages = [ "cmd/mct-agent" ];
+            subPackages = [ "cmd/machtiani" ];
             vendorHash = "sha256-BZL0+ldXx7WqMrcLGsxkX1KZ+9GO9AuVukmIJWiY7Zw=";
             env.CGO_ENABLED = 0;
             ldflags = [
@@ -53,7 +53,7 @@
             nativeBuildInputs = [ pkgs.makeWrapper ];
             nativeCheckInputs = [ pkgs.gitMinimal ];
             postInstall = ''
-              wrapProgram $out/bin/mct-agent \
+              wrapProgram $out/bin/machtiani \
                 --prefix PATH : ${lib.makeBinPath [
                   pkgs.gitMinimal
                   pkgs.ripgrep
@@ -64,26 +64,26 @@
             '';
           };
           install = pkgs.writeShellApplication {
-            name = "mct-agent-install";
+            name = "machtiani-install";
             runtimeInputs = [ pkgs.gitMinimal ];
             text = ''
-              exec ${mct-agent}/bin/mct-agent install --source "$PWD" "$@"
+              exec ${machtiani}/bin/machtiani install --source "$PWD" "$@"
             '';
           };
         in {
-          inherit mct-agent install;
-          default = mct-agent;
+          inherit machtiani install;
+          default = machtiani;
         });
 
       apps = forAllSystems (system: {
         default = {
           type = "app";
-          program = "${self.packages.${system}.mct-agent}/bin/mct-agent";
+          program = "${self.packages.${system}.machtiani}/bin/machtiani";
         };
-        mct-agent = self.apps.${system}.default;
+        machtiani = self.apps.${system}.default;
         install = {
           type = "app";
-          program = "${self.packages.${system}.install}/bin/mct-agent-install";
+          program = "${self.packages.${system}.install}/bin/machtiani-install";
         };
       });
 
@@ -138,7 +138,7 @@
         });
 
       checks = forAllSystems (system: {
-        inherit (self.packages.${system}) mct-agent;
+        inherit (self.packages.${system}) machtiani;
       });
     };
 }

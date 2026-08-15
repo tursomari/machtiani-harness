@@ -22,7 +22,7 @@ import (
 
 const (
 	receiptSchemaVersion = 2
-	defaultRootRelative  = ".machtiani/installations/mct-agent"
+	defaultRootRelative  = ".machtiani/installations/machtiani"
 )
 
 type Policy string
@@ -386,8 +386,8 @@ func (m *Manager) Install(ctx context.Context, source, prefix string) (receipt R
 	if err := m.activateProfile(ctx, storePath); err != nil {
 		return Receipt{}, err
 	}
-	binaryPath := filepath.Join(prefix, "bin", "mct-agent")
-	if err := atomicSymlink(filepath.Join(m.paths.Profile, "bin", "mct-agent"), binaryPath); err != nil {
+	binaryPath := filepath.Join(prefix, "bin", "machtiani")
+	if err := atomicSymlink(filepath.Join(m.paths.Profile, "bin", "machtiani"), binaryPath); err != nil {
 		return Receipt{}, err
 	}
 	receipt = Receipt{SchemaVersion: receiptSchemaVersion, Remote: remote, DefaultBranch: branch, SourceDir: m.paths.Source, Profile: m.paths.Profile, Prefix: prefix, BinaryPath: binaryPath, InstalledCommit: head, InstalledVersion: version, InstalledAt: m.opts.Now().UTC()}
@@ -456,7 +456,7 @@ func (m *Manager) Update(ctx context.Context, result Result) (updated Result, re
 	if err := os.MkdirAll(receipt.Prefix, 0o755); err != nil {
 		return Result{}, err
 	}
-	stageRoot, err := os.MkdirTemp(receipt.Prefix, ".mct-agent-update-*")
+	stageRoot, err := os.MkdirTemp(receipt.Prefix, ".machtiani-update-*")
 	if err != nil {
 		return Result{}, err
 	}
@@ -499,7 +499,7 @@ func (m *Manager) Update(ctx context.Context, result Result) (updated Result, re
 	// resolves through the active profile.  This repairs the link when
 	// it was replaced by a regular file (e.g. a direct store copy or
 	// an earlier install that predates the atomicSymlink installer).
-	if err := atomicSymlink(filepath.Join(m.paths.Profile, "bin", "mct-agent"), receipt.BinaryPath); err != nil {
+	if err := atomicSymlink(filepath.Join(m.paths.Profile, "bin", "machtiani"), receipt.BinaryPath); err != nil {
 		return Result{}, err
 	}
 
@@ -577,7 +577,7 @@ func nixGitInstallable(source, branch, commit string) string {
 		Scheme:   "git+file",
 		Path:     filepath.ToSlash(source),
 		RawQuery: query.Encode(),
-		Fragment: "mct-agent",
+		Fragment: "machtiani",
 	}).String()
 }
 
@@ -594,7 +594,7 @@ func (m *Manager) buildExact(ctx context.Context, source, branch, commit string)
 	if storePath == "" || strings.Contains(storePath, "\n") {
 		return "", "", fmt.Errorf("Nix returned invalid candidate output %q", storePath)
 	}
-	versionOut, err := exec.CommandContext(ctx, filepath.Join(storePath, "bin", "mct-agent"), "--version").CombinedOutput()
+	versionOut, err := exec.CommandContext(ctx, filepath.Join(storePath, "bin", "machtiani"), "--version").CombinedOutput()
 	if err != nil {
 		return "", "", fmt.Errorf("validate Nix candidate: %w: %s", err, strings.TrimSpace(string(versionOut)))
 	}
@@ -666,7 +666,7 @@ func atomicSymlink(target, destination string) error {
 
 func versionFromOutput(output string) string {
 	first, _, _ := strings.Cut(strings.TrimSpace(output), "\n")
-	return strings.TrimSpace(strings.TrimPrefix(first, "mct-agent "))
+	return strings.TrimSpace(strings.TrimPrefix(first, "machtiani "))
 }
 
 // readBinaryCommit invokes the installed binary with --version and extracts

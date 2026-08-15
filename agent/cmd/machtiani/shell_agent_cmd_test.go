@@ -437,7 +437,7 @@ func TestShellAgentHelpExitsZero(t *testing.T) {
 }
 
 func TestShellAgentUsageLine(t *testing.T) {
-	fs := pflag.NewFlagSet("mct-agent shell-agent", pflag.ContinueOnError)
+	fs := pflag.NewFlagSet("machtiani shell-agent", pflag.ContinueOnError)
 	var apiKeyFlags multiString
 	fs.BoolP("verbose", "v", false, "verbose agent logging")
 	fs.Int("context-length", 0, "total input-plus-output token context")
@@ -450,7 +450,7 @@ func TestShellAgentUsageLine(t *testing.T) {
 	var buf strings.Builder
 	fs.SetOutput(&buf)
 	fs.Usage = func() {
-		fmt.Fprintf(&buf, "Usage: mct-agent shell-agent --prompt \"<task>\" | --file <path> [flags]\n\n")
+		fmt.Fprintf(&buf, "Usage: machtiani shell-agent --prompt \"<task>\" | --file <path> [flags]\n\n")
 		fmt.Fprintln(&buf, "Flags:")
 		fs.PrintDefaults()
 	}

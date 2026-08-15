@@ -224,7 +224,7 @@ func TestRunCommandFailsWhenReadmeMissing(t *testing.T) {
 	if !strings.Contains(stderr, "Error: mct is not synced at current git state abcdef1.") {
 		t.Fatalf("expected sync-required message, got: %q", stderr)
 	}
-	if !strings.Contains(stderr, "Run \u001b[1mmct-agent sync\u001b[0m before proceeding.") {
+	if !strings.Contains(stderr, "Run \u001b[1mmachtiani sync\u001b[0m before proceeding.") {
 		t.Fatalf("expected sync instruction, got: %q", stderr)
 	}
 }
@@ -685,7 +685,7 @@ func TestConfigCommandUnknownSubcommand(t *testing.T) {
 	if !strings.Contains(stderr, "Unknown config subcommand: unknown") {
 		t.Fatalf("expected unknown subcommand error in stderr, got %q", stderr)
 	}
-	if !strings.Contains(stderr, "Usage: mct-agent config") {
+	if !strings.Contains(stderr, "Usage: machtiani config") {
 		t.Fatalf("expected usage in stderr, got %q", stderr)
 	}
 }
@@ -782,7 +782,7 @@ func TestSessionIDFlagEmitsDeprecationWarning(t *testing.T) {
 		t.Fatalf("parse --session-id: %v", err)
 	}
 	if !strings.Contains(output.String(), "Flag --session-id has been deprecated") ||
-		!strings.Contains(output.String(), "use 'mct-agent run --resume <session-id>' or -r") {
+		!strings.Contains(output.String(), "use 'machtiani run --resume <session-id>' or -r") {
 		t.Fatalf("deprecation warning missing migration guidance: %q", output.String())
 	}
 	flag := r.fs.Lookup("session-id")
@@ -806,7 +806,7 @@ func TestRunCommandRejectsConflictingSessionFlags(t *testing.T) {
 	}
 }
 
-// --- Tests for --file/-f flag on mct-agent run ---
+// --- Tests for --file/-f flag on machtiani run ---
 
 func TestFileFlagRegisteredInHelp(t *testing.T) {
 	cfg := session.Config{}
@@ -1050,7 +1050,7 @@ func TestEmptyGoalError(t *testing.T) {
 	}
 }
 
-// --- Tests for --tag flag behavior on mct-agent run ---
+// --- Tests for --tag flag behavior on machtiani run ---
 
 func TestRunCommandTagFlagSetsBothTags(t *testing.T) {
 	origHead := readmeHeadCommitFn

@@ -27,13 +27,13 @@ func handleSessionArchiveChangeCommand(args []string, unarchive bool) int {
 		pastAction = "Unarchived"
 	}
 
-	fs := pflag.NewFlagSet("mct-agent session "+action, pflag.ContinueOnError)
+	fs := pflag.NewFlagSet("machtiani session "+action, pflag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	sinceValue := fs.String("since", "", "include sessions updated on or after this date or RFC3339 timestamp")
 	untilValue := fs.String("until", "", "include sessions updated on or before this date or RFC3339 timestamp")
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: mct-agent session %s <session-id>\n", action)
-		fmt.Fprintf(os.Stderr, "       mct-agent session %s --since <date> [--until <date>]\n\n", action)
+		fmt.Fprintf(os.Stderr, "Usage: machtiani session %s <session-id>\n", action)
+		fmt.Fprintf(os.Stderr, "       machtiani session %s --since <date> [--until <date>]\n\n", action)
 		fmt.Fprintln(os.Stderr, "Dates may use YYYY-MM-DD or RFC3339 format.")
 	}
 	if err := fs.Parse(args); err != nil {

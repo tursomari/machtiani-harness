@@ -13,12 +13,12 @@ import (
 
 func handleConfigScopeCommand(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "Usage: mct-agent config scope <show|use> [flags]")
+		fmt.Fprintln(os.Stderr, "Usage: machtiani config scope <show|use> [flags]")
 		return 2
 	}
 	switch args[0] {
 	case "show":
-		fs := pflag.NewFlagSet("mct-agent config scope show", pflag.ContinueOnError)
+		fs := pflag.NewFlagSet("machtiani config scope show", pflag.ContinueOnError)
 		fs.SetOutput(os.Stderr)
 		jsonOutput := fs.Bool("json", false, "print scope as JSON")
 		if err := fs.Parse(args[1:]); err != nil {
@@ -32,7 +32,7 @@ func handleConfigScopeCommand(args []string) int {
 			return configError(err)
 		}
 		if ctx.Status != projectstore.StatusInitialized {
-			return configError(fmt.Errorf("project is not initialized; run mct-agent init"))
+			return configError(fmt.Errorf("project is not initialized; run machtiani init"))
 		}
 		if *jsonOutput {
 			data, _ := json.Marshal(map[string]string{"config_scope": string(ctx.ConfigScope)})
@@ -42,7 +42,7 @@ func handleConfigScopeCommand(args []string) int {
 		}
 		return 0
 	case "use":
-		fs := pflag.NewFlagSet("mct-agent config scope use", pflag.ContinueOnError)
+		fs := pflag.NewFlagSet("machtiani config scope use", pflag.ContinueOnError)
 		fs.SetOutput(os.Stderr)
 		noInteractive := fs.Bool("no-interactive", false, "never prompt")
 		copyGlobal := fs.Bool("copy-global", false, "copy global config when enabling project scope")
@@ -61,7 +61,7 @@ func handleConfigScopeCommand(args []string) int {
 			return configError(err)
 		}
 		if ctx.Status != projectstore.StatusInitialized {
-			return configError(fmt.Errorf("project is not initialized; run mct-agent init"))
+			return configError(fmt.Errorf("project is not initialized; run machtiani init"))
 		}
 		if !*noInteractive {
 			confirmed, err := promptYesNo(bufio.NewReader(os.Stdin), os.Stdout, fmt.Sprintf("Use %s config for this project? [y/N]: ", scope), false)

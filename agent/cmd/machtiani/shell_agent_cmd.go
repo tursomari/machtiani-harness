@@ -22,7 +22,7 @@ func handleShellAgentCommand(args []string) int {
 		fmt.Fprintln(os.Stderr, "Error: --max-input-tokens was removed; use --context-length to set the total session context window")
 		return 2
 	}
-	fs := pflag.NewFlagSet("mct-agent shell-agent", pflag.ContinueOnError)
+	fs := pflag.NewFlagSet("machtiani shell-agent", pflag.ContinueOnError)
 	var apiKeyFlags multiString
 	verbose := fs.BoolP("verbose", "v", false, "verbose agent logging")
 	contextLength := fs.Int("context-length", 0, "total input-plus-output token context for this session")
@@ -35,7 +35,7 @@ func handleShellAgentCommand(args []string) int {
 	answerTag := fs.String("answer-tag", "", `Override the final-answer tag name used by the parser and prompt templates. Must not contain "<", ">", "/", "{{", or "}}". Empty input keeps the default ("answer").`)
 	tagSuffix := fs.String("tag", "", "single suffix for both answer and command tags (e.g. --tag foo produces answer-foo and command-foo)")
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: mct-agent shell-agent -p \"<task>\" | --file <path> [flags]\n\n")
+		fmt.Fprintf(os.Stderr, "Usage: machtiani shell-agent -p \"<task>\" | --file <path> [flags]\n\n")
 		fmt.Fprintln(os.Stderr, "Flags:")
 		fs.PrintDefaults()
 	}

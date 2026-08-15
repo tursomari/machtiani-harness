@@ -52,7 +52,7 @@ func (m *multiString) Type() string {
 }
 
 func printVersion() {
-	fmt.Printf("mct-agent %s\ncommit: %s\nbuilt: %s\ndirty: %s\n", Version, Commit, BuiltAt, Dirty)
+	fmt.Printf("machtiani %s\ncommit: %s\nbuilt: %s\ndirty: %s\n", Version, Commit, BuiltAt, Dirty)
 }
 
 func main() {
@@ -74,12 +74,12 @@ var cliCommands = []cliCommand{
 }
 
 func newTopLevelFlagSet() *pflag.FlagSet {
-	fs := pflag.NewFlagSet("mct-agent", pflag.ContinueOnError)
+	fs := pflag.NewFlagSet("machtiani", pflag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	fs.Bool("version", false, "print build metadata and exit")
 	fs.BoolP("help", "h", false, "show usage information")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "Usage: mct-agent <command> [flags]")
+		fmt.Fprintln(os.Stderr, "Usage: machtiani <command> [flags]")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Commands:")
 		for _, cmd := range cliCommands {
@@ -89,7 +89,7 @@ func newTopLevelFlagSet() *pflag.FlagSet {
 		fmt.Fprintln(os.Stderr, "Flags:")
 		fs.PrintDefaults()
 		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "Use 'mct-agent <command> --help' for more information about a command.")
+		fmt.Fprintln(os.Stderr, "Use 'machtiani <command> --help' for more information about a command.")
 	}
 	return fs
 }
@@ -152,14 +152,14 @@ type runFlagSetResult struct {
 }
 
 func newRunFlagSet(cfg *session.Config) runFlagSetResult {
-	fs := pflag.NewFlagSet("mct-agent run", pflag.ContinueOnError)
+	fs := pflag.NewFlagSet("machtiani run", pflag.ContinueOnError)
 	var paramFlags multiString
 	var paramJSON multiString
 	var apiKeyFlags multiString
 	configureSessionFlags(fs, cfg, &paramFlags, &paramJSON, &apiKeyFlags, true)
 	promptFile := fs.StringP("file", "f", "", "Read goal from file (mutually exclusive with --prompt)")
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: mct-agent run -p \"<your prompt>\" | --file <path> [flags]\n\n")
+		fmt.Fprintf(os.Stderr, "Usage: machtiani run -p \"<your prompt>\" | --file <path> [flags]\n\n")
 		fmt.Fprintln(os.Stderr, "Flags:")
 		fs.PrintDefaults()
 	}
@@ -451,12 +451,12 @@ func mapHeadCommitError(err error) (exitError, bool) {
 		}, true
 	case strings.Contains(lower, "no commits"):
 		return exitError{
-			msg:  "Error: Git repository has no commits yet. Make an initial commit before running 'mct-agent run'.",
+			msg:  "Error: Git repository has no commits yet. Make an initial commit before running 'machtiani run'.",
 			code: 1,
 		}, true
 	case strings.Contains(lower, "ambiguous argument 'head'"):
 		return exitError{
-			msg:  "Error: Git repository has no commits yet. Make an initial commit before running 'mct-agent run'.",
+			msg:  "Error: Git repository has no commits yet. Make an initial commit before running 'machtiani run'.",
 			code: 1,
 		}, true
 	}
@@ -478,7 +478,7 @@ func formatSyncRequiredMessage(shortHead string) string {
 	if trimmed == "" {
 		trimmed = "unknown"
 	}
-	return fmt.Sprintf("\nError: mct is not synced at current git state %s.\n\nRun \u001b[1mmct-agent sync\u001b[0m before proceeding.", trimmed)
+	return fmt.Sprintf("\nError: mct is not synced at current git state %s.\n\nRun \u001b[1mmachtiani sync\u001b[0m before proceeding.", trimmed)
 }
 
 func shortSHA(hash string, length int) string {
@@ -505,7 +505,7 @@ func handleSyncCommand(args []string) int {
 	if cfg.MaxTurns <= 0 {
 		cfg.MaxTurns = 150
 	}
-	fs := pflag.NewFlagSet("mct-agent sync", pflag.ContinueOnError)
+	fs := pflag.NewFlagSet("machtiani sync", pflag.ContinueOnError)
 	var paramFlags multiString
 	var paramJSON multiString
 	var apiKeyFlags multiString
@@ -513,7 +513,7 @@ func handleSyncCommand(args []string) int {
 	includeDocs := fs.Bool("include-docs", false, "include documentation/markdown changes when deciding whether to regenerate the internal README")
 	configureSessionFlags(fs, &cfg, &paramFlags, &paramJSON, &apiKeyFlags, false)
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: mct-agent sync [--commit <hash>] [flags]\n\n")
+		fmt.Fprintf(os.Stderr, "Usage: machtiani sync [--commit <hash>] [flags]\n\n")
 		fmt.Fprintln(os.Stderr, "Flags:")
 		fs.PrintDefaults()
 	}
@@ -702,7 +702,7 @@ func configureSessionFlags(fs *pflag.FlagSet, cfg *session.Config, paramFlags, p
 	fs.StringVar(&cfg.OpenAIModel, "openai-model", "", "Direct upstream model name (deprecated; prefer --model)")
 	fs.StringVar(&cfg.SessionID, "session-id", "", "Existing session identifier to resume (deprecated; use --resume or -r)")
 	fs.StringVarP(&cfg.SessionID, "resume", "r", "", "Existing session identifier to resume")
-	_ = fs.MarkDeprecated("session-id", "use 'mct-agent run --resume <session-id>' or -r")
+	_ = fs.MarkDeprecated("session-id", "use 'machtiani run --resume <session-id>' or -r")
 	fs.BoolVar(&cfg.EnableTagFormat, "enable-tag-format", cfg.EnableTagFormat, "Enable tag-format response directives and validation (experimental)")
 	fs.IntVar(&cfg.ShellAgentInterruptStep, "shell-agent-interrupt-step", 0, "deterministic interrupt after this many shell-agent steps (0 = disabled)")
 	fs.StringVar(&cfg.ShellAgentStepLog, "shell-agent-step-log", "", "path for step-log JSONL file (empty disables)")
@@ -766,8 +766,8 @@ func handleConfigCommand(args []string) int {
 }
 
 func printConfigUsage() {
-	fmt.Fprintln(os.Stderr, "Usage: mct-agent config [--global | --project | --path <file>]")
-	fmt.Fprintln(os.Stderr, "       mct-agent config <subcommand> [flags]")
+	fmt.Fprintln(os.Stderr, "Usage: machtiani config [--global | --project | --path <file>]")
+	fmt.Fprintln(os.Stderr, "       machtiani config <subcommand> [flags]")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Subcommands:")
 	fmt.Fprintln(os.Stderr, "  add         Add a provider/model set")
@@ -782,7 +782,7 @@ func printConfigUsage() {
 
 func handleConfigCheckCommand(args []string) int {
 	if len(args) != 0 {
-		fmt.Fprintln(os.Stderr, "Usage: mct-agent config check")
+		fmt.Fprintln(os.Stderr, "Usage: machtiani config check")
 		return 2
 	}
 	cfg, path, err := llm.LoadGlobalConfig()
@@ -806,7 +806,7 @@ func handleConfigCheckCommand(args []string) int {
 
 func handleSessionCommand(args []string) int {
 	if len(args) < 1 || args[0] == "--help" || args[0] == "-h" {
-		fmt.Fprintln(os.Stderr, "Usage: mct-agent session <subcommand> [flags]")
+		fmt.Fprintln(os.Stderr, "Usage: machtiani session <subcommand> [flags]")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Subcommands:")
 		fmt.Fprintln(os.Stderr, "  list    List sessions")
@@ -818,7 +818,7 @@ func handleSessionCommand(args []string) int {
 		fmt.Fprintln(os.Stderr, "  delete  Delete a session")
 		fmt.Fprintln(os.Stderr, "  prune   Remove disposable session diagnostics and deprecated state")
 		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "Use 'mct-agent session <subcommand> --help' for more information.")
+		fmt.Fprintln(os.Stderr, "Use 'machtiani session <subcommand> --help' for more information.")
 		return 2
 	}
 	switch args[0] {
@@ -841,7 +841,7 @@ func handleSessionCommand(args []string) int {
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown session subcommand: %s\n", args[0])
 		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "Usage: mct-agent session <subcommand> [flags]")
+		fmt.Fprintln(os.Stderr, "Usage: machtiani session <subcommand> [flags]")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Subcommands:")
 		fmt.Fprintln(os.Stderr, "  list    List sessions")
@@ -857,13 +857,13 @@ func handleSessionCommand(args []string) int {
 }
 
 func handleSessionListCommand(args []string) int {
-	fs := pflag.NewFlagSet("mct-agent session list", pflag.ContinueOnError)
+	fs := pflag.NewFlagSet("machtiani session list", pflag.ContinueOnError)
 	jsonOutput := fs.Bool("json", false, "Output sessions as JSON array")
 	archivedOnly := fs.Bool("archived", false, "Show only archived sessions (intersects with --forked)")
 	forkedOnly := fs.Bool("forked", false, "Show only forked sessions (intersects with --archived)")
 	listAll := fs.Bool("all", false, "Show all sessions (overrides --archived and --forked)")
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: mct-agent session list [flags]\n\n")
+		fmt.Fprintf(os.Stderr, "Usage: machtiani session list [flags]\n\n")
 		fmt.Fprintln(os.Stderr, "Flags:")
 		fs.PrintDefaults()
 	}
@@ -973,10 +973,10 @@ func truncateSessionGoal(goal string, width int) string {
 }
 
 func handleSessionShowCommand(args []string) int {
-	fs := pflag.NewFlagSet("mct-agent session show", pflag.ContinueOnError)
+	fs := pflag.NewFlagSet("machtiani session show", pflag.ContinueOnError)
 	jsonOutput := fs.Bool("json", false, "Output session as JSON object")
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: mct-agent session show <session-id> [flags]\n\n")
+		fmt.Fprintf(os.Stderr, "Usage: machtiani session show <session-id> [flags]\n\n")
 		fmt.Fprintln(os.Stderr, "Flags:")
 		fs.PrintDefaults()
 	}
@@ -1065,9 +1065,9 @@ func handleSessionShowCommand(args []string) int {
 }
 
 func handleSessionForkCommand(args []string) int {
-	fs := pflag.NewFlagSet("mct-agent session fork", pflag.ContinueOnError)
+	fs := pflag.NewFlagSet("machtiani session fork", pflag.ContinueOnError)
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: mct-agent session fork <session-id>\n\n")
+		fmt.Fprintf(os.Stderr, "Usage: machtiani session fork <session-id>\n\n")
 		fmt.Fprintln(os.Stderr, "Flags:")
 		fs.PrintDefaults()
 	}
@@ -1097,9 +1097,9 @@ func handleSessionForkCommand(args []string) int {
 }
 
 func handleSessionDeleteCommand(args []string) int {
-	fs := pflag.NewFlagSet("mct-agent session delete", pflag.ContinueOnError)
+	fs := pflag.NewFlagSet("machtiani session delete", pflag.ContinueOnError)
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: mct-agent session delete <session-id>\n\n")
+		fmt.Fprintf(os.Stderr, "Usage: machtiani session delete <session-id>\n\n")
 		fmt.Fprintln(os.Stderr, "Flags:")
 		fs.PrintDefaults()
 	}

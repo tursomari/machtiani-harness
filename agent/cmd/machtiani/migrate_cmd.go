@@ -63,7 +63,7 @@ func init() {
 }
 
 func handleMigrateCommand(args []string) int {
-	fs := pflag.NewFlagSet("mct-agent migrate", pflag.ContinueOnError)
+	fs := pflag.NewFlagSet("machtiani migrate", pflag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	dryRun := fs.Bool("dry-run", false, "show the migration without changing files")
 	yes := fs.Bool("yes", false, "confirm migration and legacy-state archival")
@@ -71,7 +71,7 @@ func handleMigrateCommand(args []string) int {
 	keepLegacy := fs.Bool("keep-legacy", false, "leave verified legacy state in place instead of archiving it")
 	jsonOutput := fs.Bool("json", false, "print the migration report as JSON")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "Usage: mct-agent migrate [--dry-run] [--yes] [--no-interactive] [--keep-legacy] [--json]")
+		fmt.Fprintln(os.Stderr, "Usage: machtiani migrate [--dry-run] [--yes] [--no-interactive] [--keep-legacy] [--json]")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Copy and verify legacy project state in a UUID-backed home store, then archive the copied source entries.")
 		fmt.Fprintln(os.Stderr, "Use --dry-run to inspect the exact source and destination. Automation must pass --no-interactive --yes.")
@@ -83,7 +83,7 @@ func handleMigrateCommand(args []string) int {
 		return 2
 	}
 	if fs.NArg() != 0 {
-		return configUsageError("mct-agent migrate takes flags, not positional arguments")
+		return configUsageError("machtiani migrate takes flags, not positional arguments")
 	}
 
 	ctx, err := projectstore.Discover("")

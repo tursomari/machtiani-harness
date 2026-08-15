@@ -4,9 +4,7 @@ mct-patch-llm-input-*.log
 test-out-*/
 .gocache/
 .state/
-mct-agent
-!agent/cmd/mct-agent/
-!agent/cmd/mct-agent/*.go
+/machtiani
 agent/meta-orchestrator
 alternate-route-bundle-handoff-prompt.txt
 assessment.md

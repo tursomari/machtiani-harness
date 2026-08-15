@@ -77,7 +77,7 @@ func resolveConfigTarget(flags configTargetFlags) (configTarget, error) {
 			return configTarget{}, err
 		}
 		if ctx.Status != projectstore.StatusInitialized {
-			return configTarget{}, errors.New("--project requires an initialized project; run mct-agent init")
+			return configTarget{}, errors.New("--project requires an initialized project; run machtiani init")
 		}
 		selected = ctx.ProjectConfigPath()
 		overridden = envPath

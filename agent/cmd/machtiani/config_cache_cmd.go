@@ -21,7 +21,7 @@ var cacheNumberFlags = map[string]string{
 
 func handleConfigCacheCommand(args []string) int {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
-		fmt.Fprintln(os.Stderr, "Usage: mct-agent config cache <show|enable|disable|inherit|set> [flags]")
+		fmt.Fprintln(os.Stderr, "Usage: machtiani config cache <show|enable|disable|inherit|set> [flags]")
 		return 0
 	}
 	action := args[0]
@@ -29,7 +29,7 @@ func handleConfigCacheCommand(args []string) int {
 		fmt.Fprintf(os.Stderr, "Unknown cache subcommand: %s\n", action)
 		return 2
 	}
-	fs := pflag.NewFlagSet("mct-agent config cache "+action, pflag.ContinueOnError)
+	fs := pflag.NewFlagSet("machtiani config cache "+action, pflag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	var flags configTargetFlags
 	addConfigTargetFlags(fs, &flags)

@@ -71,15 +71,15 @@ func setNestedConfig(configPath string, value string, keyPath ...string) error {
 }
 
 // handleConfigURLCommand sets a provider base_url in the config.
-// Usage: mct-agent config url [--alias <name>] <base-url>
+// Usage: machtiani config url [--alias <name>] <base-url>
 func handleConfigURLCommand(args []string) int {
 	configPath := filepath.Join(".machtiani", "config.toml")
 
-	fs := pflag.NewFlagSet("mct-agent config url", pflag.ContinueOnError)
+	fs := pflag.NewFlagSet("machtiani config url", pflag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	alias := fs.String("alias", "default", "provider alias name")
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: mct-agent config url [--alias <name>] <base-url>\n\n")
+		fmt.Fprintf(os.Stderr, "Usage: machtiani config url [--alias <name>] <base-url>\n\n")
 		fmt.Fprintln(os.Stderr, "Set the provider base URL for the given alias.")
 		fmt.Fprintln(os.Stderr, "Flags:")
 		fs.PrintDefaults()
@@ -99,7 +99,7 @@ func handleConfigURLCommand(args []string) int {
 	baseURL := fs.Arg(0)
 
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		fmt.Fprintf(os.Stderr, "Error: config file not found at %s. Run 'mct-agent init' first.\n", configPath)
+		fmt.Fprintf(os.Stderr, "Error: config file not found at %s. Run 'machtiani init' first.\n", configPath)
 		return 1
 	}
 
@@ -113,15 +113,15 @@ func handleConfigURLCommand(args []string) int {
 }
 
 // handleConfigAPIKeyCommand sets a provider api_key in the config.
-// Usage: mct-agent config api-key [--alias <name>] <api-key>
+// Usage: machtiani config api-key [--alias <name>] <api-key>
 func handleConfigAPIKeyCommand(args []string) int {
 	configPath := filepath.Join(".machtiani", "config.toml")
 
-	fs := pflag.NewFlagSet("mct-agent config api-key", pflag.ContinueOnError)
+	fs := pflag.NewFlagSet("machtiani config api-key", pflag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	alias := fs.String("alias", "default", "provider alias name")
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: mct-agent config api-key [--alias <name>] <api-key>\n\n")
+		fmt.Fprintf(os.Stderr, "Usage: machtiani config api-key [--alias <name>] <api-key>\n\n")
 		fmt.Fprintln(os.Stderr, "Set the provider API key for the given alias.")
 		fmt.Fprintln(os.Stderr, "Flags:")
 		fs.PrintDefaults()
@@ -141,7 +141,7 @@ func handleConfigAPIKeyCommand(args []string) int {
 	apiKey := fs.Arg(0)
 
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		fmt.Fprintf(os.Stderr, "Error: config file not found at %s. Run 'mct-agent init' first.\n", configPath)
+		fmt.Fprintf(os.Stderr, "Error: config file not found at %s. Run 'machtiani init' first.\n", configPath)
 		return 1
 	}
 
@@ -155,15 +155,15 @@ func handleConfigAPIKeyCommand(args []string) int {
 }
 
 // handleConfigModelCommand sets a model name entry in the config.
-// Usage: mct-agent config model [--alias <name>] <model-name>
+// Usage: machtiani config model [--alias <name>] <model-name>
 func handleLegacyConfigModelCommand(args []string) int {
 	configPath := filepath.Join(".machtiani", "config.toml")
 
-	fs := pflag.NewFlagSet("mct-agent config model", pflag.ContinueOnError)
+	fs := pflag.NewFlagSet("machtiani config model", pflag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	alias := fs.String("alias", "default", "model alias name")
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: mct-agent config model [--alias <name>] <model-name>\n\n")
+		fmt.Fprintf(os.Stderr, "Usage: machtiani config model [--alias <name>] <model-name>\n\n")
 		fmt.Fprintln(os.Stderr, "Set the model identifier for the given alias.")
 		fmt.Fprintln(os.Stderr, "Flags:")
 		fs.PrintDefaults()
@@ -183,7 +183,7 @@ func handleLegacyConfigModelCommand(args []string) int {
 	modelName := fs.Arg(0)
 
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		fmt.Fprintf(os.Stderr, "Error: config file not found at %s. Run 'mct-agent init' first.\n", configPath)
+		fmt.Fprintf(os.Stderr, "Error: config file not found at %s. Run 'machtiani init' first.\n", configPath)
 		return 1
 	}
 
@@ -197,15 +197,15 @@ func handleLegacyConfigModelCommand(args []string) int {
 }
 
 // handleConfigReasoningCommand sets the reasoning effort for a model.
-// Usage: mct-agent config reasoning [--alias <name>] <effort>
+// Usage: machtiani config reasoning [--alias <name>] <effort>
 func handleConfigReasoningCommand(args []string) int {
 	configPath := filepath.Join(".machtiani", "config.toml")
 
-	fs := pflag.NewFlagSet("mct-agent config reasoning", pflag.ContinueOnError)
+	fs := pflag.NewFlagSet("machtiani config reasoning", pflag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	alias := fs.String("alias", "default", "model alias name")
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: mct-agent config reasoning [--alias <name>] <effort>\n\n")
+		fmt.Fprintf(os.Stderr, "Usage: machtiani config reasoning [--alias <name>] <effort>\n\n")
 		fmt.Fprintln(os.Stderr, "Set the reasoning effort level. Valid values: low, medium, high.")
 		fmt.Fprintln(os.Stderr, "Flags:")
 		fs.PrintDefaults()
@@ -225,7 +225,7 @@ func handleConfigReasoningCommand(args []string) int {
 	effort := fs.Arg(0)
 
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		fmt.Fprintf(os.Stderr, "Error: config file not found at %s. Run 'mct-agent init' first.\n", configPath)
+		fmt.Fprintf(os.Stderr, "Error: config file not found at %s. Run 'machtiani init' first.\n", configPath)
 		return 1
 	}
 
@@ -240,18 +240,18 @@ func handleConfigReasoningCommand(args []string) int {
 
 // handleConfigShowCommand displays the effective configuration with source
 // annotations.
-// Usage: mct-agent config show
+// Usage: machtiani config show
 func handleConfigShowCommand(args []string) int {
 	var showFull bool
 	var showKey string
-	fs := pflag.NewFlagSet("mct-agent config show", pflag.ContinueOnError)
+	fs := pflag.NewFlagSet("machtiani config show", pflag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	var showVerbose bool
 	fs.BoolVarP(&showFull, "full", "f", false, "Show all configuration settings including obscure ones (trajectory, file paths, etc.)")
 	fs.BoolVar(&showVerbose, "verbose", false, "Enable verbose mode (for testing source=flag)")
 	fs.StringVarP(&showKey, "key", "k", "", "Show detailed documentation for a specific config key")
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: mct-agent config show [--full]\n\n")
+		fmt.Fprintf(os.Stderr, "Usage: machtiani config show [--full]\n\n")
 		fmt.Fprintln(os.Stderr, "Print the effective configuration with source annotations showing")
 		fmt.Fprintln(os.Stderr, "whether each value comes from defaults or config.toml.")
 		fmt.Fprintln(os.Stderr, "Flags:")

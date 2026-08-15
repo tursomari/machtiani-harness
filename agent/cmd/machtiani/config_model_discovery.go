@@ -45,7 +45,7 @@ func discoverProviderModels(client *http.Client, provider configcatalog.Provider
 		return nil, fmt.Errorf("create model discovery request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "mct-agent/model-discovery")
+	req.Header.Set("User-Agent", "machtiani/model-discovery")
 	if value := strings.TrimSpace(apiKey); value != "" {
 		req.Header.Set("Authorization", "Bearer "+value)
 	}

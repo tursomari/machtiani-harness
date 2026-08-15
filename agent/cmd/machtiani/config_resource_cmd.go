@@ -28,7 +28,7 @@ func configInt(value any) (int, bool) {
 
 func handleConfigProviderCommand(args []string) int {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
-		fmt.Fprintln(os.Stderr, "Usage: mct-agent config provider <list|show|add|set|rename|remove> [flags]")
+		fmt.Fprintln(os.Stderr, "Usage: machtiani config provider <list|show|add|set|rename|remove> [flags]")
 		return 0
 	}
 	switch args[0] {
@@ -47,7 +47,7 @@ func handleConfigProviderCommand(args []string) int {
 }
 
 func handleConfigProviderRead(action string, args []string) int {
-	fs := pflag.NewFlagSet("mct-agent config provider "+action, pflag.ContinueOnError)
+	fs := pflag.NewFlagSet("machtiani config provider "+action, pflag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	var targetFlags configTargetFlags
 	addConfigTargetFlags(fs, &targetFlags)
@@ -97,7 +97,7 @@ func handleConfigProviderRead(action string, args []string) int {
 }
 
 func handleConfigProviderWrite(action string, args []string) int {
-	fs := pflag.NewFlagSet("mct-agent config provider "+action, pflag.ContinueOnError)
+	fs := pflag.NewFlagSet("machtiani config provider "+action, pflag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	var targetFlags configTargetFlags
 	addConfigTargetFlags(fs, &targetFlags)
@@ -312,7 +312,7 @@ func applyStringTableChanges(entry map[string]any, key string, sets, removes []s
 }
 
 func handleConfigProviderRename(args []string) int {
-	fs, targetFlags, noInteractive := newMutationFlagSet("mct-agent config provider rename")
+	fs, targetFlags, noInteractive := newMutationFlagSet("machtiani config provider rename")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, pflag.ErrHelp) {
 			return 0
@@ -367,7 +367,7 @@ func handleConfigProviderRename(args []string) int {
 }
 
 func handleConfigProviderRemove(args []string) int {
-	fs, targetFlags, noInteractive := newMutationFlagSet("mct-agent config provider remove")
+	fs, targetFlags, noInteractive := newMutationFlagSet("machtiani config provider remove")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, pflag.ErrHelp) {
 			return 0
@@ -432,7 +432,7 @@ func handleConfigProviderRemove(args []string) int {
 
 func handleConfigModelCommand(args []string) int {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
-		fmt.Fprintln(os.Stderr, "Usage: mct-agent config model <list|show|add|set|rename|remove|default> [flags]")
+		fmt.Fprintln(os.Stderr, "Usage: machtiani config model <list|show|add|set|rename|remove|default> [flags]")
 		return 0
 	}
 	switch args[0] {
@@ -453,7 +453,7 @@ func handleConfigModelCommand(args []string) int {
 }
 
 func handleConfigModelRead(action string, args []string) int {
-	fs := pflag.NewFlagSet("mct-agent config model "+action, pflag.ContinueOnError)
+	fs := pflag.NewFlagSet("machtiani config model "+action, pflag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	var flags configTargetFlags
 	addConfigTargetFlags(fs, &flags)
@@ -509,7 +509,7 @@ func handleConfigModelRead(action string, args []string) int {
 }
 
 func handleConfigModelWrite(action string, args []string) int {
-	fs := pflag.NewFlagSet("mct-agent config model "+action, pflag.ContinueOnError)
+	fs := pflag.NewFlagSet("machtiani config model "+action, pflag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	var flags configTargetFlags
 	addConfigTargetFlags(fs, &flags)
@@ -783,7 +783,7 @@ func modelReasoning(entry map[string]any) string {
 }
 
 func handleConfigModelRename(args []string) int {
-	fs, flags, noInteractive := newMutationFlagSet("mct-agent config model rename")
+	fs, flags, noInteractive := newMutationFlagSet("machtiani config model rename")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, pflag.ErrHelp) {
 			return 0
@@ -832,7 +832,7 @@ func handleConfigModelRename(args []string) int {
 }
 
 func handleConfigModelRemove(args []string) int {
-	fs, flags, noInteractive := newMutationFlagSet("mct-agent config model remove")
+	fs, flags, noInteractive := newMutationFlagSet("machtiani config model remove")
 	replacement := fs.String("replacement", "", "replacement for selectors that reference the removed model")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, pflag.ErrHelp) {
@@ -910,7 +910,7 @@ func handleConfigModelRemove(args []string) int {
 }
 
 func handleConfigModelDefault(args []string) int {
-	fs, flags, noInteractive := newMutationFlagSet("mct-agent config model default")
+	fs, flags, noInteractive := newMutationFlagSet("machtiani config model default")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, pflag.ErrHelp) {
 			return 0

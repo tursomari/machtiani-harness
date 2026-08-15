@@ -19,17 +19,17 @@ import (
 )
 
 var (
-	mctAgentBinary           = "mct-agent"
+	mctAgentBinary           = "machtiani"
 	mctAgentAppDir           = "/app"
 	mctAgentRecoveryAttempts = 1
 )
 
-const orchestratorSystemPrompt = `You are a meta-orchestrator agent. Your job is to instruct mct-agent to completion through a rigorous, multi-stage validation process. You will receive the contents of mct-agents agent-final-answer.md after each invocation. Evaluate the current state of the work and guide the agent accordingly.
+const orchestratorSystemPrompt = `You are a meta-orchestrator agent. Your job is to instruct machtiani to completion through a rigorous, multi-stage validation process. You will receive the contents of the machtiani agent's agent-final-answer.md after each invocation. Evaluate the current state of the work and guide the agent accordingly.
 
 Respond with exactly one of these three formats:
 
 ACTION: CONTINUE
-MESSAGE: <authoritative instruction telling mct-agent what to do next>
+MESSAGE: <authoritative instruction telling machtiani what to do next>
 
 ACTION: DONE
 MESSAGE: <empty or a brief acknowledgment>
@@ -40,7 +40,7 @@ MESSAGE: <description of the hard blocker>
 Rules and Phases of Operation:
 
 1. **Active Implementation:**
-   - If the final answer is a permission ask (e.g. "Shall I proceed?"), a status report, a design discussion, a recommendation without action, or anything short of an actual implemented solution, respond with ACTION: CONTINUE. Provide a firm, authoritative instruction telling mct-agent to implement the solution fully and not ask for permission again.
+   - If the final answer is a permission ask (e.g. "Shall I proceed?"), a status report, a design discussion, a recommendation without action, or anything short of an actual implemented solution, respond with ACTION: CONTINUE. Provide a firm, authoritative instruction telling machtiani to implement the solution fully and not ask for permission again.
 
 2. **Phase 1 - The First Sanity Check (First Completion Claim):**
    - When the agent FIRST reports that the implementation work is finished and committed, DO NOT accept it as done.
@@ -68,9 +68,9 @@ Rules and Phases of Operation:
    - If the deliverables are fully executed and complete, respond with ACTION: DONE.
 
 Global Rules:
-- The runner may append a "RUNNER-OBSERVED WORKTREE AUDIT" block after an agent final answer. Treat this audit as authoritative for phase-gating. If its gate_result is BLOCK_NEXT_PHASE, respond with ACTION: CONTINUE and instruct mct-agent to commit intentional deliverables and remove accidental deliverables before proceeding. If its gate_result is AUDIT_ERROR, respond with ACTION: CONTINUE and instruct mct-agent to perform the same git status/diff/untracked audit itself and resolve any dirty deliverable state. Do not proceed to the next phase or final DONE while the runner-observed audit blocks.
+- The runner may append a "RUNNER-OBSERVED WORKTREE AUDIT" block after an agent final answer. Treat this audit as authoritative for phase-gating. If its gate_result is BLOCK_NEXT_PHASE, respond with ACTION: CONTINUE and instruct machtiani to commit intentional deliverables and remove accidental deliverables before proceeding. If its gate_result is AUDIT_ERROR, respond with ACTION: CONTINUE and instruct machtiani to perform the same git status/diff/untracked audit itself and resolve any dirty deliverable state. Do not proceed to the next phase or final DONE while the runner-observed audit blocks.
 - If the final answer describes an irrecoverable hard blocker (e.g. no API credits available, critical missing dependency that cannot be resolved), respond with ACTION: BLOCKED.
-- Maintain context across rounds. Use the chat history to determine which phase the agent is currently in. Escalate the firmness of your instructions if mct-agent stalls or attempts to bypass a phase.`
+- Maintain context across rounds. Use the chat history to determine which phase the agent is currently in. Escalate the firmness of your instructions if machtiani stalls or attempts to bypass a phase.`
 
 const peerReviewInstruction = `You are a peer reviewer evaluating an implementation against its original requirements. Your job is to produce a rigorous, actionable critique, not a summary.
 
@@ -159,12 +159,12 @@ var protectedRuntimePaths = []string{
 	"instruction.md",
 }
 
-const reviewSystemPrompt = `You are a review-mode orchestrator. Your sole job is to ensure mct-agent produces a thorough, substantive peer review of an implementation. You will receive the contents of mct-agents agent-final-answer.md after each invocation and must evaluate whether the review is complete.
+const reviewSystemPrompt = `You are a review-mode orchestrator. Your sole job is to ensure machtiani produces a thorough, substantive peer review of an implementation. You will receive the contents of the machtiani agent's agent-final-answer.md after each invocation and must evaluate whether the review is complete.
 
 Respond with exactly one of these three formats:
 
 ACTION: CONTINUE
-MESSAGE: <specific instruction telling mct-agent what is missing and what to do>
+MESSAGE: <specific instruction telling machtiani what is missing and what to do>
 
 ACTION: DONE
 MESSAGE: <brief acknowledgment>
@@ -198,7 +198,7 @@ When to CONTINUE (issue specific, actionable instructions):
 
 When to BLOCKED:
 - The agent cannot access /app/instruction.md or the git repository.
-- mct-agent reports an irrecoverable technical failure.
+- machtiani reports an irrecoverable technical failure.
 - After three identical review submissions with no new substantive content, classify as BLOCKED.
 
 Escalate firmness with each successive CONTINUE. Always tell the agent exactly which section is inadequate and what specific information is missing. Never accept "looks good" or "no issues found" without detailed justification of the investigation performed.`
@@ -227,7 +227,7 @@ func extractPrompt(args []string) string {
 	return ""
 }
 
-// invokeMCTAgent builds and executes an mct-agent command with the given
+// invokeMCTAgent builds and executes a machtiani command with the given
 // arguments. It prepends "run" as the subcommand and returns the exit code
 // of the subprocess and any error.
 func invokeMCTAgent(ctx context.Context, metaSessionID string, trajDir string, mctSessionID string, args ...string) (int, error) {
@@ -245,7 +245,7 @@ func invokeMCTAgent(ctx context.Context, metaSessionID string, trajDir string, m
 	if snapshotErr != nil {
 		writeTrajectoryLine(trajDir, map[string]interface{}{
 			"type":      "runtime_state_snapshot_failed",
-			"label":     "before-mct-agent-run",
+			"label":     "before-machtiani-run",
 			"timestamp": time.Now().UTC().Format(time.RFC3339),
 			"error":     snapshotErr.Error(),
 		})
@@ -254,7 +254,7 @@ func invokeMCTAgent(ctx context.Context, metaSessionID string, trajDir string, m
 	err := cmd.Run()
 
 	if runSnapshot != nil {
-		if restoreErr := restoreProtectedRuntimeState(runSnapshot, trajDir, "after-mct-agent-run"); restoreErr != nil {
+		if restoreErr := restoreProtectedRuntimeState(runSnapshot, trajDir, "after-machtiani-run"); restoreErr != nil {
 			runSnapshot.cleanup()
 			return -1, restoreErr
 		}
@@ -623,12 +623,12 @@ func syncMCTAgent(ctx context.Context, trajDir string, label string, model strin
 
 		if err == nil {
 			if attempt > 1 {
-				fmt.Fprintf(os.Stderr, "mct-agent sync succeeded on attempt %d/%d for %s\n", attempt, mctAgentSyncAttempts, label)
+				fmt.Fprintf(os.Stderr, "machtiani sync succeeded on attempt %d/%d for %s\n", attempt, mctAgentSyncAttempts, label)
 			}
 			return nil
 		}
 
-		fmt.Fprintf(os.Stderr, "Warning: mct-agent sync attempt %d/%d failed for %s: %v\n", attempt, mctAgentSyncAttempts, label, err)
+		fmt.Fprintf(os.Stderr, "Warning: machtiani sync attempt %d/%d failed for %s: %v\n", attempt, mctAgentSyncAttempts, label, err)
 		if attempt < mctAgentSyncAttempts {
 			select {
 			case <-ctx.Done():
@@ -638,7 +638,7 @@ func syncMCTAgent(ctx context.Context, trajDir string, label string, model strin
 		}
 	}
 
-	return fmt.Errorf("mct-agent sync failed after %d attempts for %s: %w", mctAgentSyncAttempts, label, lastErr)
+	return fmt.Errorf("machtiani sync failed after %d attempts for %s: %w", mctAgentSyncAttempts, label, lastErr)
 }
 
 func parseOrchestratorResponse(response string) (string, string, error) {
@@ -678,7 +678,7 @@ func invokeReviewer(ctx context.Context, reviewInstruction string, reviewMode st
 		return "", err
 	}
 
-	// 2. Run mct-agent sync to refresh internal state after the main agent commits.
+	// 2. Run machtiani sync to refresh internal state after the main agent commits.
 	if err := syncMCTAgent(ctx, trajDir, "reviewer-before-child-meta", model, snapshot); err != nil {
 		return "", err
 	}
@@ -852,7 +852,7 @@ func writeTrajectoryLine(dir string, entry interface{}) {
 	}
 }
 
-// invokeMCTAgentRun invokes mct-agent run with an instruction file (-f).
+// invokeMCTAgentRun invokes machtiani run with an instruction file (-f).
 func invokeMCTAgentRun(
 	ctx context.Context,
 	metaSessionID string,
@@ -1254,7 +1254,7 @@ func forcedContinueResponseForSuspendedUserInput(reviewMode bool) string {
 	return "ACTION: CONTINUE\nMESSAGE: Do not ask for user input or permission. Continue this session autonomously. If you proposed fixes, apply them now. Address every outstanding requirement or review finding, run the relevant build/typecheck/test commands, and only claim completion with concrete evidence."
 }
 
-// RunLoop runs the meta-orchestrator loop: invoke mct-agent, evaluate the
+// RunLoop runs the meta-orchestrator loop: invoke machtiani, evaluate the
 // final answer with a conversational LLM, and continue, finish, or block
 // based on the orchestrator's decision.
 func RunLoop(
@@ -1476,7 +1476,7 @@ func RunLoop(
 				args = append(args, "--persist-tmp-data")
 			}
 
-			// Re-sync internal git state before the run so that mct-agent
+			// Re-sync internal git state before the run so that machtiani
 			// reads the current commit rather than a stale snapshot.
 			if syncErr := syncMCTAgent(ctx, trajDir, "continue-before-agent-run", model, runtimeSnapshot); syncErr != nil {
 				return 1, syncErr

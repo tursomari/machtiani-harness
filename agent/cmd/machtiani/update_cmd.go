@@ -42,18 +42,18 @@ var updateManagerFactory = func() updateCommandManager {
 func init() {
 	cliCommands = append(cliCommands, cliCommand{
 		name:        "update",
-		description: "Check and install Nix-managed mct-agent updates",
+		description: "Check and install Nix-managed machtiani updates",
 		handler:     handleUpdateCommand,
 	})
 	cliCommands = append(cliCommands, cliCommand{
 		name:        "install",
-		description: "Install mct-agent through a dedicated Nix profile",
+		description: "Install machtiani through a dedicated Nix profile",
 		handler:     handleInstallCommand,
 	})
 }
 
 func handleUpdateCommand(args []string) int {
-	fs := pflag.NewFlagSet("mct-agent update", pflag.ContinueOnError)
+	fs := pflag.NewFlagSet("machtiani update", pflag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	checkOnly := fs.Bool("check", false, "check for an update without installing it")
 	yes := fs.Bool("yes", false, "install an available update without prompting")
@@ -61,7 +61,7 @@ func handleUpdateCommand(args []string) int {
 	jsonOutput := fs.Bool("json", false, "print one machine-readable JSON result")
 	_ = fs.Bool("verbose", false, "show detailed Nix and Git output")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "Usage: mct-agent update [--check] [--yes] [--no-interactive] [--json]")
+		fmt.Fprintln(os.Stderr, "Usage: machtiani update [--check] [--yes] [--no-interactive] [--json]")
 	}
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, pflag.ErrHelp) {
@@ -70,7 +70,7 @@ func handleUpdateCommand(args []string) int {
 		return 2
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "Error: mct-agent update takes flags, not positional arguments")
+		fmt.Fprintln(os.Stderr, "Error: machtiani update takes flags, not positional arguments")
 		return 2
 	}
 	manager := updateManagerFactory()
@@ -109,7 +109,7 @@ func handleUpdateCommand(args []string) int {
 }
 
 func handleInstallCommand(args []string) int {
-	fs := pflag.NewFlagSet("mct-agent install", pflag.ContinueOnError)
+	fs := pflag.NewFlagSet("machtiani install", pflag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	source := fs.String("source", "", "clean source checkout")
 	home, _ := os.UserHomeDir()
@@ -117,7 +117,7 @@ func handleInstallCommand(args []string) int {
 	noInteractive := fs.Bool("no-interactive", false, "never prompt; use --prefix or the default prefix")
 	_ = fs.Bool("verbose", false, "show detailed Nix and Git output")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "Usage: mct-agent install --source <checkout> [--prefix <dir>] [--no-interactive] [--verbose]")
+		fmt.Fprintln(os.Stderr, "Usage: machtiani install --source <checkout> [--prefix <dir>] [--no-interactive] [--verbose]")
 	}
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, pflag.ErrHelp) {
@@ -147,7 +147,7 @@ func handleInstallCommand(args []string) int {
 		fmt.Fprintln(os.Stderr, "Error:", err)
 		return 1
 	}
-	fmt.Fprintln(os.Stderr, "Managed mct-agent installation complete.")
+	fmt.Fprintln(os.Stderr, "Managed machtiani installation complete.")
 	return 0
 }
 
@@ -188,9 +188,9 @@ func promptInstallPrefix(reader *bufio.Reader, out io.Writer, prefixes []string,
 	if len(prefixes) == 0 {
 		return "", errors.New("no installation prefixes available")
 	}
-	fmt.Fprintln(out, "Choose where to install mct-agent:")
+	fmt.Fprintln(out, "Choose where to install machtiani:")
 	for index, prefix := range prefixes {
-		destination := displayInstallPath(filepath.Join(prefix, "bin", "mct-agent"), home)
+		destination := displayInstallPath(filepath.Join(prefix, "bin", "machtiani"), home)
 		suffix := ""
 		if index == 0 {
 			suffix = " (recommended)"
@@ -264,15 +264,15 @@ func printUpdateSummary(out *os.File, result updatepkg.Result) {
 	switch result.Status {
 	case updatepkg.StatusCurrent:
 		if result.InstalledDivergent {
-			fmt.Fprintf(out, "mct-agent install is stale: receipt commit %s does not match the installed binary.\n", shortSHA(result.CurrentCommit, 12))
-			fmt.Fprintln(out, "Run \"mct-agent update\" to reinstall the correct binary.")
+			fmt.Fprintf(out, "machtiani install is stale: receipt commit %s does not match the installed binary.\n", shortSHA(result.CurrentCommit, 12))
+			fmt.Fprintln(out, "Run \"machtiani update\" to reinstall the correct binary.")
 		} else {
-			fmt.Fprintf(out, "mct-agent is current at %s.\n", shortSHA(result.CurrentCommit, 12))
+			fmt.Fprintf(out, "machtiani is current at %s.\n", shortSHA(result.CurrentCommit, 12))
 		}
 	case updatepkg.StatusAvailable:
-		fmt.Fprintf(out, "mct-agent update available: %s -> %s\n", shortSHA(result.CurrentCommit, 12), shortSHA(result.CandidateCommit, 12))
+		fmt.Fprintf(out, "machtiani update available: %s -> %s\n", shortSHA(result.CurrentCommit, 12), shortSHA(result.CandidateCommit, 12))
 	case updatepkg.StatusUpdated:
-		fmt.Fprintf(out, "mct-agent updated to %s.\n", shortSHA(result.CandidateCommit, 12))
+		fmt.Fprintf(out, "machtiani updated to %s.\n", shortSHA(result.CandidateCommit, 12))
 	case updatepkg.StatusDeclined:
 		fmt.Fprintln(out, "Update declined.")
 	}
@@ -369,7 +369,7 @@ func maybeAutomaticUpdate(args []string) (handled bool, code int) {
 		fmt.Fprintln(os.Stderr, "Update failed; continuing with the installed binary:", err)
 		return false, 0
 	}
-	fmt.Fprintf(os.Stderr, "mct-agent updated to %s; continuing original command.\n", shortSHA(result.CandidateCommit, 12))
+	fmt.Fprintf(os.Stderr, "machtiani updated to %s; continuing original command.\n", shortSHA(result.CandidateCommit, 12))
 	child := exec.Command(result.BinaryPath, args...)
 	child.Stdin, child.Stdout, child.Stderr = os.Stdin, os.Stdout, os.Stderr
 	child.Env = append(os.Environ(), updateReexecEnv+"=1")
@@ -378,14 +378,14 @@ func maybeAutomaticUpdate(args []string) (handled bool, code int) {
 		if errors.As(err, &exitErr) {
 			return true, exitErr.ExitCode()
 		}
-		fmt.Fprintln(os.Stderr, "Unable to continue with updated mct-agent:", err)
+		fmt.Fprintln(os.Stderr, "Unable to continue with updated machtiani:", err)
 		return true, 1
 	}
 	return true, 0
 }
 
 func printAutomaticUpdateDetails(result updatepkg.Result) {
-	fmt.Fprintf(os.Stderr, "mct-agent update available: %s -> %s\n", shortSHA(result.CurrentCommit, 12), shortSHA(result.CandidateCommit, 12))
+	fmt.Fprintf(os.Stderr, "machtiani update available: %s -> %s\n", shortSHA(result.CurrentCommit, 12), shortSHA(result.CandidateCommit, 12))
 	fmt.Fprintf(os.Stderr, "Remote: %s (%s)\n", result.Remote, result.DefaultBranch)
 	fmt.Fprintf(os.Stderr, "Source: %s\nInstall target: %s\n", result.SourceDir, result.BinaryPath)
 	fmt.Fprintln(os.Stderr, "The update will be built locally from the managed source checkout.")

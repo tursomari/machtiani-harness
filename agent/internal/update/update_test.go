@@ -20,7 +20,7 @@ func TestNixGitInstallableIncludesVerifiedRefAndRevision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if parsed.Scheme != "git+file" || parsed.Path != filepath.ToSlash(source) || parsed.Fragment != "mct-agent" {
+	if parsed.Scheme != "git+file" || parsed.Path != filepath.ToSlash(source) || parsed.Fragment != "machtiani" {
 		t.Fatalf("unexpected installable identity: %q", got)
 	}
 	if parsed.Query().Get("ref") != "release/next" || parsed.Query().Get("rev") != strings.Repeat("a", 40) {
@@ -38,7 +38,7 @@ func TestReceiptRoundTripAndPermissions(t *testing.T) {
 		SourceDir:        filepath.Join(home, "source"),
 		Profile:          filepath.Join(home, "profile"),
 		Prefix:           filepath.Join(home, "prefix"),
-		BinaryPath:       filepath.Join(home, "prefix", "bin", "mct-agent"),
+		BinaryPath:       filepath.Join(home, "prefix", "bin", "machtiani"),
 		InstalledCommit:  strings.Repeat("a", 40),
 		InstalledVersion: "dev-aaaaaaaaaaaa",
 		InstalledAt:      time.Unix(123, 0).UTC(),
@@ -113,7 +113,7 @@ func TestCheckDetectsRewrittenDefaultBranch(t *testing.T) {
 
 	home := t.TempDir()
 	paths := PathsForHome(home)
-	receipt := Receipt{SchemaVersion: 2, Remote: remote, DefaultBranch: "rolling", SourceDir: work, Profile: filepath.Join(home, "profile"), Prefix: filepath.Join(home, "prefix"), BinaryPath: filepath.Join(home, "prefix", "bin", "mct-agent"), InstalledCommit: old}
+	receipt := Receipt{SchemaVersion: 2, Remote: remote, DefaultBranch: "rolling", SourceDir: work, Profile: filepath.Join(home, "profile"), Prefix: filepath.Join(home, "prefix"), BinaryPath: filepath.Join(home, "prefix", "bin", "machtiani"), InstalledCommit: old}
 	if err := SaveReceipt(paths.Receipt, receipt); err != nil {
 		t.Fatal(err)
 	}
@@ -193,14 +193,14 @@ func TestCheckDetectsBinaryDivergence(t *testing.T) {
 	home := t.TempDir()
 	paths := PathsForHome(home)
 	prefix := filepath.Join(home, "prefix")
-	binaryPath := filepath.Join(prefix, "bin", "mct-agent")
+	binaryPath := filepath.Join(prefix, "bin", "machtiani")
 	if err := os.MkdirAll(filepath.Dir(binaryPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
 	// Fake binary reports a commit different from the receipt.
 	staleCommit := strings.Repeat("d", 40)
-	fakeScript := fmt.Sprintf("#!/bin/sh\necho 'mct-agent dev-%s'\necho 'commit: %s'\necho 'built: 20260808000000'\necho 'dirty: clean'\n", staleCommit[:12], staleCommit)
+	fakeScript := fmt.Sprintf("#!/bin/sh\necho 'machtiani dev-%s'\necho 'commit: %s'\necho 'built: 20260808000000'\necho 'dirty: clean'\n", staleCommit[:12], staleCommit)
 	if err := os.WriteFile(binaryPath, []byte(fakeScript), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -264,7 +264,7 @@ func TestUpdateReassertsBinarySymlink(t *testing.T) {
 	remoteDir := filepath.Join(root, "remote.git")
 	seedDir := filepath.Join(root, "seed")
 	prefix := filepath.Join(home, "prefix")
-	binaryPath := filepath.Join(prefix, "bin", "mct-agent")
+	binaryPath := filepath.Join(prefix, "bin", "machtiani")
 
 	if err := os.MkdirAll(home, 0o700); err != nil {
 		t.Fatal(err)
@@ -303,7 +303,7 @@ func TestUpdateReassertsBinarySymlink(t *testing.T) {
 	if err != nil {
 		t.Fatalf("binary at %s is not a symlink after install: %v", binaryPath, err)
 	}
-	wantTarget := filepath.Join(m.paths.Profile, "bin", "mct-agent")
+	wantTarget := filepath.Join(m.paths.Profile, "bin", "machtiani")
 	if got != wantTarget {
 		t.Fatalf("symlink target = %q, want %q", got, wantTarget)
 	}
@@ -390,8 +390,8 @@ func copyDir(t *testing.T, src, dst string, skip ...string) {
 
 func TestAtomicSymlinkCreatesDestinationDirectory(t *testing.T) {
 	root := t.TempDir()
-	target := filepath.Join(root, "profile", "bin", "mct-agent")
-	destination := filepath.Join(root, "prefix", "bin", "mct-agent")
+	target := filepath.Join(root, "profile", "bin", "machtiani")
+	destination := filepath.Join(root, "prefix", "bin", "machtiani")
 	if err := atomicSymlink(target, destination); err != nil {
 		t.Fatal(err)
 	}

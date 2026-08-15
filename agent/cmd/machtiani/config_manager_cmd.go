@@ -14,7 +14,7 @@ import (
 )
 
 func handleConfigManager(args []string) int {
-	fs := pflag.NewFlagSet("mct-agent config", pflag.ContinueOnError)
+	fs := pflag.NewFlagSet("machtiani config", pflag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	var flags configTargetFlags
 	addConfigTargetFlags(fs, &flags)
@@ -310,7 +310,7 @@ func configTargetArgs(flags configTargetFlags) []string {
 }
 
 func handleManagedConfigCheck(args []string) int {
-	fs := pflag.NewFlagSet("mct-agent config check", pflag.ContinueOnError)
+	fs := pflag.NewFlagSet("machtiani config check", pflag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	var flags configTargetFlags
 	addConfigTargetFlags(fs, &flags)
@@ -343,7 +343,7 @@ func handleManagedConfigCheck(args []string) int {
 }
 
 func handleManagedConfigShow(args []string) int {
-	fs := pflag.NewFlagSet("mct-agent config show", pflag.ContinueOnError)
+	fs := pflag.NewFlagSet("machtiani config show", pflag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	var flags configTargetFlags
 	addConfigTargetFlags(fs, &flags)

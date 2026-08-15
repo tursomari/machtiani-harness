@@ -492,7 +492,7 @@ func TestInvokeMCTAgentWithRecoveryRetriesFailedRunWithSameSession(t *testing.T)
 	writeFile(t, filepath.Join(appDir, ".machtiani", "meta-orchestrator", "sessions", "meta-1", "trajectory.jsonl"), "")
 	writeFile(t, filepath.Join(appDir, "instruction.md"), "requirements\n")
 
-	fakeAgent := filepath.Join(t.TempDir(), "mct-agent")
+	fakeAgent := filepath.Join(t.TempDir(), "machtiani")
 	writeFakeMCTAgent(t, fakeAgent, appDir, true)
 
 	restore := overrideMCTAgentTestConfig(t, fakeAgent, appDir)
@@ -519,7 +519,7 @@ func TestInvokeMCTAgentWithRecoveryRetriesFailedRunWithSameSession(t *testing.T)
 	}
 	callLines := strings.Split(strings.TrimSpace(string(calls)), "\n")
 	if len(callLines) != 2 {
-		t.Fatalf("expected two mct-agent calls, got %d:\n%s", len(callLines), calls)
+		t.Fatalf("expected two machtiani calls, got %d:\n%s", len(callLines), calls)
 	}
 	if !strings.Contains(callLines[1], "--session-id agent-1") {
 		t.Fatalf("retry did not use same session id:\n%s", calls)
@@ -548,7 +548,7 @@ func TestInvokeMCTAgentWithRecoveryRestoresRuntimeStateBeforeRetry(t *testing.T)
 	writeFile(t, filepath.Join(appDir, ".machtiani", "meta-orchestrator", "sessions", "meta-1", "trajectory.jsonl"), "")
 	writeFile(t, filepath.Join(appDir, "instruction.md"), "requirements\n")
 
-	fakeAgent := filepath.Join(t.TempDir(), "mct-agent")
+	fakeAgent := filepath.Join(t.TempDir(), "machtiani")
 	writeFakeMCTAgent(t, fakeAgent, appDir, true)
 
 	restore := overrideMCTAgentTestConfig(t, fakeAgent, appDir)
@@ -828,7 +828,7 @@ exit 0
 `, appDir, deleteRuntime)
 	writeFile(t, path, script)
 	if err := os.Chmod(path, 0755); err != nil {
-		t.Fatalf("chmod fake mct-agent: %v", err)
+		t.Fatalf("chmod fake machtiani: %v", err)
 	}
 }
 
