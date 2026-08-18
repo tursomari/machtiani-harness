@@ -114,6 +114,22 @@ func TestAgentManagedModeKeepsExecutionTopologyOutOfPlanner(t *testing.T) {
 			t.Errorf("shell prompt missing backend workflow %q", want)
 		}
 	}
+	for _, want := range []string{
+		"Do not enumerate the process environment or inspect credentials",
+		"Delegate all requested attachment processing to the managed worker",
+		"The managed worker may create the requested direct regular artifact files",
+		"you still MUST NOT create or edit project files yourself",
+		"Dear Machine owns email transport",
+		"Your final answer becomes the reply body in the original email thread automatically",
+		"do not invoke, discover, or configure an email client",
+		"For the formatted tier",
+		"For the complete tier",
+		"For the plain tier",
+	} {
+		if !strings.Contains(string(shellPrompt), want) {
+			t.Errorf("shell prompt missing attachment workflow %q", want)
+		}
+	}
 	if strings.Contains(string(shellPrompt), "DEARMACHINE_BACKEND") {
 		t.Fatalf("shell prompt contains retired singular backend environment variable: %s", shellPrompt)
 	}
