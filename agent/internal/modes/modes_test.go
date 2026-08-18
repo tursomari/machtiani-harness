@@ -116,9 +116,8 @@ func TestAgentManagedModeKeepsExecutionTopologyOutOfPlanner(t *testing.T) {
 	}
 	for _, want := range []string{
 		"Do not enumerate the process environment or inspect credentials",
-		"Delegate all requested attachment processing to the managed worker",
-		"The managed worker may create the requested direct regular artifact files",
-		"you still MUST NOT create or edit project files yourself",
+		"Requested finished artifacts belong as direct regular files",
+		"Outbox access is transport staging only",
 		"Dear Machine owns email transport",
 		"Your final answer becomes the reply body in the original email thread automatically",
 		"do not invoke, discover, or configure an email client",
@@ -128,6 +127,15 @@ func TestAgentManagedModeKeepsExecutionTopologyOutOfPlanner(t *testing.T) {
 	} {
 		if !strings.Contains(string(shellPrompt), want) {
 			t.Errorf("shell prompt missing attachment workflow %q", want)
+		}
+	}
+	_, attachmentPrompt, found := strings.Cut(string(shellPrompt), "## Attachment Handling")
+	if !found {
+		t.Fatal("shell prompt missing attachment handling section")
+	}
+	for _, forbidden := range []string{"delegate", "managed worker", "work request", "ticket"} {
+		if strings.Contains(strings.ToLower(attachmentPrompt), forbidden) {
+			t.Errorf("attachment workflow contains execution guidance %q: %s", forbidden, attachmentPrompt)
 		}
 	}
 	if strings.Contains(string(shellPrompt), "DEARMACHINE_BACKEND") {
