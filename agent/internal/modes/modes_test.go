@@ -116,8 +116,11 @@ func TestAgentManagedModeKeepsExecutionTopologyOutOfPlanner(t *testing.T) {
 	}
 	for _, want := range []string{
 		"Do not enumerate the process environment or inspect credentials",
-		"Requested finished artifacts belong as direct regular files",
-		"Outbox access is transport staging only",
+		"create requested response artifacts yourself as part of response handling",
+		"this is not project implementation and is outside the project-file write prohibition",
+		"the exact turn-specific directory named by DEARMACHINE_ATTACHMENTS_OUTBOX",
+		"never use its parent or a guessed .attachments-outbox path",
+		"Attachment staging does not authorize tracked project changes",
 		"Dear Machine owns email transport",
 		"Your final answer becomes the reply body in the original email thread automatically",
 		"do not invoke, discover, or configure an email client",
