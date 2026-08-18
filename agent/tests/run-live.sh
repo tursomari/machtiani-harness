@@ -2811,7 +2811,7 @@ test_code_forge_resume_with_mode() {
   set +e
   MACHTIANI_CONFIG="$stub_config" \
   timeout 120 "$MACHTIANI_EXE" run --resume "$agent_session" \
-    --max-turns 2 \
+    --max-turns 3 \
     --log-llm-inputs \
     \
     --turn-timeout 300 \
@@ -2939,7 +2939,7 @@ test_code_forge_resume_without_mode() {
   set +e
   MACHTIANI_CONFIG="$stub_config" \
   timeout 120 "$MACHTIANI_EXE" run --resume "$agent_session" \
-    --max-turns 2 \
+    --max-turns 3 \
     --log-llm-inputs \
     \
     --turn-timeout 300 \
