@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -30,7 +31,14 @@ import (
 const (
 	backgroundQuestionPrompt = "Give me the background of the project."
 	backgroundFallbackAnswer = "No project documentation has been created yet. Please run `machtiani sync` to generate initial project documentation."
+	recoverySystemNote       = "The previous completion was rejected by the orchestrator. Do NOT repeat your prior summary or claim the task is done. Process the following feedback as a fresh instruction and take concrete action: run tests, modify code, run commands, or investigate further."
 )
+
+func recoveryMessageKey(sessionID string, turn int, feedback string) string {
+	material := strings.TrimSpace(sessionID) + "\x00" + strconv.Itoa(turn) + "\x00" + strings.TrimSpace(feedback)
+	sum := sha256.Sum256([]byte(material))
+	return fmt.Sprintf("recovery:%x", sum)
+}
 
 var (
 	readmeHeadCommitAtFn   = readmesync.HeadCommitAt
@@ -756,13 +764,15 @@ func runSession(ctx context.Context, opts Options) Result {
 				metaType = "user_input_response"
 			}
 			resumePrompt = feedback
-			if err := appendConversationRaw("system", "The previous completion was rejected by the orchestrator. Do NOT repeat your prior summary or claim the task is done. Process the following feedback as a fresh instruction and take concrete action: run tests, modify code, run commands, or investigate further.", ""); err != nil {
-				fmt.Fprintln(diagWriter, "Transcript write error:", err)
-				runState.sessionErr = err
-				finishTurn(sessTelemetry, turn, "user-feedback", "error", turnInfo, err)
-				return Result{ExitCode: 1, Err: err}
-			}
-			if err := appendConversationRaw("user", feedback, metaType); err != nil {
+			if resumeSuspendedInput == nil {
+				key := recoveryMessageKey(sessionID, step, feedback)
+				if _, err := transcriptSetup.recorder.EnsureRecovery(key, step, recoverySystemNote, feedback); err != nil {
+					fmt.Fprintln(diagWriter, "Transcript write error:", err)
+					runState.sessionErr = err
+					finishTurn(sessTelemetry, turn, "user-feedback", "error", turnInfo, err)
+					return Result{ExitCode: 1, Err: err}
+				}
+			} else if err := appendConversationRaw("user", feedback, metaType); err != nil {
 				fmt.Fprintln(diagWriter, "Transcript write error:", err)
 				runState.sessionErr = err
 				finishTurn(sessTelemetry, turn, "user-feedback", "error", turnInfo, err)
@@ -775,7 +785,7 @@ func runSession(ctx context.Context, opts Options) Result {
 				resumeSuspendedInput = nil
 				turnInfo["resume_user_input"] = true
 			} else {
-				systemPrefix := "=== SYSTEM NOTE: The previous completion was rejected by the orchestrator. Do NOT repeat your prior summary or claim the task is done. Process the following feedback as a fresh instruction and take concrete action: run tests, modify code, run commands, or investigate further.\n\n"
+				systemPrefix := "=== SYSTEM NOTE: " + recoverySystemNote + "\n\n"
 				trFull = appendResumePromptContext(trFull, systemPrefix+feedback)
 			}
 			turnInfo["resume_prompt"] = true

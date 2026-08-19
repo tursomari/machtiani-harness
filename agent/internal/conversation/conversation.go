@@ -199,6 +199,7 @@ const (
 	messageTypeCacheAnchor       = "cache_anchor"
 	messageTypeRaw               = "raw"
 	messageTypeRawBlock          = "raw_block"
+	messageTypeRecovery          = "recovery"
 	messageTypeFinal             = "final"
 	messageTypeFinalAnswer       = "final_answer"
 
@@ -387,6 +388,15 @@ func (c *Conversation) ToTranscript() (string, error) {
 			if strings.TrimSpace(msg.Content) != "" {
 				addRawEvent(msg.Content)
 			}
+		case messageTypeRecovery:
+			switch normalizeRole(msg.Role) {
+			case "system":
+				addRawEvent(renderSystemMessage(msg.Content))
+			case "user":
+				addRawEvent(renderUserMessage(msg.Content))
+			case "assistant":
+				addRawEvent(renderAssistantMessage(msg.Content))
+			}
 		case messageTypeFinal, messageTypeFinalAnswer:
 			turns, _ := coerceInt(msg.Metadata["turns"])
 			capped, _ := coerceBool(msg.Metadata["capped"])
@@ -529,6 +539,12 @@ func serializeChatMessage(role, msgType, content string) (string, string, bool) 
 		return "assistant", prefixVisibleTag(messageTypeWorkRequest, content), true
 	case messageTypeAnswer, messageTypeWorkResult:
 		return "assistant", prefixVisibleTag(messageTypeWorkResult, content), true
+	case messageTypeRecovery:
+		role = normalizeRole(role)
+		if role != "system" && role != "user" && role != "assistant" {
+			return "", "", false
+		}
+		return role, content, true
 	case messageTypeRaw, messageTypeRawBlock, messageTypeFinal, messageTypeFinalAnswer:
 		return "assistant", content, true
 	default:
@@ -599,6 +615,11 @@ func renderUserMessage(content string) string {
 func renderAssistantMessage(content string) string {
 	body := strings.TrimRight(content, "\n")
 	return sanitize("\n=== ASSISTANT MESSAGE\n\n" + body + "\n")
+}
+
+func renderSystemMessage(content string) string {
+	body := strings.TrimRight(content, "\n")
+	return sanitize("\n=== SYSTEM MESSAGE\n\n" + body + "\n")
 }
 
 func renderUserInputResponse(content string) string {

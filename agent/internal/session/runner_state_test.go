@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tursomari/machtiani/agent/internal/conversation"
 	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/transcript"
 )
@@ -193,6 +194,121 @@ func TestConversationRecorderAppendRawUserInputRequestAndReply(t *testing.T) {
 	}
 	if !foundRequest || !foundReply {
 		t.Fatalf("expected request and reply in chat messages, got %+v", messages)
+	}
+}
+
+func TestConversationRecorderEnsureRecoveryIsIdempotent(t *testing.T) {
+	const sessionID = "conv-recovery-idempotent"
+	dir := t.TempDir()
+	conversationPath := filepath.Join(dir, "conversation.json")
+	transcriptPath := filepath.Join(dir, "agent-transcript.adoc")
+
+	tr, err := transcript.NewWithPath(transcriptPath, sessionID)
+	if err != nil {
+		t.Fatalf("transcript init: %v", err)
+	}
+
+	recorder := newConversationRecorder(tr, sessionID, "Goal", conversationPath, false, nil, false)
+	if err := recorder.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	const (
+		feedback   = "Continue the interrupted request."
+		systemNote = "The previous completion was rejected."
+	)
+	key := recoveryMessageKey(sessionID, 4, feedback)
+	added, err := recorder.EnsureRecovery(key, 4, systemNote, feedback)
+	if err != nil {
+		t.Fatalf("EnsureRecovery first call: %v", err)
+	}
+	if !added {
+		t.Fatal("expected first recovery call to append messages")
+	}
+	added, err = recorder.EnsureRecovery(key, 4, systemNote, feedback)
+	if err != nil {
+		t.Fatalf("EnsureRecovery retry: %v", err)
+	}
+	if added {
+		t.Fatal("expected retry with the same key to reuse recovery messages")
+	}
+	if err := tr.Close(); err != nil {
+		t.Fatalf("close first transcript: %v", err)
+	}
+
+	// Recreate both objects from the durable conversation, matching the
+	// process boundary exercised by Dear Machine's systemd restart loop.
+	resumedTranscript, err := transcript.NewWithPath(transcriptPath, sessionID)
+	if err != nil {
+		t.Fatalf("resumed transcript init: %v", err)
+	}
+	t.Cleanup(func() { _ = resumedTranscript.Close() })
+	resumedRecorder := newConversationRecorder(resumedTranscript, sessionID, "Goal", conversationPath, true, nil, false)
+	if err := resumedRecorder.Load(); err != nil {
+		t.Fatalf("resumed recorder Load: %v", err)
+	}
+	added, err = resumedRecorder.EnsureRecovery(key, 4, systemNote, feedback)
+	if err != nil {
+		t.Fatalf("EnsureRecovery after restart: %v", err)
+	}
+	if added {
+		t.Fatal("expected retry after restart to reuse durable recovery messages")
+	}
+	recorder = resumedRecorder
+
+	var recoveryMessages []conversation.Message
+	for _, msg := range recorder.Conversation().Messages {
+		if msgMetaType(msg.Metadata) == "recovery" {
+			recoveryMessages = append(recoveryMessages, msg)
+		}
+	}
+	if len(recoveryMessages) != 2 {
+		t.Fatalf("recovery message count = %d, want 2", len(recoveryMessages))
+	}
+	for _, msg := range recoveryMessages {
+		if got, _ := msg.Metadata["recovery_key"].(string); got != key {
+			t.Fatalf("recovery key = %q, want %q", got, key)
+		}
+		if msg.Turn == nil || *msg.Turn != 4 {
+			t.Fatalf("recovery turn = %v, want 4", msg.Turn)
+		}
+	}
+	persisted, err := os.ReadFile(conversationPath)
+	if err != nil {
+		t.Fatalf("read persisted conversation: %v", err)
+	}
+	if got := strings.Count(string(persisted), systemNote); got != 1 {
+		t.Fatalf("persisted system recovery note count = %d, want 1", got)
+	}
+	if got := strings.Count(string(persisted), feedback); got != 1 {
+		t.Fatalf("persisted recovery feedback count = %d, want 1", got)
+	}
+
+	chatMessages := recorder.Conversation().ToChatMessages("")
+	foundSystem := false
+	foundFeedback := false
+	for _, msg := range chatMessages {
+		switch {
+		case msg.Role == "system" && msg.Content == systemNote:
+			foundSystem = true
+		case msg.Role == "user" && msg.Content == feedback:
+			foundFeedback = true
+		}
+	}
+	if !foundSystem || !foundFeedback {
+		t.Fatalf("typed recovery messages missing from chat context: %+v", chatMessages)
+	}
+
+	nextKey := recoveryMessageKey(sessionID, 5, feedback)
+	if nextKey == key {
+		t.Fatal("expected a later turn to have a distinct recovery key")
+	}
+	added, err = recorder.EnsureRecovery(nextKey, 5, systemNote, feedback)
+	if err != nil {
+		t.Fatalf("EnsureRecovery later turn: %v", err)
+	}
+	if !added {
+		t.Fatal("expected a later turn to append a new recovery marker")
 	}
 }
 

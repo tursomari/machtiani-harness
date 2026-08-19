@@ -859,6 +859,84 @@ func (c *conversationRecorder) AppendRaw(role, content, metaType string) error {
 	return c.Save()
 }
 
+// EnsureRecovery records one durable recovery marker pair for a stable
+// recovery key. Re-running the same interrupted turn is idempotent: retries
+// reuse the existing messages instead of growing the conversation.
+func (c *conversationRecorder) EnsureRecovery(key string, turn int, systemNote, feedback string) (bool, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return false, errors.New("recovery key is required")
+	}
+	if c.conversation == nil || c.tr == nil {
+		return false, errors.New("conversation recorder is not initialized")
+	}
+
+	hasSystem := false
+	hasFeedback := false
+	for _, msg := range c.conversation.Messages {
+		if msgMetaType(msg.Metadata) != "recovery" {
+			continue
+		}
+		messageKey, _ := msg.Metadata["recovery_key"].(string)
+		if strings.TrimSpace(messageKey) != key {
+			continue
+		}
+		kind, _ := msg.Metadata["recovery_kind"].(string)
+		switch strings.ToLower(strings.TrimSpace(kind)) {
+		case "system":
+			hasSystem = true
+		case "feedback":
+			hasFeedback = true
+		}
+	}
+	if hasSystem && hasFeedback {
+		return false, nil
+	}
+
+	baseMetadata := map[string]any{
+		"type":         "recovery",
+		"recovery_key": key,
+		"turn":         turn,
+	}
+	if !hasSystem {
+		metadata := cloneStringAnyMap(baseMetadata)
+		metadata["recovery_kind"] = "system"
+		c.conversation.AddMessage("system", systemNote, metadata)
+	}
+	if !hasFeedback {
+		metadata := cloneStringAnyMap(baseMetadata)
+		metadata["recovery_kind"] = "feedback"
+		c.conversation.AddMessage("user", feedback, metadata)
+	}
+
+	rendered, delta, err := c.renderDelta()
+	if errors.Is(err, errConversationTranscriptDesync) {
+		if err := c.tr.Restore(rendered); err != nil {
+			return false, err
+		}
+		c.conversationRendered = rendered
+		return true, c.Save()
+	}
+	if err != nil {
+		return false, err
+	}
+	if delta != "" {
+		if err := c.tr.AppendBlock(delta); err != nil {
+			return false, err
+		}
+	}
+	c.conversationRendered = rendered
+	return true, c.Save()
+}
+
+func cloneStringAnyMap(in map[string]any) map[string]any {
+	out := make(map[string]any, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
+}
+
 func (c *conversationRecorder) WriteFinal(answer string, step int, capped bool) error {
 	if c.conversation == nil || c.tr == nil {
 		if c.tr == nil {
