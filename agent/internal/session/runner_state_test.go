@@ -347,6 +347,100 @@ func TestRunLifecycleStateSuspendForUserInput(t *testing.T) {
 	}
 }
 
+func TestConsumeSuspendedUserInputPersistsAnsweredTransition(t *testing.T) {
+	const (
+		sessionID    = "consume-suspended-user-input"
+		originalGoal = "Complete the requested repository work."
+		question     = "Do you authorize the requested merge?"
+		answer       = "Yes!"
+	)
+
+	dir := t.TempDir()
+	conversationPath := filepath.Join(dir, "conversation.json")
+	transcriptPath := filepath.Join(dir, "transcript.adoc")
+
+	conv := conversation.New(sessionID, originalGoal)
+	conv.Goal = originalGoal
+	conv.OriginalPrompt = originalGoal
+	conv.Status = string(StateSuspendedUserInput)
+	conv.SuspendedUserInput = &conversation.SuspendedUserInputState{
+		Kind:     "user-directed-ask",
+		Question: question,
+	}
+	conv.AddMessage("assistant", question, map[string]any{"type": "user_input_request"})
+	data, err := conv.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal seed conversation: %v", err)
+	}
+	if err := os.WriteFile(conversationPath, data, 0o644); err != nil {
+		t.Fatalf("write seed conversation: %v", err)
+	}
+
+	loadedState, err := sessionStateFromConversation(conv, sessionID)
+	if err != nil {
+		t.Fatalf("sessionStateFromConversation: %v", err)
+	}
+	tr, err := transcript.NewWithPath(transcriptPath, sessionID)
+	if err != nil {
+		t.Fatalf("transcript init: %v", err)
+	}
+	t.Cleanup(func() { _ = tr.Close() })
+	recorder := newConversationRecorder(tr, sessionID, originalGoal, conversationPath, true, loadedState, true)
+	if err := recorder.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if err := recorder.ConsumeSuspendedUserInput(answer); err != nil {
+		t.Fatalf("ConsumeSuspendedUserInput: %v", err)
+	}
+
+	assertConsumed := func(stage string) {
+		t.Helper()
+		persisted, err := os.ReadFile(conversationPath)
+		if err != nil {
+			t.Fatalf("%s: read conversation: %v", stage, err)
+		}
+		reloaded, err := conversation.Unmarshal(persisted)
+		if err != nil {
+			t.Fatalf("%s: unmarshal conversation: %v", stage, err)
+		}
+		if reloaded.Status != string(StateError) {
+			t.Fatalf("%s: status = %q, want %q", stage, reloaded.Status, StateError)
+		}
+		if reloaded.SuspendedUserInput != nil {
+			t.Fatalf("%s: suspended input was restored: %+v", stage, reloaded.SuspendedUserInput)
+		}
+		if reloaded.Goal != originalGoal || reloaded.OriginalPrompt != originalGoal {
+			t.Fatalf("%s: goal changed: goal=%q original_prompt=%q", stage, reloaded.Goal, reloaded.OriginalPrompt)
+		}
+		requests, responses := 0, 0
+		for _, msg := range reloaded.Messages {
+			switch msgMetaType(msg.Metadata) {
+			case "user_input_request":
+				requests++
+			case "user_input_response":
+				responses++
+				if msg.Content != answer {
+					t.Fatalf("%s: response content = %q, want %q", stage, msg.Content, answer)
+				}
+			}
+		}
+		if requests != 1 || responses != 1 {
+			t.Fatalf("%s: request/response counts = %d/%d, want 1/1", stage, requests, responses)
+		}
+	}
+
+	// This reload is the crash boundary: no later lifecycle checkpoint has run.
+	assertConsumed("immediately after answer")
+
+	// A resumed work request must not copy the old suspended state back from
+	// loadedState while it establishes shell-agent resumability.
+	if err := recorder.PreWriteTurn(1, "Proceed with the authorized work.", "/tmp/trajectory.json"); err != nil {
+		t.Fatalf("PreWriteTurn: %v", err)
+	}
+	assertConsumed("after resumed work request")
+}
+
 func TestPrepareSessionEnvironmentLocalKeepsLockInSessionScratchRoot(t *testing.T) {
 	repo := setupSessionEnvironmentTestRepo(t, "[environment]\ntype = \"local\"\n")
 

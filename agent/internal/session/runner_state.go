@@ -64,11 +64,10 @@ type sessionEnvironmentBootstrap struct {
 }
 
 type transcriptBootstrap struct {
-	transcript            *transcript.Transcript
-	recorder              *conversationRecorder
-	conversation          *conversation.Conversation
-	writeTurn             transcriptTurnWriter
-	appendConversationRaw func(role, content, metaType string) error
+	transcript   *transcript.Transcript
+	recorder     *conversationRecorder
+	conversation *conversation.Conversation
+	writeTurn    transcriptTurnWriter
 }
 
 func prepareRunBootstrap(rootCtx context.Context, opts Options, diagWriter io.Writer) (*runBootstrap, Result, bool) {
@@ -480,11 +479,10 @@ func prepareTranscriptBootstrap(cfg legacyConfig, sessionID, conversationGoal, c
 	}
 
 	return &transcriptBootstrap{
-		transcript:            tr,
-		recorder:              recorder,
-		conversation:          recorder.Conversation(),
-		writeTurn:             recorder.WriteTurn,
-		appendConversationRaw: recorder.AppendRaw,
+		transcript:   tr,
+		recorder:     recorder,
+		conversation: recorder.Conversation(),
+		writeTurn:    recorder.WriteTurn,
 	}, nil
 }
 
@@ -859,6 +857,32 @@ func (c *conversationRecorder) AppendRaw(role, content, metaType string) error {
 	return c.Save()
 }
 
+// ConsumeSuspendedUserInput records the user's answer and clears the durable
+// suspension in the same conversation save. A resumed work request must not
+// be able to copy the answered suspension back from loadedState.
+func (c *conversationRecorder) ConsumeSuspendedUserInput(content string) error {
+	if c == nil || c.conversation == nil {
+		return errors.New("conversation recorder is not initialized")
+	}
+	if c.conversation.SuspendedUserInput == nil {
+		return errors.New("conversation has no suspended user input to consume")
+	}
+
+	c.conversation.SuspendedUserInput = nil
+	c.conversation.Status = string(StateError)
+	c.resumedSession = true
+	if c.loadedState != nil {
+		c.loadedState.SuspendedUserInput = nil
+		c.loadedState.Status = string(StateError)
+	}
+
+	if c.tr == nil {
+		c.conversation.AddMessage("user", content, map[string]any{"type": "user_input_response"})
+		return c.Save()
+	}
+	return c.AppendRaw("user", content, "user_input_response")
+}
+
 // EnsureRecovery records one durable recovery marker pair for a stable
 // recovery key. Re-running the same interrupted turn is idempotent: retries
 // reuse the existing messages instead of growing the conversation.
@@ -1110,6 +1134,21 @@ func (r *runLifecycleState) clearSuspendedUserInput() {
 	if r.pendingState != nil {
 		r.pendingState.SuspendedUserInput = nil
 	}
+}
+
+func (r *runLifecycleState) consumeSuspendedUserInput(content string) error {
+	if r == nil || r.recorder == nil {
+		return errors.New("session recorder is not initialized")
+	}
+	if err := r.recorder.ConsumeSuspendedUserInput(content); err != nil {
+		return err
+	}
+	r.sessionStatus = string(StateError)
+	r.clearSuspendedUserInput()
+	if r.pendingState != nil {
+		r.pendingState.Status = string(StateError)
+	}
+	return nil
 }
 
 func (r *runLifecycleState) transition(target SessionStatus) error {

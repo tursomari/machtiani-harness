@@ -492,7 +492,6 @@ func runSession(ctx context.Context, opts Options) Result {
 		runState.checkpointTurn(diagWriter)
 	}()
 	writeTurn := transcriptSetup.writeTurn
-	appendConversationRaw := transcriptSetup.appendConversationRaw
 	conv := transcriptSetup.conversation
 	interruptedResult := func(err error) Result { return runState.interruptedResultWithHint(eventBus, diagWriter, err) }
 	isContextCancelled := runState.isContextCancelled
@@ -759,10 +758,6 @@ func runSession(ctx context.Context, opts Options) Result {
 		isResumePrompt := false
 		if trimmedResumePrompt != "" {
 			feedback := trimmedResumePrompt
-			metaType := ""
-			if resumeSuspendedInput != nil {
-				metaType = "user_input_response"
-			}
 			resumePrompt = feedback
 			if resumeSuspendedInput == nil {
 				key := recoveryMessageKey(sessionID, step, feedback)
@@ -772,7 +767,7 @@ func runSession(ctx context.Context, opts Options) Result {
 					finishTurn(sessTelemetry, turn, "user-feedback", "error", turnInfo, err)
 					return Result{ExitCode: 1, Err: err}
 				}
-			} else if err := appendConversationRaw("user", feedback, metaType); err != nil {
+			} else if err := runState.consumeSuspendedUserInput(feedback); err != nil {
 				fmt.Fprintln(diagWriter, "Transcript write error:", err)
 				runState.sessionErr = err
 				finishTurn(sessTelemetry, turn, "user-feedback", "error", turnInfo, err)
@@ -781,7 +776,6 @@ func runSession(ctx context.Context, opts Options) Result {
 			}
 			if resumeSuspendedInput != nil {
 				trFull = appendUserInputContext(trFull, feedback)
-				runState.clearSuspendedUserInput()
 				resumeSuspendedInput = nil
 				turnInfo["resume_user_input"] = true
 			} else {
