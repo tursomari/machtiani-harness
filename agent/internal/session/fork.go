@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
 
 	"github.com/tursomari/machtiani/agent/internal/conversation"
 	"github.com/tursomari/machtiani/agent/internal/core/artifacts"
@@ -13,12 +14,36 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/sessionfiles"
 )
 
+// ValidateForkDestinationID checks that a fork destination is a single,
+// path-safe opaque session ID.
+func ValidateForkDestinationID(destinationSessionID string) error {
+	if destinationSessionID == "" {
+		return fmt.Errorf("destination session id required")
+	}
+	if destinationSessionID == "." || destinationSessionID == ".." || strings.ContainsAny(destinationSessionID, `/\`) {
+		return fmt.Errorf("invalid destination session ID %q", destinationSessionID)
+	}
+	if strings.IndexFunc(destinationSessionID, func(r rune) bool {
+		return unicode.IsSpace(r) || unicode.IsControl(r)
+	}) >= 0 {
+		return fmt.Errorf("invalid destination session ID %q", destinationSessionID)
+	}
+	return nil
+}
+
 // ForkSession creates a copy of an existing session under a new session ID.
 // The source session must not be active (locked). All files from the source
 // session directory are copied to the new session directory, excluding .lock
 // files. The session state and conversation are updated to reflect the new
 // session ID.
-func ForkSession(sourceSessionID string) (string, error) {
+func ForkSession(sourceSessionID, destinationSessionID string) (string, error) {
+	destinationSessionID = strings.TrimSpace(destinationSessionID)
+	if destinationSessionID != "" {
+		if err := ValidateForkDestinationID(destinationSessionID); err != nil {
+			return "", err
+		}
+	}
+
 	active, err := IsSessionActive(sourceSessionID)
 	if err != nil {
 		return "", fmt.Errorf("check session active: %w", err)
@@ -47,7 +72,10 @@ func ForkSession(sourceSessionID string) (string, error) {
 		effectiveParent = forkedConv.ForkedFrom
 	}
 
-	newSessionID := runner.GenerateSessionID()
+	newSessionID := destinationSessionID
+	if newSessionID == "" {
+		newSessionID = runner.GenerateSessionID()
+	}
 
 	srcDir, err := artifacts.SessionDirectory(sourceSessionID)
 	if err != nil {

@@ -1394,7 +1394,7 @@ func handleSessionShowCommand(args []string) int {
 func handleSessionForkCommand(args []string) int {
 	fs := pflag.NewFlagSet("machtiani session fork", pflag.ContinueOnError)
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: machtiani session fork <session-id>\n\n")
+		fmt.Fprintf(os.Stderr, "Usage: machtiani session fork <session-id> [destination-id]\n\n")
 		fmt.Fprintln(os.Stderr, "Flags:")
 		fs.PrintDefaults()
 	}
@@ -1411,6 +1411,24 @@ func handleSessionForkCommand(args []string) int {
 		fs.Usage()
 		return 2
 	}
+	if fs.NArg() > 2 {
+		fmt.Fprintln(os.Stderr, "Error: too many arguments")
+		fs.Usage()
+		return 2
+	}
+
+	destinationSessionID := ""
+	if fs.NArg() == 2 {
+		destinationSessionID = strings.TrimSpace(fs.Arg(1))
+		if destinationSessionID == "" {
+			fmt.Fprintln(os.Stderr, "Error: destination-id is required when provided")
+			return 2
+		}
+		if err := session.ValidateForkDestinationID(destinationSessionID); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			return 2
+		}
+	}
 
 	sessionQuery := fs.Arg(0)
 	sessionID, err := session.ResolveSessionID(sessionQuery)
@@ -1418,7 +1436,11 @@ func handleSessionForkCommand(args []string) int {
 		fmt.Fprintf(os.Stderr, "Error resolving session %s: %v\n", sessionQuery, err)
 		return 1
 	}
-	newSessionID, err := session.ForkSession(sessionID)
+	if destinationSessionID == sessionID {
+		fmt.Fprintln(os.Stderr, "Error: destination must differ from source")
+		return 2
+	}
+	newSessionID, err := session.ForkSession(sessionID, destinationSessionID)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error forking session %s: %v\n", sessionID, err)
 		return 1
