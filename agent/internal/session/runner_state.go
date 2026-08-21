@@ -92,6 +92,13 @@ func prepareRunBootstrap(rootCtx context.Context, opts Options, diagWriter io.Wr
 	resumePrompt := ""
 
 	if sessionID != "" {
+		resolvedSessionID, err := ResolveSessionID(sessionID)
+		if err != nil {
+			fmt.Fprintf(diagWriter, "Error resolving session %s: %v\n", sessionID, err)
+			return nil, Result{ExitCode: 1, Err: err}, false
+		}
+		sessionID = resolvedSessionID
+
 		// Load conversation from disk if available, for migration
 		// from per-message metadata to top-level fields.
 		var conv *conversation.Conversation
@@ -105,6 +112,7 @@ func prepareRunBootstrap(rootCtx context.Context, opts Options, diagWriter io.Wr
 			fmt.Fprintln(diagWriter, "Error loading session state:", err)
 			return nil, Result{ExitCode: 1, Err: err}, false
 		}
+		state.SessionID = sessionID
 		resumeMode = true
 		loadedState = state
 		resumePrompt = strings.TrimSpace(inputPrompt)

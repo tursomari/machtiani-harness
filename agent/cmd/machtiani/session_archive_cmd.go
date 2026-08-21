@@ -45,15 +45,20 @@ func handleSessionArchiveChangeCommand(args []string, unarchive bool) int {
 
 	hasRange := strings.TrimSpace(*sinceValue) != "" || strings.TrimSpace(*untilValue) != ""
 	if fs.NArg() == 1 && !hasRange {
-		id := fs.Arg(0)
-		var err error
-		if unarchive {
-			err = session.UnarchiveSession(id)
-		} else {
-			err = session.ArchiveSession(id)
-		}
+		query := fs.Arg(0)
+		id, err := session.ResolveSessionID(query)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Session %s failed: %v\n", action, err)
+			fmt.Fprintf(os.Stderr, "Error resolving session %s: %v\n", query, err)
+			return 1
+		}
+		var changeErr error
+		if unarchive {
+			changeErr = session.UnarchiveSession(id)
+		} else {
+			changeErr = session.ArchiveSession(id)
+		}
+		if changeErr != nil {
+			fmt.Fprintf(os.Stderr, "Session %s failed: %v\n", action, changeErr)
 			return 1
 		}
 		fmt.Fprintf(os.Stdout, "%s session %s.\n", pastAction, id)

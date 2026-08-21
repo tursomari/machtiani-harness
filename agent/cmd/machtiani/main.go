@@ -1316,7 +1316,12 @@ func handleSessionShowCommand(args []string) int {
 		return 2
 	}
 
-	sessionID := fs.Arg(0)
+	sessionQuery := fs.Arg(0)
+	sessionID, err := session.ResolveSessionID(sessionQuery)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error resolving session %s: %v\n", sessionQuery, err)
+		return 1
+	}
 	convPath, err := artifacts.SessionConversationFile(sessionID)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error resolving conversation path for session %s: %v\n", sessionID, err)
@@ -1407,7 +1412,12 @@ func handleSessionForkCommand(args []string) int {
 		return 2
 	}
 
-	sessionID := fs.Arg(0)
+	sessionQuery := fs.Arg(0)
+	sessionID, err := session.ResolveSessionID(sessionQuery)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error resolving session %s: %v\n", sessionQuery, err)
+		return 1
+	}
 	newSessionID, err := session.ForkSession(sessionID)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error forking session %s: %v\n", sessionID, err)
@@ -1439,7 +1449,12 @@ func handleSessionDeleteCommand(args []string) int {
 		return 2
 	}
 
-	sessionID := fs.Arg(0)
+	sessionQuery := fs.Arg(0)
+	sessionID, err := session.ResolveSessionID(sessionQuery)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error resolving session %s: %v\n", sessionQuery, err)
+		return 1
+	}
 	if err := session.DeleteSession(sessionID); err != nil {
 		fmt.Fprintf(os.Stderr, "Error deleting session %s: %v\n", sessionID, err)
 		return 1
