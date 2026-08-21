@@ -159,5 +159,5 @@ func writeSessionConversation(path string, conv *conversation.Conversation) erro
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o644)
+	return writeConversationFileAtomic(path, data)
 }

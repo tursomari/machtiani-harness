@@ -707,7 +707,7 @@ func (c *conversationRecorder) Save() error {
 	if err := os.MkdirAll(filepath.Dir(c.conversationPath), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(c.conversationPath, data, 0o644)
+	return writeConversationFileAtomic(c.conversationPath, data)
 }
 
 func (c *conversationRecorder) EnsureSaved() {

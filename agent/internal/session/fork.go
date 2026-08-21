@@ -92,7 +92,7 @@ func ForkSession(sourceSessionID string) (string, error) {
 		return "", fmt.Errorf("marshal conversation: %w", err)
 	}
 
-	if err := os.WriteFile(convPath, marshaled, 0o644); err != nil {
+	if err := writeConversationFileAtomic(convPath, marshaled); err != nil {
 		return "", fmt.Errorf("write conversation file: %w", err)
 	}
 
