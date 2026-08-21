@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/tursomari/machtiani/agent/internal/conversation"
@@ -19,7 +20,7 @@ func TestForkSessionNonExistentSource(t *testing.T) {
 	os.Chdir(tmpDir)
 	defer os.Chdir(oldWd)
 
-	_, err := ForkSession("nonexistent-session-id")
+	_, err := ForkSession("nonexistent-session-id", "")
 	if err == nil {
 		t.Fatalf("expected error for nonexistent source session, got nil")
 	}
@@ -65,7 +66,7 @@ func TestForkSessionActiveSource(t *testing.T) {
 	}
 	defer lock.Close()
 
-	_, err = ForkSession(sourceID)
+	_, err = ForkSession(sourceID, "")
 	if err == nil {
 		t.Fatalf("expected error for active source session, got nil")
 	}
@@ -125,7 +126,7 @@ func TestForkSessionSuccess(t *testing.T) {
 		}
 	}
 
-	newID, err := ForkSession(sourceID)
+	newID, err := ForkSession(sourceID, "")
 	if err != nil {
 		t.Fatalf("ForkSession: %v", err)
 	}
@@ -226,12 +227,83 @@ func TestForkSessionSuccess(t *testing.T) {
 	})
 }
 
+func TestForkSessionUsesProvidedDestination(t *testing.T) {
+	setupForkTestWorkingDirectory(t)
+	sourceID := "agent-explicit-fork-source"
+	destinationID := "stable-explicit-fork"
+	writeForkTestConversation(t, conversation.New(sourceID, "Explicit destination"))
+
+	newID, err := ForkSession(sourceID, destinationID)
+	if err != nil {
+		t.Fatalf("ForkSession: %v", err)
+	}
+	if newID != destinationID {
+		t.Fatalf("ForkSession returned %q, want %q", newID, destinationID)
+	}
+	destinationDir, err := artifacts.SessionDirectory(destinationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(destinationDir); err != nil || !info.IsDir() {
+		t.Fatalf("destination directory stat = %v, %v; want directory", info, err)
+	}
+	forked := readForkTestConversation(t, destinationID)
+	if forked.SessionID != destinationID {
+		t.Fatalf("forked SessionID = %q, want %q", forked.SessionID, destinationID)
+	}
+	if forked.ForkedFrom != sourceID {
+		t.Fatalf("forked ForkedFrom = %q, want %q", forked.ForkedFrom, sourceID)
+	}
+}
+
+func TestForkSessionRejectsOccupiedDestination(t *testing.T) {
+	setupForkTestWorkingDirectory(t)
+	sourceID := "agent-occupied-fork-source"
+	destinationID := "occupied-fork-destination"
+	writeForkTestConversation(t, conversation.New(sourceID, "Occupied destination"))
+	destinationDir, err := artifacts.SessionDirectory(destinationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(destinationDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = ForkSession(sourceID, destinationID)
+	if err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("ForkSession error = %v, want already exists error", err)
+	}
+}
+
+func TestForkSessionRejectsPathUnsafeDestination(t *testing.T) {
+	setupForkTestWorkingDirectory(t)
+	sourceID := "agent-unsafe-fork-source"
+	writeForkTestConversation(t, conversation.New(sourceID, "Unsafe destination"))
+
+	for _, destinationID := range []string{
+		"a/b",
+		`a\b`,
+		"..",
+		".",
+		"a b",
+		"a\tb",
+		"a\x00b",
+		"a\x7fb",
+	} {
+		t.Run(fmt.Sprintf("%q", destinationID), func(t *testing.T) {
+			if newID, err := ForkSession(sourceID, destinationID); err == nil {
+				t.Fatalf("ForkSession returned %q, want invalid destination error", newID)
+			}
+		})
+	}
+}
+
 func TestForkRecordsEffectiveParent(t *testing.T) {
 	setupForkTestWorkingDirectory(t)
 	originalID := "agent-fork-original"
 	writeForkTestConversation(t, conversation.New(originalID, "Original goal"))
 
-	firstForkID, err := ForkSession(originalID)
+	firstForkID, err := ForkSession(originalID, "")
 	if err != nil {
 		t.Fatalf("ForkSession(original): %v", err)
 	}
@@ -243,7 +315,7 @@ func TestForkRecordsEffectiveParent(t *testing.T) {
 		t.Fatal("first fork ForkedHash is empty")
 	}
 
-	secondForkID, err := ForkSession(firstForkID)
+	secondForkID, err := ForkSession(firstForkID, "")
 	if err != nil {
 		t.Fatalf("ForkSession(first fork): %v", err)
 	}
@@ -263,7 +335,7 @@ func TestForkRecordsDivergedParent(t *testing.T) {
 	original.Goal = "Original goal"
 	writeForkTestConversation(t, original)
 
-	firstForkID, err := ForkSession(originalID)
+	firstForkID, err := ForkSession(originalID, "")
 	if err != nil {
 		t.Fatalf("ForkSession(original): %v", err)
 	}
@@ -272,7 +344,7 @@ func TestForkRecordsDivergedParent(t *testing.T) {
 	firstFork.AddMessage("assistant", "Diverged content", nil)
 	writeForkTestConversation(t, firstFork)
 
-	secondForkID, err := ForkSession(firstForkID)
+	secondForkID, err := ForkSession(firstForkID, "")
 	if err != nil {
 		t.Fatalf("ForkSession(diverged fork): %v", err)
 	}
@@ -293,7 +365,7 @@ func TestForkOfArchivedSessionResetsArchived(t *testing.T) {
 	source.Archived = true
 	writeForkTestConversation(t, source)
 
-	forkID, err := ForkSession(sourceID)
+	forkID, err := ForkSession(sourceID, "")
 	if err != nil {
 		t.Fatalf("ForkSession(archived): %v", err)
 	}
@@ -346,7 +418,7 @@ func TestForkSessionSkipsLockFiles(t *testing.T) {
 		t.Fatalf("write conversation: %v", err)
 	}
 
-	newID, err := ForkSession(sourceID)
+	newID, err := ForkSession(sourceID, "")
 	if err != nil {
 		t.Fatalf("ForkSession: %v", err)
 	}

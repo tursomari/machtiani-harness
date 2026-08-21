@@ -51,6 +51,9 @@ func TestSessionForkResolvesShortQuery(t *testing.T) {
 	if newSessionID == "" || newSessionID == sessionID {
 		t.Fatalf("forked session ID = %q", newSessionID)
 	}
+	if !strings.HasPrefix(newSessionID, "agent-") {
+		t.Fatalf("forked session ID = %q, want generated agent ID", newSessionID)
+	}
 	forkPath, err := artifacts.SessionConversationFile(newSessionID)
 	if err != nil {
 		t.Fatal(err)
@@ -65,5 +68,73 @@ func TestSessionForkResolvesShortQuery(t *testing.T) {
 	}
 	if forked.ForkedFrom != sessionID {
 		t.Fatalf("ForkedFrom = %q, want resolved source %q", forked.ForkedFrom, sessionID)
+	}
+}
+
+func TestSessionForkUsesProvidedDestination(t *testing.T) {
+	setupSessionArchiveCommandTest(t)
+	sessionID := "DM1-KYF1E4CZE7XRSTU123456789ABCD"
+	destinationID := "stable-cli-fork"
+	writeSessionArchiveCommandConversation(t, sessionID, "Fork to explicit destination")
+
+	stdout, stderr := captureOutput(func() {
+		if code := handleSessionForkCommand([]string{"dm1-kyf1e-4cze7x", destinationID}); code != 0 {
+			t.Fatalf("session fork exit = %d, want 0", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("stderr = %q", stderr)
+	}
+	if got := strings.TrimSpace(stdout); got != destinationID {
+		t.Fatalf("stdout = %q, want destination ID %q", stdout, destinationID)
+	}
+	forkPath, err := artifacts.SessionConversationFile(destinationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(forkPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	forked, err := conversation.Unmarshal(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if forked.SessionID != destinationID || forked.ForkedFrom != sessionID {
+		t.Fatalf("forked metadata = SessionID %q, ForkedFrom %q", forked.SessionID, forked.ForkedFrom)
+	}
+}
+
+func TestSessionForkRejectsInvalidDestination(t *testing.T) {
+	setupSessionArchiveCommandTest(t)
+	sessionID := "agent-cli-invalid-destination-source"
+	writeSessionArchiveCommandConversation(t, sessionID, "Reject invalid destination")
+
+	for _, destinationID := range []string{"", "   ", "a/b", `a\b`, ".", "..", "a b", "a\nb", "a\x00b"} {
+		t.Run(destinationID, func(t *testing.T) {
+			_, stderr := captureOutput(func() {
+				if code := handleSessionForkCommand([]string{sessionID, destinationID}); code == 0 {
+					t.Fatal("session fork exit = 0, want failure")
+				}
+			})
+			if !strings.Contains(strings.ToLower(stderr), "destination") {
+				t.Fatalf("stderr = %q, want destination error", stderr)
+			}
+		})
+	}
+}
+
+func TestSessionForkRejectsSourceAsDestination(t *testing.T) {
+	setupSessionArchiveCommandTest(t)
+	sessionID := "DM1-KYF1E4CZE7XRSTU123456789ABCD"
+	writeSessionArchiveCommandConversation(t, sessionID, "Reject source destination")
+
+	_, stderr := captureOutput(func() {
+		if code := handleSessionForkCommand([]string{"dm1-kyf1e-4cze7x", sessionID}); code == 0 {
+			t.Fatal("session fork exit = 0, want failure")
+		}
+	})
+	if !strings.Contains(stderr, "destination must differ from source") {
+		t.Fatalf("stderr = %q, want source/destination mismatch error", stderr)
 	}
 }
