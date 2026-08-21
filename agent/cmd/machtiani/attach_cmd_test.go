@@ -5,7 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/tursomari/machtiani/agent/internal/conversation"
 	"github.com/tursomari/machtiani/agent/internal/core/artifacts"
@@ -69,6 +71,7 @@ func TestAttachRejectsDisplayOnlyConflicts(t *testing.T) {
 		{name: "mode", args: []string{"--attach", "--resume", "agent-attach", "--mode", "somemode"}, wantError: "--attach"},
 		{name: "model", args: []string{"--attach", "--resume", "agent-attach", "--model", "m1"}, wantError: "--attach"},
 		{name: "positional", args: []string{"--attach", "--resume", "agent-attach", "unexpected"}, wantError: "unexpected positional arguments"},
+		{name: "deprecated session id", args: []string{"--attach", "--session-id", "agent-attach"}, wantError: "Error: --attach requires --resume/-r; the deprecated --session-id flag cannot be combined with it"},
 	}
 
 	for _, tt := range tests {
@@ -96,6 +99,76 @@ func TestAttachRejectsDisplayOnlyConflicts(t *testing.T) {
 				t.Fatalf("stderr = %q, want error containing %q", stderr, tt.wantError)
 			}
 		})
+	}
+}
+
+func TestAttachRunningSessionTailsUntilLockReleased(t *testing.T) {
+	setupSessionArchiveCommandTest(t)
+	prepareTestConfig(t)
+	sessionID := "agent-attach-running"
+	conv := conversation.New(sessionID, "Attach to a running session")
+	conv.Status = "completed"
+	addAttachTailTurn(conv, 1)
+	path := writeAttachTailConversation(t, conv)
+
+	scratchDir, err := artifacts.SessionScratchDirectory(sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(scratchDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lockPath := filepath.Join(scratchDir, "session.lock")
+	lockFile, err := os.OpenFile(lockPath, os.O_RDWR|os.O_CREATE, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
+		_ = lockFile.Close()
+	})
+	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatalf("hold running-session lock: %v", err)
+	}
+
+	originalRun := sessionRunFn
+	t.Cleanup(func() { sessionRunFn = originalRun })
+	sessionRunFn = func(context.Context, session.Options) session.Result {
+		t.Fatal("sessionRunFn called during running attach")
+		return session.Result{}
+	}
+
+	publishDone := make(chan error, 1)
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		addAttachTailTurn(conv, 2)
+		if err := publishAttachTailConversation(path, conv); err != nil {
+			publishDone <- err
+			return
+		}
+		time.Sleep(300 * time.Millisecond)
+		if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN); err != nil {
+			publishDone <- err
+			return
+		}
+		publishDone <- nil
+	}()
+
+	stdout, stderr := captureOutput(func() {
+		if code := handleRunCommand([]string{"--attach", "--resume", sessionID}); code != 0 {
+			t.Fatalf("handleRunCommand() exit = %d, want 0", code)
+		}
+	})
+	if err := <-publishDone; err != nil {
+		t.Fatal(err)
+	}
+	if stderr != "" {
+		t.Fatalf("stderr = %q, want empty", stderr)
+	}
+	for _, want := range []string{"Attach to a running session", "Live question 1", "Live answer 1", "Live question 2", "Live answer 2"} {
+		if got := strings.Count(stdout, want); got != 1 {
+			t.Errorf("stdout count for %q = %d, want 1:\n%s", want, got, stdout)
+		}
 	}
 }
 
