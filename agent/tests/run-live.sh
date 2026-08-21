@@ -437,6 +437,167 @@ PY
   fi
 }
 
+start_gated_llm_stub_server() {
+  local state_file="$1"
+  local port_file="$2"
+  local hold_file="$3"
+
+  "$PYTHON_BIN" - "$state_file" "$port_file" "$hold_file" <<'PY' &
+import json
+import sys
+import time
+import os
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+state_path = sys.argv[1]
+port_path = sys.argv[2]
+hold_path = sys.argv[3]
+try:
+    hold_after = int(os.environ.get("STUB_HOLD_AFTER", "8"))
+except ValueError:
+    hold_after = 8
+request_sequence = 0
+
+counts = {
+    "plan": 0,
+    "ask_worker": 0,
+    "monitor": 0,
+    "mixed_monitor": 0,
+    "user_directed_monitor": 0,
+    "user_directed_purifier": 0,
+    "preflight": 0,
+    "other": 0,
+    "last_plan_content": "",
+    "shell_agent": 0,
+    "shell_agent_code_mode": 0,
+    "last_shell_agent_content": "",
+}
+
+def write_state():
+    try:
+        with open(state_path, "w", encoding="utf-8") as fh:
+            json.dump(counts, fh)
+    except OSError:
+        pass
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, format, *args):
+        return
+
+    def do_POST(self):
+        global request_sequence
+
+        length = int(self.headers.get("content-length", "0"))
+        raw = self.rfile.read(length)
+        try:
+            data = json.loads(raw.decode("utf-8"))
+        except Exception:
+            self.send_response(400)
+            self.end_headers()
+            return
+        request_sequence += 1
+        seq = request_sequence
+        messages = data.get("messages", [])
+        last_user_content = None
+        for m in messages:
+            if isinstance(m, dict) and m.get("role", "").lower() == "user":
+                last_user_content = m.get("content", "")
+        match_content = last_user_content if last_user_content is not None else "\n".join(m.get("content", "") for m in messages if isinstance(m, dict))
+
+        reply = os.environ.get("STUB_FORCE_REPLY")
+        if reply is None:
+            reply = f"Stub response [{seq}]."
+            if "Decision menu (choose exactly one)" in match_content:
+                counts["plan"] += 1
+                counts["last_plan_content"] = "\n".join(m.get("content", "") for m in messages)
+                if "Use the safer fix that preserves behavior." in match_content:
+                    reply = "Decision: answer_user\nFinalize: Proceed with the safer fix and summarize the chosen direction."
+                elif "planner prompt layers" in match_content:
+                    reply = "Decision: answer_user\nReason: The planner prompt layers for code mode are organized with CORE_SAFETY_RULES, PLANNER_OPERATING_RULES, and REPO_MODE_GUIDANCE sections."
+                else:
+                    reply = "Decision: ask_worker"
+            elif "You are generating the next Ask for mct." in match_content:
+                counts["plan"] += 1
+                if "tradeoff I prefer" in match_content:
+                    reply = "Ask Mode: no-shell\nAsk: Ask the user whether they want the safer fix that preserves behavior or the faster fix that may slightly change behavior before you continue."
+                elif "Guardrail:" in match_content:
+                    reply = "Ask Mode: no-shell\nAsk: Summarize the staged planner menu flow."
+                else:
+                    reply = "Ask Mode: both\nAsk: Summarize the staged planner menu flow, then run `git diff --stat` and report the output."
+            elif "You are a guard that checks whether an ask mixes no-shell and shell actions." in match_content:
+                counts["mixed_monitor"] += 1
+                reply = "{\"is_mixed\":false,\"reason\":\"already split\",\"rewrite\":\"\"}"
+            elif "You are a guard that checks whether an ask is requesting file changes or patches." in match_content:
+                counts["monitor"] += 1
+                if counts["monitor"] == 1:
+                    reply = "{\"has_patch_intent\":true,\"reason\":\"mentions running git diff and could lead to patches\"}"
+                else:
+                    reply = "{\"has_patch_intent\":false,\"reason\":\"no patch intent\"}"
+            elif "You are a guard for user-directed asks." in match_content:
+                counts["user_directed_monitor"] += 1
+                if "Ask the user whether they want the safer fix" in match_content:
+                    reply = "{\"is_user_directed\":true,\"reason\":\"asks the user to choose the preferred tradeoff\"}"
+                else:
+                    reply = "{\"is_user_directed\":false,\"reason\":\"no user-owned authority boundary\"}"
+            elif "You are a purifier for flagged user-directed asks." in match_content:
+                counts["user_directed_purifier"] += 1
+                if "Ask the user whether they want the safer fix" in match_content:
+                    reply = "{\"should_suspend\":true,\"purified_question\":\"Do you want the safer fix that preserves behavior, or the faster fix that may slightly change behavior?\",\"context\":\"\",\"reason\":\"extracted the user-owned tradeoff\"}"
+                else:
+                    reply = "{\"should_suspend\":false,\"purified_question\":\"\",\"context\":\"\",\"reason\":\"no clean user-owned question\"}"
+            elif "You classify user requests for a developer assistant" in match_content:
+                counts["preflight"] += 1
+                reply = "content"
+            elif "You are the action-execution layer of the Machtiani shell agent." in match_content:
+                counts["shell_agent"] += 1
+                counts["last_shell_agent_content"] = match_content
+                if "You MUST use forge" in match_content:
+                    counts["shell_agent_code_mode"] += 1
+                reply = "<answer>\nStub shell-agent final answer.\n</answer>"
+            else:
+                counts["other"] += 1
+
+        write_state()
+        if seq > hold_after:
+            while os.path.exists(hold_path):
+                time.sleep(0.05)
+        payload = {
+            "id": "stub-1",
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": data.get("model", "stub-model"),
+            "choices": [
+                {"index": 0, "message": {"role": "assistant", "content": reply}, "finish_reason": "stop"}
+            ],
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        }
+        encoded = json.dumps(payload).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(encoded)))
+        self.end_headers()
+        self.wfile.write(encoded)
+
+server = HTTPServer(("127.0.0.1", 0), Handler)
+with open(port_path, "w", encoding="utf-8") as fh:
+    fh.write(str(server.server_address[1]))
+    fh.flush()
+write_state()
+server.serve_forever()
+PY
+  STUB_SERVER_PID=$!
+
+  local waited=0
+  while [[ ! -s "$port_file" && $waited -lt 50 ]]; do
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  if [[ ! -s "$port_file" ]]; then
+    echo "ERROR: gated stub server failed to write port file" >&2
+    return 1
+  fi
+}
+
 assert_stub_plan_prompt_layers() {
   local state_file="$1"
   "$PYTHON_BIN" - "$state_file" <<'PY'
@@ -1762,6 +1923,400 @@ run_menu_flow_case() {
   if [[ "${KEEP_TEST_CONFIG:-}" != "true" ]]; then
     rm -rf "$stub_dir"
     rm -rf "$(dirname "$stub_config")"
+  fi
+}
+
+run_attach_live_case() {
+  local case_id="attach-live"
+  local stub_dir="$TMP_ROOT/stub-${case_id}-$(date +%s)"
+  local state_file="$stub_dir/state.json"
+  local port_file="$stub_dir/port.txt"
+  local hold_file="$stub_dir/hold"
+  local stub_port=""
+  local stub_alias="stub-model"
+  local stub_config=""
+  local config_root=""
+  local session_id="test-attach-live-$(date +%s)"
+  local out_dir="$(pwd)/test-out-${session_id}"
+  local driver_stdout="$out_dir/driver-stdout.txt"
+  local driver_stderr="$out_dir/driver-stderr.txt"
+  local attach_stdout="$out_dir/attach-stdout.txt"
+  local attach_stderr="$out_dir/attach-stderr.txt"
+  local snapshot_bytes_file="$out_dir/snapshot-marker-bytes.txt"
+  local snapshot_count_file="$out_dir/snapshot-message-count.txt"
+  local rendered_delta_file="$out_dir/post-release-rendered-units.txt"
+  local body_rc=0
+
+  if ! mkdir -p "$stub_dir" "$out_dir" || ! touch "$hold_file"; then
+    echo "ERROR: failed to prepare gated stub files for $case_id" >&2
+    stop_llm_stub_server
+    if [[ "${KEEP_TEST_CONFIG:-}" != "true" ]]; then
+      rm -rf "$stub_dir"
+    fi
+    return 1
+  fi
+  if ! STUB_HOLD_AFTER="${STUB_HOLD_AFTER:-8}" start_gated_llm_stub_server "$state_file" "$port_file" "$hold_file"; then
+    stop_llm_stub_server
+    if [[ "${KEEP_TEST_CONFIG:-}" != "true" ]]; then
+      rm -rf "$stub_dir"
+    fi
+    return 1
+  fi
+  if ! stub_port="$(cat "$port_file")"; then
+    echo "ERROR: failed to read gated stub port for $case_id" >&2
+    stop_llm_stub_server
+    if [[ "${KEEP_TEST_CONFIG:-}" != "true" ]]; then
+      rm -rf "$stub_dir"
+    fi
+    return 1
+  fi
+  if ! stub_config="$(generate_stub_config "http://127.0.0.1:${stub_port}/v1" "$stub_alias")"; then
+    echo "ERROR: failed to generate stub config for $case_id" >&2
+    stop_llm_stub_server
+    if [[ "${KEEP_TEST_CONFIG:-}" != "true" ]]; then
+      rm -rf "$stub_dir"
+    fi
+    return 1
+  fi
+  config_root="$(dirname "$(dirname "$stub_config")")"
+
+  set +e
+  (
+    set -e
+    local DRIVER_PID=""
+    local ATTACH_PID=""
+    local pushed=false
+    local conversation_file="${MACHTIANI_TEST_SESSIONS_ROOT:-$REPO_ROOT/.machtiani/sessions}/$session_id/artifacts/conversation.json"
+    local ready=false
+    local changed=false
+    local snapshot_marker_bytes=0
+    local snapshot_message_count=0
+    local current_message_count=0
+    local current_attach_bytes=0
+    local driver_rc=0
+    local attach_rc=0
+    local i=0
+    local exit_rc=0
+
+    attach_live_diagnostics() {
+      local diagnostic_file
+      echo "Diagnostics for $case_id:" >&2
+      for diagnostic_file in "$driver_stdout" "$driver_stderr" "$attach_stdout" "$attach_stderr" "$conversation_file"; do
+        if [[ -e "$diagnostic_file" ]]; then
+          echo "==> $diagnostic_file <==" >&2
+          tail -n 80 "$diagnostic_file" >&2 || true
+        fi
+      done
+    }
+
+    finish_attach_live_body() {
+      exit_rc=$?
+      trap - EXIT
+      set +e
+      if [[ -n "$ATTACH_PID" ]] && kill -0 "$ATTACH_PID" 2>/dev/null; then
+        kill "$ATTACH_PID" 2>/dev/null || true
+        wait "$ATTACH_PID" 2>/dev/null || true
+      fi
+      if [[ -n "$DRIVER_PID" ]] && kill -0 "$DRIVER_PID" 2>/dev/null; then
+        kill "$DRIVER_PID" 2>/dev/null || true
+        wait "$DRIVER_PID" 2>/dev/null || true
+      fi
+      if [[ $exit_rc -ne 0 ]]; then
+        attach_live_diagnostics
+      fi
+      if [[ "$pushed" == true ]]; then
+        popd >/dev/null || true
+      fi
+      exit "$exit_rc"
+    }
+
+    fail_attach_live_body() {
+      echo "ERROR: $*" >&2
+      exit 1
+    }
+
+    trap finish_attach_live_body EXIT
+    pushd "$REPO_ROOT" >/dev/null
+    pushed=true
+    export MACHTIANI_SESSION_ID="$session_id" MACHTIANI_CONFIG="$stub_config"
+
+    set +e
+    timeout 300 "$MACHTIANI_EXE" run --max-turns 2 --turn-timeout 300 \
+      --model "$stub_alias" --orch-model "$stub_alias" --file-discovery-model "$stub_alias" \
+      --prompt "Summarize the purpose of README.md." \
+      >"$driver_stdout" 2>"$driver_stderr" &
+    DRIVER_PID=$!
+    set -e
+
+    for ((i = 0; i < 300; i++)); do
+      if [[ -s "$conversation_file" ]] && "$PYTHON_BIN" - "$conversation_file" <<'PY'
+import json
+import sys
+
+try:
+    with open(sys.argv[1], "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+except Exception:
+    sys.exit(1)
+messages = data.get("messages")
+if not isinstance(messages, list):
+    sys.exit(1)
+if any(isinstance(message, dict) and str(message.get("content") or "").strip() for message in messages):
+    sys.exit(0)
+sys.exit(1)
+PY
+      then
+        ready=true
+        break
+      fi
+      sleep 0.1
+    done
+    if [[ "$ready" != true ]]; then
+      fail_attach_live_body "conversation did not become ready for $case_id"
+    fi
+
+    set +e
+    MACHTIANI_CONFIG="$stub_config" timeout 180 "$MACHTIANI_EXE" run --attach --resume "$session_id" \
+      >"$attach_stdout" 2>"$attach_stderr" &
+    ATTACH_PID=$!
+    set -e
+
+    ready=false
+    for ((i = 0; i < 300; i++)); do
+      if grep -qF "── GOAL ──" "$attach_stdout" 2>/dev/null &&
+         { grep -qF "── QUESTION ──" "$attach_stdout" 2>/dev/null || grep -qF "── ANSWER ──" "$attach_stdout" 2>/dev/null; }; then
+        ready=true
+        break
+      fi
+      sleep 0.1
+    done
+    if [[ "$ready" != true ]]; then
+      fail_attach_live_body "attach output did not render the initial snapshot for $case_id"
+    fi
+
+    snapshot_marker_bytes="$(wc -c < "$attach_stdout")"
+    snapshot_message_count="$("$PYTHON_BIN" - "$conversation_file" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    data = json.load(fh)
+messages = data.get("messages")
+if not isinstance(messages, list):
+    raise SystemExit("conversation messages is not a list")
+print(len(messages))
+PY
+    )"
+    printf '%s\n' "$snapshot_marker_bytes" > "$snapshot_bytes_file"
+    printf '%s\n' "$snapshot_message_count" > "$snapshot_count_file"
+
+    rm -f "$hold_file"
+
+    for ((i = 0; i < 600; i++)); do
+      current_message_count="$("$PYTHON_BIN" - "$conversation_file" <<'PY' 2>/dev/null || true
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    data = json.load(fh)
+messages = data.get("messages")
+if not isinstance(messages, list):
+    raise SystemExit(1)
+print(len(messages))
+PY
+      )"
+      current_attach_bytes="$(wc -c < "$attach_stdout")"
+      if [[ "$current_message_count" =~ ^[0-9]+$ ]] &&
+         (( current_message_count > snapshot_message_count )) &&
+         (( current_attach_bytes > snapshot_marker_bytes )); then
+        changed=true
+        break
+      fi
+      sleep 0.1
+    done
+    if [[ "$changed" != true ]]; then
+      fail_attach_live_body "conversation and attach tail did not grow after release for $case_id"
+    fi
+
+    set +e
+    wait "$DRIVER_PID"
+    driver_rc=$?
+    set -e
+    DRIVER_PID=""
+    if [[ $driver_rc -ne 0 ]]; then
+      fail_attach_live_body "driver failed for $case_id (rc=$driver_rc)"
+    fi
+
+    if kill -0 "$ATTACH_PID" 2>/dev/null; then
+      echo "Note: attach was still active immediately after the driver exited." >&2
+    else
+      echo "Note: attach had already exited when the driver finished." >&2
+    fi
+
+    set +e
+    wait "$ATTACH_PID"
+    attach_rc=$?
+    set -e
+    ATTACH_PID=""
+    if [[ $attach_rc -ne 0 ]]; then
+      fail_attach_live_body "attach failed for $case_id (rc=$attach_rc)"
+    fi
+
+    if grep -q '^Error:' "$attach_stderr"; then
+      fail_attach_live_body "attach stderr contains an Error: line for $case_id"
+    fi
+
+    if ! "$PYTHON_BIN" - "$conversation_file" "$attach_stdout" "$snapshot_count_file" "$snapshot_bytes_file" "$rendered_delta_file" <<'PY'
+import collections
+import json
+import pathlib
+import re
+import sys
+
+conversation_path = pathlib.Path(sys.argv[1])
+stdout_path = pathlib.Path(sys.argv[2])
+snapshot_count = int(pathlib.Path(sys.argv[3]).read_text(encoding="utf-8").strip())
+snapshot_bytes = int(pathlib.Path(sys.argv[4]).read_text(encoding="utf-8").strip())
+rendered_delta_path = pathlib.Path(sys.argv[5])
+
+with conversation_path.open("r", encoding="utf-8") as fh:
+    conversation = json.load(fh)
+messages = conversation.get("messages")
+if not isinstance(messages, list):
+    raise SystemExit("ERROR: final conversation messages is not a list")
+if snapshot_count < 0 or snapshot_count > len(messages):
+    raise SystemExit(
+        f"ERROR: invalid snapshot count {snapshot_count} for final count {len(messages)}"
+    )
+
+output_bytes = stdout_path.read_bytes()
+if snapshot_bytes < 0 or snapshot_bytes > len(output_bytes):
+    raise SystemExit(
+        f"ERROR: invalid snapshot byte count {snapshot_bytes} for final output size {len(output_bytes)}"
+    )
+output = output_bytes.decode("utf-8", errors="replace")
+pre_release = output_bytes[:snapshot_bytes].decode("utf-8", errors="replace")
+post_release = output_bytes[snapshot_bytes:].decode("utf-8", errors="replace")
+
+goal_marker = "── GOAL ──"
+goal_count = output.count(goal_marker)
+if goal_count != 1:
+    raise SystemExit(f"ERROR: GOAL header count is {goal_count}, expected 1")
+
+marker_re = re.compile(r"Stub response \[[0-9]+\]\.")
+markers = marker_re.findall(output)
+for marker, count in collections.Counter(markers).items():
+    if count != 1:
+        raise SystemExit(f"ERROR: {marker!r} occurs {count} times in attach stdout")
+
+if markers:
+    pre_markers = set(marker_re.findall(pre_release))
+    post_markers = set(marker_re.findall(post_release))
+    if not (post_markers - pre_markers):
+        raise SystemExit("ERROR: no unique generic stub marker was rendered in the post-release tail")
+
+original_goal = str(conversation.get("original_goal") or "").strip()
+
+def metadata_type(message):
+    metadata = message.get("metadata")
+    if not isinstance(metadata, dict):
+        return "", {}
+    return str(metadata.get("type") or "").strip().lower(), metadata
+
+def valid_turn(message, metadata):
+    turn = message.get("turn", metadata.get("turn"))
+    try:
+        return int(turn) >= 0
+    except (TypeError, ValueError):
+        return False
+
+def expected_to_render(message):
+    if not isinstance(message, dict):
+        return False
+    content = str(message.get("content") or "")
+    role = str(message.get("role") or "").strip().lower()
+    message_type, metadata = metadata_type(message)
+    if not message_type:
+        if role == "user" and original_goal and content.strip() == original_goal:
+            return False
+        return role in {"user", "assistant", "system"} and bool(content.strip())
+    if message_type == "cache_anchor":
+        return False
+    if message_type in {"ask", "work_request"}:
+        return valid_turn(message, metadata) and bool(
+            content.strip() or str(metadata.get("decision") or "").strip()
+        )
+    if message_type in {"answer", "work_result"}:
+        return valid_turn(message, metadata) and bool(
+            content.strip()
+            or str(metadata.get("chat_path") or "").strip()
+            or metadata.get("retrieved_files")
+        )
+    if message_type in {
+        "user_input_request",
+        "user_input_response",
+        "raw",
+        "raw_block",
+    }:
+        return bool(content.strip())
+    if message_type == "recovery":
+        return role in {"user", "assistant", "system"} and bool(content.strip())
+    if message_type in {"final", "final_answer"}:
+        return True
+    return False
+
+def has_tail_evidence(message):
+    content = str(message.get("content") or "").strip()
+    if content and content in post_release:
+        return True
+    for line in content.splitlines():
+        fragment = line.strip()
+        if fragment and not fragment.startswith("==") and fragment in post_release:
+            return True
+    message_type, metadata = metadata_type(message)
+    if message_type in {"ask", "work_request"}:
+        decision = str(metadata.get("decision") or "").strip()
+        return (decision and decision in post_release) or "── QUESTION ──" in post_release
+    if message_type in {"answer", "work_result"}:
+        return "── ANSWER ──" in post_release or "── ARTIFACTS ──" in post_release
+    if message_type in {"final", "final_answer"}:
+        return "──── " in post_release
+    return False
+
+new_messages = messages[snapshot_count:]
+rendered_units = [
+    message
+    for message in new_messages
+    if expected_to_render(message) and has_tail_evidence(message)
+]
+rendered_delta_path.write_text(f"{len(rendered_units)}\n", encoding="utf-8")
+
+if len(messages) < snapshot_count + 1:
+    raise SystemExit(
+        f"ERROR: final message count {len(messages)} did not grow beyond snapshot {snapshot_count}"
+    )
+if len(messages) != snapshot_count + len(rendered_units):
+    raise SystemExit(
+        "ERROR: final message count does not equal snapshot count plus rendered tail units: "
+        f"final={len(messages)} snapshot={snapshot_count} rendered_tail={len(rendered_units)}"
+    )
+PY
+    then
+      fail_attach_live_body "attach replay assertions failed for $case_id"
+    fi
+
+    echo "Passed: $case_id" >&2
+  )
+  body_rc=$?
+  set -e
+
+  stop_llm_stub_server
+  if [[ "${KEEP_TEST_CONFIG:-}" != "true" ]]; then
+    rm -rf "$stub_dir"
+    rm -rf "$config_root"
+  fi
+  if [[ $body_rc -ne 0 ]]; then
+    return 1
   fi
 }
 
@@ -4145,6 +4700,7 @@ declare -A TESTS=(
   ["shell_agent_subcommand_live"]="run_shell_agent_subcommand_live_case"
   ["snippet_discovery_tightness_live"]="run_snippet_discovery_tightness_live_case"
   ["menu_flow_live"]="run_menu_flow_live_case"
+  ["attach_live"]="run_attach_live_case"
   ["mode_live"]="run_mode_live_case"
   ["file_discovery_live"]="run_file_discovery_live_case"
   ["show_live"]="run_show_live_case"
@@ -4201,6 +4757,7 @@ run_test_case "sync_footer" run_sync_footer_case
 run_test_case "discovery_turn_timeout" test_discovery_turn_timeout
 run_test_case "discovery_multiround_budget" test_discovery_multiround_budget
 run_test_case "mode_prompt_layers" run_mode_prompt_layers_case
+run_test_case "attach_live" run_attach_live_case
 
 # Resume without mode: verify shell-agent system prompt survives
 # a mode-less resume (uses stub server).
