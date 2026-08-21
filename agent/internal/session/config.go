@@ -54,6 +54,7 @@ type Config struct {
 	// shell-agent parser and prompt templates. Defaults to "command".
 	CommandTag              string
 	SessionID               string
+	Attach                  bool `json:"attach,omitempty"`
 	EnableTagFormat         bool
 	PromptText              string
 	Mode                    string

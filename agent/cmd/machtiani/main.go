@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"strconv"
@@ -159,7 +160,7 @@ func newRunFlagSet(cfg *session.Config) runFlagSetResult {
 	configureSessionFlags(fs, cfg, &paramFlags, &paramJSON, &apiKeyFlags, true)
 	promptFile := fs.StringP("file", "f", "", "Read goal from file (mutually exclusive with --prompt)")
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: machtiani run -p \"<your prompt>\" | --file <path> [flags]\n\n")
+		fmt.Fprintf(os.Stderr, "Usage: machtiani run -p \"<your prompt>\" | --file <path> | --attach --resume <session-id> [flags]\n\n")
 		fmt.Fprintln(os.Stderr, "Flags:")
 		fs.PrintDefaults()
 	}
@@ -220,6 +221,48 @@ func handleRunCommand(args []string) int {
 		return 2
 	}
 	markExplicitModelOverrides(fs, &cfg)
+	if cfg.Attach {
+		if strings.TrimSpace(cfg.SessionID) == "" {
+			fmt.Fprintln(os.Stderr, "Error: --attach requires --resume/-r with a session id")
+			return 2
+		}
+		conflicts := []struct {
+			flag    string
+			present bool
+		}{
+			{flag: "prompt", present: strings.TrimSpace(cfg.PromptText) != "" || fs.Changed("prompt")},
+			{flag: "file", present: strings.TrimSpace(*promptFile) != "" || fs.Changed("file")},
+			{flag: "exec", present: cfg.Print},
+			{flag: "mode", present: strings.TrimSpace(cfg.Mode) != "" || fs.Changed("mode")},
+		}
+		for _, conflict := range conflicts {
+			if conflict.present {
+				fmt.Fprintf(os.Stderr, "Error: --attach is display-only; --%s cannot be combined with it\n", conflict.flag)
+				return 2
+			}
+		}
+		for _, flag := range []string{
+			"model",
+			"orch-model",
+			"agent-model",
+			"answer-model",
+			"file-discovery-model",
+			"shell-agent-model",
+			"openai-api-key",
+			"openai-base-url",
+			"openai-model",
+		} {
+			if fs.Changed(flag) {
+				fmt.Fprintf(os.Stderr, "Error: --attach is display-only; --%s cannot be combined with it\n", flag)
+				return 2
+			}
+		}
+		if len(fs.Args()) > 0 {
+			fmt.Fprintln(os.Stderr, "Error: unexpected positional arguments for 'run' command. Use -p or --file to specify the prompt.")
+			return 2
+		}
+		return runAttach(cfg.SessionID, os.Stdout, os.Stderr)
+	}
 	if cfg.ContextLength != 0 && cfg.ContextLength < llm.MinimumContextLength {
 		fmt.Fprintf(os.Stderr, "Error: --context-length must be at least %d\n", llm.MinimumContextLength)
 		return 2
@@ -375,6 +418,40 @@ func handleRunCommand(args []string) int {
 		}
 	}
 	return res.ExitCode
+}
+
+func runAttach(sessionID string, stdout, stderr io.Writer) int {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		fmt.Fprintln(stderr, "Error: session id required")
+		return 1
+	}
+
+	conversationPath, err := artifacts.SessionConversationFile(sessionID)
+	if err != nil {
+		fmt.Fprintln(stderr, "Error:", err)
+		return 1
+	}
+	data, err := os.ReadFile(conversationPath)
+	if err != nil {
+		fmt.Fprintln(stderr, "Error:", err)
+		return 1
+	}
+	conv, err := conversation.Unmarshal(data)
+	if err != nil {
+		fmt.Fprintln(stderr, "Error:", err)
+		return 1
+	}
+	replay, err := conversation.RenderReplay(conv)
+	if err != nil {
+		fmt.Fprintln(stderr, "Error:", err)
+		return 1
+	}
+	if _, err := io.WriteString(stdout, replay+"\n"); err != nil {
+		fmt.Fprintln(stderr, "Error:", err)
+		return 1
+	}
+	return 0
 }
 
 func changedSessionSelectorFlags(fs *pflag.FlagSet) []string {
@@ -702,6 +779,7 @@ func configureSessionFlags(fs *pflag.FlagSet, cfg *session.Config, paramFlags, p
 	fs.StringVar(&cfg.OpenAIModel, "openai-model", "", "Direct upstream model name (deprecated; prefer --model)")
 	fs.StringVar(&cfg.SessionID, "session-id", "", "Existing session identifier to resume (deprecated; use --resume or -r)")
 	fs.StringVarP(&cfg.SessionID, "resume", "r", "", "Existing session identifier to resume")
+	fs.BoolVar(&cfg.Attach, "attach", cfg.Attach, "attach to an existing session: render the persisted conversation as a read-only replay (requires --resume; takes no session lock)")
 	_ = fs.MarkDeprecated("session-id", "use 'machtiani run --resume <session-id>' or -r")
 	fs.BoolVar(&cfg.EnableTagFormat, "enable-tag-format", cfg.EnableTagFormat, "Enable tag-format response directives and validation (experimental)")
 	fs.IntVar(&cfg.ShellAgentInterruptStep, "shell-agent-interrupt-step", 0, "deterministic interrupt after this many shell-agent steps (0 = disabled)")
