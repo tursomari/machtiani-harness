@@ -1,6 +1,9 @@
 #!/bin/bash
 set -euo pipefail
+# Agent-managed session environment variables must not leak into harness-spawned sessions.
 unset MACHTIANI_SESSION_ID
+unset MACHTIANI_SESSION_TEMP_ROOT
+unset MINISWE_FINAL_DIR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${REPO_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
