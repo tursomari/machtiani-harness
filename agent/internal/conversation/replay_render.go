@@ -13,6 +13,35 @@ func RenderReplay(conv *Conversation) (string, error) {
 	if conv == nil {
 		return "", errors.New("conversation is nil")
 	}
+	return renderReplay(conv, conv.Messages, true, nil)
+}
+
+// RenderReplayDelta renders only message units appended after previous. Turn
+// headings already present in previous are omitted so successive atomic
+// publishes cannot repeat a partially published turn's framing.
+func RenderReplayDelta(conv *Conversation, previous []Message) (string, error) {
+	if conv == nil {
+		return "", errors.New("conversation is nil")
+	}
+
+	messages := IdentifyNewMessages(previous, conv.Messages)
+	if len(messages) == 0 {
+		return "", nil
+	}
+
+	knownTurns := make(map[int]struct{})
+	for _, msg := range previous {
+		switch getType(msg.Metadata) {
+		case messageTypeAsk, messageTypeWorkRequest, messageTypeAnswer, messageTypeWorkResult:
+			if turn := coalesceTurn(msg); turn >= 0 {
+				knownTurns[turn] = struct{}{}
+			}
+		}
+	}
+	return renderReplay(conv, messages, false, knownTurns)
+}
+
+func renderReplay(conv *Conversation, messages []Message, includeGoal bool, knownTurns map[int]struct{}) (string, error) {
 
 	type renderEvent struct {
 		kind string
@@ -26,6 +55,7 @@ func RenderReplay(conv *Conversation) (string, error) {
 		decision  string
 		savedPath string
 		retrieved []string
+		heading   bool
 	}
 
 	events := []renderEvent{}
@@ -36,7 +66,8 @@ func RenderReplay(conv *Conversation) (string, error) {
 			return data
 		}
 		events = append(events, renderEvent{kind: "turn", turn: turn})
-		data := &turnData{}
+		_, known := knownTurns[turn]
+		data := &turnData{heading: !known}
 		turns[turn] = data
 		return data
 	}
@@ -45,7 +76,7 @@ func RenderReplay(conv *Conversation) (string, error) {
 		events = append(events, renderEvent{kind: label, text: text})
 	}
 
-	for _, msg := range conv.Messages {
+	for _, msg := range messages {
 		if isHeaderGoalMessage(conv, msg) {
 			continue
 		}
@@ -115,14 +146,16 @@ func RenderReplay(conv *Conversation) (string, error) {
 	}
 
 	var out strings.Builder
-	headerBody := replayHelperBody(renderHeader(conv.OriginalGoal), "= MCT-AGENT TRANSCRIPT", "== GOAL:")
-	out.WriteString(replaySection("GOAL", headerBody, false))
+	if includeGoal {
+		headerBody := replayHelperBody(renderHeader(conv.OriginalGoal), "= MCT-AGENT TRANSCRIPT", "== GOAL:")
+		out.WriteString(replaySection("GOAL", headerBody, false))
+	}
 	for _, event := range events {
 		switch event.kind {
 		case "turn":
 			data := turns[event.turn]
 			if data != nil {
-				out.WriteString(renderReplayTurn(event.turn, data.question, data.savedPath, data.retrieved, data.answer, data.decision))
+				out.WriteString(renderReplayTurn(event.turn, data.question, data.savedPath, data.retrieved, data.answer, data.decision, data.heading))
 			}
 		case "conclusion":
 			out.WriteString(renderReplayConclusion(event.text))
@@ -134,9 +167,11 @@ func RenderReplay(conv *Conversation) (string, error) {
 	return strings.Trim(stripANSI(sanitize(out.String())), "\n"), nil
 }
 
-func renderReplayTurn(turn int, question, savedPath string, retrieved []string, answer, decision string) string {
+func renderReplayTurn(turn int, question, savedPath string, retrieved []string, answer, decision string, includeHeading bool) string {
 	var out strings.Builder
-	out.WriteString(replaySection(fmt.Sprintf("TURN %d", turn), "", true))
+	if includeHeading {
+		out.WriteString(replaySection(fmt.Sprintf("TURN %d", turn), "", true))
+	}
 
 	questionBody := replayHelperBody(renderTurn(-1, question, "", nil, "", ""))
 	if strings.TrimSpace(questionBody) != "" {

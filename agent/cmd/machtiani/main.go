@@ -37,6 +37,21 @@ var (
 	sessionRunFn             = session.Run
 )
 
+const (
+	attachPollInterval = 250 * time.Millisecond
+	attachQuietGrace   = 750 * time.Millisecond
+)
+
+type attachRead func(path string) ([]byte, error)
+type attachProbe func(sessionID string) (bool, error)
+
+type attachDependencies struct {
+	readFile     attachRead
+	probe        attachProbe
+	pollInterval time.Duration
+	quietGrace   time.Duration
+}
+
 type multiString []string
 
 func (m *multiString) String() string {
@@ -214,6 +229,10 @@ func handleRunCommand(args []string) int {
 			return 0
 		}
 		fmt.Fprintln(os.Stderr, err)
+		return 2
+	}
+	if cfg.Attach && fs.Changed("session-id") {
+		fmt.Fprintln(os.Stderr, "Error: --attach requires --resume/-r; the deprecated --session-id flag cannot be combined with it")
 		return 2
 	}
 	if flags := changedSessionSelectorFlags(fs); len(flags) > 1 {
@@ -421,10 +440,31 @@ func handleRunCommand(args []string) int {
 }
 
 func runAttach(sessionID string, stdout, stderr io.Writer) int {
+	return runAttachWithDependencies(sessionID, stdout, stderr, attachDependencies{
+		readFile:     os.ReadFile,
+		probe:        session.IsSessionActive,
+		pollInterval: attachPollInterval,
+		quietGrace:   attachQuietGrace,
+	})
+}
+
+func runAttachWithDependencies(sessionID string, stdout, stderr io.Writer, deps attachDependencies) int {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
 		fmt.Fprintln(stderr, "Error: session id required")
 		return 1
+	}
+	if deps.readFile == nil {
+		deps.readFile = os.ReadFile
+	}
+	if deps.probe == nil {
+		deps.probe = session.IsSessionActive
+	}
+	if deps.pollInterval <= 0 {
+		deps.pollInterval = attachPollInterval
+	}
+	if deps.quietGrace <= 0 {
+		deps.quietGrace = attachQuietGrace
 	}
 
 	conversationPath, err := artifacts.SessionConversationFile(sessionID)
@@ -432,7 +472,7 @@ func runAttach(sessionID string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "Error:", err)
 		return 1
 	}
-	data, err := os.ReadFile(conversationPath)
+	data, err := deps.readFile(conversationPath)
 	if err != nil {
 		fmt.Fprintln(stderr, "Error:", err)
 		return 1
@@ -450,6 +490,69 @@ func runAttach(sessionID string, stdout, stderr io.Writer) int {
 	if _, err := io.WriteString(stdout, replay+"\n"); err != nil {
 		fmt.Fprintln(stderr, "Error:", err)
 		return 1
+	}
+
+	previous := append([]conversation.Message(nil), conv.Messages...)
+	lastContent := time.Now()
+	active, err := deps.probe(sessionID)
+	if err != nil {
+		fmt.Fprintln(stderr, "Error:", err)
+		return 1
+	}
+	var inactiveSince time.Time
+	if !active {
+		inactiveSince = lastContent
+	}
+
+	ticker := time.NewTicker(deps.pollInterval)
+	defer ticker.Stop()
+	for now := range ticker.C {
+		data, err := deps.readFile(conversationPath)
+		if err != nil {
+			fmt.Fprintln(stderr, "Error:", err)
+			return 1
+		}
+		next, err := conversation.Unmarshal(data)
+		if err != nil {
+			fmt.Fprintln(stderr, "Error:", err)
+			return 1
+		}
+
+		newMessages := conversation.IdentifyNewMessages(previous, next.Messages)
+		delta, err := conversation.RenderReplayDelta(next, previous)
+		if err != nil {
+			fmt.Fprintln(stderr, "Error:", err)
+			return 1
+		}
+		if delta != "" {
+			if _, err := io.WriteString(stdout, delta+"\n"); err != nil {
+				fmt.Fprintln(stderr, "Error:", err)
+				return 1
+			}
+		}
+		if len(newMessages) > 0 {
+			lastContent = now
+		}
+		if len(next.Messages) >= len(previous) {
+			previous = append(previous[:0], next.Messages...)
+		}
+
+		active, err = deps.probe(sessionID)
+		if err != nil {
+			fmt.Fprintln(stderr, "Error:", err)
+			return 1
+		}
+		if active {
+			inactiveSince = time.Time{}
+			continue
+		}
+		if inactiveSince.IsZero() {
+			inactiveSince = now
+			continue
+		}
+		if now.Sub(inactiveSince) >= deps.quietGrace && now.Sub(lastContent) >= deps.quietGrace {
+			return 0
+		}
 	}
 	return 0
 }
