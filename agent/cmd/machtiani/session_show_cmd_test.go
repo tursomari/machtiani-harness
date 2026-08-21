@@ -55,3 +55,51 @@ func TestSessionShowPrintsForkedFrom(t *testing.T) {
 		t.Fatalf("forked_from missing from JSON session show:\n%s", stdout)
 	}
 }
+
+func TestSessionShowResolvesShortQuery(t *testing.T) {
+	setupSessionArchiveCommandTest(t)
+	sessionID := "DM1-KYF1E4CZE7XRSTU123456789ABCD"
+	writeSessionArchiveCommandConversation(t, sessionID, "Show resolved session")
+
+	stdout, stderr := captureOutput(func() {
+		if code := handleSessionShowCommand([]string{"dm1-kyf1e-4cze7x"}); code != 0 {
+			t.Fatalf("session show exit = %d, want 0", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("stderr = %q", stderr)
+	}
+	if !strings.Contains(stdout, "Session ID:      "+sessionID) {
+		t.Fatalf("resolved session ID missing from output:\n%s", stdout)
+	}
+}
+
+func TestSessionShowUnknownShortQuery(t *testing.T) {
+	setupSessionArchiveCommandTest(t)
+
+	_, stderr := captureOutput(func() {
+		if code := handleSessionShowCommand([]string{"dm1-unknown"}); code != 1 {
+			t.Fatalf("session show exit = %d, want 1", code)
+		}
+	})
+	if !strings.Contains(stderr, "unknown session") {
+		t.Fatalf("stderr = %q, want unknown session error", stderr)
+	}
+}
+
+func TestSessionShowAmbiguousShortQuery(t *testing.T) {
+	setupSessionArchiveCommandTest(t)
+	firstID := "DM1-KYF1E4CZE7X11111111111111111"
+	secondID := "DM1-KYF1E4CZE7X22222222222222222"
+	writeSessionArchiveCommandConversation(t, firstID, "First ambiguous session")
+	writeSessionArchiveCommandConversation(t, secondID, "Second ambiguous session")
+
+	_, stderr := captureOutput(func() {
+		if code := handleSessionShowCommand([]string{"dm1-kyf1e-4cze7x"}); code != 1 {
+			t.Fatalf("session show exit = %d, want 1", code)
+		}
+	})
+	if !strings.Contains(stderr, firstID) || !strings.Contains(stderr, secondID) {
+		t.Fatalf("stderr = %q, want both ambiguous candidates", stderr)
+	}
+}

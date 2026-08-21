@@ -111,6 +111,25 @@ func TestSessionArchiveCommandsByIDAndDateRange(t *testing.T) {
 	assertSessionArchiveCommandState(t, path, false)
 }
 
+func TestSessionArchiveResolvesShortQuery(t *testing.T) {
+	setupSessionArchiveCommandTest(t)
+	sessionID := "DM1-KYF1E4CZE7XRSTU123456789ABCD"
+	path := writeSessionArchiveCommandConversation(t, sessionID, "Archive resolved session")
+
+	stdout, stderr := captureOutput(func() {
+		if code := handleSessionArchiveCommand([]string{"dm1-kyf1e-4cze7x"}); code != 0 {
+			t.Fatalf("session archive exit = %d, want 0", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("stderr = %q", stderr)
+	}
+	if !strings.Contains(stdout, sessionID) {
+		t.Fatalf("stdout = %q, want resolved session ID %q", stdout, sessionID)
+	}
+	assertSessionArchiveCommandState(t, path, true)
+}
+
 func TestSessionListArchivedFlag(t *testing.T) {
 	setupSessionArchiveCommandTest(t)
 	activeID := "agent-list-command-active"
