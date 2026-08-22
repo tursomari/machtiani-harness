@@ -40,7 +40,7 @@ func TestInterceptShellActionPersistsWithoutTrajectoryWriter(t *testing.T) {
 		t.Fatalf("records = %#v", records)
 	}
 	got := records[0]
-	if got.SessionID != req.SessionID || got.Turn != req.PlannerTurn || got.Sequence != 1 || got.Step != 3 || got.StepLimit != 8 || got.Command != "go test ./..." {
+	if got.SessionID != req.SessionID || got.Turn != req.PlannerTurn || got.Sequence != 1 || got.Step != 2 || got.StepLimit != 8 || got.Command != "go test ./..." {
 		t.Fatalf("record = %#v", got)
 	}
 }
@@ -55,6 +55,18 @@ func TestShellActionJournalRecoversSequence(t *testing.T) {
 	if err := first.Append(shellbridge.ActionMessage{Command: "first"}); err != nil {
 		t.Fatal(err)
 	}
+	path := filepath.Join(dir, "actions.jsonl")
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.WriteString(`{"v":1,"seq":999`); err != nil {
+		file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
 	second, err := newShellActionJournal(req)
 	if err != nil {
 		t.Fatal(err)
@@ -62,7 +74,7 @@ func TestShellActionJournalRecoversSequence(t *testing.T) {
 	if err := second.Append(shellbridge.ActionMessage{Command: "second"}); err != nil {
 		t.Fatal(err)
 	}
-	data, err := os.ReadFile(filepath.Join(dir, "actions.jsonl"))
+	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}

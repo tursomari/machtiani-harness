@@ -297,3 +297,13 @@ func ShellAgentTrajectoryPath(sessionID string, turn int) (string, error) {
 	}
 	return filepath.Join(root, "shell-agent", fmt.Sprintf("%d", turn), "trajectory.json"), nil
 }
+
+// ShellAgentActionsPath returns the canonical append-only shell-action journal
+// path for a given session and turn number.
+func ShellAgentActionsPath(sessionID string, turn int) (string, error) {
+	trajectoryPath, err := ShellAgentTrajectoryPath(sessionID, turn)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(filepath.Dir(trajectoryPath), "actions.jsonl"), nil
+}
