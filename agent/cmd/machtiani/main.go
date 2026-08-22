@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -22,6 +23,7 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/presentation"
 	"github.com/tursomari/machtiani/agent/internal/session"
 	shellagent "github.com/tursomari/machtiani/agent/internal/shell-agent"
+	"github.com/tursomari/machtiani/agent/internal/shellaction"
 	"github.com/tursomari/machtiani/agent/internal/ui"
 )
 
@@ -47,9 +49,11 @@ type attachProbe func(sessionID string) (bool, error)
 
 type attachDependencies struct {
 	readFile     attachRead
+	readActions  attachRead
 	probe        attachProbe
 	pollInterval time.Duration
 	quietGrace   time.Duration
+	noShellSteps bool
 }
 
 type multiString []string
@@ -280,7 +284,7 @@ func handleRunCommand(args []string) int {
 			fmt.Fprintln(os.Stderr, "Error: unexpected positional arguments for 'run' command. Use -p or --file to specify the prompt.")
 			return 2
 		}
-		return runAttach(cfg.SessionID, os.Stdout, os.Stderr)
+		return runAttachWithDisplay(cfg.SessionID, cfg.NoShellSteps, os.Stdout, os.Stderr)
 	}
 	if cfg.ContextLength != 0 && cfg.ContextLength < llm.MinimumContextLength {
 		fmt.Fprintf(os.Stderr, "Error: --context-length must be at least %d\n", llm.MinimumContextLength)
@@ -440,11 +444,17 @@ func handleRunCommand(args []string) int {
 }
 
 func runAttach(sessionID string, stdout, stderr io.Writer) int {
+	return runAttachWithDisplay(sessionID, false, stdout, stderr)
+}
+
+func runAttachWithDisplay(sessionID string, noShellSteps bool, stdout, stderr io.Writer) int {
 	return runAttachWithDependencies(sessionID, stdout, stderr, attachDependencies{
 		readFile:     os.ReadFile,
+		readActions:  os.ReadFile,
 		probe:        session.IsSessionActive,
 		pollInterval: attachPollInterval,
 		quietGrace:   attachQuietGrace,
+		noShellSteps: noShellSteps,
 	})
 }
 
@@ -456,6 +466,9 @@ func runAttachWithDependencies(sessionID string, stdout, stderr io.Writer, deps 
 	}
 	if deps.readFile == nil {
 		deps.readFile = os.ReadFile
+	}
+	if deps.readActions == nil {
+		deps.readActions = os.ReadFile
 	}
 	if deps.probe == nil {
 		deps.probe = session.IsSessionActive
@@ -482,7 +495,20 @@ func runAttachWithDependencies(sessionID string, stdout, stderr io.Writer, deps 
 		fmt.Fprintln(stderr, "Error:", err)
 		return 1
 	}
-	replay, err := conversation.RenderReplay(conv)
+	var initialActions []conversation.ShellActionRecord
+	lastActionSequence := map[int]int64{}
+	if !deps.noShellSteps {
+		initialActions, err = readAttachShellActions(conv, deps.readActions)
+		if err != nil {
+			fmt.Fprintln(stderr, "Error:", err)
+			return 1
+		}
+		rememberAttachActionSequences(lastActionSequence, initialActions)
+	}
+	replay, err := conversation.RenderReplayWithOptions(conv, conversation.ReplayOptions{
+		NoShellSteps: deps.noShellSteps,
+		ShellActions: initialActions,
+	})
 	if err != nil {
 		fmt.Fprintln(stderr, "Error:", err)
 		return 1
@@ -519,7 +545,19 @@ func runAttachWithDependencies(sessionID string, stdout, stderr io.Writer, deps 
 		}
 
 		newMessages := conversation.IdentifyNewMessages(previous, next.Messages)
-		delta, err := conversation.RenderReplayDelta(next, previous)
+		var newActions []conversation.ShellActionRecord
+		if !deps.noShellSteps {
+			actions, actionsErr := readAttachShellActions(next, deps.readActions)
+			if actionsErr != nil {
+				fmt.Fprintln(stderr, "Error:", actionsErr)
+				return 1
+			}
+			newActions = filterNewAttachActions(actions, lastActionSequence)
+		}
+		delta, err := conversation.RenderReplayDeltaWithOptions(next, previous, conversation.ReplayOptions{
+			NoShellSteps: deps.noShellSteps,
+			ShellActions: newActions,
+		})
 		if err != nil {
 			fmt.Fprintln(stderr, "Error:", err)
 			return 1
@@ -530,7 +568,7 @@ func runAttachWithDependencies(sessionID string, stdout, stderr io.Writer, deps 
 				return 1
 			}
 		}
-		if len(newMessages) > 0 {
+		if len(newMessages) > 0 || len(newActions) > 0 {
 			lastContent = now
 		}
 		if len(next.Messages) >= len(previous) {
@@ -555,6 +593,109 @@ func runAttachWithDependencies(sessionID string, stdout, stderr io.Writer, deps 
 		}
 	}
 	return 0
+}
+
+func readAttachShellActions(conv *conversation.Conversation, readFile attachRead) ([]conversation.ShellActionRecord, error) {
+	paths, err := attachShellActionPaths(conv)
+	if err != nil {
+		return nil, err
+	}
+	var records []conversation.ShellActionRecord
+	for turn, path := range paths {
+		data, readErr := readFile(path)
+		if os.IsNotExist(readErr) {
+			continue
+		}
+		if readErr != nil {
+			return nil, fmt.Errorf("read shell actions for turn %d: %w", turn, readErr)
+		}
+		parsed, parseErr := shellaction.ParseJournal(data)
+		if parseErr != nil {
+			return nil, fmt.Errorf("parse shell actions for turn %d: %w", turn, parseErr)
+		}
+		records = append(records, parsed...)
+	}
+	return records, nil
+}
+
+func attachShellActionPaths(conv *conversation.Conversation) (map[int]string, error) {
+	paths := map[int]string{}
+	if conv == nil {
+		return paths, nil
+	}
+	for _, message := range conv.Messages {
+		if turn, ok := conversation.MessageTurn(message); ok {
+			path, err := artifacts.ShellAgentActionsPath(conv.SessionID, turn)
+			if err != nil {
+				return nil, err
+			}
+			paths[turn] = path
+		}
+		if trajectoryPath, ok := attachMetadataString(message.Metadata, "shell_agent_trajectory_path"); ok {
+			if turn, ok := shellAgentTurnFromPath(trajectoryPath); ok {
+				paths[turn] = filepath.Join(filepath.Dir(trajectoryPath), "actions.jsonl")
+			}
+		}
+		if shellSessionID, ok := attachMetadataString(message.Metadata, "shell_agent_session_id"); ok {
+			if turn, ok := shellAgentTurnFromSessionID(shellSessionID); ok {
+				path, err := artifacts.ShellAgentActionsPath(conv.SessionID, turn)
+				if err != nil {
+					return nil, err
+				}
+				paths[turn] = path
+			}
+		}
+	}
+	if trajectoryPath := strings.TrimSpace(conv.ShellAgentTrajectoryPath); trajectoryPath != "" {
+		if turn, ok := shellAgentTurnFromPath(trajectoryPath); ok {
+			paths[turn] = filepath.Join(filepath.Dir(trajectoryPath), "actions.jsonl")
+		}
+	}
+	return paths, nil
+}
+
+func attachMetadataString(metadata map[string]any, key string) (string, bool) {
+	if metadata == nil {
+		return "", false
+	}
+	value, ok := metadata[key].(string)
+	value = strings.TrimSpace(value)
+	return value, ok && value != ""
+}
+
+func shellAgentTurnFromPath(path string) (int, bool) {
+	turn, err := strconv.Atoi(filepath.Base(filepath.Dir(strings.TrimSpace(path))))
+	return turn, err == nil && turn >= 0
+}
+
+func shellAgentTurnFromSessionID(sessionID string) (int, bool) {
+	const marker = "/shell-agent/"
+	index := strings.LastIndex(sessionID, marker)
+	if index < 0 {
+		return 0, false
+	}
+	turn, err := strconv.Atoi(strings.Trim(strings.TrimSpace(sessionID[index+len(marker):]), "/"))
+	return turn, err == nil && turn >= 0
+}
+
+func filterNewAttachActions(records []conversation.ShellActionRecord, last map[int]int64) []conversation.ShellActionRecord {
+	newRecords := make([]conversation.ShellActionRecord, 0, len(records))
+	for _, record := range records {
+		if record.Sequence <= last[record.Turn] {
+			continue
+		}
+		newRecords = append(newRecords, record)
+	}
+	rememberAttachActionSequences(last, newRecords)
+	return newRecords
+}
+
+func rememberAttachActionSequences(last map[int]int64, records []conversation.ShellActionRecord) {
+	for _, record := range records {
+		if record.Sequence > last[record.Turn] {
+			last[record.Turn] = record.Sequence
+		}
+	}
 }
 
 func changedSessionSelectorFlags(fs *pflag.FlagSet) []string {
