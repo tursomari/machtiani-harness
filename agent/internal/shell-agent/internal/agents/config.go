@@ -7,6 +7,7 @@ import (
 
 	"github.com/tursomari/machtiani/agent/internal/shell-agent/internal/run"
 	"github.com/tursomari/machtiani/agent/internal/shell-agent/pkg/minisweagent"
+	"github.com/tursomari/machtiani/agent/internal/shellbridge"
 )
 
 // AgentRunConfig holds immutable configuration for an agent run.
@@ -29,6 +30,7 @@ type AgentRunConfig struct {
 	// deliberately not exposed through user configuration or CLI flags.
 	CommandSupervisorLogPath string
 	CommandReviewer          CommandReviewer
+	ActionObserver           func(shellbridge.ActionMessage)
 	Clock                    CommandClock
 	AnswerTag                string
 	CommandTag               string
@@ -267,6 +269,14 @@ func WithPlannerTurn(turn int) DefaultAgentOption {
 func WithEnforceEarlyCommands(enforce bool) DefaultAgentOption {
 	return func(a *DefaultAgent) {
 		a.RunConfig.EnforceEarlyCommands = enforce
+	}
+}
+
+// WithActionObserver installs a synchronous observer for command
+// announcements. The observer runs after announcement and before execution.
+func WithActionObserver(observer func(shellbridge.ActionMessage)) DefaultAgentOption {
+	return func(a *DefaultAgent) {
+		a.RunConfig.ActionObserver = observer
 	}
 }
 

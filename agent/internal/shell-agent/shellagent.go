@@ -21,6 +21,7 @@ import (
 	shellmodels "github.com/tursomari/machtiani/agent/internal/shell-agent/internal/models"
 	"github.com/tursomari/machtiani/agent/internal/shell-agent/internal/run"
 	"github.com/tursomari/machtiani/agent/internal/shell-agent/pkg/minisweagent"
+	"github.com/tursomari/machtiani/agent/internal/shellbridge"
 )
 
 // Request carries the fully assembled message array and configuration
@@ -119,6 +120,10 @@ type Request struct {
 	// filepath.Join(baseDir, "trajectory.json") instead of using
 	// artifacts.ShellAgentTrajectoryPath.
 	TrajectoryBaseDir string `json:"trajectory_base_dir"`
+
+	// ActionObserver receives each command announcement synchronously after it
+	// is emitted and before command execution starts.
+	ActionObserver func(shellbridge.ActionMessage) `json:"-"`
 }
 
 // Result captures the outcome of a shell-agent run.
@@ -159,6 +164,7 @@ func Run(ctx context.Context, req Request) (Result, error) {
 		agents.WithEnforceEarlyCommands(req.EnforceEarlyCommands),
 		agents.WithAnswerTag(req.AnswerTag),
 		agents.WithCommandTag(req.CommandTag),
+		agents.WithActionObserver(req.ActionObserver),
 		func() agents.DefaultAgentOption {
 			if lmm, ok := req.Model.(*shellmodels.LLMAdapterModel); ok {
 				return agents.WithNewModel(func() (minisweagent.Model, error) {

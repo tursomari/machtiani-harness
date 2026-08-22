@@ -101,7 +101,13 @@ func (j *shellActionJournal) Append(action shellbridge.ActionMessage) error {
 	return nil
 }
 
-func interceptShellAction(ctx context.Context, line string, diagnostics io.Writer, journal *shellActionJournal) bool {
+func observeShellAction(action shellbridge.ActionMessage, diagnostics io.Writer, journal *shellActionJournal) {
+	if err := journal.Append(action); err != nil {
+		fmt.Fprintf(diagnostics, "intercept: append shell action journal: %v\n", err)
+	}
+}
+
+func interceptShellAction(ctx context.Context, line string, diagnostics io.Writer) bool {
 	if !strings.HasPrefix(line, shellbridge.ActionPrefix) {
 		return false
 	}
@@ -110,9 +116,6 @@ func interceptShellAction(ctx context.Context, line string, diagnostics io.Write
 	if err := json.Unmarshal([]byte(rest), &action); err != nil {
 		fmt.Fprintf(diagnostics, "intercept: parse action json: %v\n", err)
 		return true
-	}
-	if err := journal.Append(action); err != nil {
-		fmt.Fprintf(diagnostics, "intercept: append shell action journal: %v\n", err)
 	}
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(rest), &payload); err != nil {
@@ -134,7 +137,14 @@ func runShellAgentWithInterception(ctx context.Context, req shellagent.Request) 
 	original := os.Stdout
 	journal, journalErr := newShellActionJournal(req)
 	if journalErr != nil {
-		fmt.Fprintf(original, "intercept: initialize shell action journal: %v\n", journalErr)
+		fmt.Fprintf(os.Stderr, "intercept: initialize shell action journal: %v\n", journalErr)
+	}
+	existingObserver := req.ActionObserver
+	req.ActionObserver = func(action shellbridge.ActionMessage) {
+		if existingObserver != nil {
+			existingObserver(action)
+		}
+		observeShellAction(action, os.Stderr, journal)
 	}
 
 	r, w, err := os.Pipe()
@@ -154,7 +164,7 @@ func runShellAgentWithInterception(ctx context.Context, req shellagent.Request) 
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		for scanner.Scan() {
 			line := scanner.Text()
-			if interceptShellAction(ctx, line, os.Stderr, journal) {
+			if interceptShellAction(ctx, line, os.Stderr) {
 				continue
 			}
 			fmt.Fprintf(original, "%s\n", line)

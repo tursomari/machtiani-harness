@@ -505,14 +505,18 @@ func (a *DefaultAgent) translateAndExecute(ctx context.Context, resp minisweagen
 	}
 
 	a.State.commandsExecuted++
-	emitShellAction(shellbridge.ActionMessage{
+	action := shellbridge.ActionMessage{
 		Description:      strings.TrimSpace(resp.Content),
 		Command:          command,
 		ModelCallsUsed:   a.RunConfig.Model.NCalls(),
 		StepLimit:        a.RunConfig.MaxSteps,
 		RemainingSteps:   max(a.RunConfig.MaxSteps-a.RunConfig.Model.NCalls(), 0),
 		CommandsExecuted: a.State.commandsExecuted,
-	})
+	}
+	emitShellAction(action)
+	if a.RunConfig.ActionObserver != nil {
+		a.RunConfig.ActionObserver(action)
+	}
 
 	timeout := a.execTimeout()
 	result, execErr := a.executeCommand(ctx, command, timeout)
