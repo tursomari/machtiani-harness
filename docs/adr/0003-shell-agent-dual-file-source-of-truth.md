@@ -35,7 +35,7 @@ The whole-file save should be hardened to use an atomic same-directory replaceme
 
 Add `actions.jsonl` beside `trajectory.json` in every shell-agent turn directory. It is an always-on, append-only journal of command-start announcements.
 
-The existing announcement occurs in `agent/internal/shell-agent/internal/agents/loop.go` after command parsing and validation and before `executeCommand`. The stdout interceptor persists each announcement as it receives it. A record contains:
+The existing announcement occurs in `agent/internal/shell-agent/internal/agents/loop.go` after command parsing and validation and before `executeCommand`. The driver installs a synchronous action observer; the loop invokes it after emitting the stdout announcement and before starting command execution. This guarantees that the journal append attempt happens at the command-start boundary rather than racing execution in the stdout interceptor goroutine. A record contains:
 
 - schema version, shell-agent session identifier, planner turn, and a monotonically increasing per-turn sequence;
 - the natural-language description and resolved command; and
