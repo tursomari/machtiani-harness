@@ -1,6 +1,7 @@
 package conversation
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -160,5 +161,107 @@ func TestRenderReplayUnknownMessageType(t *testing.T) {
 func TestRenderReplayNilConversation(t *testing.T) {
 	if _, err := RenderReplay(nil); err == nil {
 		t.Fatal("RenderReplay(nil) error = nil, want error")
+	}
+}
+
+func TestRenderReplayWithShellActions(t *testing.T) {
+	conv := New("sess-replay-actions", "Show announced shell steps")
+	conv.AddMessage("assistant", "Inspect the implementation.", map[string]any{
+		"type": messageTypeWorkRequest,
+		"turn": 2,
+	})
+	conv.AddMessage("assistant", "Inspection complete.", map[string]any{
+		"type": messageTypeWorkResult,
+		"turn": 2,
+	})
+	actions := []ShellActionRecord{
+		{Version: 1, Turn: 2, Sequence: 2, Description: "Run the focused tests", Command: "go test ./internal/conversation", Step: 2, StepLimit: 8, CommandsExecuted: 2, RemainingSteps: 6},
+		{Version: 1, Turn: 2, Sequence: 1, Description: "Inspect the renderer", Command: "sed -n '1,200p' replay_render.go", Step: 1, StepLimit: 8, CommandsExecuted: 1, RemainingSteps: 7},
+		{Version: 1, Turn: 2, Sequence: 1, Description: "duplicate", Command: "must-not-render"},
+	}
+
+	got, err := RenderReplayWithOptions(conv, ReplayOptions{ShellActions: actions})
+	if err != nil {
+		t.Fatalf("RenderReplayWithOptions() error = %v", err)
+	}
+	for _, want := range []string{
+		"── SHELL STEPS ──",
+		"Step 1 of 8",
+		"Inspect the renderer",
+		"$ sed -n '1,200p' replay_render.go",
+		"[commands executed: 1 · remaining steps: 7]",
+		"Step 2 of 8",
+		"$ go test ./internal/conversation",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("render missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "must-not-render") {
+		t.Fatalf("duplicate sequence rendered:\n%s", got)
+	}
+	if first, second := strings.Index(got, "$ sed"), strings.Index(got, "$ go test"); first < 0 || second < 0 || first >= second {
+		t.Fatalf("actions not rendered in sequence order:\n%s", got)
+	}
+	if question, shell, answer := strings.Index(got, "── QUESTION ──"), strings.Index(got, "── SHELL STEPS ──"), strings.Index(got, "── ANSWER ──"); question < 0 || shell <= question || answer <= shell {
+		t.Fatalf("shell steps not rendered between question and answer:\n%s", got)
+	}
+}
+
+func TestRenderReplayShellActionOptionsPreserveLegacyOutput(t *testing.T) {
+	conv := New("sess-replay-actions-compat", "Preserve replay output")
+	conv.AddMessage("assistant", "Question", map[string]any{"type": messageTypeWorkRequest, "turn": 1})
+	conv.AddMessage("assistant", "Answer", map[string]any{"type": messageTypeWorkResult, "turn": 1})
+	legacy, err := RenderReplay(conv)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	withoutActions, err := RenderReplayWithOptions(conv, ReplayOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withoutActions != legacy {
+		t.Fatalf("zero-action replay changed:\nlegacy: %q\nnew:    %q", legacy, withoutActions)
+	}
+
+	suppressed, err := RenderReplayWithOptions(conv, ReplayOptions{
+		NoShellSteps: true,
+		ShellActions: []ShellActionRecord{{Turn: 1, Sequence: 1, Command: "echo hidden"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if suppressed != legacy {
+		t.Fatalf("NoShellSteps replay changed legacy output:\nlegacy: %q\nnew:    %q", legacy, suppressed)
+	}
+}
+
+func TestRenderReplayDeltaWithLateShellActions(t *testing.T) {
+	conv := New("sess-replay-actions-delta", "Tail shell actions")
+	conv.AddMessage("assistant", "Question", map[string]any{"type": messageTypeWorkRequest, "turn": 3})
+	previous := append([]Message(nil), conv.Messages...)
+	actions := []ShellActionRecord{{Turn: 3, Sequence: 4, Description: "Late action", Command: "git status"}}
+
+	got, err := RenderReplayDeltaWithOptions(conv, previous, ReplayOptions{ShellActions: actions})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"──── TURN 3 SHELL STEPS ────", "Late action", "$ git status"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("late action delta missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "Question") || strings.Contains(got, "── GOAL ──") {
+		t.Fatalf("late action delta repeated conversation history:\n%s", got)
+	}
+
+	ordered := normalizeShellActions([]ShellActionRecord{
+		{Turn: 3, Sequence: 2, Command: "second"},
+		{Turn: 2, Sequence: 3, Command: "third"},
+		{Turn: 2, Sequence: 1, Command: "first"},
+	})
+	if gotOrder := []string{ordered[0].Command, ordered[1].Command, ordered[2].Command}; !reflect.DeepEqual(gotOrder, []string{"first", "third", "second"}) {
+		t.Fatalf("normalized order = %#v", gotOrder)
 	}
 }

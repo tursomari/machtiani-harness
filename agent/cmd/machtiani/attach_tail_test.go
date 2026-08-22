@@ -12,6 +12,7 @@ import (
 
 	"github.com/tursomari/machtiani/agent/internal/conversation"
 	"github.com/tursomari/machtiani/agent/internal/core/artifacts"
+	"github.com/tursomari/machtiani/agent/internal/shellaction"
 )
 
 func TestRunAttachTailsRunningSessionWithoutDuplicates(t *testing.T) {
@@ -155,6 +156,109 @@ func TestRunAttachReportsMidLoopFailures(t *testing.T) {
 	}
 }
 
+func TestRunAttachRendersPersistedShellActionsByDefault(t *testing.T) {
+	setupSessionArchiveCommandTest(t)
+	sessionID := "agent-attach-actions-finished"
+	conv := conversation.New(sessionID, "Replay persisted actions")
+	addAttachTailTurn(conv, 1)
+	writeAttachTailConversation(t, conv)
+	writeAttachActions(t, sessionID, 1,
+		shellaction.Record{Version: 1, SessionID: sessionID, Turn: 1, Sequence: 2, Description: "Run tests", Command: "go test ./..."},
+		shellaction.Record{Version: 1, SessionID: sessionID, Turn: 1, Sequence: 1, Description: "Inspect status", Command: "git status"},
+	)
+
+	var stdout, stderr strings.Builder
+	code := runAttachWithDependencies(sessionID, &stdout, &stderr, attachDependencies{
+		readFile:     os.ReadFile,
+		readActions:  os.ReadFile,
+		probe:        func(string) (bool, error) { return false, nil },
+		pollInterval: time.Millisecond,
+		quietGrace:   3 * time.Millisecond,
+	})
+	if code != 0 || stderr.Len() != 0 {
+		t.Fatalf("runAttachWithDependencies() = %d, stderr=%q", code, stderr.String())
+	}
+	output := stdout.String()
+	for _, want := range []string{"── SHELL STEPS ──", "$ git status", "$ go test ./..."} {
+		if got := strings.Count(output, want); got != 1 {
+			t.Errorf("stdout count for %q = %d, want 1:\n%s", want, got, output)
+		}
+	}
+	if strings.Index(output, "$ git status") >= strings.Index(output, "$ go test ./...") {
+		t.Fatalf("actions not rendered in sequence order:\n%s", output)
+	}
+}
+
+func TestRunAttachNoShellStepsDoesNotReadJournal(t *testing.T) {
+	setupSessionArchiveCommandTest(t)
+	sessionID := "agent-attach-actions-hidden"
+	conv := conversation.New(sessionID, "Hide persisted actions")
+	addAttachTailTurn(conv, 1)
+	writeAttachTailConversation(t, conv)
+	legacy, err := conversation.RenderReplay(conv)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr strings.Builder
+	code := runAttachWithDependencies(sessionID, &stdout, &stderr, attachDependencies{
+		readFile: os.ReadFile,
+		readActions: func(string) ([]byte, error) {
+			t.Fatal("actions journal read with --no-shell-steps")
+			return nil, nil
+		},
+		probe:        func(string) (bool, error) { return false, nil },
+		pollInterval: time.Millisecond,
+		quietGrace:   3 * time.Millisecond,
+		noShellSteps: true,
+	})
+	if code != 0 || stderr.Len() != 0 {
+		t.Fatalf("runAttachWithDependencies() = %d, stderr=%q", code, stderr.String())
+	}
+	if got := strings.TrimSuffix(stdout.String(), "\n"); got != legacy {
+		t.Fatalf("suppressed output changed legacy replay:\nlegacy: %q\ngot:    %q", legacy, got)
+	}
+}
+
+func TestRunAttachTailsLateShellActionAndExtendsQuietGrace(t *testing.T) {
+	setupSessionArchiveCommandTest(t)
+	sessionID := "agent-attach-actions-live"
+	conv := conversation.New(sessionID, "Tail late actions")
+	addAttachTailTurn(conv, 1)
+	writeAttachTailConversation(t, conv)
+
+	writerDone := make(chan error, 1)
+	go func() {
+		time.Sleep(15 * time.Millisecond)
+		writerDone <- appendAttachAction(sessionID, 1, shellaction.Record{
+			Version: 1, SessionID: sessionID, Turn: 1, Sequence: 1,
+			Description: "Late announced action", Command: "printf late",
+		})
+	}()
+
+	started := time.Now()
+	var stdout, stderr strings.Builder
+	code := runAttachWithDependencies(sessionID, &stdout, &stderr, attachDependencies{
+		readFile:     os.ReadFile,
+		readActions:  os.ReadFile,
+		probe:        func(string) (bool, error) { return false, nil },
+		pollInterval: 2 * time.Millisecond,
+		quietGrace:   30 * time.Millisecond,
+	})
+	if err := <-writerDone; err != nil {
+		t.Fatal(err)
+	}
+	if code != 0 || stderr.Len() != 0 {
+		t.Fatalf("runAttachWithDependencies() = %d, stderr=%q", code, stderr.String())
+	}
+	if got := strings.Count(stdout.String(), "$ printf late"); got != 1 {
+		t.Fatalf("late action count = %d, want 1:\n%s", got, stdout.String())
+	}
+	if elapsed := time.Since(started); elapsed < 40*time.Millisecond {
+		t.Fatalf("attach exited after %s; late action did not extend quiet grace", elapsed)
+	}
+}
+
 func addAttachTailTurn(conv *conversation.Conversation, turn int) {
 	conv.AddMessage("assistant", fmt.Sprintf("Live question %d", turn), map[string]any{
 		"type":     "work_request",
@@ -201,4 +305,44 @@ func publishAttachTailConversation(path string, conv *conversation.Conversation)
 		return err
 	}
 	return os.Rename(tmpPath, path)
+}
+
+func writeAttachActions(t *testing.T, sessionID string, turn int, records ...shellaction.Record) string {
+	t.Helper()
+	path, err := artifacts.ShellAgentTrajectoryPath(sessionID, turn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path = filepath.Join(filepath.Dir(path), "actions.jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, record := range records {
+		if err := appendAttachAction(sessionID, turn, record); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return path
+}
+
+func appendAttachAction(sessionID string, turn int, record shellaction.Record) error {
+	trajectoryPath, err := artifacts.ShellAgentTrajectoryPath(sessionID, turn)
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(filepath.Dir(trajectoryPath), "actions.jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	data, err := shellaction.EncodeRecord(record)
+	if err != nil {
+		return err
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	_, err = file.Write(data)
+	return err
 }

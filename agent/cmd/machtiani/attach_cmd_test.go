@@ -12,6 +12,7 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/conversation"
 	"github.com/tursomari/machtiani/agent/internal/core/artifacts"
 	"github.com/tursomari/machtiani/agent/internal/session"
+	"github.com/tursomari/machtiani/agent/internal/shellaction"
 )
 
 func TestAttachFinishedSessionReplay(t *testing.T) {
@@ -55,6 +56,29 @@ func TestAttachFinishedSessionReplay(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(scratchDir, "session.lock")); !os.IsNotExist(err) {
 		t.Fatalf("attach created session.lock: %v", err)
+	}
+}
+
+func TestAttachNoShellStepsPreservesLegacyReplay(t *testing.T) {
+	setupSessionArchiveCommandTest(t)
+	prepareTestConfig(t)
+	sessionID := "agent-attach-no-shell-steps"
+	writeAttachCommandConversation(t, sessionID)
+	writeAttachActions(t, sessionID, 1, shellaction.Record{
+		Version: 1, SessionID: sessionID, Turn: 1, Sequence: 1,
+		Description: "This must be hidden", Command: "echo hidden",
+	})
+
+	stdout, stderr := captureOutput(func() {
+		if code := handleRunCommand([]string{"--attach", "--resume", sessionID, "--no-shell-steps"}); code != 0 {
+			t.Fatalf("handleRunCommand() exit = %d, want 0", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("stderr = %q, want empty", stderr)
+	}
+	if strings.Contains(stdout, "SHELL STEPS") || strings.Contains(stdout, "echo hidden") {
+		t.Fatalf("--no-shell-steps rendered an action:\n%s", stdout)
 	}
 }
 
