@@ -1929,6 +1929,204 @@ run_menu_flow_case() {
   fi
 }
 
+run_attach_shell_steps_case() (
+  local case_id="attach-shell-steps"
+  local session_id="test-attach-shell-steps-$(date +%s)"
+  local sessions_root="${MACHTIANI_TEST_SESSIONS_ROOT:-$REPO_ROOT/.machtiani/sessions}"
+  local store_root="$(dirname "$sessions_root")"
+  local session_dir="$sessions_root/$session_id"
+  local conversation_file="$session_dir/artifacts/conversation.json"
+  local actions_file="$session_dir/shell-agent/1/actions.jsonl"
+  local scratch_dir="$store_root/tmp/$session_id"
+  local lock_file="$scratch_dir/session.lock"
+  local out_dir="$(pwd)/test-out-${session_id}"
+  local default_stdout="$out_dir/default-stdout.txt"
+  local default_stderr="$out_dir/default-stderr.txt"
+  local hidden_stdout="$out_dir/hidden-stdout.txt"
+  local hidden_stderr="$out_dir/hidden-stderr.txt"
+  local live_stdout="$out_dir/live-stdout.txt"
+  local live_stderr="$out_dir/live-stderr.txt"
+  local lock_ready="$out_dir/lock-ready"
+  local lock_release="$out_dir/lock-release"
+  local LOCK_PID=""
+  local ATTACH_PID=""
+  local i=0
+
+  mkdir -p "$(dirname "$conversation_file")" "$(dirname "$actions_file")" "$scratch_dir" "$out_dir"
+  "$PYTHON_BIN" - "$conversation_file" "$session_id" "$session_dir/shell-agent/1/trajectory.json" <<'PY'
+import datetime
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+session_id = sys.argv[2]
+trajectory_path = sys.argv[3]
+now = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+conversation = {
+    "session_id": session_id,
+    "original_goal": "Exercise attach shell-step display",
+    "messages": [
+        {"role": "user", "content": "Exercise attach shell-step display", "timestamp": now},
+        {
+            "role": "assistant",
+            "content": "Inspect the fixture.",
+            "metadata": {
+                "type": "work_request",
+                "turn": 1,
+                "shell_agent_session_id": f"{session_id}/shell-agent/1",
+                "shell_agent_trajectory_path": trajectory_path,
+            },
+            "timestamp": now,
+        },
+        {
+            "role": "assistant",
+            "content": "Fixture inspected.",
+            "metadata": {"type": "work_result", "turn": 1},
+            "timestamp": now,
+        },
+    ],
+    "created_at": now,
+    "updated_at": now,
+    "shell_agent_resumable": False,
+    "shell_agent_trajectory_path": trajectory_path,
+    "turns_completed": 1,
+    "status": "completed",
+}
+path.write_text(json.dumps(conversation), encoding="utf-8")
+PY
+  printf '%s\n' \
+    "{\"v\":1,\"session_id\":\"$session_id\",\"turn\":1,\"seq\":1,\"description\":\"Inspect status\",\"command\":\"git status --short\",\"step\":1,\"step_limit\":4,\"remaining_steps\":3,\"commands_executed\":1}" \
+    >"$actions_file"
+
+  start_fixture_lock() {
+    rm -f "$lock_ready"
+    : >"$lock_release"
+    "$PYTHON_BIN" - "$lock_file" "$lock_ready" "$lock_release" <<'PY' &
+import fcntl
+import pathlib
+import sys
+import time
+
+lock_path = pathlib.Path(sys.argv[1])
+ready_path = pathlib.Path(sys.argv[2])
+release_path = pathlib.Path(sys.argv[3])
+with lock_path.open("w", encoding="utf-8") as lock:
+    fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+    ready_path.touch()
+    while release_path.exists():
+        time.sleep(0.05)
+PY
+    LOCK_PID=$!
+    for ((i = 0; i < 50; i++)); do
+      [[ -e "$lock_ready" ]] && return 0
+      sleep 0.1
+    done
+    echo "ERROR: fixture lock did not become ready for $case_id" >&2
+    return 1
+  }
+
+  release_fixture_lock() {
+    rm -f "$lock_release"
+    if [[ -n "$LOCK_PID" ]]; then
+      wait "$LOCK_PID"
+      LOCK_PID=""
+    fi
+  }
+
+  cleanup_attach_shell_steps() {
+    local rc=$?
+    trap - EXIT
+    set +e
+    rm -f "$lock_release"
+    if [[ -n "$ATTACH_PID" ]] && kill -0 "$ATTACH_PID" 2>/dev/null; then
+      kill "$ATTACH_PID" 2>/dev/null || true
+      wait "$ATTACH_PID" 2>/dev/null || true
+    fi
+    if [[ -n "$LOCK_PID" ]]; then
+      wait "$LOCK_PID" 2>/dev/null || true
+    fi
+    if [[ $rc -ne 0 ]]; then
+      for file in "$default_stdout" "$default_stderr" "$hidden_stdout" "$hidden_stderr" "$live_stdout" "$live_stderr"; do
+        if [[ -e "$file" ]]; then
+          echo "==> $file <==" >&2
+          tail -n 80 "$file" >&2 || true
+        fi
+      done
+    fi
+    exit "$rc"
+  }
+  trap cleanup_attach_shell_steps EXIT
+
+  start_fixture_lock
+  "$MACHTIANI_EXE" run --attach --resume "$session_id" >"$default_stdout" 2>"$default_stderr" &
+  ATTACH_PID=$!
+  for ((i = 0; i < 50; i++)); do
+    grep -qF '$ git status --short' "$default_stdout" 2>/dev/null && break
+    sleep 0.1
+  done
+  if ! grep -qF '$ git status --short' "$default_stdout"; then
+    echo "ERROR: default attach did not render the seeded action" >&2
+    return 1
+  fi
+  release_fixture_lock
+  wait "$ATTACH_PID"
+  ATTACH_PID=""
+
+  start_fixture_lock
+  "$MACHTIANI_EXE" run --attach --resume "$session_id" --no-shell-steps >"$hidden_stdout" 2>"$hidden_stderr" &
+  ATTACH_PID=$!
+  for ((i = 0; i < 50; i++)); do
+    grep -qF 'Fixture inspected.' "$hidden_stdout" 2>/dev/null && break
+    sleep 0.1
+  done
+  if grep -qF '$ git status --short' "$hidden_stdout" || grep -qF 'SHELL STEPS' "$hidden_stdout"; then
+    echo "ERROR: --no-shell-steps rendered shell actions" >&2
+    return 1
+  fi
+  release_fixture_lock
+  wait "$ATTACH_PID"
+  ATTACH_PID=""
+
+  start_fixture_lock
+  "$MACHTIANI_EXE" run --attach --resume "$session_id" >"$live_stdout" 2>"$live_stderr" &
+  ATTACH_PID=$!
+  for ((i = 0; i < 50; i++)); do
+    grep -qF '$ git status --short' "$live_stdout" 2>/dev/null && break
+    sleep 0.1
+  done
+  printf '%s\n' \
+    "{\"v\":1,\"session_id\":\"$session_id\",\"turn\":1,\"seq\":2,\"description\":\"Run focused tests\",\"command\":\"go test ./internal/conversation\",\"step\":2,\"step_limit\":4,\"remaining_steps\":2,\"commands_executed\":2}" \
+    >>"$actions_file"
+  for ((i = 0; i < 50; i++)); do
+    grep -qF '$ go test ./internal/conversation' "$live_stdout" 2>/dev/null && break
+    sleep 0.1
+  done
+  if ! grep -qF '$ go test ./internal/conversation' "$live_stdout"; then
+    echo "ERROR: attach did not render the appended action" >&2
+    return 1
+  fi
+  release_fixture_lock
+  wait "$ATTACH_PID"
+  ATTACH_PID=""
+
+  for file in "$default_stderr" "$hidden_stderr" "$live_stderr"; do
+    if [[ -s "$file" ]]; then
+      echo "ERROR: attach wrote unexpected stderr: $file" >&2
+      return 1
+    fi
+  done
+  if [[ "$(grep -cF '$ git status --short' "$default_stdout")" -ne 1 ]] ||
+     [[ "$(grep -cF '$ git status --short' "$live_stdout")" -ne 1 ]] ||
+     [[ "$(grep -cF '$ go test ./internal/conversation' "$live_stdout")" -ne 1 ]]; then
+    echo "ERROR: attach rendered a shell action more than once" >&2
+    return 1
+  fi
+
+  trap - EXIT
+  echo "Passed: $case_id" >&2
+)
+
 run_attach_live_case() {
   local case_id="attach-live"
   local stub_dir="$TMP_ROOT/stub-${case_id}-$(date +%s)"
@@ -4703,6 +4901,7 @@ declare -A TESTS=(
   ["shell_agent_subcommand_live"]="run_shell_agent_subcommand_live_case"
   ["snippet_discovery_tightness_live"]="run_snippet_discovery_tightness_live_case"
   ["menu_flow_live"]="run_menu_flow_live_case"
+  ["attach_shell_steps"]="run_attach_shell_steps_case"
   ["attach_live"]="run_attach_live_case"
   ["mode_live"]="run_mode_live_case"
   ["file_discovery_live"]="run_file_discovery_live_case"
@@ -4760,6 +4959,7 @@ run_test_case "sync_footer" run_sync_footer_case
 run_test_case "discovery_turn_timeout" test_discovery_turn_timeout
 run_test_case "discovery_multiround_budget" test_discovery_multiround_budget
 run_test_case "mode_prompt_layers" run_mode_prompt_layers_case
+run_test_case "attach_shell_steps" run_attach_shell_steps_case
 run_test_case "attach_live" run_attach_live_case
 
 # Resume without mode: verify shell-agent system prompt survives
