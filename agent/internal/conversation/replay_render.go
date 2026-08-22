@@ -3,29 +3,55 @@ package conversation
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
+
+	"github.com/tursomari/machtiani/agent/internal/shellaction"
+	"github.com/tursomari/machtiani/agent/internal/ui"
 )
+
+// ShellActionRecord is an announced shell command available to replay
+// renderers. It aliases the journal protocol without adding filesystem access
+// to this package.
+type ShellActionRecord = shellaction.Record
+
+// ReplayOptions controls optional replay-only sections.
+type ReplayOptions struct {
+	NoShellSteps bool
+	ShellActions []ShellActionRecord
+}
 
 // RenderReplay renders a persisted conversation as deterministic plain text
 // for read-only terminal replay. It deliberately uses framing that is distinct
 // from the AsciiDoc transcript format.
 func RenderReplay(conv *Conversation) (string, error) {
+	return RenderReplayWithOptions(conv, ReplayOptions{})
+}
+
+// RenderReplayWithOptions renders a full replay with optional shell actions.
+func RenderReplayWithOptions(conv *Conversation, opts ReplayOptions) (string, error) {
 	if conv == nil {
 		return "", errors.New("conversation is nil")
 	}
-	return renderReplay(conv, conv.Messages, true, nil)
+	return renderReplay(conv, conv.Messages, true, nil, opts)
 }
 
 // RenderReplayDelta renders only message units appended after previous. Turn
 // headings already present in previous are omitted so successive atomic
 // publishes cannot repeat a partially published turn's framing.
 func RenderReplayDelta(conv *Conversation, previous []Message) (string, error) {
+	return RenderReplayDeltaWithOptions(conv, previous, ReplayOptions{})
+}
+
+// RenderReplayDeltaWithOptions renders appended messages and newly observed
+// shell actions without repeating prior turn framing.
+func RenderReplayDeltaWithOptions(conv *Conversation, previous []Message, opts ReplayOptions) (string, error) {
 	if conv == nil {
 		return "", errors.New("conversation is nil")
 	}
 
 	messages := IdentifyNewMessages(previous, conv.Messages)
-	if len(messages) == 0 {
+	if len(messages) == 0 && (opts.NoShellSteps || len(opts.ShellActions) == 0) {
 		return "", nil
 	}
 
@@ -38,10 +64,10 @@ func RenderReplayDelta(conv *Conversation, previous []Message) (string, error) {
 			}
 		}
 	}
-	return renderReplay(conv, messages, false, knownTurns)
+	return renderReplay(conv, messages, false, knownTurns, opts)
 }
 
-func renderReplay(conv *Conversation, messages []Message, includeGoal bool, knownTurns map[int]struct{}) (string, error) {
+func renderReplay(conv *Conversation, messages []Message, includeGoal bool, knownTurns map[int]struct{}, opts ReplayOptions) (string, error) {
 
 	type renderEvent struct {
 		kind string
@@ -55,6 +81,7 @@ func renderReplay(conv *Conversation, messages []Message, includeGoal bool, know
 		decision  string
 		savedPath string
 		retrieved []string
+		actions   []ShellActionRecord
 		heading   bool
 	}
 
@@ -145,6 +172,25 @@ func renderReplay(conv *Conversation, messages []Message, includeGoal bool, know
 		}
 	}
 
+	actionOnly := map[int][]ShellActionRecord{}
+	if !opts.NoShellSteps {
+		for _, action := range normalizeShellActions(opts.ShellActions) {
+			if data, ok := turns[action.Turn]; ok {
+				data.actions = append(data.actions, action)
+				continue
+			}
+			if _, known := knownTurns[action.Turn]; known {
+				if len(actionOnly[action.Turn]) == 0 {
+					events = append(events, renderEvent{kind: "shell-actions", turn: action.Turn})
+				}
+				actionOnly[action.Turn] = append(actionOnly[action.Turn], action)
+				continue
+			}
+			data := addTurnEvent(action.Turn)
+			data.actions = append(data.actions, action)
+		}
+	}
+
 	var out strings.Builder
 	if includeGoal {
 		headerBody := replayHelperBody(renderHeader(conv.OriginalGoal), "= MCT-AGENT TRANSCRIPT", "== GOAL:")
@@ -155,8 +201,10 @@ func renderReplay(conv *Conversation, messages []Message, includeGoal bool, know
 		case "turn":
 			data := turns[event.turn]
 			if data != nil {
-				out.WriteString(renderReplayTurn(event.turn, data.question, data.savedPath, data.retrieved, data.answer, data.decision, data.heading))
+				out.WriteString(renderReplayTurn(event.turn, data.question, data.savedPath, data.retrieved, data.answer, data.decision, data.actions, data.heading))
 			}
+		case "shell-actions":
+			out.WriteString(renderReplayShellActions(event.turn, actionOnly[event.turn], true))
 		case "conclusion":
 			out.WriteString(renderReplayConclusion(event.text))
 		default:
@@ -167,7 +215,7 @@ func renderReplay(conv *Conversation, messages []Message, includeGoal bool, know
 	return strings.Trim(stripANSI(sanitize(out.String())), "\n"), nil
 }
 
-func renderReplayTurn(turn int, question, savedPath string, retrieved []string, answer, decision string, includeHeading bool) string {
+func renderReplayTurn(turn int, question, savedPath string, retrieved []string, answer, decision string, actions []ShellActionRecord, includeHeading bool) string {
 	var out strings.Builder
 	if includeHeading {
 		out.WriteString(replaySection(fmt.Sprintf("TURN %d", turn), "", true))
@@ -176,6 +224,9 @@ func renderReplayTurn(turn int, question, savedPath string, retrieved []string, 
 	questionBody := replayHelperBody(renderTurn(-1, question, "", nil, "", ""))
 	if strings.TrimSpace(questionBody) != "" {
 		out.WriteString(replaySection("QUESTION", questionBody, false))
+	}
+	if len(actions) > 0 {
+		out.WriteString(renderReplayShellActions(turn, actions, false))
 	}
 
 	artifactsBody := replayHelperBody(renderTurn(-1, "", savedPath, retrieved, "", ""))
@@ -194,6 +245,73 @@ func renderReplayTurn(turn int, question, savedPath string, retrieved []string, 
 	}
 
 	return out.String()
+}
+
+func renderReplayShellActions(turn int, actions []ShellActionRecord, continuation bool) string {
+	body := renderShellActionBody(actions)
+	if strings.TrimSpace(body) == "" {
+		return ""
+	}
+	if continuation {
+		return replaySection(fmt.Sprintf("TURN %d SHELL STEPS", turn), body, true)
+	}
+	return replaySection("SHELL STEPS", body, false)
+}
+
+func renderShellActionBody(actions []ShellActionRecord) string {
+	var out strings.Builder
+	for _, action := range normalizeShellActions(actions) {
+		if out.Len() > 0 {
+			out.WriteString("\n\n")
+		}
+		if action.Step > 0 && action.StepLimit > 0 {
+			fmt.Fprintf(&out, "Step %d of %d\n", action.Step, action.StepLimit)
+		} else if action.Step > 0 {
+			fmt.Fprintf(&out, "Step %d\n", action.Step)
+		}
+		description := ui.CleanActionDescription(action.Description)
+		command := strings.TrimSpace(action.Command)
+		if strings.EqualFold(strings.TrimSpace(description), command) {
+			description = ""
+		}
+		if description != "" {
+			out.WriteString(description)
+			out.WriteByte('\n')
+		}
+		if command != "" {
+			out.WriteString("$ ")
+			out.WriteString(command)
+			out.WriteByte('\n')
+		}
+		if action.CommandsExecuted > 0 || action.RemainingSteps > 0 {
+			fmt.Fprintf(&out, "[commands executed: %d · remaining steps: %d]\n", action.CommandsExecuted, action.RemainingSteps)
+		}
+	}
+	return strings.TrimRight(out.String(), "\n")
+}
+
+func normalizeShellActions(actions []ShellActionRecord) []ShellActionRecord {
+	ordered := append([]ShellActionRecord(nil), actions...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		if ordered[i].Turn != ordered[j].Turn {
+			return ordered[i].Turn < ordered[j].Turn
+		}
+		return ordered[i].Sequence < ordered[j].Sequence
+	})
+
+	seen := make(map[[2]int64]struct{}, len(ordered))
+	result := ordered[:0]
+	for _, action := range ordered {
+		if action.Sequence > 0 {
+			key := [2]int64{int64(action.Turn), action.Sequence}
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+		}
+		result = append(result, action)
+	}
+	return result
 }
 
 func renderReplayConclusion(block string) string {

@@ -681,6 +681,12 @@ func coalesceTurn(msg Message) int {
 	return -1
 }
 
+// MessageTurn returns the turn associated with a persisted message.
+func MessageTurn(msg Message) (int, bool) {
+	turn := coalesceTurn(msg)
+	return turn, turn >= 0
+}
+
 func coerceInt(val any) (int, bool) {
 	switch v := val.(type) {
 	case int:
