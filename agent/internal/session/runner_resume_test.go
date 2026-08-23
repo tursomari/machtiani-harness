@@ -308,7 +308,7 @@ func TestConversationJSONUpdatedAfterResume(t *testing.T) {
 		t.Fatalf("Marshal initial conversation: %v", err)
 	}
 
-	recorder := newConversationRecorder(nil, loadedState.SessionID, loadedState.Goal, convPath, true, loadedState, false)
+	recorder := newConversationRecorder(nil, loadedState.SessionID, loadedState.Goal, convPath, true, loadedState, false, false)
 
 	// Initialize the recorder (Load reads conversation.json from disk in resume mode).
 	if err := recorder.Load(); err != nil {

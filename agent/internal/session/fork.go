@@ -10,6 +10,7 @@ import (
 
 	"github.com/tursomari/machtiani/agent/internal/conversation"
 	"github.com/tursomari/machtiani/agent/internal/core/artifacts"
+	"github.com/tursomari/machtiani/agent/internal/magnifica"
 	"github.com/tursomari/machtiani/agent/internal/runner"
 	"github.com/tursomari/machtiani/agent/internal/sessionfiles"
 )
@@ -37,6 +38,20 @@ func ValidateForkDestinationID(destinationSessionID string) error {
 // files. The session state and conversation are updated to reflect the new
 // session ID.
 func ForkSession(sourceSessionID, destinationSessionID string) (string, error) {
+	return forkSession(sourceSessionID, destinationSessionID, ForkOptions{})
+}
+
+// ForkOptions controls optional state initialized specifically for the fork.
+type ForkOptions struct {
+	MagnificaHumanitas bool
+}
+
+// ForkSessionWithOptions creates a fork using the requested optional state.
+func ForkSessionWithOptions(sourceSessionID, destinationSessionID string, opts ForkOptions) (string, error) {
+	return forkSession(sourceSessionID, destinationSessionID, opts)
+}
+
+func forkSession(sourceSessionID, destinationSessionID string, opts ForkOptions) (string, error) {
 	destinationSessionID = strings.TrimSpace(destinationSessionID)
 	if destinationSessionID != "" {
 		if err := ValidateForkDestinationID(destinationSessionID); err != nil {
@@ -76,6 +91,22 @@ func ForkSession(sourceSessionID, destinationSessionID string) (string, error) {
 	if newSessionID == "" {
 		newSessionID = runner.GenerateSessionID()
 	}
+	var selectedMagnifica *conversation.MagnificaHumanitas
+	if opts.MagnificaHumanitas {
+		corpus, err := magnifica.LoadEmbedded()
+		if err != nil {
+			return "", fmt.Errorf("load Magnifica Humanitas quote corpus: %w", err)
+		}
+		selected, err := magnifica.SelectQuoteForSession(newSessionID, corpus)
+		if err != nil {
+			return "", fmt.Errorf("select Magnifica Humanitas quote: %w", err)
+		}
+		selectedMagnifica = &conversation.MagnificaHumanitas{
+			Paragraph: selected.Paragraph,
+			Line:      selected.Line,
+			Quote:     selected.Text,
+		}
+	}
 
 	srcDir, err := artifacts.SessionDirectory(sourceSessionID)
 	if err != nil {
@@ -114,6 +145,7 @@ func ForkSession(sourceSessionID, destinationSessionID string) (string, error) {
 	conv.Archived = false
 	conv.ForkedFrom = effectiveParent
 	conv.ForkedHash = canonicalHash
+	conv.MagnificaHumanitas = selectedMagnifica
 
 	marshaled, err := conv.Marshal()
 	if err != nil {

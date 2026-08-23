@@ -88,7 +88,7 @@ func TestTranscriptConversationConsistencyAfterCrash(t *testing.T) {
 	}
 	convPath := filepath.Join(convDir, "conversation.json")
 
-	rec1 := newConversationRecorder(tr1, sessionID, goal, convPath, false, nil, false)
+	rec1 := newConversationRecorder(tr1, sessionID, goal, convPath, false, nil, false, false)
 	if err := rec1.Load(); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -133,7 +133,7 @@ func TestTranscriptConversationConsistencyAfterCrash(t *testing.T) {
 		t.Fatalf("restore stale transcript: %v", err)
 	}
 
-	rec2 := newConversationRecorder(tr2, sessionID, goal, convPath, true, nil, false)
+	rec2 := newConversationRecorder(tr2, sessionID, goal, convPath, true, nil, false, false)
 	if err := rec2.Load(); err != nil {
 		t.Fatalf("Load for resume: %v", err)
 	}
@@ -246,8 +246,6 @@ func TestGoalPreservationDoubleResume(t *testing.T) {
 			reloaded2.Goal, newGoal2)
 	}
 }
-
-
 
 // TestStateTransitionValidation verifies the session state machine
 // transition rules using a table-driven test that covers all possible

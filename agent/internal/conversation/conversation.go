@@ -43,6 +43,22 @@ type Conversation struct {
 	TaskDescription          string                   `json:"task_description,omitempty"`
 	Status                   string                   `json:"status,omitempty"`
 	RuntimeStats             *RuntimeStatsState       `json:"runtime_stats,omitempty"`
+	MagnificaHumanitas       *MagnificaHumanitas      `json:"magnifica_humanitas,omitempty"`
+}
+
+// MagnificaHumanitas records the quote selected for a session.
+type MagnificaHumanitas struct {
+	Paragraph int    `json:"paragraph"`
+	Line      int    `json:"line"`
+	Quote     string `json:"quote"`
+}
+
+func (m *MagnificaHumanitas) Clone() *MagnificaHumanitas {
+	if m == nil {
+		return nil
+	}
+	clone := *m
+	return &clone
 }
 
 // ModelSelectionState records the effective model choices for a session.

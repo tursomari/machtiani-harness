@@ -100,6 +100,7 @@ func TestConversationRecorderSaveAtomicVisible(t *testing.T) {
 		false,
 		nil,
 		false,
+		false,
 	)
 	if err := recorder.Load(); err != nil {
 		t.Fatalf("Load: %v", err)

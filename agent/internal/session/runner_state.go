@@ -16,6 +16,7 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/conversation"
 	"github.com/tursomari/machtiani/agent/internal/core/artifacts"
 	"github.com/tursomari/machtiani/agent/internal/llm"
+	"github.com/tursomari/machtiani/agent/internal/magnifica"
 	"github.com/tursomari/machtiani/agent/internal/planner"
 	"github.com/tursomari/machtiani/agent/internal/presentation"
 	"github.com/tursomari/machtiani/agent/internal/runner"
@@ -456,7 +457,7 @@ func prepareTranscriptBootstrap(cfg legacyConfig, sessionID, conversationGoal, c
 	runState.repoRoot = repoRoot
 	runState.trajectoryWriter = trajectoryWriter
 
-	recorder := newConversationRecorder(tr, sessionID, conversationGoal, conversationPath, resumeMode, loadedState, hasNewInput)
+	recorder := newConversationRecorder(tr, sessionID, conversationGoal, conversationPath, resumeMode, loadedState, hasNewInput, cfg.magnificaHumanitas)
 	runState.recorder = recorder
 
 	if strings.TrimSpace(resumeTranscript) != "" {
@@ -600,11 +601,13 @@ type conversationRecorder struct {
 	shellAgentResumable      bool
 	hasNewInput              bool
 	resumedSession           bool
+	magnificaEnabled         bool
+	quoteSource              func() ([]magnifica.Quote, error)
 }
 
 var errConversationTranscriptDesync = errors.New("conversation transcript desync")
 
-func newConversationRecorder(tr *transcript.Transcript, sessionID, conversationGoal, conversationPath string, resumeMode bool, loadedState *SessionState, hasNewInput bool) *conversationRecorder {
+func newConversationRecorder(tr *transcript.Transcript, sessionID, conversationGoal, conversationPath string, resumeMode bool, loadedState *SessionState, hasNewInput, magnificaEnabled bool) *conversationRecorder {
 	c := &conversationRecorder{
 		tr:               tr,
 		sessionID:        sessionID,
@@ -613,6 +616,8 @@ func newConversationRecorder(tr *transcript.Transcript, sessionID, conversationG
 		resumeMode:       resumeMode,
 		loadedState:      loadedState,
 		hasNewInput:      hasNewInput,
+		magnificaEnabled: magnificaEnabled,
+		quoteSource:      magnifica.LoadEmbedded,
 	}
 	return c
 }
@@ -688,6 +693,25 @@ func (c *conversationRecorder) Load() error {
 	}
 	if c.conversation == nil {
 		c.conversation = conversation.New(c.sessionID, c.conversationGoal)
+	}
+	if c.magnificaEnabled && c.conversation.MagnificaHumanitas == nil {
+		quoteSource := c.quoteSource
+		if quoteSource == nil {
+			quoteSource = magnifica.LoadEmbedded
+		}
+		corpus, err := quoteSource()
+		if err != nil {
+			return fmt.Errorf("load Magnifica Humanitas quote corpus: %w", err)
+		}
+		selected, err := magnifica.SelectQuoteForSession(c.sessionID, corpus)
+		if err != nil {
+			return fmt.Errorf("select Magnifica Humanitas quote: %w", err)
+		}
+		c.conversation.MagnificaHumanitas = &conversation.MagnificaHumanitas{
+			Paragraph: selected.Paragraph,
+			Line:      selected.Line,
+			Quote:     selected.Text,
+		}
 	}
 	if strings.TrimSpace(c.conversation.OriginalGoal) == "" {
 		c.conversation.OriginalGoal = c.conversationGoal

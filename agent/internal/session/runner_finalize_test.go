@@ -25,7 +25,7 @@ func TestCompleteSessionPopulatesRawAnswer(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = tr.Close() })
 
-	recorder := newConversationRecorder(tr, "complete-raw-answer", "Goal", "", false, nil, false)
+	recorder := newConversationRecorder(tr, "complete-raw-answer", "Goal", "", false, nil, false, false)
 	if err := recorder.Load(); err != nil {
 		t.Fatalf("Load: %v", err)
 	}

@@ -34,6 +34,7 @@ type SessionState struct {
 	AnswerTag                string                                `json:"answer_tag,omitempty"`
 	CommandTag               string                                `json:"command_tag,omitempty"`
 	ModelSelection           *conversation.ModelSelectionState     `json:"model_selection,omitempty"`
+	MagnificaHumanitas       *conversation.MagnificaHumanitas      `json:"magnifica_humanitas,omitempty"`
 }
 
 type SessionListMode int
@@ -66,6 +67,7 @@ func sessionStateFromConversation(conv *conversation.Conversation, sessionID str
 			AnswerTag:                conv.AnswerTag,
 			CommandTag:               conv.CommandTag,
 			ModelSelection:           conv.ModelSelection.Clone(),
+			MagnificaHumanitas:       conv.MagnificaHumanitas.Clone(),
 			TurnsCompleted:           conv.TurnsCompleted,
 			SuspendedUserInput:       conv.SuspendedUserInput,
 			PlannerProgress:          conv.PlannerProgress,

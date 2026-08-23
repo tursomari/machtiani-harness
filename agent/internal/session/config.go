@@ -62,6 +62,7 @@ type Config struct {
 	ShellAgentInterruptStep int
 	ShellAgentStepLog       string `json:"shell_agent_step_log,omitempty"`
 	ModelOverrides          ModelOverrideFlags
+	MagnificaHumanitas      bool
 }
 
 // ModelOverrideFlags records which model selectors were explicitly present on
@@ -152,6 +153,7 @@ type legacyConfig struct {
 	mode               string
 	modeInstructionDir string
 	shellAgentStepLog  string
+	magnificaHumanitas bool
 }
 
 func newLegacyConfig(cfg Config) legacyConfig {
@@ -192,5 +194,6 @@ func newLegacyConfig(cfg Config) legacyConfig {
 		mode:                    cfg.Mode,
 		modeInstructionDir:      cfg.ModeInstructionDir,
 		shellAgentStepLog:       cfg.ShellAgentStepLog,
+		magnificaHumanitas:      cfg.MagnificaHumanitas,
 	}
 }

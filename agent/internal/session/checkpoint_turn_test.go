@@ -23,7 +23,7 @@ func TestCheckpointTurn_callsBothPersistMethods(t *testing.T) {
 		t.Fatalf("SessionConversationFile: %v", err)
 	}
 
-	recorder := newConversationRecorder(nil, sessionID, "Test checkpoint goal", convPath, false, nil, false)
+	recorder := newConversationRecorder(nil, sessionID, "Test checkpoint goal", convPath, false, nil, false, false)
 	conv := &conversation.Conversation{
 		SessionID:    sessionID,
 		OriginalGoal: "OriginalGoal checkpoint",
@@ -86,7 +86,7 @@ func TestCheckpointTurnDiagWriterCapturesSaveFailure(t *testing.T) {
 		t.Fatalf("SessionConversationFile: %v", err)
 	}
 
-	recorder := newConversationRecorder(nil, sessionID, "Test diag goal", convPath, false, nil, false)
+	recorder := newConversationRecorder(nil, sessionID, "Test diag goal", convPath, false, nil, false, false)
 	conv := &conversation.Conversation{
 		SessionID:    sessionID,
 		OriginalGoal: "OriginalGoal diag",
