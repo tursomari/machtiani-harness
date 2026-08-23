@@ -1,30 +1,18 @@
 package ui
 
 import (
-	"bufio"
-	"crypto/sha256"
-	_ "embed"
-	"encoding/binary"
-	"encoding/json"
-	"fmt"
 	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/mattn/go-runewidth"
+	"github.com/tursomari/machtiani/agent/internal/magnifica"
 	"github.com/tursomari/machtiani/agent/internal/presentation"
 )
 
 const preferredBannerRuleWidth = 72
 
-//go:embed assets/magnifica_humanitas.jsonl
-var bannerQuoteData string
-
-type bannerQuote struct {
-	Paragraph int    `json:"paragraph"`
-	Line      int    `json:"line"`
-	Text      string `json:"quote"`
-}
+type bannerQuote = magnifica.Quote
 
 var (
 	bannerQuotesOnce sync.Once
@@ -34,29 +22,7 @@ var (
 
 func loadBannerQuotes() ([]bannerQuote, error) {
 	bannerQuotesOnce.Do(func() {
-		scanner := bufio.NewScanner(strings.NewReader(bannerQuoteData))
-		for scanner.Scan() {
-			if strings.TrimSpace(scanner.Text()) == "" {
-				continue
-			}
-			var quote bannerQuote
-			if err := json.Unmarshal(scanner.Bytes(), &quote); err != nil {
-				bannerQuotesErr = fmt.Errorf("decode embedded banner quote: %w", err)
-				return
-			}
-			quote.Text = strings.TrimSpace(quote.Text)
-			if quote.Paragraph <= 0 || quote.Line <= 0 || quote.Text == "" {
-				bannerQuotesErr = fmt.Errorf("invalid embedded banner quote: %#v", quote)
-				return
-			}
-			bannerQuotes = append(bannerQuotes, quote)
-		}
-		if err := scanner.Err(); err != nil {
-			bannerQuotesErr = fmt.Errorf("scan embedded banner quotes: %w", err)
-		}
-		if len(bannerQuotes) == 0 && bannerQuotesErr == nil {
-			bannerQuotesErr = fmt.Errorf("embedded banner quote corpus is empty")
-		}
+		bannerQuotes, bannerQuotesErr = magnifica.LoadEmbedded()
 	})
 	return bannerQuotes, bannerQuotesErr
 }
@@ -66,9 +32,11 @@ func bannerQuoteForSession(sessionID string) bannerQuote {
 	if err != nil || len(quotes) == 0 {
 		return bannerQuote{Text: "Quo vadis, humanitas?"}
 	}
-	sum := sha256.Sum256([]byte(strings.TrimSpace(sessionID)))
-	index := binary.BigEndian.Uint64(sum[:8]) % uint64(len(quotes))
-	return quotes[index]
+	quote, err := magnifica.SelectQuoteForSession(sessionID, quotes)
+	if err != nil {
+		return bannerQuote{Text: "Quo vadis, humanitas?"}
+	}
+	return quote
 }
 
 // RenderSessionHeader renders the one-time session banner in ordinary
