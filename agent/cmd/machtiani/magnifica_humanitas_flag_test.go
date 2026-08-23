@@ -50,6 +50,15 @@ func TestRunFlagMagnificaHumanitas(t *testing.T) {
 	if len(related) != 1 || related[0] != "magnifica-humanitas" {
 		t.Fatalf("Magnifica Humanitas flag names = %v, want only magnifica-humanitas", related)
 	}
+
+	combinedConfig := session.Config{}
+	combinedFlags := newRunFlagSet(&combinedConfig)
+	if err := combinedFlags.fs.Parse([]string{"--magnifica-humanitas", "--no-banner"}); err != nil {
+		t.Fatalf("parse --magnifica-humanitas with --no-banner: %v", err)
+	}
+	if !combinedConfig.MagnificaHumanitas || !combinedConfig.NoBanner {
+		t.Fatalf("combined config = MagnificaHumanitas:%t NoBanner:%t, want both true", combinedConfig.MagnificaHumanitas, combinedConfig.NoBanner)
+	}
 }
 
 func allFlagNames(flags runFlagSetResult) []string {
@@ -76,7 +85,6 @@ func TestRunMagnificaHumanitasPersistsInSessionShowJSON(t *testing.T) {
 			args := []string{
 				"--dry-run",
 				"--max-turns", "1",
-				"--no-banner",
 				"--no-cursor",
 				"--no-trajectory",
 				"--prompt", "Record a hermetic session.",
@@ -90,8 +98,8 @@ func TestRunMagnificaHumanitasPersistsInSessionShowJSON(t *testing.T) {
 					t.Fatalf("run exit = %d, want 0", code)
 				}
 			})
-			if strings.Contains(stdout, "MAGNIFICA HUMANITAS") {
-				t.Fatalf("non-TTY --no-banner run unexpectedly rendered a banner: %q", stdout)
+			if strings.Contains(stdout, "machtiani (mct)") {
+				t.Fatalf("non-TTY run unexpectedly rendered a banner: %q", stdout)
 			}
 			if strings.Contains(stderr, "Error") {
 				t.Fatalf("run stderr contains an error: %q", stderr)
