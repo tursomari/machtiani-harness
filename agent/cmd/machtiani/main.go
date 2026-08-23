@@ -1007,6 +1007,7 @@ func configureSessionFlags(fs *pflag.FlagSet, cfg *session.Config, paramFlags, p
 	fs.StringVar(&cfg.TrajectoryFile, "trajectory-file", cfg.TrajectoryFile, "override path for unified trajectory JSONL (default: session-scoped path)")
 	fs.BoolVar(&cfg.NoTrajectory, "no-trajectory", cfg.NoTrajectory, "disable unified trajectory JSONL emission")
 	fs.BoolVar(&cfg.NoBanner, "no-banner", cfg.NoBanner, "disable the interactive session banner")
+	fs.BoolVar(&cfg.MagnificaHumanitas, "magnifica-humanitas", cfg.MagnificaHumanitas, "select and persist a Magnifica Humanitas quote for the session")
 	fs.BoolVar(&cfg.NoCursor, "no-cursor", cfg.NoCursor, "disable the animated activity cursor")
 	if includeDisplayFlags {
 		fs.BoolVar(&cfg.Focused, "focused", cfg.Focused, "show only the session banner, conclusion, warnings, and errors")
