@@ -19,19 +19,20 @@ const (
 
 // SessionStartedEvent signals the beginning of an agent session.
 type SessionStartedEvent struct {
-	SessionID      string
-	Identity       FooterIdentity
-	Goal           string
-	BuildVersion   string
-	BuildCommit    string
-	ContextLength  int
-	ShowBanner     bool
-	CWD            string
-	Turn           int
-	Elapsed        time.Duration
-	TokenUsage     TokenUsageUpdatedEvent
-	MaxInputTokens int
-	Models         FooterModelMetadata
+	SessionID          string
+	Identity           FooterIdentity
+	Goal               string
+	BuildVersion       string
+	BuildCommit        string
+	ContextLength      int
+	ShowBanner         bool
+	MagnificaHumanitas bool
+	CWD                string
+	Turn               int
+	Elapsed            time.Duration
+	TokenUsage         TokenUsageUpdatedEvent
+	MaxInputTokens     int
+	Models             FooterModelMetadata
 }
 
 func (e SessionStartedEvent) Type() string { return "SessionStarted" }

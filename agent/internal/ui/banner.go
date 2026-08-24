@@ -63,21 +63,27 @@ func RenderSessionHeader(event SessionStartedEvent, theme Theme, width int) stri
 	b.WriteByte('\n')
 	glyphs := theme.Presentation.Glyphs()
 	title := "machtiani (mct)"
-	prefix := title + " " + glyphs.Separator + " "
-	quote := bannerQuoteForSession(event.SessionID).Text
-	if runewidth.StringWidth(prefix) >= maxWidth {
+	if !event.MagnificaHumanitas {
 		write(presentation.StyledLine{
 			presentation.Bold(presentation.RoleTruth, truncateCellsWithDots(title, maxWidth)),
 		})
 	} else {
-		quote = truncateCellsWithDots(quote, maxWidth-runewidth.StringWidth(prefix))
-		quoteSpan := presentation.RoleText(presentation.RoleBeauty, quote)
-		quoteSpan.Italic = true
-		write(presentation.StyledLine{
-			presentation.Bold(presentation.RoleTruth, title),
-			presentation.RoleText(presentation.RoleBeauty, " "+glyphs.Separator+" "),
-			quoteSpan,
-		})
+		prefix := title + " " + glyphs.Separator + " "
+		quote := bannerQuoteForSession(event.SessionID).Text
+		if runewidth.StringWidth(prefix) >= maxWidth {
+			write(presentation.StyledLine{
+				presentation.Bold(presentation.RoleTruth, truncateCellsWithDots(title, maxWidth)),
+			})
+		} else {
+			quote = truncateCellsWithDots(quote, maxWidth-runewidth.StringWidth(prefix))
+			quoteSpan := presentation.RoleText(presentation.RoleBeauty, quote)
+			quoteSpan.Italic = true
+			write(presentation.StyledLine{
+				presentation.Bold(presentation.RoleTruth, title),
+				presentation.RoleText(presentation.RoleBeauty, " "+glyphs.Separator+" "),
+				quoteSpan,
+			})
+		}
 	}
 	b.WriteByte('\n')
 

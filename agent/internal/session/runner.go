@@ -269,6 +269,11 @@ func Run(ctx context.Context, opts Options) Result {
 	return runSession(ctx, opts)
 }
 
+func emitSessionStartedEvent(bus *ui.EventBus, event ui.SessionStartedEvent, cfg Config) {
+	event.MagnificaHumanitas = cfg.MagnificaHumanitas
+	bus.Emit(event)
+}
+
 func runSession(ctx context.Context, opts Options) Result {
 	if opts.Context != nil {
 		ctx = opts.Context
@@ -701,7 +706,7 @@ func runSession(ctx context.Context, opts Options) Result {
 	}
 
 	runState.startRuntimeClock()
-	eventBus.Emit(ui.SessionStartedEvent{
+	emitSessionStartedEvent(eventBus, ui.SessionStartedEvent{
 		SessionID:      sessionID,
 		Goal:           goal,
 		BuildVersion:   opts.Build.Version,
@@ -714,7 +719,7 @@ func runSession(ctx context.Context, opts Options) Result {
 		TokenUsage:     runState.runtimeTokenUsageSnapshot(),
 		MaxInputTokens: orchBudget.MaxInputTokens,
 		Models:         footerModelMetadata(models),
-	})
+	}, opts.Config)
 	if resumeMode {
 		eventBus.Emit(ui.RawStringEvent{Text: "Resuming session " + sessionID + " ..."})
 	}
