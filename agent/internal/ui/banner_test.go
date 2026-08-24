@@ -2,8 +2,10 @@ package ui
 
 import (
 	"bytes"
+	"errors"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/mattn/go-runewidth"
@@ -61,14 +63,16 @@ func TestRenderSessionHeaderUsesSemanticThemeAndItalicQuote(t *testing.T) {
 		false,
 	))
 	event := SessionStartedEvent{
-		SessionID:     "session-alpha",
-		Goal:          "Build something true, good, and beautiful.",
-		BuildVersion:  "v1.2.3",
-		BuildCommit:   "0123456789abcdef",
-		ContextLength: 200000,
+		SessionID:          "session-alpha",
+		Goal:               "Build something true, good, and beautiful.",
+		BuildVersion:       "v1.2.3",
+		BuildCommit:        "0123456789abcdef",
+		ContextLength:      200000,
+		MagnificaHumanitas: true,
 	}
 
-	got := RenderSessionHeader(event, theme, 88)
+	wantQuote := bannerQuoteForSession(event.SessionID).Text
+	got := RenderSessionHeader(event, theme, 160)
 	plain := stripBannerANSI(got)
 	lines := strings.Split(plain, "\n")
 	if len(lines) < 9 {
@@ -76,6 +80,9 @@ func TestRenderSessionHeaderUsesSemanticThemeAndItalicQuote(t *testing.T) {
 	}
 	if lines[0] != "" || !strings.HasPrefix(lines[1], "machtiani (mct)") || lines[2] != "" {
 		t.Errorf("header must begin with a blank line and leave a blank line after the quote: %#v", lines[:3])
+	}
+	if want := "machtiani (mct) - " + wantQuote; lines[1] != want {
+		t.Errorf("quote line = %q, want %q", lines[1], want)
 	}
 	if lines[6] != "" || strings.TrimSpace(lines[7]) != "PROMPT" {
 		t.Errorf("header must leave a blank line before the prompt block: %#v", lines[5:8])
@@ -88,6 +95,7 @@ func TestRenderSessionHeaderUsesSemanticThemeAndItalicQuote(t *testing.T) {
 		"machtiani --help",
 		"PROMPT",
 		event.Goal,
+		wantQuote,
 	} {
 		if !strings.Contains(plain, want) {
 			t.Errorf("header missing %q:\n%s", want, plain)
@@ -104,6 +112,65 @@ func TestRenderSessionHeaderUsesSemanticThemeAndItalicQuote(t *testing.T) {
 	}
 }
 
+func TestRenderSessionHeaderWithoutMagnificaOmitsQuoteWithoutLoadingCorpus(t *testing.T) {
+	resetBannerQuoteState(t)
+	sentinelErr := errors.New("corpus must not be loaded")
+	bannerQuotesErr = sentinelErr
+
+	resolved, err := presentation.ResolveWithGlyphs("none", "ascii", &bytes.Buffer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := RenderSessionHeader(SessionStartedEvent{
+		SessionID:          "gate-off",
+		Goal:               "Keep the banner, omit the quote.",
+		MagnificaHumanitas: false,
+	}, DefaultTheme(resolved), 88)
+	plain := stripBannerANSI(got)
+	lines := strings.Split(plain, "\n")
+
+	if len(lines) < 3 || lines[1] != "machtiani (mct)" || lines[2] != "" {
+		t.Fatalf("gate-off title layout = %#v, want standalone title followed by blank line", lines[:min(3, len(lines))])
+	}
+	if strings.Contains(plain, "Quo vadis, humanitas?") {
+		t.Fatalf("gate-off banner contains fallback quote:\n%s", plain)
+	}
+	if bannerQuotesErr != sentinelErr {
+		t.Fatal("gate-off banner loaded the quote corpus")
+	}
+}
+
+func TestRenderSessionHeaderWithMagnificaPreservesFallback(t *testing.T) {
+	resetBannerQuoteState(t)
+	bannerQuotesOnce.Do(func() {})
+	bannerQuotesErr = errors.New("forced corpus load failure")
+
+	resolved, err := presentation.ResolveWithGlyphs("none", "ascii", &bytes.Buffer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := RenderSessionHeader(SessionStartedEvent{
+		SessionID:          "gate-on-load-error",
+		Goal:               "Preserve the fallback.",
+		MagnificaHumanitas: true,
+	}, DefaultTheme(resolved), 88)
+	if !strings.Contains(got, "machtiani (mct) - Quo vadis, humanitas?") {
+		t.Fatalf("gate-on fallback missing:\n%s", got)
+	}
+}
+
+func resetBannerQuoteState(t *testing.T) {
+	t.Helper()
+	bannerQuotesOnce = sync.Once{}
+	bannerQuotes = nil
+	bannerQuotesErr = nil
+	t.Cleanup(func() {
+		bannerQuotesOnce = sync.Once{}
+		bannerQuotes = nil
+		bannerQuotesErr = nil
+	})
+}
+
 func TestRenderSessionHeaderIsCellWidthSafeAndUsesThreeDotTruncation(t *testing.T) {
 	resolved, err := presentation.ResolveWithGlyphs("none", "ascii", &bytes.Buffer{})
 	if err != nil {
@@ -111,11 +178,12 @@ func TestRenderSessionHeaderIsCellWidthSafeAndUsesThreeDotTruncation(t *testing.
 	}
 	theme := DefaultTheme(resolved)
 	event := SessionStartedEvent{
-		SessionID:     "narrow-session",
-		Goal:          "A deliberately long prompt with wide glyphs 界界 that must wrap without making the terminal auto-wrap.",
-		BuildVersion:  "development",
-		BuildCommit:   "0123456789abcdef",
-		ContextLength: 200000,
+		SessionID:          "narrow-session",
+		Goal:               "A deliberately long prompt with wide glyphs 界界 that must wrap without making the terminal auto-wrap.",
+		BuildVersion:       "development",
+		BuildCommit:        "0123456789abcdef",
+		ContextLength:      200000,
+		MagnificaHumanitas: true,
 	}
 
 	const width = 46

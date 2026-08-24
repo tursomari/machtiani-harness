@@ -240,12 +240,13 @@ func TestFormatterSessionStartedRendersBannerOnceWhenEnabled(t *testing.T) {
 	f.closed = true // Exercise banner rendering without launching the timer goroutine.
 	f.width = 88
 	event := SessionStartedEvent{
-		SessionID:     "banner-once",
-		Goal:          "Make it true, good, and beautiful.",
-		BuildVersion:  "v1.2.3",
-		BuildCommit:   "0123456789abcdef",
-		ContextLength: 200000,
-		ShowBanner:    true,
+		SessionID:          "banner-once",
+		Goal:               "Make it true, good, and beautiful.",
+		BuildVersion:       "v1.2.3",
+		BuildCommit:        "0123456789abcdef",
+		ContextLength:      200000,
+		ShowBanner:         true,
+		MagnificaHumanitas: true,
 	}
 
 	f.handleSessionStarted(event)
@@ -253,6 +254,22 @@ func TestFormatterSessionStartedRendersBannerOnceWhenEnabled(t *testing.T) {
 	got := stripANSI(buf.String())
 	if count := strings.Count(got, "machtiani (mct)"); count != 1 {
 		t.Fatalf("banner count = %d, want 1:\n%s", count, got)
+	}
+}
+
+func TestFormatterSessionStartedNoBannerSuppressesGateOffBanner(t *testing.T) {
+	f, bus, buf := newTestFormatter()
+	defer bus.Close()
+	f.timerEnabled = true
+	f.closed = true
+
+	f.handleSessionStarted(SessionStartedEvent{
+		ShowBanner:         false,
+		MagnificaHumanitas: false,
+		Goal:               "suppress the whole banner",
+	})
+	if got := buf.String(); got != "" {
+		t.Fatalf("no-banner gate-off output = %q, want empty", got)
 	}
 }
 
