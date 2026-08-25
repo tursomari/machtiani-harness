@@ -17,7 +17,7 @@ func TestLoadBannerQuotesUsesNormalizedEmbeddedCorpus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadBannerQuotes: %v", err)
 	}
-	if got, want := len(quotes), 47; got != want {
+	if got, want := len(quotes), 59; got != want {
 		t.Fatalf("quote count = %d, want %d", got, want)
 	}
 	for i, quote := range quotes {

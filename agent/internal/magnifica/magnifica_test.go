@@ -59,7 +59,7 @@ func TestSelectQuoteForSessionMatchesEmbeddedCorpusVectors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadEmbedded: %v", err)
 	}
-	if got, want := len(corpus), 47; got != want {
+	if got, want := len(corpus), 59; got != want {
 		t.Fatalf("corpus length = %d, want %d", got, want)
 	}
 	last := corpus[len(corpus)-1]
@@ -72,12 +72,12 @@ func TestSelectQuoteForSessionMatchesEmbeddedCorpusVectors(t *testing.T) {
 		wantIndex int
 		wantText  string
 	}{
-		// Indices and texts were computed independently from the original UI
-		// corpus with Python before the magnifica implementation existed.
-		{sessionID: "session-alpha", wantIndex: 34, wantText: "For individuals as well as for nations, development is both a duty and a right."},
-		{sessionID: "golden-vector-1", wantIndex: 27, wantText: "When we speak of dignity, we do not always use the word in the same way."},
-		{sessionID: "golden-vector-2", wantIndex: 17, wantText: "We must always keep before us the truth about God and humanity, just as Christ has revealed them to us."},
-		{sessionID: " padded-session ", wantIndex: 8, wantText: "Technology should not be considered, in itself, as a force antagonistic to humanity."},
+		// Indices and texts were recomputed from the refreshed corpus and
+		// verified independently with Python.
+		{sessionID: "session-alpha", wantIndex: 11, wantText: "In the abstract, technology in and of itself is not a solution to humanity’s problems, just as it is not inherently evil."},
+		{sessionID: "golden-vector-1", wantIndex: 41, wantText: "A society is noble and decent, not least for its support of the pursuit of truth and its adherence to the most basic of truths."},
+		{sessionID: "golden-vector-2", wantIndex: 6, wantText: "Technology should not be considered, in itself, as a force antagonistic to humanity."},
+		{sessionID: " padded-session ", wantIndex: 19, wantText: "We can describe the common good as the social expression of the dignity recognized in every person."},
 	}
 	for _, tt := range tests {
 		t.Run(tt.sessionID, func(t *testing.T) {
