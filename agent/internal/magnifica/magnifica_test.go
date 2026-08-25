@@ -77,7 +77,7 @@ func TestSelectQuoteForSessionMatchesEmbeddedCorpusVectors(t *testing.T) {
 		{sessionID: "session-alpha", wantIndex: 11, wantText: "In the abstract, technology in and of itself is not a solution to humanity’s problems, just as it is not inherently evil."},
 		{sessionID: "golden-vector-1", wantIndex: 41, wantText: "A society is noble and decent, not least for its support of the pursuit of truth and its adherence to the most basic of truths."},
 		{sessionID: "golden-vector-2", wantIndex: 6, wantText: "Technology should not be considered, in itself, as a force antagonistic to humanity."},
-		{sessionID: " padded-session ", wantIndex: 19, wantText: "We can describe the common good as the social expression of the dignity recognized in every person."},
+		{sessionID: " padded-session ", wantIndex: 19, wantText: "We can describe it as the social expression of the dignity recognized in every person."},
 	}
 	for _, tt := range tests {
 		t.Run(tt.sessionID, func(t *testing.T) {
