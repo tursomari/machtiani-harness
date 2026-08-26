@@ -44,6 +44,13 @@ func TestRunFlagFocusedAndNoShellStepsCompose(t *testing.T) {
 	}
 }
 
+func TestRunFlagDisplayModesComposeForResume(t *testing.T) {
+	cfg := parseRunDisplayFlags(t, "--resume", "agent-resume", "--focused", "--no-shell-steps")
+	if cfg.SessionID != "agent-resume" || !cfg.Focused || !cfg.NoShellSteps {
+		t.Fatalf("resume display config = %#v", cfg)
+	}
+}
+
 func TestRunFlagExec(t *testing.T) {
 	cfg := parseRunDisplayFlags(t, "--prompt", "test prompt")
 	if cfg.Print {

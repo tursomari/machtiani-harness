@@ -215,8 +215,9 @@ func TestRunAttachNoShellStepsDoesNotReadJournal(t *testing.T) {
 	if code != 0 || stderr.Len() != 0 {
 		t.Fatalf("runAttachWithDependencies() = %d, stderr=%q", code, stderr.String())
 	}
-	if got := strings.TrimSuffix(stdout.String(), "\n"); got != legacy {
-		t.Fatalf("suppressed output changed legacy replay:\nlegacy: %q\ngot:    %q", legacy, got)
+	want := "Following session " + sessionID + "\n" + legacy + "\n"
+	if got := stdout.String(); got != want {
+		t.Fatalf("suppressed output changed legacy replay:\nwant: %q\ngot:  %q", want, got)
 	}
 }
 
@@ -256,6 +257,56 @@ func TestRunAttachTailsLateShellActionAndExtendsQuietGrace(t *testing.T) {
 	}
 	if elapsed := time.Since(started); elapsed < 40*time.Millisecond {
 		t.Fatalf("attach exited after %s; late action did not extend quiet grace", elapsed)
+	}
+}
+
+func TestRunAttachStatusLineOmittedWhenNotTerminal(t *testing.T) {
+	setupSessionArchiveCommandTest(t)
+	sessionID := "agent-attach-plain"
+	conv := conversation.New(sessionID, "Plain non-TTY output")
+	addAttachTailTurn(conv, 1)
+	path := writeAttachTailConversation(t, conv)
+
+	var active atomic.Bool
+	active.Store(true)
+	writerDone := make(chan error, 1)
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		addAttachTailTurn(conv, 2)
+		if err := publishAttachTailConversation(path, conv); err != nil {
+			writerDone <- err
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+		active.Store(false)
+		writerDone <- nil
+	}()
+
+	var stdout, stderr strings.Builder
+	code := runAttachWithDependencies(sessionID, &stdout, &stderr, attachDependencies{
+		readFile:     os.ReadFile,
+		probe:        func(string) (bool, error) { return active.Load(), nil },
+		pollInterval: 3 * time.Millisecond,
+		quietGrace:   8 * time.Millisecond,
+	})
+	if err := <-writerDone; err != nil {
+		t.Fatal(err)
+	}
+	if code != 0 || stderr.Len() != 0 {
+		t.Fatalf("runAttachWithDependencies() = %d, stderr=%q", code, stderr.String())
+	}
+	output := stdout.String()
+	if strings.Contains(output, "\x1b") {
+		t.Errorf("non-TTY attach emitted ANSI escape bytes:\n%q", output)
+	}
+	if strings.Contains(output, "following session") {
+		t.Errorf("non-TTY attach drew a status line:\n%q", output)
+	}
+	if !strings.Contains(output, "Live question 2") {
+		t.Errorf("non-TTY attach lost delta content:\n%s", output)
+	}
+	if !strings.HasSuffix(output, "\n") {
+		t.Errorf("non-TTY attach output does not end with a newline:\n%q", output)
 	}
 }
 

@@ -46,6 +46,15 @@ func TestAttachFinishedSessionReplay(t *testing.T) {
 			t.Errorf("stdout missing %q in:\n%s", want, stdout)
 		}
 	}
+	if !strings.Contains(stdout, "Following session "+sessionID) {
+		t.Errorf("stdout missing follow notice for %q in:\n%s", sessionID, stdout)
+	}
+	if strings.Contains(stdout, "\x1b") {
+		t.Errorf("non-TTY attach emitted ANSI escape bytes:\n%q", stdout)
+	}
+	if got := strings.Count(stdout, "Resume this session:"); got != 1 {
+		t.Errorf("conclusion count = %d, want exactly 1:\n%s", got, stdout)
+	}
 	if !strings.HasSuffix(stdout, "\n") {
 		t.Fatalf("stdout does not end with a newline: %q", stdout)
 	}
@@ -194,6 +203,9 @@ func TestAttachRunningSessionTailsUntilLockReleased(t *testing.T) {
 			t.Errorf("stdout count for %q = %d, want 1:\n%s", want, got, stdout)
 		}
 	}
+	if got := strings.Count(stdout, "Following session "+sessionID); got != 1 {
+		t.Errorf("follow notice count = %d, want 1:\n%s", got, stdout)
+	}
 }
 
 func TestAttachMissingConversation(t *testing.T) {
@@ -251,6 +263,77 @@ func TestAttachRunEmptySessionID(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "Error:") {
 		t.Fatalf("stderr = %q, want Error", stderr.String())
+	}
+}
+
+func TestAttachFocusedSuppressesReplaySections(t *testing.T) {
+	setupSessionArchiveCommandTest(t)
+	prepareTestConfig(t)
+	sessionID := "agent-attach-focused"
+	writeAttachCommandConversation(t, sessionID)
+	writeAttachActions(t, sessionID, 1, shellaction.Record{
+		Version: 1, SessionID: sessionID, Turn: 1, Sequence: 1,
+		Description: "This must be hidden", Command: "echo hidden",
+	})
+
+	stdout, stderr := captureOutput(func() {
+		if code := handleRunCommand([]string{"--attach", "--resume", sessionID, "--focused"}); code != 0 {
+			t.Fatalf("handleRunCommand() exit = %d, want 0", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("stderr = %q, want empty", stderr)
+	}
+	for _, want := range []string{"Finished successfully.", "Resume this session:"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("focused stdout missing %q in:\n%s", want, stdout)
+		}
+	}
+	for _, suppressed := range []string{
+		"Following session",
+		"──── TURN",
+		"── QUESTION ──",
+		"── ANSWER ──",
+		"── DECISION ──",
+		"SHELL STEPS",
+		"echo hidden",
+	} {
+		if strings.Contains(stdout, suppressed) {
+			t.Errorf("focused stdout contains suppressed %q in:\n%s", suppressed, stdout)
+		}
+	}
+}
+
+func TestAttachRendersOnlyLastConclusion(t *testing.T) {
+	setupSessionArchiveCommandTest(t)
+	prepareTestConfig(t)
+	sessionID := "agent-attach-stale-final"
+	conv := conversation.New(sessionID, "Replay stale conclusions")
+	addAttachTailTurn(conv, 1)
+	conv.AddMessage("assistant", "Stale capped conclusion", map[string]any{"type": "final", "turns": 1, "capped": true})
+	addAttachTailTurn(conv, 2)
+	conv.AddMessage("assistant", "Fresh final conclusion", map[string]any{"type": "final", "turns": 2, "capped": false})
+	writeAttachTailConversation(t, conv)
+
+	var stdout, stderr strings.Builder
+	code := runAttachWithDependencies(sessionID, &stdout, &stderr, attachDependencies{
+		readFile:     os.ReadFile,
+		probe:        func(string) (bool, error) { return false, nil },
+		pollInterval: time.Millisecond,
+		quietGrace:   3 * time.Millisecond,
+	})
+	if code != 0 || stderr.Len() != 0 {
+		t.Fatalf("runAttachWithDependencies() = %d, stderr=%q", code, stderr.String())
+	}
+	output := stdout.String()
+	if strings.Contains(output, "Stale capped conclusion") {
+		t.Errorf("stale intermediate conclusion rendered:\n%s", output)
+	}
+	if got := strings.Count(output, "Resume this session:"); got != 1 {
+		t.Errorf("conclusion count = %d, want exactly 1:\n%s", got, output)
+	}
+	if !strings.Contains(output, "Fresh final conclusion") {
+		t.Errorf("final conclusion missing in:\n%s", output)
 	}
 }
 
