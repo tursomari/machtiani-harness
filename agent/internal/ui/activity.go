@@ -162,3 +162,25 @@ func renderActivityLine(activity activityPresentation, theme presentation.Theme,
 	}
 	return frames[index] + "  " + activity.Label
 }
+
+// AttachSpinnerFrame returns the animation frame for the attach status line.
+// Full motion advances with elapsed time; reduced motion returns the static
+// final frame; none and unknown themes return an empty frame.
+func AttachSpinnerFrame(theme presentation.Theme, elapsed time.Duration) string {
+	if theme.MotionMode() == presentation.MotionNone {
+		return ""
+	}
+	const pattern = activityPatternSignalScan
+	frames := unicodeActivityFrames[pattern]
+	if theme.GlyphMode() == presentation.GlyphASCII {
+		frames = asciiActivityFrames[pattern]
+	}
+	if len(frames) == 0 {
+		return ""
+	}
+	index := len(frames) - 1
+	if theme.MotionMode() == presentation.MotionFull {
+		index = int(elapsed/(125*time.Millisecond)) % len(frames)
+	}
+	return frames[index]
+}

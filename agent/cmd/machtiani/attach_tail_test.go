@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/tursomari/machtiani/agent/internal/conversation"
 	"github.com/tursomari/machtiani/agent/internal/core/artifacts"
+	"github.com/tursomari/machtiani/agent/internal/presentation"
 	"github.com/tursomari/machtiani/agent/internal/shellaction"
 )
 
@@ -257,6 +259,237 @@ func TestRunAttachTailsLateShellActionAndExtendsQuietGrace(t *testing.T) {
 	}
 	if elapsed := time.Since(started); elapsed < 40*time.Millisecond {
 		t.Fatalf("attach exited after %s; late action did not extend quiet grace", elapsed)
+	}
+}
+
+func TestRunAttachTTYShowsBannerNoticeAndSingleConclusion(t *testing.T) {
+	setupSessionArchiveCommandTest(t)
+	sessionID := "agent-attach-tty-finished"
+	conv := conversation.New(sessionID, "TTY finished session")
+	addAttachTailTurn(conv, 1)
+	conv.AddMessage("assistant", "TTY final answer", map[string]any{"type": "final", "turns": 1, "capped": false})
+	writeAttachTailConversation(t, conv)
+
+	var stdout, stderr strings.Builder
+	code := runAttachWithDependencies(sessionID, &stdout, &stderr, attachDependencies{
+		readFile:     os.ReadFile,
+		probe:        func(string) (bool, error) { return false, nil },
+		pollInterval: time.Millisecond,
+		quietGrace:   3 * time.Millisecond,
+		isTerminal:   func(io.Writer) bool { return true },
+	})
+	if code != 0 || stderr.Len() != 0 {
+		t.Fatalf("runAttachWithDependencies() = %d, stderr=%q", code, stderr.String())
+	}
+	output := stdout.String()
+	for _, want := range []string{"machtiani (mct)", "Following session " + sessionID, "TTY final answer", "Resume this session:"} {
+		if !strings.Contains(output, want) {
+			t.Errorf("TTY stdout missing %q in:\n%s", want, output)
+		}
+	}
+	if got := strings.Count(output, "Resume this session:"); got != 1 {
+		t.Errorf("conclusion count = %d, want exactly 1:\n%s", got, output)
+	}
+	if strings.Contains(output, "following session") {
+		t.Errorf("inactive session drew a status line:\n%q", output)
+	}
+	if !strings.HasSuffix(output, "\n") {
+		t.Errorf("TTY stdout does not end with a newline:\n%q", output)
+	}
+}
+
+func TestRunAttachTTYStatusLineClearsOnExit(t *testing.T) {
+	setupSessionArchiveCommandTest(t)
+	sessionID := "agent-attach-tty-live"
+	conv := conversation.New(sessionID, "TTY live session")
+	addAttachTailTurn(conv, 1)
+	path := writeAttachTailConversation(t, conv)
+
+	var active atomic.Bool
+	active.Store(true)
+	writerDone := make(chan error, 1)
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		conv.AddMessage("assistant", "TTY live turn 2", map[string]any{
+			"type":     "work_request",
+			"turn":     2,
+			"decision": "TTY live decision",
+		})
+		if err := publishAttachTailConversation(path, conv); err != nil {
+			writerDone <- err
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+		active.Store(false)
+		writerDone <- nil
+	}()
+
+	var stdout, stderr strings.Builder
+	code := runAttachWithDependencies(sessionID, &stdout, &stderr, attachDependencies{
+		readFile:     os.ReadFile,
+		probe:        func(string) (bool, error) { return active.Load(), nil },
+		pollInterval: 3 * time.Millisecond,
+		quietGrace:   8 * time.Millisecond,
+		isTerminal:   func(io.Writer) bool { return true },
+	})
+	if err := <-writerDone; err != nil {
+		t.Fatal(err)
+	}
+	if code != 0 || stderr.Len() != 0 {
+		t.Fatalf("runAttachWithDependencies() = %d, stderr=%q", code, stderr.String())
+	}
+	output := stdout.String()
+	if !strings.Contains(output, "following session "+sessionID) {
+		t.Errorf("status line label missing in:\n%q", output)
+	}
+	if !strings.Contains(output, "\u2814\u2800\u2800") {
+		t.Errorf("status line animation frame missing in:\n%q", output)
+	}
+	if !strings.Contains(output, "\r\x1b[2K") {
+		t.Errorf("status line was never cleared with carriage return:\n%q", output)
+	}
+	if !strings.HasSuffix(output, "\r\x1b[2K\n") {
+		t.Errorf("TTY output does not clear the status line and finish with a newline:\n%q", output)
+	}
+	if !strings.Contains(output, "TTY live turn 2") {
+		t.Errorf("delta content missing in:\n%s", output)
+	}
+}
+
+func TestRunAttachTTYPrintsSingleConclusionWhenSessionCompletes(t *testing.T) {
+	setupSessionArchiveCommandTest(t)
+	sessionID := "agent-attach-tty-complete"
+	conv := conversation.New(sessionID, "TTY completing session")
+	addAttachTailTurn(conv, 1)
+	path := writeAttachTailConversation(t, conv)
+
+	var active atomic.Bool
+	active.Store(true)
+	writerDone := make(chan error, 1)
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		conv.AddMessage("assistant", "TTY completing answer", map[string]any{"type": "final", "turns": 1, "capped": false})
+		if err := publishAttachTailConversation(path, conv); err != nil {
+			writerDone <- err
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+		active.Store(false)
+		writerDone <- nil
+	}()
+
+	var stdout, stderr strings.Builder
+	code := runAttachWithDependencies(sessionID, &stdout, &stderr, attachDependencies{
+		readFile:     os.ReadFile,
+		probe:        func(string) (bool, error) { return active.Load(), nil },
+		pollInterval: 3 * time.Millisecond,
+		quietGrace:   8 * time.Millisecond,
+		isTerminal:   func(io.Writer) bool { return true },
+	})
+	if err := <-writerDone; err != nil {
+		t.Fatal(err)
+	}
+	if code != 0 || stderr.Len() != 0 {
+		t.Fatalf("runAttachWithDependencies() = %d, stderr=%q", code, stderr.String())
+	}
+	output := stdout.String()
+	if got := strings.Count(output, "Resume this session:"); got != 1 {
+		t.Errorf("conclusion count = %d, want exactly 1:\n%s", got, output)
+	}
+	if got := strings.Count(output, "TTY completing answer"); got != 1 {
+		t.Errorf("final answer count = %d, want exactly 1:\n%s", got, output)
+	}
+	if !strings.Contains(output, "\u2814\u2800\u2800") {
+		t.Errorf("status line was not drawn while the session was active:\n%q", output)
+	}
+}
+
+func TestRunAttachStatusHonorsMotionAndGlyphs(t *testing.T) {
+	tests := []struct {
+		name        string
+		motion      string
+		glyphs      string
+		wantFrame   string
+		wantNoFrame string
+	}{
+		{
+			name:        "full unicode animates",
+			motion:      string(presentation.MotionFull),
+			glyphs:      string(presentation.GlyphUnicode),
+			wantFrame:   "\u2814\u2800\u2800",
+			wantNoFrame: "o..",
+		},
+		{
+			name:        "reduced shows static final frame",
+			motion:      string(presentation.MotionReduced),
+			glyphs:      string(presentation.GlyphUnicode),
+			wantFrame:   "\u2800\u2821\u2800",
+			wantNoFrame: "\u2814\u2800\u2800",
+		},
+		{
+			name:        "full ascii uses ascii frames",
+			motion:      string(presentation.MotionFull),
+			glyphs:      string(presentation.GlyphASCII),
+			wantFrame:   "o..",
+			wantNoFrame: "\u2814\u2800\u2800",
+		},
+		{
+			name:        "none omits the line",
+			motion:      string(presentation.MotionNone),
+			glyphs:      string(presentation.GlyphUnicode),
+			wantFrame:   "",
+			wantNoFrame: "\u2814\u2800\u2800",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("TERM", "xterm-256color")
+			t.Setenv("MACHTIANI_MOTION", tt.motion)
+			t.Setenv("MACHTIANI_GLYPHS", tt.glyphs)
+			theme, err := presentation.ResolveWithGlyphsAndMotion("terminal", tt.glyphs, tt.motion, io.Discard)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sessionID := "agent-attach-motion-" + tt.name
+			conv := conversation.New(sessionID, "Motion parity session")
+			addAttachTailTurn(conv, 1)
+			writeAttachTailConversation(t, conv)
+
+			var active atomic.Bool
+			active.Store(true)
+			writerDone := make(chan error, 1)
+			go func() {
+				time.Sleep(100 * time.Millisecond)
+				active.Store(false)
+				writerDone <- nil
+			}()
+
+			var stdout, stderr strings.Builder
+			code := runAttachWithDependencies(sessionID, &stdout, &stderr, attachDependencies{
+				readFile:     os.ReadFile,
+				probe:        func(string) (bool, error) { return active.Load(), nil },
+				pollInterval: 5 * time.Millisecond,
+				quietGrace:   20 * time.Millisecond,
+				theme:        theme,
+				isTerminal:   func(io.Writer) bool { return true },
+			})
+			if err := <-writerDone; err != nil {
+				t.Fatal(err)
+			}
+			if code != 0 || stderr.Len() != 0 {
+				t.Fatalf("runAttachWithDependencies() = %d, stderr=%q", code, stderr.String())
+			}
+			output := stdout.String()
+			if tt.wantFrame != "" && !strings.Contains(output, tt.wantFrame) {
+				t.Errorf("stdout missing frame %q in:\n%q", tt.wantFrame, output)
+			}
+			if strings.Contains(output, tt.wantNoFrame) {
+				t.Errorf("stdout contains unexpected frame %q in:\n%q", tt.wantNoFrame, output)
+			}
+			if strings.Contains(output, "\x1b[") && tt.motion == string(presentation.MotionNone) {
+				t.Errorf("motion-none output contains escape sequences:\n%q", output)
+			}
+		})
 	}
 }
 

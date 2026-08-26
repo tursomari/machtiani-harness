@@ -17,8 +17,9 @@ type ShellActionRecord = shellaction.Record
 
 // ReplayOptions controls optional replay-only sections.
 type ReplayOptions struct {
-	NoShellSteps bool
-	ShellActions []ShellActionRecord
+	NoShellSteps       bool
+	ShellActions       []ShellActionRecord
+	SuppressConclusion bool
 }
 
 // RenderReplay renders a persisted conversation as deterministic plain text
@@ -143,6 +144,9 @@ func renderReplay(conv *Conversation, messages []Message, includeGoal bool, know
 				addTextEvent("ASSISTANT MESSAGE", replayHelperBody(renderAssistantMessage(msg.Content), "=== ASSISTANT MESSAGE"))
 			}
 		case messageTypeFinal, messageTypeFinalAnswer:
+			if opts.SuppressConclusion {
+				continue
+			}
 			turnCount, _ := coerceInt(msg.Metadata["turns"])
 			capped, _ := coerceBool(msg.Metadata["capped"])
 			addTextEvent("conclusion", renderConclusion(msg.Content, turnCount, capped))
@@ -402,4 +406,19 @@ func stripANSI(text string) string {
 		}
 	}
 	return out.String()
+}
+
+// LastFinalMessage returns the final conclusion content when the final answer
+// message is the last message in the conversation. Read-only attach uses it to
+// render exactly one run-style conclusion instead of one per snapshot.
+func LastFinalMessage(conv *Conversation) (string, bool) {
+	if conv == nil || len(conv.Messages) == 0 {
+		return "", false
+	}
+	last := conv.Messages[len(conv.Messages)-1]
+	switch getType(last.Metadata) {
+	case messageTypeFinal, messageTypeFinalAnswer:
+		return last.Content, true
+	}
+	return "", false
 }

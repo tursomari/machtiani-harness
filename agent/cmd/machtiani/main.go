@@ -25,6 +25,7 @@ import (
 	shellagent "github.com/tursomari/machtiani/agent/internal/shell-agent"
 	"github.com/tursomari/machtiani/agent/internal/shellaction"
 	"github.com/tursomari/machtiani/agent/internal/ui"
+	"golang.org/x/term"
 )
 
 var (
@@ -54,6 +55,9 @@ type attachDependencies struct {
 	pollInterval time.Duration
 	quietGrace   time.Duration
 	noShellSteps bool
+	focused      bool
+	theme        presentation.Theme
+	isTerminal   func(io.Writer) bool
 }
 
 type multiString []string
@@ -284,7 +288,7 @@ func handleRunCommand(args []string) int {
 			fmt.Fprintln(os.Stderr, "Error: unexpected positional arguments for 'run' command. Use -p or --file to specify the prompt.")
 			return 2
 		}
-		return runAttachWithDisplay(cfg.SessionID, cfg.NoShellSteps, os.Stdout, os.Stderr)
+		return runAttachWithDisplay(cfg.SessionID, cfg.NoShellSteps, cfg.Focused, cfg.NoCursor, os.Stdout, os.Stderr)
 	}
 	if cfg.ContextLength != 0 && cfg.ContextLength < llm.MinimumContextLength {
 		fmt.Fprintf(os.Stderr, "Error: --context-length must be at least %d\n", llm.MinimumContextLength)
@@ -444,10 +448,26 @@ func handleRunCommand(args []string) int {
 }
 
 func runAttach(sessionID string, stdout, stderr io.Writer) int {
-	return runAttachWithDisplay(sessionID, false, stdout, stderr)
+	return runAttachWithDisplay(sessionID, false, false, false, stdout, stderr)
 }
 
-func runAttachWithDisplay(sessionID string, noShellSteps bool, stdout, stderr io.Writer) int {
+func runAttachWithDisplay(sessionID string, noShellSteps, focused, noCursor bool, stdout, stderr io.Writer) int {
+	themeName := string(presentation.ProfileTerminal)
+	glyphMode := string(presentation.GlyphUnicode)
+	motionMode := string(presentation.MotionFull)
+	if globalCfg, _, err := llm.LoadGlobalConfig(); err == nil && globalCfg.UI != nil {
+		themeName = globalCfg.UI.Theme
+		glyphMode = globalCfg.UI.Glyphs
+		motionMode = globalCfg.UI.Motion
+	}
+	if noCursor {
+		motionMode = string(presentation.MotionNone)
+	}
+	theme, err := presentation.ResolveWithGlyphsAndMotion(themeName, glyphMode, motionMode, stdout)
+	if err != nil {
+		fmt.Fprintln(stderr, "Error:", err)
+		return 1
+	}
 	return runAttachWithDependencies(sessionID, stdout, stderr, attachDependencies{
 		readFile:     os.ReadFile,
 		readActions:  os.ReadFile,
@@ -455,6 +475,8 @@ func runAttachWithDisplay(sessionID string, noShellSteps bool, stdout, stderr io
 		pollInterval: attachPollInterval,
 		quietGrace:   attachQuietGrace,
 		noShellSteps: noShellSteps,
+		focused:      focused,
+		theme:        theme,
 	})
 }
 
@@ -472,6 +494,9 @@ func runAttachWithDependencies(sessionID string, stdout, stderr io.Writer, deps 
 	}
 	if deps.probe == nil {
 		deps.probe = session.IsSessionActive
+	}
+	if deps.isTerminal == nil {
+		deps.isTerminal = attachIsTerminal
 	}
 	if deps.pollInterval <= 0 {
 		deps.pollInterval = attachPollInterval
@@ -495,6 +520,29 @@ func runAttachWithDependencies(sessionID string, stdout, stderr io.Writer, deps 
 		fmt.Fprintln(stderr, "Error:", err)
 		return 1
 	}
+
+	uiTheme := ui.DefaultTheme(deps.theme)
+	if !deps.focused && deps.isTerminal(stdout) {
+		banner := ui.RenderSessionHeader(ui.SessionStartedEvent{
+			SessionID:          sessionID,
+			Goal:               conv.OriginalGoal,
+			BuildVersion:       Version,
+			BuildCommit:        Commit,
+			MagnificaHumanitas: conv.MagnificaHumanitas != nil,
+			ShowBanner:         true,
+		}, uiTheme, 0)
+		if _, err := io.WriteString(stdout, banner); err != nil {
+			fmt.Fprintln(stderr, "Error:", err)
+			return 1
+		}
+	}
+	if !deps.focused {
+		if _, err := io.WriteString(stdout, "Following session "+sessionID+"\n"); err != nil {
+			fmt.Fprintln(stderr, "Error:", err)
+			return 1
+		}
+	}
+
 	var initialActions []conversation.ShellActionRecord
 	lastActionSequence := map[int]int64{}
 	if !deps.noShellSteps {
@@ -506,22 +554,43 @@ func runAttachWithDependencies(sessionID string, stdout, stderr io.Writer, deps 
 		rememberAttachActionSequences(lastActionSequence, initialActions)
 	}
 	replay, err := conversation.RenderReplayWithOptions(conv, conversation.ReplayOptions{
-		NoShellSteps: deps.noShellSteps,
-		ShellActions: initialActions,
+		NoShellSteps:       deps.noShellSteps,
+		ShellActions:       initialActions,
+		SuppressConclusion: true,
 	})
 	if err != nil {
 		fmt.Fprintln(stderr, "Error:", err)
 		return 1
 	}
-	if _, err := io.WriteString(stdout, replay+"\n"); err != nil {
-		fmt.Fprintln(stderr, "Error:", err)
-		return 1
+	if !deps.focused {
+		if _, err := io.WriteString(stdout, replay+"\n"); err != nil {
+			fmt.Fprintln(stderr, "Error:", err)
+			return 1
+		}
 	}
+
+	conclusionPrinted := false
+	if answer, ok := conversation.LastFinalMessage(conv); ok {
+		if err := writeAttachConclusion(stdout, sessionID, answer, uiTheme); err != nil {
+			fmt.Fprintln(stderr, "Error:", err)
+			return 1
+		}
+		conclusionPrinted = true
+	}
+
+	status := &attachStatusLine{
+		out:     stdout,
+		theme:   deps.theme,
+		label:   "following session " + sessionID,
+		enabled: !deps.focused && deps.isTerminal(stdout) && deps.theme.MotionMode() != presentation.MotionNone,
+	}
+	defer status.finish()
 
 	previous := append([]conversation.Message(nil), conv.Messages...)
 	lastContent := time.Now()
 	active, err := deps.probe(sessionID)
 	if err != nil {
+		status.clear()
 		fmt.Fprintln(stderr, "Error:", err)
 		return 1
 	}
@@ -529,17 +598,23 @@ func runAttachWithDependencies(sessionID string, stdout, stderr io.Writer, deps 
 	if !active {
 		inactiveSince = lastContent
 	}
+	start := time.Now()
+	if active && !conclusionPrinted {
+		status.draw(0)
+	}
 
 	ticker := time.NewTicker(deps.pollInterval)
 	defer ticker.Stop()
 	for now := range ticker.C {
 		data, err := deps.readFile(conversationPath)
 		if err != nil {
+			status.clear()
 			fmt.Fprintln(stderr, "Error:", err)
 			return 1
 		}
 		next, err := conversation.Unmarshal(data)
 		if err != nil {
+			status.clear()
 			fmt.Fprintln(stderr, "Error:", err)
 			return 1
 		}
@@ -549,23 +624,40 @@ func runAttachWithDependencies(sessionID string, stdout, stderr io.Writer, deps 
 		if !deps.noShellSteps {
 			actions, actionsErr := readAttachShellActions(next, deps.readActions)
 			if actionsErr != nil {
+				status.clear()
 				fmt.Fprintln(stderr, "Error:", actionsErr)
 				return 1
 			}
 			newActions = filterNewAttachActions(actions, lastActionSequence)
 		}
 		delta, err := conversation.RenderReplayDeltaWithOptions(next, previous, conversation.ReplayOptions{
-			NoShellSteps: deps.noShellSteps,
-			ShellActions: newActions,
+			NoShellSteps:       deps.noShellSteps,
+			ShellActions:       newActions,
+			SuppressConclusion: true,
 		})
 		if err != nil {
+			status.clear()
 			fmt.Fprintln(stderr, "Error:", err)
 			return 1
 		}
-		if delta != "" {
+		if delta != "" && !deps.focused {
+			status.clear()
 			if _, err := io.WriteString(stdout, delta+"\n"); err != nil {
 				fmt.Fprintln(stderr, "Error:", err)
 				return 1
+			}
+			if active && !conclusionPrinted {
+				status.draw(now.Sub(start))
+			}
+		}
+		if !conclusionPrinted {
+			if answer, ok := conversation.LastFinalMessage(next); ok {
+				status.clear()
+				if err := writeAttachConclusion(stdout, sessionID, answer, uiTheme); err != nil {
+					fmt.Fprintln(stderr, "Error:", err)
+					return 1
+				}
+				conclusionPrinted = true
 			}
 		}
 		if len(newMessages) > 0 || len(newActions) > 0 {
@@ -577,15 +669,20 @@ func runAttachWithDependencies(sessionID string, stdout, stderr io.Writer, deps 
 
 		active, err = deps.probe(sessionID)
 		if err != nil {
+			status.clear()
 			fmt.Fprintln(stderr, "Error:", err)
 			return 1
 		}
 		if active {
 			inactiveSince = time.Time{}
+			if !conclusionPrinted {
+				status.draw(now.Sub(start))
+			}
 			continue
 		}
 		if inactiveSince.IsZero() {
 			inactiveSince = now
+			status.clear()
 			continue
 		}
 		if now.Sub(inactiveSince) >= deps.quietGrace && now.Sub(lastContent) >= deps.quietGrace {
@@ -593,6 +690,64 @@ func runAttachWithDependencies(sessionID string, stdout, stderr io.Writer, deps 
 		}
 	}
 	return 0
+}
+
+type attachStatusLine struct {
+	out     io.Writer
+	theme   presentation.Theme
+	label   string
+	enabled bool
+	visible bool
+}
+
+// draw rewrites the live status line with the current animation frame. It
+// clears the previous frame first and writes without a trailing newline.
+func (s *attachStatusLine) draw(elapsed time.Duration) {
+	if s == nil || !s.enabled {
+		return
+	}
+	frame := ui.AttachSpinnerFrame(s.theme, elapsed)
+	if frame == "" {
+		return
+	}
+	ui.ClearCurrentLine(s.out)
+	fmt.Fprint(s.out, frame+"  "+s.label)
+	s.visible = true
+}
+
+// clear removes the live status line when one is visible.
+func (s *attachStatusLine) clear() {
+	if s == nil || !s.enabled || !s.visible {
+		return
+	}
+	ui.ClearCurrentLine(s.out)
+	s.visible = false
+}
+
+// finish clears the status line on every exit path and ends the final line.
+func (s *attachStatusLine) finish() {
+	if s == nil || !s.enabled {
+		return
+	}
+	s.clear()
+	fmt.Fprint(s.out, "\n")
+}
+
+func attachIsTerminal(out io.Writer) bool {
+	file, ok := out.(interface{ Fd() uintptr })
+	if !ok {
+		return false
+	}
+	return term.IsTerminal(int(file.Fd()))
+}
+
+func writeAttachConclusion(stdout io.Writer, sessionID, answer string, theme ui.Theme) error {
+	_, err := io.WriteString(stdout, ui.RenderSessionConclusion(ui.SessionConclusionEvent{
+		Outcome:        ui.SessionConclusionCompleted,
+		RenderedAnswer: answer,
+		SessionID:      sessionID,
+	}, theme, 0))
+	return err
 }
 
 func readAttachShellActions(conv *conversation.Conversation, readFile attachRead) ([]conversation.ShellActionRecord, error) {
