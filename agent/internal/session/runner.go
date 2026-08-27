@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/tursomari/machtiani/agent/internal/conversation"
 	"github.com/tursomari/machtiani/agent/internal/core/artifacts"
@@ -562,10 +563,14 @@ func runSession(ctx context.Context, opts Options) Result {
 	}
 	if conv.ModelSelection == nil {
 		conv.ModelSelection = persistedModelSelection(models, shellAgentModel)
-		if err := transcriptSetup.recorder.Save(); err != nil {
-			fmt.Fprintln(diagWriter, "Error persisting session model selection:", err)
-			return Result{ExitCode: 1, Err: err}
-		}
+	}
+	if persistFooterMetadata(conv, runCWD, orchBudget.MaxInputTokens, cfg.mode, footerModelMetadata(models)) {
+		// UpdatedAt doubles as the anchor for attach's elapsed-time estimate.
+		conv.UpdatedAt = time.Now().UTC()
+	}
+	if err := transcriptSetup.recorder.Save(); err != nil {
+		fmt.Fprintln(diagWriter, "Error persisting session display metadata:", err)
+		return Result{ExitCode: 1, Err: err}
 	}
 
 	mctRunner := runner.Runner{

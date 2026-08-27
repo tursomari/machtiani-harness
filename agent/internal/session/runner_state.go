@@ -1414,6 +1414,8 @@ func (r *runLifecycleState) hydrateState(state *SessionState, diagWriter io.Writ
 	}
 	if r.recorder != nil && r.recorder.HasConversation() {
 		r.recorder.conversation.RuntimeStats = state.RuntimeStats.Clone()
+		// Keep the elapsed snapshot and its timestamp together for attach.
+		r.recorder.conversation.UpdatedAt = time.Now().UTC()
 	}
 	if r.recorder != nil && r.recorder.HasConversation() {
 		_ = r.recorder.Save()

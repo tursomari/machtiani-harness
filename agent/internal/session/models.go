@@ -236,6 +236,52 @@ func footerModelMetadata(models componentModelRuntimes) ui.FooterModelMetadata {
 	}
 }
 
+// persistFooterMetadata records the run-only footer inputs in conversation.json
+// so a later attach reproduces the resolved display without consulting its own
+// environment. It returns whether the persisted record changed, which makes
+// resume and future runtime changes safe to save without needless rewrites.
+func persistFooterMetadata(conv *conversation.Conversation, cwd string, maxInputTokens int, mode string, models ui.FooterModelMetadata) bool {
+	if conv == nil {
+		return false
+	}
+	state := &conversation.FooterState{
+		CWD:            strings.TrimSpace(cwd),
+		MaxInputTokens: maxInputTokens,
+		Mode:           strings.TrimSpace(mode),
+		Models:         make([]conversation.FooterModelState, 0, len(models.Models)),
+	}
+	if state.MaxInputTokens < 0 {
+		state.MaxInputTokens = 0
+	}
+	for _, model := range models.Models {
+		state.Models = append(state.Models, conversation.FooterModelState{
+			Role:      strings.TrimSpace(model.Role),
+			Label:     strings.TrimSpace(model.Label),
+			Reasoning: strings.TrimSpace(model.Reasoning),
+		})
+	}
+	if footerStatesEqual(conv.Footer, state) {
+		return false
+	}
+	conv.Footer = state
+	return true
+}
+
+func footerStatesEqual(a, b *conversation.FooterState) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	if a.CWD != b.CWD || a.MaxInputTokens != b.MaxInputTokens || a.Mode != b.Mode || len(a.Models) != len(b.Models) {
+		return false
+	}
+	for i := range a.Models {
+		if a.Models[i] != b.Models[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func reasoningEffort(runtime modelRuntime) string {
 	if effort := reasoningEffortFromParams(runtime.extras); effort != "" {
 		return effort

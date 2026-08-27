@@ -422,6 +422,9 @@ assert_attach_captures() {
   local conclusion='Resume this session:|SHELL-AGENT INTERRUPTED|USER INPUT NEEDED'
   local action_step='^Step [0-9]+( of [0-9]+)?$'
   local action_command='^\$ [^[:space:]]'
+	local replay_session footer_record
+	replay_session="$(cat "$RUN_DIR/replay-session-id.txt" 2>/dev/null || true)"
+	footer_record="$ROOT/.machtiani/sessions/$replay_session/artifacts/conversation.json"
 
   normalize_capture "$RUN_DIR/attach-replay.tui.txt" "$default"
   normalize_capture "$RUN_DIR/attach-replay-focused.tui.txt" "$focused"
@@ -435,6 +438,15 @@ assert_attach_captures() {
   fi
   require_capture_match 'following session ' "$default" "TTY attach did not draw its live status line" || return 1
   require_capture_match 'session token input' "$default" "TTY attach did not draw its run-style footer" || return 1
+	# Footer inputs are written by run, not recomputed by attach. Terminal width
+	# may compact individual display segments, so assert their durable source.
+	if [[ ! -f "$footer_record" ]] || ! rg -q '"footer"[[:space:]]*:' "$footer_record" ||
+	   ! rg -q '"cwd"[[:space:]]*:' "$footer_record" ||
+	   ! rg -q '"max_input_tokens"[[:space:]]*:' "$footer_record" ||
+	   ! rg -q '"models"[[:space:]]*:' "$footer_record"; then
+	  echo "attach check failed: replay conversation lacks persisted footer metadata ($footer_record)" >&2
+	  return 1
+	fi
 
   require_capture_match "$conclusion" "$focused" "focused attach lost its conclusion" || return 1
   reject_capture_match "$action_step" "$focused" "focused attach rendered a step block" || return 1

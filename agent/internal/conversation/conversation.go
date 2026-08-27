@@ -43,7 +43,13 @@ type Conversation struct {
 	TaskDescription          string                   `json:"task_description,omitempty"`
 	Status                   string                   `json:"status,omitempty"`
 	RuntimeStats             *RuntimeStatsState       `json:"runtime_stats,omitempty"`
-	MagnificaHumanitas       *MagnificaHumanitas      `json:"magnifica_humanitas,omitempty"`
+	// Footer is the small, display-only record captured at run start. Keeping
+	// it on Conversation makes attach independent of the attaching process's
+	// working directory, current model configuration, and context defaults.
+	// Missing fields are intentionally tolerated for conversations written by
+	// older versions.
+	Footer             *FooterState        `json:"footer,omitempty"`
+	MagnificaHumanitas *MagnificaHumanitas `json:"magnifica_humanitas,omitempty"`
 }
 
 // MagnificaHumanitas records the quote selected for a session.
@@ -126,6 +132,33 @@ type RuntimeStatsState struct {
 	OutputTokens              int    `json:"output_tokens,omitempty"`
 	OutputTokensDisplay       string `json:"output_tokens_display,omitempty"`
 	PlannerActivePromptTokens int    `json:"planner_active_prompt_tokens,omitempty"`
+}
+
+// FooterState holds the stable values that the run footer receives from the
+// runtime environment. RuntimeStatsState holds the changing token values.
+// It is deliberately display-oriented: labels are already resolved as shown
+// to the user and contain no provider credentials or configuration aliases.
+type FooterState struct {
+	CWD            string             `json:"cwd,omitempty"`
+	MaxInputTokens int                `json:"max_input_tokens,omitempty"`
+	Mode           string             `json:"mode,omitempty"`
+	Models         []FooterModelState `json:"models,omitempty"`
+}
+
+// FooterModelState is one ordered role/model display pair in FooterState.
+type FooterModelState struct {
+	Role      string `json:"role,omitempty"`
+	Label     string `json:"label,omitempty"`
+	Reasoning string `json:"reasoning,omitempty"`
+}
+
+func (s *FooterState) Clone() *FooterState {
+	if s == nil {
+		return nil
+	}
+	clone := *s
+	clone.Models = append([]FooterModelState(nil), s.Models...)
+	return &clone
 }
 
 func NewRuntimeStatsState(activeElapsedMS int64, inputHit, inputMiss, output int) *RuntimeStatsState {

@@ -58,6 +58,7 @@ type attachDependencies struct {
 	focused      bool
 	theme        presentation.Theme
 	isTerminal   func(io.Writer) bool
+	footerWidth  func(io.Writer) int
 }
 
 // attachTerminalTeeWriter mirrors the session runner's capture writer. Keeping
@@ -505,6 +506,7 @@ func runAttachWithDisplay(sessionID string, noShellSteps, focused, noCursor bool
 		noShellSteps: noShellSteps,
 		focused:      focused,
 		theme:        theme,
+		footerWidth:  attachFooterWidth,
 	})
 }
 
@@ -544,6 +546,9 @@ func runAttachWithDependencies(sessionID string, stdout, stderr io.Writer, deps 
 	}
 	if deps.isTerminal == nil {
 		deps.isTerminal = attachIsTerminal
+	}
+	if deps.footerWidth == nil {
+		deps.footerWidth = attachFooterWidth
 	}
 	if deps.pollInterval <= 0 {
 		deps.pollInterval = attachPollInterval
@@ -732,7 +737,7 @@ func runAttachWithDependencies(sessionID string, stdout, stderr io.Writer, deps 
 		if now.Sub(inactiveSince) >= deps.quietGrace && now.Sub(lastContent) >= deps.quietGrace {
 			if styledReplay {
 				status.finish()
-				if err := writeAttachFooter(stdout, next, deps.theme); err != nil {
+				if err := writeAttachFooter(stdout, next, deps.theme, now, deps.footerWidth(stdout)); err != nil {
 					fmt.Fprintln(stderr, "Error:", err)
 					return 1
 				}
@@ -794,6 +799,21 @@ func attachIsTerminal(out io.Writer) bool {
 	return term.IsTerminal(int(file.Fd()))
 }
 
+// attachFooterWidth mirrors the formatter's terminal-width behavior so attach
+// chooses the same compaction candidate as run. A non-terminal writer leaves
+// width at zero, which RenderFinalFooter intentionally maps to its default.
+func attachFooterWidth(out io.Writer) int {
+	file, ok := out.(interface{ Fd() uintptr })
+	if !ok || !term.IsTerminal(int(file.Fd())) {
+		return 0
+	}
+	width, _, err := term.GetSize(int(file.Fd()))
+	if err != nil || width <= 0 {
+		return 0
+	}
+	return width
+}
+
 func writeAttachConclusion(stdout io.Writer, sessionID, answer string, theme ui.Theme) error {
 	_, err := io.WriteString(stdout, ui.RenderSessionConclusion(ui.SessionConclusionEvent{
 		Outcome:        ui.SessionConclusionCompleted,
@@ -806,8 +826,10 @@ func writeAttachConclusion(stdout io.Writer, sessionID, answer string, theme ui.
 // writeAttachFooter prints the run-style final footer using only the values
 // recorded with the attached conversation. It is called only for a TTY attach
 // after the source session has become quiet.
-func writeAttachFooter(stdout io.Writer, conv *conversation.Conversation, theme presentation.Theme) error {
-	for _, line := range ui.RenderFinalFooter(conversation.PersistedFooterSnapshot(conv), theme) {
+func writeAttachFooter(stdout io.Writer, conv *conversation.Conversation, theme presentation.Theme, now time.Time, width int) error {
+	snapshot := conversation.PersistedFooterSnapshotAt(conv, now)
+	snapshot.Width = width
+	for _, line := range ui.RenderFinalFooter(snapshot, theme) {
 		ui.ClearCurrentLine(stdout)
 		if _, err := fmt.Fprintln(stdout, line); err != nil {
 			return err

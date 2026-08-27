@@ -73,8 +73,8 @@ func RenderReplayDeltaWithOptions(conv *Conversation, previous []Message, opts R
 }
 
 // PersistedFooterSnapshot returns only footer values recorded in the
-// conversation. Attach uses this rather than deriving runtime-only values such
-// as the original working directory, context limit, active mode task, or
+// conversation. Attach uses this rather than deriving runtime-only values from
+// its own process, such as the original working directory, context limit, or
 // resolved provider/model labels.
 func PersistedFooterSnapshot(conv *Conversation) ui.FooterSnapshot {
 	if conv == nil {
@@ -82,7 +82,30 @@ func PersistedFooterSnapshot(conv *Conversation) ui.FooterSnapshot {
 	}
 	snapshot := ui.FooterSnapshot{
 		Identity: ui.FooterIdentity{Label: "session", Value: conv.SessionID},
-		Turn:     conv.TurnsCompleted,
+		// Run presents the next turn number, including after its last completed
+		// turn. Attach follows that same persisted convention.
+		Turn: conv.TurnsCompleted + 1,
+	}
+	if footer := conv.Footer; footer != nil {
+		snapshot.CWD = footer.CWD
+		snapshot.MaxInputTokens = footer.MaxInputTokens
+		if footer.Mode != "" {
+			snapshot.ModeTasks = []ui.ModeTaskDisplay{{
+				Index:  1,
+				Mode:   footer.Mode,
+				Status: "running",
+			}}
+		}
+		if len(footer.Models) > 0 {
+			snapshot.Models.Models = make([]ui.FooterModelDisplay, 0, len(footer.Models))
+			for _, model := range footer.Models {
+				snapshot.Models.Models = append(snapshot.Models.Models, ui.FooterModelDisplay{
+					Role:      model.Role,
+					Label:     model.Label,
+					Reasoning: model.Reasoning,
+				})
+			}
+		}
 	}
 	if stats := conv.RuntimeStats; stats != nil {
 		snapshot.Elapsed = time.Duration(stats.ActiveElapsedMS) * time.Millisecond
@@ -94,6 +117,18 @@ func PersistedFooterSnapshot(conv *Conversation) ui.FooterSnapshot {
 			ActivePromptTokens: stats.PlannerActivePromptTokens,
 		}
 	}
+	return snapshot
+}
+
+// PersistedFooterSnapshotAt adds the elapsed wall time since the most recent
+// persisted conversation update. Attach is the only caller: all other values
+// still come solely from Conversation.
+func PersistedFooterSnapshotAt(conv *Conversation, now time.Time) ui.FooterSnapshot {
+	snapshot := PersistedFooterSnapshot(conv)
+	if conv == nil || conv.RuntimeStats == nil || conv.UpdatedAt.IsZero() || now.Before(conv.UpdatedAt) {
+		return snapshot
+	}
+	snapshot.Elapsed += now.Sub(conv.UpdatedAt)
 	return snapshot
 }
 

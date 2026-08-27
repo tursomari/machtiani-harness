@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tursomari/machtiani/agent/internal/presentation"
 )
@@ -276,23 +277,62 @@ func TestRenderReplayDeltaWithLateShellActions(t *testing.T) {
 	}
 }
 
-func TestPersistedFooterSnapshotUsesOnlyConversationRuntimeStats(t *testing.T) {
+func TestPersistedFooterSnapshotUsesOnlyConversationState(t *testing.T) {
 	conv := New("sess-footer", "Footer values")
 	conv.TurnsCompleted = 4
 	conv.RuntimeStats = NewRuntimeStatsState(65_000, 1_234, 56_789, 1_000)
 	conv.RuntimeStats.PlannerActivePromptTokens = 25_000
+	conv.Footer = &FooterState{
+		CWD:            "/work/project",
+		MaxInputTokens: 120_000,
+		Mode:           "code-forge",
+		Models: []FooterModelState{
+			{Role: "planner", Label: "deepseek:deepseek-v4-flash"},
+			{Role: "shell", Label: "deepseek:deepseek-v4-flash"},
+		},
+	}
 
 	snapshot := PersistedFooterSnapshot(conv)
 	if got, want := snapshot.Elapsed.Milliseconds(), int64(65_000); got != want {
 		t.Fatalf("elapsed = %d, want %d", got, want)
 	}
-	if snapshot.Identity.Label != "session" || snapshot.Identity.Value != "sess-footer" || snapshot.Turn != 4 {
+	if snapshot.Identity.Label != "session" || snapshot.Identity.Value != "sess-footer" || snapshot.Turn != 5 {
 		t.Fatalf("identity/turn = %#v / %d", snapshot.Identity, snapshot.Turn)
 	}
 	if snapshot.TokenUsage.InputHit != 1_234 || snapshot.TokenUsage.InputMiss != 56_789 || snapshot.TokenUsage.Output != 1_000 || snapshot.ActivePromptTokens != 25_000 {
 		t.Fatalf("runtime token snapshot = %#v", snapshot)
 	}
+	if snapshot.CWD != "/work/project" || snapshot.MaxInputTokens != 120_000 || len(snapshot.Models.Models) != 2 || len(snapshot.ModeTasks) != 1 {
+		t.Fatalf("snapshot omitted persisted footer data: %#v", snapshot)
+	}
+	if got := snapshot.Models.Models[0].Label; got != "deepseek:deepseek-v4-flash" {
+		t.Fatalf("planner model = %q", got)
+	}
+}
+
+func TestPersistedFooterSnapshotToleratesOlderConversations(t *testing.T) {
+	conv := New("sess-old-footer", "Old footer values")
+	conv.TurnsCompleted = 2
+
+	snapshot := PersistedFooterSnapshot(conv)
 	if snapshot.CWD != "" || snapshot.MaxInputTokens != 0 || len(snapshot.Models.Models) != 0 || len(snapshot.ModeTasks) != 0 {
-		t.Fatalf("snapshot included non-persisted footer data: %#v", snapshot)
+		t.Fatalf("old conversation invented footer data: %#v", snapshot)
+	}
+	if snapshot.Turn != 3 {
+		t.Fatalf("turn = %d, want 3", snapshot.Turn)
+	}
+	if got := PersistedFooterSnapshotAt(conv, conv.UpdatedAt.Add(time.Minute)).Elapsed; got != 0 {
+		t.Fatalf("old conversation elapsed = %s, want persisted zero", got)
+	}
+}
+
+func TestPersistedFooterSnapshotAtAddsTimeSinceRuntimeSnapshot(t *testing.T) {
+	conv := New("sess-elapsed-footer", "Elapsed footer")
+	conv.RuntimeStats = NewRuntimeStatsState(65_000, 0, 0, 0)
+	conv.UpdatedAt = time.Date(2026, time.August, 27, 15, 0, 0, 0, time.UTC)
+
+	snapshot := PersistedFooterSnapshotAt(conv, conv.UpdatedAt.Add(3*time.Second))
+	if got, want := snapshot.Elapsed, 68*time.Second; got != want {
+		t.Fatalf("elapsed = %s, want %s", got, want)
 	}
 }

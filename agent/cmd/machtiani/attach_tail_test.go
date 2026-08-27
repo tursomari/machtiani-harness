@@ -321,7 +321,7 @@ func TestRunAttachTTYStatusLineClearsOnExit(t *testing.T) {
 	active.Store(true)
 	writerDone := make(chan error, 1)
 	go func() {
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(300 * time.Millisecond)
 		conv.AddMessage("assistant", "TTY live turn 2", map[string]any{
 			"type":     "work_request",
 			"turn":     2,
@@ -331,7 +331,7 @@ func TestRunAttachTTYStatusLineClearsOnExit(t *testing.T) {
 			writerDone <- err
 			return
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(300 * time.Millisecond)
 		active.Store(false)
 		writerDone <- nil
 	}()
@@ -360,7 +360,7 @@ func TestRunAttachTTYStatusLineClearsOnExit(t *testing.T) {
 	if !strings.Contains(output, "\r\x1b[2K") {
 		t.Errorf("status line was never cleared with carriage return:\n%q", output)
 	}
-	if !strings.Contains(output, "\r\x1b[2K0s  session token input 0 (cache 0%)  output 0\n\r\x1b[2Ksession "+sessionID+"\n") {
+	if !strings.Contains(output, "\r\x1b[2K0s  session token input 0 (cache 0%)  output 0\n\r\x1b[2Kturn 1  session "+sessionID+"\n") {
 		t.Errorf("TTY output does not end with the run-style persisted footer:\n%q", output)
 	}
 	if !strings.Contains(output, "TTY live turn 2") {
@@ -379,13 +379,13 @@ func TestRunAttachTTYPrintsSingleConclusionWhenSessionCompletes(t *testing.T) {
 	active.Store(true)
 	writerDone := make(chan error, 1)
 	go func() {
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(300 * time.Millisecond)
 		conv.AddMessage("assistant", "TTY completing answer", map[string]any{"type": "final", "turns": 1, "capped": false})
 		if err := publishAttachTailConversation(path, conv); err != nil {
 			writerDone <- err
 			return
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(300 * time.Millisecond)
 		active.Store(false)
 		writerDone <- nil
 	}()
@@ -515,7 +515,7 @@ func TestRunAttachStatusHonorsMotionAndGlyphs(t *testing.T) {
 	}
 }
 
-func TestRunAttachTTYFooterUsesPersistedRuntimeStatsOnly(t *testing.T) {
+func TestRunAttachTTYFooterUsesPersistedFooterState(t *testing.T) {
 	setupSessionArchiveCommandTest(t)
 	sessionID := "agent-attach-persisted-footer"
 	conv := conversation.New(sessionID, "Persisted footer")
@@ -523,6 +523,49 @@ func TestRunAttachTTYFooterUsesPersistedRuntimeStatsOnly(t *testing.T) {
 	conv.TurnsCompleted = 3
 	conv.RuntimeStats = conversation.NewRuntimeStatsState(65_000, 1_234, 56_789, 1_000)
 	conv.RuntimeStats.PlannerActivePromptTokens = 25_000
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	conv.Footer = &conversation.FooterState{
+		CWD:            filepath.Join(home, "project"),
+		MaxInputTokens: 120_000,
+		Mode:           "code-forge",
+		Models: []conversation.FooterModelState{
+			{Role: "planner", Label: "deepseek:deepseek-v4-flash"},
+			{Role: "shell", Label: "deepseek:deepseek-v4-flash"},
+		},
+	}
+	writeAttachTailConversation(t, conv)
+
+	var stdout, stderr strings.Builder
+	code := runAttachWithDependencies(sessionID, &stdout, &stderr, attachDependencies{
+		readFile:     os.ReadFile,
+		probe:        func(string) (bool, error) { return false, nil },
+		pollInterval: time.Millisecond,
+		quietGrace:   3 * time.Millisecond,
+		theme:        presentation.NewForTest(presentation.ProfileTerminal, true, false),
+		isTerminal:   func(io.Writer) bool { return true },
+		footerWidth:  func(io.Writer) int { return 240 },
+	})
+	if code != 0 || stderr.Len() != 0 {
+		t.Fatalf("runAttachWithDependencies() = %d, stderr=%q", code, stderr.String())
+	}
+	output := stdout.String()
+	for _, want := range []string{
+		"\x1b[1;36m1:05\x1b[0m", "~/project", "context remain \x1b[33m79%\x1b[0m", "session token input \x1b[33m58,023\x1b[0m (cache \x1b[33m2%\x1b[0m)  output \x1b[33m1,000\x1b[0m", "code-forge", "\x1b[1;36mturn 4\x1b[0m", "session \x1b[33m" + sessionID + "\x1b[0m", "planner \x1b[33mdeepseek:deepseek-v4-flash\x1b[0m", "shell \x1b[33mdeepseek:deepseek-v4-flash\x1b[0m",
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("footer missing persisted value %q in:\n%q", want, output)
+		}
+	}
+}
+
+func TestRunAttachTTYFooterToleratesConversationWithoutFooterState(t *testing.T) {
+	setupSessionArchiveCommandTest(t)
+	sessionID := "agent-attach-old-footer"
+	conv := conversation.New(sessionID, "Old footer")
+	addAttachTailTurn(conv, 1)
 	writeAttachTailConversation(t, conv)
 
 	var stdout, stderr strings.Builder
@@ -538,16 +581,9 @@ func TestRunAttachTTYFooterUsesPersistedRuntimeStatsOnly(t *testing.T) {
 		t.Fatalf("runAttachWithDependencies() = %d, stderr=%q", code, stderr.String())
 	}
 	output := stdout.String()
-	for _, want := range []string{
-		"\x1b[1;36m1:05\x1b[0m", "session token input \x1b[33m58,023\x1b[0m (cache \x1b[33m2%\x1b[0m)  output \x1b[33m1,000\x1b[0m", "\x1b[1;36mturn 3\x1b[0m", "session \x1b[33m" + sessionID + "\x1b[0m",
-	} {
-		if !strings.Contains(output, want) {
-			t.Errorf("footer missing persisted value %q in:\n%q", want, output)
-		}
-	}
 	for _, unavailable := range []string{"context remain", "planner ", "shell ", "~/"} {
 		if strings.Contains(output, unavailable) {
-			t.Errorf("footer invented unavailable value %q in:\n%q", unavailable, output)
+			t.Errorf("old footer invented unavailable value %q in:\n%q", unavailable, output)
 		}
 	}
 }
@@ -563,7 +599,7 @@ func TestRunAttachTTYStatusUsesActivitySemanticColors(t *testing.T) {
 	active.Store(true)
 	writerDone := make(chan error, 1)
 	go func() {
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(300 * time.Millisecond)
 		active.Store(false)
 		writerDone <- publishAttachTailConversation(path, conv)
 	}()

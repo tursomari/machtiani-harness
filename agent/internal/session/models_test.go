@@ -7,8 +7,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tursomari/machtiani/agent/internal/conversation"
 	"github.com/tursomari/machtiani/agent/internal/core/artifacts"
 	"github.com/tursomari/machtiani/agent/internal/llm"
+	"github.com/tursomari/machtiani/agent/internal/ui"
 )
 
 func TestResolveFileDiscoveryTrajectoryConflictingFlags(t *testing.T) {
@@ -168,6 +170,30 @@ func TestFooterModelMetadataIncludesReasoningAndShellFallback(t *testing.T) {
 	}
 	if got := meta.Models[1].Reasoning; got != "medium" {
 		t.Fatalf("shell reasoning = %q", got)
+	}
+}
+
+func TestPersistFooterMetadataStoresRunFooterInputs(t *testing.T) {
+	conv := conversation.New("footer-persist", "Persist footer")
+	models := ui.FooterModelMetadata{Models: []ui.FooterModelDisplay{
+		{Role: "planner", Label: "provider:planner-model", Reasoning: "high"},
+		{Role: "shell", Label: "provider:shell-model"},
+	}}
+	if !persistFooterMetadata(conv, "/workspace/project", 120_000, "code-forge", models) {
+		t.Fatal("initial footer persistence reported no change")
+	}
+	if conv.Footer == nil || conv.Footer.CWD != "/workspace/project" || conv.Footer.MaxInputTokens != 120_000 || conv.Footer.Mode != "code-forge" {
+		t.Fatalf("persisted footer = %#v", conv.Footer)
+	}
+	if got := conv.Footer.Models; len(got) != 2 || got[0].Label != "provider:planner-model" || got[1].Role != "shell" {
+		t.Fatalf("persisted footer models = %#v", got)
+	}
+	if persistFooterMetadata(conv, "/workspace/project", 120_000, "code-forge", models) {
+		t.Fatal("unchanged footer metadata reported a change")
+	}
+	models.Models[1].Label = "provider:replacement-shell"
+	if !persistFooterMetadata(conv, "/workspace/project", 120_000, "code-forge", models) {
+		t.Fatal("changed resolved model was not persisted")
 	}
 }
 
