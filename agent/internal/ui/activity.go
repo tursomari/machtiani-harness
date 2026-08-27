@@ -189,7 +189,7 @@ func AttachSpinnerFrame(theme presentation.Theme, elapsed time.Duration) string 
 // the same semantic roles as the live activity line: the spinner is Truth and
 // its label is Beauty. Keeping this here makes attach share the presentation
 // palette selected for run.
-func RenderAttachStatusLine(theme presentation.Theme, elapsed time.Duration, label string) string {
+func RenderAttachStatusLine(theme presentation.Theme, elapsed time.Duration) string {
 	frame := AttachSpinnerFrame(theme, elapsed)
 	if frame == "" {
 		return ""
@@ -197,6 +197,6 @@ func RenderAttachStatusLine(theme presentation.Theme, elapsed time.Duration, lab
 	return theme.RenderLine(presentation.StyledLine{
 		presentation.Bold(presentation.RoleTruth, frame),
 		presentation.Text("  "),
-		presentation.RoleText(presentation.RoleBeauty, label),
+		presentation.RoleText(presentation.RoleBeauty, "following session"),
 	})
 }

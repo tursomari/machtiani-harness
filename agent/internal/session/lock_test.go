@@ -81,6 +81,31 @@ func TestAcquireSessionLockWithLivePidRejects(t *testing.T) {
 	}
 }
 
+func TestIsSessionActiveAtUsesProvidedScratchDirectory(t *testing.T) {
+	scratchDir := t.TempDir()
+	lockPath := filepath.Join(scratchDir, sessionLockFileName)
+	file, err := os.OpenFile(lockPath, os.O_RDWR|os.O_CREATE, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+
+	active, err := IsSessionActiveAt(scratchDir)
+	if err != nil || !active {
+		t.Fatalf("IsSessionActiveAt() = %v, %v; want true, nil", active, err)
+	}
+	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_UN); err != nil {
+		t.Fatal(err)
+	}
+	active, err = IsSessionActiveAt(scratchDir)
+	if err != nil || active {
+		t.Fatalf("IsSessionActiveAt() after unlock = %v, %v; want false, nil", active, err)
+	}
+}
+
 func TestCleanupSkipsActiveSessionLock(t *testing.T) {
 	tempDir := t.TempDir()
 	root := filepath.Join(tempDir, "tmp")

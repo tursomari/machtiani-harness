@@ -436,7 +436,7 @@ assert_attach_captures() {
     echo "attach check failed: default attach must render exactly one conclusion ($default)" >&2
     return 1
   fi
-  require_capture_match 'following session ' "$default" "TTY attach did not draw its live status line" || return 1
+  require_capture_match 'following session$' "$default" "TTY attach did not draw its live status line" || return 1
   require_capture_match 'session token input' "$default" "TTY attach did not draw its run-style footer" || return 1
 	local first_footer_line first_conclusion_line
 	first_footer_line="$(rg -n -m1 'session token input' "$default" | cut -d: -f1)"
@@ -459,7 +459,7 @@ assert_attach_captures() {
   require_capture_match "$conclusion" "$focused" "focused attach lost its conclusion" || return 1
   reject_capture_match "$action_step" "$focused" "focused attach rendered a step block" || return 1
   reject_capture_match "$action_command" "$focused" "focused attach rendered a command block" || return 1
-  reject_capture_match 'session token input|Following session |machtiani \(mct\)' "$focused" "focused attach rendered decoration" || return 1
+  reject_capture_match 'session token input|following session$|machtiani \(mct\)' "$focused" "focused attach rendered decoration" || return 1
 
   reject_capture_match "$action_step" "$no_shell" "no-shell-steps attach rendered a step block" || return 1
   reject_capture_match "$action_command" "$no_shell" "no-shell-steps attach rendered a command block" || return 1
@@ -469,7 +469,7 @@ assert_attach_captures() {
     echo "attach check failed: non-TTY attach emitted ANSI escapes ($plain)" >&2
     return 1
   fi
-  reject_capture_match 'following session ' "$plain" "non-TTY attach rendered a status line" || return 1
+  reject_capture_match 'following session$' "$plain" "non-TTY attach rendered a status line" || return 1
   if [[ -s "$plain" && "$(tail -c 1 "$plain" | od -An -t x1)" != *"0a"* ]]; then
     echo "attach check failed: non-TTY attach did not end with a newline ($plain)" >&2
     return 1

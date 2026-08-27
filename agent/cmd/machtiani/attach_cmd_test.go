@@ -252,6 +252,102 @@ func TestAttachMissingConversation(t *testing.T) {
 	}
 }
 
+func TestAttachFallsBackToGlobalSessionAndThreadsSelectedScope(t *testing.T) {
+	setupSessionArchiveCommandTest(t)
+	sessionID := "agent-global-fallback-123456"
+	globalSessionsRoot, globalScratchRoot, err := attachGlobalRoots()
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := newAttachSessionTarget(sessionID, globalSessionsRoot, globalScratchRoot)
+	conv := conversation.New(sessionID, "Attach to the global fallback")
+	addAttachTailTurn(conv, 1)
+	writeAttachConversationAt(t, target.conversationPath(), conv)
+	writeAttachActionAt(t, attachShellAgentActionsPath(target.sessionDirectory, 1), shellaction.Record{
+		Version: 1, SessionID: sessionID, Turn: 1, Sequence: 1,
+		Description: "Read global action", Command: "printf global-scope",
+	})
+
+	var probedPath string
+	var stdout, stderr strings.Builder
+	code := runAttachWithDependencies("agent-global-fallback-12", &stdout, &stderr, attachDependencies{
+		readFile:    os.ReadFile,
+		readActions: os.ReadFile,
+		probe: func(path string) (bool, error) {
+			probedPath = path
+			return false, nil
+		},
+		pollInterval: time.Millisecond,
+		quietGrace:   3 * time.Millisecond,
+	})
+	if code != 0 || stderr.Len() != 0 {
+		t.Fatalf("runAttachWithDependencies() = %d, stderr=%q", code, stderr.String())
+	}
+	if probedPath != target.scratchDirectory {
+		t.Fatalf("activity probe path = %q, want selected global scratch %q", probedPath, target.scratchDirectory)
+	}
+	for _, want := range []string{"Live question 1", "$ printf global-scope"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Errorf("global attach output missing %q:\n%s", want, stdout.String())
+		}
+	}
+}
+
+func TestAttachDefaultScopeShadowsGlobalDuplicate(t *testing.T) {
+	setupSessionArchiveCommandTest(t)
+	sessionID := "agent-attach-shadow"
+	defaultConv := conversation.New(sessionID, "Prefer the default scope")
+	defaultConv.AddMessage("assistant", "Default scope answer", map[string]any{"type": "work_result", "turn": 1})
+	writeAttachTailConversation(t, defaultConv)
+
+	globalSessionsRoot, globalScratchRoot, err := attachGlobalRoots()
+	if err != nil {
+		t.Fatal(err)
+	}
+	globalTarget := newAttachSessionTarget(sessionID, globalSessionsRoot, globalScratchRoot)
+	globalConv := conversation.New(sessionID, "Do not select the global duplicate")
+	globalConv.AddMessage("assistant", "Global scope answer", map[string]any{"type": "work_result", "turn": 1})
+	writeAttachConversationAt(t, globalTarget.conversationPath(), globalConv)
+
+	var stdout, stderr strings.Builder
+	code := runAttachWithDependencies(sessionID, &stdout, &stderr, attachDependencies{
+		probe:        func(string) (bool, error) { return false, nil },
+		pollInterval: time.Millisecond,
+		quietGrace:   3 * time.Millisecond,
+	})
+	if code != 0 || stderr.Len() != 0 {
+		t.Fatalf("runAttachWithDependencies() = %d, stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Default scope answer") || strings.Contains(stdout.String(), "Global scope answer") {
+		t.Fatalf("attach did not preserve default-scope shadowing:\n%s", stdout.String())
+	}
+}
+
+func TestAttachDefaultScopeAmbiguityDoesNotFallBack(t *testing.T) {
+	setupSessionArchiveCommandTest(t)
+	defaultSessionsRoot, err := artifacts.SessionsRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, sessionID := range []string{"agent-attach-ambiguous-111", "agent-attach-ambiguous-112"} {
+		if err := os.MkdirAll(filepath.Join(defaultSessionsRoot, sessionID), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	globalSessionsRoot, _, err := attachGlobalRoots()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(globalSessionsRoot, "agent-attach-ambiguous-11"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = resolveAttachSession("agent-attach-ambiguous-11")
+	if err == nil || !strings.Contains(err.Error(), "ambiguous session id") {
+		t.Fatalf("resolveAttachSession() error = %v, want default-scope ambiguity", err)
+	}
+}
+
 func TestAttachCorruptedConversation(t *testing.T) {
 	setupSessionArchiveCommandTest(t)
 	prepareTestConfig(t)
@@ -389,6 +485,34 @@ func writeAttachCommandConversation(t *testing.T, sessionID string) {
 	})
 	data, err = conv.Marshal()
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeAttachConversationAt(t *testing.T, path string, conv *conversation.Conversation) {
+	t.Helper()
+	data, err := conv.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeAttachActionAt(t *testing.T, path string, record shellaction.Record) {
+	t.Helper()
+	data, err := shellaction.EncodeRecord(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(path, data, 0o644); err != nil {

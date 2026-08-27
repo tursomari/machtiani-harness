@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -46,7 +47,117 @@ const (
 )
 
 type attachRead func(path string) ([]byte, error)
-type attachProbe func(sessionID string) (bool, error)
+type attachProbe func(sessionScratchDirectory string) (bool, error)
+
+type attachSessionTarget struct {
+	sessionID        string
+	sessionsRoot     string
+	scratchRoot      string
+	sessionDirectory string
+	scratchDirectory string
+}
+
+func newAttachSessionTarget(sessionID, sessionsRoot, scratchRoot string) attachSessionTarget {
+	return attachSessionTarget{
+		sessionID:        sessionID,
+		sessionsRoot:     sessionsRoot,
+		scratchRoot:      scratchRoot,
+		sessionDirectory: filepath.Join(sessionsRoot, sessionID),
+		scratchDirectory: filepath.Join(scratchRoot, sessionID),
+	}
+}
+
+func (t attachSessionTarget) conversationPath() string {
+	return filepath.Join(t.sessionDirectory, "artifacts", "conversation.json")
+}
+
+// resolveAttachSession searches the current session scope before the global
+// scope. A match in the current scope wins even when the same ID exists
+// globally, while ambiguity in either searched scope is returned immediately.
+func resolveAttachSession(query string) (attachSessionTarget, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return attachSessionTarget{}, errors.New("session id required")
+	}
+
+	defaultSessionsRoot, err := artifacts.SessionsRoot()
+	if err != nil {
+		return attachSessionTarget{}, fmt.Errorf("resolve sessions root: %w", err)
+	}
+	if sessionID, found, err := resolveAttachSessionIDAt(query, defaultSessionsRoot); err != nil {
+		return attachSessionTarget{}, err
+	} else if found {
+		defaultScratchRoot, err := artifacts.ScratchRoot()
+		if err != nil {
+			return attachSessionTarget{}, fmt.Errorf("resolve scratch root: %w", err)
+		}
+		return newAttachSessionTarget(sessionID, defaultSessionsRoot, defaultScratchRoot), nil
+	}
+
+	globalSessionsRoot, globalScratchRoot, err := attachGlobalRoots()
+	if err != nil {
+		return attachSessionTarget{}, err
+	}
+	if filepath.Clean(globalSessionsRoot) != filepath.Clean(defaultSessionsRoot) {
+		if sessionID, found, err := resolveAttachSessionIDAt(query, globalSessionsRoot); err != nil {
+			return attachSessionTarget{}, err
+		} else if found {
+			return newAttachSessionTarget(sessionID, globalSessionsRoot, globalScratchRoot), nil
+		}
+	}
+
+	return attachSessionTarget{}, fmt.Errorf("unknown session: %q", query)
+}
+
+func resolveAttachSessionIDAt(query, sessionsRoot string) (string, bool, error) {
+	entries, err := os.ReadDir(sessionsRoot)
+	if err != nil && !os.IsNotExist(err) {
+		return "", false, fmt.Errorf("read sessions directory: %w", err)
+	}
+
+	canonicalQuery := canonicalAttachSessionID(query)
+	var exactMatches []string
+	var prefixMatches []string
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		canonicalName := canonicalAttachSessionID(name)
+		if canonicalName == canonicalQuery {
+			exactMatches = append(exactMatches, name)
+		}
+		if strings.HasPrefix(canonicalName, canonicalQuery) {
+			prefixMatches = append(prefixMatches, name)
+		}
+	}
+
+	if len(exactMatches) == 1 {
+		return exactMatches[0], true, nil
+	}
+	switch len(prefixMatches) {
+	case 0:
+		return "", false, nil
+	case 1:
+		return prefixMatches[0], true, nil
+	default:
+		sort.Strings(prefixMatches)
+		return "", false, fmt.Errorf("ambiguous session id %q: %d candidates: %s", query, len(prefixMatches), strings.Join(prefixMatches, ", "))
+	}
+}
+
+func canonicalAttachSessionID(value string) string {
+	return strings.ReplaceAll(strings.ToUpper(value), "-", "")
+}
+
+func attachGlobalRoots() (sessionsRoot, scratchRoot string, err error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", "", fmt.Errorf("resolve user home: %w", err)
+	}
+	root := filepath.Join(home, ".machtiani")
+	return filepath.Join(root, "sessions"), filepath.Join(root, "tmp"), nil
+}
 
 type attachDependencies struct {
 	readFile     attachRead
@@ -500,7 +611,7 @@ func runAttachWithDisplay(sessionID string, noShellSteps, focused, noCursor bool
 	return runAttachWithDependencies(sessionID, stdout, stderr, attachDependencies{
 		readFile:     os.ReadFile,
 		readActions:  os.ReadFile,
-		probe:        session.IsSessionActive,
+		probe:        session.IsSessionActiveAt,
 		pollInterval: attachPollInterval,
 		quietGrace:   attachQuietGrace,
 		noShellSteps: noShellSteps,
@@ -542,7 +653,7 @@ func runAttachWithDependencies(sessionID string, stdout, stderr io.Writer, deps 
 		deps.readActions = os.ReadFile
 	}
 	if deps.probe == nil {
-		deps.probe = session.IsSessionActive
+		deps.probe = session.IsSessionActiveAt
 	}
 	if deps.isTerminal == nil {
 		deps.isTerminal = attachIsTerminal
@@ -557,11 +668,13 @@ func runAttachWithDependencies(sessionID string, stdout, stderr io.Writer, deps 
 		deps.quietGrace = attachQuietGrace
 	}
 
-	conversationPath, err := artifacts.SessionConversationFile(sessionID)
+	target, err := resolveAttachSession(sessionID)
 	if err != nil {
 		fmt.Fprintln(stderr, "Error:", err)
 		return 1
 	}
+	sessionID = target.sessionID
+	conversationPath := target.conversationPath()
 	data, err := deps.readFile(conversationPath)
 	if err != nil {
 		fmt.Fprintln(stderr, "Error:", err)
@@ -592,7 +705,7 @@ func runAttachWithDependencies(sessionID string, stdout, stderr io.Writer, deps 
 	var initialActions []conversation.ShellActionRecord
 	lastActionSequence := map[int]int64{}
 	if !deps.noShellSteps {
-		initialActions, err = readAttachShellActions(conv, deps.readActions)
+		initialActions, err = readAttachShellActions(conv, target.sessionDirectory, deps.readActions)
 		if err != nil {
 			fmt.Fprintln(stderr, "Error:", err)
 			return 1
@@ -629,14 +742,13 @@ func runAttachWithDependencies(sessionID string, stdout, stderr io.Writer, deps 
 	overlay := &attachOverlay{
 		out:     stdout,
 		theme:   deps.theme,
-		label:   "following session " + sessionID,
 		enabled: styledReplay,
 	}
 	defer overlay.finish()
 
 	previous := append([]conversation.Message(nil), conv.Messages...)
 	lastContent := time.Now()
-	active, err := deps.probe(sessionID)
+	active, err := deps.probe(target.scratchDirectory)
 	if err != nil {
 		overlay.clear()
 		fmt.Fprintln(stderr, "Error:", err)
@@ -669,7 +781,7 @@ func runAttachWithDependencies(sessionID string, stdout, stderr io.Writer, deps 
 		newMessages := conversation.IdentifyNewMessages(previous, next.Messages)
 		var newActions []conversation.ShellActionRecord
 		if !deps.noShellSteps {
-			actions, actionsErr := readAttachShellActions(next, deps.readActions)
+			actions, actionsErr := readAttachShellActions(next, target.sessionDirectory, deps.readActions)
 			if actionsErr != nil {
 				overlay.clear()
 				fmt.Fprintln(stderr, "Error:", actionsErr)
@@ -713,7 +825,7 @@ func runAttachWithDependencies(sessionID string, stdout, stderr io.Writer, deps 
 			previous = append(previous[:0], next.Messages...)
 		}
 
-		active, err = deps.probe(sessionID)
+		active, err = deps.probe(target.scratchDirectory)
 		if err != nil {
 			overlay.clear()
 			fmt.Fprintln(stderr, "Error:", err)
@@ -748,7 +860,6 @@ func runAttachWithDependencies(sessionID string, stdout, stderr io.Writer, deps 
 type attachOverlay struct {
 	out      io.Writer
 	theme    presentation.Theme
-	label    string
 	enabled  bool
 	lines    int
 	finished bool
@@ -763,9 +874,9 @@ func (s *attachOverlay) draw(conv *conversation.Conversation, now time.Time, ela
 	}
 	snapshot := conversation.PersistedFooterSnapshotAt(conv, now)
 	snapshot.Width = width
-	lines := make([]string, 0, 3)
-	if activity := ui.RenderAttachStatusLine(s.theme, elapsed, s.label); activity != "" {
-		lines = append(lines, activity)
+	lines := make([]string, 0, 4)
+	if activity := ui.RenderAttachStatusLine(s.theme, elapsed); activity != "" {
+		lines = append(lines, activity, "")
 	}
 	lines = append(lines, ui.RenderFinalFooter(snapshot, s.theme)...)
 	if s.lines > 0 {
@@ -842,8 +953,8 @@ func writeAttachFooter(stdout io.Writer, conv *conversation.Conversation, theme 
 	return nil
 }
 
-func readAttachShellActions(conv *conversation.Conversation, readFile attachRead) ([]conversation.ShellActionRecord, error) {
-	paths, err := attachShellActionPaths(conv)
+func readAttachShellActions(conv *conversation.Conversation, sessionDirectory string, readFile attachRead) ([]conversation.ShellActionRecord, error) {
+	paths, err := attachShellActionPaths(conv, sessionDirectory)
 	if err != nil {
 		return nil, err
 	}
@@ -865,18 +976,14 @@ func readAttachShellActions(conv *conversation.Conversation, readFile attachRead
 	return records, nil
 }
 
-func attachShellActionPaths(conv *conversation.Conversation) (map[int]string, error) {
+func attachShellActionPaths(conv *conversation.Conversation, sessionDirectory string) (map[int]string, error) {
 	paths := map[int]string{}
 	if conv == nil {
 		return paths, nil
 	}
 	for _, message := range conv.Messages {
 		if turn, ok := conversation.MessageTurn(message); ok {
-			path, err := artifacts.ShellAgentActionsPath(conv.SessionID, turn)
-			if err != nil {
-				return nil, err
-			}
-			paths[turn] = path
+			paths[turn] = attachShellAgentActionsPath(sessionDirectory, turn)
 		}
 		if trajectoryPath, ok := attachMetadataString(message.Metadata, "shell_agent_trajectory_path"); ok {
 			if turn, ok := shellAgentTurnFromPath(trajectoryPath); ok {
@@ -885,11 +992,7 @@ func attachShellActionPaths(conv *conversation.Conversation) (map[int]string, er
 		}
 		if shellSessionID, ok := attachMetadataString(message.Metadata, "shell_agent_session_id"); ok {
 			if turn, ok := shellAgentTurnFromSessionID(shellSessionID); ok {
-				path, err := artifacts.ShellAgentActionsPath(conv.SessionID, turn)
-				if err != nil {
-					return nil, err
-				}
-				paths[turn] = path
+				paths[turn] = attachShellAgentActionsPath(sessionDirectory, turn)
 			}
 		}
 	}
@@ -899,6 +1002,10 @@ func attachShellActionPaths(conv *conversation.Conversation) (map[int]string, er
 		}
 	}
 	return paths, nil
+}
+
+func attachShellAgentActionsPath(sessionDirectory string, turn int) string {
+	return filepath.Join(sessionDirectory, "shell-agent", strconv.Itoa(turn), "actions.jsonl")
 }
 
 func attachMetadataString(metadata map[string]any, key string) (string, bool) {

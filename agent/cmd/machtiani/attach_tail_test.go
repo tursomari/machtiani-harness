@@ -141,6 +141,13 @@ func TestRunAttachTailsRunningSessionWithoutDuplicates(t *testing.T) {
 func TestRunAttachReportsMidLoopFailures(t *testing.T) {
 	setupSessionArchiveCommandTest(t)
 	sessionID := "agent-attach-tail-errors"
+	sessionDirectory, err := artifacts.SessionDirectory(sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(sessionDirectory, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	initial := conversation.New(sessionID, "Tail errors are reported")
 	addAttachTailTurn(initial, 1)
 	initialData, err := initial.Marshal()
@@ -393,8 +400,11 @@ func TestRunAttachTTYStatusLineClearsOnExit(t *testing.T) {
 		t.Fatalf("runAttachWithDependencies() = %d, stderr=%q", code, stderr.String())
 	}
 	output := stdout.String()
-	if !strings.Contains(output, "following session "+sessionID) {
+	if !strings.Contains(output, "following session") {
 		t.Errorf("status line label missing in:\n%q", output)
+	}
+	if strings.Contains(output, "following session "+sessionID) {
+		t.Errorf("status line label retained the session id in:\n%q", output)
 	}
 	if !strings.Contains(output, "\u2814\u2800\u2800") {
 		t.Errorf("status line animation frame missing in:\n%q", output)
@@ -430,7 +440,7 @@ func TestRunAttachTTYShowsLiveFooterOverlayBeforeQuietGrace(t *testing.T) {
 	writeAttachTailConversation(t, conv)
 
 	terminal := newAttachTestTerminal(
-		"following session "+sessionID,
+		"following session",
 		"/workspace/live-project",
 		"context remain 75%",
 		"session token input 50,000",
@@ -487,6 +497,45 @@ func TestRunAttachTTYShowsLiveFooterOverlayBeforeQuietGrace(t *testing.T) {
 	}
 	if strings.Count(stable, "session token input") != 1 || strings.Contains(stable, "following session") || strings.Contains(stable, "\x1b[2A") {
 		t.Errorf("stable footer retained or duplicated the live overlay:\n%q", stable)
+	}
+}
+
+func TestAttachOverlaySpacerAndClearCountFollowActivityLine(t *testing.T) {
+	conv := conversation.New("agent-overlay-lines", "Count overlay lines")
+	full := &attachOverlay{
+		out:     &bytes.Buffer{},
+		theme:   presentation.NewForTest(presentation.ProfileTerminal, true, false),
+		enabled: true,
+	}
+	full.draw(conv, time.Now(), 0, 120)
+	if full.lines != 4 {
+		t.Fatalf("full-motion overlay line count = %d, want 4", full.lines)
+	}
+	fullOutput := full.out.(*bytes.Buffer)
+	if !strings.Contains(fullOutput.String(), "following session\x1b[0m\n\n") {
+		t.Fatalf("full-motion overlay lacks activity spacer: %q", fullOutput.String())
+	}
+	full.clear()
+	if !strings.Contains(fullOutput.String(), "\x1b[3A") {
+		t.Fatalf("four-line overlay was not cleared as a four-line block: %q", fullOutput.String())
+	}
+
+	noneTheme, err := presentation.ResolveWithGlyphsAndMotion("terminal", "unicode", "none", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	noneOutput := &bytes.Buffer{}
+	none := &attachOverlay{out: noneOutput, theme: noneTheme, enabled: true}
+	none.draw(conv, time.Now(), 0, 120)
+	if none.lines != 2 {
+		t.Fatalf("motion-none overlay line count = %d, want 2", none.lines)
+	}
+	if strings.Contains(noneOutput.String(), "\n\n") {
+		t.Fatalf("motion-none overlay retained an activity spacer: %q", noneOutput.String())
+	}
+	none.clear()
+	if strings.Contains(noneOutput.String(), "\x1b[3A") || !strings.Contains(noneOutput.String(), "\x1b[1A") {
+		t.Fatalf("motion-none overlay clear count did not stay at two lines: %q", noneOutput.String())
 	}
 }
 
@@ -745,8 +794,11 @@ func TestRunAttachTTYStatusUsesActivitySemanticColors(t *testing.T) {
 	if !strings.Contains(output, "\x1b[1;36m\u2814\u2800\u2800\x1b[0m") {
 		t.Errorf("spinner does not use bold Truth styling:\n%q", output)
 	}
-	if !strings.Contains(output, "\x1b[35mfollowing session "+sessionID+"\x1b[0m") {
+	if !strings.Contains(output, "\x1b[35mfollowing session\x1b[0m") {
 		t.Errorf("following label does not use Beauty styling:\n%q", output)
+	}
+	if strings.Contains(output, "following session "+sessionID) {
+		t.Errorf("following label retained the session id:\n%q", output)
 	}
 }
 

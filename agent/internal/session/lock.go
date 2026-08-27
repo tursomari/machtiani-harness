@@ -173,6 +173,13 @@ func IsSessionActive(sessionID string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("resolve scratch directory: %w", err)
 	}
+	return IsSessionActiveAt(scratchDir)
+}
+
+// IsSessionActiveAt checks whether the session scratch directory is locked by
+// an active process. Callers that resolve sessions outside the current project
+// scope can use this to preserve the selected session's scratch scope.
+func IsSessionActiveAt(scratchDir string) (bool, error) {
 	lockPath := filepath.Join(scratchDir, sessionLockFileName)
 
 	file, err := os.OpenFile(lockPath, os.O_RDONLY, 0)
