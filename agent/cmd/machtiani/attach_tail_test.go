@@ -360,8 +360,8 @@ func TestRunAttachTTYStatusLineClearsOnExit(t *testing.T) {
 	if !strings.Contains(output, "\r\x1b[2K") {
 		t.Errorf("status line was never cleared with carriage return:\n%q", output)
 	}
-	if !strings.HasSuffix(output, "\r\x1b[2K\n") {
-		t.Errorf("TTY output does not clear the status line and finish with a newline:\n%q", output)
+	if !strings.Contains(output, "\r\x1b[2K0s  session token input 0 (cache 0%)  output 0\n\r\x1b[2Ksession "+sessionID+"\n") {
+		t.Errorf("TTY output does not end with the run-style persisted footer:\n%q", output)
 	}
 	if !strings.Contains(output, "TTY live turn 2") {
 		t.Errorf("delta content missing in:\n%s", output)
@@ -508,10 +508,87 @@ func TestRunAttachStatusHonorsMotionAndGlyphs(t *testing.T) {
 			if strings.Contains(output, tt.wantNoFrame) {
 				t.Errorf("stdout contains unexpected frame %q in:\n%q", tt.wantNoFrame, output)
 			}
-			if strings.Contains(output, "\x1b[") && tt.motion == string(presentation.MotionNone) {
-				t.Errorf("motion-none output contains escape sequences:\n%q", output)
+			if tt.motion == string(presentation.MotionNone) && !strings.Contains(output, "session token input") {
+				t.Errorf("motion-none output lost the final footer:\n%q", output)
 			}
 		})
+	}
+}
+
+func TestRunAttachTTYFooterUsesPersistedRuntimeStatsOnly(t *testing.T) {
+	setupSessionArchiveCommandTest(t)
+	sessionID := "agent-attach-persisted-footer"
+	conv := conversation.New(sessionID, "Persisted footer")
+	addAttachTailTurn(conv, 1)
+	conv.TurnsCompleted = 3
+	conv.RuntimeStats = conversation.NewRuntimeStatsState(65_000, 1_234, 56_789, 1_000)
+	conv.RuntimeStats.PlannerActivePromptTokens = 25_000
+	writeAttachTailConversation(t, conv)
+
+	var stdout, stderr strings.Builder
+	code := runAttachWithDependencies(sessionID, &stdout, &stderr, attachDependencies{
+		readFile:     os.ReadFile,
+		probe:        func(string) (bool, error) { return false, nil },
+		pollInterval: time.Millisecond,
+		quietGrace:   3 * time.Millisecond,
+		theme:        presentation.NewForTest(presentation.ProfileTerminal, true, false),
+		isTerminal:   func(io.Writer) bool { return true },
+	})
+	if code != 0 || stderr.Len() != 0 {
+		t.Fatalf("runAttachWithDependencies() = %d, stderr=%q", code, stderr.String())
+	}
+	output := stdout.String()
+	for _, want := range []string{
+		"\x1b[1;36m1:05\x1b[0m", "session token input \x1b[33m58,023\x1b[0m (cache \x1b[33m2%\x1b[0m)  output \x1b[33m1,000\x1b[0m", "\x1b[1;36mturn 3\x1b[0m", "session \x1b[33m" + sessionID + "\x1b[0m",
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("footer missing persisted value %q in:\n%q", want, output)
+		}
+	}
+	for _, unavailable := range []string{"context remain", "planner ", "shell ", "~/"} {
+		if strings.Contains(output, unavailable) {
+			t.Errorf("footer invented unavailable value %q in:\n%q", unavailable, output)
+		}
+	}
+}
+
+func TestRunAttachTTYStatusUsesActivitySemanticColors(t *testing.T) {
+	setupSessionArchiveCommandTest(t)
+	sessionID := "agent-attach-status-colors"
+	conv := conversation.New(sessionID, "Status colors")
+	addAttachTailTurn(conv, 1)
+	path := writeAttachTailConversation(t, conv)
+
+	var active atomic.Bool
+	active.Store(true)
+	writerDone := make(chan error, 1)
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		active.Store(false)
+		writerDone <- publishAttachTailConversation(path, conv)
+	}()
+
+	var stdout, stderr strings.Builder
+	code := runAttachWithDependencies(sessionID, &stdout, &stderr, attachDependencies{
+		readFile:     os.ReadFile,
+		probe:        func(string) (bool, error) { return active.Load(), nil },
+		pollInterval: 3 * time.Millisecond,
+		quietGrace:   8 * time.Millisecond,
+		theme:        presentation.NewForTest(presentation.ProfileTerminal, true, false),
+		isTerminal:   func(io.Writer) bool { return true },
+	})
+	if err := <-writerDone; err != nil {
+		t.Fatal(err)
+	}
+	if code != 0 || stderr.Len() != 0 {
+		t.Fatalf("runAttachWithDependencies() = %d, stderr=%q", code, stderr.String())
+	}
+	output := stdout.String()
+	if !strings.Contains(output, "\x1b[1;36m\u2814\u2800\u2800\x1b[0m") {
+		t.Errorf("spinner does not use bold Truth styling:\n%q", output)
+	}
+	if !strings.Contains(output, "\x1b[35mfollowing session "+sessionID+"\x1b[0m") {
+		t.Errorf("following label does not use Beauty styling:\n%q", output)
 	}
 }
 

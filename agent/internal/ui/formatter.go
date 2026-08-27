@@ -917,20 +917,7 @@ func (f *Formatter) setActivityCursorHiddenLocked(hidden bool) {
 }
 
 func (f *Formatter) formatFooterLinesLocked(elapsed time.Duration, lineCount int) []string {
-	width := f.width
-	if width <= 0 {
-		width = defaultWidth
-	}
-	tokenLine := formatTokenFooterLine(elapsed, f.cwd, f.activePromptTokens, f.maxInputTokens, f.tokenUsage, width)
-	if lineCount <= 1 {
-		return []string{tokenLine}
-	}
-	identity := f.footerIdentity
-	if identity.Label == "" && f.sessionID != "" {
-		identity = FooterIdentity{Label: "session", Value: f.sessionID}
-	}
-	statusLine := formatStatusFooterLine(f.modeTasks, f.activeModeTask, f.turnNumber, identity, f.footerModels, width)
-	lines := []string{tokenLine, statusLine}
+	lines := formatFooterLinesForSnapshot(f.footerSnapshotLocked(elapsed), lineCount)
 	if lineCount >= 4 && f.hasVisibleActivityLocked() {
 		activityLine := renderActivityLine(selectActivityPresentation(f.activities), f.theme.Presentation, elapsed)
 		lines = append([]string{activityLine, ""}, lines...)
@@ -975,13 +962,74 @@ type footerHighlight struct {
 	bold bool
 }
 
+// FooterSnapshot contains the truthful session values needed to format the
+// stable, two-line run footer. Callers that render a persisted session can
+// leave unavailable fields at zero values; they will not be invented.
+type FooterSnapshot struct {
+	Elapsed            time.Duration
+	CWD                string
+	ActivePromptTokens int
+	MaxInputTokens     int
+	TokenUsage         TokenUsageUpdatedEvent
+	Identity           FooterIdentity
+	Turn               int
+	Models             FooterModelMetadata
+	ModeTasks          []ModeTaskDisplay
+	ActiveModeTask     int
+	Width              int
+}
+
+// RenderFinalFooter renders the same two stable footer lines printed by run
+// when a session ends. It deliberately excludes the transient activity line.
+func RenderFinalFooter(snapshot FooterSnapshot, theme presentation.Theme) []string {
+	lines := formatFooterLinesForSnapshot(snapshot, 2)
+	return styleFooterLines(snapshot, lines, theme)
+}
+
 func (f *Formatter) styleFooterLinesLocked(lines []string) []string {
+	return styleFooterLines(f.footerSnapshotLocked(0), lines, f.theme.Presentation)
+}
+
+func (f *Formatter) footerSnapshotLocked(elapsed time.Duration) FooterSnapshot {
+	identity := f.footerIdentity
+	if identity.Label == "" && f.sessionID != "" {
+		identity = FooterIdentity{Label: "session", Value: f.sessionID}
+	}
+	return FooterSnapshot{
+		Elapsed:            elapsed,
+		CWD:                f.cwd,
+		ActivePromptTokens: f.activePromptTokens,
+		MaxInputTokens:     f.maxInputTokens,
+		TokenUsage:         f.tokenUsage,
+		Identity:           identity,
+		Turn:               f.turnNumber,
+		Models:             f.footerModels,
+		ModeTasks:          f.modeTasks,
+		ActiveModeTask:     f.activeModeTask,
+		Width:              f.width,
+	}
+}
+
+func formatFooterLinesForSnapshot(snapshot FooterSnapshot, lineCount int) []string {
+	width := snapshot.Width
+	if width <= 0 {
+		width = defaultWidth
+	}
+	tokenLine := formatTokenFooterLine(snapshot.Elapsed, snapshot.CWD, snapshot.ActivePromptTokens, snapshot.MaxInputTokens, snapshot.TokenUsage, width)
+	if lineCount <= 1 {
+		return []string{tokenLine}
+	}
+	statusLine := formatStatusFooterLine(snapshot.ModeTasks, snapshot.ActiveModeTask, snapshot.Turn, snapshot.Identity, snapshot.Models, width)
+	return []string{tokenLine, statusLine}
+}
+
+func styleFooterLines(snapshot FooterSnapshot, lines []string, theme presentation.Theme) []string {
 	styled := make([]string, 0, len(lines))
 	for i, line := range lines {
 		var highlights []footerHighlight
 		if len(lines) == 4 && i == 0 {
 			mark, label, _ := strings.Cut(line, "  ")
-			styled = append(styled, f.theme.render(presentation.StyledLine{
+			styled = append(styled, theme.RenderLine(presentation.StyledLine{
 				presentation.Bold(presentation.RoleTruth, mark),
 				presentation.Text("  "),
 				presentation.RoleText(presentation.RoleBeauty, label),
@@ -995,37 +1043,35 @@ func (f *Formatter) styleFooterLinesLocked(lines []string) []string {
 		if i == tokenIndex {
 			separator := strings.Index(line, "  ")
 			if separator < 0 {
-				styled = append(styled, f.theme.render(presentation.StyledLine{presentation.Bold(presentation.RoleTruth, line)}))
+				styled = append(styled, theme.RenderLine(presentation.StyledLine{presentation.Bold(presentation.RoleTruth, line)}))
 				continue
 			}
-			if f.activePromptTokens > 0 && f.maxInputTokens > 0 {
-				highlights = append(highlights, footerHighlight{text: formatContextRemainingPercent(f.activePromptTokens, f.maxInputTokens), role: presentation.RoleProvenance})
+			if snapshot.ActivePromptTokens > 0 && snapshot.MaxInputTokens > 0 {
+				highlights = append(highlights, footerHighlight{text: formatContextRemainingPercent(snapshot.ActivePromptTokens, snapshot.MaxInputTokens), role: presentation.RoleProvenance})
 			}
-			inputTokens := sessionInputTokens(f.tokenUsage)
-			highlights = append(highlights, footerHighlight{text: formatFooterPercent(f.tokenUsage.InputHit, inputTokens), role: presentation.RoleProvenance})
-			for _, value := range []int{inputTokens, f.tokenUsage.Output} {
+			inputTokens := sessionInputTokens(snapshot.TokenUsage)
+			highlights = append(highlights, footerHighlight{text: formatFooterPercent(snapshot.TokenUsage.InputHit, inputTokens), role: presentation.RoleProvenance})
+			for _, value := range []int{inputTokens, snapshot.TokenUsage.Output} {
 				highlights = append(highlights, footerHighlight{text: formatTokenCount(value), role: presentation.RoleProvenance})
 			}
 			tokenLine := highlightFooterText(line[separator:], highlights)
-			styled = append(styled, f.theme.render(append(presentation.StyledLine{
+			styled = append(styled, theme.RenderLine(append(presentation.StyledLine{
 				presentation.Bold(presentation.RoleTruth, line[:separator]),
 			}, tokenLine...)))
 			continue
 		} else {
-			if f.turnNumber > 0 {
-				highlights = append(highlights, footerHighlight{text: formatTurnFooterSegment(f.turnNumber), role: presentation.RoleTruth, bold: true})
+			if snapshot.Turn > 0 {
+				highlights = append(highlights, footerHighlight{text: formatTurnFooterSegment(snapshot.Turn), role: presentation.RoleTruth, bold: true})
 			}
-			if f.footerIdentity.Value != "" {
-				highlights = append(highlights, footerHighlight{text: f.footerIdentity.Value, role: presentation.RoleProvenance})
-			} else if f.sessionID != "" {
-				highlights = append(highlights, footerHighlight{text: f.sessionID, role: presentation.RoleProvenance})
+			if snapshot.Identity.Value != "" {
+				highlights = append(highlights, footerHighlight{text: snapshot.Identity.Value, role: presentation.RoleProvenance})
 			}
-			for _, model := range f.footerModels.Models {
+			for _, model := range snapshot.Models.Models {
 				if model.Label != "" {
 					highlights = append(highlights, footerHighlight{text: model.Label, role: presentation.RoleProvenance})
 				}
 			}
-			if task := f.activeFooterTaskLocked(); task != nil {
+			if task := activeFooterTask(snapshot.ModeTasks, snapshot.ActiveModeTask); task != nil {
 				label := strings.ToLower(strings.TrimSpace(task.Mode))
 				if label == "" {
 					label = sanitizeLine(task.Title)
@@ -1048,23 +1094,27 @@ func (f *Formatter) styleFooterLinesLocked(lines []string) []string {
 				}
 			}
 		}
-		styled = append(styled, f.theme.render(highlightFooterText(line, highlights)))
+		styled = append(styled, theme.RenderLine(highlightFooterText(line, highlights)))
 	}
 	return styled
 }
 
 func (f *Formatter) activeFooterTaskLocked() *ModeTaskDisplay {
-	if len(f.modeTasks) == 0 {
+	return activeFooterTask(f.modeTasks, f.activeModeTask)
+}
+
+func activeFooterTask(tasks []ModeTaskDisplay, active int) *ModeTaskDisplay {
+	if len(tasks) == 0 {
 		return nil
 	}
-	idx := f.activeModeTask
-	if idx < 0 || idx >= len(f.modeTasks) {
-		idx = activeModeTaskIndex(f.modeTasks)
+	idx := active
+	if idx < 0 || idx >= len(tasks) {
+		idx = activeModeTaskIndex(tasks)
 	}
-	if idx < 0 || idx >= len(f.modeTasks) {
+	if idx < 0 || idx >= len(tasks) {
 		return nil
 	}
-	return &f.modeTasks[idx]
+	return &tasks[idx]
 }
 
 func highlightFooterText(text string, highlights []footerHighlight) presentation.StyledLine {

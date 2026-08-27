@@ -1,8 +1,10 @@
 package main
 
 import (
+	"io"
 	"testing"
 
+	"github.com/tursomari/machtiani/agent/internal/presentation"
 	"github.com/tursomari/machtiani/agent/internal/session"
 )
 
@@ -41,6 +43,32 @@ func TestRunFlagFocusedAndNoShellStepsCompose(t *testing.T) {
 	cfg := parseRunDisplayFlags(t, "--prompt", "test prompt", "--focused", "--no-shell-steps")
 	if !cfg.Focused || !cfg.NoShellSteps {
 		t.Fatalf("composed display modes = focused:%t no-shell-steps:%t, want both true", cfg.Focused, cfg.NoShellSteps)
+	}
+}
+
+func TestRunFlagNoCursorParsesForAttach(t *testing.T) {
+	cfg := parseRunDisplayFlags(t, "--attach", "--resume", "agent-attach", "--no-cursor")
+	if cfg.SessionID != "agent-attach" || !cfg.Attach || !cfg.NoCursor {
+		t.Fatalf("attach display config = %#v", cfg)
+	}
+}
+
+func TestResolveAttachThemeUsesPresentationOverridesAndNoCursor(t *testing.T) {
+	t.Setenv("TERM", "xterm-256color")
+	t.Setenv("MACHTIANI_THEME", "machtiani-light")
+	theme, err := resolveAttachTheme(io.Discard, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if theme.Profile != presentation.ProfileMachtianiLight || theme.MotionMode() != presentation.MotionFull {
+		t.Fatalf("attach theme = profile:%q motion:%q", theme.Profile, theme.MotionMode())
+	}
+	noCursorTheme, err := resolveAttachTheme(io.Discard, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if noCursorTheme.Profile != presentation.ProfileMachtianiLight || noCursorTheme.MotionMode() != presentation.MotionNone {
+		t.Fatalf("attach no-cursor theme = profile:%q motion:%q", noCursorTheme.Profile, noCursorTheme.MotionMode())
 	}
 }
 

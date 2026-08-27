@@ -74,6 +74,17 @@ func TestRenderActivityLineHonorsMotionAndGlyphModes(t *testing.T) {
 	}
 }
 
+func TestRenderAttachStatusLineUsesActivitySemanticRoles(t *testing.T) {
+	theme := presentation.NewForTest(presentation.ProfileTerminal, true, false)
+	got := RenderAttachStatusLine(theme, 0, "following session agent-1")
+	if !strings.Contains(got, "\x1b[1;36m\u2814\u2800\u2800\x1b[0m") {
+		t.Fatalf("spinner = %q, want bold Truth", got)
+	}
+	if !strings.Contains(got, "\x1b[35mfollowing session agent-1\x1b[0m") {
+		t.Fatalf("label = %q, want Beauty", got)
+	}
+}
+
 func TestFormatterActivityLeavesBlankLineBeforeFooter(t *testing.T) {
 	f, bus, _ := newTestFormatter()
 	defer bus.Close()

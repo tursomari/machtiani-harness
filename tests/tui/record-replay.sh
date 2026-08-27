@@ -434,6 +434,7 @@ assert_attach_captures() {
     return 1
   fi
   require_capture_match 'following session ' "$default" "TTY attach did not draw its live status line" || return 1
+  require_capture_match 'session token input' "$default" "TTY attach did not draw its run-style footer" || return 1
 
   require_capture_match "$conclusion" "$focused" "focused attach lost its conclusion" || return 1
   reject_capture_match "$action_step" "$focused" "focused attach rendered a step block" || return 1
@@ -442,6 +443,7 @@ assert_attach_captures() {
 
   reject_capture_match "$action_step" "$no_shell" "no-shell-steps attach rendered a step block" || return 1
   reject_capture_match "$action_command" "$no_shell" "no-shell-steps attach rendered a command block" || return 1
+  require_capture_match 'session token input' "$no_shell" "no-shell-steps attach lost the footer" || return 1
 
   if LC_ALL=C rg -q $'\033' "$plain"; then
     echo "attach check failed: non-TTY attach emitted ANSI escapes ($plain)" >&2

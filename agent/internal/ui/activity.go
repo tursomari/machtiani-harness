@@ -184,3 +184,19 @@ func AttachSpinnerFrame(theme presentation.Theme, elapsed time.Duration) string 
 	}
 	return frames[index]
 }
+
+// RenderAttachStatusLine renders attach's transient following indicator using
+// the same semantic roles as the live activity line: the spinner is Truth and
+// its label is Beauty. Keeping this here makes attach share the presentation
+// palette selected for run.
+func RenderAttachStatusLine(theme presentation.Theme, elapsed time.Duration, label string) string {
+	frame := AttachSpinnerFrame(theme, elapsed)
+	if frame == "" {
+		return ""
+	}
+	return theme.RenderLine(presentation.StyledLine{
+		presentation.Bold(presentation.RoleTruth, frame),
+		presentation.Text("  "),
+		presentation.RoleText(presentation.RoleBeauty, label),
+	})
+}

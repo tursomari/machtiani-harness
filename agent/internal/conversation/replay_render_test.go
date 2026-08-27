@@ -275,3 +275,24 @@ func TestRenderReplayDeltaWithLateShellActions(t *testing.T) {
 		t.Fatalf("normalized order = %#v", gotOrder)
 	}
 }
+
+func TestPersistedFooterSnapshotUsesOnlyConversationRuntimeStats(t *testing.T) {
+	conv := New("sess-footer", "Footer values")
+	conv.TurnsCompleted = 4
+	conv.RuntimeStats = NewRuntimeStatsState(65_000, 1_234, 56_789, 1_000)
+	conv.RuntimeStats.PlannerActivePromptTokens = 25_000
+
+	snapshot := PersistedFooterSnapshot(conv)
+	if got, want := snapshot.Elapsed.Milliseconds(), int64(65_000); got != want {
+		t.Fatalf("elapsed = %d, want %d", got, want)
+	}
+	if snapshot.Identity.Label != "session" || snapshot.Identity.Value != "sess-footer" || snapshot.Turn != 4 {
+		t.Fatalf("identity/turn = %#v / %d", snapshot.Identity, snapshot.Turn)
+	}
+	if snapshot.TokenUsage.InputHit != 1_234 || snapshot.TokenUsage.InputMiss != 56_789 || snapshot.TokenUsage.Output != 1_000 || snapshot.ActivePromptTokens != 25_000 {
+		t.Fatalf("runtime token snapshot = %#v", snapshot)
+	}
+	if snapshot.CWD != "" || snapshot.MaxInputTokens != 0 || len(snapshot.Models.Models) != 0 || len(snapshot.ModeTasks) != 0 {
+		t.Fatalf("snapshot included non-persisted footer data: %#v", snapshot)
+	}
+}

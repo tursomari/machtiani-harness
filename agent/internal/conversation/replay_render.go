@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/tursomari/machtiani/agent/internal/presentation"
 	"github.com/tursomari/machtiani/agent/internal/shellaction"
@@ -69,6 +70,31 @@ func RenderReplayDeltaWithOptions(conv *Conversation, previous []Message, opts R
 		}
 	}
 	return renderReplay(conv, messages, knownTurns, opts)
+}
+
+// PersistedFooterSnapshot returns only footer values recorded in the
+// conversation. Attach uses this rather than deriving runtime-only values such
+// as the original working directory, context limit, active mode task, or
+// resolved provider/model labels.
+func PersistedFooterSnapshot(conv *Conversation) ui.FooterSnapshot {
+	if conv == nil {
+		return ui.FooterSnapshot{}
+	}
+	snapshot := ui.FooterSnapshot{
+		Identity: ui.FooterIdentity{Label: "session", Value: conv.SessionID},
+		Turn:     conv.TurnsCompleted,
+	}
+	if stats := conv.RuntimeStats; stats != nil {
+		snapshot.Elapsed = time.Duration(stats.ActiveElapsedMS) * time.Millisecond
+		snapshot.ActivePromptTokens = stats.PlannerActivePromptTokens
+		snapshot.TokenUsage = ui.TokenUsageUpdatedEvent{
+			InputHit:           stats.InputHitTokens,
+			InputMiss:          stats.InputMissTokens,
+			Output:             stats.OutputTokens,
+			ActivePromptTokens: stats.PlannerActivePromptTokens,
+		}
+	}
+	return snapshot
 }
 
 func renderReplay(conv *Conversation, messages []Message, knownTurns map[int]struct{}, opts ReplayOptions) (string, error) {

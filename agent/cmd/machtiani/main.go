@@ -491,18 +491,7 @@ func runAttachWithDisplay(sessionID string, noShellSteps, focused, noCursor bool
 		}
 	}
 
-	themeName := string(presentation.ProfileTerminal)
-	glyphMode := string(presentation.GlyphUnicode)
-	motionMode := string(presentation.MotionFull)
-	if globalCfg, _, err := llm.LoadGlobalConfig(); err == nil && globalCfg.UI != nil {
-		themeName = globalCfg.UI.Theme
-		glyphMode = globalCfg.UI.Glyphs
-		motionMode = globalCfg.UI.Motion
-	}
-	if noCursor {
-		motionMode = string(presentation.MotionNone)
-	}
-	theme, err := presentation.ResolveWithGlyphsAndMotion(themeName, glyphMode, motionMode, stdout)
+	theme, err := resolveAttachTheme(stdout, noCursor)
 	if err != nil {
 		fmt.Fprintln(stderr, "Error:", err)
 		return 1
@@ -517,6 +506,25 @@ func runAttachWithDisplay(sessionID string, noShellSteps, focused, noCursor bool
 		focused:      focused,
 		theme:        theme,
 	})
+}
+
+// resolveAttachTheme is intentionally the same configuration-to-presentation
+// path used by interactive commands: ui.theme/ui.glyphs/ui.motion feed the
+// presentation resolver, whose MACHTIANI_THEME, TERM, and NO_COLOR handling
+// then applies uniformly to run and attach.
+func resolveAttachTheme(stdout io.Writer, noCursor bool) (presentation.Theme, error) {
+	themeName := string(presentation.ProfileTerminal)
+	glyphMode := string(presentation.GlyphUnicode)
+	motionMode := string(presentation.MotionFull)
+	if globalCfg, _, err := llm.LoadGlobalConfig(); err == nil && globalCfg.UI != nil {
+		themeName = globalCfg.UI.Theme
+		glyphMode = globalCfg.UI.Glyphs
+		motionMode = globalCfg.UI.Motion
+	}
+	if noCursor {
+		motionMode = string(presentation.MotionNone)
+	}
+	return presentation.ResolveWithGlyphsAndMotion(themeName, glyphMode, motionMode, stdout)
 }
 
 func runAttachWithDependencies(sessionID string, stdout, stderr io.Writer, deps attachDependencies) int {
@@ -653,7 +661,6 @@ func runAttachWithDependencies(sessionID string, stdout, stderr io.Writer, deps 
 			fmt.Fprintln(stderr, "Error:", err)
 			return 1
 		}
-
 		newMessages := conversation.IdentifyNewMessages(previous, next.Messages)
 		var newActions []conversation.ShellActionRecord
 		if !deps.noShellSteps {
@@ -723,6 +730,13 @@ func runAttachWithDependencies(sessionID string, stdout, stderr io.Writer, deps 
 			continue
 		}
 		if now.Sub(inactiveSince) >= deps.quietGrace && now.Sub(lastContent) >= deps.quietGrace {
+			if styledReplay {
+				status.finish()
+				if err := writeAttachFooter(stdout, next, deps.theme); err != nil {
+					fmt.Fprintln(stderr, "Error:", err)
+					return 1
+				}
+			}
 			return 0
 		}
 	}
@@ -730,11 +744,12 @@ func runAttachWithDependencies(sessionID string, stdout, stderr io.Writer, deps 
 }
 
 type attachStatusLine struct {
-	out     io.Writer
-	theme   presentation.Theme
-	label   string
-	enabled bool
-	visible bool
+	out      io.Writer
+	theme    presentation.Theme
+	label    string
+	enabled  bool
+	visible  bool
+	finished bool
 }
 
 // draw rewrites the live status line with the current animation frame. It
@@ -743,12 +758,12 @@ func (s *attachStatusLine) draw(elapsed time.Duration) {
 	if s == nil || !s.enabled {
 		return
 	}
-	frame := ui.AttachSpinnerFrame(s.theme, elapsed)
-	if frame == "" {
+	line := ui.RenderAttachStatusLine(s.theme, elapsed, s.label)
+	if line == "" {
 		return
 	}
 	ui.ClearCurrentLine(s.out)
-	fmt.Fprint(s.out, frame+"  "+s.label)
+	fmt.Fprint(s.out, line)
 	s.visible = true
 }
 
@@ -763,11 +778,12 @@ func (s *attachStatusLine) clear() {
 
 // finish clears the status line on every exit path and ends the final line.
 func (s *attachStatusLine) finish() {
-	if s == nil || !s.enabled {
+	if s == nil || !s.enabled || s.finished {
 		return
 	}
 	s.clear()
 	fmt.Fprint(s.out, "\n")
+	s.finished = true
 }
 
 func attachIsTerminal(out io.Writer) bool {
@@ -785,6 +801,19 @@ func writeAttachConclusion(stdout io.Writer, sessionID, answer string, theme ui.
 		SessionID:      sessionID,
 	}, theme, 0))
 	return err
+}
+
+// writeAttachFooter prints the run-style final footer using only the values
+// recorded with the attached conversation. It is called only for a TTY attach
+// after the source session has become quiet.
+func writeAttachFooter(stdout io.Writer, conv *conversation.Conversation, theme presentation.Theme) error {
+	for _, line := range ui.RenderFinalFooter(conversation.PersistedFooterSnapshot(conv), theme) {
+		ui.ClearCurrentLine(stdout)
+		if _, err := fmt.Fprintln(stdout, line); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func readAttachShellActions(conv *conversation.Conversation, readFile attachRead) ([]conversation.ShellActionRecord, error) {
