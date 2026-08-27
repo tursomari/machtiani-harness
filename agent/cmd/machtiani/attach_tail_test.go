@@ -267,6 +267,11 @@ func TestRunAttachTTYShowsBannerNoticeAndSingleConclusion(t *testing.T) {
 	addAttachTailTurn(conv, 1)
 	conv.AddMessage("assistant", "TTY final answer", map[string]any{"type": "final", "turns": 1, "capped": false})
 	writeAttachTailConversation(t, conv)
+	writeAttachActions(t, sessionID, 1, shellaction.Record{
+		Version: 1, SessionID: sessionID, Turn: 1, Sequence: 1,
+		Description: "Inspect status", Command: "git status", Step: 1, StepLimit: 2,
+		CommandsExecuted: 1, RemainingSteps: 1,
+	})
 
 	var stdout, stderr strings.Builder
 	code := runAttachWithDependencies(sessionID, &stdout, &stderr, attachDependencies{
@@ -274,6 +279,7 @@ func TestRunAttachTTYShowsBannerNoticeAndSingleConclusion(t *testing.T) {
 		probe:        func(string) (bool, error) { return false, nil },
 		pollInterval: time.Millisecond,
 		quietGrace:   3 * time.Millisecond,
+		theme:        presentation.NewForTest(presentation.ProfileTerminal, true, false),
 		isTerminal:   func(io.Writer) bool { return true },
 	})
 	if code != 0 || stderr.Len() != 0 {
@@ -284,6 +290,14 @@ func TestRunAttachTTYShowsBannerNoticeAndSingleConclusion(t *testing.T) {
 		if !strings.Contains(output, want) {
 			t.Errorf("TTY stdout missing %q in:\n%s", want, output)
 		}
+	}
+	for _, want := range []string{"\x1b[1;36mStep 1 of 2\x1b[0m", "\x1b[1;32m$ \x1b[0m", "git status"} {
+		if !strings.Contains(output, want) {
+			t.Errorf("TTY stdout missing styled action %q in:\n%q", want, output)
+		}
+	}
+	if strings.Contains(output, "commands executed:") {
+		t.Errorf("TTY stdout contains replay-only action counter:\n%s", output)
 	}
 	if got := strings.Count(output, "Resume this session:"); got != 1 {
 		t.Errorf("conclusion count = %d, want exactly 1:\n%s", got, output)
@@ -403,6 +417,8 @@ func TestRunAttachTTYPrintsSingleConclusionWhenSessionCompletes(t *testing.T) {
 }
 
 func TestRunAttachStatusHonorsMotionAndGlyphs(t *testing.T) {
+	setupSessionArchiveCommandTest(t)
+
 	tests := []struct {
 		name        string
 		motion      string
@@ -455,8 +471,10 @@ func TestRunAttachStatusHonorsMotionAndGlyphs(t *testing.T) {
 
 			var active atomic.Bool
 			active.Store(true)
+			probed := make(chan struct{}, 1)
 			writerDone := make(chan error, 1)
 			go func() {
+				<-probed
 				time.Sleep(100 * time.Millisecond)
 				active.Store(false)
 				writerDone <- nil
@@ -464,8 +482,14 @@ func TestRunAttachStatusHonorsMotionAndGlyphs(t *testing.T) {
 
 			var stdout, stderr strings.Builder
 			code := runAttachWithDependencies(sessionID, &stdout, &stderr, attachDependencies{
-				readFile:     os.ReadFile,
-				probe:        func(string) (bool, error) { return active.Load(), nil },
+				readFile: os.ReadFile,
+				probe: func(string) (bool, error) {
+					select {
+					case probed <- struct{}{}:
+					default:
+					}
+					return active.Load(), nil
+				},
 				pollInterval: 5 * time.Millisecond,
 				quietGrace:   20 * time.Millisecond,
 				theme:        theme,

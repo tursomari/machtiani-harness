@@ -561,7 +561,8 @@ func runAttachWithDependencies(sessionID string, stdout, stderr io.Writer, deps 
 	}
 
 	uiTheme := ui.DefaultTheme(deps.theme)
-	if !deps.focused && deps.isTerminal(stdout) {
+	styledReplay := !deps.focused && deps.isTerminal(stdout)
+	if styledReplay {
 		banner := ui.RenderSessionHeader(ui.SessionStartedEvent{
 			SessionID:          sessionID,
 			Goal:               conv.OriginalGoal,
@@ -589,6 +590,8 @@ func runAttachWithDependencies(sessionID string, stdout, stderr io.Writer, deps 
 		NoShellSteps:       deps.noShellSteps,
 		ShellActions:       initialActions,
 		SuppressConclusion: true,
+		StyledShellSteps:   styledReplay,
+		Theme:              deps.theme,
 	})
 	if err != nil {
 		fmt.Fprintln(stderr, "Error:", err)
@@ -666,6 +669,8 @@ func runAttachWithDependencies(sessionID string, stdout, stderr io.Writer, deps 
 			NoShellSteps:       deps.noShellSteps,
 			ShellActions:       newActions,
 			SuppressConclusion: true,
+			StyledShellSteps:   styledReplay,
+			Theme:              deps.theme,
 		})
 		if err != nil {
 			status.clear()

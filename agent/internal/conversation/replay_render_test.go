@@ -4,6 +4,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/tursomari/machtiani/agent/internal/presentation"
 )
 
 func TestRenderReplaySingleTurnFinishedConversation(t *testing.T) {
@@ -34,8 +36,6 @@ func TestRenderReplaySingleTurnFinishedConversation(t *testing.T) {
 		"The renderer lives in conversation.go.",
 		"Inspect the conversation package first.",
 		"The replay renderer is ready.",
-		"# User",
-		"# Assistant",
 		"Planner decision: Inspect the conversation package first.",
 	}
 	for _, want := range wantContents {
@@ -43,7 +43,7 @@ func TestRenderReplaySingleTurnFinishedConversation(t *testing.T) {
 			t.Errorf("RenderReplay() missing %q in:\n%s", want, got)
 		}
 	}
-	for _, unwanted := range []string{"── ", "──── ", "ARTIFACTS", "mct chat:", "Retrieved File Paths:"} {
+	for _, unwanted := range []string{"# User", "# Assistant", "# System", "── ", "──── ", "ARTIFACTS", "mct chat:", "Retrieved File Paths:"} {
 		if strings.Contains(got, unwanted) {
 			t.Fatalf("RenderReplay() contains replay-only framing %q:\n%s", unwanted, got)
 		}
@@ -87,14 +87,16 @@ func TestRenderReplayMultiTurnAndMessageSections(t *testing.T) {
 		"Raw diagnostic content",
 		"Recovered after restart",
 		"Please continue",
-		"# User",
-		"# Assistant",
-		"# System",
 		"[USER INPUT REQUEST]",
 		"[USER INPUT RESPONSE]",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("RenderReplay() missing %q in:\n%s", want, got)
+		}
+	}
+	for _, unwanted := range []string{"# User", "# Assistant", "# System"} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("RenderReplay() contains role header %q in:\n%s", unwanted, got)
 		}
 	}
 }
@@ -111,12 +113,12 @@ func TestRenderReplayMissingOptionalFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RenderReplay() error = %v", err)
 	}
-	for _, want := range []string{"# User", "# Assistant", "Minimal question", "Minimal answer", "Minimal conclusion"} {
+	for _, want := range []string{"Minimal question", "Minimal answer", "Minimal conclusion"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("RenderReplay() missing %q in:\n%s", want, got)
 		}
 	}
-	for _, unwanted := range []string{"── ", "──── ", "Retrieved File Paths:", "mct chat:", "reached max-steps cap"} {
+	for _, unwanted := range []string{"# User", "# Assistant", "# System", "── ", "──── ", "Retrieved File Paths:", "mct chat:", "reached max-steps cap"} {
 		if strings.Contains(got, unwanted) {
 			t.Errorf("RenderReplay() unexpectedly contains %q in:\n%s", unwanted, got)
 		}
@@ -181,7 +183,6 @@ func TestRenderReplayWithShellActions(t *testing.T) {
 		"Step 1 of 8",
 		"Inspect the renderer",
 		"$ sed -n '1,200p' replay_render.go",
-		"[commands executed: 1 · remaining steps: 7]",
 		"Step 2 of 8",
 		"$ go test ./internal/conversation",
 	} {
@@ -195,8 +196,25 @@ func TestRenderReplayWithShellActions(t *testing.T) {
 	if first, second := strings.Index(got, "$ sed"), strings.Index(got, "$ go test"); first < 0 || second < 0 || first >= second {
 		t.Fatalf("actions not rendered in sequence order:\n%s", got)
 	}
-	if question, shell, answer := strings.Index(got, "# User"), strings.Index(got, "Step 1 of 8"), strings.Index(got, "# Assistant"); question < 0 || shell <= question || answer <= shell {
+	if question, shell, answer := strings.Index(got, "Inspect the implementation."), strings.Index(got, "Step 1 of 8"), strings.Index(got, "Inspection complete."); question < 0 || shell <= question || answer <= shell {
 		t.Fatalf("shell steps not rendered between question and answer:\n%s", got)
+	}
+	if strings.Contains(got, "commands executed:") {
+		t.Fatalf("replay rendered a shell-action counter:\n%s", got)
+	}
+
+	styled, err := RenderReplayWithOptions(conv, ReplayOptions{
+		ShellActions:     actions,
+		StyledShellSteps: true,
+		Theme:            presentation.NewForTest(presentation.ProfileTerminal, true, false),
+	})
+	if err != nil {
+		t.Fatalf("styled RenderReplayWithOptions() error = %v", err)
+	}
+	for _, want := range []string{"\x1b[1;36mStep 1 of 8\x1b[0m", "\x1b[1;32m$ \x1b[0m"} {
+		if !strings.Contains(styled, want) {
+			t.Errorf("styled replay missing %q:\n%q", want, styled)
+		}
 	}
 }
 

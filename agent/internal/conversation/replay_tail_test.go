@@ -73,7 +73,7 @@ func TestRenderReplayDeltaOmitsHistoryAndRepeatedTurnHeading(t *testing.T) {
 	}
 
 	combined := questionDelta + "\n\n" + answerDelta
-	for _, want := range []string{"Question for turn 2", "Answer for turn 2", "# User", "# Assistant"} {
+	for _, want := range []string{"Question for turn 2", "Answer for turn 2"} {
 		if !strings.Contains(combined, want) {
 			t.Errorf("combined delta missing %q:\n%s", want, combined)
 		}
@@ -83,8 +83,10 @@ func TestRenderReplayDeltaOmitsHistoryAndRepeatedTurnHeading(t *testing.T) {
 			t.Errorf("combined delta repeated history %q:\n%s", unwanted, combined)
 		}
 	}
-	if got := strings.Count(combined, "# User"); got != 1 {
-		t.Fatalf("user message count = %d, want 1:\n%s", got, combined)
+	for _, unwanted := range []string{"# User", "# Assistant", "# System"} {
+		if strings.Contains(combined, unwanted) {
+			t.Fatalf("combined delta contains role header %q:\n%s", unwanted, combined)
+		}
 	}
 }
 

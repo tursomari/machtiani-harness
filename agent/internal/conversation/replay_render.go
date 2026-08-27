@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/tursomari/machtiani/agent/internal/presentation"
 	"github.com/tursomari/machtiani/agent/internal/shellaction"
 	"github.com/tursomari/machtiani/agent/internal/ui"
 )
@@ -20,6 +21,8 @@ type ReplayOptions struct {
 	NoShellSteps       bool
 	ShellActions       []ShellActionRecord
 	SuppressConclusion bool
+	StyledShellSteps   bool
+	Theme              presentation.Theme
 }
 
 // RenderReplay renders a persisted conversation as deterministic plain text
@@ -110,18 +113,18 @@ func renderReplay(conv *Conversation, messages []Message, knownTurns map[int]str
 		case "":
 			switch normalizeRole(msg.Role) {
 			case "user":
-				addTextEvent("message", renderReplayMessage("User", msg.Content))
+				addTextEvent("message", renderReplayMessage(msg.Content))
 			case "assistant":
-				addTextEvent("message", renderReplayMessage("Assistant", msg.Content))
+				addTextEvent("message", renderReplayMessage(msg.Content))
 			case "system":
-				addTextEvent("message", renderReplayMessage("System", msg.Content))
+				addTextEvent("message", renderReplayMessage(msg.Content))
 			}
 		case messageTypeCacheAnchor:
 			continue
 		case messageTypeUserInputRequest:
-			addTextEvent("message", renderReplayMessage("Assistant", "[USER INPUT REQUEST] "+msg.Content))
+			addTextEvent("message", renderReplayMessage("[USER INPUT REQUEST] "+msg.Content))
 		case messageTypeUserInputResponse:
-			addTextEvent("message", renderReplayMessage("User", "[USER INPUT RESPONSE] "+msg.Content))
+			addTextEvent("message", renderReplayMessage("[USER INPUT RESPONSE] "+msg.Content))
 		case messageTypeRaw:
 			if strings.TrimSpace(msg.Content) != "" {
 				addTextEvent("text", sanitize(msg.Content))
@@ -133,11 +136,11 @@ func renderReplay(conv *Conversation, messages []Message, knownTurns map[int]str
 		case messageTypeRecovery:
 			switch normalizeRole(msg.Role) {
 			case "system":
-				addTextEvent("message", renderReplayMessage("System", msg.Content))
+				addTextEvent("message", renderReplayMessage(msg.Content))
 			case "user":
-				addTextEvent("message", renderReplayMessage("User", msg.Content))
+				addTextEvent("message", renderReplayMessage(msg.Content))
 			case "assistant":
-				addTextEvent("message", renderReplayMessage("Assistant", msg.Content))
+				addTextEvent("message", renderReplayMessage(msg.Content))
 			}
 		case messageTypeFinal, messageTypeFinalAnswer:
 			if opts.SuppressConclusion {
@@ -191,28 +194,28 @@ func renderReplay(conv *Conversation, messages []Message, knownTurns map[int]str
 		case "turn":
 			data := turns[event.turn]
 			if data != nil {
-				out.WriteString(renderReplayTurn(data.question, data.answer, data.decision, data.actions))
+				out.WriteString(renderReplayTurn(data.question, data.answer, data.decision, data.actions, opts))
 			}
 		case "shell-actions":
-			out.WriteString(renderReplayShellActions(actionOnly[event.turn]))
+			out.WriteString(renderReplayShellActions(actionOnly[event.turn], opts))
 		default:
 			out.WriteString(replayBlock(event.text))
 		}
 	}
 
-	return strings.Trim(stripANSI(sanitize(out.String())), "\n"), nil
+	return strings.Trim(sanitize(out.String()), "\n"), nil
 }
 
-func renderReplayTurn(question, answer, decision string, actions []ShellActionRecord) string {
+func renderReplayTurn(question, answer, decision string, actions []ShellActionRecord, opts ReplayOptions) string {
 	var out strings.Builder
 	if strings.TrimSpace(question) != "" {
-		out.WriteString(renderReplayMessage("User", question))
+		out.WriteString(renderReplayMessage(question))
 	}
 	if len(actions) > 0 {
-		out.WriteString(renderReplayShellActions(actions))
+		out.WriteString(renderReplayShellActions(actions, opts))
 	}
 	if strings.TrimSpace(answer) != "" {
-		out.WriteString(renderReplayMessage("Assistant", answer))
+		out.WriteString(renderReplayMessage(answer))
 	}
 	if strings.TrimSpace(decision) != "" {
 		out.WriteString(replayBlock("Planner decision: " + decision))
@@ -221,44 +224,57 @@ func renderReplayTurn(question, answer, decision string, actions []ShellActionRe
 	return out.String()
 }
 
-func renderReplayShellActions(actions []ShellActionRecord) string {
-	body := renderShellActionBody(actions)
-	if strings.TrimSpace(body) == "" {
+func renderReplayShellActions(actions []ShellActionRecord, opts ReplayOptions) string {
+	body := renderShellActionBody(actions, opts)
+	if strings.TrimSpace(stripANSI(body)) == "" {
 		return ""
 	}
-	return replayBlock(body)
+	return strings.TrimRight(body, "\n") + "\n\n"
 }
 
-func renderShellActionBody(actions []ShellActionRecord) string {
+func renderShellActionBody(actions []ShellActionRecord, opts ReplayOptions) string {
 	var out strings.Builder
 	for _, action := range normalizeShellActions(actions) {
-		if out.Len() > 0 {
+		if action.Step > 0 && action.StepLimit > 0 {
+			out.WriteString(renderReplayStyledLine(opts, presentation.StyledLine{
+				presentation.Bold(presentation.RoleTruth, fmt.Sprintf("Step %d of %d", action.Step, action.StepLimit)),
+			}))
+			out.WriteString("\n\n")
+		} else if action.Step > 0 {
+			out.WriteString(renderReplayStyledLine(opts, presentation.StyledLine{
+				presentation.Bold(presentation.RoleTruth, fmt.Sprintf("Step %d", action.Step)),
+			}))
 			out.WriteString("\n\n")
 		}
-		if action.Step > 0 && action.StepLimit > 0 {
-			fmt.Fprintf(&out, "Step %d of %d\n", action.Step, action.StepLimit)
-		} else if action.Step > 0 {
-			fmt.Fprintf(&out, "Step %d\n", action.Step)
-		}
-		description := ui.CleanActionDescription(action.Description)
-		command := strings.TrimSpace(action.Command)
+		description := stripANSI(ui.CleanActionDescription(action.Description))
+		command := stripANSI(strings.TrimSpace(action.Command))
 		if strings.EqualFold(strings.TrimSpace(description), command) {
 			description = ""
 		}
 		if description != "" {
 			out.WriteString(description)
-			out.WriteByte('\n')
+			out.WriteString("\n\n")
 		}
 		if command != "" {
-			out.WriteString("$ ")
-			out.WriteString(command)
-			out.WriteByte('\n')
-		}
-		if action.CommandsExecuted > 0 || action.RemainingSteps > 0 {
-			fmt.Fprintf(&out, "[commands executed: %d · remaining steps: %d]\n", action.CommandsExecuted, action.RemainingSteps)
+			out.WriteString(renderReplayStyledLine(opts, presentation.StyledLine{
+				presentation.Bold(presentation.RoleGoodness, "$ "),
+				presentation.Text(command),
+			}))
+			out.WriteString("\n\n")
 		}
 	}
 	return strings.TrimRight(out.String(), "\n")
+}
+
+func renderReplayStyledLine(opts ReplayOptions, line presentation.StyledLine) string {
+	if opts.StyledShellSteps {
+		return opts.Theme.RenderLine(line)
+	}
+	var out strings.Builder
+	for _, span := range line {
+		out.WriteString(span.Text)
+	}
+	return out.String()
 }
 
 func normalizeShellActions(actions []ShellActionRecord) []ShellActionRecord {
@@ -285,22 +301,16 @@ func normalizeShellActions(actions []ShellActionRecord) []ShellActionRecord {
 	return result
 }
 
-func renderReplayMessage(role, body string) string {
-	body = strings.Trim(sanitize(body), "\n")
+func renderReplayMessage(body string) string {
+	body = strings.Trim(stripANSI(sanitize(body)), "\n")
 	if body == "" {
 		return ""
 	}
-	var out strings.Builder
-	out.WriteString("# ")
-	out.WriteString(role)
-	out.WriteString("\n\n")
-	out.WriteString(body)
-	out.WriteString("\n\n")
-	return out.String()
+	return body + "\n\n"
 }
 
 func replayBlock(body string) string {
-	body = strings.Trim(sanitize(body), "\n")
+	body = strings.Trim(stripANSI(sanitize(body)), "\n")
 	if body == "" {
 		return ""
 	}

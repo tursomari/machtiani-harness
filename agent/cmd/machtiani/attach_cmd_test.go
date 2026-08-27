@@ -41,12 +41,12 @@ func TestAttachFinishedSessionReplay(t *testing.T) {
 	if stderr != "" {
 		t.Fatalf("stderr = %q, want empty", stderr)
 	}
-	for _, want := range []string{"What was completed?", "The replay path was implemented.", "Show the persisted result.", "Finished successfully.", "# User", "# Assistant"} {
+	for _, want := range []string{"What was completed?", "The replay path was implemented.", "Show the persisted result.", "Finished successfully."} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("stdout missing %q in:\n%s", want, stdout)
 		}
 	}
-	for _, unwanted := range []string{"Following session ", "── ", "──── ", "ARTIFACTS"} {
+	for _, unwanted := range []string{"# User", "# Assistant", "# System", "Following session ", "── ", "──── ", "ARTIFACTS"} {
 		if strings.Contains(stdout, unwanted) {
 			t.Errorf("stdout contains attach-only framing %q in:\n%s", unwanted, stdout)
 		}
