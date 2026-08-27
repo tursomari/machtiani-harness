@@ -60,6 +60,31 @@ type attachDependencies struct {
 	isTerminal   func(io.Writer) bool
 }
 
+// attachTerminalTeeWriter mirrors the session runner's capture writer. Keeping
+// Fd available is important: attach uses it to decide whether to draw the TTY
+// banner and transient following-status line.
+type attachTerminalTeeWriter struct {
+	terminal *os.File
+	capture  io.Writer
+}
+
+func (w attachTerminalTeeWriter) Write(p []byte) (int, error) {
+	n, err := w.terminal.Write(p)
+	if err != nil {
+		return n, err
+	}
+	if w.capture != nil {
+		if _, captureErr := w.capture.Write(p); captureErr != nil {
+			return n, captureErr
+		}
+	}
+	return n, nil
+}
+
+func (w attachTerminalTeeWriter) Fd() uintptr {
+	return w.terminal.Fd()
+}
+
 type multiString []string
 
 func (m *multiString) String() string {
@@ -452,6 +477,20 @@ func runAttach(sessionID string, stdout, stderr io.Writer) int {
 }
 
 func runAttachWithDisplay(sessionID string, noShellSteps, focused, noCursor bool, stdout, stderr io.Writer) int {
+	var captureFile *os.File
+	if capturePath := strings.TrimSpace(os.Getenv("MACHTIANI_TUI_CAPTURE")); capturePath != "" {
+		terminal, ok := stdout.(*os.File)
+		if !ok {
+			fmt.Fprintf(stderr, "Warning: unable to capture attach output because stdout is not a file\n")
+		} else if file, err := os.Create(capturePath); err != nil {
+			fmt.Fprintf(stderr, "Warning: unable to open capture file %q for writing: %v\n", capturePath, err)
+		} else {
+			captureFile = file
+			stdout = attachTerminalTeeWriter{terminal: terminal, capture: captureFile}
+			defer captureFile.Close()
+		}
+	}
+
 	themeName := string(presentation.ProfileTerminal)
 	glyphMode := string(presentation.GlyphUnicode)
 	motionMode := string(presentation.MotionFull)

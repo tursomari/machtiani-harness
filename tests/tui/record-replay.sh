@@ -17,6 +17,8 @@ Options:
   --run-arg ARG        Append one machtiani run argument in both phases (repeatable)
   --check-display-modes
                        Replay default, no-shell-steps, and focused run/resume modes
+  --attach-record      Best-effort: attach to the live producer while it runs
+  --attach-check       Replay a producer, then verify TTY and non-TTY attach views
   --theme PROFILE      Set MACHTIANI_THEME for both phases
   --no-build           Do not build .data/bin/replay-server if replay-server is not on PATH
   -h, --help           Show this help
@@ -33,6 +35,10 @@ USAGE
 }
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# A harness run must create its own producer session. It may be invoked from
+# inside another machtiani session, whose inherited identifiers would otherwise
+# make the recording contend for that session's lock.
+unset MACHTIANI_SESSION_ID MACHTIANI_SESSION_TEMP_ROOT
 NAME="planner-shell-agent-cache"
 BASE_DIR="$ROOT/.data/tui-replay"
 PROMPT=""
@@ -42,6 +48,8 @@ BUILD=1
 VERBOSE=0
 THEME=""
 CHECK_DISPLAY_MODES=0
+ATTACH_RECORD=0
+ATTACH_CHECK=0
 RUN_ARG_VALUES=()
 
 while (($# > 0)); do
@@ -76,6 +84,14 @@ while (($# > 0)); do
       ;;
     --check-display-modes)
       CHECK_DISPLAY_MODES=1
+      shift
+      ;;
+    --attach-record)
+      ATTACH_RECORD=1
+      shift
+      ;;
+    --attach-check)
+      ATTACH_CHECK=1
       shift
       ;;
     --theme)
@@ -269,6 +285,26 @@ wait_for_port() {
   return 1
 }
 
+wait_for_session() {
+  local terminal_log="$1"
+  local pid="$2"
+  local destination="$3"
+  local deadline=$((SECONDS + 20))
+  local session_id=""
+  while ((SECONDS < deadline)); do
+    session_id="$(session_from_log "$terminal_log")"
+    if [[ -n "$session_id" ]]; then
+      printf '%s\n' "$session_id" > "$destination"
+      return 0
+    fi
+    if ! kill -0 "$pid" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
 sanitize_config_for_replay() {
   local src="$1"
   local dst="$2"
@@ -378,6 +414,55 @@ assert_display_mode_captures() {
   done
 }
 
+assert_attach_captures() {
+  local default="$RUN_DIR/attach-replay.tui.plain.txt"
+  local focused="$RUN_DIR/attach-replay-focused.tui.plain.txt"
+  local no_shell="$RUN_DIR/attach-replay-no-shell-steps.tui.plain.txt"
+  local plain="$RUN_DIR/attach-replay-plain.stdout.txt"
+  local conclusion='Resume this session:|SHELL-AGENT INTERRUPTED|USER INPUT NEEDED'
+  local action_step='^Step [0-9]+( of [0-9]+)?$'
+  local action_command='^\$ [^[:space:]]'
+
+  normalize_capture "$RUN_DIR/attach-replay.tui.txt" "$default"
+  normalize_capture "$RUN_DIR/attach-replay-focused.tui.txt" "$focused"
+  normalize_capture "$RUN_DIR/attach-replay-no-shell-steps.tui.txt" "$no_shell"
+
+  require_capture_match 'Following session ' "$default" "default attach lost its follow notice" || return 1
+  if [[ "$(rg -c "$conclusion" "$default" 2>/dev/null || printf '0')" != "1" ]]; then
+    echo "attach check failed: default attach must render exactly one conclusion ($default)" >&2
+    return 1
+  fi
+  require_capture_match 'following session ' "$default" "TTY attach did not draw its live status line" || return 1
+
+  require_capture_match "$conclusion" "$focused" "focused attach lost its conclusion" || return 1
+  reject_capture_match "$action_step" "$focused" "focused attach rendered a step block" || return 1
+  reject_capture_match "$action_command" "$focused" "focused attach rendered a command block" || return 1
+  reject_capture_match 'session token input|Following session |machtiani \(mct\)' "$focused" "focused attach rendered decoration" || return 1
+
+  require_capture_match 'Following session ' "$no_shell" "no-shell-steps attach lost its follow notice" || return 1
+  reject_capture_match "$action_step" "$no_shell" "no-shell-steps attach rendered a step block" || return 1
+  reject_capture_match "$action_command" "$no_shell" "no-shell-steps attach rendered a command block" || return 1
+
+  if LC_ALL=C rg -q $'\033' "$plain"; then
+    echo "attach check failed: non-TTY attach emitted ANSI escapes ($plain)" >&2
+    return 1
+  fi
+  reject_capture_match 'following session ' "$plain" "non-TTY attach rendered a status line" || return 1
+  if [[ -s "$plain" && "$(tail -c 1 "$plain" | od -An -t x1)" != *"0a"* ]]; then
+    echo "attach check failed: non-TTY attach did not end with a newline ($plain)" >&2
+    return 1
+  fi
+
+  diff -u "$default" "$no_shell" > "$RUN_DIR/attach-no-shell-steps.diff" || true
+  diff -u "$default" "$focused" > "$RUN_DIR/attach-focused.diff" || true
+  for file in "$RUN_DIR/attach-no-shell-steps.diff" "$RUN_DIR/attach-focused.diff"; do
+    if [[ ! -s "$file" ]]; then
+      echo "attach check failed: expected a non-empty formatter diff ($file)" >&2
+      return 1
+    fi
+  done
+}
+
 write_manifest() {
   local live_session replay_session
   live_session="$(cat "$RUN_DIR/live-session-id.txt" 2>/dev/null || true)"
@@ -391,13 +476,24 @@ write_manifest() {
     printf 'theme=%s\n' "${THEME:-config}"
     printf 'run_arg_count=%s\n' "${#RUN_ARG_VALUES[@]}"
     printf 'display_mode_check=%s\n' "$CHECK_DISPLAY_MODES"
+    printf 'attach_record=%s\n' "$ATTACH_RECORD"
+    printf 'attach_check=%s\n' "$ATTACH_CHECK"
+    printf 'fixture_source=%s\n' "${FIXTURES_PATH:-$RUN_DIR/live.llm-fixtures.jsonl}"
     printf 'live_session=%s\n' "$live_session"
     printf 'replay_session=%s\n' "$replay_session"
-    printf 'fixture_count=%s\n' "$(line_count "$RUN_DIR/live.llm-fixtures.jsonl")"
+    printf 'fixture_count=%s\n' "$(line_count "${FIXTURES_PATH:-$RUN_DIR/live.llm-fixtures.jsonl}")"
     printf 'live_terminal_lines=%s\n' "$(line_count "$RUN_DIR/live.terminal.log")"
     printf 'replay_terminal_lines=%s\n' "$(line_count "$RUN_DIR/replay.terminal.log")"
     printf 'live_tui_lines=%s\n' "$(line_count "$RUN_DIR/live.tui.txt")"
     printf 'replay_tui_lines=%s\n' "$(line_count "$RUN_DIR/replay.tui.txt")"
+    for prefix in attach-live attach-replay attach-replay-focused attach-replay-no-shell-steps attach-replay-plain; do
+      if [[ -f "$RUN_DIR/$prefix.exit" ]]; then
+        printf '%s_exit=%s\n' "${prefix//-/_}" "$(sed -n 's/^exit=//p' "$RUN_DIR/$prefix.exit")"
+      fi
+      if [[ -f "$RUN_DIR/$prefix-session-id.txt" ]]; then
+        printf '%s_session=%s\n' "${prefix//-/_}" "$(cat "$RUN_DIR/$prefix-session-id.txt")"
+      fi
+    done
     printf 'live_terminal_raw_actions=%s\n' "$(count_matches '^MACHTIANI_SHELL_ACTION' "$RUN_DIR/live.terminal.log")"
     printf 'replay_terminal_raw_actions=%s\n' "$(count_matches '^MACHTIANI_SHELL_ACTION' "$RUN_DIR/replay.terminal.log")"
     printf 'live_tui_shell_step_lines=%s\n' "$(count_matches '\[shell step ' "$RUN_DIR/live.tui.txt")"
@@ -444,20 +540,63 @@ if [[ -n "$THEME" ]]; then
   LIVE_ENV+=("MACHTIANI_THEME=$THEME")
 fi
 
-set +e
-run_under_pty "$RUN_DIR/live.terminal.log" \
-  env \
-  "${LIVE_ENV[@]}" \
-  "$MACHTIANI_BIN" "${RUN_ARGS[@]}"
-live_exit=$?
-set -e
+if [[ "$ATTACH_RECORD" == "1" ]]; then
+  run_under_pty "$RUN_DIR/live.terminal.log" \
+    env \
+    "${LIVE_ENV[@]}" \
+    "$MACHTIANI_BIN" "${RUN_ARGS[@]}" \
+    > "$RUN_DIR/live.process.log" 2>&1 &
+  live_pid=$!
+  if wait_for_session "$RUN_DIR/live.terminal.log" "$live_pid" "$RUN_DIR/live-session-id.txt"; then
+    live_session="$(cat "$RUN_DIR/live-session-id.txt")"
+    attach_live_env=(
+      "MACHTIANI_TUI_CAPTURE=$RUN_DIR/attach-live.tui.txt"
+      "MACHTIANI_MOTION=full"
+      "TERM=xterm-256color"
+    )
+    if [[ -n "$THEME" ]]; then
+      attach_live_env+=("MACHTIANI_THEME=$THEME")
+    fi
+    set +e
+    run_under_pty "$RUN_DIR/attach-live.terminal.log" \
+      env \
+      "${attach_live_env[@]}" \
+      "$MACHTIANI_BIN" run --attach --resume "$live_session"
+    attach_live_exit=$?
+    set -e
+    printf 'exit=%s\n' "$attach_live_exit" > "$RUN_DIR/attach-live.exit"
+    printf '%s\n' "$live_session" > "$RUN_DIR/attach-live-session-id.txt"
+  else
+    printf 'session id was not available while the live producer was active\n' > "$RUN_DIR/attach-live.skipped.txt"
+  fi
+  set +e
+  wait "$live_pid"
+  live_exit=$?
+  set -e
+else
+  set +e
+  run_under_pty "$RUN_DIR/live.terminal.log" \
+    env \
+    "${LIVE_ENV[@]}" \
+    "$MACHTIANI_BIN" "${RUN_ARGS[@]}"
+  live_exit=$?
+  set -e
+fi
 printf 'exit=%s\n' "$live_exit" > "$RUN_DIR/live.exit"
 session_from_log "$RUN_DIR/live.terminal.log" > "$RUN_DIR/live-session-id.txt"
 
-if [[ "$live_exit" != "0" ]]; then
-  write_manifest
-  echo "live run failed; see $RUN_DIR/live.terminal.log" >&2
-  exit "$live_exit"
+FIXTURES_PATH="$RUN_DIR/live.llm-fixtures.jsonl"
+if [[ "$live_exit" != "0" || ! -s "$FIXTURES_PATH" ]]; then
+  fallback_fixtures="${MACHTIANI_REPLAY_FIXTURES:-$BASE_DIR/planner-shell-agent-cache/runs/20260826T212755Z/live.llm-fixtures.jsonl}"
+  if [[ "$ATTACH_CHECK" == "1" && -s "$fallback_fixtures" ]]; then
+    cp "$fallback_fixtures" "$RUN_DIR/replay.llm-fixtures.jsonl"
+    FIXTURES_PATH="$RUN_DIR/replay.llm-fixtures.jsonl"
+    printf 'live recording unavailable; replay uses %s\n' "$fallback_fixtures" > "$RUN_DIR/replay-fixture-fallback.txt"
+  else
+    write_manifest
+    echo "live run failed; see $RUN_DIR/live.terminal.log" >&2
+    exit "$live_exit"
+  fi
 fi
 
 PORT="$(find_free_port "${PORT:-19876}")"
@@ -487,7 +626,7 @@ run_replay_case() {
   local terminal_log="$RUN_DIR/$prefix.terminal.log"
   local tui_capture="$RUN_DIR/$prefix.tui.txt"
 
-  "$REPLAY_SERVER_BIN" -fixtures "$RUN_DIR/live.llm-fixtures.jsonl" -port "$PORT" \
+  "$REPLAY_SERVER_BIN" -fixtures "$FIXTURES_PATH" -port "$PORT" \
     > "$server_log" 2>&1 &
   server_pid=$!
   if ! wait_for_port "$PORT"; then
@@ -515,10 +654,142 @@ run_replay_case() {
   return "$case_exit"
 }
 
+run_attach_case() {
+  local prefix="$1"
+  local session_id="$2"
+  shift 2
+  local terminal_log="$RUN_DIR/$prefix.terminal.log"
+  local tui_capture="$RUN_DIR/$prefix.tui.txt"
+  local -a attach_env=(
+    "MACHTIANI_CONFIG=$RUN_DIR/replay.config.toml"
+    "MACHTIANI_TUI_CAPTURE=$tui_capture"
+    "MACHTIANI_MOTION=full"
+    "TERM=xterm-256color"
+  )
+  if [[ -n "$THEME" ]]; then
+    attach_env+=("MACHTIANI_THEME=$THEME")
+  fi
+  run_under_pty "$terminal_log" \
+    env \
+    "${attach_env[@]}" \
+    "$MACHTIANI_BIN" run --attach --resume "$session_id" "$@"
+  local case_exit=$?
+  printf 'exit=%s\n' "$case_exit" > "$RUN_DIR/$prefix.exit"
+  printf '%s\n' "$session_id" > "$RUN_DIR/$prefix-session-id.txt"
+  return "$case_exit"
+}
+
+run_attach_plain_case() {
+  local prefix="$1"
+  local session_id="$2"
+  shift 2
+  local stdout_file="$RUN_DIR/$prefix.stdout.txt"
+  local -a attach_env=(
+    "MACHTIANI_CONFIG=$RUN_DIR/replay.config.toml"
+    "MACHTIANI_TUI_CAPTURE=$RUN_DIR/$prefix.tui.txt"
+    "MACHTIANI_MOTION=full"
+    "TERM=xterm-256color"
+  )
+  if [[ -n "$THEME" ]]; then
+    attach_env+=("MACHTIANI_THEME=$THEME")
+  fi
+  env "${attach_env[@]}" \
+    "$MACHTIANI_BIN" run --attach --resume "$session_id" "$@" \
+    > "$stdout_file" 2> "$RUN_DIR/$prefix.stderr.txt"
+  local case_exit=$?
+  printf 'exit=%s\n' "$case_exit" > "$RUN_DIR/$prefix.exit"
+  printf '%s\n' "$session_id" > "$RUN_DIR/$prefix-session-id.txt"
+  return "$case_exit"
+}
+
+run_replay_producer_with_attach() {
+  local server_log="$RUN_DIR/replay-server.log"
+  "$REPLAY_SERVER_BIN" -fixtures "$FIXTURES_PATH" -port "$PORT" -response-delay 125ms > "$server_log" 2>&1 &
+  server_pid=$!
+  if ! wait_for_port "$PORT"; then
+    echo "error: replay server did not start on port $PORT" >&2
+    cat "$server_log" >&2 || true
+    cleanup
+    return 1
+  fi
+
+  local -a replay_env=(
+    "MACHTIANI_CONFIG=$RUN_DIR/replay.config.toml"
+    "MACHTIANI_TUI_CAPTURE=$RUN_DIR/replay.tui.txt"
+  )
+  if [[ -n "$THEME" ]]; then
+    replay_env+=("MACHTIANI_THEME=$THEME")
+  fi
+  run_under_pty "$RUN_DIR/replay.terminal.log" \
+    env \
+    "${replay_env[@]}" \
+    "$MACHTIANI_BIN" "${RUN_ARGS[@]}" \
+    > "$RUN_DIR/replay.process.log" 2>&1 &
+  local producer_pid=$!
+  local attach_exit=1
+  if wait_for_session "$RUN_DIR/replay.terminal.log" "$producer_pid" "$RUN_DIR/replay-session-id.txt"; then
+    local session_id
+    session_id="$(cat "$RUN_DIR/replay-session-id.txt")"
+    set +e
+    run_attach_case attach-replay "$session_id"
+    attach_exit=$?
+    set -e
+  fi
+  set +e
+  wait "$producer_pid"
+  local producer_exit=$?
+  set -e
+  printf 'exit=%s\n' "$producer_exit" > "$RUN_DIR/replay.exit"
+  session_from_log "$RUN_DIR/replay.terminal.log" > "$RUN_DIR/replay-session-id.txt"
+  cleanup
+  if [[ "$attach_exit" != "0" && -s "$RUN_DIR/replay-session-id.txt" ]]; then
+    local session_id
+    session_id="$(cat "$RUN_DIR/replay-session-id.txt")"
+    set +e
+    run_attach_case attach-replay "$session_id"
+    attach_exit=$?
+    set -e
+  fi
+  if [[ "$producer_exit" != "0" ]]; then
+    return "$producer_exit"
+  fi
+  return "$attach_exit"
+}
+
 set +e
-run_replay_case replay "${RUN_ARGS[@]}"
+if [[ "$ATTACH_CHECK" == "1" ]]; then
+  run_replay_producer_with_attach
+else
+  run_replay_case replay "${RUN_ARGS[@]}"
+fi
 replay_exit=$?
 set -e
+
+attach_check_exit=0
+if [[ "$ATTACH_CHECK" == "1" && "$replay_exit" == "0" ]]; then
+  replay_session="$(cat "$RUN_DIR/replay-session-id.txt" 2>/dev/null || true)"
+  if [[ -z "$replay_session" ]]; then
+    echo "error: unable to extract replay session for attach checks" >&2
+    attach_check_exit=1
+  else
+    set +e
+    run_attach_case attach-replay-focused "$replay_session" --focused
+    attach_focused_exit=$?
+    run_attach_case attach-replay-no-shell-steps "$replay_session" --no-shell-steps
+    attach_no_shell_exit=$?
+    run_attach_plain_case attach-replay-plain "$replay_session"
+    attach_plain_exit=$?
+    set -e
+    if [[ "$attach_focused_exit" != "0" || "$attach_no_shell_exit" != "0" || "$attach_plain_exit" != "0" ]]; then
+      attach_check_exit=1
+    elif assert_attach_captures; then
+      printf 'pass\n' > "$RUN_DIR/attach-check.txt"
+    else
+      printf 'fail\n' > "$RUN_DIR/attach-check.txt"
+      attach_check_exit=1
+    fi
+  fi
+fi
 
 display_exit=0
 if [[ "$CHECK_DISPLAY_MODES" == "1" && "$replay_exit" == "0" ]]; then
@@ -582,5 +853,8 @@ cat "$RUN_DIR/manifest.txt"
 
 if [[ "$display_exit" != "0" ]]; then
   exit "$display_exit"
+fi
+if [[ "$attach_check_exit" != "0" ]]; then
+  exit "$attach_check_exit"
 fi
 exit "$replay_exit"

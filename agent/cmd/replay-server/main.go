@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+	"time"
 )
 
 // fixtureEntry mirrors the struct in agent/internal/llm/recorder.go so that the
@@ -27,6 +28,7 @@ type replayServer struct {
 	mu      sync.Mutex
 	counter int
 	entries []fixtureEntry
+	delay   time.Duration
 }
 
 func (s *replayServer) handler(w http.ResponseWriter, r *http.Request) {
@@ -44,6 +46,9 @@ func (s *replayServer) handler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	entry := entries[idx]
+	if s.delay > 0 {
+		time.Sleep(s.delay)
+	}
 
 	// Default content type if none recorded.
 	contentType := "application/json"
@@ -100,6 +105,7 @@ func main() {
 
 	port := flag.Int("port", defaultPort, "port to listen on")
 	fixturesPath := flag.String("fixtures", "", "path to the JSONL fixture file")
+	responseDelay := flag.Duration("response-delay", 0, "delay each recorded response (for timing-sensitive harness checks)")
 	flag.Parse()
 
 	if *fixturesPath == "" {
@@ -115,7 +121,7 @@ func main() {
 
 	fmt.Printf("replay server: loaded %d fixtures from %s\n", len(entries), *fixturesPath)
 
-	srv := &replayServer{entries: entries}
+	srv := &replayServer{entries: entries, delay: *responseDelay}
 
 	addr := fmt.Sprintf(":%d", *port)
 	httpServer := &http.Server{Addr: addr, Handler: http.HandlerFunc(srv.handler)}

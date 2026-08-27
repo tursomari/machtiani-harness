@@ -91,6 +91,31 @@ func TestAttachNoShellStepsPreservesLegacyReplay(t *testing.T) {
 	}
 }
 
+func TestAttachCapturesRenderedOutput(t *testing.T) {
+	setupSessionArchiveCommandTest(t)
+	prepareTestConfig(t)
+	sessionID := "agent-attach-capture"
+	writeAttachCommandConversation(t, sessionID)
+	capturePath := filepath.Join(t.TempDir(), "attach.tui.txt")
+	t.Setenv("MACHTIANI_TUI_CAPTURE", capturePath)
+
+	stdout, stderr := captureOutput(func() {
+		if code := handleRunCommand([]string{"--attach", "--resume", sessionID}); code != 0 {
+			t.Fatalf("handleRunCommand() exit = %d, want 0", code)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("stderr = %q, want empty", stderr)
+	}
+	captured, err := os.ReadFile(capturePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(captured); got != stdout {
+		t.Fatalf("capture differs from stdout:\n--- capture ---\n%s\n--- stdout ---\n%s", got, stdout)
+	}
+}
+
 func TestAttachRejectsDisplayOnlyConflicts(t *testing.T) {
 	tests := []struct {
 		name      string
