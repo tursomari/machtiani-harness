@@ -22,6 +22,7 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/core/readmesync"
 	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/presentation"
+	"github.com/tursomari/machtiani/agent/internal/projectstore"
 	"github.com/tursomari/machtiani/agent/internal/session"
 	shellagent "github.com/tursomari/machtiani/agent/internal/shell-agent"
 	"github.com/tursomari/machtiani/agent/internal/shellaction"
@@ -105,31 +106,19 @@ func resolveAttachSession(query string) (attachSessionTarget, error) {
 			return newAttachSessionTarget(sessionID, globalSessionsRoot, globalScratchRoot), nil
 		}
 	}
+	if target, found, err := resolveAttachSessionInGlobalStores(query); err != nil {
+		return attachSessionTarget{}, err
+	} else if found {
+		return target, nil
+	}
 
 	return attachSessionTarget{}, fmt.Errorf("unknown session: %q", query)
 }
 
 func resolveAttachSessionIDAt(query, sessionsRoot string) (string, bool, error) {
-	entries, err := os.ReadDir(sessionsRoot)
-	if err != nil && !os.IsNotExist(err) {
-		return "", false, fmt.Errorf("read sessions directory: %w", err)
-	}
-
-	canonicalQuery := canonicalAttachSessionID(query)
-	var exactMatches []string
-	var prefixMatches []string
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		name := entry.Name()
-		canonicalName := canonicalAttachSessionID(name)
-		if canonicalName == canonicalQuery {
-			exactMatches = append(exactMatches, name)
-		}
-		if strings.HasPrefix(canonicalName, canonicalQuery) {
-			prefixMatches = append(prefixMatches, name)
-		}
+	exactMatches, prefixMatches, err := attachSessionMatchesAt(query, sessionsRoot)
+	if err != nil {
+		return "", false, err
 	}
 
 	if len(exactMatches) == 1 {
@@ -144,6 +133,131 @@ func resolveAttachSessionIDAt(query, sessionsRoot string) (string, bool, error) 
 		sort.Strings(prefixMatches)
 		return "", false, fmt.Errorf("ambiguous session id %q: %d candidates: %s", query, len(prefixMatches), strings.Join(prefixMatches, ", "))
 	}
+}
+
+func attachSessionMatchesAt(query, sessionsRoot string) (exactMatches, prefixMatches []string, err error) {
+	entries, err := os.ReadDir(sessionsRoot)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, nil, fmt.Errorf("read sessions directory: %w", err)
+	}
+
+	canonicalQuery := canonicalAttachSessionID(query)
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		canonicalName := canonicalAttachSessionID(name)
+		if canonicalName == canonicalQuery {
+			exactMatches = append(exactMatches, name)
+		}
+		if strings.HasPrefix(canonicalName, canonicalQuery) {
+			prefixMatches = append(prefixMatches, name)
+		}
+	}
+
+	return exactMatches, prefixMatches, nil
+}
+
+type attachStoreSessionMatch struct {
+	storeName string
+	sessionID string
+	target    attachSessionTarget
+}
+
+func resolveAttachSessionInGlobalStores(query string) (attachSessionTarget, bool, error) {
+	homeRoot, err := projectstore.HomeRoot()
+	if err != nil {
+		return attachSessionTarget{}, false, err
+	}
+	storeEntries, err := os.ReadDir(homeRoot)
+	if os.IsNotExist(err) {
+		return attachSessionTarget{}, false, nil
+	}
+	if err != nil {
+		return attachSessionTarget{}, false, fmt.Errorf("read Machtiani home: %w", err)
+	}
+
+	var exactMatches []attachStoreSessionMatch
+	var prefixMatches []attachStoreSessionMatch
+	for _, storeEntry := range storeEntries {
+		if !storeEntry.IsDir() {
+			continue
+		}
+		storeRoot := filepath.Join(homeRoot, storeEntry.Name())
+		sessionsRoot := filepath.Join(storeRoot, projectstore.SessionsDirName)
+		info, err := os.Stat(sessionsRoot)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return attachSessionTarget{}, false, fmt.Errorf("inspect sessions directory %s: %w", sessionsRoot, err)
+		}
+		if !info.IsDir() {
+			continue
+		}
+		scope, err := projectstore.ReadConfigScope(storeRoot)
+		if err != nil {
+			return attachSessionTarget{}, false, err
+		}
+		if scope != projectstore.ScopeGlobal {
+			continue
+		}
+
+		exactIDs, prefixIDs, err := attachSessionMatchesAt(query, sessionsRoot)
+		if err != nil {
+			return attachSessionTarget{}, false, err
+		}
+		scratchRoot := filepath.Join(storeRoot, projectstore.ScratchDirName)
+		for _, sessionID := range exactIDs {
+			exactMatches = append(exactMatches, attachStoreSessionMatch{
+				storeName: storeEntry.Name(),
+				sessionID: sessionID,
+				target:    newAttachSessionTarget(sessionID, sessionsRoot, scratchRoot),
+			})
+		}
+		for _, sessionID := range prefixIDs {
+			prefixMatches = append(prefixMatches, attachStoreSessionMatch{
+				storeName: storeEntry.Name(),
+				sessionID: sessionID,
+				target:    newAttachSessionTarget(sessionID, sessionsRoot, scratchRoot),
+			})
+		}
+	}
+
+	sortAttachStoreSessionMatches(exactMatches)
+	sortAttachStoreSessionMatches(prefixMatches)
+	if len(exactMatches) == 1 {
+		return exactMatches[0].target, true, nil
+	}
+	if len(exactMatches) > 1 {
+		return attachSessionTarget{}, false, attachStoreSessionAmbiguityError(query, exactMatches)
+	}
+	switch len(prefixMatches) {
+	case 0:
+		return attachSessionTarget{}, false, nil
+	case 1:
+		return prefixMatches[0].target, true, nil
+	default:
+		return attachSessionTarget{}, false, attachStoreSessionAmbiguityError(query, prefixMatches)
+	}
+}
+
+func sortAttachStoreSessionMatches(matches []attachStoreSessionMatch) {
+	sort.Slice(matches, func(i, j int) bool {
+		if matches[i].storeName == matches[j].storeName {
+			return matches[i].sessionID < matches[j].sessionID
+		}
+		return matches[i].storeName < matches[j].storeName
+	})
+}
+
+func attachStoreSessionAmbiguityError(query string, matches []attachStoreSessionMatch) error {
+	candidates := make([]string, 0, len(matches))
+	for _, match := range matches {
+		candidates = append(candidates, match.target.sessionDirectory)
+	}
+	return fmt.Errorf("ambiguous session id %q: %d candidates: %s", query, len(candidates), strings.Join(candidates, ", "))
 }
 
 func canonicalAttachSessionID(value string) string {

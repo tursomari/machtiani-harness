@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/tursomari/machtiani/agent/internal/conversation"
 	"github.com/tursomari/machtiani/agent/internal/core/artifacts"
+	"github.com/tursomari/machtiani/agent/internal/projectstore"
 	"github.com/tursomari/machtiani/agent/internal/session"
 	"github.com/tursomari/machtiani/agent/internal/shellaction"
 )
@@ -345,6 +347,74 @@ func TestAttachDefaultScopeAmbiguityDoesNotFallBack(t *testing.T) {
 	_, err = resolveAttachSession("agent-attach-ambiguous-11")
 	if err == nil || !strings.Contains(err.Error(), "ambiguous session id") {
 		t.Fatalf("resolveAttachSession() error = %v, want default-scope ambiguity", err)
+	}
+}
+
+func TestResolveAttachSessionFindsGlobalUUIDStoreOutsideProject(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	plainDirectory := t.TempDir()
+	originalDirectory := mustChdir(t, plainDirectory)
+	t.Cleanup(func() { mustChdir(t, originalDirectory) })
+
+	storeRoot := filepath.Join(home, projectstore.RootDirName, "7e6be546-9043-42d6-90c9-13cf67c2421f")
+	if err := projectstore.WriteConfigScope(storeRoot, projectstore.ScopeGlobal); err != nil {
+		t.Fatal(err)
+	}
+	sessionID := "agent-host-test-123456"
+	want := newAttachSessionTarget(
+		sessionID,
+		filepath.Join(storeRoot, projectstore.SessionsDirName),
+		filepath.Join(storeRoot, projectstore.ScratchDirName),
+	)
+	conv := conversation.New(sessionID, "Resolve a real UUID-backed global session")
+	writeAttachConversationAt(t, want.conversationPath(), conv)
+
+	got, err := resolveAttachSession("agent-host-test-123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("resolveAttachSession() = %#v, want %#v", got, want)
+	}
+}
+
+func TestResolveAttachSessionReportsCrossStorePrefixAmbiguity(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	plainDirectory := t.TempDir()
+	originalDirectory := mustChdir(t, plainDirectory)
+	t.Cleanup(func() { mustChdir(t, originalDirectory) })
+
+	storeSessions := []struct {
+		storeName string
+		sessionID string
+	}{
+		{storeName: "11111111-1111-4111-8111-111111111111", sessionID: "agent-host-test-ambiguous-111"},
+		{storeName: "22222222-2222-4222-8222-222222222222", sessionID: "agent-host-test-ambiguous-112"},
+	}
+	var wantCandidates []string
+	for _, fixture := range storeSessions {
+		storeRoot := filepath.Join(home, projectstore.RootDirName, fixture.storeName)
+		if err := projectstore.WriteConfigScope(storeRoot, projectstore.ScopeGlobal); err != nil {
+			t.Fatal(err)
+		}
+		target := newAttachSessionTarget(
+			fixture.sessionID,
+			filepath.Join(storeRoot, projectstore.SessionsDirName),
+			filepath.Join(storeRoot, projectstore.ScratchDirName),
+		)
+		writeAttachConversationAt(t, target.conversationPath(), conversation.New(fixture.sessionID, "Ambiguous global session"))
+		wantCandidates = append(wantCandidates, target.sessionDirectory)
+	}
+
+	_, err := resolveAttachSession("agent-host-test-ambiguous-11")
+	if err == nil {
+		t.Fatal("resolveAttachSession() succeeded, want ambiguity error")
+	}
+	want := fmt.Sprintf("ambiguous session id %q: 2 candidates: %s", "agent-host-test-ambiguous-11", strings.Join(wantCandidates, ", "))
+	if err.Error() != want {
+		t.Fatalf("resolveAttachSession() error = %q, want %q", err, want)
 	}
 }
 
