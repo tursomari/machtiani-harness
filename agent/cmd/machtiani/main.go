@@ -63,7 +63,7 @@ type attachDependencies struct {
 
 // attachTerminalTeeWriter mirrors the session runner's capture writer. Keeping
 // Fd available is important: attach uses it to decide whether to draw the TTY
-// banner and transient following-status line.
+// banner and live following/footer overlay.
 type attachTerminalTeeWriter struct {
 	terminal *os.File
 	capture  io.Writer
@@ -626,19 +626,19 @@ func runAttachWithDependencies(sessionID string, stdout, stderr io.Writer, deps 
 		conclusionPrinted = true
 	}
 
-	status := &attachStatusLine{
+	overlay := &attachOverlay{
 		out:     stdout,
 		theme:   deps.theme,
 		label:   "following session " + sessionID,
-		enabled: !deps.focused && deps.isTerminal(stdout) && deps.theme.MotionMode() != presentation.MotionNone,
+		enabled: styledReplay,
 	}
-	defer status.finish()
+	defer overlay.finish()
 
 	previous := append([]conversation.Message(nil), conv.Messages...)
 	lastContent := time.Now()
 	active, err := deps.probe(sessionID)
 	if err != nil {
-		status.clear()
+		overlay.clear()
 		fmt.Fprintln(stderr, "Error:", err)
 		return 1
 	}
@@ -648,7 +648,7 @@ func runAttachWithDependencies(sessionID string, stdout, stderr io.Writer, deps 
 	}
 	start := time.Now()
 	if active && !conclusionPrinted {
-		status.draw(0)
+		overlay.draw(conv, start, 0, deps.footerWidth(stdout))
 	}
 
 	ticker := time.NewTicker(deps.pollInterval)
@@ -656,13 +656,13 @@ func runAttachWithDependencies(sessionID string, stdout, stderr io.Writer, deps 
 	for now := range ticker.C {
 		data, err := deps.readFile(conversationPath)
 		if err != nil {
-			status.clear()
+			overlay.clear()
 			fmt.Fprintln(stderr, "Error:", err)
 			return 1
 		}
 		next, err := conversation.Unmarshal(data)
 		if err != nil {
-			status.clear()
+			overlay.clear()
 			fmt.Fprintln(stderr, "Error:", err)
 			return 1
 		}
@@ -671,7 +671,7 @@ func runAttachWithDependencies(sessionID string, stdout, stderr io.Writer, deps 
 		if !deps.noShellSteps {
 			actions, actionsErr := readAttachShellActions(next, deps.readActions)
 			if actionsErr != nil {
-				status.clear()
+				overlay.clear()
 				fmt.Fprintln(stderr, "Error:", actionsErr)
 				return 1
 			}
@@ -685,23 +685,20 @@ func runAttachWithDependencies(sessionID string, stdout, stderr io.Writer, deps 
 			Theme:              deps.theme,
 		})
 		if err != nil {
-			status.clear()
+			overlay.clear()
 			fmt.Fprintln(stderr, "Error:", err)
 			return 1
 		}
 		if delta != "" && !deps.focused {
-			status.clear()
+			overlay.clear()
 			if _, err := io.WriteString(stdout, delta+"\n\n"); err != nil {
 				fmt.Fprintln(stderr, "Error:", err)
 				return 1
 			}
-			if active && !conclusionPrinted {
-				status.draw(now.Sub(start))
-			}
 		}
 		if !conclusionPrinted {
 			if answer, ok := conversation.LastFinalMessage(next); ok {
-				status.clear()
+				overlay.clear()
 				if err := writeAttachConclusion(stdout, sessionID, answer, uiTheme); err != nil {
 					fmt.Fprintln(stderr, "Error:", err)
 					return 1
@@ -718,25 +715,25 @@ func runAttachWithDependencies(sessionID string, stdout, stderr io.Writer, deps 
 
 		active, err = deps.probe(sessionID)
 		if err != nil {
-			status.clear()
+			overlay.clear()
 			fmt.Fprintln(stderr, "Error:", err)
 			return 1
 		}
 		if active {
 			inactiveSince = time.Time{}
 			if !conclusionPrinted {
-				status.draw(now.Sub(start))
+				overlay.draw(next, now, now.Sub(start), deps.footerWidth(stdout))
 			}
 			continue
 		}
 		if inactiveSince.IsZero() {
 			inactiveSince = now
-			status.clear()
+			overlay.clear()
 			continue
 		}
 		if now.Sub(inactiveSince) >= deps.quietGrace && now.Sub(lastContent) >= deps.quietGrace {
 			if styledReplay {
-				status.finish()
+				overlay.finish()
 				if err := writeAttachFooter(stdout, next, deps.theme, now, deps.footerWidth(stdout)); err != nil {
 					fmt.Fprintln(stderr, "Error:", err)
 					return 1
@@ -748,46 +745,53 @@ func runAttachWithDependencies(sessionID string, stdout, stderr io.Writer, deps 
 	return 0
 }
 
-type attachStatusLine struct {
+type attachOverlay struct {
 	out      io.Writer
 	theme    presentation.Theme
 	label    string
 	enabled  bool
-	visible  bool
+	lines    int
 	finished bool
 }
 
-// draw rewrites the live status line with the current animation frame. It
-// clears the previous frame first and writes without a trailing newline.
-func (s *attachStatusLine) draw(elapsed time.Duration) {
+// draw rewrites attach's single live overlay block. The optional activity line
+// and the two run-style footer lines are written without a trailing newline so
+// ClearLinesAbove can replace the complete block in place on the next poll.
+func (s *attachOverlay) draw(conv *conversation.Conversation, now time.Time, elapsed time.Duration, width int) {
 	if s == nil || !s.enabled {
 		return
 	}
-	line := ui.RenderAttachStatusLine(s.theme, elapsed, s.label)
-	if line == "" {
-		return
+	snapshot := conversation.PersistedFooterSnapshotAt(conv, now)
+	snapshot.Width = width
+	lines := make([]string, 0, 3)
+	if activity := ui.RenderAttachStatusLine(s.theme, elapsed, s.label); activity != "" {
+		lines = append(lines, activity)
 	}
-	ui.ClearCurrentLine(s.out)
-	fmt.Fprint(s.out, line)
-	s.visible = true
+	lines = append(lines, ui.RenderFinalFooter(snapshot, s.theme)...)
+	if s.lines > 0 {
+		ui.ClearLinesAbove(s.lines, s.out)
+	}
+	fmt.Fprint(s.out, strings.Join(lines, "\n"))
+	s.lines = len(lines)
 }
 
-// clear removes the live status line when one is visible.
-func (s *attachStatusLine) clear() {
-	if s == nil || !s.enabled || !s.visible {
+// clear removes every line in the live overlay and leaves the cursor at the
+// block's former first row, ready for ordinary output or the stable footer.
+func (s *attachOverlay) clear() {
+	if s == nil || !s.enabled || s.lines == 0 {
 		return
 	}
-	ui.ClearCurrentLine(s.out)
-	s.visible = false
+	ui.ClearLinesAbove(s.lines, s.out)
+	s.lines = 0
 }
 
-// finish clears the status line on every exit path and ends the final line.
-func (s *attachStatusLine) finish() {
-	if s == nil || !s.enabled || s.finished {
+// finish clears the transient block exactly once. The final footer writer is
+// responsible for newline-terminating its two stable lines.
+func (s *attachOverlay) finish() {
+	if s == nil || s.finished {
 		return
 	}
 	s.clear()
-	fmt.Fprint(s.out, "\n")
 	s.finished = true
 }
 

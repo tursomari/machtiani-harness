@@ -438,6 +438,14 @@ assert_attach_captures() {
   fi
   require_capture_match 'following session ' "$default" "TTY attach did not draw its live status line" || return 1
   require_capture_match 'session token input' "$default" "TTY attach did not draw its run-style footer" || return 1
+	local first_footer_line first_conclusion_line
+	first_footer_line="$(rg -n -m1 'session token input' "$default" | cut -d: -f1)"
+	first_conclusion_line="$(rg -n -m1 "$conclusion" "$default" | cut -d: -f1)"
+	if [[ -z "$first_footer_line" || -z "$first_conclusion_line" ]] ||
+	   ((first_footer_line >= first_conclusion_line)); then
+	  echo "attach check failed: run-style footer was not visible before the conclusion ($default)" >&2
+	  return 1
+	fi
 	# Footer inputs are written by run, not recomputed by attach. Terminal width
 	# may compact individual display segments, so assert their durable source.
 	if [[ ! -f "$footer_record" ]] || ! rg -q '"footer"[[:space:]]*:' "$footer_record" ||

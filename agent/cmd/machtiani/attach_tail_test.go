@@ -1,12 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -16,6 +18,46 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/presentation"
 	"github.com/tursomari/machtiani/agent/internal/shellaction"
 )
+
+type attachTestTerminal struct {
+	mu     sync.Mutex
+	buffer bytes.Buffer
+	wants  []string
+	seen   chan struct{}
+	once   sync.Once
+}
+
+func newAttachTestTerminal(wants ...string) *attachTestTerminal {
+	return &attachTestTerminal{wants: wants, seen: make(chan struct{})}
+}
+
+func (w *attachTestTerminal) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	n, err := w.buffer.Write(p)
+	output := w.buffer.String()
+	w.mu.Unlock()
+	if err == nil {
+		matched := true
+		for _, want := range w.wants {
+			if !strings.Contains(output, want) {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			w.once.Do(func() { close(w.seen) })
+		}
+	}
+	return n, err
+}
+
+func (w *attachTestTerminal) Fd() uintptr { return 1 }
+
+func (w *attachTestTerminal) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buffer.String()
+}
 
 func TestRunAttachTailsRunningSessionWithoutDuplicates(t *testing.T) {
 	setupSessionArchiveCommandTest(t)
@@ -365,6 +407,86 @@ func TestRunAttachTTYStatusLineClearsOnExit(t *testing.T) {
 	}
 	if !strings.Contains(output, "TTY live turn 2") {
 		t.Errorf("delta content missing in:\n%s", output)
+	}
+}
+
+func TestRunAttachTTYShowsLiveFooterOverlayBeforeQuietGrace(t *testing.T) {
+	setupSessionArchiveCommandTest(t)
+	sessionID := "agent-attach-live-footer"
+	conv := conversation.New(sessionID, "Live persisted footer")
+	addAttachTailTurn(conv, 1)
+	conv.TurnsCompleted = 2
+	conv.RuntimeStats = conversation.NewRuntimeStatsState(9_000, 20_000, 30_000, 4_000)
+	conv.RuntimeStats.PlannerActivePromptTokens = 25_000
+	conv.Footer = &conversation.FooterState{
+		CWD:            filepath.Join(string(filepath.Separator), "workspace", "live-project"),
+		MaxInputTokens: 100_000,
+		Mode:           "code",
+		Models: []conversation.FooterModelState{
+			{Role: "planner", Label: "provider:planner-live"},
+			{Role: "shell", Label: "provider:shell-live"},
+		},
+	}
+	writeAttachTailConversation(t, conv)
+
+	terminal := newAttachTestTerminal(
+		"following session "+sessionID,
+		"/workspace/live-project",
+		"context remain 75%",
+		"session token input 50,000",
+		"code turn 3 running",
+		"planner provider:planner-live",
+		"shell provider:shell-live",
+	)
+	var active atomic.Bool
+	active.Store(true)
+	done := make(chan int, 1)
+	var stderr strings.Builder
+	go func() {
+		done <- runAttachWithDependencies(sessionID, terminal, &stderr, attachDependencies{
+			readFile:     os.ReadFile,
+			probe:        func(string) (bool, error) { return active.Load(), nil },
+			pollInterval: 3 * time.Millisecond,
+			quietGrace:   12 * time.Millisecond,
+			isTerminal:   func(out io.Writer) bool { _, ok := out.(*attachTestTerminal); return ok },
+			footerWidth:  func(io.Writer) int { return 240 },
+		})
+	}()
+
+	select {
+	case <-terminal.seen:
+		if !active.Load() {
+			t.Fatal("live footer was first observed after the session became inactive")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("live footer overlay was not drawn before quiet grace:\n%q", terminal.String())
+	}
+	active.Store(false)
+
+	select {
+	case code := <-done:
+		if code != 0 || stderr.Len() != 0 {
+			t.Fatalf("runAttachWithDependencies() = %d, stderr=%q", code, stderr.String())
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("attach did not finish after the source session became quiet")
+	}
+
+	output := terminal.String()
+	lastTokenLine := strings.LastIndex(output, "session token input")
+	if lastTokenLine < 0 {
+		t.Fatalf("stable final footer missing:\n%q", output)
+	}
+	finalStart := strings.LastIndex(output[:lastTokenLine], "\r\x1b[2K")
+	if finalStart < 0 {
+		t.Fatalf("stable final footer lacks a cleared first line:\n%q", output)
+	}
+	stable := output[finalStart:]
+	if strings.Count(stable, "\n") != 2 || !strings.HasSuffix(stable, "\n") {
+		t.Errorf("stable footer is not exactly two newline-terminated lines:\n%q", stable)
+	}
+	if strings.Count(stable, "session token input") != 1 || strings.Contains(stable, "following session") || strings.Contains(stable, "\x1b[2A") {
+		t.Errorf("stable footer retained or duplicated the live overlay:\n%q", stable)
 	}
 }
 
