@@ -41,13 +41,15 @@ func TestAttachFinishedSessionReplay(t *testing.T) {
 	if stderr != "" {
 		t.Fatalf("stderr = %q, want empty", stderr)
 	}
-	for _, want := range []string{"Attach to a finished session", "What was completed?", "The replay path was implemented.", "Show the persisted result.", "Finished successfully."} {
+	for _, want := range []string{"What was completed?", "The replay path was implemented.", "Show the persisted result.", "Finished successfully.", "# User", "# Assistant"} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("stdout missing %q in:\n%s", want, stdout)
 		}
 	}
-	if !strings.Contains(stdout, "Following session "+sessionID) {
-		t.Errorf("stdout missing follow notice for %q in:\n%s", sessionID, stdout)
+	for _, unwanted := range []string{"Following session ", "── ", "──── ", "ARTIFACTS"} {
+		if strings.Contains(stdout, unwanted) {
+			t.Errorf("stdout contains attach-only framing %q in:\n%s", unwanted, stdout)
+		}
 	}
 	if strings.Contains(stdout, "\x1b") {
 		t.Errorf("non-TTY attach emitted ANSI escape bytes:\n%q", stdout)
@@ -223,13 +225,13 @@ func TestAttachRunningSessionTailsUntilLockReleased(t *testing.T) {
 	if stderr != "" {
 		t.Fatalf("stderr = %q, want empty", stderr)
 	}
-	for _, want := range []string{"Attach to a running session", "Live question 1", "Live answer 1", "Live question 2", "Live answer 2"} {
+	for _, want := range []string{"Live question 1", "Live answer 1", "Live question 2", "Live answer 2"} {
 		if got := strings.Count(stdout, want); got != 1 {
 			t.Errorf("stdout count for %q = %d, want 1:\n%s", want, got, stdout)
 		}
 	}
-	if got := strings.Count(stdout, "Following session "+sessionID); got != 1 {
-		t.Errorf("follow notice count = %d, want 1:\n%s", got, stdout)
+	if strings.Contains(stdout, "Following session ") {
+		t.Errorf("stdout contains attach-only follow notice:\n%s", stdout)
 	}
 }
 
@@ -316,11 +318,9 @@ func TestAttachFocusedSuppressesReplaySections(t *testing.T) {
 	}
 	for _, suppressed := range []string{
 		"Following session",
-		"──── TURN",
-		"── QUESTION ──",
-		"── ANSWER ──",
-		"── DECISION ──",
-		"SHELL STEPS",
+		"── ",
+		"──── ",
+		"ARTIFACTS",
 		"echo hidden",
 	} {
 		if strings.Contains(stdout, suppressed) {

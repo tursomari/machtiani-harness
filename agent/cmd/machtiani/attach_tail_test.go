@@ -78,7 +78,6 @@ func TestRunAttachTailsRunningSessionWithoutDuplicates(t *testing.T) {
 
 	output := stdout.String()
 	for _, want := range []string{
-		"Tail the live session",
 		"Live question 1",
 		"Live answer 1",
 		"Live question 2",
@@ -90,10 +89,9 @@ func TestRunAttachTailsRunningSessionWithoutDuplicates(t *testing.T) {
 			t.Errorf("stdout count for %q = %d, want 1:\n%s", want, got, output)
 		}
 	}
-	for turn := 1; turn <= 3; turn++ {
-		heading := fmt.Sprintf("──── TURN %d ────", turn)
-		if got := strings.Count(output, heading); got != 1 {
-			t.Errorf("stdout count for %q = %d, want 1:\n%s", heading, got, output)
+	for _, framing := range []string{"── ", "──── ", "ARTIFACTS"} {
+		if strings.Contains(output, framing) {
+			t.Errorf("stdout contains replay-only framing %q:\n%s", framing, output)
 		}
 	}
 }
@@ -151,7 +149,7 @@ func TestRunAttachReportsMidLoopFailures(t *testing.T) {
 			if !strings.Contains(stderr.String(), tt.wantStderr) {
 				t.Fatalf("stderr = %q, want error containing %q", stderr.String(), tt.wantStderr)
 			}
-			if got := strings.Count(stdout.String(), "Tail errors are reported"); got != 1 {
+			if got := strings.Count(stdout.String(), "Live question 1"); got != 1 {
 				t.Fatalf("initial snapshot count = %d, want 1: %q", got, stdout.String())
 			}
 		})
@@ -181,7 +179,7 @@ func TestRunAttachRendersPersistedShellActionsByDefault(t *testing.T) {
 		t.Fatalf("runAttachWithDependencies() = %d, stderr=%q", code, stderr.String())
 	}
 	output := stdout.String()
-	for _, want := range []string{"── SHELL STEPS ──", "$ git status", "$ go test ./..."} {
+	for _, want := range []string{"$ git status", "$ go test ./..."} {
 		if got := strings.Count(output, want); got != 1 {
 			t.Errorf("stdout count for %q = %d, want 1:\n%s", want, got, output)
 		}
@@ -217,7 +215,7 @@ func TestRunAttachNoShellStepsDoesNotReadJournal(t *testing.T) {
 	if code != 0 || stderr.Len() != 0 {
 		t.Fatalf("runAttachWithDependencies() = %d, stderr=%q", code, stderr.String())
 	}
-	want := "Following session " + sessionID + "\n" + legacy + "\n"
+	want := legacy + "\n\n"
 	if got := stdout.String(); got != want {
 		t.Fatalf("suppressed output changed legacy replay:\nwant: %q\ngot:  %q", want, got)
 	}
@@ -282,7 +280,7 @@ func TestRunAttachTTYShowsBannerNoticeAndSingleConclusion(t *testing.T) {
 		t.Fatalf("runAttachWithDependencies() = %d, stderr=%q", code, stderr.String())
 	}
 	output := stdout.String()
-	for _, want := range []string{"machtiani (mct)", "Following session " + sessionID, "TTY final answer", "Resume this session:"} {
+	for _, want := range []string{"machtiani (mct)", "PROMPT", "TTY final answer", "Resume this session:"} {
 		if !strings.Contains(output, want) {
 			t.Errorf("TTY stdout missing %q in:\n%s", want, output)
 		}

@@ -2284,8 +2284,8 @@ PY
 
     ready=false
     for ((i = 0; i < 300; i++)); do
-      if grep -qF "── GOAL ──" "$attach_stdout" 2>/dev/null &&
-         { grep -qF "── QUESTION ──" "$attach_stdout" 2>/dev/null || grep -qF "── ANSWER ──" "$attach_stdout" 2>/dev/null; }; then
+      if grep -qF "# User" "$attach_stdout" 2>/dev/null ||
+         grep -qF "# Assistant" "$attach_stdout" 2>/dev/null; then
         ready=true
         break
       fi
@@ -2399,10 +2399,17 @@ output = output_bytes.decode("utf-8", errors="replace")
 pre_release = output_bytes[:snapshot_bytes].decode("utf-8", errors="replace")
 post_release = output_bytes[snapshot_bytes:].decode("utf-8", errors="replace")
 
-goal_marker = "── GOAL ──"
-goal_count = output.count(goal_marker)
-if goal_count != 1:
-    raise SystemExit(f"ERROR: GOAL header count is {goal_count}, expected 1")
+for replay_box in (
+    "── GOAL ──",
+    "── QUESTION ──",
+    "── ANSWER ──",
+    "── DECISION ──",
+    "── SHELL STEPS ──",
+    "── ARTIFACTS ──",
+    "──── TURN ",
+):
+    if replay_box in output:
+        raise SystemExit(f"ERROR: attach stdout contains replay-only framing: {replay_box}")
 
 marker_re = re.compile(r"Stub response \[[0-9]+\]\.")
 markers = marker_re.findall(output)
@@ -2448,11 +2455,7 @@ def expected_to_render(message):
             content.strip() or str(metadata.get("decision") or "").strip()
         )
     if message_type in {"answer", "work_result"}:
-        return valid_turn(message, metadata) and bool(
-            content.strip()
-            or str(metadata.get("chat_path") or "").strip()
-            or metadata.get("retrieved_files")
-        )
+        return valid_turn(message, metadata) and bool(content.strip())
     if message_type in {
         "user_input_request",
         "user_input_response",
@@ -2477,11 +2480,11 @@ def has_tail_evidence(message):
     message_type, metadata = metadata_type(message)
     if message_type in {"ask", "work_request"}:
         decision = str(metadata.get("decision") or "").strip()
-        return (decision and decision in post_release) or "── QUESTION ──" in post_release
+        return (decision and decision in post_release) or "# User" in post_release
     if message_type in {"answer", "work_result"}:
-        return "── ANSWER ──" in post_release or "── ARTIFACTS ──" in post_release
+        return "# Assistant" in post_release
     if message_type in {"final", "final_answer"}:
-        return "──── " in post_release
+        return "Resume this session:" in post_release
     return False
 
 new_messages = messages[snapshot_count:]

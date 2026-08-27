@@ -427,7 +427,8 @@ assert_attach_captures() {
   normalize_capture "$RUN_DIR/attach-replay-focused.tui.txt" "$focused"
   normalize_capture "$RUN_DIR/attach-replay-no-shell-steps.tui.txt" "$no_shell"
 
-  require_capture_match 'Following session ' "$default" "default attach lost its follow notice" || return 1
+  require_capture_match 'machtiani \(mct\)|PROMPT' "$default" "default attach lost its run-style banner" || return 1
+  reject_capture_match '── (GOAL|QUESTION|ANSWER|DECISION|SHELL STEPS|ARTIFACTS) ──|──── TURN ' "$default" "default attach rendered replay-only framing" || return 1
   if [[ "$(rg -c "$conclusion" "$default" 2>/dev/null || printf '0')" != "1" ]]; then
     echo "attach check failed: default attach must render exactly one conclusion ($default)" >&2
     return 1
@@ -439,7 +440,6 @@ assert_attach_captures() {
   reject_capture_match "$action_command" "$focused" "focused attach rendered a command block" || return 1
   reject_capture_match 'session token input|Following session |machtiani \(mct\)' "$focused" "focused attach rendered decoration" || return 1
 
-  require_capture_match 'Following session ' "$no_shell" "no-shell-steps attach lost its follow notice" || return 1
   reject_capture_match "$action_step" "$no_shell" "no-shell-steps attach rendered a step block" || return 1
   reject_capture_match "$action_command" "$no_shell" "no-shell-steps attach rendered a command block" || return 1
 

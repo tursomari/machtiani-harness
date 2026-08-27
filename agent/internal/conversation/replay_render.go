@@ -15,7 +15,7 @@ import (
 // to this package.
 type ShellActionRecord = shellaction.Record
 
-// ReplayOptions controls optional replay-only sections.
+// ReplayOptions controls optional replay output.
 type ReplayOptions struct {
 	NoShellSteps       bool
 	ShellActions       []ShellActionRecord
@@ -23,8 +23,8 @@ type ReplayOptions struct {
 }
 
 // RenderReplay renders a persisted conversation as deterministic plain text
-// for read-only terminal replay. It deliberately uses framing that is distinct
-// from the AsciiDoc transcript format.
+// for read-only terminal replay. Its scrollback follows the ordinary run view:
+// conversational messages and shell action blocks, without replay-only boxes.
 func RenderReplay(conv *Conversation) (string, error) {
 	return RenderReplayWithOptions(conv, ReplayOptions{})
 }
@@ -34,7 +34,7 @@ func RenderReplayWithOptions(conv *Conversation, opts ReplayOptions) (string, er
 	if conv == nil {
 		return "", errors.New("conversation is nil")
 	}
-	return renderReplay(conv, conv.Messages, true, nil, opts)
+	return renderReplay(conv, conv.Messages, nil, opts)
 }
 
 // RenderReplayDelta renders only message units appended after previous. Turn
@@ -65,10 +65,10 @@ func RenderReplayDeltaWithOptions(conv *Conversation, previous []Message, opts R
 			}
 		}
 	}
-	return renderReplay(conv, messages, false, knownTurns, opts)
+	return renderReplay(conv, messages, knownTurns, opts)
 }
 
-func renderReplay(conv *Conversation, messages []Message, includeGoal bool, knownTurns map[int]struct{}, opts ReplayOptions) (string, error) {
+func renderReplay(conv *Conversation, messages []Message, knownTurns map[int]struct{}, opts ReplayOptions) (string, error) {
 
 	type renderEvent struct {
 		kind string
@@ -77,13 +77,10 @@ func renderReplay(conv *Conversation, messages []Message, includeGoal bool, know
 	}
 
 	type turnData struct {
-		question  string
-		answer    string
-		decision  string
-		savedPath string
-		retrieved []string
-		actions   []ShellActionRecord
-		heading   bool
+		question string
+		answer   string
+		decision string
+		actions  []ShellActionRecord
 	}
 
 	events := []renderEvent{}
@@ -94,8 +91,7 @@ func renderReplay(conv *Conversation, messages []Message, includeGoal bool, know
 			return data
 		}
 		events = append(events, renderEvent{kind: "turn", turn: turn})
-		_, known := knownTurns[turn]
-		data := &turnData{heading: !known}
+		data := &turnData{}
 		turns[turn] = data
 		return data
 	}
@@ -114,42 +110,40 @@ func renderReplay(conv *Conversation, messages []Message, includeGoal bool, know
 		case "":
 			switch normalizeRole(msg.Role) {
 			case "user":
-				addTextEvent("USER MESSAGE", replayHelperBody(renderUserMessage(msg.Content), "=== USER MESSAGE"))
+				addTextEvent("message", renderReplayMessage("User", msg.Content))
 			case "assistant":
-				addTextEvent("ASSISTANT MESSAGE", replayHelperBody(renderAssistantMessage(msg.Content), "=== ASSISTANT MESSAGE"))
+				addTextEvent("message", renderReplayMessage("Assistant", msg.Content))
 			case "system":
-				addTextEvent("SYSTEM MESSAGE", replayHelperBody(renderSystemMessage(msg.Content), "=== SYSTEM MESSAGE"))
+				addTextEvent("message", renderReplayMessage("System", msg.Content))
 			}
 		case messageTypeCacheAnchor:
 			continue
 		case messageTypeUserInputRequest:
-			addTextEvent("USER INPUT REQUEST", replayHelperBody(renderUserInputRequest(msg.Content), "=== USER INPUT REQUEST"))
+			addTextEvent("message", renderReplayMessage("Assistant", "[USER INPUT REQUEST] "+msg.Content))
 		case messageTypeUserInputResponse:
-			addTextEvent("USER INPUT RESPONSE", replayHelperBody(renderUserInputResponse(msg.Content), "=== USER INPUT RESPONSE"))
+			addTextEvent("message", renderReplayMessage("User", "[USER INPUT RESPONSE] "+msg.Content))
 		case messageTypeRaw:
 			if strings.TrimSpace(msg.Content) != "" {
-				addTextEvent("RAW", sanitize(msg.Content))
+				addTextEvent("text", sanitize(msg.Content))
 			}
 		case messageTypeRawBlock:
 			if strings.TrimSpace(msg.Content) != "" {
-				addTextEvent("RAW BLOCK", sanitize(msg.Content))
+				addTextEvent("text", sanitize(msg.Content))
 			}
 		case messageTypeRecovery:
 			switch normalizeRole(msg.Role) {
 			case "system":
-				addTextEvent("SYSTEM MESSAGE", replayHelperBody(renderSystemMessage(msg.Content), "=== SYSTEM MESSAGE"))
+				addTextEvent("message", renderReplayMessage("System", msg.Content))
 			case "user":
-				addTextEvent("USER MESSAGE", replayHelperBody(renderUserMessage(msg.Content), "=== USER MESSAGE"))
+				addTextEvent("message", renderReplayMessage("User", msg.Content))
 			case "assistant":
-				addTextEvent("ASSISTANT MESSAGE", replayHelperBody(renderAssistantMessage(msg.Content), "=== ASSISTANT MESSAGE"))
+				addTextEvent("message", renderReplayMessage("Assistant", msg.Content))
 			}
 		case messageTypeFinal, messageTypeFinalAnswer:
 			if opts.SuppressConclusion {
 				continue
 			}
-			turnCount, _ := coerceInt(msg.Metadata["turns"])
-			capped, _ := coerceBool(msg.Metadata["capped"])
-			addTextEvent("conclusion", renderConclusion(msg.Content, turnCount, capped))
+			addTextEvent("text", sanitize(msg.Content))
 		case messageTypeAsk, messageTypeWorkRequest:
 			turn := coalesceTurn(msg)
 			if turn < 0 {
@@ -167,10 +161,6 @@ func renderReplay(conv *Conversation, messages []Message, includeGoal bool, know
 			}
 			data := addTurnEvent(turn)
 			data.answer = msg.Content
-			data.retrieved = coerceStringSlice(msg.Metadata["retrieved_files"])
-			if savedPath, ok := coerceString(msg.Metadata["chat_path"]); ok {
-				data.savedPath = savedPath
-			}
 		default:
 			return "", fmt.Errorf("conversation: unhandled message type %q in RenderReplay", msgType)
 		}
@@ -196,70 +186,47 @@ func renderReplay(conv *Conversation, messages []Message, includeGoal bool, know
 	}
 
 	var out strings.Builder
-	if includeGoal {
-		headerBody := replayHelperBody(renderHeader(conv.OriginalGoal), "= MCT-AGENT TRANSCRIPT", "== GOAL:")
-		out.WriteString(replaySection("GOAL", headerBody, false))
-	}
 	for _, event := range events {
 		switch event.kind {
 		case "turn":
 			data := turns[event.turn]
 			if data != nil {
-				out.WriteString(renderReplayTurn(event.turn, data.question, data.savedPath, data.retrieved, data.answer, data.decision, data.actions, data.heading))
+				out.WriteString(renderReplayTurn(data.question, data.answer, data.decision, data.actions))
 			}
 		case "shell-actions":
-			out.WriteString(renderReplayShellActions(event.turn, actionOnly[event.turn], true))
-		case "conclusion":
-			out.WriteString(renderReplayConclusion(event.text))
+			out.WriteString(renderReplayShellActions(actionOnly[event.turn]))
 		default:
-			out.WriteString(replaySection(event.kind, event.text, false))
+			out.WriteString(replayBlock(event.text))
 		}
 	}
 
 	return strings.Trim(stripANSI(sanitize(out.String())), "\n"), nil
 }
 
-func renderReplayTurn(turn int, question, savedPath string, retrieved []string, answer, decision string, actions []ShellActionRecord, includeHeading bool) string {
+func renderReplayTurn(question, answer, decision string, actions []ShellActionRecord) string {
 	var out strings.Builder
-	if includeHeading {
-		out.WriteString(replaySection(fmt.Sprintf("TURN %d", turn), "", true))
-	}
-
-	questionBody := replayHelperBody(renderTurn(-1, question, "", nil, "", ""))
-	if strings.TrimSpace(questionBody) != "" {
-		out.WriteString(replaySection("QUESTION", questionBody, false))
+	if strings.TrimSpace(question) != "" {
+		out.WriteString(renderReplayMessage("User", question))
 	}
 	if len(actions) > 0 {
-		out.WriteString(renderReplayShellActions(turn, actions, false))
+		out.WriteString(renderReplayShellActions(actions))
 	}
-
-	artifactsBody := replayHelperBody(renderTurn(-1, "", savedPath, retrieved, "", ""))
-	if strings.TrimSpace(artifactsBody) != "" {
-		out.WriteString(replaySection("ARTIFACTS", artifactsBody, false))
+	if strings.TrimSpace(answer) != "" {
+		out.WriteString(renderReplayMessage("Assistant", answer))
 	}
-
-	answerBody := replayHelperBody(renderTurn(-1, "", "", nil, answer, ""), "=== ANSWER")
-	if strings.TrimSpace(answerBody) != "" {
-		out.WriteString(replaySection("ANSWER", answerBody, false))
-	}
-
-	decisionBody := replayHelperBody(renderTurn(-1, "", "", nil, "", decision))
-	if strings.TrimSpace(decisionBody) != "" {
-		out.WriteString(replaySection("DECISION", decisionBody, false))
+	if strings.TrimSpace(decision) != "" {
+		out.WriteString(replayBlock("Planner decision: " + decision))
 	}
 
 	return out.String()
 }
 
-func renderReplayShellActions(turn int, actions []ShellActionRecord, continuation bool) string {
+func renderReplayShellActions(actions []ShellActionRecord) string {
 	body := renderShellActionBody(actions)
 	if strings.TrimSpace(body) == "" {
 		return ""
 	}
-	if continuation {
-		return replaySection(fmt.Sprintf("TURN %d SHELL STEPS", turn), body, true)
-	}
-	return replaySection("SHELL STEPS", body, false)
+	return replayBlock(body)
 }
 
 func renderShellActionBody(actions []ShellActionRecord) string {
@@ -318,47 +285,26 @@ func normalizeShellActions(actions []ShellActionRecord) []ShellActionRecord {
 	return result
 }
 
-func renderReplayConclusion(block string) string {
-	block = strings.Trim(sanitize(block), "\n")
-	line, body, found := strings.Cut(block, "\n")
-	if !found {
-		return replaySection("CONCLUSION", block, true)
-	}
-	label := strings.TrimSpace(strings.TrimPrefix(line, "=="))
-	if label == "" {
-		label = "CONCLUSION"
-	}
-	return replaySection(label, strings.Trim(body, "\n"), true)
-}
-
-func replayHelperBody(block string, headings ...string) string {
-	body := strings.Trim(sanitize(block), "\n")
-	for _, heading := range headings {
-		if strings.HasPrefix(body, heading) {
-			body = strings.TrimPrefix(body, heading)
-			body = strings.Trim(body, "\n")
-		}
-	}
-	return body
-}
-
-func replaySection(label, body string, major bool) string {
-	rule := "──"
-	if major {
-		rule = "────"
+func renderReplayMessage(role, body string) string {
+	body = strings.Trim(sanitize(body), "\n")
+	if body == "" {
+		return ""
 	}
 	var out strings.Builder
-	out.WriteString(rule)
-	out.WriteByte(' ')
-	out.WriteString(label)
-	out.WriteByte(' ')
-	out.WriteString(rule)
+	out.WriteString("# ")
+	out.WriteString(role)
 	out.WriteString("\n\n")
-	if body = strings.Trim(body, "\n"); body != "" {
-		out.WriteString(body)
-		out.WriteString("\n\n")
-	}
+	out.WriteString(body)
+	out.WriteString("\n\n")
 	return out.String()
+}
+
+func replayBlock(body string) string {
+	body = strings.Trim(sanitize(body), "\n")
+	if body == "" {
+		return ""
+	}
+	return body + "\n\n"
 }
 
 func stripANSI(text string) string {

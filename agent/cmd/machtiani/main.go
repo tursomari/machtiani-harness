@@ -575,13 +575,6 @@ func runAttachWithDependencies(sessionID string, stdout, stderr io.Writer, deps 
 			return 1
 		}
 	}
-	if !deps.focused {
-		if _, err := io.WriteString(stdout, "Following session "+sessionID+"\n"); err != nil {
-			fmt.Fprintln(stderr, "Error:", err)
-			return 1
-		}
-	}
-
 	var initialActions []conversation.ShellActionRecord
 	lastActionSequence := map[int]int64{}
 	if !deps.noShellSteps {
@@ -602,7 +595,7 @@ func runAttachWithDependencies(sessionID string, stdout, stderr io.Writer, deps 
 		return 1
 	}
 	if !deps.focused {
-		if _, err := io.WriteString(stdout, replay+"\n"); err != nil {
+		if _, err := io.WriteString(stdout, replay+"\n\n"); err != nil {
 			fmt.Fprintln(stderr, "Error:", err)
 			return 1
 		}
@@ -681,7 +674,7 @@ func runAttachWithDependencies(sessionID string, stdout, stderr io.Writer, deps 
 		}
 		if delta != "" && !deps.focused {
 			status.clear()
-			if _, err := io.WriteString(stdout, delta+"\n"); err != nil {
+			if _, err := io.WriteString(stdout, delta+"\n\n"); err != nil {
 				fmt.Fprintln(stderr, "Error:", err)
 				return 1
 			}

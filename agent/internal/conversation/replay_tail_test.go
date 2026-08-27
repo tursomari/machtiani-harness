@@ -72,19 +72,19 @@ func TestRenderReplayDeltaOmitsHistoryAndRepeatedTurnHeading(t *testing.T) {
 		t.Fatalf("RenderReplayDelta(answer) error = %v", err)
 	}
 
-	combined := questionDelta + answerDelta
-	for _, want := range []string{"Question for turn 2", "Answer for turn 2", "──── TURN 2 ────", "── QUESTION ──", "── ANSWER ──"} {
+	combined := questionDelta + "\n\n" + answerDelta
+	for _, want := range []string{"Question for turn 2", "Answer for turn 2", "# User", "# Assistant"} {
 		if !strings.Contains(combined, want) {
 			t.Errorf("combined delta missing %q:\n%s", want, combined)
 		}
 	}
-	for _, unwanted := range []string{"Tail a running conversation", "Question for turn 1", "Answer for turn 1", "── GOAL ──"} {
+	for _, unwanted := range []string{"Tail a running conversation", "Question for turn 1", "Answer for turn 1", "── ", "──── "} {
 		if strings.Contains(combined, unwanted) {
 			t.Errorf("combined delta repeated history %q:\n%s", unwanted, combined)
 		}
 	}
-	if got := strings.Count(combined, "──── TURN 2 ────"); got != 1 {
-		t.Fatalf("TURN 2 heading count = %d, want 1:\n%s", got, combined)
+	if got := strings.Count(combined, "# User"); got != 1 {
+		t.Fatalf("user message count = %d, want 1:\n%s", got, combined)
 	}
 }
 

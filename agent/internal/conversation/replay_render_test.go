@@ -30,25 +30,23 @@ func TestRenderReplaySingleTurnFinishedConversation(t *testing.T) {
 		t.Fatalf("RenderReplay() error = %v", err)
 	}
 	wantContents := []string{
-		"Investigate the replay renderer",
 		"Which files implement conversation rendering?",
 		"The renderer lives in conversation.go.",
 		"Inspect the conversation package first.",
-		"internal/conversation/conversation.go",
-		"internal/conversation/conversation_test.go",
-		"sessions/sess-replay-1/chat/machtiani-response.md",
 		"The replay renderer is ready.",
-		"── ARTIFACTS ──",
-		"── DECISION ──",
-		"──── CONCLUSION (after 1 turn(s)) ────",
+		"# User",
+		"# Assistant",
+		"Planner decision: Inspect the conversation package first.",
 	}
 	for _, want := range wantContents {
 		if !strings.Contains(got, want) {
 			t.Errorf("RenderReplay() missing %q in:\n%s", want, got)
 		}
 	}
-	if strings.Contains(got, "= MCT-AGENT TRANSCRIPT") {
-		t.Fatalf("RenderReplay() returned the AsciiDoc transcript header:\n%s", got)
+	for _, unwanted := range []string{"── ", "──── ", "ARTIFACTS", "mct chat:", "Retrieved File Paths:"} {
+		if strings.Contains(got, unwanted) {
+			t.Fatalf("RenderReplay() contains replay-only framing %q:\n%s", unwanted, got)
+		}
 	}
 	if strings.Contains(got, "\x1b[") {
 		t.Fatalf("RenderReplay() contains ANSI escapes: %q", got)
@@ -89,16 +87,11 @@ func TestRenderReplayMultiTurnAndMessageSections(t *testing.T) {
 		"Raw diagnostic content",
 		"Recovered after restart",
 		"Please continue",
-		"── GOAL ──",
-		"──── TURN 1 ────",
-		"──── TURN 2 ────",
-		"── QUESTION ──",
-		"── ANSWER ──",
-		"── USER INPUT REQUEST ──",
-		"── USER INPUT RESPONSE ──",
-		"── RAW ──",
-		"── SYSTEM MESSAGE ──",
-		"── USER MESSAGE ──",
+		"# User",
+		"# Assistant",
+		"# System",
+		"[USER INPUT REQUEST]",
+		"[USER INPUT RESPONSE]",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("RenderReplay() missing %q in:\n%s", want, got)
@@ -118,12 +111,12 @@ func TestRenderReplayMissingOptionalFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RenderReplay() error = %v", err)
 	}
-	for _, want := range []string{"──── TURN 3 ────", "Minimal question", "Minimal answer", "Minimal conclusion"} {
+	for _, want := range []string{"# User", "# Assistant", "Minimal question", "Minimal answer", "Minimal conclusion"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("RenderReplay() missing %q in:\n%s", want, got)
 		}
 	}
-	for _, unwanted := range []string{"Planner decision:", "Retrieved File Paths:", "mct chat:", "reached max-steps cap"} {
+	for _, unwanted := range []string{"── ", "──── ", "Retrieved File Paths:", "mct chat:", "reached max-steps cap"} {
 		if strings.Contains(got, unwanted) {
 			t.Errorf("RenderReplay() unexpectedly contains %q in:\n%s", unwanted, got)
 		}
@@ -144,8 +137,8 @@ func TestRenderReplayEmptyConversation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RenderReplay() error = %v", err)
 	}
-	if !strings.Contains(got, "── GOAL ──") || !strings.Contains(got, "Only the goal remains") {
-		t.Fatalf("RenderReplay() = %q, want framed goal", got)
+	if got != "" {
+		t.Fatalf("RenderReplay() = %q, want no goal because attach renders it in the PROMPT block", got)
 	}
 }
 
@@ -185,7 +178,6 @@ func TestRenderReplayWithShellActions(t *testing.T) {
 		t.Fatalf("RenderReplayWithOptions() error = %v", err)
 	}
 	for _, want := range []string{
-		"── SHELL STEPS ──",
 		"Step 1 of 8",
 		"Inspect the renderer",
 		"$ sed -n '1,200p' replay_render.go",
@@ -203,7 +195,7 @@ func TestRenderReplayWithShellActions(t *testing.T) {
 	if first, second := strings.Index(got, "$ sed"), strings.Index(got, "$ go test"); first < 0 || second < 0 || first >= second {
 		t.Fatalf("actions not rendered in sequence order:\n%s", got)
 	}
-	if question, shell, answer := strings.Index(got, "── QUESTION ──"), strings.Index(got, "── SHELL STEPS ──"), strings.Index(got, "── ANSWER ──"); question < 0 || shell <= question || answer <= shell {
+	if question, shell, answer := strings.Index(got, "# User"), strings.Index(got, "Step 1 of 8"), strings.Index(got, "# Assistant"); question < 0 || shell <= question || answer <= shell {
 		t.Fatalf("shell steps not rendered between question and answer:\n%s", got)
 	}
 }
@@ -247,12 +239,12 @@ func TestRenderReplayDeltaWithLateShellActions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"──── TURN 3 SHELL STEPS ────", "Late action", "$ git status"} {
+	for _, want := range []string{"Late action", "$ git status"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("late action delta missing %q:\n%s", want, got)
 		}
 	}
-	if strings.Contains(got, "Question") || strings.Contains(got, "── GOAL ──") {
+	if strings.Contains(got, "Question") || strings.Contains(got, "── ") || strings.Contains(got, "──── ") {
 		t.Fatalf("late action delta repeated conversation history:\n%s", got)
 	}
 
