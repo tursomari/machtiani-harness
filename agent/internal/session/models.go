@@ -244,8 +244,12 @@ func persistFooterMetadata(conv *conversation.Conversation, cwd string, maxInput
 	if conv == nil {
 		return false
 	}
+	persistedCWD := strings.TrimSpace(cwd)
+	if conv.Footer != nil && conv.Footer.CWD != "" {
+		persistedCWD = conv.Footer.CWD
+	}
 	state := &conversation.FooterState{
-		CWD:            strings.TrimSpace(cwd),
+		CWD:            persistedCWD,
 		MaxInputTokens: maxInputTokens,
 		Mode:           strings.TrimSpace(mode),
 		Models:         make([]conversation.FooterModelState, 0, len(models.Models)),

@@ -197,6 +197,29 @@ func TestPersistFooterMetadataStoresRunFooterInputs(t *testing.T) {
 	}
 }
 
+func TestPersistFooterMetadataKeepsFoundingCWDOnResume(t *testing.T) {
+	conv := conversation.New("footer-resume", "Persist founding cwd")
+	initialModels := ui.FooterModelMetadata{Models: []ui.FooterModelDisplay{
+		{Role: "planner", Label: "provider:initial-planner"},
+	}}
+	if !persistFooterMetadata(conv, "/orig/dir", 120_000, "code", initialModels) {
+		t.Fatal("initial footer persistence reported no change")
+	}
+
+	resumedModels := ui.FooterModelMetadata{Models: []ui.FooterModelDisplay{
+		{Role: "planner", Label: "provider:resumed-planner", Reasoning: "high"},
+	}}
+	if !persistFooterMetadata(conv, "/different/resume/dir", 240_000, "code-forge", resumedModels) {
+		t.Fatal("resumed footer persistence reported no change")
+	}
+	if got, want := conv.Footer.CWD, "/orig/dir"; got != want {
+		t.Fatalf("footer cwd after resume = %q, want founding cwd %q", got, want)
+	}
+	if conv.Footer.MaxInputTokens != 240_000 || conv.Footer.Mode != "code-forge" || conv.Footer.Models[0].Label != "provider:resumed-planner" {
+		t.Fatalf("resumed footer metadata was not refreshed: %#v", conv.Footer)
+	}
+}
+
 func TestPersistedModelSelectionCapturesEffectiveAliases(t *testing.T) {
 	models := componentModelRuntimes{
 		orchestrator: modelRuntime{alias: "original-orchestrator", usingAlias: true},
