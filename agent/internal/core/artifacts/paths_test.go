@@ -332,6 +332,14 @@ func TestFileDiscoveryTrajectoryPath(t *testing.T) {
 		if file != expectedFile {
 			t.Fatalf("expected %s, got %s", expectedFile, file)
 		}
+
+		fileAt, err := SessionTrajectoryFileAt(filepath.Join(repoDir, ".machtiani", "sessions", sessionID), "agent")
+		if err != nil {
+			t.Fatalf("SessionTrajectoryFileAt: %v", err)
+		}
+		if fileAt != expectedFile {
+			t.Fatalf("expected %s, got %s", expectedFile, fileAt)
+		}
 	})
 }
 

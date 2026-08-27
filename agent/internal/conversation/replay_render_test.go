@@ -336,3 +336,42 @@ func TestPersistedFooterSnapshotAtAddsTimeSinceRuntimeSnapshot(t *testing.T) {
 		t.Fatalf("elapsed = %s, want %s", got, want)
 	}
 }
+
+func TestPersistedFooterSnapshotWithTrajectoryAtBackfillsLegacyCWD(t *testing.T) {
+	conv := New("sess-legacy-footer", "Legacy footer")
+	trajectory := []byte("{\"kind\":\"agent.session.start\",\"payload\":{\"repo_root\":\"/legacy/worktree\"}}\n")
+
+	snapshot := PersistedFooterSnapshotWithTrajectoryAt(conv, trajectory, conv.UpdatedAt)
+	if got, want := snapshot.CWD, "/legacy/worktree"; got != want {
+		t.Fatalf("CWD = %q, want %q", got, want)
+	}
+}
+
+func TestPersistedFooterSnapshotWithTrajectoryAtPreservesExistingCWD(t *testing.T) {
+	conv := New("sess-current-footer", "Current footer")
+	conv.Footer = &FooterState{CWD: "/persisted/worktree"}
+	trajectory := []byte("{\"kind\":\"agent.session.start\",\"payload\":{\"repo_root\":\"/legacy/worktree\"}}\n")
+
+	snapshot := PersistedFooterSnapshotWithTrajectoryAt(conv, trajectory, conv.UpdatedAt)
+	if got, want := snapshot.CWD, "/persisted/worktree"; got != want {
+		t.Fatalf("CWD = %q, want %q", got, want)
+	}
+}
+
+func TestPersistedFooterSnapshotWithTrajectoryAtToleratesUnavailableTrajectory(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		trajectory []byte
+	}{
+		{name: "missing"},
+		{name: "unparsable", trajectory: []byte("not jsonl\n")},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			conv := New("sess-no-legacy-footer", "No legacy footer")
+			snapshot := PersistedFooterSnapshotWithTrajectoryAt(conv, tt.trajectory, conv.UpdatedAt)
+			if snapshot.CWD != "" {
+				t.Fatalf("CWD = %q, want empty", snapshot.CWD)
+			}
+		})
+	}
+}

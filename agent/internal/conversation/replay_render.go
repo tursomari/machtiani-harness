@@ -1,8 +1,11 @@
 package conversation
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 	"time"
@@ -130,6 +133,40 @@ func PersistedFooterSnapshotAt(conv *Conversation, now time.Time) ui.FooterSnaps
 	}
 	snapshot.Elapsed += now.Sub(conv.UpdatedAt)
 	return snapshot
+}
+
+// PersistedFooterSnapshotWithTrajectoryAt supplements older conversations
+// that did not persist Footer.CWD with the founding directory recorded by the
+// session-start trajectory event. Persisted footer state always wins, and
+// missing or malformed trajectory data is ignored.
+func PersistedFooterSnapshotWithTrajectoryAt(conv *Conversation, trajectoryData []byte, now time.Time) ui.FooterSnapshot {
+	snapshot := PersistedFooterSnapshotAt(conv, now)
+	if snapshot.CWD != "" {
+		return snapshot
+	}
+	snapshot.CWD = foundingCWDFromTrajectory(trajectoryData)
+	return snapshot
+}
+
+func foundingCWDFromTrajectory(data []byte) string {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	for {
+		var event struct {
+			Kind    string `json:"kind"`
+			Payload struct {
+				RepoRoot string `json:"repo_root"`
+			} `json:"payload"`
+		}
+		if err := decoder.Decode(&event); err != nil {
+			if errors.Is(err, io.EOF) {
+				return ""
+			}
+			return ""
+		}
+		if event.Kind == "agent.session.start" {
+			return strings.TrimSpace(event.Payload.RepoRoot)
+		}
+	}
 }
 
 func renderReplay(conv *Conversation, messages []Message, knownTurns map[int]struct{}, opts ReplayOptions) (string, error) {

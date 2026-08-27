@@ -274,16 +274,17 @@ func attachGlobalRoots() (sessionsRoot, scratchRoot string, err error) {
 }
 
 type attachDependencies struct {
-	readFile     attachRead
-	readActions  attachRead
-	probe        attachProbe
-	pollInterval time.Duration
-	quietGrace   time.Duration
-	noShellSteps bool
-	focused      bool
-	theme        presentation.Theme
-	isTerminal   func(io.Writer) bool
-	footerWidth  func(io.Writer) int
+	readFile       attachRead
+	readActions    attachRead
+	readTrajectory attachRead
+	probe          attachProbe
+	pollInterval   time.Duration
+	quietGrace     time.Duration
+	noShellSteps   bool
+	focused        bool
+	theme          presentation.Theme
+	isTerminal     func(io.Writer) bool
+	footerWidth    func(io.Writer) int
 }
 
 // attachTerminalTeeWriter mirrors the session runner's capture writer. Keeping
@@ -723,15 +724,16 @@ func runAttachWithDisplay(sessionID string, noShellSteps, focused, noCursor bool
 		return 1
 	}
 	return runAttachWithDependencies(sessionID, stdout, stderr, attachDependencies{
-		readFile:     os.ReadFile,
-		readActions:  os.ReadFile,
-		probe:        session.IsSessionActiveAt,
-		pollInterval: attachPollInterval,
-		quietGrace:   attachQuietGrace,
-		noShellSteps: noShellSteps,
-		focused:      focused,
-		theme:        theme,
-		footerWidth:  attachFooterWidth,
+		readFile:       os.ReadFile,
+		readActions:    os.ReadFile,
+		readTrajectory: os.ReadFile,
+		probe:          session.IsSessionActiveAt,
+		pollInterval:   attachPollInterval,
+		quietGrace:     attachQuietGrace,
+		noShellSteps:   noShellSteps,
+		focused:        focused,
+		theme:          theme,
+		footerWidth:    attachFooterWidth,
 	})
 }
 
@@ -766,6 +768,9 @@ func runAttachWithDependencies(sessionID string, stdout, stderr io.Writer, deps 
 	if deps.readActions == nil {
 		deps.readActions = os.ReadFile
 	}
+	if deps.readTrajectory == nil {
+		deps.readTrajectory = os.ReadFile
+	}
 	if deps.probe == nil {
 		deps.probe = session.IsSessionActiveAt
 	}
@@ -799,9 +804,12 @@ func runAttachWithDependencies(sessionID string, stdout, stderr io.Writer, deps 
 		fmt.Fprintln(stderr, "Error:", err)
 		return 1
 	}
-
 	uiTheme := ui.DefaultTheme(deps.theme)
 	styledReplay := !deps.focused && deps.isTerminal(stdout)
+	var footerTrajectory []byte
+	if styledReplay {
+		footerTrajectory = readAttachFooterTrajectory(conv, target.sessionDirectory, deps.readTrajectory)
+	}
 	if styledReplay {
 		banner := ui.RenderSessionHeader(ui.SessionStartedEvent{
 			SessionID:          sessionID,
@@ -854,9 +862,10 @@ func runAttachWithDependencies(sessionID string, stdout, stderr io.Writer, deps 
 	}
 
 	overlay := &attachOverlay{
-		out:     stdout,
-		theme:   deps.theme,
-		enabled: styledReplay,
+		out:              stdout,
+		theme:            deps.theme,
+		enabled:          styledReplay,
+		footerTrajectory: footerTrajectory,
 	}
 	defer overlay.finish()
 
@@ -960,7 +969,7 @@ func runAttachWithDependencies(sessionID string, stdout, stderr io.Writer, deps 
 		if now.Sub(inactiveSince) >= deps.quietGrace && now.Sub(lastContent) >= deps.quietGrace {
 			if styledReplay {
 				overlay.finish()
-				if err := writeAttachFooter(stdout, next, deps.theme, now, deps.footerWidth(stdout)); err != nil {
+				if err := writeAttachFooter(stdout, next, footerTrajectory, deps.theme, now, deps.footerWidth(stdout)); err != nil {
 					fmt.Fprintln(stderr, "Error:", err)
 					return 1
 				}
@@ -972,11 +981,12 @@ func runAttachWithDependencies(sessionID string, stdout, stderr io.Writer, deps 
 }
 
 type attachOverlay struct {
-	out      io.Writer
-	theme    presentation.Theme
-	enabled  bool
-	lines    int
-	finished bool
+	out              io.Writer
+	theme            presentation.Theme
+	enabled          bool
+	footerTrajectory []byte
+	lines            int
+	finished         bool
 }
 
 // draw rewrites attach's single live overlay block. The optional activity line
@@ -986,7 +996,7 @@ func (s *attachOverlay) draw(conv *conversation.Conversation, now time.Time, ela
 	if s == nil || !s.enabled {
 		return
 	}
-	snapshot := conversation.PersistedFooterSnapshotAt(conv, now)
+	snapshot := conversation.PersistedFooterSnapshotWithTrajectoryAt(conv, s.footerTrajectory, now)
 	snapshot.Width = width
 	lines := make([]string, 0, 4)
 	if activity := ui.RenderAttachStatusLine(s.theme, elapsed); activity != "" {
@@ -1055,8 +1065,8 @@ func writeAttachConclusion(stdout io.Writer, sessionID, answer string, theme ui.
 // writeAttachFooter prints the run-style final footer using only the values
 // recorded with the attached conversation. It is called only for a TTY attach
 // after the source session has become quiet.
-func writeAttachFooter(stdout io.Writer, conv *conversation.Conversation, theme presentation.Theme, now time.Time, width int) error {
-	snapshot := conversation.PersistedFooterSnapshotAt(conv, now)
+func writeAttachFooter(stdout io.Writer, conv *conversation.Conversation, footerTrajectory []byte, theme presentation.Theme, now time.Time, width int) error {
+	snapshot := conversation.PersistedFooterSnapshotWithTrajectoryAt(conv, footerTrajectory, now)
 	snapshot.Width = width
 	for _, line := range ui.RenderFinalFooter(snapshot, theme) {
 		ui.ClearCurrentLine(stdout)
@@ -1065,6 +1075,21 @@ func writeAttachFooter(stdout io.Writer, conv *conversation.Conversation, theme 
 		}
 	}
 	return nil
+}
+
+func readAttachFooterTrajectory(conv *conversation.Conversation, sessionDirectory string, readFile attachRead) []byte {
+	if conv == nil || (conv.Footer != nil && conv.Footer.CWD != "") || readFile == nil {
+		return nil
+	}
+	path, err := artifacts.SessionTrajectoryFileAt(sessionDirectory, "agent")
+	if err != nil {
+		return nil
+	}
+	data, err := readFile(path)
+	if err != nil {
+		return nil
+	}
+	return data
 }
 
 func readAttachShellActions(conv *conversation.Conversation, sessionDirectory string, readFile attachRead) ([]conversation.ShellActionRecord, error) {

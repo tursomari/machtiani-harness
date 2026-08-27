@@ -183,15 +183,27 @@ func ScratchRoots() ([]string, error) {
 // SessionTrajectoryFile constructs the canonical JSONL path for a named
 // trajectory stream in the session directory.
 func SessionTrajectoryFile(sessionID, name string) (string, error) {
+	sessionDirectory, err := SessionDirectory(sessionID)
+	if err != nil {
+		return "", err
+	}
+	return SessionTrajectoryFileAt(sessionDirectory, name)
+}
+
+// SessionTrajectoryFileAt constructs the canonical JSONL path for a named
+// trajectory stream under an already-resolved session directory. This keeps
+// callers that resolve sessions across stores from re-running project-global
+// session discovery.
+func SessionTrajectoryFileAt(sessionDirectory, name string) (string, error) {
+	sessionDirectory = strings.TrimSpace(sessionDirectory)
+	if sessionDirectory == "" {
+		return "", errors.New("session directory required")
+	}
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return "", errors.New("trajectory file name required")
 	}
-	dir, err := SessionTrajectoryDirectory(sessionID)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, name+".jsonl"), nil
+	return filepath.Join(sessionDirectory, trajectoryDirName, name+".jsonl"), nil
 }
 
 // SessionLLMDirectory returns the directory under the session artifacts

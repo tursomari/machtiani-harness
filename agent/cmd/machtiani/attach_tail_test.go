@@ -539,6 +539,26 @@ func TestAttachOverlaySpacerAndClearCountFollowActivityLine(t *testing.T) {
 	}
 }
 
+func TestReadAttachFooterTrajectoryUsesResolvedSessionDirectory(t *testing.T) {
+	sessionDirectory := filepath.Join(t.TempDir(), "resolved-session")
+	wantPath, err := artifacts.SessionTrajectoryFileAt(sessionDirectory, "agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantData := []byte("{\"kind\":\"agent.session.start\",\"payload\":{\"repo_root\":\"/legacy/worktree\"}}\n")
+	var gotPath string
+	gotData := readAttachFooterTrajectory(conversation.New("legacy-session", "Legacy session"), sessionDirectory, func(path string) ([]byte, error) {
+		gotPath = path
+		return wantData, nil
+	})
+	if gotPath != wantPath {
+		t.Fatalf("trajectory path = %q, want %q", gotPath, wantPath)
+	}
+	if !bytes.Equal(gotData, wantData) {
+		t.Fatalf("trajectory data = %q, want %q", gotData, wantData)
+	}
+}
+
 func TestRunAttachTTYPrintsSingleConclusionWhenSessionCompletes(t *testing.T) {
 	setupSessionArchiveCommandTest(t)
 	sessionID := "agent-attach-tty-complete"
