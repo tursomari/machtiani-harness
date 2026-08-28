@@ -88,6 +88,32 @@ func TestRenderAttachStatusLineUsesActivitySemanticRoles(t *testing.T) {
 	}
 }
 
+func TestAttachSpinnerFrameAdvancesAtPollCadence(t *testing.T) {
+	t.Setenv("TERM", "xterm-256color")
+	tests := []struct {
+		name   string
+		glyphs string
+		want   []string
+	}{
+		{name: "unicode", glyphs: "unicode", want: []string{"⠔⠀⠀", "⠀⠡⠀", "⠀⠀⠊"}},
+		{name: "ascii", glyphs: "ascii", want: []string{"o..", ".o.", "..o"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			theme, err := presentation.ResolveWithGlyphsAndMotion("none", tt.glyphs, "full", &bytes.Buffer{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for i, want := range tt.want {
+				elapsed := time.Duration(i) * 250 * time.Millisecond
+				if got := AttachSpinnerFrame(theme, elapsed); got != want {
+					t.Fatalf("frame at %s = %q, want %q", elapsed, got, want)
+				}
+			}
+		})
+	}
+}
+
 func TestFormatterActivityLeavesBlankLineBeforeFooter(t *testing.T) {
 	f, bus, _ := newTestFormatter()
 	defer bus.Close()

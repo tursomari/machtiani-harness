@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/tursomari/machtiani/agent/internal/presentation"
+	"github.com/tursomari/machtiani/agent/internal/ui"
 )
 
 func TestRenderReplaySingleTurnFinishedConversation(t *testing.T) {
@@ -344,6 +345,78 @@ func TestPersistedFooterSnapshotWithTrajectoryAtBackfillsLegacyCWD(t *testing.T)
 	snapshot := PersistedFooterSnapshotWithTrajectoryAt(conv, trajectory, conv.UpdatedAt)
 	if got, want := snapshot.CWD, "/legacy/worktree"; got != want {
 		t.Fatalf("CWD = %q, want %q", got, want)
+	}
+}
+
+func TestPersistedFooterSnapshotWithTrajectoryAtBackfillsLegacyModels(t *testing.T) {
+	conv := New("sess-legacy-models", "Legacy models")
+	conv.ModelSelection = &ModelSelectionState{
+		OrchestratorAlias: "planner-alias",
+		ShellAgentAlias:   "shell-alias",
+	}
+	trajectory := []byte(strings.Join([]string{
+		`{"kind":"llm.context_budget.resolved","payload":{"provider":"deepseek","model_alias":"planner-alias","max_input_tokens":120000}}`,
+		`{"kind":"llm.request.start","payload":{"alias":"planner-alias","model":{"alias":"planner-alias","base_url":"https://example.invalid/v1","endpoint":"chat/completions","model":"deepseek-v4-pro","provider":"deepseek"}}}`,
+		`{"kind":"planner.request","payload":{"model_alias":"planner-alias","model_name":"deepseek-v4-pro"}}`,
+	}, "\n") + "\n")
+
+	snapshot := PersistedFooterSnapshotWithTrajectoryAt(conv, trajectory, conv.UpdatedAt)
+	want := []ui.FooterModelDisplay{
+		{Role: "planner", Label: "deepseek:deepseek-v4-pro"},
+		{Role: "shell", Label: "deepseek:deepseek-v4-pro"},
+	}
+	if !reflect.DeepEqual(snapshot.Models.Models, want) {
+		t.Fatalf("models = %#v, want %#v", snapshot.Models.Models, want)
+	}
+}
+
+func TestPersistedFooterSnapshotWithTrajectoryAtBackfillsLegacyModelAliases(t *testing.T) {
+	conv := New("sess-legacy-model-aliases", "Legacy model aliases")
+	conv.ModelSelection = &ModelSelectionState{
+		OrchestratorAlias: "planner-alias",
+		ShellAgentAlias:   "shell-alias",
+	}
+
+	snapshot := PersistedFooterSnapshotWithTrajectoryAt(conv, nil, conv.UpdatedAt)
+	want := []ui.FooterModelDisplay{
+		{Role: "planner", Label: "planner-alias"},
+		{Role: "shell", Label: "shell-alias"},
+	}
+	if !reflect.DeepEqual(snapshot.Models.Models, want) {
+		t.Fatalf("models = %#v, want %#v", snapshot.Models.Models, want)
+	}
+}
+
+func TestPersistedFooterSnapshotWithTrajectoryAtLeavesLegacyModelsEmptyWhenUnavailable(t *testing.T) {
+	conv := New("sess-no-legacy-models", "No legacy models")
+
+	snapshot := PersistedFooterSnapshotWithTrajectoryAt(conv, nil, conv.UpdatedAt)
+	if len(snapshot.Models.Models) != 0 {
+		t.Fatalf("models = %#v, want empty", snapshot.Models.Models)
+	}
+}
+
+func TestPersistedFooterSnapshotWithTrajectoryAtPreservesExistingModels(t *testing.T) {
+	conv := New("sess-current-models", "Current models")
+	conv.ModelSelection = &ModelSelectionState{
+		OrchestratorAlias: "legacy-planner-alias",
+		ShellAgentAlias:   "legacy-shell-alias",
+	}
+	conv.Footer = &FooterState{
+		Models: []FooterModelState{
+			{Role: "planner", Label: "persisted:planner", Reasoning: "high"},
+			{Role: "shell", Label: "persisted:shell", Reasoning: "medium"},
+		},
+	}
+	trajectory := []byte(`{"kind":"llm.request.start","payload":{"alias":"legacy-planner-alias","model":{"model":"trajectory-model","provider":"trajectory-provider"}}}` + "\n")
+
+	snapshot := PersistedFooterSnapshotWithTrajectoryAt(conv, trajectory, conv.UpdatedAt)
+	want := []ui.FooterModelDisplay{
+		{Role: "planner", Label: "persisted:planner", Reasoning: "high"},
+		{Role: "shell", Label: "persisted:shell", Reasoning: "medium"},
+	}
+	if !reflect.DeepEqual(snapshot.Models.Models, want) {
+		t.Fatalf("models = %#v, want %#v", snapshot.Models.Models, want)
 	}
 }
 

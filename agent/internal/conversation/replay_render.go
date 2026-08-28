@@ -136,16 +136,133 @@ func PersistedFooterSnapshotAt(conv *Conversation, now time.Time) ui.FooterSnaps
 }
 
 // PersistedFooterSnapshotWithTrajectoryAt supplements older conversations
-// that did not persist Footer.CWD with the founding directory recorded by the
-// session-start trajectory event. Persisted footer state always wins, and
-// missing or malformed trajectory data is ignored.
+// that did not persist footer values with data recorded in the trajectory and
+// model selection. Persisted footer state always wins, and missing or malformed
+// trajectory data is ignored.
 func PersistedFooterSnapshotWithTrajectoryAt(conv *Conversation, trajectoryData []byte, now time.Time) ui.FooterSnapshot {
 	snapshot := PersistedFooterSnapshotAt(conv, now)
-	if snapshot.CWD != "" {
-		return snapshot
+	if snapshot.CWD == "" {
+		snapshot.CWD = foundingCWDFromTrajectory(trajectoryData)
 	}
-	snapshot.CWD = foundingCWDFromTrajectory(trajectoryData)
+	if len(snapshot.Models.Models) == 0 {
+		var selection *ModelSelectionState
+		if conv != nil {
+			selection = conv.ModelSelection
+		}
+		snapshot.Models.Models = legacyFooterModels(trajectoryData, selection)
+	}
 	return snapshot
+}
+
+func legacyFooterModels(trajectoryData []byte, selection *ModelSelectionState) []ui.FooterModelDisplay {
+	type plannerModel struct {
+		alias string
+		name  string
+	}
+	type resolvedModel struct {
+		alias    string
+		provider string
+		model    string
+	}
+	type trajectoryEvent struct {
+		Kind    string `json:"kind"`
+		Payload struct {
+			Alias      string `json:"alias"`
+			ModelAlias string `json:"model_alias"`
+			ModelName  string `json:"model_name"`
+			Provider   string `json:"provider"`
+			Model      struct {
+				Alias    string `json:"alias"`
+				Provider string `json:"provider"`
+				Model    string `json:"model"`
+			} `json:"model"`
+		} `json:"payload"`
+	}
+
+	plannerModels := make([]plannerModel, 0)
+	contextProviders := make(map[string]string)
+	requestProviders := make(map[string]string)
+	resolvedLabels := make(map[string]string)
+	decoder := json.NewDecoder(bytes.NewReader(trajectoryData))
+	for {
+		var event trajectoryEvent
+		if err := decoder.Decode(&event); err != nil {
+			break
+		}
+		switch event.Kind {
+		case "planner.request":
+			alias := strings.TrimSpace(event.Payload.ModelAlias)
+			name := strings.TrimSpace(event.Payload.ModelName)
+			if alias != "" && name != "" {
+				plannerModels = append(plannerModels, plannerModel{alias: alias, name: name})
+			}
+		case "llm.context_budget.resolved":
+			rememberLegacyProvider(contextProviders, event.Payload.ModelAlias, event.Payload.Provider)
+		case "llm.request.start":
+			model := resolvedModel{
+				alias:    strings.TrimSpace(event.Payload.Alias),
+				provider: strings.TrimSpace(event.Payload.Model.Provider),
+				model:    strings.TrimSpace(event.Payload.Model.Model),
+			}
+			rememberLegacyProvider(requestProviders, model.alias, model.provider)
+			if model.provider != "" && model.model != "" {
+				label := model.provider + ":" + model.model
+				resolvedLabels[strings.ToLower(label)] = label
+			}
+		}
+	}
+
+	for _, plannerModel := range plannerModels {
+		aliasKey := strings.ToLower(plannerModel.alias)
+		provider := contextProviders[aliasKey]
+		if provider == "" {
+			provider = requestProviders[aliasKey]
+		}
+		if provider != "" {
+			return legacyResolvedFooterModels(provider + ":" + plannerModel.name)
+		}
+	}
+	if len(resolvedLabels) == 1 {
+		for _, label := range resolvedLabels {
+			return legacyResolvedFooterModels(label)
+		}
+	}
+
+	if selection == nil {
+		return nil
+	}
+	plannerAlias := strings.TrimSpace(selection.OrchestratorAlias)
+	shellAlias := strings.TrimSpace(selection.ShellAgentAlias)
+	if shellAlias == "" {
+		shellAlias = plannerAlias
+	}
+	models := make([]ui.FooterModelDisplay, 0, 2)
+	if plannerAlias != "" {
+		models = append(models, ui.FooterModelDisplay{Role: "planner", Label: plannerAlias})
+	}
+	if shellAlias != "" {
+		models = append(models, ui.FooterModelDisplay{Role: "shell", Label: shellAlias})
+	}
+	return models
+}
+
+func rememberLegacyProvider(providers map[string]string, alias, provider string) {
+	alias = strings.TrimSpace(alias)
+	provider = strings.TrimSpace(provider)
+	if alias == "" || provider == "" {
+		return
+	}
+	key := strings.ToLower(alias)
+	if providers[key] == "" {
+		providers[key] = provider
+	}
+}
+
+func legacyResolvedFooterModels(label string) []ui.FooterModelDisplay {
+	return []ui.FooterModelDisplay{
+		{Role: "planner", Label: label},
+		{Role: "shell", Label: label},
+	}
 }
 
 func foundingCWDFromTrajectory(data []byte) string {

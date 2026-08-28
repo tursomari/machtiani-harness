@@ -180,7 +180,7 @@ func AttachSpinnerFrame(theme presentation.Theme, elapsed time.Duration) string 
 	}
 	index := len(frames) - 1
 	if theme.MotionMode() == presentation.MotionFull {
-		index = int(elapsed/(125*time.Millisecond)) % len(frames)
+		index = int(elapsed/(250*time.Millisecond)) % len(frames)
 	}
 	return frames[index]
 }
