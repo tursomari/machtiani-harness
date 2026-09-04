@@ -324,11 +324,12 @@ func redactLLMInput(v any) any {
 
 func modelSummary(model ResolvedModel) map[string]any {
 	return map[string]any{
-		"alias":    strings.TrimSpace(model.Alias),
-		"provider": strings.TrimSpace(model.ProviderName),
-		"model":    strings.TrimSpace(model.Model),
-		"base_url": strings.TrimSpace(model.BaseURL),
-		"endpoint": strings.TrimSpace(model.Endpoint),
+		"alias":     strings.TrimSpace(model.Alias),
+		"provider":  strings.TrimSpace(model.ProviderName),
+		"transport": strings.TrimSpace(model.Transport),
+		"model":     strings.TrimSpace(model.Model),
+		"base_url":  strings.TrimSpace(model.BaseURL),
+		"endpoint":  strings.TrimSpace(model.Endpoint),
 	}
 }
 
@@ -1389,6 +1390,9 @@ func chatWithResolvedFallback(ctx context.Context, primary ResolvedModel, fallba
 	if err := validateResolvedModel(primary); err != nil {
 		return "", err
 	}
+	if primary.Transport == "model-host" && len(fallbackAliases) == 0 && len(fallbackModels) == 0 {
+		return chatModelHost(ctx, primary, extraParams, messages, stream, onToken)
+	}
 	overrides := apiKeyOverridesFromContext(ctx)
 	normalizedFallbacks := normalizeFallbackAliases(primary, fallbackAliases)
 	targets := buildFallbackTargets(primary, normalizedFallbacks, fallbackModels)
@@ -1471,7 +1475,11 @@ func chatWithResolvedFallback(ctx context.Context, primary ResolvedModel, fallba
 			fallbackMeta.Metadata = map[string]any{"fallback_alias": alias}
 		}
 		var fallbackErr error
-		result, _, fallbackErr = executeWithReasoningCompatibility(ctx, fallbackModel, payload, false, nil, fallbackMeta)
+		if fallbackModel.Transport == "model-host" {
+			result, fallbackErr = chatModelHost(ctx, fallbackModel, extraParams, messages, false, nil)
+		} else {
+			result, _, fallbackErr = executeWithReasoningCompatibility(ctx, fallbackModel, payload, false, nil, fallbackMeta)
+		}
 		emitFailoverResultEvent(ctx, primary, fallbackModel, source, alias, fallbackErr)
 		if fallbackErr != nil {
 			lastErr = fallbackErr
@@ -1561,6 +1569,15 @@ func executeWithReasoningCompatibility(ctx context.Context, model ResolvedModel,
 }
 
 func validateResolvedModel(model ResolvedModel) error {
+	if model.Transport == "model-host" {
+		if strings.TrimSpace(model.Profile) == "" {
+			return errors.New("resolved model-host transport missing profile")
+		}
+		if strings.TrimSpace(model.Model) == "" {
+			return errors.New("resolved model missing upstream model name")
+		}
+		return nil
+	}
 	if strings.TrimSpace(model.BaseURL) == "" {
 		return errors.New("resolved model missing base URL")
 	}
@@ -1627,6 +1644,9 @@ func buildFallbackTargets(primary ResolvedModel, aliases []string, models []Reso
 }
 
 func fallbackResolvedKey(m ResolvedModel) string {
+	if m.Transport == "model-host" {
+		return "model-host|" + strings.ToLower(strings.TrimSpace(m.Profile)) + "|" + strings.ToLower(strings.TrimSpace(m.Model))
+	}
 	base := strings.ToLower(strings.TrimSpace(m.BaseURL))
 	endpoint := strings.ToLower(strings.TrimSpace(m.Endpoint))
 	model := strings.ToLower(strings.TrimSpace(m.Model))
@@ -1635,6 +1655,10 @@ func fallbackResolvedKey(m ResolvedModel) string {
 }
 
 func sameResolvedModel(a, b ResolvedModel) bool {
+	if a.Transport == "model-host" || b.Transport == "model-host" {
+		return a.Transport == b.Transport && strings.EqualFold(strings.TrimSpace(a.Profile), strings.TrimSpace(b.Profile)) &&
+			strings.EqualFold(strings.TrimSpace(a.Model), strings.TrimSpace(b.Model))
+	}
 	return strings.EqualFold(strings.TrimSpace(a.BaseURL), strings.TrimSpace(b.BaseURL)) &&
 		strings.EqualFold(strings.TrimSpace(a.Endpoint), strings.TrimSpace(b.Endpoint)) &&
 		strings.EqualFold(strings.TrimSpace(a.Model), strings.TrimSpace(b.Model))

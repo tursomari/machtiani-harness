@@ -264,6 +264,7 @@ func validateProvidersRaw(raw map[string]any, diagnostics *[]Diagnostic) {
 			continue
 		}
 		validateKnownMap(provider, path, map[string]string{
+			"transport": "string", "profile": "string", "command": "string",
 			"base_url": "string", "api_key": "string", "endpoint": "string", "reasoning_format": "string",
 			"headers": "table", "query": "table",
 		}, diagnostics)
@@ -427,8 +428,10 @@ func ValidateConfig(cfg Config, path string, options ValidationOptions) []Diagno
 		}
 		if options.RequireAllCredentials && providerName != "" {
 			if provider, ok := cfg.Providers[providerName]; ok {
-				if err := validateProviderCredential(name, providerName, provider.APIKey); err != nil {
-					diagnostics = append(diagnostics, configError("providers."+providerName+".api_key", "missing_credential", fmt.Sprintf("model %q: %v", name, err)))
+				if strings.TrimSpace(provider.Transport) != "model-host" {
+					if err := validateProviderCredential(name, providerName, provider.APIKey); err != nil {
+						diagnostics = append(diagnostics, configError("providers."+providerName+".api_key", "missing_credential", fmt.Sprintf("model %q: %v", name, err)))
+					}
 				}
 			}
 		}
@@ -438,6 +441,22 @@ func ValidateConfig(cfg Config, path string, options ValidationOptions) []Diagno
 		providerPath := "providers." + name
 		if strings.TrimSpace(name) == "" {
 			diagnostics = append(diagnostics, configError("providers", "invalid_name", "provider name cannot be empty"))
+		}
+		transport := strings.TrimSpace(provider.Transport)
+		if transport == "" {
+			transport = "openai-chat"
+		}
+		if transport != "openai-chat" && transport != "model-host" {
+			diagnostics = append(diagnostics, configError(providerPath+".transport", "invalid_value", "must be openai-chat or model-host"))
+		}
+		if transport == "model-host" {
+			if strings.TrimSpace(provider.Profile) == "" {
+				diagnostics = append(diagnostics, configError(providerPath+".profile", "missing_field", "profile is required for model-host transport"))
+			}
+			if strings.TrimSpace(provider.APIKey) != "" {
+				diagnostics = append(diagnostics, configError(providerPath+".api_key", "invalid_value", "model-host credentials belong in the referenced private profile"))
+			}
+			continue
 		}
 		baseURL := strings.TrimSpace(provider.BaseURL)
 		if baseURL == "" {

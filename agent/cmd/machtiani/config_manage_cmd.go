@@ -223,8 +223,14 @@ func validateConfigDocument(raw map[string]any) error {
 		if !ok {
 			return fmt.Errorf("providers.%s must be a table", name)
 		}
+		transport, _ := provider["transport"].(string)
 		baseURL, _ := provider["base_url"].(string)
-		if strings.TrimSpace(baseURL) == "" {
+		if strings.TrimSpace(transport) == "model-host" {
+			profile, _ := provider["profile"].(string)
+			if strings.TrimSpace(profile) == "" {
+				return fmt.Errorf("providers.%s.profile is required for model-host transport", name)
+			}
+		} else if strings.TrimSpace(baseURL) == "" {
 			return fmt.Errorf("providers.%s.base_url is required", name)
 		}
 	}
@@ -441,7 +447,7 @@ func validEnvironmentName(value string) bool {
 
 func printProvider(name string, provider map[string]any) {
 	fmt.Printf("Provider %s\n", name)
-	for _, key := range []string{"base_url", "endpoint", "reasoning_format"} {
+	for _, key := range []string{"transport", "profile", "command", "base_url", "endpoint", "reasoning_format"} {
 		if value, ok := provider[key]; ok {
 			fmt.Printf("  %s: %v\n", key, value)
 		}

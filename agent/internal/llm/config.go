@@ -265,6 +265,9 @@ type ModeInstructions struct {
 }
 
 type ProviderConfig struct {
+	Transport       string            `toml:"transport"`
+	Profile         string            `toml:"profile"`
+	Command         string            `toml:"command"`
 	BaseURL         string            `toml:"base_url"`
 	APIKey          string            `toml:"api_key"`
 	Headers         map[string]string `toml:"headers"`
@@ -344,6 +347,9 @@ type ModelDefaultsConfig struct {
 type ResolvedModel struct {
 	Alias            string
 	ProviderName     string
+	Transport        string
+	Profile          string
+	Command          string
 	BaseURL          string
 	APIKey           string
 	Headers          map[string]string
@@ -378,6 +384,20 @@ const (
 type configData struct {
 	path   string
 	config Config
+}
+
+func expandHomePath(value string) string {
+	if value == "~" {
+		if home, err := os.UserHomeDir(); err == nil {
+			return home
+		}
+	}
+	if strings.HasPrefix(value, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, strings.TrimPrefix(value, "~/"))
+		}
+	}
+	return value
 }
 
 var (
@@ -430,8 +450,12 @@ func ResolveModelWithOverrides(alias string, overrides map[string]string) (Resol
 		return ResolvedModel{}, fmt.Errorf("provider %q for model %q not defined in %s", providerName, effectiveAlias, cfg.path)
 	}
 
+	transport := strings.TrimSpace(provider.Transport)
+	if transport == "" {
+		transport = "openai-chat"
+	}
 	baseURL := strings.TrimSpace(provider.BaseURL)
-	if baseURL == "" {
+	if transport != "model-host" && baseURL == "" {
 		return ResolvedModel{}, fmt.Errorf("provider %q missing base_url in %s", providerName, cfg.path)
 	}
 
@@ -448,6 +472,9 @@ func ResolveModelWithOverrides(alias string, overrides map[string]string) (Resol
 	resolved := ResolvedModel{
 		Alias:                        effectiveAlias,
 		ProviderName:                 providerName,
+		Transport:                    transport,
+		Profile:                      expandHomePath(strings.TrimSpace(provider.Profile)),
+		Command:                      strings.TrimSpace(provider.Command),
 		BaseURL:                      baseURL,
 		Headers:                      copyStringMap(provider.Headers),
 		Query:                        copyStringMap(provider.Query),
@@ -470,6 +497,17 @@ func ResolveModelWithOverrides(alias string, overrides map[string]string) (Resol
 		resolved.ContextLength = modelDef.ContextLength
 		resolved.ContextSource = modelDef.ContextLengthSource
 		resolved.ContextInherited = false
+	}
+
+	if transport == "model-host" {
+		if resolved.Profile == "" {
+			return ResolvedModel{}, fmt.Errorf("provider %q missing profile in %s", providerName, cfg.path)
+		}
+		if resolved.Command == "" {
+			resolved.Command = "machtiani-model-host"
+		}
+		applyLearnedContext(&resolved)
+		return resolved, nil
 	}
 
 	configKey := strings.TrimSpace(provider.APIKey)
@@ -856,6 +894,15 @@ func parseConfig(path string) (Config, error) {
 				return Config{}, fmt.Errorf("parse %s [providers.%s]: expected table", path, name)
 			}
 			prov := ProviderConfig{}
+			if v, ok := entryMap["transport"].(string); ok {
+				prov.Transport = v
+			}
+			if v, ok := entryMap["profile"].(string); ok {
+				prov.Profile = v
+			}
+			if v, ok := entryMap["command"].(string); ok {
+				prov.Command = v
+			}
 			if v, ok := entryMap["base_url"].(string); ok {
 				prov.BaseURL = v
 			}
@@ -1910,6 +1957,7 @@ func cloneConfig(in Config) Config {
 	}
 	for name, prov := range in.Providers {
 		copyProv := ProviderConfig{
+			Transport: prov.Transport, Profile: prov.Profile, Command: prov.Command,
 			BaseURL: prov.BaseURL, APIKey: prov.APIKey, Endpoint: prov.Endpoint, ReasoningFormat: prov.ReasoningFormat,
 		}
 		if len(prov.Headers) > 0 {
@@ -1992,6 +2040,9 @@ func CloneResolvedModel(in ResolvedModel) ResolvedModel {
 	clone := ResolvedModel{
 		Alias:                        in.Alias,
 		ProviderName:                 in.ProviderName,
+		Transport:                    in.Transport,
+		Profile:                      in.Profile,
+		Command:                      in.Command,
 		BaseURL:                      in.BaseURL,
 		APIKey:                       in.APIKey,
 		Headers:                      copyStringMap(in.Headers),

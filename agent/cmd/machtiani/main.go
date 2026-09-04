@@ -346,6 +346,7 @@ var cliCommands = []cliCommand{
 	{name: "sync", description: "Sync the internal README with current git state", handler: handleSyncCommand},
 	{name: "session", description: "Manage sessions (list, show)", handler: handleSessionCommand},
 	{name: "config", description: "Create and manage configuration", handler: handleConfigCommand},
+	{name: "auth", description: "Manage shared model authentication", handler: handleAuthCommand},
 	{name: "shell-agent", description: "Run a shell-agent task directly (no planner)", handler: handleShellAgentCommand},
 }
 

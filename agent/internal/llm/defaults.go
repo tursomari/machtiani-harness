@@ -259,6 +259,15 @@ func overlayConfig(target *Config, source Config, srcSource FieldSource) {
 			target.ProviderSources[k] = srcSource
 			if existing, ok := target.Providers[k]; ok {
 				// overlay onto an already-present provider
+				if v.Transport != "" {
+					existing.Transport = v.Transport
+				}
+				if v.Profile != "" {
+					existing.Profile = v.Profile
+				}
+				if v.Command != "" {
+					existing.Command = v.Command
+				}
 				if v.BaseURL != "" {
 					existing.BaseURL = v.BaseURL
 					existing.BaseURLSource = srcSource
@@ -286,6 +295,7 @@ func overlayConfig(target *Config, source Config, srcSource FieldSource) {
 			} else {
 				// deep-copy a brand-new provider entry
 				copyProv := ProviderConfig{
+					Transport: v.Transport, Profile: v.Profile, Command: v.Command,
 					BaseURL: v.BaseURL, APIKey: v.APIKey, Endpoint: v.Endpoint, ReasoningFormat: v.ReasoningFormat,
 				}
 				copyProv.BaseURLSource = srcSource
