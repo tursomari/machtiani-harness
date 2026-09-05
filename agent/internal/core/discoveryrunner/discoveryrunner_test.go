@@ -1,11 +1,56 @@
 package discoveryrunner
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/tursomari/machtiani/agent/internal/llm"
 )
+
+func TestRunUsesModelHostTransportWithoutHTTPFields(t *testing.T) {
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+	if err := os.WriteFile(filepath.Join(workspace, "README.md"), []byte("fixture\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	host := filepath.Join(t.TempDir(), "model-host")
+	script := `#!/bin/sh
+read request
+printf '%s\n' '{"v":1,"id":"generation","event":{"type":"text-delta","index":0,"text":"BEGIN_RELEVANT_FILES[file-discovery]\nREADME.md\nEND_RELEVANT_FILES[file-discovery]"}}'
+printf '%s\n' '{"v":1,"id":"generation","result":{"completed":true}}'
+`
+	if err := os.WriteFile(host, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	budget, err := llm.BudgetForContextLength(8192, llm.ContextSourceSessionFlag)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	trajectory := filepath.Join(t.TempDir(), "trajectory.jsonl")
+	result, err := Run(context.Background(), "find the readme\n\nRG_OUT:\nREADME.md\nEND_RG_OUT\n", ModelSettings{
+		Resolved: llm.ResolvedModel{
+			Transport: "model-host",
+			Profile:   "/private/model-profile.json",
+			Command:   host,
+			Model:     "fixture",
+		},
+		InputBudget:        budget,
+		TrajectoryOverride: trajectory,
+	}, "session", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Paths) != 1 || result.Paths[0] != "README.md" {
+		if data, readErr := os.ReadFile(trajectory); readErr == nil {
+			t.Logf("trajectory:\n%s", data)
+		}
+		t.Fatalf("paths = %#v", result.Paths)
+	}
+}
 
 func TestFitInitialPromptReservesFixedProtocolContent(t *testing.T) {
 	budget, err := llm.BudgetForContextLength(8192, llm.ContextSourceSessionFlag)

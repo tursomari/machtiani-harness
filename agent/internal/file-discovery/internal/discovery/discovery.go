@@ -895,8 +895,8 @@ func computeMarkerLabel(sessionID string) string {
 }
 
 func callChat(ctx context.Context, llmCfg LLMSettings, msgs []chatMessage) (string, error) {
-	if strings.TrimSpace(llmCfg.Model.APIKey) == "" || strings.TrimSpace(llmCfg.Model.BaseURL) == "" || strings.TrimSpace(llmCfg.Model.Model) == "" {
-		return "", errors.New("llm runtime not configured")
+	if err := llm.ValidateResolvedModel(llmCfg.Model); err != nil {
+		return "", fmt.Errorf("llm runtime not configured: %w", err)
 	}
 	llmMsgs := make([]llm.Message, len(msgs))
 	for i, m := range msgs {

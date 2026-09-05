@@ -1391,7 +1391,7 @@ func chatWithResolvedFallback(ctx context.Context, primary ResolvedModel, fallba
 		}
 		return reply, nil
 	}
-	if err := validateResolvedModel(primary); err != nil {
+	if err := ValidateResolvedModel(primary); err != nil {
 		return "", err
 	}
 	if primary.Transport == "model-host" && len(fallbackAliases) == 0 && len(fallbackModels) == 0 {
@@ -1460,7 +1460,7 @@ func chatWithResolvedFallback(ctx context.Context, primary ResolvedModel, fallba
 		if sameResolvedModel(primary, fallbackModel) {
 			continue
 		}
-		if err := validateResolvedModel(fallbackModel); err != nil {
+		if err := ValidateResolvedModel(fallbackModel); err != nil {
 			lastErr = err
 			continue
 		}
@@ -1572,7 +1572,10 @@ func executeWithReasoningCompatibility(ctx context.Context, model ResolvedModel,
 	return "", "", reasoningFailureGuidance(model, effort, attempts)
 }
 
-func validateResolvedModel(model ResolvedModel) error {
+// ValidateResolvedModel verifies the transport-specific fields needed to call
+// a resolved model. Model-host providers intentionally do not expose HTTP
+// credentials or a base URL to Machtiani.
+func ValidateResolvedModel(model ResolvedModel) error {
 	if model.Transport == "model-host" {
 		if strings.TrimSpace(model.Profile) == "" {
 			return errors.New("resolved model-host transport missing profile")

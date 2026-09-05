@@ -157,6 +157,9 @@ func Run(ctx context.Context, prompt string, model ModelSettings, sessionID stri
 	}
 
 	resolved := llm.CloneResolvedModel(model.Resolved)
+	if err := llm.ValidateResolvedModel(resolved); err != nil {
+		return Result{}, fmt.Errorf("file-discovery runtime: %w", err)
+	}
 	cfg := integration.Config{
 		MaxRounds:            20,
 		CmdTimeoutSec:        30,
@@ -169,9 +172,6 @@ func Run(ctx context.Context, prompt string, model ModelSettings, sessionID stri
 		APIKey:               strings.TrimSpace(resolved.APIKey),
 		BaseURL:              strings.TrimSpace(resolved.BaseURL),
 		Model:                strings.TrimSpace(resolved.Model),
-	}
-	if cfg.APIKey == "" || cfg.BaseURL == "" || cfg.Model == "" {
-		return Result{}, errors.New("file-discovery runtime missing API key, base URL, or model")
 	}
 	llmSettings := integration.LLMSettings{
 		Model:                      resolved,
