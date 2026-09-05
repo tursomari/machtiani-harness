@@ -2203,6 +2203,9 @@ func parseRetryAfter(header http.Header) (time.Duration, bool) {
 }
 
 func buildRequest(ctx context.Context, model ResolvedModel, body []byte) (*http.Request, error) {
+	if model.Transport == "model-host" {
+		return nil, errors.New("model-host model must use model-host transport, not an HTTP request")
+	}
 	endpoint := strings.TrimSpace(model.Endpoint)
 	base := strings.TrimSpace(model.BaseURL)
 	var target string

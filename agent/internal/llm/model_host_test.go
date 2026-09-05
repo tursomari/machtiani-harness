@@ -239,3 +239,14 @@ printf '%s\n' '{"v":1,"id":"generation","error":{"code":"MODEL_UNAVAILABLE","mes
 		t.Fatalf("model-host primary was not called: %v", err)
 	}
 }
+
+func TestBuildRequestRejectsModelHostTransport(t *testing.T) {
+	_, err := buildRequest(context.Background(), ResolvedModel{
+		Transport: "model-host",
+		Profile:   "/private/profile.json",
+		Model:     "host-model",
+	}, []byte(`{}`))
+	if err == nil || !strings.Contains(err.Error(), "must use model-host transport") {
+		t.Fatalf("buildRequest error = %v, want model-host routing error", err)
+	}
+}
