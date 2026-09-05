@@ -140,6 +140,41 @@ func TestEnsureFallbackToPrimaryNoDuplicates(t *testing.T) {
 	}
 }
 
+func TestEnsureFallbackToPrimarySkipsSelfFallback(t *testing.T) {
+	primary := modelRuntime{
+		alias: "dearmachine",
+		resolved: llm.ResolvedModel{
+			Transport: "model-host",
+			Profile:   "/home/installer/.config/machtiani/model-profile.json",
+			Model:     "gpt-5.6-terra",
+		},
+	}
+	target := cloneModelRuntime(primary)
+
+	ensureFallbackToPrimary(&target, primary)
+
+	if len(target.fallbackAliases) != 0 {
+		t.Fatalf("self fallback aliases = %#v, want none", target.fallbackAliases)
+	}
+	if len(target.fallbackResolved) != 0 {
+		t.Fatalf("self fallback models = %#v, want none", target.fallbackResolved)
+	}
+}
+
+func TestResolvedModelsEqualDistinguishesModelHostProfiles(t *testing.T) {
+	first := llm.ResolvedModel{
+		Transport: "model-host",
+		Profile:   "/profiles/codex.json",
+		Model:     "gpt-5.6-terra",
+	}
+	second := first
+	second.Profile = "/profiles/claude.json"
+
+	if resolvedModelsEqual(first, second) {
+		t.Fatal("model-host runtimes with different profiles compared equal")
+	}
+}
+
 func TestFooterModelMetadataIncludesReasoningAndShellFallback(t *testing.T) {
 	models := componentModelRuntimes{
 		orchestrator: modelRuntime{

@@ -158,6 +158,9 @@ func ensureFallbackToPrimary(target *modelRuntime, primary modelRuntime) {
 	if target == nil {
 		return
 	}
+	if resolvedModelsEqual(target.resolved, primary.resolved) {
+		return
+	}
 	target.fallbackAliases = prependAliasIfMissing(target.fallbackAliases, primary.alias)
 	target.fallbackResolved = prependResolvedModel(target.fallbackResolved, primary.resolved)
 }
@@ -210,6 +213,11 @@ func prependResolvedModel(list []llm.ResolvedModel, model llm.ResolvedModel) []l
 }
 
 func resolvedModelsEqual(a, b llm.ResolvedModel) bool {
+	if a.Transport == "model-host" || b.Transport == "model-host" {
+		return a.Transport == b.Transport &&
+			strings.EqualFold(strings.TrimSpace(a.Profile), strings.TrimSpace(b.Profile)) &&
+			strings.EqualFold(strings.TrimSpace(a.Model), strings.TrimSpace(b.Model))
+	}
 	return strings.EqualFold(strings.TrimSpace(a.BaseURL), strings.TrimSpace(b.BaseURL)) &&
 		strings.EqualFold(strings.TrimSpace(a.Endpoint), strings.TrimSpace(b.Endpoint)) &&
 		strings.EqualFold(strings.TrimSpace(a.Model), strings.TrimSpace(b.Model))
