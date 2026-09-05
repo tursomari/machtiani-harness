@@ -1,6 +1,30 @@
-# Project-Wide Testing Guide
+# Testing Machtiani Harness
 
-This is the canonical, self-contained guide for every test harness in the `machtiani` monorepo. Test commands, prerequisites, environment variables, artifacts, and debugging guidance belong here rather than in component-local testing documents.
+This is the canonical entrypoint for tests owned by the Machtiani Harness
+repository. Test commands, prerequisites, environment variables, artifacts,
+and debugging guidance belong here or in a specialized document linked from
+here. Umbrella and sibling-submodule tests are intentionally outside this
+document's ownership.
+
+## Recommended starting checks
+
+Use the narrowest Go package suite while iterating. For example:
+
+```bash
+cd agent
+GOCACHE=$(pwd)/.gocache go test ./internal/session ./internal/config
+```
+
+Before landing a Harness branch, run at least the maintained package build:
+
+```bash
+nix build '.#machtiani'
+```
+
+Use `nix flake check` when the change affects multiple packages, Nix wiring,
+packaging, or repository-wide contracts. Add the clean-container smoke, live
+agent suite, TUI record/replay, or evaluation harness only when the changed
+behavior reaches that boundary.
 
 ## Test Layout
 
@@ -20,8 +44,9 @@ This is the canonical, self-contained guide for every test harness in the `macht
 - Docker, for the clean-container smoke test.
 - For live LLM runs: valid `TEST_API_KEY`, `TEST_BASE_URL`, and `TEST_MODEL` values, or the `OPENAI_*` fallbacks supported by the selected harness.
 
-## Unit Tests
-Run from the repository root to cover all Go packages without touching integration harnesses:
+## Go Package Tests
+
+Run from the repository root to cover all Go packages:
 
 ```bash
 cd agent
@@ -29,7 +54,10 @@ GOCACHE=$(pwd)/.gocache go test ./...
 cd ..
 ```
 
-- No environment variables are required.
+- No provider environment variables are required. This is a broad package
+  sweep, not an instant unit-only loop: packages such as `internal/update`
+  exercise Nix-backed update behavior and can take substantially longer than
+  focused package tests.
 
 ### Targeted Component Suites
 
@@ -323,6 +351,24 @@ EXPECT_REPRO=false bash agent/tests/repro-concurrent-run-cleanup.sh
 ```
 
 Use `EXPECT_REPRO=true` only to confirm the historical buggy behavior. `KEEP_REPRO_ARTIFACTS=true` preserves logs, and `STUB_DELAY_SECONDS=...` adjusts the overlap window.
+
+### Standalone and specialist agent scripts
+
+The following executable files are intentionally outside the default Go and
+`run-live.sh` ladders. Their status matters when choosing a test:
+
+| Entrypoint | Status and use |
+| --- | --- |
+| `agent/tests/command-supervisor-smoke.sh` | Maintained deterministic helper used by `run-live.sh` and the clean-container smoke. Prefer those parent entrypoints unless diagnosing the supervisor fixture itself. |
+| `agent/tests/print-mode-test.sh` | Maintained opt-in live smoke for `machtiani run --exec`; it skips unless `MACHTIANI_LIVE_PRINT_TEST=1` and requires a configured live model. |
+| `agent/tests/ab-dev-host-isolation-test.sh` | Specialist Docker regression for the A/B runner's host-worktree isolation. Run when changing `scripts/ab-dev.sh` or its build context. |
+| `agent/tests/enforce_early_commands_test.sh` | Specialist live A/B comparison. The maintained pass/fail regression is the `test_enforce_early_commands` case in `run-live.sh`; use this standalone script only for comparative trajectory evidence. |
+| `agent/tests/replay_fewshot_test.sh` | Legacy exploratory A/B script that expects a repository-root binary and private configuration. It is not a current landing gate; use the session Go tests for few-shot placement and `run-live.sh` for maintained end-to-end behavior. |
+| `agent/tests/ab-live.sh` | Output parser used by `scripts/ab-dev.sh --parse-results`, not an independent product test. It always exits successfully and reports parsed status in TSV. |
+
+The A/B workflow itself remains a supported specialist tool and is documented
+in `agent/tests/README.md` and `scripts/README.md`. It is not required for an
+ordinary change unless the task calls for control-versus-treatment evidence.
 
 ## TUI Record and Replay
 

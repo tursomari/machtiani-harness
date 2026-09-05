@@ -79,7 +79,9 @@ bash agent/tests/run-live.sh
 - If the harness fails with `mct is not synced at current git state ... Run machtiani sync before proceeding.`, run the repo-local sync command from `docs/machtiani-runbook.md` and rerun the harness.
 - When `TEST_*` and `OPENAI_*` are both unset the script injects stub credentials and forces `--dry-run`.
 
-See `TESTING.md` for the complete testing guide, including prerequisites, commands, environment variables, artifacts, and debugging workflows for every harness.
+See [`TESTING.md`](TESTING.md) for the canonical repository testing entrypoint,
+including recommended starting checks, prerequisites, specialist and legacy
+status, live-test boundaries, artifacts, and debugging workflows.
 
 ## Managed and development installations
 
