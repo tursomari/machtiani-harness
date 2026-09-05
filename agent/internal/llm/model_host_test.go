@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -9,6 +10,18 @@ import (
 	"testing"
 	"time"
 )
+
+func captureModelHostRequest(t *testing.T) (string, string) {
+	t.Helper()
+	capture := filepath.Join(t.TempDir(), "request.json")
+	t.Setenv("MACHTIANI_MODEL_HOST_CAPTURE", capture)
+	fixture := writeModelHostFixture(t, `
+read request
+printf '%s' "$request" > "$MACHTIANI_MODEL_HOST_CAPTURE"
+printf '%s\n' '{"v":1,"id":"generation","result":{"completed":true}}'
+`)
+	return fixture, capture
+}
 
 func writeModelHostFixture(t *testing.T, body string) string {
 	t.Helper()
@@ -47,6 +60,50 @@ printf '%s\n' '{"v":1,"id":"generation","result":{"completed":true}}'
 	}
 	if !observed.UsageAvailable || observed.PromptTokens != 7 || observed.CompletionTokens != 2 || observed.CachedTokens != 3 {
 		t.Fatalf("usage=%+v", observed)
+	}
+}
+
+func TestModelHostTransportPreservesRoleAndCacheBoundary(t *testing.T) {
+	fixture, capture := captureModelHostRequest(t)
+	model := ResolvedModel{
+		Transport: "model-host", Profile: "/private/profile.json", Command: fixture, Model: "fixture",
+		CacheKeyName: "cache_control", CacheControl: map[string]any{"type": "ephemeral"},
+		CacheTriggerThreshold: 1, CacheLookbackOffset: 2,
+	}
+	messages := []Message{
+		{Role: "system", Content: "stable instructions", Metadata: map[string]any{"estimated_tokens": 20}},
+		{Role: "user", Content: "variable suffix", Metadata: map[string]any{"estimated_tokens": 20}},
+	}
+	ctx := WithStage(context.Background(), "planner")
+	if _, err := chatModelHost(ctx, model, nil, messages, false, nil); err != nil {
+		t.Fatal(err)
+	}
+	payload, err := os.ReadFile(capture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var request struct {
+		Params struct {
+			Caller   string `json:"caller"`
+			Role     string `json:"role"`
+			Messages []struct {
+				Role         string         `json:"role"`
+				Content      string         `json:"content"`
+				CacheControl map[string]any `json:"cacheControl"`
+			} `json:"messages"`
+		} `json:"params"`
+	}
+	if err := json.Unmarshal(payload, &request); err != nil {
+		t.Fatal(err)
+	}
+	if request.Params.Caller != "machtiani" || request.Params.Role != "planner" {
+		t.Fatalf("identity=%s role=%s", request.Params.Caller, request.Params.Role)
+	}
+	if len(request.Params.Messages) != 2 || request.Params.Messages[0].Content != "stable instructions" || request.Params.Messages[0].CacheControl["type"] != "ephemeral" {
+		t.Fatalf("messages=%#v", request.Params.Messages)
+	}
+	if request.Params.Messages[1].CacheControl != nil {
+		t.Fatalf("variable suffix unexpectedly cacheable: %#v", request.Params.Messages[1])
 	}
 }
 

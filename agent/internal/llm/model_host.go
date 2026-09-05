@@ -24,6 +24,7 @@ type modelHostRequest struct {
 
 type modelHostGenerate struct {
 	Caller          string             `json:"caller"`
+	Role            string             `json:"role,omitempty"`
 	SessionID       string             `json:"sessionId"`
 	Messages        []modelHostMessage `json:"messages"`
 	Model           string             `json:"model"`
@@ -32,8 +33,9 @@ type modelHostGenerate struct {
 }
 
 type modelHostMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role         string         `json:"role"`
+	Content      string         `json:"content"`
+	CacheControl map[string]any `json:"cacheControl,omitempty"`
 }
 
 type modelHostEnvelope struct {
@@ -80,6 +82,53 @@ func modelHostSessionID(ctx context.Context) string {
 	return "machtiani-call"
 }
 
+func modelHostMessages(ctx context.Context, messages []Message, model ResolvedModel) ([]modelHostMessage, error) {
+	formatted := applyCacheControl(ctx, messages, model)
+	requestMessages := make([]modelHostMessage, 0, len(formatted))
+	cacheKey := strings.TrimSpace(model.CacheKeyName)
+	for _, raw := range formatted {
+		message, ok := raw.(map[string]any)
+		if !ok {
+			return nil, errors.New("format model-host message: expected object")
+		}
+		role, _ := message["role"].(string)
+		role = strings.ToLower(strings.TrimSpace(role))
+		switch role {
+		case "system", "user", "assistant":
+		default:
+			return nil, fmt.Errorf("model-host transport does not support message role %q", role)
+		}
+		result := modelHostMessage{Role: role}
+		switch content := message["content"].(type) {
+		case string:
+			result.Content = content
+		case []any:
+			var text strings.Builder
+			for _, rawPart := range content {
+				part, ok := rawPart.(map[string]any)
+				if !ok || part["type"] != "text" {
+					return nil, errors.New("format model-host message: expected text content")
+				}
+				value, ok := part["text"].(string)
+				if !ok {
+					return nil, errors.New("format model-host message: expected text content")
+				}
+				text.WriteString(value)
+				if cacheKey != "" {
+					if control, ok := part[cacheKey].(map[string]any); ok {
+						result.CacheControl = control
+					}
+				}
+			}
+			result.Content = text.String()
+		default:
+			return nil, errors.New("format model-host message: expected string or text content")
+		}
+		requestMessages = append(requestMessages, result)
+	}
+	return requestMessages, nil
+}
+
 func chatModelHost(ctx context.Context, model ResolvedModel, extraParams map[string]any, messages []Message, stream bool, onToken func(string)) (string, error) {
 	command := strings.TrimSpace(model.Command)
 	if command == "" {
@@ -89,18 +138,13 @@ func chatModelHost(ctx context.Context, model ResolvedModel, extraParams map[str
 	if profile == "" {
 		return "", errors.New("resolved model-host transport missing profile")
 	}
-	requestMessages := make([]modelHostMessage, 0, len(messages))
-	for _, message := range messages {
-		role := strings.ToLower(strings.TrimSpace(message.Role))
-		switch role {
-		case "system", "user", "assistant":
-		default:
-			return "", fmt.Errorf("model-host transport does not support message role %q", message.Role)
-		}
-		requestMessages = append(requestMessages, modelHostMessage{Role: role, Content: message.Content})
+	requestMessages, err := modelHostMessages(ctx, messages, model)
+	if err != nil {
+		return "", err
 	}
 	params := modelHostGenerate{
 		Caller:    "machtiani",
+		Role:      stageFromContext(ctx),
 		SessionID: modelHostSessionID(ctx),
 		Messages:  requestMessages,
 		Model:     model.Model,
