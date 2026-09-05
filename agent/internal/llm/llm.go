@@ -1394,32 +1394,42 @@ func chatWithResolvedFallback(ctx context.Context, primary ResolvedModel, fallba
 	if err := ValidateResolvedModel(primary); err != nil {
 		return "", err
 	}
-	if primary.Transport == "model-host" && len(fallbackAliases) == 0 && len(fallbackModels) == 0 {
-		return chatModelHost(ctx, primary, extraParams, messages, stream, onToken)
-	}
 	overrides := apiKeyOverridesFromContext(ctx)
 	normalizedFallbacks := normalizeFallbackAliases(primary, fallbackAliases)
 	targets := buildFallbackTargets(primary, normalizedFallbacks, fallbackModels)
 
-	basePayload := mergeMaps(primary.Params, extraParams)
-	basePayload["model"] = primary.Model
-	basePayload["messages"] = applyCacheControl(ctx, messages, primary)
-	stage := stageFromContext(ctx)
-	if stage == "" {
-		stage = strings.TrimSpace(os.Getenv(llmStageEnv))
-	}
-	appendLLMInputLog(ctx, map[string]any{
-		"stage":   stage,
-		"model":   modelSummary(primary),
-		"stream":  stream,
-		"payload": basePayload,
-	})
-
 	var result string
 	var attemptErr error
 	emittedPrefix := ""
-	primaryMeta := llmAttemptMeta{Alias: strings.TrimSpace(primary.Alias), Mode: "non-stream", Source: "primary"}
-	result, emittedPrefix, attemptErr = executeWithReasoningCompatibility(ctx, primary, basePayload, stream, onToken, primaryMeta)
+	if primary.Transport == "model-host" {
+		primaryOnToken := onToken
+		var streamedPrefix strings.Builder
+		if stream && onToken != nil {
+			primaryOnToken = func(token string) {
+				streamedPrefix.WriteString(token)
+				onToken(token)
+			}
+		}
+		result, attemptErr = chatModelHost(ctx, primary, extraParams, messages, stream, primaryOnToken)
+		emittedPrefix = streamedPrefix.String()
+	} else {
+		basePayload := mergeMaps(primary.Params, extraParams)
+		basePayload["model"] = primary.Model
+		basePayload["messages"] = applyCacheControl(ctx, messages, primary)
+		stage := stageFromContext(ctx)
+		if stage == "" {
+			stage = strings.TrimSpace(os.Getenv(llmStageEnv))
+		}
+		appendLLMInputLog(ctx, map[string]any{
+			"stage":   stage,
+			"model":   modelSummary(primary),
+			"stream":  stream,
+			"payload": basePayload,
+		})
+
+		primaryMeta := llmAttemptMeta{Alias: strings.TrimSpace(primary.Alias), Mode: "non-stream", Source: "primary"}
+		result, emittedPrefix, attemptErr = executeWithReasoningCompatibility(ctx, primary, basePayload, stream, onToken, primaryMeta)
+	}
 	if attemptErr == nil {
 		return result, nil
 	}

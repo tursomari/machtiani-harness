@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -177,5 +179,63 @@ func TestModelHostTransportHonorsCancellation(t *testing.T) {
 	}, nil, []Message{{Role: "user", Content: "hello"}}, false, nil)
 	if err == nil || time.Since(started) > 3*time.Second {
 		t.Fatalf("error=%v elapsed=%s", err, time.Since(started))
+	}
+}
+
+func TestModelHostPrimaryUsesTransportWithSelfFallbacks(t *testing.T) {
+	fixture := writeModelHostFixture(t, `
+read request
+printf '%s\n' '{"v":1,"id":"generation","event":{"type":"text-delta","index":0,"text":"host response"}}'
+printf '%s\n' '{"v":1,"id":"generation","result":{"completed":true}}'
+`)
+	primary := ResolvedModel{
+		Alias: "dearmachine", Transport: "model-host", Profile: "/private/profile.json", Command: fixture, Model: "fixture",
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	answer, err := ChatWithResolvedFallback(ctx, primary, []string{"dearmachine"}, []ResolvedModel{primary}, nil, []Message{{Role: "user", Content: "hello"}})
+	if err != nil {
+		t.Fatalf("ChatWithResolvedFallback error: %v", err)
+	}
+	if answer != "host response" {
+		t.Fatalf("answer = %q, want host response", answer)
+	}
+}
+
+func TestModelHostPrimaryFailureUsesHTTPFallback(t *testing.T) {
+	called := filepath.Join(t.TempDir(), "model-host-called")
+	t.Setenv("MACHTIANI_MODEL_HOST_CALLED", called)
+	fixture := writeModelHostFixture(t, `
+read request
+: > "$MACHTIANI_MODEL_HOST_CALLED"
+printf '%s\n' '{"v":1,"id":"generation","error":{"code":"MODEL_UNAVAILABLE","message":"primary unavailable"}}'
+`)
+	primary := ResolvedModel{
+		Alias: "dearmachine", Transport: "model-host", Profile: "/private/profile.json", Command: fixture, Model: "host-model",
+	}
+	fallback := ResolvedModel{
+		Alias: "fallback", BaseURL: "http://fallback.example", Endpoint: "/chat/completions", Model: "fallback-model",
+	}
+	originalTransport := http.DefaultClient.Transport
+	http.DefaultClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"choices":[{"message":{"content":"fallback response"}}]}`)),
+			Request:    req,
+		}, nil
+	})
+	defer func() { http.DefaultClient.Transport = originalTransport }()
+
+	answer, err := ChatWithResolvedFallback(context.Background(), primary, nil, []ResolvedModel{fallback}, nil, []Message{{Role: "user", Content: "hello"}})
+	if err != nil {
+		t.Fatalf("ChatWithResolvedFallback error: %v", err)
+	}
+	if answer != "fallback response" {
+		t.Fatalf("answer = %q, want fallback response", answer)
+	}
+	if _, err := os.Stat(called); err != nil {
+		t.Fatalf("model-host primary was not called: %v", err)
 	}
 }
