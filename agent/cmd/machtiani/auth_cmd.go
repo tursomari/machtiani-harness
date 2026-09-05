@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -24,7 +25,7 @@ type modelHostProtocolResponse struct {
 
 func handleAuthCommand(args []string) int {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
-		fmt.Fprintln(os.Stderr, "Usage: machtiani auth <status|login|logout> [--model <alias>]")
+		fmt.Fprintln(os.Stderr, "Usage: machtiani auth <status|login|logout> [--model <alias>] [--mode <browser|device_code>]")
 		return 0
 	}
 	action := args[0]
@@ -35,6 +36,7 @@ func handleAuthCommand(args []string) int {
 	flags := pflag.NewFlagSet("machtiani auth "+action, pflag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
 	model := flags.String("model", "", "model alias (defaults to default_model)")
+	mode := flags.String("mode", "browser", "subscription login mode: browser or device_code")
 	if err := flags.Parse(args[1:]); err != nil {
 		return 2
 	}
@@ -50,6 +52,22 @@ func handleAuthCommand(args []string) int {
 	if resolved.Transport != "model-host" {
 		fmt.Fprintln(os.Stderr, "This model does not use the shared model host; manage its configured API credential directly.")
 		return 1
+	}
+	if action == "login" {
+		normalizedMode := strings.ReplaceAll(strings.TrimSpace(*mode), "-", "_")
+		if normalizedMode != "browser" && normalizedMode != "device_code" {
+			fmt.Fprintln(os.Stderr, "Authentication mode must be browser or device_code.")
+			return 2
+		}
+		if err := callInteractiveModelHostLogin(resolved.Command, resolved.Profile, normalizedMode); err != nil {
+			fmt.Fprintf(os.Stderr, "Authentication login failed: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+	if flags.Changed("mode") {
+		fmt.Fprintln(os.Stderr, "--mode is supported only by auth login.")
+		return 2
 	}
 	result, protocolErr, err := callModelHostAuth(resolved.Command, resolved.Profile, "auth/"+action)
 	if err != nil {
@@ -78,6 +96,21 @@ func handleAuthCommand(args []string) int {
 	}
 	fmt.Printf("Authentication %s completed for %s.\n", action, resolved.ProviderName)
 	return 0
+}
+
+func callInteractiveModelHostLogin(command, profile, mode string) error {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		command = "machtiani-model-host"
+	}
+	process := exec.Command(command, "auth", "login", "--profile", profile, "--mode", mode)
+	process.Stdin = os.Stdin
+	process.Stdout = os.Stdout
+	process.Stderr = os.Stderr
+	if err := process.Run(); err != nil {
+		return errors.New("the provider-owned interactive sign-in did not complete")
+	}
+	return nil
 }
 
 func callModelHostAuth(command, profile, method string) (json.RawMessage, *struct {
