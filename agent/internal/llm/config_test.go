@@ -95,7 +95,10 @@ func TestLocateConfigFallsBackToGlobalConfig(t *testing.T) {
 }
 
 func TestLoadGlobalConfigParsesSections(t *testing.T) {
-	content := `
+	content := `default_model = "alias"
+shell_agent_model = "alias"
+answer_model = "alias"
+file_discovery_model = "alias"
 
 [prompts.planner]
 system_template = "Planner system"
@@ -143,6 +146,9 @@ model = "alias-impl"
 	}
 	if loadedPath != path {
 		t.Fatalf("expected loaded path %q, got %q", path, loadedPath)
+	}
+	if cfg.DefaultModel != "alias" || cfg.ShellAgentModel != "alias" || cfg.AnswerModel != "alias" || cfg.FileDiscoveryModel != "alias" {
+		t.Fatalf("expected cloned model-role selections, got default=%q shell=%q answer=%q discovery=%q", cfg.DefaultModel, cfg.ShellAgentModel, cfg.AnswerModel, cfg.FileDiscoveryModel)
 	}
 	if cfg.Planner == nil || cfg.Planner.MaxTurns != 7 {
 		t.Fatalf("expected planner max_turns 7, got %+v", cfg.Planner)

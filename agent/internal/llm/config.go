@@ -1896,10 +1896,16 @@ func expandUserPath(path string) (string, error) {
 }
 
 func cloneConfig(in Config) Config {
-	clone := Config{
-		DefaultModel: in.DefaultModel,
-		Providers:    make(map[string]ProviderConfig, len(in.Providers)),
-		Models:       make(map[string]ModelDefinition, len(in.Models)),
+	clone := in
+	clone.Providers = make(map[string]ProviderConfig, len(in.Providers))
+	clone.Models = make(map[string]ModelDefinition, len(in.Models))
+	clone.ProviderSources = make(map[string]FieldSource, len(in.ProviderSources))
+	for name, source := range in.ProviderSources {
+		clone.ProviderSources[name] = source
+	}
+	clone.ModelSources = make(map[string]FieldSource, len(in.ModelSources))
+	for name, source := range in.ModelSources {
+		clone.ModelSources[name] = source
 	}
 	if in.ModelDefaults != nil {
 		defaults := *in.ModelDefaults
@@ -1956,10 +1962,7 @@ func cloneConfig(in Config) Config {
 		clone.Trajectory = &t
 	}
 	for name, prov := range in.Providers {
-		copyProv := ProviderConfig{
-			Transport: prov.Transport, Profile: prov.Profile, Command: prov.Command,
-			BaseURL: prov.BaseURL, APIKey: prov.APIKey, Endpoint: prov.Endpoint, ReasoningFormat: prov.ReasoningFormat,
-		}
+		copyProv := prov
 		if len(prov.Headers) > 0 {
 			copyProv.Headers = copyStringMap(prov.Headers)
 		}
@@ -1969,29 +1972,8 @@ func cloneConfig(in Config) Config {
 		clone.Providers[name] = copyProv
 	}
 	for name, model := range in.Models {
-		copyModel := ModelDefinition{
-			Provider:                        model.Provider,
-			Model:                           model.Model,
-			ContextLength:                   model.ContextLength,
-			ParamsJSON:                      model.ParamsJSON,
-			CacheKeyName:                    model.CacheKeyName,
-			CacheControl:                    deepCopyMap(model.CacheControl),
-			CacheTriggerThreshold:           model.CacheTriggerThreshold,
-			CacheLookbackOffset:             model.CacheLookbackOffset,
-			CacheReanchorTokens:             model.CacheReanchorTokens,
-			CacheReanchorMessages:           model.CacheReanchorMessages,
-			CacheReanchorMinCachedTokens:    model.CacheReanchorMinCachedTokens,
-			CacheEnabled:                    model.CacheEnabled,
-			cacheEnabledSet:                 model.cacheEnabledSet,
-			contextLengthSet:                model.contextLengthSet,
-			cacheKeyNameSet:                 model.cacheKeyNameSet,
-			cacheControlSet:                 model.cacheControlSet,
-			cacheTriggerThresholdSet:        model.cacheTriggerThresholdSet,
-			cacheLookbackOffsetSet:          model.cacheLookbackOffsetSet,
-			cacheReanchorTokensSet:          model.cacheReanchorTokensSet,
-			cacheReanchorMessagesSet:        model.cacheReanchorMessagesSet,
-			cacheReanchorMinCachedTokensSet: model.cacheReanchorMinCachedTokensSet,
-		}
+		copyModel := model
+		copyModel.CacheControl = deepCopyMap(model.CacheControl)
 		if len(model.Params) > 0 {
 			copyModel.Params = deepCopyMap(model.Params)
 		}
