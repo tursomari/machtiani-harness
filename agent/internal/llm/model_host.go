@@ -54,6 +54,7 @@ type modelHostEvent struct {
 	TotalTokens      int    `json:"totalTokens,omitempty"`
 	CacheReadTokens  int    `json:"cacheReadTokens,omitempty"`
 	CacheWriteTokens int    `json:"cacheWriteTokens,omitempty"`
+	ReasoningTokens  int    `json:"reasoningTokens,omitempty"`
 }
 
 type modelHostFault struct {
@@ -234,6 +235,7 @@ func chatModelHost(ctx context.Context, model ResolvedModel, extraParams map[str
 				usage = &responseUsage{
 					PromptTokens:     envelope.Event.InputTokens,
 					CompletionTokens: envelope.Event.OutputTokens,
+					ReasoningTokens:  envelope.Event.ReasoningTokens,
 					TotalTokens:      envelope.Event.TotalTokens,
 					PromptTokensDetails: &promptTokensDetails{
 						CachedTokens:     envelope.Event.CacheReadTokens,

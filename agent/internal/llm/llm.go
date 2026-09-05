@@ -110,6 +110,7 @@ type UsageInfo struct {
 	Stage            string
 	PromptTokens     int
 	CompletionTokens int
+	ReasoningTokens  int
 	CachedTokens     int
 	CacheWriteTokens int
 	CacheDiscount    *float64
@@ -1159,6 +1160,7 @@ func (e *partialResponseError) Unwrap() error {
 type responseUsage struct {
 	PromptTokens        int                  `json:"prompt_tokens"`
 	CompletionTokens    int                  `json:"completion_tokens"`
+	ReasoningTokens     int                  `json:"reasoning_tokens"`
 	TotalTokens         int                  `json:"total_tokens"`
 	CacheDiscount       *float64             `json:"cache_discount"`
 	PromptTokensDetails *promptTokensDetails `json:"prompt_tokens_details"`
@@ -1175,6 +1177,7 @@ func emitCacheUsage(ctx context.Context, model ResolvedModel, usage *responseUsa
 		if usage != nil {
 			info.PromptTokens = usage.PromptTokens
 			info.CompletionTokens = usage.CompletionTokens
+			info.ReasoningTokens = usage.ReasoningTokens
 			if usage.PromptTokensDetails != nil {
 				info.CachedTokens = usage.PromptTokensDetails.CachedTokens
 				info.CacheWriteTokens = usage.PromptTokensDetails.CacheWriteTokens
@@ -1203,6 +1206,7 @@ func emitCacheUsage(ctx context.Context, model ResolvedModel, usage *responseUsa
 		"model":             modelSummary(model),
 		"prompt_tokens":     usage.PromptTokens,
 		"completion_tokens": usage.CompletionTokens,
+		"reasoning_tokens":  usage.ReasoningTokens,
 		"total_tokens":      usage.TotalTokens,
 	}
 	if usage.PromptTokensDetails != nil {

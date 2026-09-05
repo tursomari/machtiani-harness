@@ -26,6 +26,7 @@ type verificationRoleResult struct {
 	Model            string `json:"model"`
 	InputTokens      int    `json:"inputTokens,omitempty"`
 	OutputTokens     int    `json:"outputTokens,omitempty"`
+	ReasoningTokens  int    `json:"reasoningTokens,omitempty"`
 	CachedTokens     int    `json:"cachedTokens,omitempty"`
 	CacheWriteTokens int    `json:"cacheWriteTokens,omitempty"`
 	UsageAvailable   bool   `json:"usageAvailable"`
@@ -122,7 +123,8 @@ func handleVerifyCommand(args []string) int {
 		report.Roles = append(report.Roles, verificationRoleResult{
 			Role: role.Name, Alias: role.Alias, Provider: model.ProviderName, Model: model.Model,
 			InputTokens: usage.PromptTokens, OutputTokens: usage.CompletionTokens,
-			CachedTokens: usage.CachedTokens, CacheWriteTokens: usage.CacheWriteTokens,
+			ReasoningTokens: usage.ReasoningTokens,
+			CachedTokens:    usage.CachedTokens, CacheWriteTokens: usage.CacheWriteTokens,
 			UsageAvailable: usage.UsageAvailable,
 		})
 	}

@@ -15,12 +15,14 @@ import (
 func TestVerifyCommandInvokesEveryConfiguredModelRoleThroughMachtiani(t *testing.T) {
 	root := t.TempDir()
 	capture := filepath.Join(root, "requests.jsonl")
+	processCapture := filepath.Join(root, "processes.txt")
 	command := filepath.Join(root, "model-host")
 	script := `#!/bin/sh
 read request
 printf '%s\n' "$request" >> "$MACHTIANI_VERIFY_CAPTURE"
+printf '%s\n' "$$" >> "$MACHTIANI_VERIFY_PROCESS_CAPTURE"
 printf '%s\n' '{"v":1,"id":"generation","event":{"type":"text-delta","index":0,"text":"READY"}}'
-printf '%s\n' '{"v":1,"id":"generation","event":{"type":"usage","inputTokens":11,"outputTokens":1,"totalTokens":12,"cacheReadTokens":7}}'
+printf '%s\n' '{"v":1,"id":"generation","event":{"type":"usage","inputTokens":11,"outputTokens":1,"totalTokens":12,"cacheReadTokens":7,"reasoningTokens":3}}'
 printf '%s\n' '{"v":1,"id":"generation","result":{"completed":true}}'
 `
 	if err := os.WriteFile(command, []byte(script), 0o700); err != nil {
@@ -62,6 +64,7 @@ context_length = 131072
 	}
 	t.Setenv("MACHTIANI_CONFIG", configPath)
 	t.Setenv("MACHTIANI_VERIFY_CAPTURE", capture)
+	t.Setenv("MACHTIANI_VERIFY_PROCESS_CAPTURE", processCapture)
 	llm.ResetConfigForTesting()
 	t.Cleanup(llm.ResetConfigForTesting)
 	loaded, _, err := llm.LoadGlobalConfig()
@@ -82,10 +85,11 @@ context_length = 131072
 	var report struct {
 		Status string `json:"status"`
 		Roles  []struct {
-			Role         string `json:"role"`
-			Alias        string `json:"alias"`
-			Model        string `json:"model"`
-			CachedTokens int    `json:"cachedTokens"`
+			Role            string `json:"role"`
+			Alias           string `json:"alias"`
+			Model           string `json:"model"`
+			CachedTokens    int    `json:"cachedTokens"`
+			ReasoningTokens int    `json:"reasoningTokens"`
 		} `json:"roles"`
 	}
 	if err := json.Unmarshal([]byte(stdout), &report); err != nil {
@@ -99,7 +103,7 @@ context_length = 131072
 	wantModels := []string{"provider-planner", "provider-shell", "provider-answer", "provider-discovery"}
 	for index := range wantRoles {
 		role := report.Roles[index]
-		if role.Role != wantRoles[index] || role.Alias != wantAliases[index] || role.Model != wantModels[index] || role.CachedTokens != 7 {
+		if role.Role != wantRoles[index] || role.Alias != wantAliases[index] || role.Model != wantModels[index] || role.CachedTokens != 7 || role.ReasoningTokens != 3 {
 			t.Fatalf("role[%d]=%+v", index, role)
 		}
 	}
@@ -132,6 +136,21 @@ context_length = 131072
 			t.Fatalf("session identity is empty or reused: %q", request.Params.SessionID)
 		}
 		sessions[request.Params.SessionID] = true
+	}
+	processes, err := os.ReadFile(processCapture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	processIDs := splitNonemptyLines(string(processes))
+	if len(processIDs) != 4 {
+		t.Fatalf("started %d model-host processes, want one fresh process per role", len(processIDs))
+	}
+	uniqueProcesses := map[string]bool{}
+	for _, processID := range processIDs {
+		if uniqueProcesses[processID] {
+			t.Fatalf("model-host process was reused across roles: %v", processIDs)
+		}
+		uniqueProcesses[processID] = true
 	}
 }
 

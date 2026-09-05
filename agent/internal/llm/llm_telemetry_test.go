@@ -106,6 +106,7 @@ func TestEmitCacheUsageNotifiesGeneralUsageObserver(t *testing.T) {
 	emitCacheUsage(ctx, ResolvedModel{ProviderName: "example", Model: "answer-model"}, &responseUsage{
 		PromptTokens:     100,
 		CompletionTokens: 25,
+		ReasoningTokens:  7,
 		CacheDiscount:    &discount,
 		PromptTokensDetails: &promptTokensDetails{
 			CachedTokens:     40,
@@ -116,7 +117,7 @@ func TestEmitCacheUsageNotifiesGeneralUsageObserver(t *testing.T) {
 	if gotModel.Model != "answer-model" || gotModel.ProviderName != "example" {
 		t.Fatalf("observer model = %+v", gotModel)
 	}
-	if !got.UsageAvailable || got.Stage != "answer" || got.PromptTokens != 100 || got.CompletionTokens != 25 || got.CachedTokens != 40 || got.CacheWriteTokens != 10 {
+	if !got.UsageAvailable || got.Stage != "answer" || got.PromptTokens != 100 || got.CompletionTokens != 25 || got.ReasoningTokens != 7 || got.CachedTokens != 40 || got.CacheWriteTokens != 10 {
 		t.Fatalf("observer usage = %+v", got)
 	}
 	if got.CacheDiscount == nil || *got.CacheDiscount != discount {

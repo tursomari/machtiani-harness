@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -42,7 +43,7 @@ case "$request" in
 esac
 printf '%s\n' '{"v":1,"id":"generation","event":{"type":"text-delta","index":0,"text":"hello "}}'
 printf '%s\n' '{"v":1,"id":"generation","event":{"type":"text-delta","index":0,"text":"world"}}'
-printf '%s\n' '{"v":1,"id":"generation","event":{"type":"usage","inputTokens":7,"outputTokens":2,"totalTokens":9,"cacheReadTokens":3}}'
+printf '%s\n' '{"v":1,"id":"generation","event":{"type":"usage","inputTokens":7,"outputTokens":2,"totalTokens":9,"cacheReadTokens":3,"reasoningTokens":1}}'
 printf '%s\n' '{"v":1,"id":"generation","result":{"completed":true}}'
 `)
 	model := ResolvedModel{Transport: "model-host", Profile: "/private/profile.json", Command: fixture, Model: "fixture"}
@@ -58,7 +59,7 @@ printf '%s\n' '{"v":1,"id":"generation","result":{"completed":true}}'
 	if answer != "hello world" || strings.Join(tokens, "") != answer {
 		t.Fatalf("answer=%q tokens=%q", answer, tokens)
 	}
-	if !observed.UsageAvailable || observed.PromptTokens != 7 || observed.CompletionTokens != 2 || observed.CachedTokens != 3 {
+	if !observed.UsageAvailable || observed.PromptTokens != 7 || observed.CompletionTokens != 2 || observed.CachedTokens != 3 || observed.ReasoningTokens != 1 {
 		t.Fatalf("usage=%+v", observed)
 	}
 }
@@ -107,17 +108,33 @@ func TestModelHostTransportPreservesRoleAndCacheBoundary(t *testing.T) {
 	}
 }
 
-func TestModelHostTransportReturnsStructuredFailure(t *testing.T) {
-	fixture := writeModelHostFixture(t, `
+func TestModelHostTransportReturnsStructuredFailures(t *testing.T) {
+	tests := []struct {
+		code         string
+		retryAfterMS int
+	}{
+		{code: "AUTH_REQUIRED"},
+		{code: "AUTH_EXPIRED"},
+		{code: "RATE_LIMITED", retryAfterMS: 2750},
+		{code: "QUOTA_EXHAUSTED"},
+		{code: "MODEL_UNAVAILABLE"},
+		{code: "UPSTREAM_CHANGED"},
+		{code: "CANCELLED"},
+	}
+	for _, test := range tests {
+		t.Run(test.code, func(t *testing.T) {
+			fixture := writeModelHostFixture(t, fmt.Sprintf(`
 read request
-printf '%s\n' '{"v":1,"id":"generation","error":{"code":"AUTH_EXPIRED","message":"Sign in again."}}'
-`)
-	_, err := chatModelHost(context.Background(), ResolvedModel{
-		Transport: "model-host", Profile: "/private/profile.json", Command: fixture, Model: "fixture",
-	}, nil, []Message{{Role: "user", Content: "hello"}}, false, nil)
-	var hostErr *ModelHostCallError
-	if err == nil || !strings.Contains(err.Error(), "Sign in again") || !errors.As(err, &hostErr) || hostErr.Code != "AUTH_EXPIRED" {
-		t.Fatalf("error=%#v", err)
+			printf '%%s\n' '{"v":1,"id":"generation","error":{"code":"%s","message":"provider detail","retryAfterMs":%d}}'
+			`, test.code, test.retryAfterMS))
+			_, err := chatModelHost(context.Background(), ResolvedModel{
+				Transport: "model-host", Profile: "/private/profile.json", Command: fixture, Model: "fixture",
+			}, nil, []Message{{Role: "user", Content: "hello"}}, false, nil)
+			var hostErr *ModelHostCallError
+			if err == nil || !strings.Contains(err.Error(), "provider detail") || !errors.As(err, &hostErr) || hostErr.Code != test.code || hostErr.RetryAfterMS != test.retryAfterMS {
+				t.Fatalf("error=%#v structured=%#v", err, hostErr)
+			}
+		})
 	}
 }
 
