@@ -138,6 +138,35 @@ read request
 	}
 }
 
+func TestModelHostFailureIsActionableOutsideVerify(t *testing.T) {
+	tests := []struct {
+		fault ModelHostCallError
+		want  []string
+	}{
+		{fault: ModelHostCallError{Code: "AUTH_EXPIRED", Message: "Sign in expired.", ModelAlias: "dearmachine"}, want: []string{"Sign in expired.", "machtiani auth login --model dearmachine"}},
+		{fault: ModelHostCallError{Code: "RATE_LIMITED", Message: "Slow down.", RetryAfterMS: 2500}, want: []string{"Slow down.", "retry after 3s"}},
+		{fault: ModelHostCallError{Code: "QUOTA_EXHAUSTED", Message: "No usage."}, want: []string{"No usage.", "subscription account's usage limits"}},
+		{fault: ModelHostCallError{Code: "MODEL_UNAVAILABLE", Message: "Gone."}, want: []string{"Gone.", "configured model"}},
+		{fault: ModelHostCallError{Code: "UPSTREAM_CHANGED", Message: "Protocol changed."}, want: []string{"Protocol changed.", "pinned model-host runtime"}},
+	}
+	for _, test := range tests {
+		t.Run(test.fault.Code, func(t *testing.T) {
+			if got := test.fault.Error(); !containsAllStrings(got, test.want...) {
+				t.Fatalf("error=%q want=%v", got, test.want)
+			}
+		})
+	}
+}
+
+func containsAllStrings(value string, parts ...string) bool {
+	for _, part := range parts {
+		if !strings.Contains(value, part) {
+			return false
+		}
+	}
+	return true
+}
+
 func TestModelHostTransportHonorsCancellation(t *testing.T) {
 	fixture := writeModelHostFixture(t, "read request\nexec sleep 30\n")
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)

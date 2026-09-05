@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 const modelHostProtocolVersion = 1
@@ -67,13 +68,38 @@ type ModelHostCallError struct {
 	Code         string
 	Message      string
 	RetryAfterMS int
+	ModelAlias   string
 }
 
 func (e *ModelHostCallError) Error() string {
 	if e == nil {
 		return ""
 	}
-	return e.Message
+	message := strings.TrimSpace(e.Message)
+	switch e.Code {
+	case "AUTH_REQUIRED", "AUTH_EXPIRED":
+		if e.ModelAlias != "" {
+			return fmt.Sprintf("%s Run 'machtiani auth login --model %s' in an interactive terminal, then retry.", message, e.ModelAlias)
+		}
+	case "RATE_LIMITED":
+		if e.RetryAfterMS > 0 {
+			return fmt.Sprintf("%s Provider retry after %s.", message, (time.Duration(e.RetryAfterMS) * time.Millisecond).Round(time.Second))
+		}
+	case "QUOTA_EXHAUSTED":
+		return message + " Check the subscription account's usage limits before retrying."
+	case "MODEL_UNAVAILABLE":
+		return message + " Check the configured model and provider account access."
+	case "UPSTREAM_CHANGED":
+		return message + " Update or reinstall the pinned model-host runtime before retrying."
+	}
+	return message
+}
+
+func modelHostAlias(model ResolvedModel) string {
+	if alias := strings.TrimSpace(model.Alias); alias != "" {
+		return alias
+	}
+	return strings.TrimSpace(model.ProviderName)
 }
 
 func modelHostSessionID(ctx context.Context) string {
@@ -222,7 +248,7 @@ func chatModelHost(ctx context.Context, model ResolvedModel, extraParams map[str
 		if envelope.Error != nil {
 			_ = cmd.Process.Kill()
 			_ = cmd.Wait()
-			return "", &ModelHostCallError{Code: envelope.Error.Code, Message: envelope.Error.Message, RetryAfterMS: envelope.Error.RetryAfterMS}
+			return "", &ModelHostCallError{Code: envelope.Error.Code, Message: envelope.Error.Message, RetryAfterMS: envelope.Error.RetryAfterMS, ModelAlias: modelHostAlias(model)}
 		}
 		if envelope.Event != nil {
 			switch envelope.Event.Type {
