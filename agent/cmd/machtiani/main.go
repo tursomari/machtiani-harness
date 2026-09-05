@@ -347,6 +347,7 @@ var cliCommands = []cliCommand{
 	{name: "session", description: "Manage sessions (list, show)", handler: handleSessionCommand},
 	{name: "config", description: "Create and manage configuration", handler: handleConfigCommand},
 	{name: "auth", description: "Manage shared model authentication", handler: handleAuthCommand},
+	{name: "verify", description: "Verify every configured model role", handler: handleVerifyCommand},
 	{name: "shell-agent", description: "Run a shell-agent task directly (no planner)", handler: handleShellAgentCommand},
 }
 

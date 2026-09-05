@@ -76,10 +76,29 @@ func (e *ModelHostCallError) Error() string {
 }
 
 func modelHostSessionID(ctx context.Context) string {
+	if ctx != nil {
+		if value, ok := ctx.Value(contextKeyModelHostSessionID{}).(string); ok && strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
 	if value := strings.TrimSpace(os.Getenv("MACHTIANI_SESSION_ID")); value != "" {
 		return value
 	}
 	return "machtiani-call"
+}
+
+type contextKeyModelHostSessionID struct{}
+
+// WithModelHostSessionID gives one model-host call chain an explicit identity
+// without mutating the process environment shared by concurrent callers.
+func WithModelHostSessionID(ctx context.Context, sessionID string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if strings.TrimSpace(sessionID) == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, contextKeyModelHostSessionID{}, strings.TrimSpace(sessionID))
 }
 
 func modelHostMessages(ctx context.Context, messages []Message, model ResolvedModel) ([]modelHostMessage, error) {
