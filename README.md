@@ -34,7 +34,7 @@ Sandboxing and environment isolation belong in an external scaffold layer, not i
 ## Prerequisites
 - Nix 2.24 or newer with flakes enabled for installation, updates, and the
   pinned development environments.
-- Go 1.23+ only for direct Go development outside the Nix shells.
+- Go 1.26.5 for direct Go development outside the Nix shells.
 - The installed Nix package supplies pinned Git, ripgrep, Bash, coreutils, and
   GNU sed for agent-launched commands; they do not need separate host installs.
 - OpenAI‑compatible API access:
@@ -76,7 +76,7 @@ bash agent/tests/run-live.sh
 - `MACHTIANI_BIN` must be an absolute executable path. The harness carries it into its detached worktree and never resolves or invokes a host command named `machtiani`.
 - `MACHTIANI_REQUIRE_LIVE=true` rejects stub/dry-run preflight; omit it only when intentionally exercising the non-live fallback mode.
 - Writes `test-out-*` directories containing logs, transcripts, and artifacts in the repo root.
-- If the harness fails with `mct is not synced at current git state ... Run machtiani sync before proceeding.`, run the repo-local sync command from `docs/machtiani-runbook.md` and rerun the harness.
+- If the harness fails with `machtiani is not synced at current git state ... Run machtiani sync before proceeding.`, run the repo-local sync command from `docs/machtiani-runbook.md` and rerun the harness.
 - When `TEST_*` and `OPENAI_*` are both unset the script injects stub credentials and forces `--dry-run`.
 
 See [`TESTING.md`](TESTING.md) for the canonical repository testing entrypoint,
@@ -807,3 +807,8 @@ rm -f ~/.local/bin/machtiani ~/.local/bin/file-discovery ~/.local/bin/shell-agen
 Remove `~/.machtiani/installations/machtiani/` as well to discard the managed
 source clone and updater state. Project UUID stores and model configuration are
 independent and are not removed by this step.
+
+## License
+
+Machtiani is distributed under the [MIT License](LICENSE). Third-party code
+retains its own license and notices.
