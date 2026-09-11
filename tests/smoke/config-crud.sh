@@ -59,6 +59,9 @@ assert_unchanged() {
   [[ "$actual" == "$expected" ]] || fail "rejected mutation changed $CONFIG_PATH"
 }
 
+echo "==> Exercising ChatGPT subscription configuration in a terminal..."
+python3 "$(dirname "$0")/config-chatgpt-wizard.py"
+
 echo "==> Exercising the provider catalogue..."
 machtiani config catalog list >"$SCRATCH_DIR/catalog-list"
 assert_file_contains 'deepseek' "$SCRATCH_DIR/catalog-list"

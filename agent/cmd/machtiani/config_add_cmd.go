@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -93,6 +94,8 @@ func handleConfigAddCommand(args []string) int {
 			value, _ := catalog.Provider(strings.TrimPrefix(selection, "catalog:"))
 			preset = &value
 			*presetID = value.ID
+		case selection == "subscription:chatgpt":
+			*providerName = "chatgpt"
 		case selection == "other":
 			*providerName, err = promptLineDefault(reader, "Provider name", "default", true)
 			if err != nil {
@@ -138,7 +141,28 @@ func handleConfigAddCommand(args []string) int {
 	if providerExists && (providerDefinitionChanged || preset != nil) {
 		return configUsageError("provider definition flags and --preset cannot be used for an existing provider; use config provider set")
 	}
-	if !providerExists {
+	var subscription *chatGPTConfigSetup
+	if !providerExists && *providerName == "chatgpt" {
+		if providerDefinitionChanged {
+			return configUsageError("ChatGPT subscriptions use browser or device-code sign-in; use a separate provider for API keys")
+		}
+		subscription, err = newChatGPTConfigSetup()
+	} else if providerExists {
+		subscription, err = existingChatGPTConfigSetup(providers[*providerName])
+	}
+	if err != nil {
+		return configError(err)
+	}
+	if subscription != nil {
+		defer subscription.close()
+		if err := subscription.authenticate(*noInteractive, menuTheme); err != nil {
+			return configError(err)
+		}
+		if !providerExists {
+			providers[*providerName] = map[string]any{"transport": "model-host", "profile": subscription.path, "command": subscription.command}
+		}
+	}
+	if !providerExists && subscription == nil {
 		if !*noInteractive && preset == nil {
 			if strings.TrimSpace(*providerURL) == "" {
 				*providerURL, err = promptLineDefault(reader, "Provider URL", "", true)
@@ -208,7 +232,7 @@ func handleConfigAddCommand(args []string) int {
 
 	modelCatalogProvider := preset
 	discoveryCredential := modelDiscoveryCredential(*apiKey, *apiKeyEnv)
-	if modelCatalogProvider == nil && providerExists && !*noInteractive {
+	if subscription == nil && modelCatalogProvider == nil && providerExists && !*noInteractive {
 		if value, ok := catalogProviderForConfigured(*providerName, providers[*providerName], catalog); ok {
 			modelCatalogProvider = &value
 			discoveryCredential = configuredProviderCredential(providers[*providerName])
@@ -216,6 +240,17 @@ func handleConfigAddCommand(args []string) int {
 	}
 	var catalogModel *configcatalog.Model
 	detectedContextLength := 0
+	if subscription != nil {
+		selected, selectErr := subscription.selectModel(*modelID, *noInteractive, menuTheme)
+		if selectErr != nil {
+			return configError(selectErr)
+		}
+		*modelID = selected.ID
+		catalogModel = &configcatalog.Model{ID: selected.ID, Name: selected.Name, Reasoning: selected.ReasoningEfforts}
+		if *noInteractive && strings.TrimSpace(*alias) == "" {
+			*alias = uniqueModelAliasSuggestion("chatgpt-"+suggestedModelAlias(*modelID), models)
+		}
+	}
 	if modelCatalogProvider != nil {
 		if strings.TrimSpace(*modelID) == "" {
 			if *noInteractive {
@@ -250,13 +285,20 @@ func handleConfigAddCommand(args []string) int {
 		}
 		if strings.TrimSpace(*alias) == "" {
 			suggested := uniqueModelAliasSuggestion(*modelID, models)
+			if subscription != nil {
+				suggested = uniqueModelAliasSuggestion("chatgpt-"+suggestedModelAlias(*modelID), models)
+			}
 			*alias, err = promptModelAlias(reader, suggested)
 			if err != nil {
 				return configError(err)
 			}
 		}
 		if !fs.Changed("reasoning") {
-			*reasoning, err = promptReasoningChoice(reader, catalogModel, menuTheme)
+			if subscription != nil {
+				*reasoning, err = promptChatGPTReasoning(catalogModel.Reasoning, menuTheme)
+			} else {
+				*reasoning, err = promptReasoningChoice(reader, catalogModel, menuTheme)
+			}
 			if err != nil {
 				return configError(err)
 			}
@@ -285,6 +327,11 @@ func handleConfigAddCommand(args []string) int {
 		}
 	}
 	*modelID, *alias, *reasoning = strings.TrimSpace(*modelID), strings.TrimSpace(*alias), strings.TrimSpace(*reasoning)
+	if subscription != nil && *reasoning != "" {
+		if !slices.Contains(catalogModel.Reasoning, *reasoning) {
+			return configUsageError("reasoning effort is not offered by this ChatGPT model")
+		}
+	}
 	if *modelID == "" || *alias == "" {
 		return configUsageError("--model and --alias are required (catalogue presets supply defaults)")
 	}
@@ -355,8 +402,16 @@ func handleConfigAddCommand(args []string) int {
 		fmt.Println("No changes written.")
 		return 0
 	}
+	if subscription != nil {
+		if err := subscription.setInitialModel(*modelID); err != nil {
+			return configError(err)
+		}
+	}
 	if err := doc.save(); err != nil {
 		return configError(err)
+	}
+	if subscription != nil {
+		subscription.saved = true
 	}
 	fmt.Printf("Added model %s using provider %s.\n", *alias, *providerName)
 	if !*noInteractive {
@@ -376,6 +431,9 @@ func promptProviderChoice(existing map[string]any, catalog configcatalog.Catalog
 	options := make([]initMenuOption, 0, len(existing)+len(catalog.Providers)+1)
 	for _, name := range sortedKeys(existing) {
 		options = append(options, initMenuOption{label: "Existing: " + name, value: "existing:" + name})
+	}
+	if _, exists := existing["chatgpt"]; !exists {
+		options = append(options, initMenuOption{label: "ChatGPT subscription", value: "subscription:chatgpt"})
 	}
 	for _, provider := range catalog.Providers {
 		if _, exists := existing[provider.ID]; !exists {

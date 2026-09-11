@@ -43,7 +43,7 @@ machtiani config
 If the selected file does not exist, this opens initial setup. Otherwise it
 opens menus for providers, models, the default model, caching, and validation.
 Choosing **Manage models → Add model** uses the same provider-first setup flow:
-select an existing provider, a catalogue preset, or `Other provider` before
+select an existing provider, `ChatGPT subscription`, a catalogue preset, or `Other provider` before
 choosing or entering the model.
 
 Interactive menus refresh the visible terminal after each selection. A submenu
@@ -138,13 +138,61 @@ machtiani config add [flags]
 
 When `--provider` names an existing provider, its URL and credentials are
 reused. Provider-definition flags are rejected in that case; use `provider set`
-to modify the existing provider. A new provider requires a URL and either
-`--api-key` or `--api-key-env`.
+to modify the existing provider. A new API provider requires a URL and either
+`--api-key` or `--api-key-env`. ChatGPT subscriptions use the sign-in flow below.
 
 The first model becomes the default automatically. Interactive additions ask
 whether a later model should become the default and offer to add another set.
 `--no-cache` is only valid while creating a new configuration; later additions
 do not change the existing global cache policy.
+
+## ChatGPT subscription models
+
+Run `machtiani config add` and choose **ChatGPT subscription**, or start that
+flow directly with `machtiani config add --provider chatgpt`. The same choice
+is available through **Manage models → Add model** and initial configuration.
+The `machtiani-model-host` executable from the Machtiani Installer runtime must
+be on `PATH`; `MACHTIANI_MODEL_HOST_BIN` can point to another installed copy.
+Running the DearMachine installer wizard or installing the DearMachine service
+is not required.
+
+Choose browser sign-in on a desktop, or device-code sign-in for SSH/headless
+use. The official Codex runtime handles authentication. Harness keeps a private
+profile under the OS configuration directory (`$XDG_CONFIG_HOME/machtiani/`
+or `~/.config/machtiani/` on Linux), using a separate Codex login directory so
+an existing API-key login does not select API billing. Harness does not copy
+tokens into TOML or the model profile.
+
+After sign-in, the wizard fetches the account's available models and reasoning
+efforts through the model host. Model display names and IDs remain as supplied
+by the runtime; only the suggested local alias receives a `chatgpt-` prefix.
+For example, model ID `gpt-example` suggests `chatgpt-gpt-example`. Existing
+aliases produce suggestions such as `chatgpt-gpt-example-2`. You can replace
+the suggestion, but an explicit duplicate is rejected.
+
+To add another model from that account, select **Existing: chatgpt**. The wizard
+refreshes the model list and reuses the login without modifying the shared
+profile's default model. Existing installer-created ChatGPT providers can also
+be selected, including providers with a different local name. Each model alias
+records its own exact model ID, so subscription and API-key versions can coexist
+and different roles can select different models or providers:
+
+```bash
+machtiani run --model chatgpt-planner --shell-agent-model openai-shell -p "Your task"
+```
+
+The example assumes those two aliases have been configured. Use
+`machtiani auth status --model <alias>` to inspect sign-in, or
+`machtiani auth login --model <alias> --mode browser` to sign in again.
+After an account is configured, `config add --provider chatgpt --model <id>
+--no-interactive` adds an available model with a unique prefixed alias; `--alias`
+can override it. Noninteractive setup never opens a login prompt.
+
+Cancelling or rejecting setup leaves the selected TOML configuration unchanged.
+It removes only a newly allocated profile for that attempt; existing profiles
+and account sessions are preserved. The wizard needs a working runtime and
+model catalogue; it reports sign-in, unavailable-model, and discovery errors
+instead of substituting API access or a static model list.
 
 ## Built-in provider catalogue
 

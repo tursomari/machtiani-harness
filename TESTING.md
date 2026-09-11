@@ -197,6 +197,12 @@ The container test must complete all of these checks before printing its success
 5. A pseudo-terminal wizard run verifies that an existing OpenRouter provider
    retains `Search current model catalogue` when another model is added, without
    making a live OpenRouter request or changing the disposable configuration.
+   The same configuration suite runs `tests/smoke/config-chatgpt-wizard.py`
+   against the real CLI and a local model-host fixture. It covers browser and
+   device-code login, current subscription model/effort discovery, unchanged
+   display names, prefixed and custom aliases, collisions with API models,
+   account reuse after provider rename, cancellation, and failed setup.
+   These tests require no subscription credentials and make no provider calls.
 6. Every provider, model, and cache subcommand is exercised, including
    reference-aware rename/removal, reasoning and parameter updates, cache
    inheritance, inspection, validation, and expected failure paths.
@@ -226,6 +232,13 @@ The container test must complete all of these checks before printing its success
     archive.
 
 The scripts use `set -euo pipefail`; any failed command must produce a non-zero harness exit and must not print `SMOKE TEST PASSED`.
+
+To iterate on only the ChatGPT wizard tests with an already-built candidate,
+use `MACHTIANI_SMOKE_AGENT=/absolute/path/to/machtiani nix develop .#smoke -c
+python3 tests/smoke/config-chatgpt-wizard.py`. The full container smoke invokes
+the same test from `config-crud.sh`. This verifies the configuration and
+model-host protocol boundary with a fixture; a real account sign-in remains
+a separate live acceptance check.
 
 ## Integration Tests
 All integration harnesses default to deterministic stub or dry-run behavior. Export the listed environment variables to invoke live LLM calls.

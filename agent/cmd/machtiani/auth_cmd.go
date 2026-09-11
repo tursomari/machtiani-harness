@@ -2,12 +2,14 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/spf13/pflag"
 	"github.com/tursomari/machtiani/agent/internal/llm"
@@ -69,7 +71,7 @@ func handleAuthCommand(args []string) int {
 		fmt.Fprintln(os.Stderr, "--mode is supported only by auth login.")
 		return 2
 	}
-	result, protocolErr, err := callModelHostAuth(resolved.Command, resolved.Profile, "auth/"+action)
+	result, protocolErr, err := callModelHostControl(resolved.Command, resolved.Profile, "auth/"+action)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Authentication command failed: %v\n", err)
 		return 1
@@ -113,7 +115,7 @@ func callInteractiveModelHostLogin(command, profile, mode string) error {
 	return nil
 }
 
-func callModelHostAuth(command, profile, method string) (json.RawMessage, *struct {
+func callModelHostControl(command, profile, method string) (json.RawMessage, *struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
 }, error) {
@@ -121,7 +123,10 @@ func callModelHostAuth(command, profile, method string) (json.RawMessage, *struc
 	if command == "" {
 		command = "machtiani-model-host"
 	}
-	process := exec.Command(command, "--profile", profile)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	process := exec.CommandContext(ctx, command, "--profile", profile)
+	process.WaitDelay = time.Second
 	stdin, err := process.StdinPipe()
 	if err != nil {
 		return nil, nil, err
@@ -144,6 +149,7 @@ func callModelHostAuth(command, profile, method string) (json.RawMessage, *struc
 		return nil, nil, err
 	}
 	scanner := bufio.NewScanner(stdout)
+	scanner.Buffer(make([]byte, 4096), 1024*1024)
 	if !scanner.Scan() {
 		waitErr := process.Wait()
 		if scanner.Err() != nil {
