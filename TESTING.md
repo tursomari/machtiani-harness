@@ -240,6 +240,14 @@ the same test from `config-crud.sh`. This verifies the configuration and
 model-host protocol boundary with a fixture; a real account sign-in remains
 a separate live acceptance check.
 
+The model selection CLI can also be tested independently with
+`MACHTIANI_SMOKE_AGENT=/absolute/path/to/machtiani nix develop .#smoke -c
+python3 tests/smoke/config-model-selection.py`. This suite uses disposable
+configurations and real terminals to check shell-agent selection, explicit
+scope targeting, preservation of other settings, invalid arguments, and
+confirmation/cancellation. It runs from `config-crud.sh` in the container smoke
+suite and makes no provider requests.
+
 ## Integration Tests
 All integration harnesses default to deterministic stub or dry-run behavior. Export the listed environment variables to invoke live LLM calls.
 

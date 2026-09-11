@@ -356,6 +356,7 @@ machtiani config model set [<alias>] [flags]
 machtiani config model rename <old> <new> [flags]
 machtiani config model remove [<alias>] [flags]
 machtiani config model default [<alias>] [flags]
+machtiani config model shell-agent [<alias>] [flags]
 ```
 
 `list` displays each alias, provider, upstream model identifier, and marks the
@@ -394,6 +395,21 @@ machtiani config model set reviewer --clear-reasoning
 machtiani config model default reviewer
 machtiani config model rename reviewer final-reviewer
 ```
+
+To persist a separate model for shell-agent tasks, select an existing alias:
+
+```bash
+machtiani config model shell-agent chatgpt-gpt-5.6-sol --global --no-interactive
+```
+
+This saves the top-level `shell_agent_model` without changing `default_model`,
+other role selections, model definitions, or provider credentials. It accepts
+`--global`, `--project`, or `--path <file>` with the same targeting rules as
+other configuration commands. An unknown alias is rejected without writing.
+Without `--no-interactive`, the subcommand offers an alias picker when omitted
+and asks for confirmation before saving. `machtiani run --shell-agent-model
+<alias>` still overrides the saved selection for one run. The standalone
+`machtiani shell-agent` command uses `--model` for its per-run override.
 
 ### Reasoning request compatibility
 

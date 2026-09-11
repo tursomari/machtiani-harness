@@ -59,6 +59,9 @@ assert_unchanged() {
   [[ "$actual" == "$expected" ]] || fail "rejected mutation changed $CONFIG_PATH"
 }
 
+echo "==> Exercising model role selection..."
+python3 "$(dirname "$0")/config-model-selection.py"
+
 echo "==> Exercising ChatGPT subscription configuration in a terminal..."
 python3 "$(dirname "$0")/config-chatgpt-wizard.py"
 

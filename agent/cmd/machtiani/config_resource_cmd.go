@@ -432,7 +432,7 @@ func handleConfigProviderRemove(args []string) int {
 
 func handleConfigModelCommand(args []string) int {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
-		fmt.Fprintln(os.Stderr, "Usage: machtiani config model <list|show|add|set|rename|remove|default> [flags]")
+		fmt.Fprintln(os.Stderr, "Usage: machtiani config model <list|show|add|set|rename|remove|default|shell-agent> [flags]")
 		return 0
 	}
 	switch args[0] {
@@ -446,6 +446,8 @@ func handleConfigModelCommand(args []string) int {
 		return handleConfigModelRemove(args[1:])
 	case "default":
 		return handleConfigModelDefault(args[1:])
+	case "shell-agent":
+		return handleConfigModelSelection("shell-agent", "shell_agent_model", "Shell-agent model", args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown model subcommand: %s\n", args[0])
 		return 2
@@ -910,7 +912,16 @@ func handleConfigModelRemove(args []string) int {
 }
 
 func handleConfigModelDefault(args []string) int {
-	fs, flags, noInteractive := newMutationFlagSet("machtiani config model default")
+	return handleConfigModelSelection("default", "default_model", "Default model", args)
+}
+
+func handleConfigModelSelection(action, key, label string, args []string) int {
+	fs, flags, noInteractive := newMutationFlagSet("machtiani config model " + action)
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: machtiani config model %s [<alias>] [flags]\n\n", action)
+		fmt.Fprintf(os.Stderr, "Save the %s using an existing model alias.\n", strings.ToLower(label))
+		fs.PrintDefaults()
+	}
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, pflag.ErrHelp) {
 			return 0
@@ -934,10 +945,10 @@ func handleConfigModelDefault(args []string) int {
 	if fs.NArg() == 1 {
 		alias = fs.Arg(0)
 	} else if fs.NArg() > 1 {
-		return configUsageError("model default expects at most one alias")
+		return configUsageError("model " + action + " expects at most one alias")
 	}
 	if alias == "" && !*noInteractive {
-		alias, err = promptDocumentSelection(doc, "Default model", sortedKeys(models))
+		alias, err = promptDocumentSelection(doc, label, sortedKeys(models))
 		if err != nil {
 			return configError(err)
 		}
@@ -948,18 +959,18 @@ func handleConfigModelDefault(args []string) int {
 	if _, ok := models[alias]; !ok {
 		return configError(fmt.Errorf("model %q not found", alias))
 	}
-	confirmed, err := confirmConfigChange(*noInteractive, fmt.Sprintf("Set default model to %q.", alias))
+	confirmed, err := confirmConfigChange(*noInteractive, fmt.Sprintf("Set %s to %q.", strings.ToLower(label), alias))
 	if err != nil {
 		return configError(err)
 	}
 	if !confirmed {
 		return 0
 	}
-	doc.raw["default_model"] = alias
+	doc.raw[key] = alias
 	if err := doc.save(); err != nil {
 		return configError(err)
 	}
-	fmt.Printf("Default model: %s\n", alias)
+	fmt.Printf("%s: %s\n", label, alias)
 	return 0
 }
 

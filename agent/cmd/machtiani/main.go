@@ -1591,7 +1591,7 @@ func printConfigUsage() {
 	fmt.Fprintln(os.Stderr, "  add         Add a provider/model set")
 	fmt.Fprintln(os.Stderr, "  catalog     List and inspect built-in provider presets")
 	fmt.Fprintln(os.Stderr, "  provider    Manage providers")
-	fmt.Fprintln(os.Stderr, "  model       Manage models and the default selection")
+	fmt.Fprintln(os.Stderr, "  model       Manage models and default/shell-agent selections")
 	fmt.Fprintln(os.Stderr, "  cache       Manage global and per-model caching")
 	fmt.Fprintln(os.Stderr, "  scope       Show or select global/project configuration")
 	fmt.Fprintln(os.Stderr, "  check       Validate the selected configuration file")
