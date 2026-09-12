@@ -513,14 +513,8 @@ func BuildLibrary(global *llm.Config, apiKeyOverrides map[string]string, persist
 	if modelAlias == "" {
 		modelCfg.ModelName = global.DefaultModel
 	}
-	if strings.TrimSpace(modelCfg.APIKey) == "" {
-		if key := os.Getenv("OPENROUTER_API_KEY"); key != "" {
-			modelCfg.APIKey = key
-		} else if key := os.Getenv("OPENAI_API_KEY"); key != "" {
-			modelCfg.APIKey = key
-		}
-	}
-
+	// Resolve credentials through the selected model's provider. An unrelated
+	// provider's environment variable must not override that selection.
 	model, err := NewModel(modelCfg, apiKeyOverrides)
 	if err != nil {
 		return nil, fmt.Errorf("configure shell-agent model: %w", err)
