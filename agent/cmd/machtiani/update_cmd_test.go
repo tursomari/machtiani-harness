@@ -240,3 +240,47 @@ func replaceUpdateManagerForTest(fake updateCommandManager) func() {
 	updateManagerFactory = func() updateCommandManager { return fake }
 	return func() { updateManagerFactory = original }
 }
+
+type coordinatedUpdateManager struct {
+	fakeUpdateManager
+	launcher string
+}
+
+func (f *coordinatedUpdateManager) CoordinatedLauncher() (string, error) { return f.launcher, nil }
+
+func TestStandaloneCommandsDeferToCoordinatedOwner(t *testing.T) {
+	for _, mode := range []string{"check", "install"} {
+		t.Run(mode, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			record := filepath.Join(home, "arguments")
+			t.Setenv("OWNER_TEST_RECORD", record)
+			launcher := filepath.Join(home, "dearmachine")
+			if err := os.WriteFile(launcher, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$OWNER_TEST_RECORD\"\n"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			fake := &coordinatedUpdateManager{launcher: launcher}
+			original := updateManagerFactory
+			updateManagerFactory = func() updateCommandManager { return fake }
+			defer func() { updateManagerFactory = original }()
+			var code int
+			want := "update\n"
+			if mode == "check" {
+				code = handleUpdateCommand([]string{"--check", "--json"})
+				want += "--check\n--json\n"
+			} else {
+				code = handleInstallCommand([]string{"--source", "/unused/source", "--no-interactive"})
+			}
+			if code != 0 {
+				t.Fatalf("exit %d", code)
+			}
+			got, err := os.ReadFile(record)
+			if err != nil || string(got) != want {
+				t.Fatalf("handoff: %q %v", got, err)
+			}
+			if fake.installed || fake.updated {
+				t.Fatal("standalone mutation occurred")
+			}
+		})
+	}
+}

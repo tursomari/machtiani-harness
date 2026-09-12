@@ -74,6 +74,9 @@ func handleUpdateCommand(args []string) int {
 		return 2
 	}
 	manager := updateManagerFactory()
+	if handled, code := coordinatedUpdate(manager, *checkOnly || (*noInteractive && !*yes), *jsonOutput); handled {
+		return code
+	}
 	result, err := manager.Check(context.Background())
 	if err != nil {
 		return printUpdateError(err, *jsonOutput)
@@ -129,6 +132,10 @@ func handleInstallCommand(args []string) int {
 		fs.Usage()
 		return 2
 	}
+	manager := updateManagerFactory()
+	if handled, code := coordinatedUpdate(manager, false, false); handled {
+		return code
+	}
 	selectedPrefix, err := resolveInstallPrefix(
 		*prefix,
 		home,
@@ -143,7 +150,7 @@ func handleInstallCommand(args []string) int {
 		fmt.Fprintln(os.Stderr, "Error: choose installation location:", err)
 		return 1
 	}
-	if _, err := updateManagerFactory().Install(context.Background(), *source, selectedPrefix); err != nil {
+	if _, err := manager.Install(context.Background(), *source, selectedPrefix); err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
 		return 1
 	}
@@ -320,6 +327,9 @@ func maybeAutomaticUpdate(args []string) (handled bool, code int) {
 		return false, 0
 	}
 	manager := updatepkg.NewManager(updatepkg.Options{Home: home, Version: Version, Commit: Commit, Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr})
+	if launcher, err := manager.CoordinatedLauncher(); launcher != "" || err != nil {
+		return false, 0
+	}
 	if _, err := os.Stat(manager.Paths().Receipt); errors.Is(err, os.ErrNotExist) {
 		return false, 0
 	} else if err != nil {
@@ -389,4 +399,37 @@ func printAutomaticUpdateDetails(result updatepkg.Result) {
 	fmt.Fprintf(os.Stderr, "Remote: %s (%s)\n", result.Remote, result.DefaultBranch)
 	fmt.Fprintf(os.Stderr, "Source: %s\nInstall target: %s\n", result.SourceDir, result.BinaryPath)
 	fmt.Fprintln(os.Stderr, "The update will be built locally from the managed source checkout.")
+}
+
+// A standalone invocation joins the coordinated update path once DearMachine
+// owns the installation. No standalone source, profile or launcher is changed.
+func coordinatedUpdate(manager updateCommandManager, check, jsonOutput bool) (bool, int) {
+	owner, ok := manager.(interface{ CoordinatedLauncher() (string, error) })
+	if !ok {
+		return false, 0
+	}
+	launcher, err := owner.CoordinatedLauncher()
+	if err != nil {
+		return true, printUpdateError(err, jsonOutput)
+	}
+	if launcher == "" {
+		return false, 0
+	}
+	args := []string{"update"}
+	if check {
+		args = append(args, "--check")
+	}
+	if jsonOutput {
+		args = append(args, "--json")
+	}
+	command := exec.Command(launcher, args...)
+	command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, os.Stderr
+	if err := command.Run(); err != nil {
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
+			return true, exit.ExitCode()
+		}
+		return true, printUpdateError(err, jsonOutput)
+	}
+	return true, 0
 }

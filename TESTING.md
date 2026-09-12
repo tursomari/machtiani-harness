@@ -615,3 +615,14 @@ The original evaluation pipeline, documented in scripts/run_eval.sh itself. It c
 ## Related Documentation
 - `README.md` — quick-start install and environment setup guidance.
 - `docs/machtiani-runbook.md` — repo-local synchronization and operation guidance.
+
+## Shared installation ownership
+
+`agent/internal/update/coordinated_test.go` checks that a DearMachine-owned
+installation blocks standalone profile mutation, including custom data roots
+and incomplete ownership records. The command suite checks that standalone
+install and update requests delegate to the coordinated launcher. Run
+`go test ./internal/update ./cmd/machtiani` from `agent` with isolated Git
+configuration so disposable fixture commits do not inherit operator signing.
+The sibling Installer's managed Nix container suite covers installation order,
+launcher takeover, preserved data and restoration after failed activation.

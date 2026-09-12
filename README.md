@@ -97,6 +97,13 @@ Both commands use the same Machtiani configuration and project data under
 
 ### Managed installation: `machtiani`
 
+If DearMachine is installed, it owns the shared Machtiani command. Machtiani
+installation and update requests use DearMachine's coordinated updater;
+standalone automatic updates are suppressed. Installing DearMachine after
+standalone Machtiani takes over the default command after building the combined
+release, while retaining configuration and project data. Use `machtiani-dev`
+for independent development builds.
+
 Nix 2.24 or newer with flakes enabled is required on NixOS, macOS, and other
 Linux distributions. Install from a clean clone whose `origin` identifies the
 update stream. The checkout must be at the tip of the remote default branch:

@@ -304,6 +304,9 @@ func (m *Manager) Check(ctx context.Context) (Result, error) {
 // Install creates an updater-owned source clone, realizes the exact source
 // revision with Nix, and activates it through a dedicated profile.
 func (m *Manager) Install(ctx context.Context, source, prefix string) (receipt Receipt, retErr error) {
+	if err := m.requireStandalone(); err != nil {
+		return Receipt{}, err
+	}
 	var err error
 	source, err = filepath.Abs(source)
 	if err != nil {
@@ -383,6 +386,9 @@ func (m *Manager) Install(ctx context.Context, source, prefix string) (receipt R
 	if err := os.Rename(stagedSource, m.paths.Source); err != nil {
 		return Receipt{}, err
 	}
+	if err := m.requireStandalone(); err != nil {
+		return Receipt{}, err
+	}
 	if err := m.activateProfile(ctx, storePath); err != nil {
 		return Receipt{}, err
 	}
@@ -403,6 +409,9 @@ func (m *Manager) Install(ctx context.Context, source, prefix string) (receipt R
 // Update builds the exact candidate commit in an isolated worktree and only
 // replaces the active binary after the candidate identifies itself correctly.
 func (m *Manager) Update(ctx context.Context, result Result) (updated Result, retErr error) {
+	if err := m.requireStandalone(); err != nil {
+		return Result{}, err
+	}
 	if result.Status != StatusAvailable || strings.TrimSpace(result.CandidateCommit) == "" {
 		return result, nil
 	}
@@ -490,6 +499,9 @@ func (m *Manager) Update(ctx context.Context, result Result) (updated Result, re
 			}
 		}
 	}()
+	if err := m.requireStandalone(); err != nil {
+		return Result{}, err
+	}
 	if err := m.activateProfile(ctx, storePath); err != nil {
 		return Result{}, err
 	}
