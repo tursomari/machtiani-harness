@@ -79,7 +79,7 @@ All config commands accept these target flags:
 | Flag | Target |
 | --- | --- |
 | `--path <file>` | Exactly the supplied path |
-| `--global` | `$HOME/.machtiani/config.toml` |
+| `--global` | `$XDG_CONFIG_HOME/machtiani/config.toml` (default `~/.config/machtiani/config.toml`) |
 | `--project` | `$HOME/.machtiani/<uuid>/config.toml` for the initialized project |
 
 The three flags are mutually exclusive. Without one, selection uses this order:
@@ -87,7 +87,8 @@ The three flags are mutually exclusive. Without one, selection uses this order:
 1. `MACHTIANI_CONFIG`, when set.
 2. The UUID-project config when its stored scope is `project`.
 3. A repo-local `.machtiani/config.toml` for an unmigrated legacy project.
-4. `$HOME/.machtiani/config.toml`.
+4. The native user configuration under `~/.config/machtiani/` (honoring `XDG_CONFIG_HOME`).
+5. The legacy `$HOME/.machtiani/config.toml` when no native configuration exists.
 
 Every command displays the selected absolute path. An explicit `--path` or
 An explicit target overrides `MACHTIANI_CONFIG` and reports that the
@@ -314,7 +315,7 @@ Provider `add` and `set` support:
 | Flag | Meaning |
 | --- | --- |
 | `--url <url>` | Set `base_url` |
-| `--api-key <value>` | Store a literal API key |
+| `--api-key <value>` | Save the key in the selected configuration’s private credential file |
 | `--api-key-env <name>` | Store an environment reference |
 | `--clear-api-key` | Remove the configured API key |
 | `--endpoint <path>` | Set a provider-specific endpoint |
@@ -565,3 +566,51 @@ Use `--keep-legacy` when the verified source copy must remain in place.
 The former scalar commands `config url`, `config api-key`, `config model
 <identifier>`, and `config reasoning` have been removed. Use the corresponding
 `config provider set` or `config model set` resource command instead.
+
+### Native configuration and private credentials
+
+The default user configuration is `$XDG_CONFIG_HOME/machtiani/config.toml`, or
+`~/.config/machtiani/config.toml` when `XDG_CONFIG_HOME` is unset. Project state,
+sessions, and modes remain under `~/.machtiani`. `MACHTIANI_CONFIG` selects an
+exact configuration for both setup and execution; explicit configuration-command
+`--path`, `--global`, and `--project` targets retain their precedence.
+
+Keys entered through native setup are saved in a mode-`0600` `credentials.env`
+beside the selected configuration. The TOML contains a reference, for example:
+
+```toml
+credentials_file = "credentials.env"
+
+[providers.deepseek]
+base_url = "https://api.deepseek.com"
+api_key_ref = "DEEPSEEK_API_KEY"
+```
+
+Relative credential paths resolve against the configuration directory, regardless
+of the working directory. An `api_key_ref` resolves
+from that private file; a missing file or entry is an error, not a fallback to
+another configuration or the inherited backend environment. An explicit
+`--api-key provider:value` runtime override still wins. An `api_key = "${VARIABLE}"` entry remains an environment reference, even when
+other providers in the configuration use file references. Credential files contain
+plain assignments, are never evaluated as shell scripts, and are not encrypted.
+
+`config provider set <alias> --api-key-env <name> --credentials-file <path>
+--no-interactive` connects an existing saved credential without passing its value
+in command arguments. Configuration inspection prints references, never the saved
+values. Saving a configuration also extracts any existing literal provider keys.
+
+Native `init` migrates the former `~/.machtiani/config.toml` into the new user
+location if it does not already exist, retaining the original for recovery.
+Reading configuration does not perform migration. For an explicit destination:
+
+```console
+MACHTIANI_CONFIG=/path/to/config.toml machtiani config import --source /path/to/old.toml
+```
+
+Import does not overwrite an existing configuration. `--credentials-file` can
+supply a legacy environment file; only referenced entries are copied. Copying a
+global configuration into project scope also copies its referenced credentials.
+
+DearMachine owns `~/.config/dearmachine/machtiani/config.toml` and its sibling
+`credentials.env`. It selects that path through `MACHTIANI_CONFIG`; installing
+DearMachine does not replace the personal Machtiani configuration.

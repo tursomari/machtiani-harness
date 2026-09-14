@@ -626,3 +626,23 @@ install and update requests delegate to the coordinated launcher. Run
 configuration so disposable fixture commits do not inherit operator signing.
 The sibling Installer's managed Nix container suite covers installation order,
 launcher takeover, preserved data and restoration after failed activation.
+
+## Configuration and credential isolation
+
+`agent/internal/configfiles`, `agent/internal/llm`, and the configuration command
+Go tests cover private credential storage, selected-file resolution, migration,
+copying, environment-only compatibility, and non-disclosure. Keep both HOME and
+XDG_CONFIG_HOME isolated in fixtures.
+
+After building an absolute test binary, run the real command regression:
+
+```console
+python3 tests/smoke/config-isolation.py /absolute/path/to/test-machtiani
+```
+
+It creates a disposable home and two repositories, configures separate personal
+and DearMachine credentials, and executes real `init` and `sync` commands against
+a loopback-only fake provider. It checks which key reaches HTTP and verifies that
+a missing selected credential fails before HTTP. No actual keys, email, installed
+services, or host configuration are used. This deterministic check supplements
+the existing smoke and product evaluation gates.

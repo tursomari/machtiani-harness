@@ -353,6 +353,7 @@ func TestAttachDefaultScopeAmbiguityDoesNotFallBack(t *testing.T) {
 func TestResolveAttachSessionFindsGlobalUUIDStoreOutsideProject(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
 	plainDirectory := t.TempDir()
 	originalDirectory := mustChdir(t, plainDirectory)
 	t.Cleanup(func() { mustChdir(t, originalDirectory) })
@@ -382,6 +383,7 @@ func TestResolveAttachSessionFindsGlobalUUIDStoreOutsideProject(t *testing.T) {
 func TestResolveAttachSessionReportsCrossStorePrefixAmbiguity(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
 	plainDirectory := t.TempDir()
 	originalDirectory := mustChdir(t, plainDirectory)
 	t.Cleanup(func() { mustChdir(t, originalDirectory) })

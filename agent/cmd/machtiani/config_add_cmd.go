@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/pflag"
 	"github.com/tursomari/machtiani/agent/internal/configcatalog"
+	"github.com/tursomari/machtiani/agent/internal/configfiles"
 	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/presentation"
 )
@@ -236,6 +237,16 @@ func handleConfigAddCommand(args []string) int {
 		if value, ok := catalogProviderForConfigured(*providerName, providers[*providerName], catalog); ok {
 			modelCatalogProvider = &value
 			discoveryCredential = configuredProviderCredential(providers[*providerName])
+			if table, ok := providers[*providerName].(map[string]any); ok {
+				if ref, ok := table["api_key_ref"].(string); ok && ref != "" {
+					file, _ := doc.raw["credentials_file"].(string)
+					values, err := configfiles.Read(configfiles.Resolve(doc.path, file))
+					if err != nil {
+						return configError(err)
+					}
+					discoveryCredential = values[ref]
+				}
+			}
 		}
 	}
 	var catalogModel *configcatalog.Model

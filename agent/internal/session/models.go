@@ -421,6 +421,8 @@ func resolveModelRuntimes(cfg legacyConfig, global llm.Config, paramPairs, param
 				primary.resolved = resolved
 				primary.alias = defaultAlias
 				primary.usingAlias = true
+			} else {
+				return componentModelRuntimes{}, err2
 			}
 		}
 	}

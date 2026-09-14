@@ -15,6 +15,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/spf13/pflag"
+	"github.com/tursomari/machtiani/agent/internal/configfiles"
 	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/presentation"
 	"github.com/tursomari/machtiani/agent/internal/projectstore"
@@ -39,7 +40,7 @@ type configDocument struct {
 
 func addConfigTargetFlags(fs *pflag.FlagSet, flags *configTargetFlags) {
 	fs.StringVar(&flags.path, "path", "", "exact configuration file to use")
-	fs.BoolVar(&flags.global, "global", false, "use $HOME/.machtiani/config.toml")
+	fs.BoolVar(&flags.global, "global", false, "use the native configuration under ~/.config/machtiani")
 	fs.BoolVar(&flags.project, "project", false, "use the current UUID project's config.toml")
 }
 
@@ -166,7 +167,7 @@ func (d *configDocument) save() error {
 	if err := os.MkdirAll(filepath.Dir(d.path), 0700); err != nil {
 		return fmt.Errorf("create config directory: %w", err)
 	}
-	if err := writeConfigAtomically(d.path, d.raw); err != nil {
+	if err := configfiles.Save(d.path, d.raw); err != nil {
 		return fmt.Errorf("write %s: %w", d.path, err)
 	}
 	return nil
@@ -447,7 +448,7 @@ func validEnvironmentName(value string) bool {
 
 func printProvider(name string, provider map[string]any) {
 	fmt.Printf("Provider %s\n", name)
-	for _, key := range []string{"transport", "profile", "command", "base_url", "endpoint", "reasoning_format"} {
+	for _, key := range []string{"transport", "profile", "command", "base_url", "endpoint", "reasoning_format", "api_key_ref"} {
 		if value, ok := provider[key]; ok {
 			fmt.Printf("  %s: %v\n", key, value)
 		}

@@ -253,6 +253,7 @@ func TestStandaloneCommandsDeferToCoordinatedOwner(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			home := t.TempDir()
 			t.Setenv("HOME", home)
+			t.Setenv("XDG_CONFIG_HOME", "")
 			record := filepath.Join(home, "arguments")
 			t.Setenv("OWNER_TEST_RECORD", record)
 			launcher := filepath.Join(home, "dearmachine")

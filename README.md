@@ -40,7 +40,7 @@ Sandboxing and environment isolation belong in an external scaffold layer, not i
 - OpenAI‑compatible API access:
   - API key and base URL for models used by Machtiani.
 - A writable bin directory on PATH (e.g., `~/.local/bin`).
-- A global `~/.machtiani/config.toml`, a selected UUID-project config, or a `MACHTIANI_CONFIG` path describing your agent, model, and environment settings. See the *Configuration* section below.
+- A global `~/.config/machtiani/config.toml`, a selected UUID-project config, or a `MACHTIANI_CONFIG` path describing your agent, model, and environment settings. See the *Configuration* section below.
 
 ## Testing
 

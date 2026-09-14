@@ -12,6 +12,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/google/uuid"
 	"github.com/spf13/pflag"
+	"github.com/tursomari/machtiani/agent/internal/configfiles"
 	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/modes"
 	"github.com/tursomari/machtiani/agent/internal/presentation"
@@ -104,7 +105,7 @@ func handleInitCommand(args []string) int {
 	if err != nil {
 		return configError(err)
 	}
-	if ctx.Status == projectstore.StatusLegacy {
+	if ctx.Status == projectstore.StatusLegacy && strings.TrimSpace(os.Getenv("MACHTIANI_CONFIG")) == "" {
 		if err := modes.SyncCanonical(); err != nil {
 			return configError(err)
 		}
@@ -136,26 +137,31 @@ func handleInitCommand(args []string) int {
 		ctx.StoreRoot = filepath.Join(ctx.HomeRoot, ctx.ID.String())
 		ctx.Status = projectstore.StatusInitialized
 	}
-	target, err := projectstore.GlobalConfigPath()
-	if err != nil {
-		return configError(err)
-	}
-	if scope == projectstore.ScopeProject {
-		target = ctx.ProjectConfigPath()
+	target := strings.TrimSpace(os.Getenv("MACHTIANI_CONFIG"))
+	if target == "" {
+		if scope == projectstore.ScopeProject {
+			target = ctx.ProjectConfigPath()
+		} else {
+			target, err = projectstore.GlobalConfigPath()
+			if err == nil {
+				err = configfiles.MigrateGlobal(target)
+			}
+			if err != nil {
+				return configError(err)
+			}
+		}
 	}
 	if _, err := os.Stat(target); os.IsNotExist(err) {
 		hasCreationFlags := strings.TrimSpace(*preset+*provider+*url+*model+*alias) != ""
 		if scope == projectstore.ScopeProject && !hasCreationFlags {
 			global, globalErr := projectstore.GlobalConfigPath()
 			if globalErr == nil {
-				if data, readErr := os.ReadFile(global); readErr == nil {
-					if mkdirErr := os.MkdirAll(filepath.Dir(target), 0o700); mkdirErr != nil {
-						return configError(mkdirErr)
-					}
-					if writeErr := os.WriteFile(target, data, 0o600); writeErr != nil {
-						return configError(writeErr)
+				if _, readErr := os.Stat(global); readErr == nil {
+					if err := configfiles.Import(global, target, ""); err != nil {
+						return configError(err)
 					}
 				}
+
 			}
 		}
 		if _, statErr := os.Stat(target); os.IsNotExist(statErr) {

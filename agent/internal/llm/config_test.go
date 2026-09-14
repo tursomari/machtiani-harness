@@ -16,6 +16,7 @@ func TestLocateConfigUsesInitializedProjectScope(t *testing.T) {
 	t.Setenv("MACHTIANI_CONFIG", "")
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)
 	id := uuid.New()
@@ -45,6 +46,7 @@ func TestLocateConfigPrefersLocalWithinGitRoot(t *testing.T) {
 	t.Setenv("MACHTIANI_CONFIG", "")
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
 	mustWriteFile(t, filepath.Join(home, ".machtiani", "config.toml"), "global = true\n")
 
 	repoDir := t.TempDir()
@@ -72,7 +74,8 @@ func TestLocateConfigFallsBackToGlobalConfig(t *testing.T) {
 	t.Setenv("MACHTIANI_CONFIG", "")
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	globalConfig := filepath.Join(home, ".machtiani", "config.toml")
+	t.Setenv("XDG_CONFIG_HOME", "")
+	globalConfig := filepath.Join(home, ".config", "machtiani", "config.toml")
 	mustWriteFile(t, globalConfig, "global = true\n")
 
 	repoDir := t.TempDir()
@@ -628,6 +631,7 @@ func TestLoadModeInstructionsRejectsConfiguredPaths(t *testing.T) {
 func TestLoadModeInstructionsUsesHomeModes(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
 	path := filepath.Join(home, ".machtiani", "modes", "coding", "tasks.toml")
 	mustWriteFile(t, path, sampleCodingToml())
 	doc, err := LoadModeInstructions("coding", "", Config{}, "")
@@ -642,6 +646,7 @@ func TestLoadModeInstructionsUsesHomeModes(t *testing.T) {
 func TestLoadModeInstructionsInvalidTomlReturnsError(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
 	mustWriteFile(t, filepath.Join(home, ".machtiani", "modes", "coding", "tasks.toml"), "[[tasks]\n title = \"broken\"")
 
 	_, err := LoadModeInstructions("coding", "", Config{}, "")
@@ -656,6 +661,7 @@ func TestLoadModeInstructionsPermissionError(t *testing.T) {
 	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
 	path := filepath.Join(home, ".machtiani", "modes", "coding", "tasks.toml")
 	mustWriteFile(t, path, sampleCodingToml())
 	if err := os.Chmod(path, 0o000); err != nil {

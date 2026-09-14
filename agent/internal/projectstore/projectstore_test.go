@@ -13,6 +13,7 @@ func TestDiscoverInitializedGitProject(t *testing.T) {
 	home := t.TempDir()
 	repo := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
 	gitInit(t, repo)
 	id := uuid.New()
 	if err := WriteProjectUUID(repo, id); err != nil {
@@ -44,6 +45,7 @@ func TestDiscoverInitializedGitProject(t *testing.T) {
 func TestDiscoverLegacyAndCleanProjects(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
 	clean := t.TempDir()
 	ctx, err := Discover(clean)
 	if err != nil {
@@ -87,6 +89,7 @@ func TestNonGitMarkerSearchesParents(t *testing.T) {
 	home := t.TempDir()
 	root := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
 	id := uuid.New()
 	if err := WriteProjectUUID(root, id); err != nil {
 		t.Fatal(err)

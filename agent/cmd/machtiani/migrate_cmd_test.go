@@ -179,6 +179,7 @@ func setupMigrationTest(t *testing.T) (home, project string) {
 	home = t.TempDir()
 	project = t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("MACHTIANI_CONFIG", "")
 	cmd := exec.Command("git", "init", "--quiet", project)
 	if output, err := cmd.CombinedOutput(); err != nil {

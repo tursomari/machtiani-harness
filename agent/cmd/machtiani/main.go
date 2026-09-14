@@ -1557,6 +1557,8 @@ func handleConfigCommand(args []string) int {
 		return handleConfigManager(args)
 	}
 	switch args[0] {
+	case "import":
+		return handleConfigImport(args[1:])
 	case "check":
 		return handleManagedConfigCheck(args[1:])
 	case "show":

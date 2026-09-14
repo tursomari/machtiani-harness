@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/spf13/pflag"
+	"github.com/tursomari/machtiani/agent/internal/configfiles"
 	"github.com/tursomari/machtiani/agent/internal/projectstore"
 )
 
@@ -78,14 +78,7 @@ func handleConfigScopeCommand(args []string) int {
 				if err != nil {
 					return configError(err)
 				}
-				data, err := os.ReadFile(global)
-				if err != nil {
-					return configError(err)
-				}
-				if err := os.MkdirAll(filepath.Dir(ctx.ProjectConfigPath()), 0o700); err != nil {
-					return configError(err)
-				}
-				if err := os.WriteFile(ctx.ProjectConfigPath(), data, 0o600); err != nil {
+				if err := configfiles.Import(global, ctx.ProjectConfigPath(), ""); err != nil {
 					return configError(err)
 				}
 			}

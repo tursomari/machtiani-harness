@@ -105,6 +105,7 @@ func handleConfigProviderWrite(action string, args []string) int {
 	url := fs.String("url", "", "provider base URL")
 	apiKey := fs.String("api-key", "", "literal provider API key")
 	apiKeyEnv := fs.String("api-key-env", "", "environment variable name to store by reference")
+	credentialsFile := fs.String("credentials-file", "", "private environment file, relative to the selected config")
 	clearAPIKey := fs.Bool("clear-api-key", false, "remove the configured API key")
 	endpoint := fs.String("endpoint", "", "provider endpoint path")
 	clearEndpoint := fs.Bool("clear-endpoint", false, "remove the provider endpoint")
@@ -233,9 +234,11 @@ func handleConfigProviderWrite(action string, args []string) int {
 	}
 	if key != "" {
 		entry["api_key"] = key
+		delete(entry, "api_key_ref")
 	}
 	if *clearAPIKey {
 		delete(entry, "api_key")
+		delete(entry, "api_key_ref")
 	}
 	if fs.Changed("endpoint") {
 		entry["endpoint"] = strings.TrimSpace(*endpoint)
@@ -272,6 +275,13 @@ func handleConfigProviderWrite(action string, args []string) int {
 		return 0
 	}
 	providers[name] = entry
+	if fs.Changed("credentials-file") {
+		doc.raw["credentials_file"] = *credentialsFile
+		if *apiKeyEnv != "" && *credentialsFile != "" {
+			entry["api_key_ref"] = *apiKeyEnv
+			delete(entry, "api_key")
+		}
+	}
 	if err := doc.save(); err != nil {
 		return configError(err)
 	}
@@ -280,7 +290,7 @@ func handleConfigProviderWrite(action string, args []string) int {
 }
 
 func providerMutationChanged(fs *pflag.FlagSet) bool {
-	for _, name := range []string{"url", "api-key", "api-key-env", "clear-api-key", "endpoint", "clear-endpoint", "reasoning-format", "header", "remove-header", "query", "remove-query"} {
+	for _, name := range []string{"credentials-file", "url", "api-key", "api-key-env", "clear-api-key", "endpoint", "clear-endpoint", "reasoning-format", "header", "remove-header", "query", "remove-query"} {
 		if fs.Changed(name) {
 			return true
 		}

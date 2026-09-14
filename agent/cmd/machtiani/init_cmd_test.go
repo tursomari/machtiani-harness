@@ -242,7 +242,7 @@ func TestInitPreservesExistingConfigurationAndSyncsModes(t *testing.T) {
 	}); code != 0 {
 		t.Fatalf("config add exit = %d", code)
 	}
-	path := filepath.Join(".machtiani", "config.toml")
+	path := filepath.Join(".config", "machtiani", "config.toml")
 	before, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -252,7 +252,7 @@ func TestInitPreservesExistingConfigurationAndSyncsModes(t *testing.T) {
 			t.Errorf("init exit = %d, want 0", code)
 		}
 	})
-	if stderr != "" || !strings.Contains(stdout, "canonical modes synchronized") {
+	if stderr != "" || !strings.Contains(stdout, "Project initialized:") {
 		t.Fatalf("stdout = %q, stderr = %q", stdout, stderr)
 	}
 	after, err := os.ReadFile(path)
@@ -296,6 +296,7 @@ func TestInitNonInteractiveCreatesStableUUIDHomeStore(t *testing.T) {
 	home := t.TempDir()
 	project := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("MACHTIANI_CONFIG", "")
 
 	original, err := os.Getwd()
@@ -307,7 +308,7 @@ func TestInitNonInteractiveCreatesStableUUIDHomeStore(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chdir(original) })
 
-	global := filepath.Join(home, ".machtiani", "config.toml")
+	global := filepath.Join(home, ".config", "machtiani", "config.toml")
 	if code := handleConfigAddCommand([]string{
 		"--global", "--provider", "p", "--url", "https://example.com/v1",
 		"--api-key-env", "TEST_API_KEY", "--model", "one", "--alias", "one",

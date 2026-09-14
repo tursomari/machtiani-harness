@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/BurntSushi/toml"
+	"github.com/tursomari/machtiani/agent/internal/configfiles"
 
 	"github.com/tursomari/machtiani/agent/internal/git"
 	"github.com/tursomari/machtiani/agent/internal/presentation"
@@ -16,6 +17,7 @@ import (
 )
 
 type Config struct {
+	CredentialsFile    string                     `toml:"credentials_file"`
 	DefaultModel       string                     `toml:"default_model"`
 	DefaultModelSource FieldSource                `toml:"-"`
 	Planner            *PlannerConfig             `toml:"planner"`
@@ -265,6 +267,8 @@ type ModeInstructions struct {
 }
 
 type ProviderConfig struct {
+	APIKeyRef       string `toml:"api_key_ref"`
+	credentialsFile string
 	Transport       string            `toml:"transport"`
 	Profile         string            `toml:"profile"`
 	Command         string            `toml:"command"`
@@ -511,6 +515,14 @@ func ResolveModelWithOverrides(alias string, overrides map[string]string) (Resol
 	}
 
 	configKey := strings.TrimSpace(provider.APIKey)
+	credentialFile := ""
+	if provider.APIKeyRef != "" && (!configfiles.ValidName(provider.APIKeyRef) || provider.APIKey != "" || provider.credentialsFile == "") {
+		return ResolvedModel{}, fmt.Errorf("provider %q requires a valid api_key_ref and credentials_file, without api_key", providerName)
+	}
+	if provider.APIKeyRef != "" {
+		configKey = "${" + provider.APIKeyRef + "}"
+		credentialFile = provider.credentialsFile
+	}
 	envCandidates := []string{providerEnvVarName(providerName)}
 	if aliasEnv := providerEnvVarName(effectiveAlias); aliasEnv != "" && aliasEnv != envCandidates[0] {
 		envCandidates = append(envCandidates, aliasEnv)
@@ -519,11 +531,14 @@ func ResolveModelWithOverrides(alias string, overrides map[string]string) (Resol
 	if overrideKey, ok := lookupAPIKeyOverride(overrides, providerName, effectiveAlias); ok {
 		resolved.APIKey = overrideKey
 	} else if configKey != "" {
-		configuredKey, envName, err := resolveConfiguredAPIKey(configKey)
+		configuredKey, envName, err := resolveProviderAPIKey(configKey, credentialFile)
 		if err != nil {
 			return ResolvedModel{}, fmt.Errorf("provider %q api_key in %s: %w", providerName, cfg.path, err)
 		}
 		if envName != "" && strings.TrimSpace(configuredKey) == "" {
+			if credentialFile != "" {
+				return ResolvedModel{}, fmt.Errorf("provider %q credential %s is missing from %s", providerName, envName, credentialFile)
+			}
 			return ResolvedModel{}, fmt.Errorf("provider %q api_key references unset environment variable %s in %s", providerName, envName, cfg.path)
 		}
 		resolved.APIKey = configuredKey
@@ -555,6 +570,18 @@ func ResolveModelWithOverrides(alias string, overrides map[string]string) (Resol
 	}
 
 	return resolved, nil
+}
+
+func resolveProviderAPIKey(value, file string) (string, string, error) {
+	resolved, name, err := resolveConfiguredAPIKey(value)
+	if err != nil || name == "" || file == "" {
+		return resolved, name, err
+	}
+	values, err := configfiles.Read(file)
+	if err != nil {
+		return "", name, err
+	}
+	return values[name], name, nil
 }
 
 func resolveConfiguredAPIKey(value string) (resolved, envName string, err error) {
@@ -637,6 +664,16 @@ func locateConfig() (string, error) {
 		candidate := ctx.ProjectConfigPath()
 		if ctx.ConfigScope == projectstore.ScopeGlobal {
 			candidate, err = projectstore.GlobalConfigPath()
+			if err == nil {
+				if _, statErr := os.Stat(candidate); os.IsNotExist(statErr) {
+					if home, homeErr := os.UserHomeDir(); homeErr == nil {
+						legacy := filepath.Join(home, ".machtiani", "config.toml")
+						if _, legacyErr := os.Stat(legacy); legacyErr == nil {
+							candidate = legacy
+						}
+					}
+				}
+			}
 			if err != nil {
 				return "", err
 			}
@@ -657,13 +694,20 @@ func locateConfig() (string, error) {
 			return local, nil
 		}
 	}
+	if candidate, err := projectstore.GlobalConfigPath(); err != nil {
+		return "", err
+	} else if _, err := os.Stat(candidate); err == nil {
+		return candidate, nil
+	}
+
+	// Retain read-only compatibility until explicit native setup migrates the file.
 	if home, err := os.UserHomeDir(); err == nil {
-		candidate := filepath.Join(home, ".machtiani", "config.toml")
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate, nil
+		legacy := filepath.Join(home, ".machtiani", "config.toml")
+		if _, err := os.Stat(legacy); err == nil {
+			return legacy, nil
 		}
 	}
-	return "", fmt.Errorf("machtiani config not found; set MACHTIANI_CONFIG or create .machtiani/config.toml")
+	return "", fmt.Errorf("machtiani config not found; run machtiani init or set MACHTIANI_CONFIG")
 }
 
 func findLocalConfig(start string) (string, error) {
@@ -716,6 +760,9 @@ func parseConfig(path string) (Config, error) {
 	}
 	if v, ok := raw["default_model"].(string); ok {
 		cfg.DefaultModel = v
+	}
+	if ref, ok := raw["credentials_file"].(string); ok && ref != "" {
+		cfg.CredentialsFile = configfiles.Resolve(path, ref)
 	}
 	var (
 		legacyPlannerPrompts    *PlannerPromptsConfig
@@ -894,6 +941,9 @@ func parseConfig(path string) (Config, error) {
 				return Config{}, fmt.Errorf("parse %s [providers.%s]: expected table", path, name)
 			}
 			prov := ProviderConfig{}
+			if v, ok := entryMap["api_key_ref"].(string); ok {
+				prov.APIKeyRef = v
+			}
 			if v, ok := entryMap["transport"].(string); ok {
 				prov.Transport = v
 			}
@@ -929,6 +979,7 @@ func parseConfig(path string) (Config, error) {
 				}
 				prov.Query = query
 			}
+			prov.credentialsFile = cfg.CredentialsFile
 			cfg.Providers[name] = prov
 		}
 	}

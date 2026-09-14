@@ -153,6 +153,7 @@ func setupMagnificaRunCommandTest(t *testing.T, sessionID string) {
 
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("MACHTIANI_SESSION_ID", sessionID)
 	t.Setenv("MACHTIANI_SESSION_TEMP_ROOT", "")
 	t.Setenv("OPENAI_API_KEY", "test-key")

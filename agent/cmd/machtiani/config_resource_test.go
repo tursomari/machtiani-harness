@@ -20,7 +20,7 @@ func TestConfigAddNonInteractiveCreatesResourceConfig(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("config add exit = %d", code)
 	}
-	raw := readTOML(t, filepath.Join(".machtiani", "config.toml"))
+	raw := readTOML(t, filepath.Join(".config", "machtiani", "config.toml"))
 	if raw["default_model"] != "coder" {
 		t.Fatalf("default_model = %#v", raw["default_model"])
 	}
@@ -34,7 +34,7 @@ func TestConfigAddNonInteractiveCreatesResourceConfig(t *testing.T) {
 	if model["provider"] != "openai" || model["model"] != "gpt-x" {
 		t.Fatalf("model = %#v", model)
 	}
-	info, err := os.Stat(filepath.Join(".machtiani", "config.toml"))
+	info, err := os.Stat(filepath.Join(".config", "machtiani", "config.toml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func TestConfigContextLengthLifecycle(t *testing.T) {
 	}); code != 0 {
 		t.Fatalf("config add exit = %d", code)
 	}
-	path := filepath.Join(".machtiani", "config.toml")
+	path := filepath.Join(".config", "machtiani", "config.toml")
 	raw := readTOML(t, path)
 	if got := raw["model_defaults"].(map[string]any)["context_length"]; got != int64(llm.DefaultContextLength) {
 		t.Fatalf("default context_length = %#v", got)
@@ -110,7 +110,7 @@ func TestConfigAddPresetCreatesCompleteProviderAndModel(t *testing.T) {
 	if code := handleConfigAddCommand([]string{"--preset", "deepseek", "--no-interactive"}); code != 0 {
 		t.Fatalf("config add preset exit = %d", code)
 	}
-	raw := readTOML(t, filepath.Join(".machtiani", "config.toml"))
+	raw := readTOML(t, filepath.Join(".config", "machtiani", "config.toml"))
 	if raw["default_model"] != "deepseek" {
 		t.Fatalf("default_model = %#v", raw["default_model"])
 	}
@@ -137,7 +137,7 @@ func TestConfigAddPresetAllowsCompleteOverrides(t *testing.T) {
 	}); code != 0 {
 		t.Fatalf("config add preset overrides exit = %d", code)
 	}
-	raw := readTOML(t, filepath.Join(".machtiani", "config.toml"))
+	raw := readTOML(t, filepath.Join(".config", "machtiani", "config.toml"))
 	provider := raw["providers"].(map[string]any)["openrouter"].(map[string]any)
 	if provider["base_url"] != "https://gateway.example/v1" || provider["endpoint"] != "/chat" {
 		t.Fatalf("provider = %#v", provider)
@@ -173,7 +173,7 @@ func TestConfigProviderReasoningFormatAndModelParamsJSON(t *testing.T) {
 		t.Fatalf("model set exit = %d", code)
 	}
 
-	raw := readTOML(t, filepath.Join(".machtiani", "config.toml"))
+	raw := readTOML(t, filepath.Join(".config", "machtiani", "config.toml"))
 	provider := raw["providers"].(map[string]any)["custom"].(map[string]any)
 	if provider["reasoning_format"] != "reasoning_explicit" {
 		t.Fatalf("reasoning_format = %#v", provider["reasoning_format"])
@@ -202,7 +202,7 @@ func TestConfigProviderReasoningFormatAndModelParamsJSON(t *testing.T) {
 	if code := handleConfigProviderCommand([]string{"set", "custom", "--reasoning-format", "auto", "--no-interactive"}); code != 0 {
 		t.Fatalf("clear reasoning format exit = %d", code)
 	}
-	raw = readTOML(t, filepath.Join(".machtiani", "config.toml"))
+	raw = readTOML(t, filepath.Join(".config", "machtiani", "config.toml"))
 	provider = raw["providers"].(map[string]any)["custom"].(map[string]any)
 	model = raw["models"].(map[string]any)["demo"].(map[string]any)
 	if _, exists := provider["reasoning_format"]; exists {
@@ -260,7 +260,7 @@ func TestConfigResourceRenameAndReferenceAwareRemoval(t *testing.T) {
 	if code := handleConfigModelCommand([]string{"rename", "one", "primary", "--no-interactive"}); code != 0 {
 		t.Fatal(code)
 	}
-	raw := readTOML(t, filepath.Join(".machtiani", "config.toml"))
+	raw := readTOML(t, filepath.Join(".config", "machtiani", "config.toml"))
 	if raw["default_model"] != "primary" {
 		t.Fatalf("default_model = %#v", raw["default_model"])
 	}
@@ -274,7 +274,7 @@ func TestConfigResourceRenameAndReferenceAwareRemoval(t *testing.T) {
 	if code := handleConfigModelCommand([]string{"remove", "primary", "--replacement", "two", "--no-interactive"}); code != 0 {
 		t.Fatal(code)
 	}
-	raw = readTOML(t, filepath.Join(".machtiani", "config.toml"))
+	raw = readTOML(t, filepath.Join(".config", "machtiani", "config.toml"))
 	if raw["default_model"] != "two" {
 		t.Fatalf("replacement default = %#v", raw["default_model"])
 	}
@@ -289,7 +289,7 @@ func TestConfigCacheOverrideAndInherit(t *testing.T) {
 	if code := handleConfigCacheCommand([]string{"disable", "--model", "one", "--no-interactive"}); code != 0 {
 		t.Fatal(code)
 	}
-	raw := readTOML(t, filepath.Join(".machtiani", "config.toml"))
+	raw := readTOML(t, filepath.Join(".config", "machtiani", "config.toml"))
 	model := raw["models"].(map[string]any)["one"].(map[string]any)
 	if model["cache_enabled"] != false {
 		t.Fatalf("cache override = %#v", model["cache_enabled"])
@@ -297,7 +297,7 @@ func TestConfigCacheOverrideAndInherit(t *testing.T) {
 	if code := handleConfigCacheCommand([]string{"inherit", "--model", "one", "--no-interactive"}); code != 0 {
 		t.Fatal(code)
 	}
-	raw = readTOML(t, filepath.Join(".machtiani", "config.toml"))
+	raw = readTOML(t, filepath.Join(".config", "machtiani", "config.toml"))
 	model = raw["models"].(map[string]any)["one"].(map[string]any)
 	if _, ok := model["cache_enabled"]; ok {
 		t.Fatalf("cache override survived: %#v", model)
@@ -351,7 +351,7 @@ func TestConfigAddNoInteractiveRequiresCompleteArguments(t *testing.T) {
 	if !strings.Contains(stderr, "new providers require") {
 		t.Fatalf("stderr = %q", stderr)
 	}
-	if _, err := os.Stat(filepath.Join(".machtiani", "config.toml")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(".config", "machtiani", "config.toml")); !os.IsNotExist(err) {
 		t.Fatalf("incomplete command wrote a config: %v", err)
 	}
 }
@@ -362,7 +362,7 @@ func TestInvalidModelMutationLeavesFileUnchanged(t *testing.T) {
 	if code := handleConfigAddCommand([]string{"--provider", "p", "--url", "https://example", "--api-key", "secret", "--model", "one", "--alias", "one", "--no-interactive"}); code != 0 {
 		t.Fatal(code)
 	}
-	path := filepath.Join(".machtiani", "config.toml")
+	path := filepath.Join(".config", "machtiani", "config.toml")
 	before, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -390,7 +390,7 @@ func TestProviderShowRedactsLiteralAPIKey(t *testing.T) {
 			t.Errorf("exit = %d", code)
 		}
 	})
-	if strings.Contains(stdout, "super-secret") || !strings.Contains(stdout, "[redacted]") {
+	if strings.Contains(stdout, "super-secret") || !strings.Contains(stdout, "api_key_ref: MACHTIANI_PROVIDER_") {
 		t.Fatalf("provider output = %q", stdout)
 	}
 }
@@ -401,7 +401,7 @@ func TestConfigMutationPreservesUnknownKeys(t *testing.T) {
 	if code := handleConfigAddCommand([]string{"--provider", "p", "--url", "https://example", "--api-key", "secret", "--model", "one", "--alias", "one", "--no-interactive"}); code != 0 {
 		t.Fatal(code)
 	}
-	path := filepath.Join(".machtiani", "config.toml")
+	path := filepath.Join(".config", "machtiani", "config.toml")
 	raw := readTOML(t, path)
 	raw["custom_extension"] = map[string]any{"enabled": true, "label": "keep-me"}
 	writeTOML(t, path, raw)

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/tursomari/machtiani/agent/internal/configfiles"
 	"github.com/tursomari/machtiani/agent/internal/git"
 )
 
@@ -106,13 +107,14 @@ func HomeRoot() (string, error) {
 	return filepath.Join(home, RootDirName), nil
 }
 
-// GlobalConfigPath returns ~/.machtiani/config.toml.
+// GlobalConfigPath returns the native configuration beneath XDG_CONFIG_HOME.
 func GlobalConfigPath() (string, error) {
-	root, err := HomeRoot()
+	root, err := configfiles.Root()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(root, GlobalConfig), nil
+	path := filepath.Join(root, "machtiani", GlobalConfig)
+	return path, nil
 }
 
 // ModesRoot returns ~/.machtiani/modes.

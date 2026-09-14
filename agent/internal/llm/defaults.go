@@ -106,6 +106,9 @@ func MergeConfig(defaults, fileConfig, flagOverrides Config) Config {
 
 // overlayConfig overlays non-zero and non-nil fields from source onto target.
 func overlayConfig(target *Config, source Config, srcSource FieldSource) {
+	if source.CredentialsFile != "" {
+		target.CredentialsFile = source.CredentialsFile
+	}
 	// --- string fields --------------------------------------------------
 	if source.DefaultModel != "" {
 		target.DefaultModel = source.DefaultModel
@@ -272,8 +275,15 @@ func overlayConfig(target *Config, source Config, srcSource FieldSource) {
 					existing.BaseURL = v.BaseURL
 					existing.BaseURLSource = srcSource
 				}
+				if v.APIKeyRef != "" {
+					existing.APIKey = ""
+					existing.APIKeyRef = v.APIKeyRef
+					existing.credentialsFile = v.credentialsFile
+				}
 				if v.APIKey != "" {
+					existing.APIKeyRef = ""
 					existing.APIKey = v.APIKey
+					existing.credentialsFile = v.credentialsFile
 					existing.APIKeySource = srcSource
 				}
 				if v.Endpoint != "" {
@@ -296,7 +306,7 @@ func overlayConfig(target *Config, source Config, srcSource FieldSource) {
 				// deep-copy a brand-new provider entry
 				copyProv := ProviderConfig{
 					Transport: v.Transport, Profile: v.Profile, Command: v.Command,
-					BaseURL: v.BaseURL, APIKey: v.APIKey, Endpoint: v.Endpoint, ReasoningFormat: v.ReasoningFormat,
+					BaseURL: v.BaseURL, APIKey: v.APIKey, APIKeyRef: v.APIKeyRef, credentialsFile: v.credentialsFile, Endpoint: v.Endpoint, ReasoningFormat: v.ReasoningFormat,
 				}
 				copyProv.BaseURLSource = srcSource
 				copyProv.APIKeySource = srcSource

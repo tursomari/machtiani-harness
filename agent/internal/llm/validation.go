@@ -72,7 +72,7 @@ func configError(path, code, message string) Diagnostic {
 func validateRawConfig(path string, raw map[string]any) error {
 	var diagnostics []Diagnostic
 	top := map[string]string{
-		"default_model": "string", "verbose": "bool", "persist_tmp_data": "bool", "dry_run": "bool",
+		"credentials_file": "string", "default_model": "string", "verbose": "bool", "persist_tmp_data": "bool", "dry_run": "bool",
 		"shell_agent_enabled": "bool", "shell_agent_model": "string", "answer_model": "string",
 		"file_discovery_model": "string", "answer_tag": "string", "tag": "string", "enable_tag_format": "bool",
 		"final_file": "string", "transcript_file": "string", "file_discovery_trajectory": "string",
@@ -265,7 +265,7 @@ func validateProvidersRaw(raw map[string]any, diagnostics *[]Diagnostic) {
 		}
 		validateKnownMap(provider, path, map[string]string{
 			"transport": "string", "profile": "string", "command": "string",
-			"base_url": "string", "api_key": "string", "endpoint": "string", "reasoning_format": "string",
+			"base_url": "string", "api_key": "string", "api_key_ref": "string", "endpoint": "string", "reasoning_format": "string",
 			"headers": "table", "query": "table",
 		}, diagnostics)
 		for _, mapName := range []string{"headers", "query"} {
@@ -429,7 +429,7 @@ func ValidateConfig(cfg Config, path string, options ValidationOptions) []Diagno
 		if options.RequireAllCredentials && providerName != "" {
 			if provider, ok := cfg.Providers[providerName]; ok {
 				if strings.TrimSpace(provider.Transport) != "model-host" {
-					if err := validateProviderCredential(name, providerName, provider.APIKey); err != nil {
+					if err := validateProviderCredentialConfig(name, providerName, provider); err != nil {
 						diagnostics = append(diagnostics, configError("providers."+providerName+".api_key", "missing_credential", fmt.Sprintf("model %q: %v", name, err)))
 					}
 				}
@@ -439,6 +439,9 @@ func ValidateConfig(cfg Config, path string, options ValidationOptions) []Diagno
 
 	for name, provider := range cfg.Providers {
 		providerPath := "providers." + name
+		if provider.APIKeyRef != "" && (!validAPIKeyEnvironmentName(provider.APIKeyRef) || provider.APIKey != "" || cfg.CredentialsFile == "") {
+			diagnostics = append(diagnostics, configError(providerPath+".api_key_ref", "invalid_value", "requires credentials_file and a valid reference name, without api_key"))
+		}
 		if strings.TrimSpace(name) == "" {
 			diagnostics = append(diagnostics, configError("providers", "invalid_name", "provider name cannot be empty"))
 		}
@@ -453,7 +456,7 @@ func ValidateConfig(cfg Config, path string, options ValidationOptions) []Diagno
 			if strings.TrimSpace(provider.Profile) == "" {
 				diagnostics = append(diagnostics, configError(providerPath+".profile", "missing_field", "profile is required for model-host transport"))
 			}
-			if strings.TrimSpace(provider.APIKey) != "" {
+			if strings.TrimSpace(provider.APIKey) != "" || provider.APIKeyRef != "" {
 				diagnostics = append(diagnostics, configError(providerPath+".api_key", "invalid_value", "model-host credentials belong in the referenced private profile"))
 			}
 			continue
@@ -532,6 +535,27 @@ func ValidateConfig(cfg Config, path string, options ValidationOptions) []Diagno
 	validatePromptTemplates(cfg.Prompts, &diagnostics)
 	sortDiagnostics(diagnostics)
 	return diagnostics
+}
+
+func validateProviderCredentialConfig(alias, name string, p ProviderConfig) error {
+	if p.APIKeyRef != "" {
+		return validateProviderCredentialFile(alias, name, "${"+p.APIKeyRef+"}", p.credentialsFile)
+	}
+	return validateProviderCredential(alias, name, p.APIKey)
+}
+
+func validateProviderCredentialFile(alias, provider, key, file string) error {
+	resolved, _, err := resolveProviderAPIKey(key, file)
+	if err != nil {
+		return err
+	}
+	if resolved != "" {
+		return nil
+	}
+	if file != "" {
+		return fmt.Errorf("credential reference is missing from %s", file)
+	}
+	return validateProviderCredential(alias, provider, key)
 }
 
 func validateProviderCredential(modelAlias, providerName, configured string) error {
