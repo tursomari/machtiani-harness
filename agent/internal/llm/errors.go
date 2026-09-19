@@ -13,9 +13,13 @@ var contextOverflowCodes = map[string]struct{}{
 	"maximum_context_length_exceeded": {},
 }
 
-// IsContextOverflow reports only machine-readable ChatCompletion errors. It
+// IsContextOverflow reports only machine-readable provider or model-host errors. It
 // deliberately ignores HTTP status and human-readable message text.
 func IsContextOverflow(err error) bool {
+	var hostErr *ModelHostCallError
+	if errors.As(err, &hostErr) && hostErr != nil {
+		return hostErr.Code == "CONTEXT_LENGTH_EXCEEDED"
+	}
 	var httpErr *HTTPResponseError
 	if !errors.As(err, &httpErr) || httpErr == nil || httpErr.Body == "" {
 		return false

@@ -25,3 +25,12 @@ func TestIsContextOverflowRejectsStatusAndMessage(t *testing.T) {
 		}
 	}
 }
+
+func TestIsContextOverflowModelHostCode(t *testing.T) {
+	if !IsContextOverflow(&ModelHostCallError{Code: "CONTEXT_LENGTH_EXCEEDED"}) {
+		t.Fatal("model-host context overflow was not recognized")
+	}
+	if IsContextOverflow(&ModelHostCallError{Code: "INTERNAL", Message: "CONTEXT_LENGTH_EXCEEDED"}) {
+		t.Fatal("error text must not classify an unrelated model-host failure")
+	}
+}

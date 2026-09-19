@@ -451,11 +451,9 @@ func runReadmeManager(ctx context.Context, opts RunOptions, isAnswerOnly bool) e
 		if err != nil {
 			return "", err
 		}
-		assistant := strings.TrimSpace(res.Assistant)
-		if assistant != "" {
-			return assistant, nil
-		}
-		return strings.TrimSpace(res.FullText), nil
+		// The transcript contains the input prompt even when generation is
+		// empty. Only an assistant answer may become the internal README.
+		return strings.TrimSpace(res.Assistant), nil
 	})
 	return mgr.Run(ctx, commit)
 }

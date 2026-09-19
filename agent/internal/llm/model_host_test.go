@@ -21,6 +21,7 @@ func captureModelHostRequest(t *testing.T) (string, string) {
 	fixture := writeModelHostFixture(t, `
 read request
 printf '%s' "$request" > "$MACHTIANI_MODEL_HOST_CAPTURE"
+printf '%s\n' '{"v":1,"id":"generation","event":{"type":"text-delta","text":"ok"}}'
 printf '%s\n' '{"v":1,"id":"generation","result":{"completed":true}}'
 `)
 	return fixture, capture
@@ -248,5 +249,22 @@ func TestBuildRequestRejectsModelHostTransport(t *testing.T) {
 	}, []byte(`{}`))
 	if err == nil || !strings.Contains(err.Error(), "must use model-host transport") {
 		t.Fatalf("buildRequest error = %v, want model-host routing error", err)
+	}
+}
+
+func TestModelHostTransportRejectsEmptyCompletions(t *testing.T) {
+	for _, reason := range []string{"stop", "max-tokens"} {
+		t.Run(reason, func(t *testing.T) {
+			fixture := writeModelHostFixture(t, fmt.Sprintf(`
+read request
+printf '%%s\n' '{"v":1,"id":"generation","event":{"type":"reasoning-delta","text":"thinking only"}}'
+printf '%%s\n' '{"v":1,"id":"generation","event":{"type":"finish","reason":"%s"}}'
+printf '%%s\n' '{"v":1,"id":"generation","result":{"completed":true}}'
+`, reason))
+			answer, err := chatModelHost(context.Background(), ResolvedModel{Transport: "model-host", Profile: "/private/profile.json", Command: fixture, Model: "fixture"}, nil, []Message{{Role: "user", Content: "hello"}}, false, nil)
+			if answer != "" || err == nil || !strings.Contains(err.Error(), "no answer text") || !strings.Contains(err.Error(), reason) {
+				t.Fatalf("answer=%q error=%v", answer, err)
+			}
+		})
 	}
 }

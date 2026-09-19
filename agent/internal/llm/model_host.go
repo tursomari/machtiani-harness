@@ -49,6 +49,7 @@ type modelHostEnvelope struct {
 
 type modelHostEvent struct {
 	Type             string `json:"type"`
+	Reason           string `json:"reason,omitempty"`
 	Text             string `json:"text,omitempty"`
 	InputTokens      int    `json:"inputTokens,omitempty"`
 	OutputTokens     int    `json:"outputTokens,omitempty"`
@@ -233,6 +234,7 @@ func chatModelHost(ctx context.Context, model ResolvedModel, extraParams map[str
 	var answer strings.Builder
 	var usage *responseUsage
 	completed := false
+	finishReason := "unknown"
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 64<<10), 16<<20)
 	for scanner.Scan() {
@@ -257,6 +259,8 @@ func chatModelHost(ctx context.Context, model ResolvedModel, extraParams map[str
 				if stream && onToken != nil {
 					onToken(envelope.Event.Text)
 				}
+			case "finish":
+				finishReason = envelope.Event.Reason
 			case "usage":
 				usage = &responseUsage{
 					PromptTokens:     envelope.Event.InputTokens,
@@ -295,6 +299,9 @@ func chatModelHost(ctx context.Context, model ResolvedModel, extraParams map[str
 		return "", errors.New("model host ended without a completion result")
 	}
 	emitCacheUsage(ctx, model, usage)
+	if strings.TrimSpace(answer.String()) == "" {
+		return "", fmt.Errorf("model host returned no answer text (finish reason: %s)", finishReason)
+	}
 	return answer.String(), nil
 }
 

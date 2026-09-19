@@ -583,3 +583,39 @@ func TestFileDiscoveryRunsWhenShellAgentDisabled(t *testing.T) {
 		t.Fatalf("expected retrieved files in prompt: %q", capturedPrompt)
 	}
 }
+func TestRunRetriesModelHostContextOverflowBeforeOutput(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MACHTIANI_SESSION_ID", "test-context-overflow-retry")
+
+	original := chatStreamWithRuntime
+	t.Cleanup(func() { chatStreamWithRuntime = original })
+
+	calls := 0
+	chatStreamWithRuntime = func(ctx context.Context, model llm.ResolvedModel, fallbackAliases []string, fallbackModels []llm.ResolvedModel, extra map[string]any, messages []llm.Message, onToken func(string)) (string, error) {
+		calls++
+		if calls == 1 {
+			return "", &llm.ModelHostCallError{Code: "CONTEXT_LENGTH_EXCEEDED"}
+		}
+		return "recovered", nil
+	}
+
+	res, err := Run(context.Background(), RunOptions{
+		Prompt: "Hello",
+		Mode:   "answer-only",
+		Runtime: ModelRuntime{Resolved: llm.ResolvedModel{
+			Model:         "answer-model",
+			ContextLength: llm.DefaultContextLength,
+			ContextSource: llm.SourceDefault,
+		}},
+		Prompts: testPromptsConfig(),
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("chat calls = %d, want 2", calls)
+	}
+	if res.Assistant != "recovered" {
+		t.Fatalf("assistant = %q", res.Assistant)
+	}
+}
