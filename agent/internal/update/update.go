@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/tursomari/machtiani/agent/internal/hostos"
 	"io"
 	"net/url"
 	"os"
@@ -14,7 +15,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -731,7 +731,7 @@ func (m *Manager) TryLock() (*fileLock, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	if err := hostos.Flock(int(f.Fd()), hostos.LOCK_EX|hostos.LOCK_NB); err != nil {
 		f.Close()
 		return nil, err
 	}
@@ -745,7 +745,7 @@ func (l *fileLock) Close() error {
 	if l == nil || l.file == nil {
 		return nil
 	}
-	_ = syscall.Flock(int(l.file.Fd()), syscall.LOCK_UN)
+	_ = hostos.Flock(int(l.file.Fd()), hostos.LOCK_UN)
 	return l.file.Close()
 }
 

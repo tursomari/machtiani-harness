@@ -5,11 +5,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/tursomari/machtiani/agent/internal/hostos"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 
 	"github.com/tursomari/machtiani/agent/internal/core/artifacts"
 	"github.com/tursomari/machtiani/agent/internal/core/utils"
@@ -115,7 +115,7 @@ func (m *Manager) Run(ctx context.Context, projectCommitHash string) error {
 		return err
 	}
 	defer func() {
-		_ = syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
+		_ = hostos.Flock(int(lockFile.Fd()), hostos.LOCK_UN)
 		_ = lockFile.Close()
 	}()
 
@@ -199,7 +199,7 @@ func (m *Manager) acquireSyncLock() (*os.File, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open internal README sync lock: %w", err)
 	}
-	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
+	if err := hostos.Flock(int(file.Fd()), hostos.LOCK_EX); err != nil {
 		_ = file.Close()
 		return nil, fmt.Errorf("lock internal README sync state: %w", err)
 	}

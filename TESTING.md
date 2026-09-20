@@ -646,3 +646,12 @@ a loopback-only fake provider. It checks which key reaches HTTP and verifies tha
 a missing selected credential fails before HTTP. No actual keys, email, installed
 services, or host configuration are used. This deterministic check supplements
 the existing smoke and product evaluation gates.
+
+## Native Windows development proof
+
+Run the cross-compiled `internal/shell-agent/internal/environments` test binary
+inside a disposable Windows guest with native Git Bash on PATH.
+`TestWindowsVisibleFiles` checks a Windows path with spaces and Unicode, and
+`TestWindowsCancellationStopsNativeDescendants` checks that cancelling a shell
+also terminates its native Windows descendants. See the umbrella's
+`tests/windows-native/README.md` for the installed runtime and live file task.

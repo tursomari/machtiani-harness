@@ -3,11 +3,11 @@ package session
 import (
 	"errors"
 	"fmt"
+	"github.com/tursomari/machtiani/agent/internal/hostos"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/tursomari/machtiani/agent/internal/core/artifacts"
@@ -248,9 +248,9 @@ func cleanupOrphanedSessionDirs(root string, verbose bool, diagWriter io.Writer)
 			continue
 		}
 
-		flockErr := syscall.Flock(int(f.Fd()), syscall.LOCK_SH|syscall.LOCK_NB)
+		flockErr := hostos.Flock(int(f.Fd()), hostos.LOCK_SH|hostos.LOCK_NB)
 		if flockErr != nil {
-			if errors.Is(flockErr, syscall.EWOULDBLOCK) {
+			if errors.Is(flockErr, hostos.ErrWouldBlock) {
 				// Session is alive — another process holds the exclusive lock.
 				f.Close()
 				continue
@@ -263,7 +263,7 @@ func cleanupOrphanedSessionDirs(root string, verbose bool, diagWriter io.Writer)
 
 		// Lock acquired: the original process has exited.
 		// Release the shared lock, close the file, and clean up.
-		syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		hostos.Flock(int(f.Fd()), hostos.LOCK_UN)
 		f.Close()
 
 		removalReason := "orphaned lock file"

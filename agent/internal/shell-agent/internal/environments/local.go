@@ -146,7 +146,8 @@ func (e *LocalEnvironment) Start(ctx context.Context, command, cwd string) (mini
 	cw := &combinedWriter{limit: maxBytes}
 	cmd.Stdout = cw
 	cmd.Stderr = cw
-	if err := cmd.Start(); err != nil {
+	pgid, err := startProcessGroup(cmd)
+	if err != nil {
 		_ = os.Remove(scriptPath)
 		return nil, fmt.Errorf("start command: %w", err)
 	}
@@ -155,7 +156,7 @@ func (e *LocalEnvironment) Start(ctx context.Context, command, cwd string) (mini
 		cmd:           cmd,
 		ctx:           ctx,
 		pid:           cmd.Process.Pid,
-		pgid:          processGroupID(cmd),
+		pgid:          pgid,
 		startedAt:     time.Now(),
 		output:        cw,
 		scriptPath:    scriptPath,
@@ -259,6 +260,7 @@ func (c *localRunningCommand) killOnContextDone() {
 
 func (c *localRunningCommand) reap() {
 	err := c.cmd.Wait()
+	releaseProcessGroup(c.cmd, c.pgid)
 	snapshot := c.output.snapshot()
 	result := minisweagent.ExecuteResult{Output: snapshot.Output, ReturnCode: 0}
 	if status := c.cmd.ProcessState; status != nil {

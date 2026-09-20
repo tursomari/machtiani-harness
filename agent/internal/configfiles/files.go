@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"syscall"
 	"unicode"
 
 	"github.com/BurntSushi/toml"
@@ -42,22 +41,11 @@ func Resolve(config, reference string) string {
 }
 
 func Read(path string) (map[string]string, error) {
-	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
-	if err != nil {
-		return nil, fmt.Errorf("open credential file %s: %w", path, err)
-	}
-	f := os.NewFile(uintptr(fd), path)
-	defer f.Close()
-	info, err := f.Stat()
+	f, err := openPrivate(path)
 	if err != nil {
 		return nil, err
 	}
-	if !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 || info.Size() > 1048576 {
-		return nil, fmt.Errorf("credential file %s must be a private regular file", path)
-	}
-	if stat, ok := info.Sys().(*syscall.Stat_t); ok && stat.Uid != uint32(os.Getuid()) {
-		return nil, errors.New("credential file must be owned by current user")
-	}
+	defer f.Close()
 	var data bytes.Buffer
 	if _, err = data.ReadFrom(f); err != nil {
 		return nil, err
@@ -116,6 +104,10 @@ func Write(path string, data []byte) error {
 		return err
 	}
 	defer os.Remove(f.Name())
+	if err := protectPrivate(f.Name()); err != nil {
+		f.Close()
+		return err
+	}
 	if _, err = f.Write(data); err != nil {
 		f.Close()
 		return err

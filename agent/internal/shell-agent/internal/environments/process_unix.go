@@ -34,3 +34,11 @@ func killProcessGroup(cmd *exec.Cmd, pgid int) error {
 	}
 	return nil
 }
+
+func startProcessGroup(cmd *exec.Cmd) (int, error) {
+	if err := cmd.Start(); err != nil {
+		return 0, err
+	}
+	return processGroupID(cmd), nil
+}
+func releaseProcessGroup(_ *exec.Cmd, _ int) {}

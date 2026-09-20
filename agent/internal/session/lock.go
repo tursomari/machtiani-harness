@@ -15,11 +15,11 @@ package session
 import (
 	"errors"
 	"fmt"
+	"github.com/tursomari/machtiani/agent/internal/hostos"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/tursomari/machtiani/agent/internal/core/artifacts"
@@ -44,11 +44,11 @@ func acquireSessionLock(sessionID, sessionRoot string) (*sessionLock, error) {
 
 	var lockErr error
 	for attempt := 0; attempt < 3; attempt++ {
-		lockErr = syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		lockErr = hostos.Flock(int(file.Fd()), hostos.LOCK_EX|hostos.LOCK_NB)
 		if lockErr == nil {
 			break
 		}
-		if !errors.Is(lockErr, syscall.EWOULDBLOCK) {
+		if !errors.Is(lockErr, hostos.ErrWouldBlock) {
 			file.Close()
 			return nil, fmt.Errorf("lock session file %s: %w", lockPath, lockErr)
 		}
@@ -65,13 +65,13 @@ func acquireSessionLock(sessionID, sessionRoot string) (*sessionLock, error) {
 	// alive. This guards against PID reuse races where the kernel released
 	// a stale flock but the recorded PID now belongs to a different process.
 	if err := validateLockPID(file); err != nil {
-		syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+		hostos.Flock(int(file.Fd()), hostos.LOCK_UN)
 		file.Close()
 		return nil, fmt.Errorf("session lock PID validation failed for %s: %w", lockPath, err)
 	}
 
 	if err := initialiseLockFile(file, sessionID); err != nil {
-		syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+		hostos.Flock(int(file.Fd()), hostos.LOCK_UN)
 		file.Close()
 		return nil, err
 	}
@@ -132,11 +132,7 @@ func validateLockPID(file *os.File) error {
 		if pid == os.Getpid() {
 			return nil
 		}
-		process, findErr := os.FindProcess(pid)
-		if findErr != nil {
-			return nil
-		}
-		if signalErr := process.Signal(syscall.Signal(0)); signalErr != nil {
+		if !hostos.Alive(pid) {
 			return nil
 		}
 		return fmt.Errorf("lock file PID %d is still alive (conflicting process)", pid)
@@ -150,7 +146,7 @@ func (l *sessionLock) Close() error {
 	}
 
 	var errs []error
-	if err := syscall.Flock(int(l.file.Fd()), syscall.LOCK_UN); err != nil {
+	if err := hostos.Flock(int(l.file.Fd()), hostos.LOCK_UN); err != nil {
 		errs = append(errs, fmt.Errorf("unlock session file %s: %w", l.path, err))
 	}
 	if err := l.file.Close(); err != nil {
@@ -191,14 +187,14 @@ func IsSessionActiveAt(scratchDir string) (bool, error) {
 	}
 	defer file.Close()
 
-	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_SH|syscall.LOCK_NB); err != nil {
-		if errors.Is(err, syscall.EWOULDBLOCK) {
+	if err := hostos.Flock(int(file.Fd()), hostos.LOCK_SH|hostos.LOCK_NB); err != nil {
+		if errors.Is(err, hostos.ErrWouldBlock) {
 			return true, nil
 		}
 		return false, fmt.Errorf("check session lock %s: %w", lockPath, err)
 	}
 
 	// Successfully acquired shared lock, release it.
-	syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+	hostos.Flock(int(file.Fd()), hostos.LOCK_UN)
 	return false, nil
 }
