@@ -6,25 +6,43 @@ import (
 	"os/exec"
 	"sync"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
+type shellJob struct{ command, temporary windows.Handle }
+
 var shellJobs = struct {
 	sync.Mutex
-	handles map[int]windows.Handle
-}{handles: make(map[int]windows.Handle)}
+	handles map[int]shellJob
+}{handles: make(map[int]shellJob)}
 
 func configureProcessGroup(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_SUSPENDED | windows.CREATE_NEW_PROCESS_GROUP}
 }
 func startProcessGroup(cmd *exec.Cmd) (int, error) {
+	commandJob, err := windows.CreateJobObject(nil, nil)
+	if err != nil {
+		return 0, err
+	}
+	keepCommandJob := false
+	defer func() {
+		if !keepCommandJob {
+			windows.CloseHandle(commandJob)
+		}
+	}()
+	commandLimits := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{}
+	commandLimits.BasicLimitInformation.LimitFlags = windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+	if _, err = windows.SetInformationJobObject(commandJob, windows.JobObjectExtendedLimitInformation, uintptr(unsafe.Pointer(&commandLimits)), uint32(unsafe.Sizeof(commandLimits))); err != nil {
+		return 0, err
+	}
 	job, err := windows.CreateJobObject(nil, nil)
 	if err != nil {
 		return 0, err
 	}
 	limits := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{}
 	// Explicit asynchronous workers may leave this command's temporary job,
-	// while an enclosing task/client job still owns their cancellation.
+	// while the enclosing command job still owns their cancellation.
 	limits.BasicLimitInformation.LimitFlags = windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | windows.JOB_OBJECT_LIMIT_BREAKAWAY_OK
 	if _, err = windows.SetInformationJobObject(job, windows.JobObjectExtendedLimitInformation, uintptr(unsafe.Pointer(&limits)), uint32(unsafe.Sizeof(limits))); err != nil {
 		windows.CloseHandle(job)
@@ -44,7 +62,10 @@ func startProcessGroup(cmd *exec.Cmd) (int, error) {
 	if err != nil {
 		return fail(err)
 	}
-	err = windows.AssignProcessToJobObject(job, proc)
+	err = windows.AssignProcessToJobObject(commandJob, proc)
+	if err == nil {
+		err = windows.AssignProcessToJobObject(job, proc)
+	}
 	windows.CloseHandle(proc)
 	if err != nil {
 		return fail(err)
@@ -79,7 +100,8 @@ func startProcessGroup(cmd *exec.Cmd) (int, error) {
 	}
 
 	shellJobs.Lock()
-	shellJobs.handles[cmd.Process.Pid] = job
+	shellJobs.handles[cmd.Process.Pid] = shellJob{command: commandJob, temporary: job}
+	keepCommandJob = true
 	shellJobs.Unlock()
 	// Watch the process handle separately from exec.Cmd.Wait: descendants can
 	// inherit stdout pipes and otherwise keep Wait blocked after their parent exits.
@@ -94,7 +116,7 @@ func startProcessGroup(cmd *exec.Cmd) (int, error) {
 		_, _ = windows.WaitForSingleObject(waiter, windows.INFINITE)
 		shellJobs.Lock()
 		defer shellJobs.Unlock()
-		if current, ok := shellJobs.handles[cmd.Process.Pid]; ok && current == job {
+		if current, ok := shellJobs.handles[cmd.Process.Pid]; ok && current.temporary == job {
 			_ = windows.TerminateJobObject(job, 1)
 		}
 	}()
@@ -105,7 +127,11 @@ func releaseProcessGroup(cmd *exec.Cmd, _ int) {
 	shellJobs.Lock()
 	defer shellJobs.Unlock()
 	if job, ok := shellJobs.handles[cmd.Process.Pid]; ok {
-		windows.CloseHandle(job)
+		// Normal shell completion releases only the temporary job. An explicit
+		// asynchronous worker retains command ownership until it exits. Closing
+		// this process still closes the command handle and kills its workers.
+		windows.CloseHandle(job.temporary)
+		go releaseEmptyCommandJob(job.command)
 		delete(shellJobs.handles, cmd.Process.Pid)
 	}
 }
@@ -113,7 +139,23 @@ func killProcessGroup(cmd *exec.Cmd, _ int) error {
 	shellJobs.Lock()
 	defer shellJobs.Unlock()
 	if job, ok := shellJobs.handles[cmd.Process.Pid]; ok {
-		return windows.TerminateJobObject(job, 1)
+		return windows.TerminateJobObject(job.command, 1)
 	}
 	return nil
+}
+
+// JOBOBJECT_BASIC_ACCOUNTING_INFORMATION has fixed-width fields on Windows.
+// Keep the outer job handle until all explicitly detached children have exited.
+func releaseEmptyCommandJob(job windows.Handle) {
+	defer windows.CloseHandle(job)
+	var accounting struct {
+		TotalUserTime, TotalKernelTime, PeriodUserTime, PeriodKernelTime     int64
+		PageFaultCount, TotalProcesses, ActiveProcesses, TerminatedProcesses uint32
+	}
+	for {
+		if err := windows.QueryInformationJobObject(job, windows.JobObjectBasicAccountingInformation, uintptr(unsafe.Pointer(&accounting)), uint32(unsafe.Sizeof(accounting)), nil); err != nil || accounting.ActiveProcesses == 0 {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
