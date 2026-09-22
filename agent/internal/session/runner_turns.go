@@ -370,6 +370,10 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 		}
 		result.ShellAgentTrajectoryMessages = shellResult.TrajectoryMessages
 		result.ShellAgentTrajectoryPath = shellResult.TrajectoryPath
+		if shellResult.Failure != nil {
+			stream.Complete(shellResult.Failure.JSON())
+			return env.recordShellAgentFailure(question, shellResult.Failure)
+		}
 		if shellErr != nil {
 			env.turnInfo["shell_agent_error"] = trimTo(shellErr.Error(), 200)
 			if env.isContextCancelled(shellErr) {
@@ -381,6 +385,10 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 				finishTurn(env.sessTelemetry, env.turn, env.turnDecision, "interrupted", env.turnInfo, shellErr)
 				return turnExecutionResult{action: turnLoopReturn, result: env.interruptedResult(shellErr), shellAgentUsed: shellAgentUsedThisTurn}
 			}
+			stream.Abort(shellErr.Error())
+			*env.sessionErr = shellErr
+			finishTurn(env.sessTelemetry, env.turn, env.turnDecision, "error", env.turnInfo, shellErr)
+			return turnExecutionResult{action: turnLoopReturn, result: Result{ExitCode: 1, Err: shellErr}, shellAgentUsed: shellAgentUsedThisTurn}
 		}
 		if shellResult.Cancelled {
 			if strings.TrimSpace(shellResult.TrajectoryPath) != "" {
@@ -400,7 +408,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 			if strings.TrimSpace(shellResult.TrajectoryPath) != "" {
 				env.turnInfo["shell_agent_trajectory"] = trimTo(shellResult.TrajectoryPath, 200)
 			}
-			if env.isResumingTurn && !skipResumeVerify {
+			if env.isResumingTurn && !skipResumeVerify && !shellResult.Restarted {
 				resumedMsgs := result.ShellAgentTrajectoryMessages
 				err := verifyShellAgentResume(interruptedMsgs, resumedMsgs)
 				if err != nil {
@@ -449,6 +457,9 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 		transcriptQuestion := question
 		if block := strings.TrimSpace(result.DirectiveBlock); block != "" && runNoShell {
 			transcriptQuestion = transcriptQuestion + "\n\n" + block
+		}
+		if !shellResult.Cancelled && strings.TrimSpace(shellResult.TrajectoryPath) != "" {
+			env.recorder.SetShellAgentMetadata(shellResult.TrajectoryPath, false)
 		}
 		if err := env.writeTurn(env.step, transcriptQuestion, savedPath, retrieved, fullAns, "ask"); err != nil {
 			fmt.Fprintln(env.diagWriter, "Transcript write error:", err)
@@ -529,6 +540,10 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 		return turnExecutionResult{action: turnLoopReturn, result: Result{ExitCode: 1, Err: merr}, shellAgentUsed: shellAgentUsedThisTurn}
 	}
 
+	if result.ShellAgentFailure != nil {
+		stream.Complete(result.ShellAgentFailure.JSON())
+		return env.recordShellAgentFailure(question, result.ShellAgentFailure)
+	}
 	if strings.TrimSpace(result.ShellAgentTrajectoryPath) != "" {
 		env.turnInfo["shell_agent_trajectory"] = trimTo(result.ShellAgentTrajectoryPath, 200)
 	}
@@ -539,7 +554,7 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 			env.bus.Emit(ui.NotificationEvent{Level: ui.NotificationInfo, Message: "[resume] shell-agent interrupted again; assertion deferred"})
 		}
 	}
-	if env.isResumingTurn && !skipResumeVerify {
+	if env.isResumingTurn && !skipResumeVerify && !result.ShellAgentRestarted {
 		resumedMsgs := result.ShellAgentTrajectoryMessages
 		err := verifyShellAgentResume(interruptedMsgs, resumedMsgs)
 		if err != nil {
@@ -590,6 +605,9 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 	if block := strings.TrimSpace(result.DirectiveBlock); block != "" {
 		transcriptQuestion = transcriptQuestion + "\n\n" + block
 	}
+	if !result.ShellAgentCancelled && strings.TrimSpace(result.ShellAgentTrajectoryPath) != "" {
+		env.recorder.SetShellAgentMetadata(result.ShellAgentTrajectoryPath, false)
+	}
 	if err := env.writeTurn(env.step, transcriptQuestion, savedPath, retrieved, fullAns, "ask"); err != nil {
 		fmt.Fprintln(env.diagWriter, "Transcript write error:", err)
 		*env.sessionErr = err
@@ -617,6 +635,26 @@ func executeAskDecision(env *runTurnEnv, question string) turnExecutionResult {
 		return turnExecutionResult{action: turnLoopAnswerUser, shellAgentUsed: shellAgentUsedThisTurn}
 	}
 	return turnExecutionResult{action: turnLoopAskWorker, shellAgentUsed: shellAgentUsedThisTurn}
+}
+
+// A failed worker attempt completes the request with a structured failure so
+// the planner can decide what to do next. It never counts as worker success.
+func (env *runTurnEnv) recordShellAgentFailure(question string, failure *shellagent.Failure) turnExecutionResult {
+	env.recorder.SetShellAgentMetadata(failure.TrajectoryPath, false)
+	env.recorder.shellAgentFailure = failure
+	defer func() { env.recorder.shellAgentFailure = nil }()
+	env.turnInfo["shell_agent_failure"] = failure
+	if err := env.writeTurn(env.step, question, "", nil, failure.JSON(), "ask"); err != nil {
+		*env.sessionErr = err
+		finishTurn(env.sessTelemetry, env.turn, env.turnDecision, "error", env.turnInfo, err)
+		return turnExecutionResult{action: turnLoopReturn, result: Result{ExitCode: 1, Err: err}, shellAgentUsed: true}
+	}
+	*env.turnsCompleted++
+	finishTurn(env.sessTelemetry, env.turn, env.turnDecision, "error", env.turnInfo, failure)
+	if *env.turnsCompleted >= env.cfg.maxTurns {
+		return turnExecutionResult{action: turnLoopAnswerUser, shellAgentUsed: true}
+	}
+	return turnExecutionResult{action: turnLoopAskWorker, shellAgentUsed: true}
 }
 
 // TurnContext bundles turn-scoped data for shell-agent request construction.

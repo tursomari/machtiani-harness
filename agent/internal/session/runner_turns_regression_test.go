@@ -2,7 +2,10 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"io"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/tursomari/machtiani/agent/internal/conversation"
@@ -12,6 +15,51 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/shell-agent/pkg/minisweagent"
 	"github.com/tursomari/machtiani/agent/internal/ui"
 )
+
+func TestShellAgentFailureIsPersistedBeforePlannerContinues(t *testing.T) {
+	conv := conversation.New("test-format-failure", "Complete the work")
+	path := filepath.Join(t.TempDir(), "conversation.json")
+	recorder := &conversationRecorder{conversation: conv, conversationPath: path, sessionID: conv.SessionID}
+	if err := recorder.PreWriteTurn(1, "Do the work", "test-trajectory"); err != nil {
+		t.Fatal(err)
+	}
+	completed := 0
+	var sessionErr error
+	env := &runTurnEnv{cfg: legacyConfig{maxTurns: 3}, step: 1, recorder: recorder, writeTurn: recorder.WriteTurn, turnsCompleted: &completed, sessionErr: &sessionErr, turnInfo: map[string]any{}}
+	failure := &shellagent.Failure{Status: "failed", Code: "FormatErrorLoop", Attempts: 2, Message: "No valid final answer", Diagnostic: "invalid tags", TrajectoryPath: "test-trajectory"}
+	result := env.recordShellAgentFailure("Do the work", failure)
+	if result.action != turnLoopAskWorker || sessionErr != nil || completed != 1 {
+		t.Fatalf("result = %+v, err = %v, completed = %d", result, sessionErr, completed)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err := conversation.Unmarshal(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.ShellAgentResumable || saved.TurnsCompleted != 1 {
+		t.Fatalf("saved state = %+v", saved)
+	}
+	var results int
+	for _, msg := range saved.Messages {
+		if msg.Metadata["type"] != "work_result" {
+			continue
+		}
+		results++
+		var got shellagent.Failure
+		if err := json.Unmarshal([]byte(msg.Content), &got); err != nil {
+			t.Fatal(err)
+		}
+		if got.Code != "FormatErrorLoop" || got.Attempts != 2 || msg.Metadata["status"] != "failed" || msg.Metadata["failure"] == nil {
+			t.Fatalf("work result = %+v", msg)
+		}
+	}
+	if results != 1 {
+		t.Fatalf("work results = %d", results)
+	}
+}
 
 // TestExecuteAskDecisionTerminatesAtOrOverCap verifies that when a session
 // resumes with turns_completed already at or above the configured turn cap,

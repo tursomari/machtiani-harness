@@ -55,6 +55,29 @@ func testShellAgentRequest() *shellagent.Request {
 	}
 }
 
+func TestShellAgentFailureReachesBothPromptPathsWithoutChatFallback(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	failure := &shellagent.Failure{Status: "failed", Code: "FormatErrorLoop", Attempts: 2, Message: "No valid final answer", Diagnostic: "invalid tags", TrajectoryPath: "test-trajectory"}
+	originalRun, originalChat := shellAgentRun, chatStreamWithRuntime
+	t.Cleanup(func() { shellAgentRun, chatStreamWithRuntime = originalRun, originalChat })
+	shellAgentRun = func(context.Context, shellagent.Request) (shellagent.Result, error) {
+		return shellagent.Result{ExitStatus: "FormatErrorLoop", Error: failure, TrajectoryPath: failure.TrajectoryPath, Restarted: true}, nil
+	}
+	chatStreamWithRuntime = func(context.Context, llm.ResolvedModel, []string, []llm.ResolvedModel, map[string]any, []llm.Message, func(string)) (string, error) {
+		t.Fatal("failure must not become a chat-generated answer")
+		return "", nil
+	}
+	opts := RunOptions{Prompt: "Do the work", Mode: "default", ShellAgent: true, ShellAgentRequest: testShellAgentRequest(), Prompts: testPromptsConfig(), Runtime: ModelRuntime{Resolved: llm.ResolvedModel{Model: "test"}}}
+	res, err := Run(context.Background(), opts)
+	if err != nil || res.ShellAgentFailure != failure || res.Assistant != failure.JSON() || res.ShellAgentCancelled || !res.ShellAgentRestarted {
+		t.Fatalf("result = %+v, err = %v", res, err)
+	}
+	only, err := RunShellAgentOnly(context.Background(), opts, *opts.ShellAgentRequest)
+	if err != nil || only.Failure != failure || only.Summary != failure.JSON() || only.Cancelled || !only.Restarted {
+		t.Fatalf("shell-only result = %+v, err = %v", only, err)
+	}
+}
+
 func TestRunUsesShellAgentSubmittedAnswerWithoutChatFallback(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("MACHTIANI_SESSION_ID", "test-shell-agent-submitted")

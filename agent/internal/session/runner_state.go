@@ -20,6 +20,7 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/planner"
 	"github.com/tursomari/machtiani/agent/internal/presentation"
 	"github.com/tursomari/machtiani/agent/internal/runner"
+	shellagent "github.com/tursomari/machtiani/agent/internal/shell-agent"
 	"github.com/tursomari/machtiani/agent/internal/tempdir"
 	"github.com/tursomari/machtiani/agent/internal/trajectory"
 	"github.com/tursomari/machtiani/agent/internal/transcript"
@@ -599,6 +600,7 @@ type conversationRecorder struct {
 	conversationJSON         string
 	shellAgentTrajectoryPath string
 	shellAgentResumable      bool
+	shellAgentFailure        *shellagent.Failure
 	hasNewInput              bool
 	resumedSession           bool
 	magnificaEnabled         bool
@@ -814,12 +816,17 @@ func (c *conversationRecorder) WriteTurn(step int, question, savedPath string, r
 		"decision":               decision,
 		"shell_agent_session_id": shellAgentSessionID,
 	})
-	c.conversation.AddMessage("assistant", summary, map[string]any{
+	resultMetadata := map[string]any{
 		"type":            "work_result",
 		"turn":            step,
 		"retrieved_files": retrieved,
 		"chat_path":       savedPath,
-	})
+	}
+	if c.shellAgentFailure != nil {
+		resultMetadata["status"] = "failed"
+		resultMetadata["failure"] = c.shellAgentFailure
+	}
+	c.conversation.AddMessage("assistant", summary, resultMetadata)
 	rendered, delta, err := c.renderDelta()
 	if errors.Is(err, errConversationTranscriptDesync) {
 		if c.tr != nil {

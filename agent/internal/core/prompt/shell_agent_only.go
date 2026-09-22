@@ -2,6 +2,7 @@ package prompt
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -18,6 +19,8 @@ type ShellAgentOnlyResult struct {
 	TrajectoryPath     string
 	TrajectoryMessages []minisweagent.Message `json:"trajectory_messages,omitempty"`
 	Cancelled          bool
+	Failure            *shellagent.Failure
+	Restarted          bool
 }
 
 // RunShellAgentOnly runs the shell agent on the prompt and returns its output
@@ -66,6 +69,11 @@ func RunShellAgentOnly(ctx context.Context, opts RunOptions, req shellagent.Requ
 	}
 	res.TrajectoryPath = result.TrajectoryPath
 	res.TrajectoryMessages = result.Trajectory.Messages
+	res.Restarted = result.Restarted
+	if errors.As(result.Error, &res.Failure) {
+		res.Summary = res.Failure.JSON()
+		return res, nil
+	}
 	if result.Error != nil {
 		return res, fmt.Errorf("shell-agent failed: %w", result.Error)
 	}

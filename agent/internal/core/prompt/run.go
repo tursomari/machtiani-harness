@@ -2,6 +2,7 @@ package prompt
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -246,6 +247,14 @@ func Run(ctx context.Context, opts RunOptions) (Result, error) {
 		}
 		shellAgentTrajectoryPath = result.TrajectoryPath
 		res.ShellAgentTrajectoryMessages = result.Trajectory.Messages
+		res.ShellAgentRestarted = result.Restarted
+		if errors.As(result.Error, &res.ShellAgentFailure) {
+			res.ShellAgentTrajectoryPath = shellAgentTrajectoryPath
+			res.ShellAgentUsed = true
+			res.Assistant = res.ShellAgentFailure.JSON()
+			res.FullText = res.Assistant
+			return res, nil
+		}
 		if result.Error != nil {
 			res.ShellAgentTrajectoryPath = shellAgentTrajectoryPath
 			return res, fmt.Errorf("shell-agent failed: %w", result.Error)

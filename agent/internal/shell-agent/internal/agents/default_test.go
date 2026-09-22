@@ -240,8 +240,9 @@ func TestRunLoopFormatErrorCircuitBreaker(t *testing.T) {
 	agent.addMessage("user", "test task", nil)
 
 	status, msg, err := agent.RunLoop(context.Background(), false)
-	if err != nil {
-		t.Fatalf("RunLoop() error = %v", err)
+	var formatErr *minisweagent.FormatError
+	if !errors.As(err, &formatErr) {
+		t.Fatalf("expected format error, got %v", err)
 	}
 	if status != "FormatErrorLoop" {
 		t.Fatalf("status = %q, want %q", status, "FormatErrorLoop")
@@ -371,7 +372,17 @@ func TestRenderFormatErrorUsesTemplate(t *testing.T) {
 		agent.State.Prompts.ShellAgent.FormatErrorTemplate = ""
 
 		result := agent.renderFormatError(fmt.Errorf("test error"))
-		const fallback = "Your response did not use an accepted format. Reason: test error. Respond with exactly one <command>...</command> block containing the Bash command to execute, or exactly one <answer>...</answer> block if you are concluding."
+		const fallback = `Your previous response was rejected. No command from that response was executed.
+
+Reason: test error
+Consecutive rejected responses: 1 of 3.
+Three consecutive rejections end this attempt.
+
+Correct the specific problem above and respond with exactly one of:
+- <command>Bash command to execute</command>
+- <answer>Your final answer</answer>
+
+Use the exact tag names shown. Do not wrap the response in Markdown code fences or combine command and answer blocks.`
 		if result != fallback {
 			t.Fatalf("expected fallback message %q, got %q", fallback, result)
 		}
@@ -393,7 +404,17 @@ func TestRenderFormatErrorUsesTemplate(t *testing.T) {
 		agent := NewDefaultAgent(&stubModel{}, &stubEnvironment{}, cfg, prompts)
 
 		result := agent.renderFormatError(fmt.Errorf("test error"))
-		const fallback = "Your response did not use an accepted format. Reason: test error. Respond with exactly one <command>...</command> block containing the Bash command to execute, or exactly one <answer>...</answer> block if you are concluding."
+		const fallback = `Your previous response was rejected. No command from that response was executed.
+
+Reason: test error
+Consecutive rejected responses: 1 of 3.
+Three consecutive rejections end this attempt.
+
+Correct the specific problem above and respond with exactly one of:
+- <command>Bash command to execute</command>
+- <answer>Your final answer</answer>
+
+Use the exact tag names shown. Do not wrap the response in Markdown code fences or combine command and answer blocks.`
 		if result != fallback {
 			t.Fatalf("expected fallback message %q, got %q", fallback, result)
 		}
@@ -415,7 +436,17 @@ func TestRenderFormatErrorUsesTemplate(t *testing.T) {
 		agent := NewDefaultAgent(&stubModel{}, &stubEnvironment{}, cfg, prompts)
 
 		result := agent.renderFormatError(fmt.Errorf("test error"))
-		const fallback = "Your response did not use an accepted format. Reason: test error. Respond with exactly one <command>...</command> block containing the Bash command to execute, or exactly one <answer>...</answer> block if you are concluding."
+		const fallback = `Your previous response was rejected. No command from that response was executed.
+
+Reason: test error
+Consecutive rejected responses: 1 of 3.
+Three consecutive rejections end this attempt.
+
+Correct the specific problem above and respond with exactly one of:
+- <command>Bash command to execute</command>
+- <answer>Your final answer</answer>
+
+Use the exact tag names shown. Do not wrap the response in Markdown code fences or combine command and answer blocks.`
 		if result != fallback {
 			t.Fatalf("expected fallback message %q, got %q", fallback, result)
 		}

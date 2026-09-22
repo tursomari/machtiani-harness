@@ -9,6 +9,28 @@ A minimal implementation of the mini SWE shell agent written in Go 1.23+. It mir
 - Text/template cascade for system/instance/feedback messaging
 - JSON trajectory writer for post-run inspection
 
+## Format-error recovery
+
+Rejected responses receive the specific validation reason, the consecutive
+rejection count, and the required command/answer tags. No command from a
+rejected response executes. The built-in feedback template and fallback use
+the same wording; custom feedback templates can still override it.
+
+Three consecutive format errors stop the current attempt with
+`FormatErrorLoop` and a non-nil loop error. The library permits one fresh
+conversation for the same work request, under the original context/deadline.
+Each attempt keeps the configured step limit. The redo resets conversation
+history and format-error state, preserves the workspace, and receives bounded
+observations of previously executed commands. It must inspect current state
+before repeating actions.
+
+The first failed trajectory is retained as `format-error-attempt-1.json`
+beside the current `trajectory.json`. A persisted recovery marker prevents
+interruption/resume from granting another redo. If recovery fails, the planner
+receives a system-generated JSON failure with a status, code, attempt count,
+diagnostic, and trajectory path. The work result is marked failed; it is never
+an empty success or a fabricated confidence-scored final answer.
+
 ## Getting Started
 
 ```bash

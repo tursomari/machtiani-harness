@@ -134,7 +134,7 @@ type Result struct {
 	// ExitStatus is the termination status (e.g. "Submitted", "LimitsExceeded").
 	ExitStatus string
 
-	// Error is any non-agent error that occurred during the run.
+	// Error reports runtime errors or an exhausted format-error recovery.
 	Error error
 
 	// TrajectoryPath is the directory path where the trajectory is stored.
@@ -142,17 +142,20 @@ type Result struct {
 
 	// Trajectory is the full trajectory of the run, if available.
 	Trajectory minisweagent.Trajectory
+
+	// Restarted reports that this invocation replaced a failed conversation.
+	Restarted bool
 }
 
-// Run executes the shell-agent loop using the provided request.
+// runAttempt executes one shell-agent conversation using the provided request.
 //
 // The caller is responsible for building the complete message array:
 //  1. Shell-agent system prompt (rendered once per session).
 //  2. Planner conversation messages (serialized via serializeChatMessage).
 //  3. Instance prompt (rendered from the shell-agent instance template).
 //
-// Run sets the messages and enters the standard tool-calling loop.
-func Run(ctx context.Context, req Request) (Result, error) {
+// runAttempt sets the messages and enters the standard tool-calling loop.
+func runAttempt(ctx context.Context, req Request) (Result, error) {
 	var res Result
 
 	// Compute shell-agent session checkpoint directory.
@@ -208,6 +211,14 @@ func Run(ctx context.Context, req Request) (Result, error) {
 	} else {
 		if trajFilePath != "" {
 			if loadedTraj, loadErr := run.LoadTrajectory(trajFilePath); loadErr == nil {
+				if loadedTraj.ExitStatus == "FormatErrorLoop" {
+					return Result{
+						ExitStatus: loadedTraj.ExitStatus, Answer: loadedTraj.Result,
+						Error:          &minisweagent.FormatError{Message: loadedTraj.Result},
+						TrajectoryPath: trajFilePath,
+						Trajectory:     minisweagent.Trajectory{Messages: loadedTraj.Messages, ExitStatus: loadedTraj.ExitStatus, Result: loadedTraj.Result},
+					}, nil
+				}
 				currentSystem, hasCurrentSystem := firstSystemMessage(msgs)
 				if loadedTraj.ResumeState != nil {
 					agent.RestoreResumeState(loadedTraj.ResumeState)
@@ -257,13 +268,15 @@ func Run(ctx context.Context, req Request) (Result, error) {
 		}
 	}
 
-	// After the run, save the resume state file for future resumes,
-	// but only when ResumeAttempt is true (do not persist state for
-	// forced-fresh runs).
-	if resumeAttempt {
+	// Recovery attempts must be persisted even for forced-fresh runs so their
+	// diagnostics and retry budget survive interruption/resume.
+	if resumeAttempt || exitStatus == "FormatErrorLoop" || hasRecoveryContext(agent.Messages()) {
 		saveTraj := run.FromAgent(agent, exitStatus, answer, nil)
 		if agent.RunConfig.CheckpointDir != "" {
 			if saveErr := run.SaveTrajectoryToPath(saveTraj, agent.RunConfig.CheckpointDir); saveErr != nil {
+				if exitStatus == "FormatErrorLoop" || hasRecoveryContext(agent.Messages()) {
+					return res, fmt.Errorf("save shell-agent recovery trajectory: %w", saveErr)
+				}
 				log.Printf("save final trajectory: %v", saveErr)
 			}
 		}

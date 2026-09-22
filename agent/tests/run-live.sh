@@ -1315,6 +1315,18 @@ EOF
 provider = "${test_provider_name}"
 model = "${remote}"
 EOF
+    if [[ "$LIVE_MODE" == true && -n "${TEST_REASONING_EFFORT:-}" ]]; then
+      "$PYTHON_BIN" - "$config_file" "$alias" "$TEST_REASONING_EFFORT" <<'PY'
+import json
+import pathlib
+import sys
+
+path, alias, effort = sys.argv[1:]
+with pathlib.Path(path).open("a", encoding="utf-8") as config:
+    config.write(f"\n[models.{json.dumps(alias)}.params]\n")
+    config.write(f"reasoning_effort = {json.dumps(effort)}\n")
+PY
+    fi
     declared_aliases+=("$alias")
   }
 

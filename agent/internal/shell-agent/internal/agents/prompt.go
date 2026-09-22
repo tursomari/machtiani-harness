@@ -8,6 +8,7 @@ import (
 	"github.com/tursomari/machtiani/agent/internal/llm"
 	"github.com/tursomari/machtiani/agent/internal/shell-agent/internal/run"
 	"github.com/tursomari/machtiani/agent/internal/shell-agent/pkg/minisweagent"
+	"github.com/tursomari/machtiani/agent/internal/templates"
 )
 
 func (a *DefaultAgent) systemPromptContent() (string, error) {
@@ -43,14 +44,31 @@ func (a *DefaultAgent) systemPromptContent() (string, error) {
 }
 
 func (a *DefaultAgent) renderFormatError(rawErr error) string {
+	vars := map[string]interface{}{
+		"RawErr":       rawErr.Error(),
+		"FailureCount": a.State.consecutiveFormatErrors + 1,
+		"FailureLimit": maxConsecutiveFormatErrors,
+		"CommandTag":   a.RunConfig.CommandTag,
+		"AnswerTag":    a.RunConfig.AnswerTag,
+	}
 	tmpl := a.State.Prompts.ShellAgent.FormatErrorTemplate
 	if tmpl != "" {
-		rendered, err := a.renderTemplate(tmpl, map[string]interface{}{"RawErr": rawErr.Error()})
+		rendered, err := a.renderTemplate(tmpl, vars)
 		if err == nil && strings.TrimSpace(rendered) != "" {
 			return rendered
 		}
 	}
-	return "Your response did not use an accepted format. Reason: " + rawErr.Error() + ". Respond with exactly one <" + a.RunConfig.CommandTag + ">...</" + a.RunConfig.CommandTag + "> block containing the Bash command to execute, or exactly one <" + a.RunConfig.AnswerTag + ">...</" + a.RunConfig.AnswerTag + "> block if you are concluding."
+	// Render the same embedded template with only known variables, independent
+	// of custom templates and environment/model template variables.
+	tmpl, err := templates.GetEmbeddedTemplate("shell_agent.format_error_template")
+	if err != nil {
+		panic(err) // Missing embedded assets are a programming error.
+	}
+	rendered, err := run.RenderTemplate(tmpl, vars)
+	if err != nil {
+		panic(err) // Covered by the default/fallback parity tests.
+	}
+	return rendered
 }
 
 func (a *DefaultAgent) renderTemplate(tmpl string, injected map[string]interface{}) (string, error) {

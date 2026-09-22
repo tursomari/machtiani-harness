@@ -306,6 +306,14 @@ func (r *Runner) RunPrompt(ctx context.Context, sessionID string, in PromptInput
 		}
 		payload = trajectory.MergeExcerptWithPrefix(payload, trajectory.MakeTextExcerpt(res.Assistant, w.ExcerptLen()), "answer")
 		evt := trajectory.Event{Kind: "mct.prompt.result", SpanID: span.ID, ParentSpanID: parentSpan, Payload: payload}
+		if res.ShellAgentRestarted {
+			payload["shell_agent_restarted"] = true
+		}
+		if res.ShellAgentFailure != nil {
+			payload["shell_agent_failure"] = res.ShellAgentFailure
+			evt.Level = "error"
+			evt.Err = &trajectory.ErrorInfo{Message: res.ShellAgentFailure.Error(), Category: "shell_agent", Code: res.ShellAgentFailure.Code}
+		}
 		if emitErr := w.Emit(ctx, evt); emitErr != nil {
 			r.reportRunnerTrajectoryError(emitErr)
 		}

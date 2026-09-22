@@ -74,7 +74,9 @@ type Result struct {
 	TrajectoryPath               string
 	FileDiscoveryRan             bool
 	ShellAgentUsed               bool
-	ShellAgentCancelled          bool                   // ShellAgentCancelled indicates the shell-agent run was interrupted or did not complete normally.
+	ShellAgentCancelled          bool // ShellAgentCancelled indicates the shell-agent run was interrupted or did not complete normally.
+	ShellAgentFailure            *shellagent.Failure
+	ShellAgentRestarted          bool
 	ShellAgentTrajectoryPath     string                 // ShellAgentTrajectoryPath is the filesystem path to the shell-agent session trajectory file (trajectory.json).
 	ShellAgentTrajectoryMessages []minisweagent.Message `json:"-,"`
 }

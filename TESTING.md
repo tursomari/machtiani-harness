@@ -596,6 +596,8 @@ After a successful run, verify:
 The original evaluation pipeline, documented in scripts/run_eval.sh itself. It compares agent outputs against a known ground truth commit and requires --eval-commit and --ground-truth flags. Refer to the script header and inline comments for usage details.
 
 ## Environment Variable Reference
+
+- `TEST_REASONING_EFFORT` — optional reasoning effort for generated live model aliases in `agent/tests/run-live.sh` (for example, `medium`). Unset leaves the provider default unchanged.
 - `TEST_API_KEY`, `TEST_BASE_URL`, `TEST_MODEL` — preferred live credentials for repository test harnesses and required by the Docker smoke test.
 - `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL` — general runtime credentials and the fallback for live harnesses that prefer `TEST_*`; harnesses with stubs use stub/dry-run mode when neither set is available.
 - `MACHTIANI_TUI_CAPTURE` — formatter-level TUI capture path. The record/replay harness sets this automatically for `live.tui.txt` and `replay.tui.txt`.

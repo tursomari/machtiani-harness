@@ -74,7 +74,7 @@ func (a *DefaultAgent) RunLoop(ctx context.Context, resuming bool) (string, stri
 					}
 				}
 				if a.State.consecutiveFormatErrors >= maxConsecutiveFormatErrors {
-					return "FormatErrorLoop", agentErr.Error(), nil
+					return "FormatErrorLoop", agentErr.Error(), err
 				}
 				if a.RunConfig.Verbose {
 					log.Printf("step %d recorded recoverable error: %s", a.State.stepCounter, agentErr.Error())
