@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net"
 	"net/http"
 	"net/url"
@@ -32,6 +33,8 @@ type Message struct {
 }
 
 var ErrNoChoices = errors.New("no choices returned")
+var ErrEmptyResponse = errors.New("response contains no answer content")
+var ErrInvalidStreamResponse = errors.New("invalid streaming response")
 
 var (
 	streamingHTTPClient = &http.Client{Timeout: 60 * time.Minute}
@@ -1978,6 +1981,14 @@ func performStream(req *http.Request, onToken func(string)) (string, *responseUs
 		}
 		return "", nil, &HTTPResponseError{URL: req.URL.String(), Status: resp.StatusCode, Body: strings.TrimSpace(string(b)), Header: resp.Header.Clone()}
 	}
+	// Some compatible endpoints omit the header. If provided, it must describe
+	// SSE; ordinary JSON must take the non-stream fallback instead of vanishing.
+	if contentType := resp.Header.Get("Content-Type"); contentType != "" {
+		mediaType, _, err := mime.ParseMediaType(contentType)
+		if err != nil || mediaType != "text/event-stream" {
+			return "", nil, fmt.Errorf("%w: expected Content-Type text/event-stream", ErrInvalidStreamResponse)
+		}
+	}
 
 	var full strings.Builder
 	var usage *responseUsage
@@ -1985,8 +1996,8 @@ func performStream(req *http.Request, onToken func(string)) (string, *responseUs
 	for {
 		line, err := reader.ReadString('\n')
 		if len(line) > 0 {
-			if strings.HasPrefix(line, "data: ") {
-				payload := strings.TrimSpace(strings.TrimPrefix(line, "data: "))
+			if strings.HasPrefix(line, "data:") {
+				payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 				if payload == "[DONE]" {
 					break
 				}
@@ -1998,18 +2009,19 @@ func performStream(req *http.Request, onToken func(string)) (string, *responseUs
 					} `json:"choices"`
 					Usage *responseUsage `json:"usage"`
 				}
-				if err := json.Unmarshal([]byte(payload), &obj); err == nil {
-					if obj.Usage != nil {
-						usage = obj.Usage
-					}
-					if len(obj.Choices) > 0 {
-						tok := obj.Choices[0].Delta.Content
-						if tok != "" {
-							if onToken != nil {
-								onToken(tok)
-							}
-							full.WriteString(tok)
+				if err := json.Unmarshal([]byte(payload), &obj); err != nil {
+					return full.String(), usage, fmt.Errorf("%w event: %w", ErrInvalidStreamResponse, err)
+				}
+				if obj.Usage != nil {
+					usage = obj.Usage
+				}
+				if len(obj.Choices) > 0 {
+					tok := obj.Choices[0].Delta.Content
+					if tok != "" {
+						if onToken != nil {
+							onToken(tok)
 						}
+						full.WriteString(tok)
 					}
 				}
 			}
@@ -2026,6 +2038,9 @@ func performStream(req *http.Request, onToken func(string)) (string, *responseUs
 	}
 	if IsRecording() {
 		RecordRoundTrip(req, nil, resp.StatusCode, resp.Header, []byte(full.String()))
+	}
+	if strings.TrimSpace(full.String()) == "" {
+		return full.String(), usage, fmt.Errorf("streaming response: %w", ErrEmptyResponse)
 	}
 	return full.String(), usage, nil
 }
@@ -2070,6 +2085,9 @@ func performNonStream(req *http.Request) (string, *responseUsage, error) {
 	if len(parsed.Choices) == 0 {
 		return "", nil, ErrNoChoices
 	}
+	if strings.TrimSpace(parsed.Choices[0].Message.Content) == "" {
+		return "", parsed.Usage, fmt.Errorf("non-streaming response: %w", ErrEmptyResponse)
+	}
 	return parsed.Choices[0].Message.Content, parsed.Usage, nil
 }
 
@@ -2094,6 +2112,11 @@ func emitWithPrefix(ctx context.Context, onToken func(string), prefix, full stri
 
 func shouldRetry(err error) bool {
 	if err == nil {
+		return false
+	}
+	// Invalid streams should enter the non-stream fallback immediately,
+	// including JSON syntax errors that would otherwise trigger stream retries.
+	if errors.Is(err, ErrInvalidStreamResponse) || errors.Is(err, ErrEmptyResponse) {
 		return false
 	}
 	// Provider-side timeouts arrive wrapped in UnreachableHostError and are

@@ -771,7 +771,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 state_path = sys.argv[1]
 port_path = sys.argv[2]
-state = {"requests": 0, "discovery_requests": 0}
+state = {"requests": 0, "discovery_requests": 0, "readme_stream_requests": 0}
 
 def write_state():
     with open(state_path, "w", encoding="utf-8") as fh:
@@ -804,6 +804,8 @@ class Handler(BaseHTTPRequestHandler):
             time.sleep(1.5)
             reply = "BEGIN_RELEVANT_FILES[file-discovery]\nREADME.md\nEND_RELEVANT_FILES[file-discovery]\n"
         else:
+            if data.get("stream"):
+                state["readme_stream_requests"] += 1
             write_state()
             reply = "# Internal README\n\nThis fixture verifies discovery timeout policy.\n"
 
@@ -816,9 +818,15 @@ class Handler(BaseHTTPRequestHandler):
             "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
         }
         encoded = json.dumps(payload).encode("utf-8")
+        content_type = "application/json"
+        if data.get("stream"):
+            payload["object"] = "chat.completion.chunk"
+            payload["choices"] = [{"index": 0, "delta": {"content": reply}, "finish_reason": "stop"}]
+            encoded = ("data: " + json.dumps(payload) + "\n\ndata: [DONE]\n\n").encode("utf-8")
+            content_type = "text/event-stream"
         try:
             self.send_response(200)
-            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(encoded)))
             self.end_headers()
             self.wfile.write(encoded)
@@ -860,6 +868,7 @@ port_path = sys.argv[2]
 state = {
     "requests": 0,
     "discovery_requests": 0,
+    "readme_stream_requests": 0,
     "discovery_token_counts": [],
     "max_discovery_tokens": 0,
     "summary_seen": False,
@@ -927,6 +936,8 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 reply = json.dumps({"tool": "file_search", "args": {"kind": "files_pattern", "pattern": "\\.go$"}})
         else:
+            if data.get("stream"):
+                state["readme_stream_requests"] += 1
             reply = "# Multi-round budget fixture\n\nDiscovery stayed within its active budget through forced finalization.\n"
         write_state()
 
@@ -939,8 +950,14 @@ class Handler(BaseHTTPRequestHandler):
             "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
         }
         encoded = json.dumps(payload).encode("utf-8")
+        content_type = "application/json"
+        if data.get("stream"):
+            payload["object"] = "chat.completion.chunk"
+            payload["choices"] = [{"index": 0, "delta": {"content": reply}, "finish_reason": "stop"}]
+            encoded = ("data: " + json.dumps(payload) + "\n\ndata: [DONE]\n\n").encode("utf-8")
+            content_type = "text/event-stream"
         self.send_response(200)
-        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(encoded)))
         self.end_headers()
         self.wfile.write(encoded)
@@ -4588,6 +4605,27 @@ test_missing_config() {
     "Explain how the agent chooses its model runtime."
 }
 
+assert_synced_readme_answer() {
+  local repo="$1" config_file="$2" expected="$3" project_json commit
+  project_json="$(cd "$repo" && MACHTIANI_CONFIG="$config_file" "$MACHTIANI_EXE" project show --json)" || return 1
+  commit="$(git -C "$repo" rev-parse HEAD)" || return 1
+  "$PYTHON_BIN" - "$project_json" "$commit" "$expected" <<'PY'
+import json
+import pathlib
+import subprocess
+import sys
+
+store = pathlib.Path(json.loads(sys.argv[1])["store"])
+readme_repo = store / "artifacts" / "readme"
+actual = subprocess.check_output(
+    ["git", "-C", str(readme_repo), "show", f"oid-{sys.argv[2]}:internal-readme.md"],
+    text=True,
+)
+if actual.strip() != sys.argv[3].strip():
+    raise SystemExit("synced README does not match the fixture's assistant answer")
+PY
+}
+
 test_discovery_turn_timeout() {
   local case_root repo config_file state_file port_file short_stdout short_stderr unlimited_stdout unlimited_stderr port
   case_root="$(mktemp -d "$TMP_ROOT/discovery-timeout.XXXXXX")"
@@ -4675,8 +4713,15 @@ with open(sys.argv[1], "r", encoding="utf-8") as fh:
     state = json.load(fh)
 if int(state.get("discovery_requests", 0)) < 2:
     raise SystemExit("expected at least two delayed discovery requests")
+if state["requests"] - state["discovery_requests"] != 1 or state["readme_stream_requests"] != 1:
+    raise SystemExit("expected exactly one README request, using streaming without fallback")
 PY
   then
+    stop_llm_stub_server
+    return 1
+  fi
+  if ! assert_synced_readme_answer "$repo" "$config_file" \
+    $'# Internal README\n\nThis fixture verifies discovery timeout policy.\n'; then
     stop_llm_stub_server
     return 1
   fi
@@ -4765,9 +4810,16 @@ if not state.get("summary_seen"):
     raise SystemExit(f"compacted discovery summary was never observed: {state}")
 if not state.get("forced_finalization_seen"):
     raise SystemExit(f"forced finalization request was not observed: {state}")
+if state["requests"] - state["discovery_requests"] != 1 or state["readme_stream_requests"] != 1:
+    raise SystemExit("expected exactly one README request, using streaming without fallback")
 print(f"validated {state['discovery_requests']} multi-round discovery requests; max={state['max_discovery_tokens']} tokens")
 PY
   then
+    stop_llm_stub_server
+    return 1
+  fi
+  if ! assert_synced_readme_answer "$repo" "$config_file" \
+    $'# Multi-round budget fixture\n\nDiscovery stayed within its active budget through forced finalization.\n'; then
     stop_llm_stub_server
     return 1
   fi
