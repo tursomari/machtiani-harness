@@ -1413,7 +1413,11 @@ func chatWithResolvedFallback(ctx context.Context, primary ResolvedModel, fallba
 				onToken(token)
 			}
 		}
-		result, attemptErr = chatModelHost(ctx, primary, extraParams, messages, stream, primaryOnToken)
+		mode := "non-stream"
+		if stream {
+			mode = "stream"
+		}
+		result, attemptErr = chatModelHostWithRetries(ctx, primary, extraParams, messages, stream, primaryOnToken, llmAttemptMeta{Alias: strings.TrimSpace(primary.Alias), Mode: mode, Source: "primary"})
 		emittedPrefix = streamedPrefix.String()
 	} else {
 		basePayload := mergeMaps(primary.Params, extraParams)
@@ -1493,7 +1497,7 @@ func chatWithResolvedFallback(ctx context.Context, primary ResolvedModel, fallba
 		}
 		var fallbackErr error
 		if fallbackModel.Transport == "model-host" {
-			result, fallbackErr = chatModelHost(ctx, fallbackModel, extraParams, messages, false, nil)
+			result, fallbackErr = chatModelHostWithRetries(ctx, fallbackModel, extraParams, messages, false, nil, fallbackMeta)
 		} else {
 			result, _, fallbackErr = executeWithReasoningCompatibility(ctx, fallbackModel, payload, false, nil, fallbackMeta)
 		}

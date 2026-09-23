@@ -42,6 +42,9 @@ func Run(ctx context.Context, req Request) (Result, error) {
 	if err != nil {
 		return res, err
 	}
+	if failed, ok := modelHostFailure(res); ok {
+		return failed, nil
+	}
 	if hasRecoveryContext(res.Trajectory.Messages) {
 		return recoveryOutcome(res), nil
 	}
@@ -87,9 +90,28 @@ func Run(ctx context.Context, req Request) (Result, error) {
 	res, err = runAttempt(ctx, req)
 	res.Restarted = true
 	if err == nil {
-		res = recoveryOutcome(res)
+		if failed, ok := modelHostFailure(res); ok {
+			res = failed
+		} else {
+			res = recoveryOutcome(res)
+		}
 	}
 	return res, err
+}
+
+func modelHostFailure(res Result) (Result, bool) {
+	var fault *llm.ModelHostCallError
+	if !errors.As(res.Error, &fault) || fault.Code == "CANCELLED" {
+		return res, false
+	}
+	attempts := fault.Attempts
+	if attempts < 1 {
+		attempts = 1
+	}
+	res.Error = &Failure{Status: "failed", Code: fault.Code, Attempts: attempts,
+		Message:    "Shell-agent model request failed; no valid final answer was produced.",
+		Diagnostic: fault.Error(), TrajectoryPath: res.TrajectoryPath}
+	return res, true
 }
 
 func recoveryOutcome(res Result) Result {

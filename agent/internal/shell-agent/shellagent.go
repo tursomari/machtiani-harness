@@ -270,11 +270,13 @@ func runAttempt(ctx context.Context, req Request) (Result, error) {
 
 	// Recovery attempts must be persisted even for forced-fresh runs so their
 	// diagnostics and retry budget survive interruption/resume.
-	if resumeAttempt || exitStatus == "FormatErrorLoop" || hasRecoveryContext(agent.Messages()) {
+	var modelHostErr *llm.ModelHostCallError
+	modelHostFailed := errors.As(runErr, &modelHostErr)
+	if resumeAttempt || exitStatus == "FormatErrorLoop" || modelHostFailed || hasRecoveryContext(agent.Messages()) {
 		saveTraj := run.FromAgent(agent, exitStatus, answer, nil)
 		if agent.RunConfig.CheckpointDir != "" {
 			if saveErr := run.SaveTrajectoryToPath(saveTraj, agent.RunConfig.CheckpointDir); saveErr != nil {
-				if exitStatus == "FormatErrorLoop" || hasRecoveryContext(agent.Messages()) {
+				if exitStatus == "FormatErrorLoop" || modelHostFailed || hasRecoveryContext(agent.Messages()) {
 					return res, fmt.Errorf("save shell-agent recovery trajectory: %w", saveErr)
 				}
 				log.Printf("save final trajectory: %v", saveErr)

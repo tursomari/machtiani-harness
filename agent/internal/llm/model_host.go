@@ -70,6 +70,57 @@ type ModelHostCallError struct {
 	Message      string
 	RetryAfterMS int
 	ModelAlias   string
+	Attempts     int
+}
+
+func (e *ModelHostCallError) Retryable() bool {
+	return e.Code == "RATE_LIMITED" || e.Code == "TRANSIENT_ERROR" || e.Code == "EMPTY_RESPONSE"
+}
+
+// Retry the same generation, never the enclosing shell-agent turn or commands.
+// Streaming callers cannot safely replay text already delivered to their UI.
+func chatModelHostWithRetries(ctx context.Context, model ResolvedModel, extraParams map[string]any, messages []Message, stream bool, onToken func(string), meta llmAttemptMeta) (string, error) {
+	const attempts = 3
+	for attempt := 1; ; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		emitted := false
+		observe := func(token string) {
+			if token != "" {
+				emitted = true
+			}
+			if onToken != nil {
+				onToken(token)
+			}
+		}
+		answer, err := chatModelHost(ctx, model, extraParams, messages, stream, observe)
+		if err == nil {
+			return answer, nil
+		}
+		var fault *ModelHostCallError
+		if !errors.As(err, &fault) {
+			return "", err
+		}
+		fault.Attempts = attempt
+		if !fault.Retryable() || emitted || attempt == attempts {
+			return "", err
+		}
+		wait := nonStreamRetryBackoff(attempt)
+		if fault.RetryAfterMS > 0 {
+			// Never retry earlier than the provider permits. The caller's
+			// deadline still bounds this wait, including long rate limits.
+			wait = time.Duration(fault.RetryAfterMS) * time.Millisecond
+		}
+		emitRetryEvent(ctx, model, attempt, wait, err, meta)
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return "", ctx.Err()
+		case <-timer.C:
+		}
+	}
 }
 
 func (e *ModelHostCallError) Error() string {
@@ -300,7 +351,11 @@ func chatModelHost(ctx context.Context, model ResolvedModel, extraParams map[str
 	}
 	emitCacheUsage(ctx, model, usage)
 	if strings.TrimSpace(answer.String()) == "" {
-		return "", fmt.Errorf("model host returned no answer text (finish reason: %s)", finishReason)
+		code := "EMPTY_RESPONSE"
+		if finishReason == "cancelled" {
+			code = "CANCELLED"
+		}
+		return "", &ModelHostCallError{Code: code, Message: fmt.Sprintf("model host returned no answer text (finish reason: %s)", finishReason), ModelAlias: modelHostAlias(model)}
 	}
 	return answer.String(), nil
 }

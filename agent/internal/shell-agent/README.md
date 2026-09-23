@@ -31,6 +31,21 @@ receives a system-generated JSON failure with a status, code, attempt count,
 diagnostic, and trajectory path. The work result is marked failed; it is never
 an empty success or a fabricated confidence-scored final answer.
 
+## Model-host failure recovery
+
+Model-host generations retry transient transport/provider failures, rate limits,
+and empty responses up to three total attempts within the original turn deadline.
+Only the failed model query is repeated; earlier shell commands and conversation
+history are retained. Authentication, quota, invalid-request, and protocol errors
+do not retry. A streaming caller that has already received text does not replay
+the generation. Retry events record the delay and provider explanation.
+
+If a model-host request still fails, the shell-agent saves its trajectory and
+returns a structured failed work result to the planner, including the provider
+code, diagnostic, and model-call attempt count. Cancellation and the turn deadline
+retain their existing interruption behavior. This recovery is separate from the
+fresh-conversation redo for format errors.
+
 ## Getting Started
 
 ```bash

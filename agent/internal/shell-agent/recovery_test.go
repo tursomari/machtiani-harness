@@ -15,6 +15,7 @@ import (
 type recoveryModel struct {
 	perRunCountingModel
 	responses  []string
+	failure    error
 	queries    [][]minisweagent.Message
 	afterQuery func(int)
 }
@@ -22,6 +23,9 @@ type recoveryModel struct {
 func (m *recoveryModel) Query(_ context.Context, msgs []minisweagent.Message, _ ...minisweagent.QueryOption) (minisweagent.QueryResult, error) {
 	m.queries = append(m.queries, append([]minisweagent.Message(nil), msgs...))
 	if m.nCalls >= len(m.responses) {
+		if m.failure != nil {
+			return minisweagent.QueryResult{}, m.failure
+		}
 		return minisweagent.QueryResult{}, errors.New("unexpected extra model call")
 	}
 	content := m.responses[m.nCalls]
@@ -160,5 +164,26 @@ func TestFormatRecoveryResumesAfterFirstAttemptStopped(t *testing.T) {
 	res, err := Run(context.Background(), req)
 	if err != nil || res.Error != nil || !res.Restarted || res.Answer != "Recovered" || m.nCalls != 4 {
 		t.Fatalf("result = %+v, err = %v, calls = %d", res, err, m.nCalls)
+	}
+}
+
+func TestModelHostFailureBecomesStructuredWorkFailure(t *testing.T) {
+	for _, code := range []string{"TRANSIENT_ERROR", "EMPTY_RESPONSE", "AUTH_REQUIRED"} {
+		t.Run(code, func(t *testing.T) {
+			m := &recoveryModel{responses: []string{"<command>echo done</command>"}, failure: &llm.ModelHostCallError{Code: code, Message: "provider explanation", Attempts: 3}}
+			e := &recoveryEnv{}
+			res, err := Run(context.Background(), recoveryRequest(t, m, e))
+			var failure *Failure
+			if err != nil || !errors.As(res.Error, &failure) || failure.Code != code || failure.Attempts != 3 || !strings.Contains(failure.Diagnostic, "provider explanation") {
+				t.Fatalf("result=%+v err=%v", res, err)
+			}
+			if res.Restarted || len(e.commands) != 1 || len(m.queries) != 2 {
+				t.Fatalf("replayed work: result=%+v commands=%v calls=%d", res, e.commands, len(m.queries))
+			}
+			data, err := os.ReadFile(res.TrajectoryPath)
+			if err != nil || !strings.Contains(string(data), "echo done") {
+				t.Fatalf("trajectory missing: %v", err)
+			}
+		})
 	}
 }

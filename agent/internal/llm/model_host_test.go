@@ -268,3 +268,92 @@ printf '%%s\n' '{"v":1,"id":"generation","result":{"completed":true}}'
 		})
 	}
 }
+
+func TestModelHostRetriesWithinSameRequest(t *testing.T) {
+	for _, code := range []string{"TRANSIENT_ERROR", "RATE_LIMITED", "EMPTY_RESPONSE"} {
+		t.Run(code, func(t *testing.T) {
+			capture := filepath.Join(t.TempDir(), "requests")
+			t.Setenv("MACHTIANI_MODEL_HOST_CAPTURE", capture)
+			fixture := writeModelHostFixture(t, fmt.Sprintf(`
+read request
+printf '%%s\n' "$request" >> "$MACHTIANI_MODEL_HOST_CAPTURE"
+if [ "$(wc -l < "$MACHTIANI_MODEL_HOST_CAPTURE")" -lt 3 ]; then
+  printf '%%s\n' '{"v":1,"id":"generation","error":{"code":"%s","message":"temporary failure","retryAfterMs":1}}'
+else
+  printf '%%s\n' '{"v":1,"id":"generation","event":{"type":"text-delta","text":"recovered"}}'
+  printf '%%s\n' '{"v":1,"id":"generation","result":{"completed":true}}'
+fi
+`, code))
+			answer, err := ChatWithResolvedFallback(context.Background(), ResolvedModel{Transport: "model-host", Profile: "/private/profile.json", Command: fixture, Model: "fixture"}, nil, nil, nil, []Message{{Role: "user", Content: "same task"}})
+			if err != nil || answer != "recovered" {
+				t.Fatalf("answer=%q err=%v", answer, err)
+			}
+			data, err := os.ReadFile(capture)
+			if err != nil {
+				t.Fatal(err)
+			}
+			lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+			if len(lines) != 3 || lines[0] != lines[1] || lines[1] != lines[2] {
+				t.Fatalf("generation requests changed: %q", lines)
+			}
+		})
+	}
+}
+
+func TestModelHostRetryLimitsAndPermanentFailures(t *testing.T) {
+	for _, code := range []string{"TRANSIENT_ERROR", "AUTH_REQUIRED", "AUTH_EXPIRED", "QUOTA_EXHAUSTED", "INVALID_REQUEST", "CONTEXT_LENGTH_EXCEEDED", "MODEL_UNAVAILABLE", "UPSTREAM_CHANGED", "CANCELLED", "INTERNAL"} {
+		t.Run(code, func(t *testing.T) {
+			capture := filepath.Join(t.TempDir(), "requests")
+			t.Setenv("MACHTIANI_MODEL_HOST_CAPTURE", capture)
+			fixture := writeModelHostFixture(t, fmt.Sprintf(`
+read request
+printf '%%s\n' "$request" >> "$MACHTIANI_MODEL_HOST_CAPTURE"
+printf '%%s\n' '{"v":1,"id":"generation","error":{"code":"%s","message":"provider explanation","retryAfterMs":1}}'
+`, code))
+			_, err := ChatWithResolvedFallback(context.Background(), ResolvedModel{Transport: "model-host", Profile: "/private/profile.json", Command: fixture, Model: "fixture"}, nil, nil, nil, []Message{{Role: "user", Content: "hello"}})
+			want := 1
+			if code == "TRANSIENT_ERROR" {
+				want = 3
+			}
+			var fault *ModelHostCallError
+			if !errors.As(err, &fault) || fault.Code != code || fault.Attempts != want || !strings.Contains(err.Error(), "provider explanation") {
+				t.Fatalf("err=%v fault=%+v", err, fault)
+			}
+			data, err := os.ReadFile(capture)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Count(string(data), "\n"); got != want {
+				t.Fatalf("calls=%d want=%d", got, want)
+			}
+		})
+	}
+}
+
+func TestModelHostRetryWaitHonorsDeadline(t *testing.T) {
+	fixture := writeModelHostFixture(t, `
+read request
+printf '%s\n' '{"v":1,"id":"generation","error":{"code":"RATE_LIMITED","message":"wait","retryAfterMs":60000}}'
+`)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, err := ChatWithResolvedFallback(ctx, ResolvedModel{Transport: "model-host", Profile: "/private/profile.json", Command: fixture, Model: "fixture"}, nil, nil, nil, nil)
+	if !errors.Is(err, context.DeadlineExceeded) || time.Since(start) > time.Second {
+		t.Fatalf("err=%v elapsed=%s", err, time.Since(start))
+	}
+}
+
+func TestModelHostDoesNotReplayDeliveredStream(t *testing.T) {
+	fixture := writeModelHostFixture(t, `
+read request
+printf '%s\n' '{"v":1,"id":"generation","event":{"type":"text-delta","text":"partial"}}'
+printf '%s\n' '{"v":1,"id":"generation","error":{"code":"TRANSIENT_ERROR","message":"disconnected","retryAfterMs":1}}'
+`)
+	var tokens strings.Builder
+	_, err := ChatStreamWithResolvedFallback(context.Background(), ResolvedModel{Transport: "model-host", Profile: "/private/profile.json", Command: fixture, Model: "fixture"}, nil, nil, nil, nil, func(s string) { tokens.WriteString(s) })
+	var fault *ModelHostCallError
+	if !errors.As(err, &fault) || fault.Attempts != 1 || tokens.String() != "partial" {
+		t.Fatalf("err=%v tokens=%q", err, tokens.String())
+	}
+}
