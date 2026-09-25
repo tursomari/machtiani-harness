@@ -16,6 +16,8 @@ func setupConfigTest(t *testing.T) (origDir string, cleanup func()) {
 	t.Helper()
 	tmpDir := t.TempDir()
 	t.Setenv("HOME", tmpDir)
+	t.Setenv("USERPROFILE", tmpDir)
+	t.Setenv("MACHTIANI_CONFIG", "")
 	t.Setenv("XDG_CONFIG_HOME", "")
 	origDir, err := os.Getwd()
 	if err != nil {
@@ -32,6 +34,38 @@ func setupConfigTest(t *testing.T) (origDir string, cleanup func()) {
 	}
 	t.Cleanup(cleanup)
 	return origDir, cleanup
+}
+
+// An installed client exports MACHTIANI_CONFIG. Tests must never follow it
+// back into the user's real provider configuration or credential store.
+func TestConfigFixtureDoesNotModifyInheritedConfiguration(t *testing.T) {
+	external := filepath.Join(t.TempDir(), "config.toml")
+	original := []byte("# caller-owned configuration\n")
+	if err := os.WriteFile(external, original, 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MACHTIANI_CONFIG", external)
+	t.Run("isolated mutation", func(t *testing.T) {
+		_, cleanup := setupConfigTest(t)
+		defer cleanup()
+		if code := handleConfigAddCommand([]string{
+			"--provider", "fixture", "--url", "https://example.invalid/v1",
+			"--api-key", "fixture-only-credential", "--model", "demo",
+			"--alias", "demo", "--no-interactive",
+		}); code != 0 {
+			t.Fatalf("config add exit = %d", code)
+		}
+		if _, err := os.Stat(filepath.Join(".config", "machtiani", "config.toml")); err != nil {
+			t.Errorf("fixture configuration was not created: %v", err)
+		}
+	})
+	after, err := os.ReadFile(external)
+	if err != nil || !bytes.Equal(original, after) {
+		t.Error("configuration tests modified the inherited configuration")
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(external), "credentials.env")); !os.IsNotExist(err) {
+		t.Error("configuration tests wrote credentials outside the fixture")
+	}
 }
 
 func captureOutput(fn func()) (stdout, stderr string) {
