@@ -6,7 +6,7 @@ implements DearMachine's stdin/close-path contract, but Machtiani itself does no
 load or configure DearMachine backends.
 
 Use the authoritative
-[DearMachine custom-backend guide](https://github.com/7db9a/DearMachine/blob/main/docs/custom-backend-guide.md)
+[DearMachine custom-backend guide](https://github.com/tursomari/dearmachine/blob/main/docs/custom-backend-guide.md)
 for the configuration schema, executable contract, health checks, wrapper
 example, and troubleshooting steps. Keeping that contract in the DearMachine
 repository prevents the two projects from publishing divergent instructions.
