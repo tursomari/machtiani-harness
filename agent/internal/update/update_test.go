@@ -273,7 +273,7 @@ func TestUpdateReassertsBinarySymlink(t *testing.T) {
 	// Seed: copy the project source and make it a fresh git repo.
 	copyDir(t, projectRoot, seedDir,
 		".git", ".gocache", ".machtiani", ".bench", ".data",
-		"result", "third_party/skyvern",
+		"result",
 	)
 	runGit(t, seedDir, "init", "--quiet", "--initial-branch=rolling")
 	runGit(t, seedDir, "config", "user.email", "update-test@example.invalid")

@@ -43,7 +43,7 @@ configured independently with `[ui].glyphs = "unicode"` or `"ascii"`; the
   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   21s  ~/projects/machtiani  session token input 24,706 (cache 88%)  output 1,152
-  code-forge-skyvern turn 1 running  session agent-20260718T051605-0813  planner deepseek:deepseek-v4-flash high  shell deepseek:deepseek-v4-flash high
+  code-forge turn 1 running  session agent-20260718T051605-0813  planner deepseek:deepseek-v4-flash high  shell deepseek:deepseek-v4-flash high
 ```
 
 ## Semantic treatment

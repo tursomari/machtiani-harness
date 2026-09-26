@@ -26,10 +26,10 @@ The agent now ships with a mode system that supervises multi-step work. When you
 - **Resume support:** progress is stored in `<project-store>/sessions/<session-id>/mode-plan.json`, so resuming the session continues with the remaining tasks instead of replaying everything from scratch.
 - **Customize instructions:** do not edit a canonical mode in place. Copy it to a new name, then edit the copy: `cp -r ~/.machtiani/modes/code ~/.machtiani/modes/my-code`. Canonical refreshes leave custom mode names untouched.
 - **Optional defaults:** when fewer than two tasks are defined for a mode, the mode system falls back to mode-specific defaults. Set different task files or bullet points if you want a custom workflow.
-- Available modes include code, code-forge, code-strong-forge, and code-forge-skyvern.
+- Available modes include code, code-forge, and code-strong-forge.
 
 ## Sandboxing and Reproducibility
-Sandboxing and environment isolation belong in an external scaffold layer, not inside Machtiani business logic. The agent itself supports only local process execution. For reproducible sandboxed runs, a separate scaffold such as the NixOS QEMU VM defined in the nixlab project or a Docker Compose setup provides the isolation boundary. The skyvern-docker branch preserves a Docker-based Skyvern experiment with VNC streaming as an example of external scaffolding. See shell.nix for a Nix-based Skyvern runtime environment.
+Sandboxing and environment isolation belong in an external scaffold layer, not inside Machtiani business logic. The agent itself supports only local process execution. For reproducible sandboxed runs, a separate scaffold such as the NixOS QEMU VM defined in the nixlab project or a Docker Compose setup provides the isolation boundary.
 
 ## Prerequisites
 - Nix 2.24 or newer with flakes enabled for installation, updates, and the
@@ -220,11 +220,6 @@ Those GNU tools are also placed first on agent-launched command PATH on macOS.
 The flake evaluates for `x86_64-linux`, `aarch64-linux`, `x86_64-darwin`, and
 `aarch64-darwin`; only `x86_64-linux` has been natively built and smoke-tested
 as of 2026-07-16.
-
-Skyvern remains an optional source-checkout workflow. Use a separate clone,
-initialize `third_party/skyvern`, prepare its Python/browser environment, and
-run `scripts/skyvern-start.sh`. Do not use the updater-owned source clone as a
-Skyvern workspace because its environment, database, and logs make it dirty.
 
 ## Quick Start
 

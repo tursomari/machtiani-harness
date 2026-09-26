@@ -221,7 +221,7 @@ printf '  %s  ~/projects/mct  session token input %s (cache %s)  output %s\n' \
   "$(span "$provenance" '88%')" \
   "$(span "$provenance" '1,152')"
 printf '  %s %s %s  session %s  planner %s high  shell %s high\n' \
-  "$(span "${bold}${beauty}" 'code-forge-skyvern')" \
+  "$(span "${bold}${beauty}" 'code-forge')" \
   "$(span "${bold}${truth}" 'turn 1')" \
   "$(span "${bold}${truth}" 'running')" \
   "$(span "$provenance" 'agent-20260718T051605-0813')" \

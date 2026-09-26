@@ -8,8 +8,7 @@ The `scripts/` directory contains build helpers, A/B testing harnesses, and
 evaluation infrastructure for the Machtiani monorepo. It provides the Docker
 tooling for reproducible A/B comparison of code changes (`ab-dev.sh` plus
 `Dockerfile.build`), the evaluation pipeline for comparing machtiani against Forge (`run_eval.sh`,
-`run_eval_head.sh`), and supporting files for Skyvern web interaction and judge
-prompting.  Agent-side test runner documentation lives in
+`run_eval_head.sh`), and supporting files for judge prompting.  Agent-side test runner documentation lives in
 `agent/tests/README.md` — this file focuses on the scripts that sit above the
 agent layer.
 
@@ -90,7 +89,7 @@ image is approximately 1.4 GB.
 
 The `.dockerignore` at the repository root reduces the build context from
 ~14 GB to ~3.4 MB by excluding `.machtiani/sessions/`, `tmp/`, `.git/modules/`,
-`third_party/`, and other large directories.  Only top-level `.git/` objects
+and other large directories.  Only top-level `.git/` objects
 reach the builder stage.
 
 ---
@@ -194,30 +193,6 @@ with sections for purpose, prerequisites, setup instructions, agent invocation
 commands, and evaluation criteria.  The evaluation pipeline populates this
 template via `scripts/generate_comparison.sh` and feeds the resulting runbook
 to the judge LLM.  The template lives at `scripts/runbook_template.md:1`.
-
----
-
-## skyvern-start.sh
-
-`scripts/skyvern-start.sh` starts the local Skyvern API server for web
-interaction tasks.  It checks whether Skyvern is already running on port 8000
-and, if so, extracts and prints the API key.  Otherwise it kills any existing
-process on port 8000, starts the Skyvern server from
-`third_party/skyvern/.env`, and outputs the generated API key.  The script is
-used by machtiani modes that require browser automation (e.g.,
-`code-forge-skyvern`).  It lives at `scripts/skyvern-start.sh:1`.
-
----
-
-## skyvern-examples/
-
-`scripts/skyvern-examples/` contains SkyvernScript example payloads and a
-README for common web automation workflows.  It includes `machtiani-extract.json`
-(data extraction from the Machtiani site), `osan3-navigate.json` (navigation
-example), and `obstacle-detection.md` (guide to handling captchas and
-authentication walls).  The directory's own `README.md` documents the Skyvern
-local server API (endpoints, request fields, polling pattern) and links to
-additional resources in `third_party/skyvern/docs/`.
 
 ---
 

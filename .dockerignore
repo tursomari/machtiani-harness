@@ -16,7 +16,6 @@
 /.git/worktrees/
 
 # Third-party submodules
-/third_party/
 
 # Plan and notes markdown files at the repository root
 /docker-ab-testing-action-plan*.md

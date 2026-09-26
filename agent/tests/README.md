@@ -335,7 +335,6 @@ context from approximately **14 GB to roughly 3.4 MB** by excluding:
 - `.git/modules/`, `lost-found/`, `worktrees/` — multi-GB submodule and
   worktree data (only the top-level `.git/` objects are retained for the
   builder stage).
-- `third_party/` — vendored submodule contents.
 - Plan markdown files at the repo root (`docker-ab-testing-action-plan*.md`,
   `*.md`).
 - Stray test output logs (`stdout.log`, `stderr.log`).

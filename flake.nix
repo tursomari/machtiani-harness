@@ -30,8 +30,7 @@
             src = ./.;
             filter = path: type:
               let rel = lib.removePrefix (toString ./. + "/") (toString path);
-              in !(lib.hasPrefix "third_party/skyvern" rel)
-                && !(lib.hasPrefix ".git" rel)
+              in !(lib.hasPrefix ".git" rel)
                 && !(lib.hasPrefix ".gocache" rel)
                 && rel != "result";
           };

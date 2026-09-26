@@ -345,11 +345,11 @@ func TestFormatterFooterIncludesModeAndModelStatus(t *testing.T) {
 
 	bus.Emit(ModeTaskPlanDisplayEvent{Tasks: []ModeTaskDisplay{{
 		Index:  1,
-		Title:  "Code (Forge + Skyvern)",
-		Mode:   "code-forge-skyvern",
+		Title:  "Code (Forge)",
+		Mode:   "code-forge",
 		Status: "pending",
 	}}})
-	bus.Emit(ModeTaskStatusUpdateEvent{Index: 0, Title: "Code (Forge + Skyvern)", Status: "running"})
+	bus.Emit(ModeTaskStatusUpdateEvent{Index: 0, Title: "Code (Forge)", Status: "running"})
 	bus.Emit(SessionStartedEvent{
 		Goal:    "test goal",
 		Turn:    1,
@@ -370,7 +370,7 @@ func TestFormatterFooterIncludesModeAndModelStatus(t *testing.T) {
 
 	output := stripANSI(buf.String())
 	requireContains(t, output, "42s  session token input 553,080 (cache 89%)  output 7,007")
-	requireContains(t, output, "code-forge-skyvern turn 1 running  planner deepseek-v4-flash medium  shell deepseek-v4-flash medium")
+	requireContains(t, output, "code-forge turn 1 running  planner deepseek-v4-flash medium  shell deepseek-v4-flash medium")
 	if strings.Contains(output, "[meta] planned tasks") || strings.Contains(output, "[meta] task") {
 		t.Fatalf("expected mode metadata to stay out of normal output\nGot: %s", output)
 	}
@@ -431,7 +431,7 @@ func TestFormatterFooterStylesModeAsBoldBeauty(t *testing.T) {
 	f.turnNumber = 1
 	f.modeTasks = []ModeTaskDisplay{{
 		Index:  1,
-		Mode:   "code-forge-skyvern",
+		Mode:   "code-forge",
 		Status: "running",
 	}}
 	f.activeModeTask = 0
@@ -441,10 +441,10 @@ func TestFormatterFooterStylesModeAsBoldBeauty(t *testing.T) {
 	if len(styled) != 2 {
 		t.Fatalf("expected two styled footer lines, got %d", len(styled))
 	}
-	if !strings.Contains(styled[1], "\x1b[1;35mcode-forge-skyvern\x1b[0m") {
+	if !strings.Contains(styled[1], "\x1b[1;35mcode-forge\x1b[0m") {
 		t.Fatalf("expected mode value to use bold Beauty/magenta styling, got %q", styled[1])
 	}
-	if strings.Contains(styled[1], "\x1b[1;36mcode-forge-skyvern\x1b[0m") {
+	if strings.Contains(styled[1], "\x1b[1;36mcode-forge\x1b[0m") {
 		t.Fatalf("mode value should not use Truth/cyan styling, got %q", styled[1])
 	}
 }
@@ -479,7 +479,7 @@ func TestFormatterSessionEndedPrintsFinalFooterAfterOutput(t *testing.T) {
 
 	bus.Emit(ModeTaskPlanDisplayEvent{Tasks: []ModeTaskDisplay{{
 		Index:  1,
-		Mode:   "code-forge-skyvern",
+		Mode:   "code-forge",
 		Status: "running",
 	}}})
 	bus.Emit(SessionStartedEvent{
@@ -506,7 +506,7 @@ func TestFormatterSessionEndedPrintsFinalFooterAfterOutput(t *testing.T) {
 	output := stripANSI(buf.String())
 	complete := strings.LastIndex(output, "=== SESSION COMPLETE ===")
 	tokenFooter := strings.LastIndex(output, "session token input 58,023 (cache 2%)  output 1,000")
-	statusFooter := strings.LastIndex(output, "code-forge-skyvern turn 2 running  session agent-20260709T125317-5182  planner openrouter:z-ai/glm-5.2 high  shell deepseek:deepseek-v4-pro max")
+	statusFooter := strings.LastIndex(output, "code-forge turn 2 running  session agent-20260709T125317-5182  planner openrouter:z-ai/glm-5.2 high  shell deepseek:deepseek-v4-pro max")
 	if complete < 0 || tokenFooter < 0 || statusFooter < 0 {
 		t.Fatalf("expected session output and final footer\nGot: %s", output)
 	}
@@ -572,7 +572,7 @@ func TestFormatterFooterDegradesForNarrowWidth(t *testing.T) {
 	f.tokenUsage = TokenUsageUpdatedEvent{InputHit: 491392, InputMiss: 61688, Output: 7007}
 	f.modeTasks = []ModeTaskDisplay{{
 		Index:  1,
-		Mode:   "code-forge-skyvern",
+		Mode:   "code-forge",
 		Status: "running",
 	}}
 	f.activeModeTask = 0
@@ -780,7 +780,7 @@ func TestFormatterFooterUsesAvailableWidthForModelLabels(t *testing.T) {
 	f.turnNumber = 4
 	f.modeTasks = []ModeTaskDisplay{{
 		Index:  1,
-		Mode:   "code-forge-skyvern",
+		Mode:   "code-forge",
 		Status: "running",
 	}}
 	f.activeModeTask = 0
@@ -795,7 +795,7 @@ func TestFormatterFooterUsesAvailableWidthForModelLabels(t *testing.T) {
 	if len(lines) != 2 {
 		t.Fatalf("expected two footer lines, got %d", len(lines))
 	}
-	requireContains(t, lines[1], "code-forge-skyvern turn 4 running")
+	requireContains(t, lines[1], "code-forge turn 4 running")
 	requireContains(t, lines[1], "session agent-20260709T125317-5182")
 	requireContains(t, lines[1], "planner very-long-orchestrator-model-label medium")
 	requireContains(t, lines[1], "shell very-long-shell-agent-model-label high")
@@ -807,8 +807,8 @@ func TestFormatterFooterShowsTaskFractionForMultiTaskMode(t *testing.T) {
 	f.width = 120
 	f.turnNumber = 7
 	f.modeTasks = []ModeTaskDisplay{
-		{Index: 1, Mode: "code-forge-skyvern", Status: "complete"},
-		{Index: 2, Mode: "code-forge-skyvern", Status: "running"},
+		{Index: 1, Mode: "code-forge", Status: "complete"},
+		{Index: 2, Mode: "code-forge", Status: "running"},
 	}
 	f.activeModeTask = 1
 
@@ -816,7 +816,7 @@ func TestFormatterFooterShowsTaskFractionForMultiTaskMode(t *testing.T) {
 	if len(lines) != 2 {
 		t.Fatalf("expected two footer lines, got %d", len(lines))
 	}
-	requireContains(t, lines[1], "code-forge-skyvern task 2/2 turn 7 running")
+	requireContains(t, lines[1], "code-forge task 2/2 turn 7 running")
 }
 
 func TestFormatterFooterUpdatesTurnStatus(t *testing.T) {
@@ -825,7 +825,7 @@ func TestFormatterFooterUpdatesTurnStatus(t *testing.T) {
 	f.width = 120
 	f.modeTasks = []ModeTaskDisplay{{
 		Index:  1,
-		Mode:   "code-forge-skyvern",
+		Mode:   "code-forge",
 		Status: "running",
 	}}
 	f.activeModeTask = 0
@@ -836,7 +836,7 @@ func TestFormatterFooterUpdatesTurnStatus(t *testing.T) {
 	if len(lines) != 2 {
 		t.Fatalf("expected two footer lines, got %d", len(lines))
 	}
-	requireContains(t, lines[1], "code-forge-skyvern turn 3 running")
+	requireContains(t, lines[1], "code-forge turn 3 running")
 }
 
 func TestFooterLineCountHeightFallbacks(t *testing.T) {
