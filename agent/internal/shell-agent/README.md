@@ -1,6 +1,6 @@
 # Shell Agent (Go)
 
-A minimal implementation of the mini SWE shell agent written in Go 1.23+. It mirrors the reference Python agent by running a tight observe–think–act loop over shell commands while persisting a JSON trajectory for every run.
+A minimal implementation of the mini SWE shell agent written in Go 1.26.8+. It mirrors the reference Python agent by running a tight observe–think–act loop over shell commands while persisting a JSON trajectory for every run.
 
 ## Features
 

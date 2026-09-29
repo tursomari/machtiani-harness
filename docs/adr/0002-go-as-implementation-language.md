@@ -68,7 +68,7 @@ The ecosystem is balanced: no single language overreaches. The only requirement:
 
 ## References
 
-- `go.mod` — Go 1.26.5
+- `go.mod` — Go 1.26.8
 - `agent/internal/shell-agent/` — `os/exec.CommandContext`
 - `agent/internal/orchestrator/` — goroutine/channel concurrency
 - `agent/internal/session/runner_turns.go` — routing policy

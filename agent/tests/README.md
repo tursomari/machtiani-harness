@@ -273,7 +273,7 @@ image.
 
 ### Multi-stage Dockerfile.build
 
-**Stage 1: builder** (base: `golang:1.23-bookworm`)
+**Stage 1: builder** (base: `golang:1.26.8-bookworm`)
 
 1. Installs build dependencies: ripgrep, rsync, git, gcc.
 2. Copies `agent/go.mod` and `agent/go.sum` first for layer caching.

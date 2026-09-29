@@ -62,7 +62,7 @@ invocations, delta values, and the `ab-live.sh` parser rules), see
 `scripts/Dockerfile.build` is a two-stage Docker image that powers the A/B
 testing harness.
 
-**Stage 1 (builder)** is based on `golang:1.23-bookworm`.  It installs build
+**Stage 1 (builder)** is based on `golang:1.26.8-bookworm`.  It installs build
 dependencies (ripgrep, rsync, git, gcc), copies `agent/go.mod` and
 `agent/go.sum` first for layer caching, then copies the full `agent/` source
 tree, `scripts/`, `.machtiani/`, and `.git/`.  When the `CHANGE_PATCH_B64`
@@ -98,7 +98,7 @@ reach the builder stage.
 
 `scripts/Dockerfile.base` is a simpler, single-stage base image for non-A/B
 Docker workflows such as the LLM evaluator.  It starts from
-`golang:1.23-bookworm`, installs ripgrep, rsync, git, and gcc, sets
+`golang:1.26.8-bookworm`, installs ripgrep, rsync, git, and gcc, sets
 `WORKDIR /build`, copies `agent/go.mod`, and runs `go mod download` for layer
 caching.  It does not embed the A/B infrastructure (no patch application
 logic, no multi-stage separation, no runtime stage), making it suitable as a

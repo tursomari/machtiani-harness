@@ -18,10 +18,10 @@
           pkgs = import nixpkgs { inherit system; };
           lib = pkgs.lib;
           patchedGo = pkgs.go.overrideAttrs (_: {
-            version = "1.26.5";
+            version = "1.26.8";
             src = pkgs.fetchurl {
-              url = "https://go.dev/dl/go1.26.5.src.tar.gz";
-              hash = "sha256-SVvkvIcXasVnOS5bQRar2YRm0z17SdQedkzMaXay3EI=";
+              url = "https://go.dev/dl/go1.26.8.src.tar.gz";
+              hash = "sha256-Tjm5jkL5RvoFrIvFtxh335fb23y7Gnd7VBZnrXEX/S4=";
             };
           });
           revision = self.rev or "unknown";
@@ -39,7 +39,7 @@
             version = "0.1.0-${shortRevision}";
             src = source + "/agent";
             subPackages = [ "cmd/machtiani" ];
-            vendorHash = "sha256-BZL0+ldXx7WqMrcLGsxkX1KZ+9GO9AuVukmIJWiY7Zw=";
+            vendorHash = "sha256-TMJji2HywFgzKjIMIjY2PwEJ3/hdjlPTk5s9IXi/yEE=";
             env.CGO_ENABLED = 0;
             ldflags = [
               "-s"
@@ -91,10 +91,10 @@
           pkgs = import nixpkgs { inherit system; };
           lib = pkgs.lib;
           patchedGo = pkgs.go.overrideAttrs (_: {
-            version = "1.26.5";
+            version = "1.26.8";
             src = pkgs.fetchurl {
-              url = "https://go.dev/dl/go1.26.5.src.tar.gz";
-              hash = "sha256-SVvkvIcXasVnOS5bQRar2YRm0z17SdQedkzMaXay3EI=";
+              url = "https://go.dev/dl/go1.26.8.src.tar.gz";
+              hash = "sha256-Tjm5jkL5RvoFrIvFtxh335fb23y7Gnd7VBZnrXEX/S4=";
             };
           });
           portableGo = patchedGo.overrideAttrs (old: {

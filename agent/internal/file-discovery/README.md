@@ -17,7 +17,7 @@ sync does not launch `rg`, `sed`, `ls`, or a shell.
 - All logs to stderr; prints exactly one final block to stdout on success
 
 ## Requirements
-- Go 1.26.5
+- Go 1.26.8
 - For full loop: OpenAI-compatible Chat Completions endpoint
   - `OPENAI_API_KEY` (required)
   - `OPENAI_BASE_URL` (required)

@@ -139,10 +139,10 @@ The script then optionally runs a command inside each container and diffs the ou
 
 `scripts/Dockerfile.build` uses a two-stage pattern:
 
-**Stage 1 — `builder`** (based on `golang:1.23-bookworm`):
+**Stage 1 — `builder`** (based on `golang:1.26.8-bookworm`):
 
 ```dockerfile
-FROM golang:1.23-bookworm AS builder
+FROM golang:1.26.8-bookworm AS builder
 
 ARG CHANGE_PATCH                          # Optional patch for treatment builds
 
@@ -199,7 +199,7 @@ Without `--link`, a change to any file in `agent/` would invalidate the `COPY ag
 `scripts/Dockerfile.base` is a minimal single-stage image used internally for pre-warming the Go module cache:
 
 ```dockerfile
-FROM golang:1.23-bookworm
+FROM golang:1.26.8-bookworm
 RUN apt-get update && apt-get install -y ripgrep rsync git gcc && rm -rf /var/lib/apt/lists/*
 WORKDIR /build
 COPY agent/go.mod ./

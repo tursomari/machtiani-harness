@@ -1,5 +1,5 @@
 # Stage 1: builder
-FROM golang:1.23-bookworm AS builder
+FROM golang:1.26.8-bookworm AS builder
 ENV GOFLAGS=-buildvcs=auto
 
 # Optional patch to apply for version B builds
@@ -67,7 +67,7 @@ FROM debian:bookworm-slim
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y ripgrep rsync bash python3 git && rm -rf /var/lib/apt/lists/*
-# Copy the Go toolchain from the builder stage (golang:1.23-bookworm) so
+# Copy the Go toolchain from the builder stage (golang:1.26.8-bookworm) so
 # tests that shell out to `go build` (e.g. the snippet-discovery-tight-
 # readme test in agent/tests/run-live.sh) work in the runtime container.
 # Using the same Go version as the builder guarantees the runtime

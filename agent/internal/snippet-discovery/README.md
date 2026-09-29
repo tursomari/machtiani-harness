@@ -3,7 +3,7 @@
 `snippet-discovery` is a Go CLI that asks an LLM to identify relevant line ranges inside a set of allow-listed files. It exposes a minimal tool protocol: a single `<show>` tool to display numbered file contents and a JSON-only final output.
 
 ## Requirements
-- Go 1.23 (Linux)
+- Go 1.26.8 (Linux)
 - OpenAI-compatible Chat Completions endpoint
   - `OPENAI_API_KEY` (required)
   - `OPENAI_BASE_URL` (required)

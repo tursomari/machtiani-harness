@@ -34,7 +34,7 @@ Sandboxing and environment isolation belong in an external scaffold layer, not i
 ## Prerequisites
 - Nix 2.24 or newer with flakes enabled for installation, updates, and the
   pinned development environments.
-- Go 1.26.5 for direct Go development outside the Nix shells.
+- Go 1.26.8 for direct Go development outside the Nix shells.
 - The installed Nix package supplies pinned Git, ripgrep, Bash, coreutils, and
   GNU sed for agent-launched commands; they do not need separate host installs.
 - OpenAI‑compatible API access:

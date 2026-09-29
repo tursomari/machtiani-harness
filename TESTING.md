@@ -37,7 +37,7 @@ behavior reaches that boundary.
 - `scripts/` retains installation, benchmark, treatment, and evaluation runners; those stable paths are intentionally separate from test harnesses.
 
 ## Prerequisites
-- Go 1.26.5, provided by `nix develop .#default`.
+- Go 1.26.8, provided by `nix develop .#default`.
 - `git` for cloning fixture repositories during integration tests.
 - `rg`, `sed`, and `ls` are not prerequisites for sync file-discovery. Some
   separate shell-agent tests intentionally exercise the host command toolchain.
