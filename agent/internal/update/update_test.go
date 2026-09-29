@@ -265,10 +265,15 @@ func TestUpdateReassertsBinarySymlink(t *testing.T) {
 	seedDir := filepath.Join(root, "seed")
 	prefix := filepath.Join(home, "prefix")
 	binaryPath := filepath.Join(prefix, "bin", "machtiani")
+	workDir := filepath.Join(root, "work")
 
-	if err := os.MkdirAll(home, 0o700); err != nil {
-		t.Fatal(err)
+	for _, dir := range []string{home, workDir} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
 	}
+	// Nix out-links land in the working directory; the user's must stay clean.
+	t.Chdir(workDir)
 
 	// Seed: copy the project source and make it a fresh git repo.
 	copyDir(t, projectRoot, seedDir,
@@ -356,6 +361,9 @@ func TestUpdateReassertsBinarySymlink(t *testing.T) {
 	}
 	if gotTarget != wantTarget {
 		t.Fatalf("symlink target = %q, want %q", gotTarget, wantTarget)
+	}
+	if _, err := os.Lstat(filepath.Join(workDir, "result")); !os.IsNotExist(err) {
+		t.Fatalf("install or update left a Nix result link in the working directory: %v", err)
 	}
 }
 

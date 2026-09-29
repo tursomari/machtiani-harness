@@ -620,7 +620,7 @@ func (m *Manager) activateProfile(ctx context.Context, storePath string) error {
 	if err := os.MkdirAll(filepath.Dir(m.paths.Profile), 0o700); err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, "nix", "build", "--profile", m.paths.Profile, storePath)
+	cmd := exec.CommandContext(ctx, "nix", "build", "--no-link", "--profile", m.paths.Profile, storePath)
 	cmd.Stdout, cmd.Stderr = m.opts.Stderr, m.opts.Stderr
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("activate Nix profile: %w", err)
