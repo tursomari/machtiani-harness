@@ -5,8 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
+
+	"github.com/tursomari/machtiani/agent/internal/hostos"
 )
 
 func TestAcquireSessionLockExclusive(t *testing.T) {
@@ -89,7 +90,7 @@ func TestIsSessionActiveAtUsesProvidedScratchDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer file.Close()
-	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	if err := hostos.Flock(int(file.Fd()), hostos.LOCK_EX|hostos.LOCK_NB); err != nil {
 		t.Fatal(err)
 	}
 
@@ -97,7 +98,7 @@ func TestIsSessionActiveAtUsesProvidedScratchDirectory(t *testing.T) {
 	if err != nil || !active {
 		t.Fatalf("IsSessionActiveAt() = %v, %v; want true, nil", active, err)
 	}
-	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_UN); err != nil {
+	if err := hostos.Flock(int(file.Fd()), hostos.LOCK_UN); err != nil {
 		t.Fatal(err)
 	}
 	active, err = IsSessionActiveAt(scratchDir)
@@ -121,12 +122,12 @@ func TestCleanupSkipsActiveSessionLock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open lock: %v", err)
 	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	if err := hostos.Flock(int(f.Fd()), hostos.LOCK_EX|hostos.LOCK_NB); err != nil {
 		f.Close()
 		t.Fatalf("flock: %v", err)
 	}
 	defer func() {
-		syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		hostos.Flock(int(f.Fd()), hostos.LOCK_UN)
 		f.Close()
 	}()
 

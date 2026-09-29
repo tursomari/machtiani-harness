@@ -7,9 +7,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
+
+	"github.com/tursomari/machtiani/agent/internal/hostos"
 )
 
 func withWorkingDir(t *testing.T, dir string, fn func()) {
@@ -265,11 +266,11 @@ func TestCleanupSessionDirsSkipsFreshLock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open lock: %v", err)
 	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	if err := hostos.Flock(int(f.Fd()), hostos.LOCK_EX|hostos.LOCK_NB); err != nil {
 		t.Fatalf("flock: %v", err)
 	}
 	defer func() {
-		syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		hostos.Flock(int(f.Fd()), hostos.LOCK_UN)
 		f.Close()
 	}()
 
@@ -300,11 +301,11 @@ func TestCleanupSessionDirsSkipsWorkspaceForActiveSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open lock: %v", err)
 	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	if err := hostos.Flock(int(f.Fd()), hostos.LOCK_EX|hostos.LOCK_NB); err != nil {
 		t.Fatalf("flock: %v", err)
 	}
 	defer func() {
-		syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		hostos.Flock(int(f.Fd()), hostos.LOCK_UN)
 		f.Close()
 	}()
 
@@ -333,7 +334,7 @@ func TestHelperProcess(t *testing.T) {
 	if err != nil {
 		os.Exit(1)
 	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+	if err := hostos.Flock(int(f.Fd()), hostos.LOCK_EX); err != nil {
 		f.Close()
 		os.Exit(1)
 	}
@@ -384,12 +385,12 @@ func TestCleanupSessionDirsSkipsLockHeldByChildProcess(t *testing.T) {
 		if err != nil {
 			t.Fatalf("open lock for polling: %v", err)
 		}
-		flockErr := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
-		if errors.Is(flockErr, syscall.EWOULDBLOCK) {
+		flockErr := hostos.Flock(int(f.Fd()), hostos.LOCK_EX|hostos.LOCK_NB)
+		if errors.Is(flockErr, hostos.ErrWouldBlock) {
 			f.Close()
 			break // child holds the lock
 		}
-		syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		hostos.Flock(int(f.Fd()), hostos.LOCK_UN)
 		f.Close()
 		if flockErr != nil {
 			t.Fatalf("flock poll: %v", flockErr)
@@ -467,12 +468,12 @@ func TestCleanupOrphanedTempDirsPreservesNearbySessions(t *testing.T) {
 		if err != nil {
 			t.Fatalf("open lock for polling: %v", err)
 		}
-		flockErr := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
-		if errors.Is(flockErr, syscall.EWOULDBLOCK) {
+		flockErr := hostos.Flock(int(f.Fd()), hostos.LOCK_EX|hostos.LOCK_NB)
+		if errors.Is(flockErr, hostos.ErrWouldBlock) {
 			f.Close()
 			break
 		}
-		syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		hostos.Flock(int(f.Fd()), hostos.LOCK_UN)
 		f.Close()
 		if flockErr != nil {
 			t.Fatalf("flock poll: %v", flockErr)

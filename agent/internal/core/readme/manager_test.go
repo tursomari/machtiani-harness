@@ -7,9 +7,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 
+	"github.com/tursomari/machtiani/agent/internal/hostos"
 	"github.com/tursomari/machtiani/agent/internal/llm"
 )
 
@@ -322,7 +322,7 @@ func TestAcquireSyncLockIsExclusive(t *testing.T) {
 		t.Fatalf("acquire first sync lock: %v", err)
 	}
 	defer func() {
-		_ = syscall.Flock(int(first.Fd()), syscall.LOCK_UN)
+		_ = hostos.Flock(int(first.Fd()), hostos.LOCK_UN)
 		_ = first.Close()
 	}()
 
@@ -331,8 +331,8 @@ func TestAcquireSyncLockIsExclusive(t *testing.T) {
 		t.Fatalf("open second sync lock handle: %v", err)
 	}
 	defer second.Close()
-	err = syscall.Flock(int(second.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
-	if !errors.Is(err, syscall.EWOULDBLOCK) {
+	err = hostos.Flock(int(second.Fd()), hostos.LOCK_EX|hostos.LOCK_NB)
+	if !errors.Is(err, hostos.ErrWouldBlock) {
 		t.Fatalf("second lock error = %v, want EWOULDBLOCK", err)
 	}
 }

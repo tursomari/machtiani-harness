@@ -6,12 +6,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
 	"github.com/tursomari/machtiani/agent/internal/conversation"
 	"github.com/tursomari/machtiani/agent/internal/core/artifacts"
+	"github.com/tursomari/machtiani/agent/internal/hostos"
 	"github.com/tursomari/machtiani/agent/internal/projectstore"
 	"github.com/tursomari/machtiani/agent/internal/session"
 	"github.com/tursomari/machtiani/agent/internal/shellaction"
@@ -186,10 +186,10 @@ func TestAttachRunningSessionTailsUntilLockReleased(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		_ = syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
+		_ = hostos.Flock(int(lockFile.Fd()), hostos.LOCK_UN)
 		_ = lockFile.Close()
 	})
-	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	if err := hostos.Flock(int(lockFile.Fd()), hostos.LOCK_EX|hostos.LOCK_NB); err != nil {
 		t.Fatalf("hold running-session lock: %v", err)
 	}
 
@@ -209,7 +209,7 @@ func TestAttachRunningSessionTailsUntilLockReleased(t *testing.T) {
 			return
 		}
 		time.Sleep(300 * time.Millisecond)
-		if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN); err != nil {
+		if err := hostos.Flock(int(lockFile.Fd()), hostos.LOCK_UN); err != nil {
 			publishDone <- err
 			return
 		}
