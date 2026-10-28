@@ -505,7 +505,8 @@ func unsetReadmeGitEnv(t *testing.T) {
 	t.Helper()
 	for _, entry := range os.Environ() {
 		key := strings.SplitN(entry, "=", 2)[0]
-		if !strings.HasPrefix(key, "GIT_") {
+		upper := strings.ToUpper(key)
+		if !strings.HasPrefix(upper, "GIT_") && upper != "EMAIL" {
 			continue
 		}
 		t.Setenv(key, "")
@@ -565,6 +566,10 @@ func assertUnsignedReadmeHistory(t *testing.T, repo, projectCommit string) {
 	}
 	if got := strings.TrimSpace(runReadmeTestGit(t, repo, "for-each-ref", "--format=%(contents:signature)", "refs/tags/"+tagRef)); got != "" {
 		t.Fatalf("%s carries a signature: %q", tagRef, got)
+	}
+	wantTagger := readmeBotName + " <" + readmeBotEmail + ">"
+	if got := strings.TrimSpace(runReadmeTestGit(t, repo, "for-each-ref", "--format=%(taggername) %(taggeremail)", "refs/tags/"+tagRef)); got != wantTagger {
+		t.Fatalf("%s tagger = %q, want %q", tagRef, got, wantTagger)
 	}
 }
 

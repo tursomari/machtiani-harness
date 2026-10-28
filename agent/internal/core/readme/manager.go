@@ -46,6 +46,7 @@ type Manager struct {
 	IncludeDocs      bool
 	PromptExecutor   PromptExecutor
 	Prompts          *llm.MCTPromptsConfig
+	runner           *gitRunner
 }
 
 // NewManager returns a manager rooted at the git toplevel containing cwd.
@@ -73,6 +74,7 @@ func NewManager(isAnswerOnly bool, verbose bool) (*Manager, error) {
 		LastCommitPath:   filepath.Join(stateDir, lastCommitFilename),
 		IsAnswerOnlyMode: isAnswerOnly,
 		Verbose:          verbose || envVerbose,
+		runner:           newReadmeGitRunner(repoPath),
 	}, nil
 }
 
@@ -120,6 +122,10 @@ func (m *Manager) Run(ctx context.Context, projectCommitHash string) error {
 		_ = hostos.Flock(int(lockFile.Fd()), hostos.LOCK_UN)
 		_ = lockFile.Close()
 	}()
+
+	if err := m.ensureControlledGitState(); err != nil {
+		return err
+	}
 
 	if err := m.ensureBotConfig(); err != nil {
 		return err
@@ -297,11 +303,11 @@ func (m *Manager) generateAndCommit(ctx context.Context, projectCommitHash, last
 	if err := os.WriteFile(m.ReadmeFilePath, []byte(content), 0o644); err != nil {
 		return fmt.Errorf("write readme: %w", err)
 	}
-	if err := m.runGit(m.ReadmeRepoPath, "add", readmeFilename); err != nil {
+	if err := m.runGit(m.ReadmeRepoPath, "add", "-f", readmeFilename); err != nil {
 		return err
 	}
 	commitMsg := fmt.Sprintf("README update for project %s", projectCommitHash)
-	if err := m.runGit(m.ReadmeRepoPath, "-c", "commit.gpgSign=false", "commit", "-m", commitMsg); err != nil {
+	if err := m.runGit(m.ReadmeRepoPath, "commit", "-m", commitMsg); err != nil {
 		return err
 	}
 	newHead, headErr := m.gitOutput(m.ReadmeRepoPath, "rev-parse", "HEAD")
@@ -545,6 +551,27 @@ func (m *Manager) runGit(dir string, args ...string) error {
 }
 
 func (m *Manager) gitOutput(dir string, args ...string) (string, error) {
+	return m.controlledGit().run(dir, args...)
+}
+
+func (m *Manager) controlledGit() *gitRunner {
+	if m.runner == nil {
+		m.runner = newReadmeGitRunner(m.ReadmeRepoPath)
+	}
+	return m.runner
+}
+
+func (m *Manager) runProjectGit(args ...string) (string, error) {
+	if len(args) == 0 {
+		return "", errors.New("project git command requires a subcommand")
+	}
+	readArgs := make([]string, 0, len(args)+3)
+	readArgs = append(readArgs, args[0], "--no-ext-diff", "--no-textconv", "--no-color")
+	readArgs = append(readArgs, args[1:]...)
+	return m.projectGitOutput(m.ProjectRoot, readArgs...)
+}
+
+func (m *Manager) projectGitOutput(dir string, args ...string) (string, error) {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
 	var stdout bytes.Buffer
@@ -555,10 +582,6 @@ func (m *Manager) gitOutput(dir string, args ...string) (string, error) {
 		return "", fmt.Errorf("git %s failed: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
 	}
 	return stdout.String(), nil
-}
-
-func (m *Manager) runProjectGit(args ...string) (string, error) {
-	return m.gitOutput(m.ProjectRoot, args...)
 }
 
 // ReadREADMEForProject reads the README blob associated with a project commit
@@ -636,7 +659,7 @@ func tagREADMEWithProjectCommitAt(repoPath, projectCommitHash string) error {
 		}
 		return fmt.Errorf("internal README tag %s already maps to %s, refusing to move it to %s", tag, existing, head)
 	}
-	return runGitCommand(repoPath, "-c", "tag.gpgSign=false", "tag", "-a", tag, "-m", message)
+	return runGitCommand(repoPath, "tag", "-a", tag, "-m", message)
 }
 
 // GetREADMECommitForProject retrieves README version matching project commit.
@@ -663,16 +686,7 @@ func gitRevParse(dir, rev string) (string, error) {
 }
 
 func gitCommandOutput(dir string, args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("git %s failed: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
-	}
-	return stdout.String(), nil
+	return newReadmeGitRunner(dir).run(dir, args...)
 }
 
 func writeFileAtomic(path string, data []byte, mode os.FileMode) (retErr error) {
@@ -708,14 +722,8 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) (retErr error) 
 }
 
 func runGitCommand(dir string, args ...string) error {
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("git %s failed: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
-	}
-	return nil
+	_, err := newReadmeGitRunner(dir).run(dir, args...)
+	return err
 }
 
 func shortHash(hash string) string {

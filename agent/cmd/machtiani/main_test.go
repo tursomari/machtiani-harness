@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -113,6 +114,97 @@ func TestSyncCommandSucceedsWithGlobalSigningEnabled(t *testing.T) {
 	}
 }
 
+func TestSyncCommandIgnoresHostileGlobalConfig(t *testing.T) {
+	prepareTestConfig(t)
+	t.Setenv("OPENAI_API_KEY", "test-key")
+	t.Setenv("OPENAI_BASE_URL", "https://example.com/v1")
+	t.Setenv("OPENAI_MODEL", "test-model")
+	t.Setenv("MACHTIANI_README_TEST_STUB", "basic")
+
+	repoDir := initTestRepo(t)
+	if err := os.MkdirAll(filepath.Join(repoDir, ".machtiani", "artifacts"), 0o755); err != nil {
+		t.Fatalf("create legacy artifact root: %v", err)
+	}
+
+	root := t.TempDir()
+	global := writeSyncSigningGlobal(t, root)
+
+	excludes := filepath.Join(root, "global-excludes")
+	if err := os.WriteFile(excludes, []byte("internal-readme.md\n"), 0o644); err != nil {
+		t.Fatalf("write hostile excludes: %v", err)
+	}
+	attributes := filepath.Join(root, "global-attributes")
+	if err := os.WriteFile(attributes, []byte("internal-readme.md filter=hostile\n"), 0o644); err != nil {
+		t.Fatalf("write hostile attributes: %v", err)
+	}
+	hooks := filepath.Join(root, "global-hooks")
+	if err := os.MkdirAll(hooks, 0o755); err != nil {
+		t.Fatalf("create hostile hooks dir: %v", err)
+	}
+	if runtime.GOOS != "windows" {
+		if err := os.WriteFile(filepath.Join(hooks, "pre-commit"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+			t.Fatalf("write hostile hook: %v", err)
+		}
+	}
+	missingClean := filepath.Join(root, "missing-clean-filter")
+	for key, value := range map[string]string{
+		"core.excludesFile":       excludes,
+		"core.attributesFile":     attributes,
+		"core.autocrlf":           "true",
+		"core.hooksPath":          hooks,
+		"filter.hostile.clean":    missingClean,
+		"filter.hostile.required": "true",
+	} {
+		runGitOutput(t, root, "config", "--file", global, key, value)
+	}
+
+	isolateSyncGitConfig(t, root, global)
+	original, err := os.ReadFile(global)
+	if err != nil {
+		t.Fatalf("read global config: %v", err)
+	}
+
+	origWD := mustChdir(t, repoDir)
+	defer mustChdir(t, origWD)
+
+	t.Setenv("GIT_CONFIG_COUNT", "2")
+	t.Setenv("GIT_CONFIG_KEY_0", "commit.gpgSign")
+	t.Setenv("GIT_CONFIG_VALUE_0", "true")
+	t.Setenv("GIT_CONFIG_KEY_1", "tag.gpgSign")
+	t.Setenv("GIT_CONFIG_VALUE_1", "true")
+	t.Setenv("GIT_AUTHOR_NAME", "Personal Author")
+	t.Setenv("GIT_AUTHOR_EMAIL", "personal-author@example.test")
+	t.Setenv("GIT_COMMITTER_NAME", "Personal Committer")
+	t.Setenv("GIT_COMMITTER_EMAIL", "personal-committer@example.test")
+	t.Setenv("EMAIL", "personal@example.test")
+
+	for run := 1; run <= 2; run++ {
+		var exitCode int
+		stdout := captureStdout(t, func() {
+			exitCode = handleSyncCommand(nil)
+		})
+		if exitCode != 0 {
+			t.Fatalf("sync run %d exit = %d, stdout=%q", run, exitCode, stdout)
+		}
+		if !strings.Contains(stdout, "Readme synced for commit ") {
+			t.Fatalf("sync run %d missing success output: %q", run, stdout)
+		}
+	}
+
+	head := strings.TrimSpace(runGitOutput(t, repoDir, "rev-parse", "HEAD"))
+	readmeRepo := filepath.Join(repoDir, ".machtiani", "artifacts", "readme")
+	assertSyncReadmeBotConfig(t, readmeRepo)
+	assertSyncUnsignedReadmeHistory(t, readmeRepo, head)
+
+	after, err := os.ReadFile(global)
+	if err != nil {
+		t.Fatalf("reread global config: %v", err)
+	}
+	if !bytes.Equal(original, after) {
+		t.Fatalf("global Git configuration changed:\nbefore:\n%s\nafter:\n%s", original, after)
+	}
+}
+
 func writeSyncSigningGlobal(t *testing.T, root string) string {
 	t.Helper()
 	global := filepath.Join(root, "global.gitconfig")
@@ -144,7 +236,8 @@ func isolateSyncGitConfig(t *testing.T, root, global string) {
 	t.Helper()
 	for _, entry := range os.Environ() {
 		key := strings.SplitN(entry, "=", 2)[0]
-		if !strings.HasPrefix(key, "GIT_") {
+		upper := strings.ToUpper(key)
+		if !strings.HasPrefix(upper, "GIT_") && upper != "EMAIL" {
 			continue
 		}
 		t.Setenv(key, "")
@@ -198,6 +291,10 @@ func assertSyncUnsignedReadmeHistory(t *testing.T, repo, projectCommit string) {
 	}
 	if got := strings.TrimSpace(runGitOutput(t, repo, "for-each-ref", "--format=%(contents:signature)", "refs/tags/"+tagRef)); got != "" {
 		t.Fatalf("%s carries a signature: %q", tagRef, got)
+	}
+	wantTagger := "Machtiani README Bot <readme-bot@machtiani.local>"
+	if got := strings.TrimSpace(runGitOutput(t, repo, "for-each-ref", "--format=%(taggername) %(taggeremail)", "refs/tags/"+tagRef)); got != wantTagger {
+		t.Fatalf("%s tagger = %q, want %q", tagRef, got, wantTagger)
 	}
 }
 
