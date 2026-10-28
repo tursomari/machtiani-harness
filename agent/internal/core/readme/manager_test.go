@@ -1,6 +1,7 @@
 package readme
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -334,6 +335,236 @@ func TestAcquireSyncLockIsExclusive(t *testing.T) {
 	err = hostos.Flock(int(second.Fd()), hostos.LOCK_EX|hostos.LOCK_NB)
 	if !errors.Is(err, hostos.ErrWouldBlock) {
 		t.Fatalf("second lock error = %v, want EWOULDBLOCK", err)
+	}
+}
+
+func TestRunDisablesSigningForFreshReadmeRepo(t *testing.T) {
+	root := t.TempDir()
+	global := writeReadmeSigningGlobal(t, root)
+	isolateReadmeGitConfig(t, root, global)
+	original, err := os.ReadFile(global)
+	if err != nil {
+		t.Fatalf("read global config: %v", err)
+	}
+	t.Setenv(mockReadmeEnv, "basic")
+
+	manager := newReadmeSigningTestManager(root)
+	projectCommit := strings.Repeat("a", 40)
+	if err := manager.Run(context.Background(), projectCommit); err != nil {
+		t.Fatalf("run readme sync with signing enabled globally: %v", err)
+	}
+
+	assertReadmeBotConfig(t, manager.ReadmeRepoPath)
+	assertUnsignedReadmeHistory(t, manager.ReadmeRepoPath, projectCommit)
+	after, err := os.ReadFile(global)
+	if err != nil {
+		t.Fatalf("reread global config: %v", err)
+	}
+	if !bytes.Equal(original, after) {
+		t.Fatalf("global Git configuration changed:\nbefore:\n%s\nafter:\n%s", original, after)
+	}
+}
+
+func TestRunRepairsPreexistingReadmeRepoConfig(t *testing.T) {
+	root := t.TempDir()
+	global := writeReadmeSigningGlobal(t, root)
+	isolateReadmeGitConfig(t, root, global)
+	original, err := os.ReadFile(global)
+	if err != nil {
+		t.Fatalf("read global config: %v", err)
+	}
+	t.Setenv(mockReadmeEnv, "basic")
+
+	manager := newReadmeSigningTestManager(root)
+	if err := os.MkdirAll(manager.ReadmeRepoPath, 0o755); err != nil {
+		t.Fatalf("create pre-existing readme repo: %v", err)
+	}
+	runReadmeTestGit(t, manager.ReadmeRepoPath, "init")
+	runReadmeTestGit(t, manager.ReadmeRepoPath, "config", "--local", "user.name", "Personal Local")
+	runReadmeTestGit(t, manager.ReadmeRepoPath, "config", "--local", "user.email", "personal-local@example.test")
+	runReadmeTestGit(t, manager.ReadmeRepoPath, "config", "--local", "author.name", "Personal Author")
+	runReadmeTestGit(t, manager.ReadmeRepoPath, "config", "--local", "author.email", "personal-author@example.test")
+	runReadmeTestGit(t, manager.ReadmeRepoPath, "config", "--local", "committer.name", "Personal Committer")
+	runReadmeTestGit(t, manager.ReadmeRepoPath, "config", "--local", "committer.email", "personal-committer@example.test")
+	runReadmeTestGit(t, manager.ReadmeRepoPath, "config", "--local", "--add", "commit.gpgSign", "true")
+	runReadmeTestGit(t, manager.ReadmeRepoPath, "config", "--local", "--add", "commit.gpgSign", "true")
+	runReadmeTestGit(t, manager.ReadmeRepoPath, "config", "--local", "tag.gpgSign", "true")
+
+	projectCommit := strings.Repeat("b", 40)
+	if err := manager.Run(context.Background(), projectCommit); err != nil {
+		t.Fatalf("repair pre-existing readme repo with signing enabled: %v", err)
+	}
+
+	assertReadmeBotConfig(t, manager.ReadmeRepoPath)
+	assertUnsignedReadmeHistory(t, manager.ReadmeRepoPath, projectCommit)
+	after, err := os.ReadFile(global)
+	if err != nil {
+		t.Fatalf("reread global config: %v", err)
+	}
+	if !bytes.Equal(original, after) {
+		t.Fatalf("global Git configuration changed:\nbefore:\n%s\nafter:\n%s", original, after)
+	}
+}
+
+func TestSigningGlobalConfigStillAppliesOutsideReadmeRepo(t *testing.T) {
+	root := t.TempDir()
+	global := writeReadmeSigningGlobal(t, root)
+	isolateReadmeGitConfig(t, root, global)
+	original, err := os.ReadFile(global)
+	if err != nil {
+		t.Fatalf("read global config: %v", err)
+	}
+
+	repo := t.TempDir()
+	runReadmeTestGit(t, repo, "init")
+	runReadmeTestGit(t, repo, "config", "--local", "user.name", "Unrelated User")
+	runReadmeTestGit(t, repo, "config", "--local", "user.email", "unrelated@example.test")
+	if err := os.WriteFile(filepath.Join(repo, "file.txt"), []byte("unrelated\n"), 0o644); err != nil {
+		t.Fatalf("write unrelated file: %v", err)
+	}
+	runReadmeTestGit(t, repo, "add", "file.txt")
+
+	cmd := exec.Command("git", "commit", "-m", "must require signing")
+	cmd.Dir = repo
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected global signing to make an unrelated commit fail: %s", output)
+	}
+	if _, err := exec.Command("git", "-C", repo, "rev-parse", "--verify", "HEAD").Output(); err == nil {
+		t.Fatal("unrelated repository produced a commit despite unavailable signing key")
+	}
+
+	after, err := os.ReadFile(global)
+	if err != nil {
+		t.Fatalf("reread global config: %v", err)
+	}
+	if !bytes.Equal(original, after) {
+		t.Fatalf("global Git configuration changed:\nbefore:\n%s\nafter:\n%s", original, after)
+	}
+}
+
+func TestRunOverridesEnvironmentSigningForReadmeRepo(t *testing.T) {
+	root := t.TempDir()
+	global := writeReadmeSigningGlobal(t, root)
+	isolateReadmeGitConfig(t, root, global)
+	t.Setenv("GIT_CONFIG_COUNT", "2")
+	t.Setenv("GIT_CONFIG_KEY_0", "commit.gpgSign")
+	t.Setenv("GIT_CONFIG_VALUE_0", "true")
+	t.Setenv("GIT_CONFIG_KEY_1", "tag.gpgSign")
+	t.Setenv("GIT_CONFIG_VALUE_1", "true")
+	t.Setenv(mockReadmeEnv, "basic")
+
+	manager := newReadmeSigningTestManager(root)
+	projectCommit := strings.Repeat("c", 40)
+	if err := manager.Run(context.Background(), projectCommit); err != nil {
+		t.Fatalf("run readme sync with environment-level signing: %v", err)
+	}
+
+	assertReadmeBotConfig(t, manager.ReadmeRepoPath)
+	assertUnsignedReadmeHistory(t, manager.ReadmeRepoPath, projectCommit)
+}
+
+func writeReadmeSigningGlobal(t *testing.T, root string) string {
+	t.Helper()
+	global := filepath.Join(root, "global.gitconfig")
+	missingSigner := filepath.Join(root, "missing-ssh-signer")
+	missingKey := filepath.Join(root, "missing-signing-key")
+	settings := [][2]string{
+		{"user.name", "Personal User"},
+		{"user.email", "personal@example.test"},
+		{"user.signingkey", missingKey},
+		{"author.name", "Personal Author"},
+		{"author.email", "author@example.test"},
+		{"committer.name", "Personal Committer"},
+		{"committer.email", "committer@example.test"},
+		{"commit.gpgSign", "true"},
+		{"tag.gpgSign", "true"},
+		{"gpg.format", "ssh"},
+		{"gpg.ssh.program", missingSigner},
+	}
+	for _, setting := range settings {
+		cmd := exec.Command("git", "config", "--file", global, setting[0], setting[1])
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("seed global config %s: %v: %s", setting[0], err, output)
+		}
+	}
+	return global
+}
+
+func isolateReadmeGitConfig(t *testing.T, root, global string) {
+	t.Helper()
+	unsetReadmeGitEnv(t)
+	t.Setenv("HOME", root)
+	t.Setenv("USERPROFILE", root)
+	t.Setenv("XDG_CONFIG_HOME", root)
+	t.Setenv("GIT_CONFIG_GLOBAL", global)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+}
+
+func unsetReadmeGitEnv(t *testing.T) {
+	t.Helper()
+	for _, entry := range os.Environ() {
+		key := strings.SplitN(entry, "=", 2)[0]
+		if !strings.HasPrefix(key, "GIT_") {
+			continue
+		}
+		t.Setenv(key, "")
+		if err := os.Unsetenv(key); err != nil {
+			t.Fatalf("unset %s: %v", key, err)
+		}
+	}
+}
+
+func newReadmeSigningTestManager(root string) *Manager {
+	repo := filepath.Join(root, "readme")
+	return &Manager{
+		ProjectRoot:    root,
+		ReadmeRepoPath: repo,
+		ReadmeFilePath: filepath.Join(repo, readmeFilename),
+		StateDirPath:   filepath.Join(repo, stateDirName),
+		LastCommitPath: filepath.Join(repo, stateDirName, lastCommitFilename),
+	}
+}
+
+func assertReadmeBotConfig(t *testing.T, repo string) {
+	t.Helper()
+	want := map[string]string{
+		"user.name":       readmeBotName,
+		"user.email":      readmeBotEmail,
+		"author.name":     readmeBotName,
+		"author.email":    readmeBotEmail,
+		"committer.name":  readmeBotName,
+		"committer.email": readmeBotEmail,
+	}
+	for key, value := range want {
+		got := strings.TrimSpace(runReadmeTestGit(t, repo, "config", "--local", "--get", key))
+		if got != value {
+			t.Fatalf("local %s = %q, want %q", key, got, value)
+		}
+	}
+	for _, key := range []string{"commit.gpgSign", "tag.gpgSign"} {
+		got := strings.TrimSpace(runReadmeTestGit(t, repo, "config", "--local", "--get-all", key))
+		if got != "false" {
+			t.Fatalf("local %s values = %q, want a single false", key, got)
+		}
+	}
+}
+
+func assertUnsignedReadmeHistory(t *testing.T, repo, projectCommit string) {
+	t.Helper()
+	if got := strings.TrimSpace(runReadmeTestGit(t, repo, "log", "-1", "--format=%G?")); got != "N" {
+		t.Fatalf("README commit signature status = %q, want N", got)
+	}
+	wantIdentity := readmeBotName + " <" + readmeBotEmail + ">|" + readmeBotName + " <" + readmeBotEmail + ">"
+	if got := strings.TrimSpace(runReadmeTestGit(t, repo, "log", "-1", "--format=%an <%ae>|%cn <%ce>")); got != wantIdentity {
+		t.Fatalf("README commit identity = %q, want %q", got, wantIdentity)
+	}
+	tagRef := "oid-" + projectCommit
+	if got := strings.TrimSpace(runReadmeTestGit(t, repo, "cat-file", "-t", tagRef)); got != "tag" {
+		t.Fatalf("%s object type = %q, want annotated tag", tagRef, got)
+	}
+	if got := strings.TrimSpace(runReadmeTestGit(t, repo, "for-each-ref", "--format=%(contents:signature)", "refs/tags/"+tagRef)); got != "" {
+		t.Fatalf("%s carries a signature: %q", tagRef, got)
 	}
 }
 

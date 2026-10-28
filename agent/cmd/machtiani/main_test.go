@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -47,6 +48,168 @@ func TestSyncCommandUsesHeadCommit(t *testing.T) {
 	if _, err := os.Stat(readmePath); err != nil {
 		t.Fatalf("expected readme file at %s: %v", readmePath, err)
 	}
+}
+
+func TestSyncCommandSucceedsWithGlobalSigningEnabled(t *testing.T) {
+	prepareTestConfig(t)
+	t.Setenv("OPENAI_API_KEY", "test-key")
+	t.Setenv("OPENAI_BASE_URL", "https://example.com/v1")
+	t.Setenv("OPENAI_MODEL", "test-model")
+	t.Setenv("MACHTIANI_README_TEST_STUB", "basic")
+
+	repoDir := t.TempDir()
+	runGit(t, repoDir, "init")
+	runGit(t, repoDir, "config", "user.name", "Test User")
+	runGit(t, repoDir, "config", "user.email", "test@example.com")
+	runGit(t, repoDir, "config", "commit.gpgSign", "false")
+	runGit(t, repoDir, "config", "tag.gpgSign", "false")
+	if err := os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	runGit(t, repoDir, "add", "README.md")
+	runGit(t, repoDir, "commit", "-m", "initial commit")
+	if err := os.MkdirAll(filepath.Join(repoDir, ".machtiani", "artifacts"), 0o755); err != nil {
+		t.Fatalf("create legacy artifact root: %v", err)
+	}
+
+	root := t.TempDir()
+	global := writeSyncSigningGlobal(t, root)
+	isolateSyncGitConfig(t, root, global)
+	original, err := os.ReadFile(global)
+	if err != nil {
+		t.Fatalf("read global config: %v", err)
+	}
+
+	origWD := mustChdir(t, repoDir)
+	defer mustChdir(t, origWD)
+
+	for run := 1; run <= 2; run++ {
+		var exitCode int
+		stdout := captureStdout(t, func() {
+			exitCode = handleSyncCommand(nil)
+		})
+		if exitCode != 0 {
+			t.Fatalf("sync run %d exit = %d, stdout=%q", run, exitCode, stdout)
+		}
+		if !strings.Contains(stdout, "Readme synced for commit ") {
+			t.Fatalf("sync run %d missing success output: %q", run, stdout)
+		}
+	}
+
+	head, err := exec.Command("git", "-C", repoDir, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatalf("resolve project HEAD: %v", err)
+	}
+	readmeRepo := filepath.Join(repoDir, ".machtiani", "artifacts", "readme")
+	assertSyncReadmeBotConfig(t, readmeRepo)
+	assertSyncUnsignedReadmeHistory(t, readmeRepo, strings.TrimSpace(string(head)))
+
+	after, err := os.ReadFile(global)
+	if err != nil {
+		t.Fatalf("reread global config: %v", err)
+	}
+	if !bytes.Equal(original, after) {
+		t.Fatalf("global Git configuration changed:\nbefore:\n%s\nafter:\n%s", original, after)
+	}
+}
+
+func writeSyncSigningGlobal(t *testing.T, root string) string {
+	t.Helper()
+	global := filepath.Join(root, "global.gitconfig")
+	missingSigner := filepath.Join(root, "missing-ssh-signer")
+	missingKey := filepath.Join(root, "missing-signing-key")
+	settings := [][2]string{
+		{"user.name", "Personal User"},
+		{"user.email", "personal@example.test"},
+		{"user.signingkey", missingKey},
+		{"author.name", "Personal Author"},
+		{"author.email", "author@example.test"},
+		{"committer.name", "Personal Committer"},
+		{"committer.email", "committer@example.test"},
+		{"commit.gpgSign", "true"},
+		{"tag.gpgSign", "true"},
+		{"gpg.format", "ssh"},
+		{"gpg.ssh.program", missingSigner},
+	}
+	for _, setting := range settings {
+		cmd := exec.Command("git", "config", "--file", global, setting[0], setting[1])
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("seed global config %s: %v: %s", setting[0], err, output)
+		}
+	}
+	return global
+}
+
+func isolateSyncGitConfig(t *testing.T, root, global string) {
+	t.Helper()
+	for _, entry := range os.Environ() {
+		key := strings.SplitN(entry, "=", 2)[0]
+		if !strings.HasPrefix(key, "GIT_") {
+			continue
+		}
+		t.Setenv(key, "")
+		if err := os.Unsetenv(key); err != nil {
+			t.Fatalf("unset %s: %v", key, err)
+		}
+	}
+	t.Setenv("HOME", root)
+	t.Setenv("USERPROFILE", root)
+	t.Setenv("XDG_CONFIG_HOME", root)
+	t.Setenv("GIT_CONFIG_GLOBAL", global)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+}
+
+func assertSyncReadmeBotConfig(t *testing.T, repo string) {
+	t.Helper()
+	want := map[string]string{
+		"user.name":       "Machtiani README Bot",
+		"user.email":      "readme-bot@machtiani.local",
+		"author.name":     "Machtiani README Bot",
+		"author.email":    "readme-bot@machtiani.local",
+		"committer.name":  "Machtiani README Bot",
+		"committer.email": "readme-bot@machtiani.local",
+	}
+	for key, value := range want {
+		got := strings.TrimSpace(runGitOutput(t, repo, "config", "--local", "--get", key))
+		if got != value {
+			t.Fatalf("local %s = %q, want %q", key, got, value)
+		}
+	}
+	for _, key := range []string{"commit.gpgSign", "tag.gpgSign"} {
+		got := strings.TrimSpace(runGitOutput(t, repo, "config", "--local", "--get-all", key))
+		if got != "false" {
+			t.Fatalf("local %s values = %q, want a single false", key, got)
+		}
+	}
+}
+
+func assertSyncUnsignedReadmeHistory(t *testing.T, repo, projectCommit string) {
+	t.Helper()
+	if got := strings.TrimSpace(runGitOutput(t, repo, "log", "-1", "--format=%G?")); got != "N" {
+		t.Fatalf("README commit signature status = %q, want N", got)
+	}
+	wantIdentity := "Machtiani README Bot <readme-bot@machtiani.local>|Machtiani README Bot <readme-bot@machtiani.local>"
+	if got := strings.TrimSpace(runGitOutput(t, repo, "log", "-1", "--format=%an <%ae>|%cn <%ce>")); got != wantIdentity {
+		t.Fatalf("README commit identity = %q, want %q", got, wantIdentity)
+	}
+	tagRef := "oid-" + projectCommit
+	if got := strings.TrimSpace(runGitOutput(t, repo, "cat-file", "-t", tagRef)); got != "tag" {
+		t.Fatalf("%s object type = %q, want annotated tag", tagRef, got)
+	}
+	if got := strings.TrimSpace(runGitOutput(t, repo, "for-each-ref", "--format=%(contents:signature)", "refs/tags/"+tagRef)); got != "" {
+		t.Fatalf("%s carries a signature: %q", tagRef, got)
+	}
+}
+
+func runGitOutput(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, output)
+	}
+	return string(output)
 }
 
 func TestSyncCommandPreservesErrorOutputWhenFooterIsNotTerminal(t *testing.T) {

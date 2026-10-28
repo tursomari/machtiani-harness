@@ -25,6 +25,8 @@ const (
 	stateDirName         = ".state"
 	lastCommitFilename   = "last_project_commit"
 	syncLockFilename     = "sync.lock"
+	readmeBotName        = "Machtiani README Bot"
+	readmeBotEmail       = "readme-bot@machtiani.local"
 	mockReadmeEnv        = "MACHTIANI_README_TEST_STUB"     // enables deterministic content for integration tests
 	SkipReadmeManagerEnv = "MACHTIANI_SKIP_INTERNAL_README" // disables recursive manager execution when invoking the CLI
 	verboseEnv           = "MACHTIANI_INTERNAL_README_VERBOSE"
@@ -119,6 +121,10 @@ func (m *Manager) Run(ctx context.Context, projectCommitHash string) error {
 		_ = lockFile.Close()
 	}()
 
+	if err := m.ensureBotConfig(); err != nil {
+		return err
+	}
+
 	if err := m.syncExistingReadme(projectCommitHash); err == nil {
 		m.verbosef("readme already tagged for project %s; syncing existing content", shortHash(projectCommitHash))
 		if err := m.writeLastProcessed(projectCommitHash); err != nil {
@@ -163,12 +169,6 @@ func (m *Manager) ensureRepo() (bool, error) {
 		if err := m.runGit(m.ReadmeRepoPath, "init"); err != nil {
 			return created, err
 		}
-		if err := m.runGit(m.ReadmeRepoPath, "config", "user.name", "Machtiani README Bot"); err != nil {
-			return created, err
-		}
-		if err := m.runGit(m.ReadmeRepoPath, "config", "user.email", "readme-bot@machtiani.local"); err != nil {
-			return created, err
-		}
 		gitignorePath := filepath.Join(m.ReadmeRepoPath, ".gitignore")
 		if _, statErr := os.Stat(gitignorePath); os.IsNotExist(statErr) {
 			if writeErr := os.WriteFile(gitignorePath, []byte(stateDirName+"/\n"), 0o644); writeErr != nil {
@@ -180,6 +180,25 @@ func (m *Manager) ensureRepo() (bool, error) {
 		return created, fmt.Errorf("stat readme git dir: %w", err)
 	}
 	return created, nil
+}
+
+func (m *Manager) ensureBotConfig() error {
+	settings := [][2]string{
+		{"user.name", readmeBotName},
+		{"user.email", readmeBotEmail},
+		{"author.name", readmeBotName},
+		{"author.email", readmeBotEmail},
+		{"committer.name", readmeBotName},
+		{"committer.email", readmeBotEmail},
+		{"commit.gpgSign", "false"},
+		{"tag.gpgSign", "false"},
+	}
+	for _, setting := range settings {
+		if err := m.runGit(m.ReadmeRepoPath, "config", "--local", "--replace-all", setting[0], setting[1]); err != nil {
+			return fmt.Errorf("configure internal README repo %s: %w", setting[0], err)
+		}
+	}
+	return nil
 }
 
 func (m *Manager) ensureStateDir() (bool, error) {
@@ -207,10 +226,10 @@ func (m *Manager) acquireSyncLock() (*os.File, error) {
 }
 
 func (m *Manager) syncExistingReadme(projectCommitHash string) error {
-	if _, err := GetREADMECommitForProject(projectCommitHash); err != nil {
+	if _, err := getREADMECommitForProjectAt(m.ReadmeRepoPath, projectCommitHash); err != nil {
 		return err
 	}
-	return CheckoutReadonlyReadme(projectCommitHash)
+	return checkoutReadonlyReadmeAt(m.ReadmeRepoPath, projectCommitHash)
 }
 
 func (m *Manager) readLastProcessed() (string, error) {
@@ -282,14 +301,14 @@ func (m *Manager) generateAndCommit(ctx context.Context, projectCommitHash, last
 		return err
 	}
 	commitMsg := fmt.Sprintf("README update for project %s", projectCommitHash)
-	if err := m.runGit(m.ReadmeRepoPath, "commit", "-m", commitMsg); err != nil {
+	if err := m.runGit(m.ReadmeRepoPath, "-c", "commit.gpgSign=false", "commit", "-m", commitMsg); err != nil {
 		return err
 	}
 	newHead, headErr := m.gitOutput(m.ReadmeRepoPath, "rev-parse", "HEAD")
 	if headErr == nil {
 		m.verbosef("committed README update for project %s as %s", shortHash(projectCommitHash), shortHash(strings.TrimSpace(newHead)))
 	}
-	if err := TagREADMEWithProjectCommit(projectCommitHash); err != nil {
+	if err := tagREADMEWithProjectCommitAt(m.ReadmeRepoPath, projectCommitHash); err != nil {
 		return err
 	}
 	m.verbosef("tagged README commit with oid-%s", shortHash(projectCommitHash))
@@ -297,7 +316,7 @@ func (m *Manager) generateAndCommit(ctx context.Context, projectCommitHash, last
 }
 
 func (m *Manager) reuseExistingReadme(projectCommitHash string) error {
-	if err := TagREADMEWithProjectCommit(projectCommitHash); err != nil {
+	if err := tagREADMEWithProjectCommitAt(m.ReadmeRepoPath, projectCommitHash); err != nil {
 		return err
 	}
 	m.verbosef("updated tag oid-%s to current README HEAD", shortHash(projectCommitHash))
@@ -617,7 +636,7 @@ func tagREADMEWithProjectCommitAt(repoPath, projectCommitHash string) error {
 		}
 		return fmt.Errorf("internal README tag %s already maps to %s, refusing to move it to %s", tag, existing, head)
 	}
-	return runGitCommand(repoPath, "tag", "-a", tag, "-m", message)
+	return runGitCommand(repoPath, "-c", "tag.gpgSign=false", "tag", "-a", tag, "-m", message)
 }
 
 // GetREADMECommitForProject retrieves README version matching project commit.
